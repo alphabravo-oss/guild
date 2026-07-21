@@ -1,0 +1,8 @@
+{
+  "name": "crucible",
+  "description": "A mini-foundry — the build-verify-fix engine without the MCP server or the planning interview. You bring a structured spec (requirement IDs + acceptance criteria); crucible builds it and refuses to let it drift. /crucible:build <spec-file> decomposes the spec into units with DISJOINT file ownership, shows you the split for one approval, then runs a Workflow engine: CAST (parallel deliberate-engineering builders, each handed its unit prompt verbatim, each producing re-executable evidence bound to requirement IDs) -> INSPECT (blind orthogonal verification streams — wiring exists/substantive/wired, spec-before-code assay, and server-side re-execution of every evidence command) -> GRIND (every non-passing verdict is a defect; fix and full-re-inspect, loop until zero or a cycle cap) -> ASSAY (fresh-eyes agents read the spec first, form expectations, then confirm each requirement). Refuses a dirty tree; edits the shared working tree under disjoint ownership; commits per-unit only on your say-so so any unit is one revert away. Drops what needs the heavy machinery: no MCP gates/hashing, no isolated-worktree evidence, no brownfield flow-graph interview. Keeps the load-bearing principles: the engine routes and verifies, it never re-narrates the spec or judges the code itself.",
+  "version": "0.1.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

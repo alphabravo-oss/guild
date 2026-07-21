@@ -1,0 +1,5 @@
+{
+  "defects": [
+    {"stream": "BOGUS_STREAM", "status": "open", "fixed_in_cycle": null, "summary": "unknown stream — should trigger PHASE9_UNKNOWN_STREAM"}
+  ]
+}

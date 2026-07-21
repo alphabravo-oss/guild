@@ -1,0 +1,24 @@
+[project]
+name = "foundry-mcp"
+version = "1.7.0"
+description = "MCP server for the Foundry build-verify-fix loop. Phase gates, defect tracking, verification orchestration."
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.0.0", "jsonschema>=4.20.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+foundry-mcp = "foundry_mcp.server:main"
+
+[tool.pytest.ini_options]
+# Phase 4 Plan 04-02: tests need ``foundry_mcp.tools.evidence`` importable
+# without the package being pip-installed. ``pythonpath = ["src"]`` puts the
+# ``src/`` layout on sys.path at pytest startup so ``importorskip`` in
+# tests/test_evidence.py resolves once Plan 04-02's evidence.py module ships.
+# Mirrors plugins/forge/pyproject.toml ``[tool.pytest.ini_options]`` discipline.
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["src"]
+addopts = "-ra"

@@ -1,0 +1,14 @@
+# evidence-cmd: pytest tests/test_login.py::test_credentials -v
+# evidence-for: FR-1, FR-2
+
+============================= test session starts ==============================
+platform darwin -- Python 3.13.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/gsheppard/AB/AI/codsworth-marketplace/svc/api
+configfile: pyproject.toml
+collected 3 items
+
+tests/test_login.py::test_credentials_accepts_valid PASSED               [ 33%]
+tests/test_login.py::test_credentials_rejects_missing_password PASSED    [ 66%]
+tests/test_login.py::test_credentials_rejects_short_password PASSED      [100%]
+
+============================== 3 passed in 0.22s ===============================

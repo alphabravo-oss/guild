@@ -1,0 +1,23 @@
+{
+  "stream": "TEST-01",
+  "cycle": 5,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 6.7,
+  "uvx_subprocess_seconds": 5.2,
+  "observations": [
+    {
+      "observation_id": "OBS-040",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_value_check.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 22222,
+      "status": "FAIL",
+      "captured_output": "AssertionError: expected token == 'eyJ0eXAiOi...'; got 'eyJhbGciOi...'. Test asserts on a concrete literal value rather than verifying the shape (token: str non-empty).",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "failed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    }
+  ]
+}

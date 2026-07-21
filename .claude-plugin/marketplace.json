@@ -1,0 +1,120 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "guild",
+  "description": "Plugin marketplace for Guild — the spec engine and the build engine for Claude Code.",
+  "owner": {
+    "name": "AlphaBravo"
+  },
+  "plugins": [
+    {
+      "name": "forge",
+      "source": "./plugins/forge",
+      "description": "Codebase-aware specification engine. Runs a grounded interview that captures implicit facts as A-AUTO-NNN entries, emits typed Global Invariants / State Transitions / Contracts tables, runs an adversarial spec review at R3.5, and writes a foundry-ready spec with version frontmatter — locked, classified, and verifiable. Brownfield runs produce a flow delta against the existing system; greenfield runs produce an end-state spec; cosmetic runs skip flow mapping. Forge plans. Foundry builds.",
+      "version": "4.3.1",
+      "category": "development",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "foundry",
+      "source": "./plugins/foundry",
+      "description": "Autonomous build-verify-fix loop. Decomposes a spec into castings with pre-authored teammate prompts, validates them through an 11-dimension F0.9 gate (including F0.7 intent-carrier coverage), builds in parallel waves with server-side evidence re-execution and per-requirement-ID binding, runs up to 8 verification streams (TRACE, FLOW_TRACE, PROVE, RESEARCH_AUDIT, COVERAGE_DIFF, SIGHT, TEST/PROBE, TEST_OBSERVATIONS), grinds defects to zero, then assays the result with fresh-eyes verification. Brownfield runs consume a flow delta; greenfield and cosmetic runs use the end-state pipeline. Forge plans. Foundry builds.",
+      "version": "4.4.0",
+      "category": "development",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "adhoc",
+      "source": "./plugins/adhoc",
+      "description": "Stops Claude from racing on ad-hoc work. Methodical-mode pre-response checklist injected every turn (Restate, Verified/Unverified assumptions, Read Floor, Approach Deliberation, Blast Radius, Stall Check, Competing Hypotheses, Goal-Driven Execution). Stop hook enforces four gates: file:line citation verifier, uncertainty-tell scanner, zero-tool-call grounding audit, and an iterative two-tier critic-dialog (Haiku fast-critic rounds 1-2, opus pre-stop-critic rounds 3-5, HARD block at round 5 until /adhoc:trust-me bypass). Each critic runs a 10-item rule compliance audit and sees the prior round's feedback to verify Claude actually addressed flagged issues. /adhoc:casual (one turn skip), /adhoc:trust-me (one-turn strict bypass), /adhoc:off (session disable). /adhoc:deep for heavier analysis, /adhoc:second-opinion for independent critique.",
+      "version": "0.3.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "crew",
+      "source": "./plugins/crew",
+      "description": "Throw an AI dev at a problem and have it own the outcome. Five Opus agents (router, scout, worker, critic, fresh-eyes) collaborate to investigate, plan, execute, and verify — SSH into systems, spin up infra, edit code, ship features, debug deploys, get airgap bundles working. Worker self-switches between investigating, planning, executing, and verifying modes — one persistent persona, not five different ones. Bounded scout budget (25 tool calls / 5 min, doubled in --paranoid), multi-agent reflexion on stuck (N=2-3 parallel variants + judge — fixes Reflexion's degeneration-of-thought failure mode), critic and fresh-eyes both produce mandatory evidence ledgers of commands they actually ran. One checkpoint (plan approval) for side-effecting tasks, zero for pure investigation. Plan and debrief render in chat; state files exist in .crew/runs/ for resume. Production beats --yolo always. /crew:goal sets a completion condition and runs the worker→critic→fresh-eyes loop unattended — cycle after cycle until critic and fresh-eyes both return pass, or a cycle/time cap stops it — enforced by a Stop hook (goal-gate.py) that blocks the run from ending while the goal is unmet.",
+      "version": "0.2.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "tidy",
+      "source": "./plugins/tidy",
+      "description": "Careful low-risk codebase cleanup across 7 focused tracks: deduplication, type consolidation, dead code removal, circular dependency untangling, type strengthening, error-handling cleanup, and deprecated/AI-slop removal. Each track inspects in parallel (read-only), writes a critical assessment, ranks proposed changes by confidence (HIGH / MEDIUM / LOW / UNCERTAIN), and auto-applies ONLY HIGH-confidence LOW-risk changes per batch — running language-appropriate type checks, tests, and lints after each. MEDIUM and LOW changes get surfaced for explicit human decision. Atomic git commits per batch so any failing check is one revert away. Anti-pattern guardrails: never merges code that just LOOKS similar; never removes dynamically-imported / config-referenced / framework-convention / generated code; never strips legitimate boundary types (JSON parses, external APIs, FFI); never silences real error boundaries; never introduces new abstractions just to break a cycle; never uses comments as the source of truth. Refuses to run on a dirty working tree. Default mode is --dry-run (assess only); --apply is opt-in with a checkpoint before changes; --auto skips the checkpoint but never the HIGH-only confidence gate.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "e2e",
+      "source": "./plugins/e2e",
+      "description": "End-to-end test authoring and maintenance for web apps via Playwright + Playwright MCP. Claude drives a real browser, reads the accessibility tree, and emits *.spec.ts files that pass — then keeps them passing. /e2e:init scaffolds Playwright in the cwd and registers the MCP server. /e2e:write <flow> drives the browser to perform the flow and emits a green spec. /e2e:crawl discovers every route and generates a smoke spec per route. /e2e:matrix produces a routes × roles coverage suite with reused storageState. /e2e:audit runs the suite, reads trace.zip files, and triages failures by root cause. /e2e:record wraps playwright codegen for manual capture. The author skill enforces selector hygiene (getByRole over CSS), auto-wait discipline, and idempotent test design; the diagnose skill drives trace-driven flaky-test triage. The spec-writer subagent isolates MCP-driven spec authoring from the main context.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "weave",
+      "source": "./plugins/weave",
+      "description": "Generate really good dynamic Workflow scripts on demand. /weave:make <task> classifies the task into an orchestration archetype (understand / design / review / research / migrate / generic), picks the right fan-out topology — pipeline by default, a barrier only when one stage genuinely needs all prior results — and authors a self-contained Workflow script that obeys the Workflow tool's hard rules: pure-literal meta block, schema'd agent returns instead of text parsing, .filter(Boolean) after fan-out, adversarial-verify for findings, loop-until-dry / loop-until-budget for unknown-size work, isolation:'worktree' only for parallel file mutation, budget loops guarded on budget.total, no Date.now/Math.random. Every script passes `node --check` and a 12-point self-audit before it is saved to .claude/workflows/ or run. Saved workflows are parameterized over args, so they're reusable — run now with --run, run later by name, or edit and re-run. Running is opt-in; authoring and saving are not.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "holmes",
+      "source": "./plugins/holmes",
+      "description": "Macro-architecture / design-cohesion review — the senior-engineer 'is this shaped right or accreted?' critique, not bug-hunting or lint. Reads a codebase like Holmes reads a room: deduces the real design problem from the detail that's out of place. /holmes:review <target> runs a Workflow engine that builds a grounded structural map of the target (a path, the diff, a subsystem, or a described piece of logic), then runs 7 blind design lenses — package/module proliferation, missed sharing & reuse, helper sprawl & abstraction fit, flow & layering, cohesion, naming/structural consistency, accretion markers — each a separate agent hunting one class of design problem. Every candidate finding is adversarially verified by a skeptic that tries to refute it as intentional, so plausible-but-wrong smells get dropped; a completeness critic then re-lenses any in-scope area no finding touched. The result is synthesized into a per-subsystem deliberate/mixed/accreted verdict with file:line evidence and an ordered, concrete reshaping plan. Report only — never edits code. Forbidden from style nits, correctness bugs, or treating comments as source of truth; an empty result is a valid honest outcome for a well-shaped target.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "crucible",
+      "source": "./plugins/crucible",
+      "description": "A mini-foundry — the build-verify-fix engine without the MCP server or the planning interview. You bring a structured spec (markdown with stable requirement IDs + acceptance criteria); crucible builds it and refuses to let it drift. /crucible:build <spec-file> decomposes the spec into units with DISJOINT file ownership, shows the split for one approval, then runs a Workflow engine: CAST (parallel deliberate-engineering builders, each handed its unit prompt verbatim, each emitting re-executable evidence bound to requirement IDs) → INSPECT (three blind orthogonal streams — wiring exists/substantive/wired, spec-before-code fresh-eyes assay, and re-execution of every evidence command) → GRIND (every non-passing verdict is a defect; fix the affected units and full-re-inspect, loop until zero or a cycle cap) → ASSAY (fresh-eyes agents read the spec first, form expectations, then confirm each requirement). Refuses a dirty tree; edits the shared working tree under disjoint ownership; commits per-unit only on user say-so so any unit is one revert away. Keeps foundry's load-bearing principles — verbatim unit prompts (no interpretation layer), multi-stream blind verification (build-green ≠ done), evidence binding, defect-to-zero grind, spec-before-code assay, an engine that routes and verifies but never re-narrates the spec or judges the code itself. Drops what needs the heavy machinery: no MCP gates/hashing, no isolated-worktree evidence, no brownfield flow-graph interview. forge plans → foundry builds; crucible is foundry's build engine, mini.",
+      "version": "0.1.0",
+      "category": "development",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "damu",
+      "source": "./plugins/damu",
+      "description": "De-AI My UI — strips the tells that make an interface read as 'made by an AI in Tailwind.' Two modes over one shared catalog of ~19 slop signatures (font chaos, the purple-on-black AI palette, gratuitous parallax, weird hovers, default/neon gradients, neon gradient borders, recycled rocket/bolt/shield icons, everything-is-a-24px-card, over-rounded corners, huge drop shadows, the AI-startup serif, out-of-box shadcn, forced monochrome, icon/emoji overuse and mismatch, empty filler copy, tiny/low-contrast text). /damu:prevent renders the catalog's fixes into a copy-pasteable anti-slop ruleset, lightly tailored to the detected stack, for you to adjust and drop into CLAUDE.md or memory so Claude stops generating slop in the first place — it writes no file. /damu:remediate drives Playwright MCP to capture per-route screenshots plus extracted CSS facts (font counts and sizes, color clusters, WCAG contrast, radius/shadow distributions, gradient and parallax signals, shadcn/Tailwind-default signatures), then runs a holmes-style Workflow engine — a context pass that fixes what's legitimate for this product, nine blind per-tell lenses (typography, color, gradients & borders, shape & depth, layout soul, motion, iconography, copy, readability) that each hard-respect those legitimate patterns and self-rate confidence (HIGH only for unmotivated, uniform choices) so nothing is silently dropped, a completeness critic, and synthesis into a per-page deliberate/mixed/slop verdict with a ranked, source-anchored change list. Report first; --apply commits only HIGH-confidence low-risk fixes one atomic commit each and refuses a dirty tree, never rewriting copy. Governing principle: every tell is sometimes correct, so a finding is HIGH-confidence only when the choice looks unmotivated and uniform.",
+      "version": "0.2.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
+      "name": "ux-review",
+      "source": "./plugins/ux-review",
+      "description": "Experiential UX review that drives the RUNNING app as a real user — not a code read. Reading source is a code review and structurally cannot find experience defects: a mode that doesn't do what its label claims, an overlay anchored to the wrong thing (the viewport center instead of the point you chose), a feature that works on the default screen and silently breaks in another state, or a table-stakes affordance that's simply absent. /ux-review:run launches the app in a real browser, self-configures by discovering what the product is, who it's for, and what it promises (so it's told nothing and stays generic), then builds a coverage grid — every screen × state × variant × viewport × input modality — and drives real jobs-to-be-done end-to-end through five sharp lenses: promise-vs-delivery, default-vs-buried, anchor/subject, every-state-not-the-happy-one, and what's-missing, plus the classic usability heuristics framed experientially. Adversarial states (empty/error/offline/slow/denied/first-run), a keyboard + screen-reader + mobile sweep, and a continuous console/network watch catch silent failures. A completeness critic loops until a full pass finds nothing new. Findings are ranked by user harm and logged as job → expected vs actual (+screenshot) → why-it-hurts → severity, closed by an auditable coverage report. Drives real browsers via Playwright MCP; the persona-driver subagent fans out one driver per persona × surface for exhaustive parallel coverage. Report only — it never edits the app's code.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    }
+  ]
+}

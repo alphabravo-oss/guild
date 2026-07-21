@@ -1,0 +1,12 @@
+# evidence-cmd: pytest tests/test_billing.py::test_invoice_creation -v
+# evidence-for: FR-1
+
+============================= test session starts ==============================
+platform darwin -- Python 3.13.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/gsheppard/AB/AI/codsworth-marketplace/svc/billing
+configfile: pyproject.toml
+collected 1 item
+
+tests/test_billing.py::test_invoice_creation PASSED                      [100%]
+
+============================== 1 passed in 0.18s ===============================

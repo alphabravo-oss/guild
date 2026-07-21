@@ -1,0 +1,7 @@
+[
+  {"tool": "Read", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Read", "target_path": "foundry-archive/run-001/castings/casting-1-prompt.md"},
+  {"tool": "Bash", "pattern": "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2'); print(model.encode(['login']).tolist())"},
+  {"tool": "Embedding", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Write", "target_path": "foundry-archive/run-001/intent-coverage.json"}
+]

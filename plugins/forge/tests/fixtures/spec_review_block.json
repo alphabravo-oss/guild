@@ -1,0 +1,14 @@
+{
+  "review_version": "v1.0",
+  "verdict": "block",
+  "flag_count": 1,
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "citation": "A-007",
+      "typed_row": "CT-001",
+      "ambiguity": "CT-001 [from A-007] locks bcrypt as the surface output but A-007 body says 'bcrypt OR argon2 — both fine'; the row drops argon2 unilaterally."
+    }
+  ],
+  "reviewer_order_violation": false
+}

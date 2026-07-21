@@ -1,0 +1,15 @@
+# evidence-cmd: pytest tests/test_search.py -v
+# evidence-for: US-1, # FR-2 deferred to next sprint
+
+============================= test session starts ==============================
+platform darwin -- Python 3.13.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/gsheppard/AB/AI/codsworth-marketplace/svc/search
+configfile: pyproject.toml
+collected 4 items
+
+tests/test_search.py::test_search_returns_results_for_term PASSED        [ 25%]
+tests/test_search.py::test_search_handles_empty_query PASSED             [ 50%]
+tests/test_search.py::test_search_paginates_results PASSED               [ 75%]
+tests/test_search.py::test_search_respects_filter_predicates PASSED      [100%]
+
+============================== 4 passed in 0.33s ===============================

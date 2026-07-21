@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
+.idea/
+.vscode/
+*.swp
+.planning/
+/.mcp.json
+/.serena/
+/forge-specs/
+/evidence/
+/foundry-archive/

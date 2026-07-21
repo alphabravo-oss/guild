@@ -1,0 +1,9 @@
+# evidence-cmd: pytest
+# evidence-volatile: [unclosed
+============================= test session starts ==============================
+collected 2 items
+
+tests/test_dashboard.py::test_dashboard_loads_without_errors PASSED      [ 50%]
+tests/test_dashboard.py::test_dashboard_filters_by_owner PASSED          [100%]
+
+============================== 2 passed in 0.05s ===============================

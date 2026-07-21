@@ -1,0 +1,13 @@
+# evidence-cmd: ./scripts/run-checks.sh
+# evidence-for: bogus, not-an-id, foo-bar
+
+[run-checks] starting at 2026-05-06T17:00:00Z
+[run-checks] step 1/4: lint   ... ok (0.41s)
+[run-checks] step 2/4: typecheck ... ok (1.82s)
+[run-checks] step 3/4: unit tests ... ok (3.27s)
+[run-checks] step 4/4: integration smoke ... ok (2.04s)
+
+[run-checks] summary: 4/4 steps passed
+[run-checks] total wall-clock: 7.54s
+[run-checks] exit-code: 0
+[run-checks] artifacts written to .checks/run-2026-05-06T17-00-00Z/

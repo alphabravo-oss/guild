@@ -1,0 +1,44 @@
+{
+  "review_version": "v1.0",
+  "verdict": "block",
+  "flag_count": 6,
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "citation": "A-001",
+      "typed_row": "GI-001",
+      "ambiguity": "GI-001 [from A-001] paraphrases the operator-stays-generic invariant in tokens that drift from the transcript wording."
+    },
+    {
+      "id": "FLAG-002",
+      "citation": "A-002",
+      "typed_row": "ST-001",
+      "ambiguity": "ST-001 [from A-002] omits the F4 ASSAY guard the transcript names as the COMPLETED to ARCHIVED gate."
+    },
+    {
+      "id": "FLAG-003",
+      "citation": "A-003",
+      "typed_row": "CT-001",
+      "ambiguity": "CT-001 [from A-003] drops the EVIDENCE_MISMATCH error case the transcript locks."
+    },
+    {
+      "id": "FLAG-004",
+      "citation": "A-004",
+      "typed_row": null,
+      "ambiguity": "A-004 commits to Python 3.11 but no row carries the runtime invariant explicitly."
+    },
+    {
+      "id": "FLAG-005",
+      "citation": "A-006",
+      "typed_row": "GI-002",
+      "ambiguity": "GI-002 [from A-006] elides the no-caching-layer clause the transcript locks."
+    },
+    {
+      "id": "FLAG-006",
+      "citation": "A-007",
+      "typed_row": "CT-001",
+      "ambiguity": "CT-001 [from A-007] picks bcrypt unilaterally while the transcript leaves bcrypt vs argon2 unresolved."
+    }
+  ],
+  "reviewer_order_violation": false
+}

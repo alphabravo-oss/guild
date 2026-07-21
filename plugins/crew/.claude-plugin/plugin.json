@@ -1,0 +1,8 @@
+{
+  "name": "crew",
+  "description": "Throw an AI dev at a problem and have it own the outcome. Five Opus agents (router, scout, worker, critic, fresh-eyes) collaborate to investigate, plan, execute, and verify — SSH into systems, spin up infra, edit code, ship features, debug deploys, get airgap bundles working. Worker self-switches between investigating, planning, executing, and verifying modes. Bounded scout budget, multi-agent reflexion on stuck (N=2-3 parallel variants + judge), critic and fresh-eyes must produce evidence ledgers of commands they actually ran. One checkpoint (plan approval) for side-effecting tasks, zero for pure investigation. Plan and debrief render in chat; state files exist in .crew/runs/ for resume. /crew:goal runs the worker→critic→fresh-eyes loop unattended until critic and fresh-eyes both return pass — enforced by a Stop hook, bounded by cycle and time caps.",
+  "version": "0.2.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

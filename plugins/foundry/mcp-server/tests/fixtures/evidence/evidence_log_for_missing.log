@@ -1,0 +1,14 @@
+# evidence-cmd: pytest tests/test_orders.py -v
+
+============================= test session starts ==============================
+platform darwin -- Python 3.13.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/gsheppard/AB/AI/codsworth-marketplace/svc/api
+configfile: pyproject.toml
+collected 4 items
+
+tests/test_orders.py::test_create_order_with_valid_payload PASSED        [ 25%]
+tests/test_orders.py::test_create_order_rejects_negative_quantity PASSED [ 50%]
+tests/test_orders.py::test_order_total_includes_tax PASSED               [ 75%]
+tests/test_orders.py::test_order_status_transitions_valid PASSED         [100%]
+
+============================== 4 passed in 0.31s ===============================

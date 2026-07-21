@@ -1,0 +1,10 @@
+# evidence-cmd: pytest -k some_test
+Build successful.
+All checks passed.
+Done.
+============================= test session starts ==============================
+collected 1 item
+
+tests/test_some.py::test_some_test PASSED                                [100%]
+
+============================== 1 passed in 0.02s ===============================

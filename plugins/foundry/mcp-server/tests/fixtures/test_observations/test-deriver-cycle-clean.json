@@ -1,0 +1,35 @@
+{
+  "stream": "TEST-01",
+  "cycle": 1,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 12.3,
+  "uvx_subprocess_seconds": 10.1,
+  "observations": [
+    {
+      "observation_id": "OBS-001",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_pass.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 12345,
+      "status": "PASS",
+      "captured_output": "tests passed: 1; shape-only assertions verified",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    },
+    {
+      "observation_id": "OBS-002",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_fail.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 67890,
+      "status": "FAIL",
+      "captured_output": "AssertionError: expected dict shape {token: str, expires_at: str}, got {error: 'invalid'}",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    }
+  ]
+}

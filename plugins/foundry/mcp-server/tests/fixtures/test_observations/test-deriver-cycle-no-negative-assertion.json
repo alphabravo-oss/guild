@@ -1,0 +1,23 @@
+{
+  "stream": "TEST-01",
+  "cycle": 4,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 5.5,
+  "uvx_subprocess_seconds": 4.4,
+  "observations": [
+    {
+      "observation_id": "OBS-030",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_happy_only.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 11111,
+      "status": "PASS",
+      "captured_output": "test_login_happy_path PASSED — only positive case asserted; no negative branch covered",
+      "negative_assertion_present": false,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    }
+  ]
+}

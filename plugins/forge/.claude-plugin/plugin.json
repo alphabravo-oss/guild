@@ -1,0 +1,8 @@
+{
+  "name": "forge",
+  "description": "Codebase-aware specification engine for Claude Code. Runs parallel codebase research, then a grounded interview that captures implicit facts as A-AUTO-NNN entries, emits typed Global Invariants / State Transitions / Contracts tables, runs an adversarial spec review at R3.5, then writes a foundry-ready spec with version frontmatter (v2.1) — locked, classified, citation-backed. Detects brownfield, greenfield, and cosmetic modes; brownfield runs produce a flow delta against the existing system. Forge plans. Foundry builds.",
+  "version": "4.3.1",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

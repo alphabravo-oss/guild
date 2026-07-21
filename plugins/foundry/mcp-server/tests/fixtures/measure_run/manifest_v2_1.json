@@ -1,0 +1,24 @@
+{
+  "spec_format_version": "v2.1",
+  "spec_format_version_tuple": [2, 1],
+  "stream_skips": [],
+  "castings": [
+    {
+      "casting_id": "c-001",
+      "evidence_provenance": {
+        "git_hash": "deadbeefcafef00d1234567890abcdef12345678",
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "mtime": "2026-05-08T16:30:00Z"
+      }
+    }
+  ],
+  "intent_coverage_summary": {
+    "total_a_nnn": 6,
+    "propagated": 6,
+    "paraphrased": 0,
+    "dropped": 0
+  },
+  "invariants_table": "| ID | statement | applies-to | violation | citation |\n|----|-----------|------------|-----------|----------|\n| GI-001 | sample | layer | violation | [from A-001] |",
+  "state_transitions_table": "| ID | from-state | to-state | trigger | guard | citation |\n|----|------------|----------|---------|-------|----------|\n| ST-001 | A | B | t | g | [from A-002] |",
+  "contracts_table": "| ID | surface | input | output | errors | citation |\n|----|---------|-------|--------|--------|----------|\n| CT-001 | f | x | y | err | [from A-003] |"
+}

@@ -1,0 +1,8 @@
+# evidence-volatile: \d+ms
+============================= test session starts ==============================
+collected 2 items
+
+tests/test_search.py::test_search_returns_paginated_results PASSED       [ 50%]
+tests/test_search.py::test_search_empty_query_rejected PASSED            [100%]
+
+============================== 2 passed in 18ms ================================

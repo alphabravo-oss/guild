@@ -1,0 +1,10 @@
+[
+  {"tool": "Read", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Read", "target_path": "foundry-archive/run-001/transcript.md"},
+  {"tool": "Grep", "pattern": "## Contracts", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Grep", "pattern": "<spec_requirements>", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Glob", "pattern": "foundry-archive/run-001/test_observations/generated/*.py"},
+  {"tool": "Write", "target_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_pass.py"},
+  {"tool": "Write", "target_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_fail.py"},
+  {"tool": "Bash", "command": "uvx --from hypothesis-jsonschema --with hypothesis python -m pytest foundry-archive/run-001/test_observations/generated/ -v"}
+]

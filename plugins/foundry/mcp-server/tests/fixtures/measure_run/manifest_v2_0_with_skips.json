@@ -1,0 +1,35 @@
+{
+  "spec_format_version": "v2.0",
+  "spec_format_version_tuple": [2, 0],
+  "stream_skips": [
+    {
+      "stream_id": "EVID-01",
+      "reason": "spec_format_version",
+      "spec_version": "v2.0",
+      "stream_min": "v2.1",
+      "agent_path": null
+    },
+    {
+      "stream_id": "PROBE-01",
+      "reason": "spec_format_version",
+      "spec_version": "v2.0",
+      "stream_min": "v2.1",
+      "agent_path": "plugins/forge/agents/spec-reviewer.md"
+    },
+    {
+      "stream_id": "TEST-01",
+      "reason": "spec_format_version",
+      "spec_version": "v2.0",
+      "stream_min": "v2.1",
+      "agent_path": "plugins/foundry/agents/spec-test-deriver.md"
+    },
+    {
+      "stream_id": "INTENT-01",
+      "reason": "spec_format_version",
+      "spec_version": "v2.0",
+      "stream_min": "v2.1",
+      "agent_path": "plugins/foundry/agents/intent-carrier.md"
+    }
+  ],
+  "castings": []
+}

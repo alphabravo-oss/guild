@@ -1,0 +1,23 @@
+{
+  "stream": "TEST-01",
+  "cycle": 3,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 4.2,
+  "uvx_subprocess_seconds": 3.1,
+  "observations": [
+    {
+      "observation_id": "OBS-020",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_source_leak.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 13579,
+      "status": "FAIL",
+      "captured_output": "from src.handlers import login_handler\nimport src.handlers.login as _login\nresult = _login.handle({})\nassert result['token'] == 'abc'",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    }
+  ]
+}

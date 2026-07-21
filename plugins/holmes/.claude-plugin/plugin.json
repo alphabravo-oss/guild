@@ -1,0 +1,8 @@
+{
+  "name": "holmes",
+  "description": "Macro-architecture / design-cohesion review — the senior-engineer 'is this shaped right or accreted?' critique, not bug-hunting or lint. Reads a codebase like Holmes reads a room: deduces the real design problem from the detail that's out of place. /holmes:review <target> runs a Workflow engine that builds a grounded structural map of the target (a path, the diff, a subsystem, or a described piece of logic), then runs 7 blind design lenses — package/module proliferation, missed sharing & reuse, helper sprawl & abstraction fit, flow & layering, cohesion, naming/structural consistency, accretion markers — each a separate agent hunting one class of design problem. Every candidate finding is adversarially verified by a skeptic that tries to refute it as intentional, so plausible-but-wrong smells get dropped; a completeness critic then re-lenses any in-scope area no finding touched. The result is synthesized into a per-subsystem deliberate/mixed/accreted verdict with file:line evidence and an ordered, concrete reshaping plan. Report only — never edits code. Forbidden from style nits, correctness bugs, or treating comments as source of truth ('everybody lies'); an empty result is a valid honest outcome for a well-shaped target.",
+  "version": "0.1.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

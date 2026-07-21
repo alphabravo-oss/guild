@@ -1,0 +1,8 @@
+{
+  "name": "adhoc",
+  "description": "Stops Claude from racing on ad-hoc work. Methodical-mode pre-response checklist injected every turn (Restate, Verified/Unverified assumptions, Read Floor, Approach Deliberation, Blast Radius, Stall Check, Competing Hypotheses, Goal-Driven Execution). Stop hook enforces four gates: file:line citation verifier, uncertainty-tell scanner, zero-tool-call grounding audit, and an iterative two-tier critic-dialog (Haiku fast-critic rounds 1-2, opus pre-stop-critic rounds 3-5, HARD block at round 5 until /adhoc:trust-me bypass). Each critic runs a 10-item rule compliance audit and sees the prior round's feedback to verify Claude actually addressed flagged issues. /adhoc:casual (one turn skip), /adhoc:trust-me (one-turn strict bypass), /adhoc:off (session disable). /adhoc:deep for heavier analysis, /adhoc:second-opinion for independent critique.",
+  "version": "0.3.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

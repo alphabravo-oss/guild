@@ -1,0 +1,8 @@
+[
+  {"tool": "Read", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Read", "target_path": "foundry-archive/run-001/transcript.md"},
+  {"tool": "Read", "target_path": "src/handlers/login.py"},
+  {"tool": "Grep", "pattern": "def handle", "target_path": "src/handlers/login.py"},
+  {"tool": "Read", "target_path": "plugins/forge/agents/spec-reviewer.md"},
+  {"tool": "Write", "target_path": "foundry-archive/run-001/test_observations/generated/test_login_contract_leaky.py"}
+]

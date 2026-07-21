@@ -1,0 +1,14 @@
+{
+  "review_version": "v1.0",
+  "verdict": "pass",
+  "flag_count": 1,
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "citation": "A-007",
+      "typed_row": "CT-001",
+      "ambiguity": "CT-001 [from A-007] locks bcrypt unilaterally while A-007 leaves bcrypt vs argon2 unresolved — flagged but reviewer set verdict=pass anyway (Pitfall 3: advisory mode forbidden, any flag MUST block)."
+    }
+  ],
+  "reviewer_order_violation": false
+}

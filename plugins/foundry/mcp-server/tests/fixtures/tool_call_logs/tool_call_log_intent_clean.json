@@ -1,0 +1,10 @@
+[
+  {"tool": "Read", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Read", "target_path": "foundry-archive/run-001/castings/casting-1-prompt.md"},
+  {"tool": "Read", "target_path": "foundry-archive/run-001/castings/casting-2-prompt.md"},
+  {"tool": "Grep", "pattern": "## A-\\d+", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Grep", "pattern": "## A-AUTO-\\d+", "target_path": "foundry-archive/run-001/spec.md"},
+  {"tool": "Grep", "pattern": "\\[from A-\\d+\\]", "target_path": "foundry-archive/run-001/castings/casting-1-prompt.md"},
+  {"tool": "Glob", "pattern": "foundry-archive/run-001/castings/casting-*-prompt.md"},
+  {"tool": "Write", "target_path": "foundry-archive/run-001/intent-coverage.json"}
+]

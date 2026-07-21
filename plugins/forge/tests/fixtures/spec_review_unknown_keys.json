@@ -1,0 +1,8 @@
+{
+  "review_version": "v1.0",
+  "verdict": "pass",
+  "flag_count": 0,
+  "flags": [],
+  "reviewer_order_violation": false,
+  "suggested_fix": "rewrite the contracts row to lock argon2 instead"
+}

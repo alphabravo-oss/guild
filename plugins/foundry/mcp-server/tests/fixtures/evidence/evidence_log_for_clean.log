@@ -1,0 +1,16 @@
+# evidence-cmd: pytest tests/test_login.py -v
+# evidence-for: US-1, FR-2
+
+============================= test session starts ==============================
+platform darwin -- Python 3.13.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/gsheppard/AB/AI/codsworth-marketplace/svc/api
+configfile: pyproject.toml
+collected 5 items
+
+tests/test_login.py::test_login_endpoint_accepts_valid_credentials PASSED [ 20%]
+tests/test_login.py::test_login_endpoint_rejects_missing_password PASSED [ 40%]
+tests/test_login.py::test_login_endpoint_returns_jwt_cookie PASSED       [ 60%]
+tests/test_login.py::test_session_persists_across_redirect PASSED        [ 80%]
+tests/test_login.py::test_logout_clears_session_cookie PASSED            [100%]
+
+============================== 5 passed in 0.42s ===============================

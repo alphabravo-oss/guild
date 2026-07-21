@@ -1,0 +1,14 @@
+{
+  "review_version": "v1.0",
+  "verdict": "block",
+  "flag_count": 1,
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "citation": "",
+      "typed_row": "CT-001",
+      "ambiguity": "CT-001 surface looks suspicious — but no specific A-NNN citation is offered (Pitfall 1: every flag MUST cite a transcript A-NNN)."
+    }
+  ],
+  "reviewer_order_violation": false
+}

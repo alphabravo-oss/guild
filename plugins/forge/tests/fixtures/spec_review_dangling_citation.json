@@ -1,0 +1,14 @@
+{
+  "review_version": "v1.0",
+  "verdict": "block",
+  "flag_count": 1,
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "citation": "A-999",
+      "typed_row": "CT-001",
+      "ambiguity": "CT-001 disagrees with A-999 — but A-999 is not in the transcript (Pitfall 1: dangling citation, validator must reject)."
+    }
+  ],
+  "reviewer_order_violation": false
+}

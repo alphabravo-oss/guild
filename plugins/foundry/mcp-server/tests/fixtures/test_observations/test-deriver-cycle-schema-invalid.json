@@ -1,0 +1,24 @@
+{
+  "stream": "TEST-01",
+  "cycle": 7,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 7.7,
+  "uvx_subprocess_seconds": 6.6,
+  "suggested_fix": "Reviewer-style auto-resolve smuggled into top-level — must be rejected by closed-vocabulary KNOWN_TEST_OBSERVATION_KEYS frozenset.",
+  "observations": [
+    {
+      "observation_id": "OBS-060",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_smuggle.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 44444,
+      "status": "FAIL",
+      "captured_output": "Top-level extra key 'suggested_fix' present.",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    }
+  ]
+}

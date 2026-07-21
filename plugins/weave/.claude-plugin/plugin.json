@@ -1,0 +1,8 @@
+{
+  "name": "weave",
+  "description": "Generate really good dynamic Workflow scripts on demand. /weave:make <task> classifies the task into an orchestration archetype (understand / design / review / research / migrate / generic), picks the right fan-out topology (pipeline by default, barrier only when a stage genuinely needs all prior results), and authors a self-contained Workflow script that obeys the Workflow tool's hard rules — pure-literal meta block, schema'd agent returns instead of text parsing, .filter(Boolean) after fan-out, adversarial-verify for findings, loop-until-dry / loop-until-budget for unknown-size work, isolation:'worktree' only for parallel file mutation, no Date.now/Math.random. Every script is validated with `node --check` and a 12-point self-audit before it is saved to .claude/workflows/ or run. Weave writes the orchestration so you don't freehand it.",
+  "version": "0.1.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

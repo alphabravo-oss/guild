@@ -1,0 +1,23 @@
+{
+  "stream": "TEST-01",
+  "cycle": 8,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 4.9,
+  "uvx_subprocess_seconds": 3.7,
+  "observations": [
+    {
+      "observation_id": "OBS-070",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_dangling_req.py",
+      "tests_spec": ["FR-99"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 55555,
+      "status": "FAIL",
+      "captured_output": "Test cites FR-99 — not present in spec_test_deriver_simple.md <spec_requirements> block (which lists FR-1, FR-2, US-1).",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-99"]
+    }
+  ]
+}

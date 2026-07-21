@@ -1,0 +1,8 @@
+{
+  "defects": [
+    {"stream": "TRACE", "status": "open", "fixed_in_cycle": null, "summary": "missing assertion in casting-1 trace"},
+    {"stream": "PROVE", "status": "fixed", "fixed_in_cycle": 2, "summary": "prove-side dangling reference resolved"},
+    {"stream": "TEST-01", "status": "open", "fixed_in_cycle": null, "summary": "hypothesis strategy missing for CT-001 mode branch"},
+    {"stream": "INTENT-01", "status": "open", "fixed_in_cycle": null, "summary": "A-007 dropped from casting-1 prompt"}
+  ]
+}

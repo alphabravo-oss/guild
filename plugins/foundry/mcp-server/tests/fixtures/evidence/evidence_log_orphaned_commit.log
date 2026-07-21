@@ -1,0 +1,8 @@
+# evidence-cmd: pytest
+============================= test session starts ==============================
+collected 2 items
+
+tests/test_health.py::test_health_endpoint_returns_200 PASSED            [ 50%]
+tests/test_health.py::test_health_endpoint_includes_version PASSED       [100%]
+
+============================== 2 passed in 0.03s ===============================

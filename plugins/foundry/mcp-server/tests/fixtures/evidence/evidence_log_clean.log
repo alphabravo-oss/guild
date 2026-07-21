@@ -1,0 +1,10 @@
+# evidence-cmd: pytest -k login_endpoint
+# evidence-volatile: \d+\.\d+s
+============================= test session starts ==============================
+collected 3 items
+
+tests/test_login.py::test_login_endpoint_accepts_valid PASSED            [ 33%]
+tests/test_login.py::test_login_endpoint_rejects_missing_password PASSED [ 66%]
+tests/test_login.py::test_login_endpoint_returns_jwt_cookie PASSED       [100%]
+
+============================== 3 passed in 0.04s ===============================

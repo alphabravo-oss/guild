@@ -1,0 +1,8 @@
+# evidence-cmd: sleep 999
+# evidence-timeout: 5
+============================= test session starts ==============================
+collected 1 item
+
+tests/test_long_running.py::test_pretend_long_workload PASSED            [100%]
+
+============================== 1 passed in 998.42s =============================

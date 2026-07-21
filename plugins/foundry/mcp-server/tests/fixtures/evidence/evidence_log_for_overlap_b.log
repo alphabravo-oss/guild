@@ -1,0 +1,14 @@
+# evidence-cmd: pytest tests/test_login.py::test_session_persistence -v
+# evidence-for: FR-2, FR-3
+
+============================= test session starts ==============================
+platform darwin -- Python 3.13.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/gsheppard/AB/AI/codsworth-marketplace/svc/api
+configfile: pyproject.toml
+collected 3 items
+
+tests/test_login.py::test_session_persists_across_redirect PASSED        [ 33%]
+tests/test_login.py::test_session_expires_after_timeout PASSED           [ 66%]
+tests/test_login.py::test_session_invalidated_on_logout PASSED           [100%]
+
+============================== 3 passed in 0.27s ===============================

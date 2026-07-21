@@ -1,0 +1,8 @@
+{
+  "name": "e2e",
+  "description": "End-to-end test authoring and maintenance for web apps via Playwright + Playwright MCP. Claude drives a real browser, reads the accessibility tree, and emits *.spec.ts files that pass — then keeps them passing. /e2e:init scaffolds Playwright in the cwd and registers the MCP server. /e2e:write <flow> drives the browser to perform the flow and emits a green spec. /e2e:crawl discovers every route and generates a smoke spec per route. /e2e:matrix produces a routes × roles coverage suite with reused storageState. /e2e:audit runs the suite, reads trace.zip files, and triages failures by root cause. /e2e:record wraps playwright codegen for manual capture. The author skill enforces selector hygiene (getByRole over CSS), auto-wait discipline, and idempotent test design; the diagnose skill drives trace-driven flaky-test triage. The spec-writer subagent isolates MCP-driven spec authoring from the main context.",
+  "version": "0.1.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}

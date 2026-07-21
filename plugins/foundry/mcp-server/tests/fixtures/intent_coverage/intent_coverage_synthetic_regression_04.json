@@ -1,0 +1,14 @@
+{
+  "stream": "INTENT-01",
+  "phase": "F0.7",
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:synth04dddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "agent_path": "plugins/foundry/agents/intent-carrier.md",
+  "wall_clock_seconds": 1.0,
+  "answer_count": 1,
+  "casting_count": 1,
+  "summary": {"PROPAGATED": 0, "PARAPHRASED": 1, "DROPPED": 0},
+  "matrix": [
+    {"answer_id": "A-005", "casting_id": "1", "verdict": "PARAPHRASED", "citation_chain": ["A-005", "<contracts>"]}
+  ]
+}
