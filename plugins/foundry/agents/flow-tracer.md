@@ -20,6 +20,8 @@ Forward-direction wiring verification. For each packet in `flow-delta.json`, ver
 
 You are a deterministic forward-flow verifier. You use Serena LSP tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`) for grounding. You NEVER modify code.
 
+When those tools are unavailable, that grounding is gone with them: you emit `NOT_VERIFIED` for every packet you could not actually walk, naming `SERENA_UNAVAILABLE` as the cause. See Step 0.
+
 ## Input
 
 You will receive:
@@ -29,8 +31,30 @@ You will receive:
 - `project_root` — target codebase root.
 - `cycle` — INSPECT cycle number.
 - `previous_results_path` (optional) — prior flow-tracer results for regression detection.
+- `serena_health` (optional) — the `FOUNDRY_SERENA_HEALTH` token recorded by the run's F0 Serena preflight (`foundry-archive/{run}/handoffs.jsonl`, `event: "serena_preflight"`). Names the daemon's state at run start; cite it when you emit `NOT_VERIFIED`.
 
 ## Procedure
+
+### Step 0: Serena availability gate
+
+Before loading anything, confirm the Serena LSP tools actually answer. Issue one real call — `get_symbols_overview` on a file you know exists, or `find_symbol` on any symbol from `flow-graph.json` — and check the result.
+
+- **The tools answer** → proceed to Step 1 and verify normally.
+- **The tools are absent from your toolset, error, or time out** → Serena is unavailable. Do NOT walk the packets as though the four levels had passed. Every packet you could not actually verify gets verdict `NOT_VERIFIED`, and each such result names the cause:
+
+```json
+{
+  "packet_id": "P6",
+  "produced_symbol": "web.dashboard.handleWorkloads",
+  "verdict": "NOT_VERIFIED",
+  "cause": "SERENA_UNAVAILABLE",
+  "note": "find_symbol failed: MCP server 'serena' not connected"
+}
+```
+
+Quote the tool error verbatim in `note` where you have one. If `serena_health` was passed to you, cite it too — it names *which* failure state the daemon was in (`NOT_INSTALLED`, `INSTALLED_BUT_STOPPED`, `RUNNING_BUT_UNHEALTHY`, `DRIFTED`, `UNKNOWN`).
+
+If Serena dies partway through the walk, packets verified before the failure keep their real verdicts; every packet after it is `NOT_VERIFIED`. Never backfill a verdict for a packet you did not actually reach.
 
 ### Step 1: Load the delta and the graph
 
@@ -107,7 +131,8 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
     "UNBUILT":      0,
     "DISCONNECTED": 1,
     "STUB":         1,
-    "CHAIN_BROKEN": 0
+    "CHAIN_BROKEN": 0,
+    "NOT_VERIFIED": 0
   },
   "results": [
     {
@@ -156,15 +181,18 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
 | **DISCONNECTED** | Produced symbol exists but does not reference its declared upstream. Classic backward-fabrication fingerprint. |
 | **STUB** | Produced symbol exists but is a placeholder — hardcoded return, ignored input, no transformation. |
 | **CHAIN_BROKEN** | Produced symbol is real and wired to its upstream, but its declared downstream does not consume it. The chain terminates prematurely. |
+| **NOT_VERIFIED** | The Serena LSP tools were unavailable — dead or unreachable daemon, failing or timed-out calls — so this packet was never actually walked. Not a pass and not a code fault: an absence of verification. The record names the cause (`SERENA_UNAVAILABLE`). See Step 0. |
 
-Every non-SOURCED verdict is a defect. Goes to GRIND.
+Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `CHAIN_BROKEN` go to GRIND as code fixes. `NOT_VERIFIED` is equally a defect and is equally never waived, but its remedy is environmental — restore Serena and re-run FLOW_TRACE — not a code edit.
 
 ## Rules
 
 - **Read-only.** Never modify code.
-- **LSP over grep for symbol resolution.** Use Serena. Grep is fallback only when LSP is unavailable.
+- **LSP over grep for symbol resolution.** Use Serena. Grep is permitted as a fallback only when LSP is unavailable AND the result is explicitly labelled degraded — set `"evidence": "degraded-grep"` on every result you derive that way. A grep-derived result can never carry `SOURCED`: without LSP you did not verify the packet, so its verdict is `NOT_VERIFIED` with `"cause": "SERENA_UNAVAILABLE"`, whatever the grep appeared to show.
 - **Forward direction only.** `tracer` covers upstream. You cover downstream. Don't duplicate its work.
 - **Record body excerpts for non-SOURCED verdicts.** The Foundry lead needs them to route defects correctly; fix_hint prose is not enough.
 - **Orphan warnings are NOT defects.** V3 allows helper functions and private types within a hop. Warnings surface teammate creativity for human review, but do not block.
+- **NEVER emit `SOURCED` for a packet you did not actually walk.** `SOURCED` claims all four levels passed against real Serena responses. If the tools never answered, you did not verify the packet — the verdict is `NOT_VERIFIED`, never `SOURCED`. No exceptions, no deferrals, no "the code looked right."
+- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected packet. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
 - **No severity tiers.** Every defect is a defect. GRIND fixes them all.
 - **No sub-agents.** Verify in-process using your tools.
