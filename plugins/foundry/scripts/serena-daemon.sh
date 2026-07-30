@@ -8,7 +8,7 @@
 #
 # Usage: serena-daemon.sh <subcommand>
 #
-# Subcommands: start stop status restart install-service uninstall-service
+# Subcommands: start stop status doctor restart install-service uninstall-service
 #
 # Streamable-HTTP transport only (SSE is broken for Claude Code, issue #196).
 
@@ -144,13 +144,23 @@ serena_mcp_healthy() {
 cmd_start() {
   # 1. PID file liveness check.
   if [ -f "$PID_FILE" ]; then
-    local pid
+    local pid pid_cmdline
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      ok "Serena daemon already running (PID $pid)"
-      exit 0
+      # `kill -0` proves only that SOME process holds this PID, not that it is
+      # ours: PIDs are recycled, so after a reboot an unrelated process can
+      # inherit the recorded number and make `start` report "already running"
+      # while no daemon exists. Confirm it really is a Serena server using the
+      # same ps/start-mcp-server match serena_port_pids() applies.
+      pid_cmdline="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+      if printf '%s' "$pid_cmdline" | grep -q "start-mcp-server"; then
+        ok "Serena daemon already running (PID $pid)"
+        exit 0
+      fi
     fi
-    # Stale PID file — remove and continue.
+    # Stale PID file — the process is gone, or the PID was recycled by an
+    # unrelated process. Either way the record is worthless: remove it and fall
+    # through to the port check, which resolves the daemon reliably.
     rm -f "$PID_FILE"
   fi
 
@@ -292,14 +302,26 @@ cmd_stop() {
 
 # ── status ────────────────────────────────────────────────────────────────────
 cmd_status() {
-  # 1. Trust the PID file when it points at a live process.
+  # 1. Trust the PID file only when it points at a live process that is
+  #    genuinely ours.
   if [ -f "$PID_FILE" ]; then
-    local pid
+    local pid pid_cmdline
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      ok "Serena daemon: running (PID $pid)"
-      exit 0
+      # `kill -0` proves only that SOME process holds this PID. PIDs are
+      # recycled, so after a reboot an unrelated process can inherit the
+      # recorded number and this fast path would report a healthy daemon that
+      # is not running — short-circuiting the reliable port-based check below.
+      # Validate with the same ps/start-mcp-server match serena_port_pids()
+      # applies before trusting the record.
+      pid_cmdline="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+      if printf '%s' "$pid_cmdline" | grep -q "start-mcp-server"; then
+        ok "Serena daemon: running (PID $pid)"
+        exit 0
+      fi
     fi
+    # Dead PID, or a live one belonging to an unrelated process — fall through
+    # to port detection rather than reporting a false "running".
   fi
 
   # 2. No usable PID file — fall back to port detection. This covers daemons
@@ -504,6 +526,259 @@ cmd_uninstall_service() {
   esac
 }
 
+# ── doctor ────────────────────────────────────────────────────────────────────
+# One-shot diagnostic sweep. Reports seven independent dimensions, one line
+# each, then summarises them in a single exit code.
+#
+# EXIT CODE CONTRACT — stable and machine-consumed. Callers branch on the exit
+# code and MUST NOT parse stdout text: the wording below is for humans and may
+# be reworded at any time, the codes may not.
+#
+#   0  healthy               service installed, definition current, and Serena
+#                            answering a valid MCP handshake on $PORT
+#   1  not-installed         no OS service definition on disk (also the verdict
+#                            on a platform with no supported service manager,
+#                            where one cannot exist)
+#   2  installed-but-stopped service installed, nothing serving on $PORT
+#   3  running-but-unhealthy something holds $PORT but no valid MCP handshake
+#                            came back — the wedged-daemon case — OR health
+#                            could not be established at all. An unprobed
+#                            daemon is never reported healthy, so the probe's
+#                            "unverifiable" verdict lands here and not on 0.
+#   4  drifted               running and healthy, but the installed service
+#                            definition no longer matches what the current
+#                            source renders
+#
+# Precedence when several apply: 1 > 2 > 3 > 4 > 0. Each code names the single
+# most actionable finding, and drift is only meaningful once the service exists,
+# so not-installed outranks it. The report always prints all seven dimensions
+# regardless of which code wins — nothing is hidden from a human by the summary.
+#
+# Drift that cannot be determined (the renderer could not run) is reported as
+# such and does NOT become code 4: claiming drift would send a caller into a
+# reconcile that fails for the very same reason.
+#
+# READ-ONLY by contract. Unlike `status`, doctor never writes or clears the PID
+# file, never installs, and never restarts. Diagnosis and repair are kept apart
+# so a caller can ask "what is wrong?" without changing anything.
+cmd_doctor() {
+  local os port_pids_raw="" port_count=0 p
+  local lsof_seen="no" health_rc=0 serena_pids=""
+  local pidfile_state="absent" pidfile_pid="" pid_cmdline=""
+  local platform_ok="yes" artifact="" installed="no"
+  local drift="n/a" rendered=""
+  local last_exit="unknown"
+  local dup_count=0 dup_line="" log_state="absent" top=""
+
+  os="$(uname)"
+
+  # ── Gather (no output; every optional tool is guarded so a missing binary or
+  #    an expected failure degrades a line instead of aborting under set -e) ──
+
+  # (a) Raw port occupancy. `lsof -i` lists every process holding a socket on
+  #     the port — the listening server AND every connected client — so this is
+  #     an occupancy signal only, never a count of Serena processes. Dimension
+  #     (c) is the authoritative "is the server alive" answer.
+  if command -v lsof >/dev/null 2>&1; then
+    lsof_seen="yes"
+    port_pids_raw="$(lsof -i :"$PORT" -t 2>/dev/null || true)"
+  fi
+  for p in $port_pids_raw; do
+    port_count=$((port_count + 1))
+  done
+
+  # (b) MCP handshake, delegated to the probe: 0 healthy, 1 not running,
+  #     2 unresponsive, 3 unverifiable. It prints nothing, and `|| health_rc=$?`
+  #     keeps an expected unhealthy verdict from killing this function.
+  serena_mcp_healthy || health_rc=$?
+
+  # (c) The Serena server process, resolved by port + cmdline rather than by a
+  #     bare PID-file read, plus whether the recorded PID can still be trusted.
+  serena_pids="$(serena_port_pids || true)"
+  if [ -f "$PID_FILE" ]; then
+    pidfile_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -z "$pidfile_pid" ]; then
+      pidfile_state="empty"
+    elif ! kill -0 "$pidfile_pid" 2>/dev/null; then
+      pidfile_state="dead"
+    else
+      # Live PID is not enough — PIDs are recycled. Same ps/start-mcp-server
+      # match used by serena_port_pids() and by the start/status fast paths.
+      pid_cmdline="$(ps -p "$pidfile_pid" -o command= 2>/dev/null || true)"
+      if printf '%s' "$pid_cmdline" | grep -q "start-mcp-server"; then
+        pidfile_state="valid"
+      else
+        pidfile_state="foreign"
+      fi
+    fi
+  fi
+
+  # (d) Service installed, branching on platform the way install-service does.
+  case "$os" in
+    Darwin) artifact="$PLIST_FILE" ;;
+    Linux)  artifact="$SYSTEMD_FILE" ;;
+    *)      platform_ok="no" ;;
+  esac
+  if [ "$platform_ok" = "yes" ] && [ -f "$artifact" ]; then
+    installed="yes"
+  fi
+
+  # (e) Drift. Byte comparison against what the current source renders is the
+  #     whole test — no version marker exists in either artifact to consult.
+  #     The renderer returns (never exits) non-zero on an unsupported platform
+  #     or a missing uvx, so it is called as an `if` condition to keep set -e
+  #     from aborting the sweep. Generation lives in render_service_definition
+  #     and nowhere else; doctor only compares.
+  if [ "$installed" = "yes" ]; then
+    if rendered="$(render_service_definition "$os")"; then
+      # $( ) strips trailing newlines, so the single trailing newline the
+      # renderer guarantees is restored before the comparison — that keeps this
+      # a true byte comparison rather than a content-only one.
+      if printf '%s\n' "$rendered" | cmp -s - "$artifact"; then
+        drift="current"
+      else
+        drift="drifted"
+      fi
+    else
+      drift="unknown"
+    fi
+  fi
+
+  # (f) Last exit status from the service manager.
+  case "$os" in
+    Darwin)
+      if [ "$installed" = "yes" ] && command -v launchctl >/dev/null 2>&1; then
+        local lc_label="" lc_out="" lc_status=""
+        # Derive the label from the artifact path rather than repeating the
+        # string the renderer already owns.
+        lc_label="$(basename "$artifact" .plist)"
+        lc_out="$(launchctl list "$lc_label" 2>/dev/null || true)"
+        if [ -n "$lc_out" ]; then
+          lc_status="$(printf '%s\n' "$lc_out" \
+            | awk -F'=' '/LastExitStatus/ { gsub(/[^0-9-]/, "", $2); print $2; exit }' || true)"
+          if [ -n "$lc_status" ]; then
+            last_exit="$lc_status"
+          else
+            last_exit="loaded (no LastExitStatus reported)"
+          fi
+        else
+          last_exit="not loaded"
+        fi
+      fi
+      ;;
+    Linux)
+      if [ "$installed" = "yes" ] && command -v systemctl >/dev/null 2>&1; then
+        local sc_unit="" sc_out=""
+        sc_unit="$(basename "$artifact")"
+        sc_out="$(systemctl --user show "$sc_unit" \
+          --property=Result --property=ExecMainStatus --property=NRestarts \
+          2>/dev/null || true)"
+        if [ -n "$sc_out" ]; then
+          last_exit="$(printf '%s' "$sc_out" | tr '\n' ' ' || true)"
+        fi
+      fi
+      ;;
+  esac
+
+  # (g) Repeating identical error line in the log. The daemon appends for its
+  #     whole lifetime and this file reaches tens of megabytes, so only a
+  #     bounded tail is scanned. awk (not `sort | uniq -c | head`) does the
+  #     counting so no stage can exit early and trip pipefail. Reporting the
+  #     observation is the whole job here — classifying a crash loop is not.
+  if [ -f "$LOG_FILE" ]; then
+    log_state="scanned"
+    top="$(tail -n 200 "$LOG_FILE" 2>/dev/null \
+      | awk '/[Ee]rror|ERROR|Traceback|Exception|CRITICAL|[Ff]ailed|[Ff]atal/ { c[$0]++ }
+             END { m = 0; l = ""
+                   for (k in c) { if (c[k] > m) { m = c[k]; l = k } }
+                   if (m > 1) printf "%d\t%s", m, l }' || true)"
+    if [ -n "$top" ]; then
+      dup_count="${top%%$'\t'*}"
+      dup_line="$(printf '%s' "${top#*$'\t'}" | cut -c1-120 || true)"
+    fi
+  fi
+
+  # ── Report: one line per dimension, always all seven ──
+  info "Serena doctor — port $PORT"
+
+  # (a) port bound?
+  if [ "$lsof_seen" != "yes" ]; then
+    warn "port $PORT ............ unknown (lsof not available)"
+  elif [ "$port_count" -eq 0 ]; then
+    warn "port $PORT ............ not bound"
+  else
+    ok "port $PORT ............ bound ($port_count socket holder(s), clients included)"
+  fi
+
+  # (b) MCP handshake OK?
+  case "$health_rc" in
+    0) ok   "MCP handshake ........ ok" ;;
+    1) warn "MCP handshake ........ not attempted (nothing serving on the port)" ;;
+    2) warn "MCP handshake ........ FAILED (port held but no valid response — wedged)" ;;
+    *) warn "MCP handshake ........ unverifiable (curl not available)" ;;
+  esac
+
+  # (c) process alive?
+  if [ -n "$serena_pids" ]; then
+    ok "Serena process ....... alive (PID(s) $serena_pids); PID file: $pidfile_state"
+  else
+    warn "Serena process ....... none running; PID file: $pidfile_state"
+  fi
+  if [ "$pidfile_state" = "foreign" ]; then
+    warn "  ^ PID file names $pidfile_pid, which is live but is NOT a Serena process"
+  fi
+
+  # (d) service installed?
+  if [ "$platform_ok" != "yes" ]; then
+    warn "service installed .... no (unsupported OS: $os)"
+  elif [ "$installed" = "yes" ]; then
+    ok "service installed .... yes ($artifact)"
+  else
+    warn "service installed .... no (expected at $artifact)"
+  fi
+
+  # (e) installed definition matches current source?
+  case "$drift" in
+    current)  ok   "definition ........... matches current source" ;;
+    drifted)  warn "definition ........... DRIFTED from current source" ;;
+    unknown)  warn "definition ........... could not be determined (renderer unavailable)" ;;
+    *)        info "definition ........... n/a (nothing installed to compare)" ;;
+  esac
+
+  # (f) last exit status?
+  info "last exit status ..... $last_exit"
+
+  # (g) log showing a repeating error?
+  if [ "$log_state" = "absent" ]; then
+    info "repeating log error .. none (no log file at $LOG_FILE)"
+  elif [ -n "$dup_line" ]; then
+    warn "repeating log error .. ${dup_count}x in last 200 lines: $dup_line"
+  else
+    ok "repeating log error .. none in last 200 lines"
+  fi
+
+  # ── Verdict: see EXIT CODE CONTRACT above. Every branch exits explicitly;
+  #    nothing falls off the end of this function. ──
+  if [ "$installed" != "yes" ]; then
+    warn "verdict: not installed — run: serena-daemon.sh install-service"
+    exit 1
+  fi
+  if [ "$health_rc" -eq 1 ]; then
+    warn "verdict: installed but stopped — run: serena-daemon.sh start"
+    exit 2
+  fi
+  if [ "$health_rc" -ne 0 ]; then
+    warn "verdict: running but unhealthy — run: serena-daemon.sh restart"
+    exit 3
+  fi
+  if [ "$drift" = "drifted" ]; then
+    warn "verdict: drifted — installed definition is out of date"
+    exit 4
+  fi
+  ok "verdict: healthy"
+  exit 0
+}
+
 # ── usage ─────────────────────────────────────────────────────────────────────
 usage() {
   cat << EOF
@@ -513,6 +788,7 @@ Subcommands:
   start              Start the Serena MCP HTTP daemon (idempotent)
   stop               Stop the Serena MCP HTTP daemon
   status             Report daemon status and PID
+  doctor             Full health/drift diagnosis (distinct exit code per state)
   restart            Stop then start
   install-service    Install OS service (launchd on macOS, systemd on Linux)
   uninstall-service  Remove OS service
@@ -529,6 +805,7 @@ case "${1:-}" in
   start)             cmd_start ;;
   stop)              cmd_stop ;;
   status)            cmd_status ;;
+  doctor)            cmd_doctor ;;
   restart)           "$0" stop; "$0" start ;;
   install-service)   cmd_install_service ;;
   uninstall-service) cmd_uninstall_service ;;
