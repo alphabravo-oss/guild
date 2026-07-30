@@ -961,16 +961,34 @@ detect_crash_loop() {
 # so not-installed outranks it. The report always prints all seven dimensions
 # regardless of which code wins — nothing is hidden from a human by the summary.
 #
+# THE PRECEDENCE IS DELIBERATE, AND IT MASKS DRIFT FROM THE EXIT CODE. Because 4
+# sits below all three health codes, exit 4 is reachable ONLY from an otherwise
+# healthy state: installed, and answering a valid MCP handshake. A host that is
+# BOTH drifted AND stopped exits 2, not 4. That ordering is the intended one — a
+# daemon that is not serving is the more urgent finding, and a stale definition
+# on disk changes nothing until something actually starts from it.
+#
+# The consequence binds every caller: 1, 2 and 3 carry NO information about
+# drift, and MUST NOT be read as "no drift". Only 4 asserts drift, and only 0
+# asserts its absence. Drift is still always EVALUATED whenever the service is
+# installed — the report's `definition` line states the true answer independently
+# of health, and the verdict names a drift that a health code outranked — but
+# that is human-readable output, which per this contract callers do not parse. A
+# caller that must act on drift specifically runs `reconcile`, which is
+# idempotent, silent when already converged, and never consults this exit code.
+#
 # Drift that cannot be determined (the renderer could not run) is reported as
 # such and does NOT become code 4: claiming drift would send a caller into a
-# reconcile that fails for the very same reason.
+# reconcile that fails for the very same reason. This is a third state the exit
+# code does not distinguish, for the same reason as above — 0 and 4 are the only
+# codes that say anything about drift, and "undetermined" is neither.
 #
 # READ-ONLY by contract. Unlike `status`, doctor never writes or clears the PID
 # file, never installs, and never restarts. Diagnosis and repair are kept apart
 # so a caller can ask "what is wrong?" without changing anything.
 cmd_doctor() {
   local os port_pids_raw="" port_count=0 p
-  local lsof_seen="no" health_rc=0 serena_pids=""
+  local port_state="unknown" health_rc=0 serena_pids=""
   local pidfile_state="absent" pidfile_pid="" pid_cmdline=""
   local platform_ok="yes" artifact="" installed="no"
   local drift="n/a" rendered=""
@@ -982,26 +1000,52 @@ cmd_doctor() {
   # ── Gather (no output; every optional tool is guarded so a missing binary or
   #    an expected failure degrades a line instead of aborting under set -e) ──
 
-  # (a) Raw port occupancy. `lsof -i` lists every process holding a socket on
-  #     the port — the listening server AND every connected client — so this is
-  #     an occupancy signal only, never a count of Serena processes. Dimension
-  #     (c) is the authoritative "is the server alive" answer.
+  # Shared port resolution, consumed by dimensions (a) and (c) alike. Those two
+  # are separate READINGS of one body of evidence, so they must not consult
+  # separate resolvers: deriving (a) from a private inline `lsof` call is what
+  # let this report print "port unknown (lsof not available)" on the line
+  # directly above "Serena process alive (PID 1234)" on every host without lsof
+  # — two lines of one report contradicting each other. serena_port_pids()
+  # already tries lsof -> ss -> fuser, so it is the single source of truth here.
+  serena_pids="$(serena_port_pids || true)"
+
+  # (a) Raw port occupancy. When lsof is present it stays the resolver for this
+  #     line because it is the RICHEST reading available: `lsof -i` lists every
+  #     process holding a socket on the port — the listening server AND every
+  #     connected client — so the count is an occupancy signal, never a count of
+  #     Serena processes. Without lsof there is no holder census to be had, so
+  #     the shared resolver answers the weaker but still honest question: a named
+  #     Serena listener proves the port IS bound, and an authoritative empty
+  #     enumeration (serena_port_owners_known) proves it is not. Only when
+  #     nothing could look at all does this degrade to "unknown" — which is now
+  #     the same condition under which dimension (c) reports nothing running, so
+  #     the two lines can no longer disagree. Dimension (c) remains the
+  #     authoritative "is the server alive" answer.
   if command -v lsof >/dev/null 2>&1; then
-    lsof_seen="yes"
     port_pids_raw="$(lsof -i :"$PORT" -t 2>/dev/null || true)"
+    for p in $port_pids_raw; do
+      port_count=$((port_count + 1))
+    done
+    if [ "$port_count" -gt 0 ]; then
+      port_state="counted"
+    else
+      port_state="free"
+    fi
+  elif [ -n "$serena_pids" ]; then
+    port_state="held"
+  elif serena_port_owners_known; then
+    # Called as an `if` condition (never bare) so its earned "not running"
+    # return of 1 cannot abort the sweep under set -e.
+    port_state="free"
   fi
-  for p in $port_pids_raw; do
-    port_count=$((port_count + 1))
-  done
 
   # (b) MCP handshake, delegated to the probe: 0 healthy, 1 not running,
   #     2 unresponsive, 3 unverifiable. It prints nothing, and `|| health_rc=$?`
   #     keeps an expected unhealthy verdict from killing this function.
   serena_mcp_healthy || health_rc=$?
 
-  # (c) The Serena server process, resolved by port + cmdline rather than by a
-  #     bare PID-file read, plus whether the recorded PID can still be trusted.
-  serena_pids="$(serena_port_pids || true)"
+  # (c) The Serena server process — resolved above by port + cmdline rather than
+  #     by a bare PID-file read — plus whether the recorded PID can be trusted.
   if [ -f "$PID_FILE" ]; then
     pidfile_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [ -z "$pidfile_pid" ]; then
@@ -1109,13 +1153,12 @@ cmd_doctor() {
   info "Serena doctor — port $PORT"
 
   # (a) port bound?
-  if [ "$lsof_seen" != "yes" ]; then
-    warn "port $PORT ............ unknown (lsof not available)"
-  elif [ "$port_count" -eq 0 ]; then
-    warn "port $PORT ............ not bound"
-  else
-    ok "port $PORT ............ bound ($port_count socket holder(s), clients included)"
-  fi
+  case "$port_state" in
+    counted) ok   "port $PORT ............ bound ($port_count socket holder(s), clients included)" ;;
+    held)    ok   "port $PORT ............ bound (Serena listener named on the port)" ;;
+    free)    warn "port $PORT ............ not bound" ;;
+    *)       warn "port $PORT ............ unknown (no usable port resolver: lsof, ss or fuser)" ;;
+  esac
 
   # (b) MCP handshake OK?
   case "$health_rc" in
@@ -1179,6 +1222,20 @@ cmd_doctor() {
 
   # ── Verdict: see EXIT CODE CONTRACT above. Every branch exits explicitly;
   #    nothing falls off the end of this function. ──
+
+  # Drift never outranks a health finding, so a drifted-AND-unhealthy host is
+  # about to return 2 or 3 and exit 4 will never be seen. Name the masked drift
+  # here rather than letting the one-line verdict silently overrule the
+  # `definition` line printed above it: without this, a human reads "installed
+  # but stopped", fixes exactly that, and never learns a reconcile was also
+  # owed. `drifted` implies the service is installed, so no extra guard on
+  # $installed is needed. This changes no exit code — the precedence below is
+  # frozen and consumed by the SessionStart hook and the foundry preflight.
+  if [ "$drift" = "drifted" ] && [ "$health_rc" -ne 0 ]; then
+    warn "note: the definition is ALSO drifted; the verdict below outranks it —"
+    warn "      run: serena-daemon.sh reconcile"
+  fi
+
   if [ "$installed" != "yes" ]; then
     warn "verdict: not installed — run: serena-daemon.sh install-service"
     exit 1
