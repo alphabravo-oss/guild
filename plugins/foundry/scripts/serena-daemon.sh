@@ -443,12 +443,33 @@ EOF
       # systemd track the real daemon; Environment=PATH ensures `uvx` resolves
       # under the service's restricted PATH. WorkingDirectory pins the project
       # tree so Serena indexes the correct repo after a reboot.
+      #
+      # The two start-limit directives below are set EXPLICITLY, and belong in
+      # [Unit] rather than [Service]. Omitting them does not mean "unlimited" —
+      # it means inheriting the manager-wide DefaultStartLimit* values, which
+      # vary by distro, so the circuit breaker would be whatever the local
+      # systemd build happens to default to. Pinning them is what guarantees a
+      # command that can never succeed actually stops being restarted: with
+      # RestartSec=5 a hard-failing start cycles about every 5s, so the 5-start
+      # budget is spent in ~25s — far inside the 300s window — and systemd
+      # drives the unit into `failed` state instead of retrying forever. The
+      # window is deliberately far wider than the budget needs, so that a daemon
+      # which runs for hours and dies once never accumulates toward the limit,
+      # and so an occasional reconcile-driven restart cannot spend the budget
+      # and mask real crash-loop signal.
+      #
+      # This is the Linux half of crash-loop handling and has no macOS
+      # counterpart by design: launchd has no terminal give-up state at all, so
+      # KeepAlive stays true in the plist above and macOS relies on
+      # detect_crash_loop() reporting the loop instead.
       local uvx_dir
       uvx_dir="$(dirname "$uvx_path")"
       cat << EOF
 [Unit]
 Description=Serena MCP HTTP Daemon (guild)
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=forking
@@ -540,9 +561,233 @@ cmd_uninstall_service() {
   esac
 }
 
+# ── crash-loop detection ──────────────────────────────────────────────────────
+# Decide whether the service is stuck being restarted forever without ever
+# succeeding, and print that finding. A HELPER, not a subcommand: `doctor` calls
+# it to surface the finding and nothing else does.
+#
+# The tool has to make this call itself because neither supervisor hands over a
+# ready-made answer. systemd only lands a unit in `failed` state once its start
+# limit is spent — and that limit is pinned by this script's own renderer, not
+# left to any distro default worth trusting. launchd has no terminal give-up
+# state at all: an unsatisfiable KeepAlive job retries forever, which is exactly
+# how the original incident stayed invisible for 29 days. So the evidence is
+# assembled here, from supervisor counters plus the daemon's own log.
+#
+# EVIDENCE, and why no single signal is trusted on its own:
+#   supervisor  Darwin: `successive crashes`, `state`, `last exit code`
+#               Linux:  `is-failed` (burst exhausted) plus `NRestarts`
+#   log         an identical error line repeated in a bounded tail of $LOG_FILE
+#
+# A repeating log line is NEVER sufficient by itself — a perfectly healthy
+# daemon can log the same error on every poll — so it only ever corroborates
+# supervisor evidence that restarts are actually happening. Supervisor evidence
+# strong enough on its own (launchd's crash counter, systemd's failed state or a
+# high NRestarts) stands without it.
+#
+# RETURN CODES. This function never calls `exit`; it must not be able to end
+# `doctor`, whose own exit codes are a frozen contract:
+#   0  no crash loop detected — INCLUDING the indeterminate and not-loaded cases
+#   1  crash loop detected
+#
+# Indeterminate deliberately returns 0. Per concerns.md C-003 the output of
+# `launchctl print` is not a stable interface, so any field this function cannot
+# find, or cannot read as a number, is reported as unknown and never as a crash
+# loop — a false alarm would send a caller restarting a daemon that is fine.
+# Field names verified empirically on macOS 15 (Darwin 24.6.0): `successive
+# crashes` is ABSENT from the output when it is zero, and `last exit code` is
+# not always numeric (it reads `(never exited)` for a job that never ran), so
+# absence and non-numeric values are both normal inputs here, not failures.
+# Every external command is guarded, so a missing binary — launchctl on Linux,
+# systemctl on macOS — degrades a line instead of aborting under set -e.
+detect_crash_loop() {
+  local os="" artifact="" label="" unit=""
+  local lc_print="" lc_out="" lc_fields=""
+  local crashes="" job_state="" last_code="" last_code_raw=""
+  local failed="no" sc_restarts=""
+  local loaded="yes" sup_known="no" sup_hard="no" sup_soft="no" detail=""
+  local log_repeat=0 log_line="" top=""
+
+  os="$(uname)"
+
+  # ── Log evidence. Gathered first because both platforms corroborate with it.
+  #    The daemon appends for its whole lifetime and this file reaches tens of
+  #    megabytes, so only a bounded tail is read. The threshold is 3, not 2:
+  #    this function CLASSIFIES a loop, where doctor's own log line merely
+  #    REPORTS a repeat, so a single stray pair must not reach this verdict.
+  #    awk does the counting (rather than `sort | uniq -c | head`) so no stage
+  #    can exit early and trip pipefail.
+  if [ -f "$LOG_FILE" ]; then
+    top="$(tail -n 400 "$LOG_FILE" 2>/dev/null \
+      | awk '/[Ee]rror|ERROR|Traceback|Exception|CRITICAL|[Ff]ailed|[Ff]atal/ { c[$0]++ }
+             END { m = 0; l = ""
+                   for (k in c) { if (c[k] > m) { m = c[k]; l = k } }
+                   if (m >= 3) printf "%d\t%s", m, l }' || true)"
+    if [ -n "$top" ]; then
+      log_repeat="${top%%$'\t'*}"
+      log_line="$(printf '%s' "${top#*$'\t'}" | cut -c1-120 || true)"
+    fi
+  fi
+
+  # ── Supervisor evidence, branching on platform the way install-service does.
+  case "$os" in
+    Darwin)
+      artifact="$PLIST_FILE"
+      label="$(basename "$artifact" .plist)"
+      if [ ! -f "$artifact" ] || ! command -v launchctl >/dev/null 2>&1; then
+        loaded="no"
+      else
+        # `print` carries the crash counter and scheduling state; `list` is the
+        # coarse fallback that still reports an exit status when `print` is
+        # unavailable or its layout has shifted under us.
+        lc_print="$(launchctl print "gui/$(id -u)/$label" 2>/dev/null || true)"
+        lc_out="$(launchctl list "$label" 2>/dev/null || true)"
+        if [ -z "$lc_print" ] && [ -z "$lc_out" ]; then
+          loaded="no"
+        else
+          # One pass, keys matched EXACTLY after trimming, so a renamed or
+          # reordered field yields "" rather than a wrong read. Exact matching
+          # is also what keeps the `state` key from swallowing the separate
+          # `job state` line that appears later in the same output.
+          lc_fields="$(printf '%s\n' "$lc_print" | awk -F' = ' '
+            { k = $1; sub(/^[ \t]+/, "", k); sub(/[ \t]+$/, "", k)
+              if (NF < 2) next
+              v = $2; sub(/;$/, "", v); sub(/[ \t]+$/, "", v)
+              if      (k == "successive crashes" && c == "") c = v
+              else if (k == "state"              && s == "") s = v
+              else if (k == "last exit code"     && e == "") e = v }
+            END { printf "%s\t%s\t%s", c, s, e }' || true)"
+          crashes="$(printf '%s' "$lc_fields" | cut -f1 || true)"
+          job_state="$(printf '%s' "$lc_fields" | cut -f2 || true)"
+          last_code="$(printf '%s' "$lc_fields" | cut -f3 || true)"
+
+          # Fall back to `launchctl list`, whose LastExitStatus key has been
+          # stable far longer than anything in `print`.
+          if [ -z "$last_code" ] && [ -n "$lc_out" ]; then
+            last_code="$(printf '%s\n' "$lc_out" \
+              | awk -F'=' '/"LastExitStatus"/ { gsub(/[^0-9-]/, "", $2); print $2; exit }' || true)"
+          fi
+
+          # Validate before ANY numeric use: `(never exited)` and an empty field
+          # both have to survive as "unknown", not error out under set -e.
+          # `last exit code` gains a symbolic suffix when the status maps to a
+          # sysexits.h name — `78: EX_CONFIG`, which is the exact shape of a
+          # real crash-loop report — so match a LEADING integer rather than
+          # demanding the whole field be numeric, or that signal is thrown away.
+          # The raw text is kept for the human line: "78: EX_CONFIG" names the
+          # cause, where a bare "78" sends the reader off to look it up.
+          last_code_raw="$last_code"
+          if [[ "$last_code" =~ ^(-?[0-9]+) ]]; then
+            last_code="${BASH_REMATCH[1]}"
+          else
+            last_code=""
+          fi
+          if ! [[ "$crashes" =~ ^[0-9]+$ ]]; then crashes=""; fi
+
+          if [ -n "$crashes" ] || [ -n "$job_state" ] || [ -n "$last_code" ]; then
+            sup_known="yes"
+          fi
+
+          if [ -n "$crashes" ] && [ "$crashes" -ge 3 ]; then
+            sup_hard="yes"
+            detail="launchd reports $crashes successive crashes"
+          elif [ "$job_state" = "spawn scheduled" ] && [ -n "$last_code" ] && [ "$last_code" -ne 0 ]; then
+            # Respawn pending after a failed run: launchd's crash-loop shape.
+            sup_hard="yes"
+            detail="launchd state '$job_state' with last exit code $last_code_raw"
+          elif [ -n "$last_code" ] && [ "$last_code" -ne 0 ]; then
+            sup_soft="yes"
+            detail="launchd last exit code $last_code_raw"
+          fi
+        fi
+      fi
+      ;;
+    Linux)
+      artifact="$SYSTEMD_FILE"
+      unit="$(basename "$artifact")"
+      if [ ! -f "$artifact" ] || ! command -v systemctl >/dev/null 2>&1; then
+        loaded="no"
+      else
+        # is-failed exits 0 exactly when the unit sits in `failed` state. Once
+        # the start limit is spent that state means "systemd gave up restarting
+        # this" — the definitive loop, and the bounded outcome the start limits
+        # in render_service_definition exist to produce.
+        if systemctl --user is-failed "$unit" >/dev/null 2>&1; then
+          failed="yes"
+          sup_known="yes"
+        fi
+        sc_restarts="$(systemctl --user show "$unit" --property=NRestarts 2>/dev/null \
+          | awk -F'=' '$1 == "NRestarts" { gsub(/[^0-9]/, "", $2); print $2; exit }' || true)"
+        if ! [[ "$sc_restarts" =~ ^[0-9]+$ ]]; then sc_restarts=""; fi
+        if [ -n "$sc_restarts" ]; then
+          sup_known="yes"
+        fi
+
+        if [ "$failed" = "yes" ]; then
+          sup_hard="yes"
+          detail="systemd unit $unit is in failed state"
+        elif [ -n "$sc_restarts" ] && [ "$sc_restarts" -ge 3 ]; then
+          sup_hard="yes"
+          detail="systemd reports NRestarts=$sc_restarts"
+        elif [ -n "$sc_restarts" ] && [ "$sc_restarts" -ge 1 ]; then
+          sup_soft="yes"
+          detail="systemd reports NRestarts=$sc_restarts"
+        fi
+      fi
+      ;;
+    *)
+      # No supported service manager, so there is no supervisor to loop and
+      # nothing to report. Never an error.
+      return 0
+      ;;
+  esac
+
+  # ── Verdict. Uniform across platforms; only the evidence feeding it differs.
+  if [ "$loaded" = "no" ]; then
+    info "crash loop ........... none (service not loaded)"
+    return 0
+  fi
+
+  if [ "$sup_hard" = "yes" ]; then
+    warn "crash loop ........... DETECTED — $detail"
+  elif [ "$sup_soft" = "yes" ] && [ "$log_repeat" -ge 3 ]; then
+    warn "crash loop ........... DETECTED — $detail, and the same error repeats ${log_repeat}x in the log"
+  elif [ "$sup_known" = "no" ]; then
+    # Loaded, but nothing readable came back. Reported honestly and NOT as a
+    # crash loop: an unparseable supervisor is not evidence of one.
+    warn "crash loop ........... indeterminate (supervisor state could not be read)"
+    return 0
+  else
+    ok "crash loop ........... none"
+    return 0
+  fi
+
+  # Detected. Explain what it means on THIS platform, because the two differ in
+  # whether anything will ever stop the restarts.
+  if [ -n "$log_line" ]; then
+    warn "  ^ repeating error (${log_repeat}x in last 400 lines): $log_line"
+  fi
+  case "$os" in
+    Darwin)
+      warn "  ^ launchd KeepAlive has no give-up state and will retry forever — fix the cause or run: serena-daemon.sh uninstall-service"
+      ;;
+    Linux)
+      if [ "$failed" = "yes" ]; then
+        warn "  ^ systemd hit the start limit and STOPPED restarting it; after fixing the cause run: systemctl --user reset-failed $unit"
+      else
+        warn "  ^ restarts are bounded by the unit's start limit and will stop once it is spent; inspect $LOG_FILE"
+      fi
+      ;;
+  esac
+  return 1
+}
+
 # ── doctor ────────────────────────────────────────────────────────────────────
 # One-shot diagnostic sweep. Reports seven independent dimensions, one line
-# each, then summarises them in a single exit code.
+# each, plus a derived crash-loop finding, then summarises them in a single exit
+# code. The crash-loop line is a FINDING, not an eighth dimension and not a new
+# exit state: it classifies evidence the dimensions already report, and the exit
+# code contract below is unchanged by it.
 #
 # EXIT CODE CONTRACT — stable and machine-consumed. Callers branch on the exit
 # code and MUST NOT parse stdout text: the wording below is for humans and may
@@ -770,6 +1015,19 @@ cmd_doctor() {
   else
     ok "repeating log error .. none in last 200 lines"
   fi
+
+  # (h) Derived finding: is this thing being restarted forever without ever
+  #     succeeding? Dimensions (f) and (g) report raw observations; classifying
+  #     them is detect_crash_loop's job, and it reads signals doctor does not —
+  #     launchd's crash counter, systemd's failed state.
+  #
+  #     `|| true` is deliberate and load-bearing twice over. It keeps a detected
+  #     crash loop (return 1) from aborting the sweep under set -e, and it
+  #     discards the return value on purpose: the finding is a named line in
+  #     this report, NOT a new exit state. doctor's exit codes are a contract
+  #     consumed by the SessionStart hook and the foundry preflight, so no
+  #     finding here may add to them or renumber them.
+  detect_crash_loop || true
 
   # ── Verdict: see EXIT CODE CONTRACT above. Every branch exits explicitly;
   #    nothing falls off the end of this function. ──
