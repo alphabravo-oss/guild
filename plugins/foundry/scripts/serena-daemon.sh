@@ -69,6 +69,76 @@ serena_port_pids() {
   printf '%s' "${out# }"
 }
 
+# Return 0 iff Serena is genuinely serving MCP on $PORT.
+#
+# A bound port is NOT evidence of health: a wedged Serena keeps its listener
+# open while answering nothing (oraios/serena#1367), so an lsof-only check
+# reports a hung daemon as healthy. This probe is layered — the cheap port
+# check gates a real MCP `initialize` handshake, and only a response actually
+# carrying protocolVersion + serverInfo earns a healthy verdict.
+#
+# Exit codes (stable contract — callers branch on these and MUST NOT parse
+# output; this function prints nothing):
+#   0  healthy      — handshake returned a valid protocolVersion/serverInfo
+#   1  not running  — nothing serving on $PORT (cheap check found no process)
+#   2  unresponsive — port is held but no valid handshake came back; this is
+#                     the wedged-daemon case a restart is expected to clear
+#   3  unverifiable — port is held but curl is absent, so MCP-level health
+#                     could not be established either way. Deliberately not 0:
+#                     an unprobed daemon is never "verified healthy". Callers
+#                     should report uncertainty here, not force a restart.
+serena_mcp_healthy() {
+  local pids="" body="" req="" re_proto="" re_info=""
+
+  # LAYER 1 — cheap, local, no network: is a Serena server even on the port?
+  # Reuses the resolver above rather than re-parsing lsof. Nothing there means
+  # unhealthy, and we return without issuing any HTTP request at all.
+  pids="$(serena_port_pids || true)"
+  if [ -z "$pids" ]; then
+    return 1
+  fi
+
+  # curl is a new dependency that setup-prereqs.sh does not check for (it does
+  # not even hard-fail for uvx), so follow the optional-lsof precedent above
+  # and degrade quietly instead of erroring or hanging.
+  if ! command -v curl >/dev/null 2>&1; then
+    return 3
+  fi
+
+  # LAYER 2 — MCP `initialize` handshake against the streamable-HTTP endpoint.
+  # The Accept header must offer BOTH types: the transport answers a request
+  # POST with either application/json or an SSE frame, and omitting either
+  # makes the server reject the request outright. The endpoint is loopback
+  # with no authentication, so no credential is sent. Both timeouts are
+  # explicit and finite because this runs from the SessionStart hook and must
+  # never stall a session — --max-time bounds the whole call, not just connect.
+  req='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"serena-daemon-healthcheck","version":"1.0"}}}'
+  # `|| true`: refused / timed-out / non-2xx are EXPECTED outcomes of an
+  # unhealthy probe, and set -e must not turn them into a caller abort.
+  # --fail makes curl treat a 4xx/5xx as failure and emit no body, so an error
+  # page can never be mistaken for a handshake.
+  body="$(curl -s --fail \
+    --connect-timeout 2 --max-time 3 \
+    -X POST "http://localhost:$PORT/mcp" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    --data "$req" 2>/dev/null || true)"
+
+  # A response only proves health if it carries the handshake fields, so an
+  # empty, truncated, or malformed body falls through to the unhealthy return.
+  # Matched with bash's own =~ rather than `printf | grep` so that pipefail
+  # cannot misreport a SIGPIPE'd printf as a failed match. Raw JSON and an SSE
+  # `data:` frame both carry these fields on one line, so this is agnostic to
+  # which framing the transport chose.
+  re_proto='"protocolVersion"[[:space:]]*:[[:space:]]*"[^"]+"'
+  re_info='"serverInfo"[[:space:]]*:[[:space:]]*[{]'
+  if [[ "$body" =~ $re_proto ]] && [[ "$body" =~ $re_info ]]; then
+    return 0
+  fi
+
+  return 2
+}
+
 # ── start ─────────────────────────────────────────────────────────────────────
 # Idempotent. Never spawns a second process if one is already running.
 cmd_start() {
