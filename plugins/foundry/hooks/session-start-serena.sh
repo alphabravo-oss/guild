@@ -23,8 +23,9 @@ set -euo pipefail
 HOOK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON="$HOOK_DIR/../scripts/serena-daemon.sh"
 
-# Per-invocation wall-clock bound, in seconds. At most three subcommands run
-# (reconcile, doctor, start), so this caps the hook at 24s. The hook entry in
+# Per-invocation wall-clock bound, in seconds. At most FOUR subcommands run
+# (reconcile, doctor, the post-settle doctor re-probe, start) plus one
+# SETTLE_SECONDS sleep, so the worst case is 4*5 + 4 = 24s. The hook entry in
 # hooks.json carries "timeout": 30 as a separate backstop, and the 6s gap
 # between the two is deliberate: if every subcommand hung, the per-invocation
 # bounds must expire FIRST so this script survives to report the hang through
@@ -32,9 +33,25 @@ DAEMON="$HOOK_DIR/../scripts/serena-daemon.sh"
 # the same moment and the failure report — the entire point of the hook — would
 # be lost on exactly the machine that needed it. Raise both together or neither.
 #
-# Generous against real worst cases: doctor's own handshake is capped at 3s, and
-# start blocks only on a 2s liveness sleep because it launches detached.
-DAEMON_TIMEOUT=8
+# The settle re-probe below was paid for by tightening this bound from 8s to 5s
+# rather than by raising the manifest key: 3*8=24 and 4*5+4=24 are the same
+# total, so the worst case and the 6s margin are both exactly what they were.
+#
+# 5s still clears every real worst case with headroom, all of which are bounded
+# by construction rather than by hope: doctor's handshake is capped by curl's
+# own --max-time 3, reconcile's heaviest path is that same 3s probe plus a
+# launchctl unload/load measured at 0.02s, and start blocks only on a 2s
+# liveness sleep because it launches detached. A subcommand that somehow does
+# exceed 5s is killed and surfaces as 124, which the default branch reports —
+# degraded, but still never blocking.
+DAEMON_TIMEOUT=5
+
+# Settle window, in seconds, between a doctor verdict of "installed but stopped"
+# and acting on it. See the long comment at the settle block below for why this
+# exists. Sized from measurement, not guesswork: `launchctl load` returns in
+# 0.020s while the daemon it just spawned takes 1.473s more to bind the port
+# (measured on a warm uv cache), so 4s is ~2.7x the observed window.
+SETTLE_SECONDS=4
 
 # Stock macOS ships no timeout(1) — it arrives only with coreutils, as gtimeout
 # or as a PATH-shadowing gnubin. This plugin ships through a public marketplace
@@ -95,6 +112,43 @@ daemon_rc reconcile || true
 # code 1 tells us nothing about health — the wording below reflects that.
 doctor_rc=0
 daemon_rc doctor || doctor_rc=$?
+
+# ── 2a. Settle before believing "stopped" ────────────────────────────────────
+# The reconcile above may have just reloaded the service, and a reload is
+# ASYNCHRONOUS: `launchctl load` returns as soon as launchd accepts the job,
+# which is 0.020s, while the daemon it spawns under RunAtLoad needs another
+# 1.473s to bind the port (both measured on a warm uv cache; a cold one is far
+# slower, and repinning SERENA_PKG guarantees a cold cache on every machine's
+# first session start after an upgrade).
+#
+# Inside that window nothing is on the port, so serena_mcp_healthy takes its
+# cheap "nothing is listening" path — no handshake, no curl — and doctor
+# summarises that as code 2. Code 2 is indistinguishable from a genuinely dead
+# daemon from out here, and acting on it directly would call `start`, whose
+# adoption guard cannot help: it adopts an already-bound port, and the whole
+# premise of this window is that the port is NOT bound yet. There is nothing to
+# adopt, so start would launch a SECOND, unsupervised instance racing launchd's
+# own. Whichever binds first wins and the other dies on the address conflict.
+# The two losses are not symmetric: if the unsupervised one loses it simply
+# exits, but if the SUPERVISED one loses, KeepAlive restarts it straight back
+# into the same conflict, and launchd has no give-up state to end that.
+#
+# So wait once, bounded, and ask again. Re-probing means re-running `doctor`,
+# never inspecting the port from here: which processes hold it, and what that
+# implies, stays entirely inside serena-daemon.sh.
+#
+# Only the stopped verdict pays for this. An ordinary healthy session start
+# never reaches it and costs exactly what it did before.
+if [ "$doctor_rc" -eq 2 ]; then
+  sleep "$SETTLE_SECONDS"
+  # Re-probe replaces the verdict outright rather than being handled inline, so
+  # a daemon that finished coming up during the wait flows into the branch that
+  # actually matches its new state — including the healthy branch, which stays
+  # silent. Still 2 afterwards means the wait was long enough and nothing came
+  # up, so it really is down and the start branch below is correct.
+  doctor_rc=0
+  daemon_rc doctor || doctor_rc=$?
+fi
 
 case "$doctor_rc" in
   0)
