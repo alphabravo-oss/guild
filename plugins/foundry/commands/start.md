@@ -46,6 +46,19 @@ Call `Foundry-Next` after every step. It returns a `YOUR NEXT CALL:` imperative 
 
 **Creating the run (F0):** when you call `Foundry-Init`, thread the `--url URL` invocation flag through by passing `url=<FOUNDRY_URL>` (the value `setup-foundry.sh` echoed as `FOUNDRY_URL=...`). `Foundry-Init` persists it to `castings/manifest.json` as `target_url`, which the SIGHT/inspect gate reads. Omit it (or pass an empty string) when no `--url` was given — the gate then stays blocked for any run that has frontend files but no target URL.
 
+**Serena preflight (F0):** `setup-foundry.sh` probes Serena on every run and echoes `FOUNDRY_SERENA_HEALTH=<TOKEN>` alongside the other `FOUNDRY_*` lines. The token is a closed set of exactly six values — no other value is ever emitted:
+
+| Token | Meaning |
+|---|---|
+| `HEALTHY` | doctor reported the healthy state |
+| `NOT_INSTALLED` | doctor reported the not-installed state |
+| `INSTALLED_BUT_STOPPED` | doctor reported the installed-but-stopped state |
+| `RUNNING_BUT_UNHEALTHY` | doctor reported the running-but-unhealthy state |
+| `DRIFTED` | doctor reported the drifted state |
+| `UNKNOWN` | doctor could not be run, or returned an exit code outside its table |
+
+Read the token and record it immediately after `Foundry-Init` with `Foundry-Handoff(event="serena_preflight", summary="FOUNDRY_SERENA_HEALTH=<TOKEN>")`, so the run carries the record at `foundry-archive/{run}/handoffs.jsonl`. **Then proceed, always — for every token, including the five non-`HEALTHY` ones.** The token NEVER halts the run, NEVER gates a phase, NEVER triggers an `AskUserQuestion`, and NEVER causes you to run any `serena-daemon.sh` repair subcommand (`start`, `restart`, `reconcile`, `install-service`). Repair is the SessionStart hook's job; foundry does not mutate service state during a run. Your only actions are read, record, proceed.
+
 ### F0: RESEARCH
 
 Investigate HOW to build before decomposing. Spawn 2-4 researcher agents in parallel (model: sonnet, prompt: `${CLAUDE_PLUGIN_ROOT}/agents/researcher.md`). Each writes to `foundry-archive/{run}/research/{domain-slug}-RESEARCH.md`. If 4+ researchers, run a `research-synthesizer` agent to produce `SUMMARY.md`.
@@ -543,7 +556,7 @@ Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `es
 | `Foundry-Validate-Castings` | F0.9: 9-dimension validate |
 | `Foundry-Spawn-Teammate` | F1/F3: read pre-authored teammate prompt |
 | `Foundry-Spec-Hash` | Before acceptance: fresh spec hash |
-| `Foundry-Handoff` | At every phase/artifact transition |
+| `Foundry-Handoff` | At every phase/artifact transition; also F0 right after `Foundry-Init` to record the Serena preflight verdict as `event="serena_preflight"`, `summary="FOUNDRY_SERENA_HEALTH=<TOKEN>"` |
 | `Foundry-Accept-Casting` | Before marking casting complete |
 | `Foundry-Team-Up` | After TeamCreate |
 | `Foundry-Team-Down` | After TeamDelete |
