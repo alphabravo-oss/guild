@@ -6,8 +6,7 @@
 # Installs:
 #   - Foundry MCP server (via uvx from this plugin)
 #   - Playwright MCP (browser automation for SIGHT)
-#   - Serena MCP (LSP wiring for TRACE)
-#   - ralph-loop plugin (teammate execution engine)
+#   - Serena MCP (LSP wiring for TRACE) — only if its daemon starts
 #   - Configures .mcp.json in the target project
 
 set -euo pipefail
@@ -90,21 +89,17 @@ if ! command -v uvx &>/dev/null; then
     warn "Serena MCP (TRACE) and Foundry MCP require uvx."
 fi
 
-# ── Install Plugins ──────────────────────────────────────────────────────────
-info "Installing required plugins..."
-
-# ralph-loop (teammate execution)
-info "  Installing ralph-loop..."
-if claude plugin marketplace add anthropics/claude-plugins-official 2>/dev/null; then
-    claude plugin install ralph-loop 2>/dev/null && ok "  ralph-loop installed" || warn "  ralph-loop may already be installed"
-else
-    warn "  claude-plugins-official marketplace may already be added"
-    claude plugin install ralph-loop 2>/dev/null && ok "  ralph-loop installed" || warn "  ralph-loop may already be installed"
-fi
-
-# hookify (optional but useful)
-info "  Installing hookify..."
-claude plugin install hookify 2>/dev/null && ok "  hookify installed" || warn "  hookify may already be installed"
+# ── Plugin dependencies ──────────────────────────────────────────────────────
+# Previously this installed ralph-loop (billed as the "teammate execution
+# engine") and hookify, and added the claude-plugins-official marketplace to do
+# it. Neither is referenced anywhere in foundry — not in commands, agents,
+# skills, scripts, or the MCP server. Teammates are spawned through the Agent /
+# TeamCreate / SendMessage tools declared in commands/start.md. Installing
+# plugins a user did not ask for, to satisfy a dependency that does not exist,
+# is not setup's business.
+#
+# If teammate execution is ever routed through ralph-loop for real, reinstate
+# the install here AND make something actually call it.
 
 # ── Start the Serena daemon ─────────────────────────────────────────────────
 # The serena MCP entry is an HTTP pointer at localhost:9121. Writing that entry
@@ -239,7 +234,6 @@ echo ""
 printf "${BOLD}${GREEN}Foundry setup complete.${RESET}\n"
 echo ""
 echo "Installed:"
-echo "  Plugins:     ralph-loop, hookify"
 if [[ $SERENA_UP -eq 1 ]]; then
   echo "  MCP Servers: foundry (uvx), playwright (npx), serena (HTTP :9121)"
 else

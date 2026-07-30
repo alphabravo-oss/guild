@@ -102,7 +102,12 @@ Gracefully stop the active run. Resumable later.
 
 ### `/foundry:setup`
 
-Install all prerequisites: Foundry MCP server, Playwright MCP, Serena MCP, ralph-loop and hookify plugins.
+Install prerequisites: Foundry MCP server, Playwright MCP, Serena MCP.
+
+### `/foundry:update`
+
+Update the foundry MCP server to the latest version. Nothing else — no config
+changes, no reinstalls. Run this after a new foundry release.
 
 ### `/foundry:help`
 
@@ -112,11 +117,17 @@ Show this help.
 
 Run `/foundry:setup` once per machine to install:
 
-- **Foundry MCP server** — phase gates, defect tracking, orchestration state
-- **Playwright MCP** — browser automation for SIGHT
-- **Serena MCP** — LSP wiring for TRACE / FLOW_TRACE
-- **ralph-loop plugin** — teammate execution engine
-- **hookify plugin** — hook configuration utilities
+- **Foundry MCP server** — phase gates, defect tracking, orchestration state.
+  The only hard requirement; without it no foundry command works.
+- **Playwright MCP** — browser automation. Needed only for the SIGHT stream.
+- **Serena MCP** — LSP symbol resolution for TRACE / FLOW_TRACE. Optional: it
+  needs a shared daemon on `localhost:9121`, and those streams fall back to grep
+  (and say so in their reports) when it is absent.
+
+Setup registers the MCP server against a git URL that carries no version, so
+your `.mcp.json` never goes stale and never needs hand-editing. To upgrade the
+server later run `/foundry:update` — uvx caches the build by resolved commit and
+will otherwise serve the same one indefinitely.
 
 ## Key properties
 
