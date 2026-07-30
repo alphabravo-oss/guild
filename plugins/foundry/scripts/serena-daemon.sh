@@ -65,10 +65,37 @@ SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd 
 # cannot be trusted to find, monitor, or terminate the daemon. Resolving by port
 # is the only reliable way to locate the actual long-lived process, regardless of
 # how it was started (manual `start` or an OS service manager).
+#
+# Three resolvers are tried in order because no single one is universally
+# present: lsof ships on macOS but is absent from Debian-slim, Alpine and most
+# container images, where iproute2's `ss` (the fallback cmd_start already leans
+# on at :205) or `fuser` generally is. lsof stays first so behaviour on a host
+# that has it is unchanged. Whichever resolver answers, every candidate PID is
+# still confirmed to be a Serena server by cmdline — never skipped for a
+# "trusted" tool, because cmd_stop SIGKILLs everything this function emits and a
+# misattributed PID would terminate an unrelated user process.
+#
+# ALWAYS returns 0, reporting only through stdout: cmd_stop consumes this as a
+# bare `targets="$targets $(serena_port_pids)"`, whose exit status IS the
+# substitution's, so a non-zero return here would abort cmd_stop under set -e.
+# An empty result is therefore ambiguous by construction — "no Serena on the
+# port" and "nothing could look" are the same empty string. Any caller that
+# must tell those apart asks serena_port_owners_known().
 serena_port_pids() {
   local pids="" p cmdline out=""
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -i :"$PORT" -t 2>/dev/null || true)"
+  elif command -v ss >/dev/null 2>&1; then
+    # -p names the owner as `users:(("serena",pid=1234,fd=7))`, and needs no
+    # root for our own processes. -l keeps this to LISTEN sockets, so connected
+    # clients never enter the set. A busybox ss that rejects the filter
+    # expression or omits owner info simply yields nothing here, which degrades
+    # into the unknown verdict rather than into a false "not running".
+    pids="$(ss -tlnp "sport = :$PORT" 2>/dev/null \
+      | grep -oE 'pid=[0-9]+' | cut -d= -f2 || true)"
+  elif command -v fuser >/dev/null 2>&1; then
+    # Writes the "9121/tcp:" label to stderr and the bare PIDs to stdout.
+    pids="$(fuser "$PORT"/tcp 2>/dev/null || true)"
   fi
   for p in $pids; do
     cmdline="$(ps -p "$p" -o command= 2>/dev/null || true)"
@@ -83,6 +110,72 @@ serena_port_pids() {
   printf '%s' "${out# }"
 }
 
+# Return 0 when the set of processes holding $PORT was authoritatively
+# enumerated — a resolver ran to completion and either found the port free or
+# named every holder. Return 1 when it was not, because nothing could look or a
+# holder could not be attributed to a PID.
+#
+# This exists solely to qualify an EMPTY serena_port_pids(). Empty there means
+# "no Serena server was identified on $PORT", which is a real "not running"
+# only if something actually managed to look. Reading it that way when nothing
+# could look is what reported a live, answering daemon as stopped on hosts
+# where lsof is not installed.
+#
+# Note this deliberately answers "was the holder set enumerated?", NOT "is the
+# port occupied?". The two differ on the case that matters: when a resolver
+# names a holder that is not Serena — a foreign process, or the pre-rename
+# com.codsworth agent contending for this same port (A-003) — the holder set IS
+# enumerated, so "Serena is not running" is earned and code 1 is correct.
+#
+# Consulted only on the cold path of an already-empty PID list, so a healthy
+# daemon never pays for it.
+serena_port_owners_known() {
+  local ss_out="" listen=""
+
+  if command -v lsof >/dev/null 2>&1; then
+    # `lsof -i :PORT -t` prints a PID for every holder and nothing at all when
+    # the port is free, so a run enumerates the holder set either way. This is
+    # the resolver serena_port_pids already prefers, so trusting it here keeps
+    # behaviour on lsof-bearing hosts exactly as it was.
+    return 0
+  fi
+
+  if command -v ss >/dev/null 2>&1; then
+    # Non-zero means the flags or filter expression were rejected and nothing
+    # was learned — busybox ss and macOS's iproute2mac ss both exit non-zero
+    # with empty stdout, and reading that silence as "port free" would recreate
+    # this very defect on those hosts.
+    if ! ss_out="$(ss -tlnp "sport = :$PORT" 2>/dev/null)"; then
+      return 1
+    fi
+    listen="$(printf '%s\n' "$ss_out" | grep -E "[:.]$PORT([^0-9]|$)" || true)"
+    if [ -z "$listen" ]; then
+      return 0
+    fi
+    # A listener exists, so the answer is authoritative only if -p actually
+    # attributed it: ss can report occupancy without naming an owner, which is
+    # the case cmd_start's ss branch (:205) already notes it cannot resolve.
+    if printf '%s' "$listen" | grep -q 'pid='; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if command -v fuser >/dev/null 2>&1; then
+    # Trusted for a positive answer only. macOS ships a BSD fuser that takes
+    # file paths and no port spec: it answers `fuser 9121/tcp` with exit 1 and
+    # empty stdout, byte for byte what Linux fuser reports for a genuinely free
+    # port. Indistinguishable from here, so silence is never read as "free".
+    if [ -n "$(fuser "$PORT"/tcp 2>/dev/null | tr -d '[:space:]' || true)" ]; then
+      return 0
+    fi
+    return 1
+  fi
+
+  # No resolver at all.
+  return 1
+}
+
 # Return 0 iff Serena is genuinely serving MCP on $PORT.
 #
 # A bound port is NOT evidence of health: a wedged Serena keeps its listener
@@ -94,22 +187,42 @@ serena_port_pids() {
 # Exit codes (stable contract — callers branch on these and MUST NOT parse
 # output; this function prints nothing):
 #   0  healthy      — handshake returned a valid protocolVersion/serverInfo
-#   1  not running  — nothing serving on $PORT (cheap check found no process)
-#   2  unresponsive — port is held but no valid handshake came back; this is
-#                     the wedged-daemon case a restart is expected to clear
-#   3  unverifiable — port is held but curl is absent, so MCP-level health
-#                     could not be established either way. Deliberately not 0:
-#                     an unprobed daemon is never "verified healthy". Callers
+#   1  not running  — a port resolver looked and $PORT is free, so nothing is
+#                     serving. Reserved for a verdict the cheap check EARNED;
+#                     never inferred from its inability to look.
+#   2  unresponsive — a Serena process was identified on $PORT but no valid
+#                     handshake came back; the wedged-daemon case a restart
+#                     is expected to clear
+#   3  unverifiable — MCP-level health could not be established either way:
+#                     curl is absent, or nothing could confirm whether the
+#                     port is even held (no lsof/ss/fuser, or a holder whose
+#                     owner cannot be named) and the handshake did not answer.
+#                     Deliberately not 0 — an unprobed daemon is never
+#                     "verified healthy". Equally deliberately not 1: a failed
+#                     *look* is not a failed *probe*, and reporting one as the
+#                     other is what made a live daemon read as dead. Callers
 #                     should report uncertainty here, not force a restart.
 serena_mcp_healthy() {
   local pids="" body="" req="" re_proto="" re_info=""
 
   # LAYER 1 — cheap, local, no network: is a Serena server even on the port?
-  # Reuses the resolver above rather than re-parsing lsof. Nothing there means
-  # unhealthy, and we return without issuing any HTTP request at all.
+  # Reuses the resolver above rather than re-parsing lsof.
   pids="$(serena_port_pids || true)"
   if [ -z "$pids" ]; then
-    return 1
+    # Empty is ambiguous on its own: it means "no Serena server identified",
+    # which is a real "not running" only when a resolver actually enumerated
+    # the port's holders. Answering the other cases the same way is what
+    # reported a healthy, answering daemon as stopped wherever lsof is not
+    # installed (Debian-slim, Alpine, most container images).
+    if serena_port_owners_known; then
+      # Earned: something looked and found no Serena server, so nothing can be
+      # serving. Return without paying for an HTTP request that cannot succeed.
+      return 1
+    fi
+    # Nothing could look, or a holder could not be attributed — and that holder
+    # may well be Serena. The handshake below is the only remaining witness and
+    # is already bounded, so let it decide rather than guessing from absent
+    # port evidence.
   fi
 
   # curl is a new dependency that setup-prereqs.sh does not check for (it does
@@ -147,10 +260,22 @@ serena_mcp_healthy() {
   re_proto='"protocolVersion"[[:space:]]*:[[:space:]]*"[^"]+"'
   re_info='"serverInfo"[[:space:]]*:[[:space:]]*[{]'
   if [[ "$body" =~ $re_proto ]] && [[ "$body" =~ $re_info ]]; then
+    # Authoritative on its own: something answered a real MCP handshake on
+    # $PORT. This is why a host with no port resolver at all still gets a
+    # correct healthy verdict, and why no /proc/net/tcp walker is needed.
     return 0
   fi
 
-  return 2
+  # No valid handshake. What that proves depends on what Layer 1 could see:
+  #   a Serena PID was identified -> the server is there and is not answering,
+  #                                  which is the wedged daemon (#1367).
+  #   Layer 1 was ambiguous       -> nothing confirmed a Serena process and
+  #                                  nothing proved the port free, so neither
+  #                                  "wedged" nor "stopped" is honest here.
+  if [ -n "$pids" ]; then
+    return 2
+  fi
+  return 3
 }
 
 # ── start ─────────────────────────────────────────────────────────────────────
