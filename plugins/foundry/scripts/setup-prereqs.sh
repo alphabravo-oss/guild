@@ -197,9 +197,13 @@ UPDATE_SCRIPT="$PLUGIN_ROOT/scripts/update-mcp.sh"
 UPDATE_ARGS=(--project "$PROJECT_ROOT")
 [[ $USE_LOCAL_SRC -eq 1 ]] && UPDATE_ARGS+=(--local)
 
+MCP_SERVER_OK=0
 if [[ -f "$UPDATE_SCRIPT" ]]; then
-    bash "$UPDATE_SCRIPT" "${UPDATE_ARGS[@]}" || \
+    if bash "$UPDATE_SCRIPT" "${UPDATE_ARGS[@]}"; then
+        MCP_SERVER_OK=1
+    else
         warn "MCP server refresh failed — run /foundry:update once the cause is fixed"
+    fi
 else
     warn "update-mcp.sh not found at $UPDATE_SCRIPT — skipping MCP server refresh"
 fi
@@ -230,17 +234,35 @@ SERENA_EOF
 ok "Serena config written at $SERENA_DIR/project.yml"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
+# Report what actually happened. A setup script that prints "complete" over a
+# failed step is how the serena and ralph-loop problems survived: its output was
+# the only evidence anyone had, and it was wrong.
 echo ""
-printf "${BOLD}${GREEN}Foundry setup complete.${RESET}\n"
+if [[ $MCP_SERVER_OK -eq 1 ]]; then
+  printf "${BOLD}${GREEN}Foundry setup complete.${RESET}\n"
+else
+  printf "${BOLD}${YELLOW}Foundry setup finished with errors.${RESET}\n"
+  printf "${YELLOW}The MCP server is NOT installed — foundry will not run.${RESET}\n"
+fi
 echo ""
 echo "Installed:"
-if [[ $SERENA_UP -eq 1 ]]; then
-  echo "  MCP Servers: foundry (uvx), playwright (npx), serena (HTTP :9121)"
+if [[ $MCP_SERVER_OK -eq 1 ]]; then
+  echo "  MCP Servers: foundry (uvx)"
 else
-  echo "  MCP Servers: foundry (uvx), playwright (npx)"
+  echo "  MCP Servers: foundry FAILED — see the error above, then /foundry:update"
+fi
+if command -v npx &>/dev/null; then
+  echo "               playwright (npx) — SIGHT stream"
+else
+  echo "               playwright NOT usable — npx not found, SIGHT will not run"
+fi
+if [[ $SERENA_UP -eq 1 ]]; then
+  echo "               serena (HTTP :9121) — TRACE / FLOW_TRACE"
+else
   echo "               serena NOT registered — daemon is down"
-  echo "               Start it with: bash $SERENA_DAEMON start"
-  echo "               Survive reboots: bash $SERENA_DAEMON install-service"
+  echo "                 TRACE falls back to grep and reports it"
+  echo "                 Start it with:   bash $SERENA_DAEMON start"
+  echo "                 Survive reboots: bash $SERENA_DAEMON install-service"
 fi
 echo "  MCP source:  $MCP_SERVER_SRC"
 echo "  Config:      $MCP_FILE, $SERENA_DIR/project.yml"
@@ -253,6 +275,7 @@ echo "  /foundry:start \"scope\" --spec path/to/spec.md    Start building"
 echo "  /foundry:resume                                  Resume interrupted run"
 echo "  /foundry:status                                  Show run status"
 echo "  /foundry:stop                                    Graceful stop"
+echo "  /foundry:update                                  Update the MCP server"
 echo ""
 printf "${BOLD}Restart Claude Code to activate MCP servers.${RESET}\n"
 echo ""
