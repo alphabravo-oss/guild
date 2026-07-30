@@ -765,11 +765,47 @@ detect_crash_loop() {
   #    REPORTS a repeat, so a single stray pair must not reach this verdict.
   #    awk does the counting (rather than `sort | uniq -c | head`) so no stage
   #    can exit early and trip pipefail.
+  #
+  #    WHAT COUNTS AS AN ERROR LINE. Matching severity words ANYWHERE in a line
+  #    both over- and under-reports. Both directions were verified against a real
+  #    ~/.serena-daemon.log:
+  #      over  — Serena echoes its own MCP instruction banner once per start, and
+  #              that banner's first line opens `CRITICAL: Before starting to work
+  #              on a coding task...`. A few restarts inside the window and a
+  #              perfectly healthy daemon reports a repeating "error" that is a
+  #              banner, which is noise a reader has to spend time dismissing.
+  #      under — uv's resolver failure, the exact shape of the 29-day incident
+  #              this whole subcommand exists to catch, carries no severity word
+  #              at all: `  × No solution found when resolving tool dependencies:`.
+  #              A word-matching scan finds NOTHING in a log that is nothing but
+  #              crash, which is the far more expensive of the two mistakes.
+  #    So a line qualifies on its STRUCTURE, as one of the shapes this daemon's
+  #    own writers actually emit:
+  #      ERROR|CRITICAL|FATAL + ISO date   python logging record
+  #      ERROR:|FATAL: + space             uvicorn level prefix
+  #      error: + space                    uv / cargo style diagnostic
+  #      × or ╰─▶                          uv error and cause-chain glyphs
+  #      Caused by:                        uv cause chain
+  #      Traceback                         python traceback header
+  #    CRITICAL is deliberately absent from the bare-colon shape and honoured
+  #    only in the timestamped one: it is the single severity word that also
+  #    opens the banner above, and uvicorn does not emit it in practice.
+  #    Two portability notes, both load-bearing: the glyphs are alternated as
+  #    whole literals (never a bracket class, which byte-wise awks would split
+  #    mid-character), and the year is spelled [0-9][0-9][0-9][0-9] because
+  #    interval expressions are not supported by every awk this ships to.
+  #    Ties break lexicographically so the reported line is stable run to run —
+  #    uv prints × and ╰─▶ once each per attempt, so their counts tie routinely.
   if [ -f "$LOG_FILE" ]; then
     top="$(tail -n 400 "$LOG_FILE" 2>/dev/null \
-      | awk '/[Ee]rror|ERROR|Traceback|Exception|CRITICAL|[Ff]ailed|[Ff]atal/ { c[$0]++ }
+      | awk '/^[[:space:]]*(ERROR|CRITICAL|FATAL)[[:space:]]+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ ||
+             /^[[:space:]]*(ERROR|FATAL):[[:space:]]/ ||
+             /^[[:space:]]*error:[[:space:]]/ ||
+             /^[[:space:]]*(×|╰─▶)/ ||
+             /^[[:space:]]*Caused by:[[:space:]]/ ||
+             /^[[:space:]]*Traceback/ { c[$0]++ }
              END { m = 0; l = ""
-                   for (k in c) { if (c[k] > m) { m = c[k]; l = k } }
+                   for (k in c) { if (c[k] > m || (c[k] == m && k < l)) { m = c[k]; l = k } }
                    if (m >= 3) printf "%d\t%s", m, l }' || true)"
     if [ -n "$top" ]; then
       log_repeat="${top%%$'\t'*}"
@@ -1136,12 +1172,28 @@ cmd_doctor() {
   #     bounded tail is scanned. awk (not `sort | uniq -c | head`) does the
   #     counting so no stage can exit early and trip pipefail. Reporting the
   #     observation is the whole job here — classifying a crash loop is not.
+  #
+  #     This dimension and detect_crash_loop() are two READINGS of one body of
+  #     evidence — this one shallower (200 lines) and more eager (a plain pair
+  #     counts), that one deeper and stricter because it feeds a verdict. They
+  #     may differ in depth and threshold; they must NOT differ in what counts
+  #     as an error line, or this report contradicts the finding printed a few
+  #     lines below it. The structural shapes below are therefore kept identical
+  #     to the ones detect_crash_loop() matches, and the reasoning for each —
+  #     including why a bare `CRITICAL:` is excluded and why the uv glyphs are
+  #     matched — is documented once, in that function's log-evidence block.
+  #     Change one and you must change the other.
   if [ -f "$LOG_FILE" ]; then
     log_state="scanned"
     top="$(tail -n 200 "$LOG_FILE" 2>/dev/null \
-      | awk '/[Ee]rror|ERROR|Traceback|Exception|CRITICAL|[Ff]ailed|[Ff]atal/ { c[$0]++ }
+      | awk '/^[[:space:]]*(ERROR|CRITICAL|FATAL)[[:space:]]+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ ||
+             /^[[:space:]]*(ERROR|FATAL):[[:space:]]/ ||
+             /^[[:space:]]*error:[[:space:]]/ ||
+             /^[[:space:]]*(×|╰─▶)/ ||
+             /^[[:space:]]*Caused by:[[:space:]]/ ||
+             /^[[:space:]]*Traceback/ { c[$0]++ }
              END { m = 0; l = ""
-                   for (k in c) { if (c[k] > m) { m = c[k]; l = k } }
+                   for (k in c) { if (c[k] > m || (c[k] == m && k < l)) { m = c[k]; l = k } }
                    if (m > 1) printf "%d\t%s", m, l }' || true)"
     if [ -n "$top" ]; then
       dup_count="${top%%$'\t'*}"
