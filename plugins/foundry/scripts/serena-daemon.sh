@@ -320,22 +320,48 @@ cmd_status() {
   exit 1
 }
 
-# ── install-service ───────────────────────────────────────────────────────────
-cmd_install_service() {
-  local os
-  os="$(uname)"
-
-  local uvx_path
-  uvx_path="$(command -v uvx || true)"
-  if [ -z "$uvx_path" ]; then
-    fail "uvx not found"
-    exit 1
-  fi
-
-  case "$os" in
+# ── render-service-definition ─────────────────────────────────────────────────
+# Emit the complete text of the OS service definition for <platform> on stdout.
+#
+#   render_service_definition Darwin   -> launchd plist body
+#   render_service_definition Linux    -> systemd user unit body
+#
+# PURE by contract: the ONLY effect of this function is bytes on stdout. It
+# writes no file, creates no directory, and calls neither launchctl nor
+# systemctl — installing what it renders is the caller's job. It also never
+# prints via info/ok/warn, because those write to stdout and would corrupt the
+# artifact mid-render; fail() is safe here only because it writes to stderr.
+#
+# Splitting generation from installation is the point: `install-service` and the
+# drift check render from this one template instead of keeping two copies that
+# can silently disagree. Generation lives here and nowhere else.
+#
+# Deliberately carries NO embedded version marker, no generator key, and no
+# timestamp — nothing recording when or by what the artifact was made. Drift is
+# determined by byte-comparing this output against the installed file, so the
+# rendered bytes must stay reproducible — and launchd's tolerance of unknown
+# top-level plist keys is unverified, which this approach never has to test.
+#
+# Exit codes (stable contract — callers branch on these; this function returns
+# and never exits, so it is safe to call more than once in a single process):
+#   0  rendered     — the definition was written to stdout
+#   1  unsupported  — platform argument is neither Darwin nor Linux
+#   2  unrenderable — uvx not found, so the launch path cannot be resolved
+#
+# Note: the render arms intentionally end on `cat` and do NOT force `return 0`.
+# A caller testing this in a condition (`if render_service_definition ... ; then`)
+# suspends set -e inside the function, so propagating cat's status is what lets a
+# failed write on the caller's redirection surface instead of silently passing.
+render_service_definition() {
+  case "${1:-}" in
     Darwin)
-      mkdir -p "$HOME/Library/LaunchAgents"
-      cat > "$PLIST_FILE" << EOF
+      local uvx_path
+      uvx_path="$(command -v uvx || true)"
+      if [ -z "$uvx_path" ]; then
+        fail "uvx not found; cannot render launchd plist"
+        return 2
+      fi
+      cat << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -368,18 +394,14 @@ cmd_install_service() {
 </dict>
 </plist>
 EOF
-      if [[ -f "$LEGACY_PLIST_FILE" ]]; then
-        info "Removing legacy launchd agent (com.codsworth.serena)..."
-        launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
-        rm -f "$LEGACY_PLIST_FILE"
-      fi
-      launchctl unload "$PLIST_FILE" 2>/dev/null || true
-      launchctl load "$PLIST_FILE"
-      ok "Serena service installed and loaded (macOS launchd). Daemon will start at login."
-      exit 0
       ;;
     Linux)
-      mkdir -p "$HOME/.config/systemd/user"
+      local uvx_path
+      uvx_path="$(command -v uvx || true)"
+      if [ -z "$uvx_path" ]; then
+        fail "uvx not found; cannot render systemd unit"
+        return 2
+      fi
       # Route ExecStart through this script's `start` subcommand so the PID file
       # is written on every launch (including boot). Type=forking + PIDFile lets
       # systemd track the real daemon; Environment=PATH ensures `uvx` resolves
@@ -387,7 +409,7 @@ EOF
       # tree so Serena indexes the correct repo after a reboot.
       local uvx_dir
       uvx_dir="$(dirname "$uvx_path")"
-      cat > "$SYSTEMD_FILE" << EOF
+      cat << EOF
 [Unit]
 Description=Serena MCP HTTP Daemon (guild)
 After=network.target
@@ -406,6 +428,43 @@ StandardError=append:%h/.serena-daemon.log
 [Install]
 WantedBy=default.target
 EOF
+      ;;
+    *)
+      fail "unsupported OS: ${1:-}"
+      return 1
+      ;;
+  esac
+}
+
+# ── install-service ───────────────────────────────────────────────────────────
+cmd_install_service() {
+  local os
+  os="$(uname)"
+
+  local uvx_path
+  uvx_path="$(command -v uvx || true)"
+  if [ -z "$uvx_path" ]; then
+    fail "uvx not found"
+    exit 1
+  fi
+
+  case "$os" in
+    Darwin)
+      mkdir -p "$HOME/Library/LaunchAgents"
+      render_service_definition Darwin > "$PLIST_FILE"
+      if [[ -f "$LEGACY_PLIST_FILE" ]]; then
+        info "Removing legacy launchd agent (com.codsworth.serena)..."
+        launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
+        rm -f "$LEGACY_PLIST_FILE"
+      fi
+      launchctl unload "$PLIST_FILE" 2>/dev/null || true
+      launchctl load "$PLIST_FILE"
+      ok "Serena service installed and loaded (macOS launchd). Daemon will start at login."
+      exit 0
+      ;;
+    Linux)
+      mkdir -p "$HOME/.config/systemd/user"
+      render_service_definition Linux > "$SYSTEMD_FILE"
       systemctl --user daemon-reload 2>/dev/null || true
       systemctl --user enable --now serena-daemon.service
       ok "Serena service installed and enabled (Linux systemd). Daemon will start at login."
