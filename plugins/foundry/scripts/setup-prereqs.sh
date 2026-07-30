@@ -138,14 +138,32 @@ ok "MCP servers configured in $MCP_FILE"
 
 # ── Serena project config ────────────────────────────────────────────────────
 SERENA_DIR="$PROJECT_ROOT/.serena"
+SERENA_CONFIG="$SERENA_DIR/project.yml"
 info "Writing Serena project config..."
 mkdir -p "$SERENA_DIR"
-cat > "$SERENA_DIR/project.yml" << 'SERENA_EOF'
+
+# Check the destination before writing, the same discipline the .mcp.json block
+# above uses. An existing config is preserved to a timestamped backup and then
+# rewritten — never skipped: configs written by earlier versions carry a
+# list-of-mappings languages block that Serena cannot load, and only a rewrite
+# repairs them. Under `set -e` a failed cp aborts before the overwrite, so the
+# file is never destroyed without a backup landing first.
+if [ -f "$SERENA_CONFIG" ]; then
+    SERENA_BACKUP="$SERENA_CONFIG.$(date +%Y%m%d-%H%M%S).bak"
+    cp "$SERENA_CONFIG" "$SERENA_BACKUP"
+    warn "Existing Serena config backed up to $SERENA_BACKUP"
+fi
+
+# `languages` must be a flat list of plain strings. Serena's
+# ProjectConfig._from_dict() calls .lower() on each element directly, so a
+# mapping element (a list item carrying a `name:` key) raises AttributeError
+# when the config loads.
+cat > "$SERENA_CONFIG" << 'SERENA_EOF'
 # Serena LSP configuration for Foundry TRACE verification
 languages:
-  - name: go
-  - name: typescript
-  - name: python
+  - go
+  - typescript
+  - python
 
 ignored_paths:
   - node_modules
@@ -159,7 +177,7 @@ ignored_paths:
   - foundry-archive
   - .serena
 SERENA_EOF
-ok "Serena config written at $SERENA_DIR/project.yml"
+ok "Serena config written at $SERENA_CONFIG"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
