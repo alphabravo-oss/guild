@@ -11,7 +11,9 @@
 # Subcommands: start stop status doctor reconcile restart install-service
 #              uninstall-service
 #
-# Streamable-HTTP transport only (SSE is broken for Claude Code, issue #196).
+# Streamable-HTTP transport only: it is what lets ONE long-lived server serve
+# many concurrent Claude Code sessions, which is the entire point of a shared
+# daemon (stdio would be a separate process per client).
 
 set -euo pipefail
 
@@ -30,10 +32,19 @@ fail()  { printf "${RED}[serena]${RESET} %s\n" "$*" >&2; }
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 PORT=9121
-# Serena is not published to PyPI as "serena-mcp" — it is distributed from the
-# oraios/serena git repo and exposes the `serena` console script. Every launch
-# site (manual start, launchd plist) must use `uvx --from "$SERENA_PKG" serena`.
-SERENA_PKG="git+https://github.com/oraios/serena"
+# Serena ships on PyPI as the `serena-agent` project, whose console script is
+# named `serena` — the two names differ, so every launch site (manual start,
+# launchd plist) must go through `uvx --from "$SERENA_PKG" serena` rather than
+# naming either one alone.
+#
+# Pinned with `==`, and sourced from PyPI rather than a git URL, because uvx
+# resolves this specifier on EVERY daemon start — including the unattended
+# RunAtLoad start at login. A git URL made each of those starts require working
+# network AND git, and floating HEAD silently rode unreleased upstream changes
+# (e.g. the in-flight languages -> language_servers rename). An exact pin names
+# one immutable artifact that uv serves from its cache, so starts are
+# reproducible. Bump deliberately, and keep both launch sites in agreement.
+SERENA_PKG="serena-agent==1.6.1"
 PID_FILE="$HOME/.serena-daemon.pid"
 LOG_FILE="$HOME/.serena-daemon.log"
 PLIST_FILE="$HOME/Library/LaunchAgents/com.guild.serena.plist"
@@ -61,8 +72,10 @@ serena_port_pids() {
   fi
   for p in $pids; do
     cmdline="$(ps -p "$p" -o command= 2>/dev/null || true)"
-    # Match the server invocation, not a package name: the real process runs
-    # as `.../bin/serena start-mcp-server ...` (via uvx --from git+.../serena).
+    # Match the server invocation, not a package name: uvx execs the `serena`
+    # console script out of $SERENA_PKG, so the real process runs as
+    # `.../bin/serena start-mcp-server ...` no matter which package version is
+    # pinned — which is what keeps this match surviving a bump of that pin.
     if printf '%s' "$cmdline" | grep -q "start-mcp-server"; then
       out="$out $p"
     fi
@@ -211,7 +224,11 @@ cmd_start() {
   if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
     export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
   fi
+  # Launch site 1 of 2. The plist ProgramArguments array in
+  # render_service_definition() is the other, and the two carry an IDENTICAL
+  # flag set — a divergence between them is what produced the original incident.
   nohup uvx --from "$SERENA_PKG" serena start-mcp-server \
+    --context claude-code \
     --transport streamable-http \
     --port "$PORT" \
     >> "$LOG_FILE" 2>&1 &
@@ -397,6 +414,10 @@ render_service_definition() {
         fail "uvx not found; cannot render launchd plist"
         return 2
       fi
+      # Launch site 2 of 2. cmd_start()'s `nohup uvx` invocation is the other,
+      # and the two carry an IDENTICAL flag set — a divergence between them is
+      # what produced the original incident. launchd gives every token its own
+      # <string> element, so an option and its value are two adjacent elements.
       cat << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -412,6 +433,8 @@ render_service_definition() {
     <string>$SERENA_PKG</string>
     <string>serena</string>
     <string>start-mcp-server</string>
+    <string>--context</string>
+    <string>claude-code</string>
     <string>--transport</string>
     <string>streamable-http</string>
     <string>--port</string>
@@ -1267,7 +1290,7 @@ Subcommands:
   install-service    Install OS service (launchd on macOS, systemd on Linux)
   uninstall-service  Remove OS service
 
-Daemon command: uvx --from git+https://github.com/oraios/serena serena start-mcp-server --transport streamable-http --port 9121
+Daemon command: uvx --from $SERENA_PKG serena start-mcp-server --context claude-code --transport streamable-http --port $PORT
 PID file:       ~/.serena-daemon.pid
 Log file:       ~/.serena-daemon.log
 Port:           9121
