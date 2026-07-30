@@ -76,9 +76,15 @@ Cross-reference inventory against the spec:
 
 **Optional: Serena MCP** — If available, use `find_symbol` and
 `find_referencing_symbols` for deterministic wiring verification. Supplements
-(does not replace) manual code reading. When running as a foundry TRACE agent,
-Serena is available via scoped `mcpServers` on the Agent tool call. When running
-standalone (`/foundry:trace`), Serena is available globally.
+(does not replace) manual code reading.
+
+Serena is inherited from the session's MCP servers — there is no per-spawn
+scoping, so a TRACE agent has it only if the session has it. It requires the
+shared HTTP daemon on `localhost:9121`; run `scripts/serena-daemon.sh status` to
+check and `scripts/serena-daemon.sh start` to bring it up. When the daemon is
+down the Serena tools are simply absent and this step falls back to grep and
+Read — record that fallback in the report rather than presenting grep results as
+LSP-verified.
 
 ### Step 2: FUNCTION-LEVEL DEEP DIVE — The Core of the Audit
 
