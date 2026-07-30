@@ -157,14 +157,50 @@ fi
 #      subcommand invoked here. Repair is the SessionStart hook's job; foundry
 #      does not mutate service state during a run.
 #
-# Health probing itself lives entirely in serena-daemon.sh — no timeout, retry,
-# or port check is reimplemented here.
+# Health probing itself lives entirely in serena-daemon.sh — no retry, port
+# check, or handshake is reimplemented here. The timeout below is not an
+# exception to that: it bounds an existing call from the outside, it does not
+# add liveness logic of its own.
 if [[ -x "$SCRIPT_DIR/serena-daemon.sh" ]]; then
+  # Wall-clock bound, in seconds. Rule 1 above holds on the exit-code axis for
+  # free; without this it does NOT hold on the latency axis. doctor's own curl
+  # handshake is capped at 3s (serena-daemon.sh:248), but the lsof/ps,
+  # launchctl/systemctl and drift-comparison steps around it carry no bound of
+  # their own — so a wedged launchctl, a stuck systemctl or a hung NFS mount
+  # under $HOME would stall the START of a foundry run indefinitely. That is the
+  # blocking GI-003 forbids, arriving by latency instead of by exit status.
+  #
+  # 8s matches the SessionStart hook's DAEMON_TIMEOUT for the same subcommand on
+  # the same script; two different bounds on one call would be a maintenance
+  # trap. It is invisible in practice — doctor returns in well under a second on
+  # a healthy machine and in ~3s on a dead one — while leaving ~5s of headroom
+  # above the handshake cap for the half-dozen fast local queries.
+  SERENA_PROBE_TIMEOUT=8
+
+  # Stock macOS ships no timeout(1); it arrives only with coreutils, as gtimeout
+  # or as a PATH-shadowing gnubin. This plugin installs onto machines in an
+  # unknown state, so the binary is detected rather than assumed. When neither
+  # name resolves, the call falls back to unbounded — a deliberate degradation,
+  # not an oversight: skipping the probe instead would report UNKNOWN on every
+  # run and make the verdict useless on exactly those machines.
+  SERENA_TIMEOUT_BIN=""
+  if command -v timeout >/dev/null 2>&1; then
+    SERENA_TIMEOUT_BIN="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    SERENA_TIMEOUT_BIN="gtimeout"
+  fi
+
   rc=0
-  "$SCRIPT_DIR/serena-daemon.sh" doctor >/dev/null 2>&1 || rc=$?
+  if [[ -n "$SERENA_TIMEOUT_BIN" ]]; then
+    "$SERENA_TIMEOUT_BIN" "$SERENA_PROBE_TIMEOUT" \
+      "$SCRIPT_DIR/serena-daemon.sh" doctor >/dev/null 2>&1 || rc=$?
+  else
+    "$SCRIPT_DIR/serena-daemon.sh" doctor >/dev/null 2>&1 || rc=$?
+  fi
   # Mapping is doctor's published exit-code contract; codes are not ours to
-  # renumber. Anything outside the table (including 127, command not found)
-  # falls through to UNKNOWN rather than being guessed at.
+  # renumber. Anything outside the table falls through to UNKNOWN rather than
+  # being guessed at — 127 (command not found) and 124 (bound expired) both land
+  # there, so a hung probe degrades to UNKNOWN and needs no seventh token.
   case "$rc" in
     0) SERENA_HEALTH="HEALTHY" ;;
     1) SERENA_HEALTH="NOT_INSTALLED" ;;
