@@ -71,6 +71,17 @@ if ! command -v uvx &>/dev/null; then
     warn "Serena MCP (TRACE) and Foundry MCP require uvx."
 fi
 
+# curl carries the MCP `initialize` handshake in serena-daemon.sh's health probe.
+# Advisory, not fatal: the probe already degrades to a port-only check without it
+# and the daemon itself runs fine, so this warns at the same level as uvx — a
+# strictly harder dependency this script also declines to hard-fail on. Naming
+# the later symptom here is the point: it is otherwise invisible why a healthy
+# daemon reports as unverifiable.
+if ! command -v curl &>/dev/null; then
+    warn "curl not found. Serena MCP health probing degrades to a port-only check."
+    warn "Expect 'MCP handshake ... unverifiable' from serena-daemon.sh doctor and the SessionStart hook."
+fi
+
 # ── Install Plugins ──────────────────────────────────────────────────────────
 info "Installing required plugins..."
 
