@@ -8,7 +8,8 @@
 #
 # Usage: serena-daemon.sh <subcommand>
 #
-# Subcommands: start stop status doctor restart install-service uninstall-service
+# Subcommands: start stop status doctor reconcile restart install-service
+#              uninstall-service
 #
 # Streamable-HTTP transport only (SSE is broken for Claude Code, issue #196).
 
@@ -253,11 +254,24 @@ cmd_stop() {
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   fi
 
-  # Build the target set: recorded PID (if alive) plus every Serena server on $PORT.
-  # Duplicates are harmless — a second kill on the same PID is a no-op.
-  local targets=""
+  # Build the target set: recorded PID (if alive and genuinely ours) plus every
+  # Serena server on $PORT. Duplicates are harmless — a second kill on the same
+  # PID is a no-op. A WRONG pid is not: every member of this set is about to be
+  # sent SIGTERM and, ten seconds later, SIGKILL.
+  local targets="" pid_cmdline
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    targets="$pid"
+    # `kill -0` proves only that SOME process holds this PID, not that it is
+    # ours: PIDs are recycled, so a stale PID file whose number has been reused
+    # would make `stop` terminate an arbitrary unrelated user process — and do
+    # it silently, because the port-derived half below still stops the real
+    # daemon and the command reports success. Confirm it really is a Serena
+    # server using the same ps/start-mcp-server match serena_port_pids()
+    # applies. Validating a PID away never weakens `stop`: every genuine Serena
+    # process bound to the port is contributed by serena_port_pids() regardless.
+    pid_cmdline="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if printf '%s' "$pid_cmdline" | grep -q "start-mcp-server"; then
+      targets="$pid"
+    fi
   fi
   targets="$targets $(serena_port_pids)"
 
@@ -779,6 +793,207 @@ cmd_doctor() {
   exit 0
 }
 
+# ── reconcile ─────────────────────────────────────────────────────────────────
+# Converge the installed OS service definition onto whatever the current source
+# renders, repairing drift automatically and without being asked. This is
+# invoked on every session start, so the converged path must cost nothing and
+# say nothing.
+#
+# EXIT CODE CONTRACT — stable and machine-consumed. The SessionStart hook
+# branches on the exit code and MUST NOT parse stdout text: the wording below is
+# for humans and may be reworded at any time, the codes may not.
+#
+#   0  converged | repaired  nothing needed, or drift was found and fully
+#                            repaired. Both are success — a caller cannot and
+#                            need not tell them apart from the code alone.
+#   1  unsupported           OS is neither Darwin nor Linux; nothing was touched
+#   2  render-failed         the definition could not be rendered, so drift
+#                            could not even be determined. Nothing is written
+#                            and nothing is unloaded: a machine that cannot be
+#                            evaluated is left exactly as it was found.
+#   3  write-failed          drift was found but the new definition could not be
+#                            written to disk
+#   4  reload-failed         the new definition was written, but the service
+#                            manager would not reload it
+#
+# WHAT COUNTS AS DRIFT — two independent conditions, either of which triggers a
+# repair:
+#
+#   (1) The installed artifact's bytes differ from what render_service_definition
+#       emits. An absent artifact counts, so a machine that never ran
+#       install-service is repaired into an installed one — which is the point:
+#       recovery must not depend on the owner knowing install-service exists.
+#       Byte comparison is the whole test. No version stamp is read, written or
+#       relied on, because none exists in either artifact to consult (A-013).
+#
+#   (2) macOS only — a pre-rename com.codsworth.serena agent is still on disk.
+#       That agent is supervised, binds this same $PORT, and carries a command
+#       that can no longer be satisfied, so two agents contend for one port
+#       (A-003). Its presence is a divergence from what current source describes
+#       even when com.guild.serena.plist is itself byte-perfect, and A-014 has
+#       reconcile clear it unconditionally — so it cannot be nested inside (1),
+#       which may be false forever on exactly such a machine. Condition (1)
+#       remains a pure byte comparison; this is a second trigger beside it, not
+#       an extra input to it.
+#
+# Both conditions are self-clearing, which is what makes this idempotent: after
+# one repair the artifact matches and the legacy file is gone, so every later
+# run takes the silent path.
+#
+# WRITES TO MACHINE-LEVEL SERVICE STATE AUTOMATICALLY, by design (A-014). There
+# is deliberately no confirmation prompt, no dry-run default and no --force
+# opt-in gate.
+#
+# Deliberate consequence of the silent-when-converged rule: if a repair writes
+# the definition but the reload fails (exit 4), later runs see a matching
+# artifact and stay silent rather than retrying the reload. Reporting that state
+# is `doctor`'s job (installed-but-stopped); repair is not re-attempted for a
+# condition that already looks converged on disk.
+cmd_reconcile() {
+  local os rendered=""
+  os="$(uname)"
+
+  case "$os" in
+    Darwin)
+      local legacy="no" drifted="no"
+      if [[ -f "$LEGACY_PLIST_FILE" ]]; then
+        legacy="yes"
+      fi
+
+      # Render first. The renderer returns (never exits) non-zero, so it is
+      # called as an `if` condition to keep set -e from aborting here. It prints
+      # its own diagnosis to stderr on failure.
+      if ! rendered="$(render_service_definition Darwin)"; then
+        fail "cannot render launchd plist; leaving service state untouched"
+        exit 2
+      fi
+
+      # $( ) strips trailing newlines, so the single trailing newline the
+      # renderer guarantees is restored before comparing — that keeps this a
+      # true byte comparison rather than a content-only one. A missing artifact
+      # makes cmp fail, which is exactly the "absent counts as drift" verdict.
+      if ! printf '%s\n' "$rendered" | cmp -s - "$PLIST_FILE"; then
+        drifted="yes"
+      fi
+
+      # Converged on both conditions: write nothing, reload nothing, print
+      # nothing. This is the path every ordinary session start takes.
+      if [ "$drifted" = "no" ] && [ "$legacy" = "no" ]; then
+        exit 0
+      fi
+
+      if [ "$drifted" = "yes" ]; then
+        info "Serena service definition is out of date — regenerating..."
+        if ! mkdir -p "$HOME/Library/LaunchAgents"; then
+          fail "cannot create $HOME/Library/LaunchAgents"
+          exit 3
+        fi
+        # Write the very bytes that were just compared, rather than rendering a
+        # second time: that is what guarantees the next run finds a match and
+        # stays silent instead of re-repairing on every session start.
+        if ! printf '%s\n' "$rendered" > "$PLIST_FILE"; then
+          fail "cannot write $PLIST_FILE"
+          exit 3
+        fi
+      fi
+
+      if [ "$legacy" = "yes" ]; then
+        info "Removing legacy launchd agent (com.codsworth.serena)..."
+        launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
+        rm -f "$LEGACY_PLIST_FILE"
+      fi
+
+      # Reload decision.
+      #
+      # A rewritten definition always needs one — launchd keeps serving the old
+      # one until the label is unloaded and loaded again.
+      #
+      # A legacy-only repair does not. The current agent may already be serving
+      # perfectly well, and bouncing a healthy daemon on every session start
+      # until the stale file happened to get removed would be gratuitous. So
+      # health decides that case: serena_mcp_healthy is consulted only here, on
+      # a path that has already committed to repairing something. That keeps it
+      # off the converged path entirely — no cost, no output — and it cannot
+      # stall a session, because the probe carries explicit connect and max
+      # timeouts of its own.
+      local reload="no" health_rc=0
+      if [ "$drifted" = "yes" ]; then
+        reload="yes"
+      else
+        serena_mcp_healthy || health_rc=$?
+        if [ "$health_rc" -ne 0 ]; then
+          reload="yes"
+        fi
+      fi
+
+      if [ "$reload" = "yes" ]; then
+        launchctl unload "$PLIST_FILE" 2>/dev/null || true
+        if ! launchctl load "$PLIST_FILE"; then
+          fail "definition written but launchctl could not load $PLIST_FILE"
+          exit 4
+        fi
+      fi
+
+      ok "Serena service reconciled (macOS launchd)."
+      exit 0
+      ;;
+    Linux)
+      # No legacy-agent condition here: com.codsworth.serena was a launchd
+      # agent, so the pre-rename artifact only ever existed on macOS. Drift is
+      # therefore the single trigger on this platform.
+      local drifted="no"
+      if ! rendered="$(render_service_definition Linux)"; then
+        fail "cannot render systemd unit; leaving service state untouched"
+        exit 2
+      fi
+      if ! printf '%s\n' "$rendered" | cmp -s - "$SYSTEMD_FILE"; then
+        drifted="yes"
+      fi
+      if [ "$drifted" = "no" ]; then
+        exit 0
+      fi
+
+      info "Serena service definition is out of date — regenerating..."
+      if ! mkdir -p "$HOME/.config/systemd/user"; then
+        fail "cannot create $HOME/.config/systemd/user"
+        exit 3
+      fi
+      if ! printf '%s\n' "$rendered" > "$SYSTEMD_FILE"; then
+        fail "cannot write $SYSTEMD_FILE"
+        exit 3
+      fi
+
+      # The two platforms' reload paths legitimately differ in shape (A-007
+      # does not require behavioural parity), and they do: launchd needs the
+      # label unloaded and loaded again, systemd needs daemon-reload to re-read
+      # the unit file followed by a restart. `enable --now` — what
+      # install-service uses on a fresh install — is NOT sufficient here,
+      # because it does not disturb a unit that is already running and would
+      # leave the daemon executing the stale ExecStart until the next boot.
+      # `restart` starts a stopped unit and bounces a running one, so it is
+      # unconditionally correct after drift and leaves the health probe nothing
+      # to decide on this platform.
+      if ! command -v systemctl >/dev/null 2>&1; then
+        fail "definition written but systemctl is unavailable; unit not reloaded"
+        exit 4
+      fi
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user enable serena-daemon.service 2>/dev/null || true
+      if ! systemctl --user restart serena-daemon.service; then
+        fail "definition written but systemctl could not restart serena-daemon.service"
+        exit 4
+      fi
+
+      ok "Serena service reconciled (Linux systemd)."
+      exit 0
+      ;;
+    *)
+      fail "unsupported OS: $os"
+      exit 1
+      ;;
+  esac
+}
+
 # ── usage ─────────────────────────────────────────────────────────────────────
 usage() {
   cat << EOF
@@ -789,6 +1004,7 @@ Subcommands:
   stop               Stop the Serena MCP HTTP daemon
   status             Report daemon status and PID
   doctor             Full health/drift diagnosis (distinct exit code per state)
+  reconcile          Repair a drifted service definition (silent when converged)
   restart            Stop then start
   install-service    Install OS service (launchd on macOS, systemd on Linux)
   uninstall-service  Remove OS service
@@ -806,6 +1022,7 @@ case "${1:-}" in
   stop)              cmd_stop ;;
   status)            cmd_status ;;
   doctor)            cmd_doctor ;;
+  reconcile)         cmd_reconcile ;;
   restart)           "$0" stop; "$0" start ;;
   install-service)   cmd_install_service ;;
   uninstall-service) cmd_uninstall_service ;;
