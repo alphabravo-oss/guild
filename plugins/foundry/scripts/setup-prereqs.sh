@@ -145,6 +145,7 @@ import json
 mcp_file = "$MCP_FILE"
 mcp_server_src = "$MCP_SERVER_SRC"
 serena_up = "$SERENA_UP" == "1"
+use_local = "$USE_LOCAL_SRC" == "1"
 
 with open(mcp_file) as f:
     cfg = json.load(f)
@@ -156,10 +157,25 @@ configured = []
 # --project-root is relative and resolved against the server process cwd, which
 # Claude Code sets to the session's project directory. That is what makes this
 # entry portable enough to live at user scope instead of per-project.
-servers["foundry"] = {
-    "command": "uvx",
-    "args": ["--from", mcp_server_src, "foundry-mcp", "--project-root", "."]
-}
+#
+# Two different launchers, on purpose:
+#   remote (default) — uvx against the git URL. Version-free, so the entry never
+#     goes stale, at the cost of needing an explicit refresh to move commits.
+#   local (--local)  — `uv run --directory`, NOT uvx. uvx caches a directory
+#     source and will not release it: --refresh, --refresh-package and
+#     --reinstall all keep serving the stale build, and only `uv cache prune`
+#     clears it. `uv run --directory` reads the tree on every launch, so a
+#     maintainer's edits take effect immediately with no cache step at all.
+if use_local:
+    servers["foundry"] = {
+        "command": "uv",
+        "args": ["run", "--directory", mcp_server_src, "foundry-mcp", "--project-root", "."]
+    }
+else:
+    servers["foundry"] = {
+        "command": "uvx",
+        "args": ["--from", mcp_server_src, "foundry-mcp", "--project-root", "."]
+    }
 configured.append("foundry")
 
 # Playwright MCP (browser automation for SIGHT)

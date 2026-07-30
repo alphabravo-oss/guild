@@ -11,12 +11,12 @@
 # package artifacts but leaves the uvx tool environment intact. Only --refresh
 # actually re-resolves and rebuilds.
 #
-# KNOWN LIMITATION (--local only): --refresh reliably re-resolves *git* sources
-# but does NOT pick up edits to a local directory source — verified against
-# --refresh, --refresh-package and --reinstall, all of which silently served the
-# stale build. Only `uv cache prune` clears the sticky uvx tool environment. The
-# shipped path is the git URL and is unaffected; maintainers running --local get
-# an explicit warning below when the version does not move.
+# This applies to git sources only. uvx also caches *directory* sources, and far
+# more stubbornly: --refresh, --refresh-package and --reinstall all keep serving
+# the stale build, and only `uv cache prune` clears it. So local entries do not
+# use uvx at all — setup registers them as `uv run --directory`, which reads the
+# tree on every launch. There is no cache to go stale and nothing to refresh,
+# which is why --local exits early below after a single run check.
 #
 # This script is the whole upgrade path. setup-prereqs.sh calls it too, so there
 # is one implementation rather than two that drift.
@@ -98,8 +98,23 @@ PYEOF
 }
 
 if [[ $USE_LOCAL_SRC -eq 1 ]]; then
+    # Local entries launch via `uv run --directory`, which reads the tree on
+    # every start. There is no cached build to invalidate, so there is nothing
+    # for this script to do beyond confirming the tree runs.
     MCP_SERVER_SRC="$PLUGIN_ROOT/mcp-server"
     info "Source: local working tree (--local)"
+    info "  $MCP_SERVER_SRC"
+    if VERSION="$(uv run --directory "$MCP_SERVER_SRC" foundry-mcp --version 2>&1)"; then
+        echo ""
+        ok "Local tree runs: $VERSION"
+        ok "Nothing to refresh — local entries read the tree on every launch."
+    else
+        echo ""
+        fail "Local tree does not run:"
+        printf "%s\n" "$VERSION" >&2
+        exit 1
+    fi
+    exit 0
 else
     REGISTERED_SRC="$(resolve_registered_src)"
     if [[ -n "$REGISTERED_SRC" ]]; then
@@ -132,14 +147,6 @@ fi
 echo ""
 if [[ "$BEFORE" == "$AFTER" ]]; then
     ok "Already up to date: $AFTER"
-    if [[ $USE_LOCAL_SRC -eq 1 ]]; then
-        echo ""
-        warn "Running against a local working tree. If you edited the server and the"
-        warn "version above did not move, uvx is serving a stale cached build —"
-        warn "--refresh does not invalidate it for directory sources. Clear it with:"
-        warn "  uv cache prune"
-        warn "then re-run this script."
-    fi
 else
     printf "${BOLD}${GREEN}Updated:${RESET} %s → %s\n" "$BEFORE" "$AFTER"
 fi
