@@ -23,28 +23,33 @@ set -euo pipefail
 HOOK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON="$HOOK_DIR/../scripts/serena-daemon.sh"
 
-# Per-invocation wall-clock bound, in seconds. At most FOUR subcommands run
-# (reconcile, doctor, the post-settle doctor re-probe, start) plus one
-# SETTLE_SECONDS sleep, so the worst case is 4*5 + 4 = 24s. The hook entry in
-# hooks.json carries "timeout": 30 as a separate backstop, and the 6s gap
-# between the two is deliberate: if every subcommand hung, the per-invocation
-# bounds must expire FIRST so this script survives to report the hang through
-# additionalContext. Were the two equal, the framework could kill the hook at
-# the same moment and the failure report — the entire point of the hook — would
-# be lost on exactly the machine that needed it. Raise both together or neither.
+# Per-invocation wall-clock bounds, in seconds, enforced by daemon_rc() below.
 #
-# The settle re-probe below was paid for by tightening this bound from 8s to 5s
-# rather than by raising the manifest key: 3*8=24 and 4*5+4=24 are the same
-# total, so the worst case and the 6s margin are both exactly what they were.
+# They are UNEQUAL, and that is deliberate. One shared bound must be sized to
+# the slowest subcommand, which inflates the worst case of every other call for
+# no reason; sized to the fastest, it truncates reconcile mid-repair. Each bound
+# is instead derived from the real worst case of the subcommand it guards.
 #
-# 5s still clears every real worst case with headroom, all of which are bounded
-# by construction rather than by hope: doctor's handshake is capped by curl's
-# own --max-time 3, reconcile's heaviest path is that same 3s probe plus a
-# launchctl unload/load measured at 0.02s, and start blocks only on a 2s
-# liveness sleep because it launches detached. A subcommand that somehow does
-# exceed 5s is killed and surfaces as 124, which the default branch reports —
-# degraded, but still never blocking.
+# DAEMON_TIMEOUT covers doctor, the settle re-probe, and start. doctor's
+# handshake is capped by curl's own --max-time 3 and the rest of it is fast
+# local queries; start runs no handshake at all, only port resolvers plus the 2s
+# liveness sleep it takes after launching detached (~3s worst). 5s clears both
+# with headroom. It is also, deliberately, the SAME number the foundry preflight
+# bounds its own doctor probe with (setup-foundry.sh, SERENA_PROBE_TIMEOUT): two
+# callers of one subcommand must not disagree about how long it may take, and
+# that file's comment asks for the two to be changed only in step. Honour that.
 DAEMON_TIMEOUT=5
+
+# RECONCILE_TIMEOUT covers reconcile alone — the one subcommand the preflight
+# never calls, which is why it can diverge without breaking the equality above.
+# reconcile's CONVERGED path is 0.025s, but its REPAIR path now ends in a
+# post-load health probe (serena-daemon.sh, RECONCILE_PROBE_SECONDS=4) whose
+# budget is only checked AFTER each attempt, so a final attempt can begin just
+# under budget and then spend curl's full 3s cap: 4 + 3 = 7s worst case. Under
+# the old shared 5s bound that repair was killed mid-probe — recorded as concern
+# C-019 while the missing timeout(1) on stock macOS still masked it. 8s lets the
+# repair finish and report instead of being truncated.
+RECONCILE_TIMEOUT=8
 
 # Settle window, in seconds, between a doctor verdict of "installed but stopped"
 # and acting on it. See the long comment at the settle block below for why this
@@ -53,37 +58,142 @@ DAEMON_TIMEOUT=5
 # (measured on a warm uv cache), so 4s is ~2.7x the observed window.
 SETTLE_SECONDS=4
 
-# Stock macOS ships no timeout(1) — it arrives only with coreutils, as gtimeout
-# or as a PATH-shadowing gnubin. This plugin ships through a public marketplace
-# to machines in an unknown install state (A-AUTO-007), so the binary is
-# detected rather than assumed. When it is absent the per-invocation bound
-# degrades to nothing and the hooks.json "timeout" key is the sole hard bound;
-# that key is why constraint LR-015 holds on every platform, not just this one.
-TIMEOUT_BIN=""
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_BIN="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_BIN="gtimeout"
-fi
+# Poll granularity while waiting on a bounded subcommand, in seconds. Sets how
+# long the common case over-waits after the subcommand has already answered
+# (doctor returns in well under a second on a healthy machine) against how many
+# `sleep` forks the worst case costs.
+DAEMON_POLL_INTERVAL=0.2
 
-# Run a serena-daemon.sh subcommand and hand back its exit status.
+# ── Worst-case budget ─────────────────────────────────────────────────────────
+# The longest path this hook can take is the stopped-daemon repair path, which
+# issues four subcommands around one settle wait:
 #
-# All output is discarded: the subcommands print colored [serena] status lines
+#     reconcile          RECONCILE_TIMEOUT     8
+#     doctor             DAEMON_TIMEOUT        5
+#     settle sleep       SETTLE_SECONDS        4
+#     doctor re-probe    DAEMON_TIMEOUT        5
+#     start              DAEMON_TIMEOUT        5
+#                                             --
+#                                             27
+#
+# plus the watchdog's own escalation: an expiry costs a TERM, a 0.5s grace and a
+# KILL, so four expiries add 2.0s. Worst case 29s — an upper bound rather than
+# an estimate, because the watchdog can only fire EARLY: $SECONDS ticks on whole
+# second boundaries of a clock this script may have started part-way through, so
+# a bound of N expires somewhere in (N-1, N] and never past N.
+#
+# hooks.json carries "timeout": 36 as an outer, framework-enforced backstop, and
+# the 7s gap between the two is deliberate: if every subcommand hung, the
+# per-invocation bounds must expire FIRST so this script survives to report the
+# hang through additionalContext. Were the two equal the framework could kill
+# the hook mid-flight and the failure report — the entire point of the hook —
+# would be lost on exactly the machine that needed it. Raise both together or
+# neither.
+
+# Run a serena-daemon.sh subcommand under a wall-clock bound and ECHO its exit
+# status, reporting an expiry as 124 the way timeout(1) would.
+#
+# DELIBERATE DUPLICATION: this is the same bash-native watchdog as
+# serena_probe_rc() in scripts/setup-foundry.sh, which bounds the foundry
+# preflight's doctor probe. Extracting a shared helper was considered and
+# rejected — a new sourced file would be a third component with its own load
+# path, and neither caller may fail if it is missing. Fix bugs in BOTH copies.
+#
+# No external binary is involved, and that is the entire point. timeout(1) is
+# absent from stock macOS — it arrives only with coreutils, as gtimeout or as a
+# PATH-shadowing gnubin — so detecting it and degrading to an unbounded call
+# when it is missing leaves no per-invocation bound at all on the priority
+# platform (A-007), which is precisely the machine population this plugin
+# reaches through a public marketplace in an unknown install state
+# (A-AUTO-007). There the hooks.json key was the only remaining bound, and it
+# kills the hook MID-FLIGHT — losing the additionalContext warning that is this
+# hook's whole purpose. A bound that is absent where it is most needed is not a
+# bound. Everything below is bash builtins plus ps/kill/sleep, so it holds
+# everywhere the script itself runs.
+#
+# All subcommand output is discarded: they print colored [serena] status lines
 # for humans, and this script's stdout is reserved for the JSON envelope below —
 # interleaving the two would corrupt it. The status is the ONLY thing read back;
 # doctor's stdout text is explicitly not a contract (see the EXIT CODE CONTRACT
 # header above cmd_doctor in serena-daemon.sh) and is never parsed here.
 #
-# A missing script or a timeout kill surfaces as a status well outside doctor's
-# 0-4 range (127 and 124 respectively), which the default branch catches.
+# A missing or non-executable script surfaces as 127, an expiry as 124 — both
+# well outside doctor's 0-4 range, so both land in the default branch below.
+#
+# MUST be called inside a command substitution: the subshell is load-bearing
+# twice over. It confines job control to the subcommand, and it is where bash
+# writes the "Terminated" job notice for a killed one — so the 2>/dev/null at
+# the call site discards that notice. Redirecting the `wait` builtin alone does
+# not, and an undiscarded notice on this script's stderr would be the only
+# output it produces that is not the JSON envelope.
 daemon_rc() {
-  local rc=0
-  if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" "$DAEMON_TIMEOUT" "$DAEMON" "$@" >/dev/null 2>&1 || rc=$?
-  else
-    "$DAEMON" "$@" >/dev/null 2>&1 || rc=$?
+  local budget="$1"; shift
+  local job_pid deadline expired rc pgid target
+
+  # Job control, just long enough to fork the subcommand, so it becomes the
+  # leader of its OWN process group. Killing the leader alone is not enough:
+  # the latency in these subcommands is in what THEY shell out to, bash does not
+  # forward signals to those, and a wedged service-manager or port query would
+  # outlive its parent as an orphan still holding the very resource that timed
+  # us out. Signalling the group takes the whole tree.
+  #
+  # stdin comes from /dev/null because under job control a background job that
+  # reads the terminal is STOPPED by SIGTTIN rather than killed, and a stopped
+  # job would sit in the wait below neither finishing nor dying. This hook is
+  # handed the SessionStart event JSON on its own stdin, so there is genuinely
+  # something there to be read.
+  set -m
+  "$DAEMON" "$@" >/dev/null 2>&1 </dev/null &
+  job_pid=$!
+  set +m
+
+  # Poll, rather than race a background killer against the subcommand.
+  # Escalation then runs on this thread, so there is no second process to cancel
+  # and no window where cancelling it skips the follow-up KILL and strands a
+  # child that ignored TERM.
+  #
+  # The deadline is wall-clock via $SECONDS rather than a count of iterations,
+  # so the bound stays honest even where `sleep` rejects a fractional argument
+  # (some busybox builds). There the guarded sleep fails, this loop spins, and
+  # it still ends on the same second — degraded to a busy wait, never to an
+  # unbounded one and never to a wrong verdict.
+  deadline=$(( SECONDS + budget ))
+  expired=false
+  while kill -0 "$job_pid" 2>/dev/null; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      expired=true
+      break
+    fi
+    sleep "$DAEMON_POLL_INTERVAL" || true
+  done
+
+  if [ "$expired" = true ]; then
+    # Never signal a process group we do not own. `kill -TERM -$pid` on a pid
+    # that is NOT a group leader lands on THIS script's group — and this script
+    # runs inside the user's session, so that is the user's whole session. So
+    # the group id is read back and the negative form is used only where it
+    # provably equals the pid; anything else, including a ps that answers
+    # nothing, falls back to signalling the single process. Read here rather
+    # than at fork time because the subcommand is known to be alive at this
+    # instant, whereas one that had already exited would answer nothing.
+    pgid="$(ps -o pgid= -p "$job_pid" 2>/dev/null | tr -d ' ' || true)"
+    if [ "$pgid" = "$job_pid" ]; then
+      target="-$job_pid"
+    else
+      target="$job_pid"
+    fi
+    kill -TERM "$target" 2>/dev/null || true
+    sleep 0.5 || true
+    kill -KILL "$target" 2>/dev/null || true
   fi
-  return "$rc"
+
+  rc=0
+  wait "$job_pid" || rc=$?
+  # A signalled subcommand reports 143 or 137. Normalise to 124 so "the bound
+  # expired" carries one code on every path; all three would reach the same
+  # default arm below regardless, but only one of them says why.
+  if [ "$expired" = true ]; then rc=124; fi
+  echo "$rc"
 }
 
 # Emit the SessionStart context envelope. Callers pass plain ASCII with no
@@ -98,10 +208,12 @@ emit_context() {
 # check of its own to gate it with. On a machine still holding the pre-rename
 # agent, this is the call that finally clears it.
 #
-# Its status is deliberately not captured: doctor runs immediately after and is
-# the authority on what the model gets told. A reconcile that failed to converge
-# shows up as doctor's 1 or 4 verdict, and those messages say so.
-daemon_rc reconcile || true
+# Its status is deliberately DISCARDED — hence the `:` — rather than merely
+# ignored: doctor runs immediately after and is the authority on what the model
+# gets told. A reconcile that failed to converge shows up as doctor's 1 or 4
+# verdict, and those messages say so. The command substitution is not optional
+# even here; see the note on daemon_rc above.
+: "$(daemon_rc "$RECONCILE_TIMEOUT" reconcile 2>/dev/null)"
 
 # ── 2. Diagnose ──────────────────────────────────────────────────────────────
 # Branch on the integer exit code only. Contract, verbatim from
@@ -110,8 +222,13 @@ daemon_rc reconcile || true
 #   3 running-but-unhealthy   4 drifted
 # Precedence there is 1 > 2 > 3 > 4 > 0, and "installed" is tested first, so
 # code 1 tells us nothing about health — the wording below reflects that.
-doctor_rc=0
-daemon_rc doctor || doctor_rc=$?
+#
+# Every test on this value below is a STRING comparison, never `-eq`. A subshell
+# that somehow died before echoing would leave it empty, and `[ "" -eq 2 ]` is a
+# fatal error under set -e — which would abort the hook on precisely the path
+# where it most needs to survive and report. Empty simply falls to the default
+# arm, which already means "unrecognised status".
+doctor_rc="$(daemon_rc "$DAEMON_TIMEOUT" doctor 2>/dev/null)"
 
 # ── 2a. Settle before believing "stopped" ────────────────────────────────────
 # The reconcile above may have just reloaded the service, and a reload is
@@ -139,15 +256,16 @@ daemon_rc doctor || doctor_rc=$?
 #
 # Only the stopped verdict pays for this. An ordinary healthy session start
 # never reaches it and costs exactly what it did before.
-if [ "$doctor_rc" -eq 2 ]; then
-  sleep "$SETTLE_SECONDS"
+if [ "$doctor_rc" = "2" ]; then
+  # `|| true` for the same reason the watchdog's own sleeps carry it: a host
+  # without a usable `sleep` must lose the settle window, not the whole hook.
+  sleep "$SETTLE_SECONDS" || true
   # Re-probe replaces the verdict outright rather than being handled inline, so
   # a daemon that finished coming up during the wait flows into the branch that
   # actually matches its new state — including the healthy branch, which stays
   # silent. Still 2 afterwards means the wait was long enough and nothing came
   # up, so it really is down and the start branch below is correct.
-  doctor_rc=0
-  daemon_rc doctor || doctor_rc=$?
+  doctor_rc="$(daemon_rc "$DAEMON_TIMEOUT" doctor 2>/dev/null)"
 fi
 
 case "$doctor_rc" in
@@ -167,9 +285,8 @@ case "$doctor_rc" in
   2)
     # Installed but nothing serving the port. This is the one state the hook
     # repairs directly.
-    start_rc=0
-    daemon_rc start || start_rc=$?
-    if [ "$start_rc" -eq 0 ]; then
+    start_rc="$(daemon_rc "$DAEMON_TIMEOUT" start 2>/dev/null)"
+    if [ "$start_rc" = "0" ]; then
       # cmd_start confirms the process is alive but does NOT verify an MCP
       # handshake, so "started" is not yet "ready" — say exactly that rather
       # than staying silent and letting the first Serena call fail unexplained.
