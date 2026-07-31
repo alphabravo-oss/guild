@@ -57,7 +57,7 @@ Call `Foundry-Next` after every step. It returns a `YOUR NEXT CALL:` imperative 
 | `DRIFTED` | doctor reported the drifted state |
 | `UNKNOWN` | doctor could not be run, or returned an exit code outside its table |
 
-Read the token and record it immediately after `Foundry-Init` with `Foundry-Handoff(event="serena_preflight", summary="FOUNDRY_SERENA_HEALTH=<TOKEN>")`, so the run carries the record at `foundry-archive/{run}/handoffs.jsonl`. **Then proceed, always — for every token, including the five non-`HEALTHY` ones.** The token NEVER halts the run, NEVER gates a phase, NEVER triggers an `AskUserQuestion`, and NEVER causes you to run any `serena-daemon.sh` repair subcommand (`start`, `restart`, `reconcile`, `install-service`). Repair is the SessionStart hook's job; foundry does not mutate service state during a run. Your only actions are read, record, proceed.
+Read the token and record it immediately after `Foundry-Init` with `Foundry-Handoff(event="serena_preflight", summary="FOUNDRY_SERENA_HEALTH=<TOKEN>")`, so the run carries the record at `foundry-archive/{run}/handoffs.jsonl`. **Then proceed, always — for every token, including the five non-`HEALTHY` ones.** The token NEVER halts the run, NEVER gates a phase, NEVER triggers an `AskUserQuestion`, and NEVER causes you to run any `serena-daemon.sh` repair subcommand (`start`, `restart`, `reconcile`, `install-service`). Repair is the SessionStart hook's job; foundry does not mutate service state during a run. Your only actions are read, record, pass it forward to the F2 wiring streams (see F2: INSPECT), and proceed.
 
 ### F0: RESEARCH
 
@@ -502,6 +502,10 @@ Call `Foundry-Gate(phase='cast')`.
 - **TEST-01** — agent with `agents/spec-test-deriver.md` (sonnet, code-blind). Reads spec only; derives hypothesis-jsonschema strategies from TYPE-01 contracts table; runs generated tests in ephemeral worktree; emits findings to `test_observations/test-deriver-cycle-{N}.json`. ASSAY (F4) routes via 5th parallel agent (`agents/test-observations-adjudicator.md`).
 - **SIGHT** — lead runs Playwright directly (only exception to "lead never does work").
 - **TEST / PROBE** — inline test suite / API smoke.
+
+**Pass the Serena token to TRACE and FLOW_TRACE.** Both wiring streams run on the Serena LSP tools, and both fail open to `NOT_VERIFIED` when those tools are unavailable. When you spawn them, include the `FOUNDRY_SERENA_HEALTH` token you recorded at F0 (see **Serena preflight (F0)** above) in the agent prompt, under the name each agent declares: `FOUNDRY_SERENA_HEALTH` for TRACE (`agents/tracer.md`), `serena_health` for FLOW_TRACE (`agents/flow-tracer.md`). Passing it under the other name delivers nothing — the agent reads only its own field.
+
+The token is diagnostic, never a gate. It lets a `NOT_VERIFIED` record name *which* state the daemon was in (`NOT_INSTALLED`, `INSTALLED_BUT_STOPPED`, `RUNNING_BUT_UNHEALTHY`, `DRIFTED`, `UNKNOWN`) instead of reporting an unattributed failure. **It NEVER gates the spawn, NEVER skips a stream, and NEVER halts the run.** Spawn both streams normally for every token, including `HEALTHY`, and let each agent's own Step 0 gate decide its verdicts — an unhealthy daemon changes what the streams can *verify*, never whether they *run*. If no token was recorded, spawn anyway and omit the field.
 
 *Streams whose agent declares `min_spec_format_version` exceeding `manifest.spec_format_version_tuple` are predictively skipped at F0.5 (see F0.5 V2 step 2b) and recorded in `manifest.stream_skips`. F2 invokes only the streams not in the skip list; F0.9 sub-check 7k re-derives the expected skip set and compares to the recorded array. Phase 3 / TYPE-02.*
 
