@@ -57,6 +57,25 @@ SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
 # PID file is written on every launch — including service-managed boots).
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 
+# Post-load health-probe budgets, in seconds. See await_daemon_healthy() for why
+# a budget is polled rather than slept, and why either number is spent only when
+# something is actually wrong.
+#
+# install-service is a MANUAL, interactive command with no external watchdog, so
+# it can afford to wait out a cold uv cache — and one is guaranteed on every
+# machine's first install after SERENA_PKG is repinned, because uvx must fetch
+# and unpack the pinned artifact before the server binds anything.
+INSTALL_PROBE_SECONDS=15
+# reconcile runs unattended from the SessionStart hook on every single session,
+# so its budget is sized to that caller rather than to a cold cache: the hook
+# bounds each subcommand at DAEMON_TIMEOUT=5s (hooks/session-start-serena.sh:47)
+# and its own comment budgets reconcile's heaviest path at ~3s. 4s is the settle
+# window that hook already measured for this exact wait
+# (hooks/session-start-serena.sh:49-54: launchctl load returns in 0.020s, the
+# daemon it spawns binds 1.473s later), and because the poll is adaptive a
+# healthy reload returns at about that 1.5s mark, not at 4s.
+RECONCILE_PROBE_SECONDS=4
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 # Echo the PID of EVERY process currently holding $PORT — Serena or not, one per
 # line. This is the ONLY port-resolver chain in this script; every other function
@@ -301,6 +320,102 @@ serena_mcp_healthy() {
     return 2
   fi
   return 3
+}
+
+# Poll serena_mcp_healthy until it answers healthy or <budget> seconds elapse.
+# Prints nothing — the caller owns the reporting, because what a failure MEANS
+# differs between a manual install and an unattended reconcile.
+#
+# WHY THIS EXISTS. `launchctl load` and `systemctl restart` report that the
+# SUPERVISOR ACCEPTED THE JOB, not that the job can run: launchd loads a plist
+# whose command can never be satisfied without complaint. Reporting "service
+# installed and loaded" on the strength of that acceptance alone is exactly the
+# gap the 29-day silent failure went through. So nothing downstream of a load
+# may claim success until something has actually answered on $PORT. The probe
+# itself is serena_mcp_healthy and is never reimplemented here (GI-001).
+#
+# WHY A POLL AND NOT A FIXED SLEEP. A reload is asynchronous — `launchctl load`
+# returns in 0.020s while the daemon it spawns needs another 1.473s to bind
+# (measured; hooks/session-start-serena.sh:49-54 records the same figures). A
+# fixed sleep would charge that wait to every SUCCESS. Polling charges it only
+# until the daemon answers, so the budget below is spent in full only when
+# something is genuinely wrong — which is the case that can afford to wait.
+#
+# BOUNDED BY CONSTRUCTION, never by hope, because reconcile calls this from the
+# SessionStart hook and a foundry run must not block on a dead Serena (GI-003).
+# Each probe is independently capped by curl's --connect-timeout 2 / --max-time 3
+# inside serena_mcp_healthy, and the loop carries TWO independent bounds because
+# either one alone has a failure mode:
+#
+#   Wall clock is the TIGHT bound. It is the only one that also covers a probe
+#   that is itself slow — a wedged daemon makes curl burn its full 3s every
+#   time, which a probe count cannot bound to anything useful.
+#
+#   Probe count is the FAILSAFE. A deadline computed from `date` loops FOREVER
+#   on a host where that call fails: an empty `now` makes the `-ge` test error,
+#   and an errored test inside `if` is merely false, never a break. Counting
+#   needs nothing that can fail. Belt and braces is warranted here and nowhere
+#   else in this file, because this is the one loop that runs unattended on
+#   every session start on machines nobody debugging it can see (A-AUTO-007).
+#
+# Worst case is therefore <budget> + 3s in wall-clock terms, and at most
+# <budget>+1 probes if the clock cannot be read at all.
+#
+# Return codes:
+#   0  healthy      — a valid MCP handshake came back inside the budget
+#   1  unhealthy    — the budget expired and the probe could say so on evidence
+#   2  unverifiable — MCP health could not be established either way for the
+#                     whole budget (curl absent, or nothing could read the port
+#                     and the handshake never answered). Deliberately NOT 1:
+#                     failing an install because an OPTIONAL tool is missing is
+#                     a false negative, and this file already degrades quietly
+#                     rather than erroring when curl or lsof is absent.
+await_daemon_healthy() {
+  local budget="${1:-0}" deadline="" now="" rc=0 last=3 probes=0
+
+  # `|| true`: a host that cannot read its own clock still gets the failsafe
+  # bound below, so an unreadable clock degrades the tightness of the bound
+  # rather than removing it.
+  now="$(date +%s 2>/dev/null || true)"
+  if [ -n "$now" ]; then
+    deadline=$(( now + budget ))
+  fi
+
+  while :; do
+    # `|| rc=$?` (never bare): every non-zero verdict here is an EXPECTED
+    # outcome of probing a daemon that may still be starting, and set -e must
+    # not turn one into a caller abort.
+    rc=0
+    serena_mcp_healthy || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      return 0
+    fi
+    last="$rc"
+
+    # Failsafe bound — depends on nothing external.
+    probes=$(( probes + 1 ))
+    if [ "$probes" -gt "$budget" ]; then
+      break
+    fi
+
+    # Tight bound — skipped entirely when the clock could not be read.
+    if [ -n "$deadline" ]; then
+      now="$(date +%s 2>/dev/null || true)"
+      if [ -z "$now" ] || [ "$now" -ge "$deadline" ]; then
+        break
+      fi
+    fi
+
+    sleep 1
+  done
+
+  # Distinguish "it is not coming up" from "nothing could tell". Only the
+  # probe's own unverifiable verdict (3) becomes 2 here; a port resolver that
+  # earned "not running" (1) or found a wedged server (2) is real evidence.
+  if [ "$last" -eq 3 ]; then
+    return 2
+  fi
+  return 1
 }
 
 # ── start ─────────────────────────────────────────────────────────────────────
@@ -688,8 +803,19 @@ EOF
 }
 
 # ── install-service ───────────────────────────────────────────────────────────
+# Exit codes: 0 success, non-zero failure. That two-state contract is UNCHANGED
+# by the post-load probe added below — a probe that cannot confirm the daemon
+# reports the same `exit 1` this command already used for "uvx not found" and
+# "unsupported OS", so no caller's branching is disturbed and no code is
+# renumbered. (There are no machine callers of this subcommand in-repo; it is
+# invoked by hand, and by doctor's advice line telling a human to run it.)
+#
+# What DOES change is what `exit 0` asserts. It used to mean "launchd/systemd
+# accepted the definition"; it now means "...and something answered a real MCP
+# handshake on $PORT". Those differ on precisely the machine that produced the
+# 29-day incident: a plist whose command can never be satisfied loads perfectly.
 cmd_install_service() {
-  local os
+  local os probe_rc=0
   os="$(uname)"
 
   local uvx_path
@@ -710,7 +836,23 @@ cmd_install_service() {
       fi
       launchctl unload "$PLIST_FILE" 2>/dev/null || true
       launchctl load "$PLIST_FILE"
-      ok "Serena service installed and loaded (macOS launchd). Daemon will start at login."
+      # launchd has now ACCEPTED the job. That is not evidence the job runs, so
+      # do not report success until the daemon answers. macOS is the platform
+      # the incident actually happened on and the priority platform (A-007).
+      probe_rc=0
+      await_daemon_healthy "$INSTALL_PROBE_SECONDS" || probe_rc=$?
+      if [ "$probe_rc" -eq 1 ]; then
+        fail "launchd accepted the job, but Serena did not answer an MCP handshake on port $PORT within ${INSTALL_PROBE_SECONDS}s."
+        fail "The plist IS installed — what could not be confirmed is that the command inside it runs. Diagnose: serena-daemon.sh doctor    (log: $LOG_FILE)"
+        exit 1
+      fi
+      if [ "$probe_rc" -eq 2 ]; then
+        # An optional tool is missing, not a broken install. Say so plainly
+        # rather than failing an install that may be perfectly fine.
+        warn "Serena service installed and loaded (macOS launchd), but its health could NOT be verified (curl unavailable, or the port could not be read). Confirm with: serena-daemon.sh doctor"
+        exit 0
+      fi
+      ok "Serena service installed, loaded, and answering MCP on port $PORT (macOS launchd). Daemon will start at login."
       exit 0
       ;;
     Linux)
@@ -718,7 +860,27 @@ cmd_install_service() {
       render_service_definition Linux > "$SYSTEMD_FILE"
       systemctl --user daemon-reload 2>/dev/null || true
       systemctl --user enable --now serena-daemon.service
-      ok "Serena service installed and enabled (Linux systemd). Daemon will start at login."
+      # `--now` does block on unit start and does fail loudly under set -e, so
+      # this platform was already partly guarded — but only against a unit that
+      # cannot START. The unit is Type=forking with ExecStart routed through this
+      # script's own `start`, which exits 0 after a liveness check on the
+      # launcher PID and never attempts a handshake. So systemd's "started" is
+      # not "serving" either, and a wedged daemon (oraios/serena#1367) still
+      # reports a clean install. The probe is a platform-independent HTTP
+      # handshake, so applying it here closes that hole without contorting the
+      # two reload paths toward each other — those legitimately differ (A-007).
+      probe_rc=0
+      await_daemon_healthy "$INSTALL_PROBE_SECONDS" || probe_rc=$?
+      if [ "$probe_rc" -eq 1 ]; then
+        fail "systemd started the unit, but Serena did not answer an MCP handshake on port $PORT within ${INSTALL_PROBE_SECONDS}s."
+        fail "The unit IS installed — what could not be confirmed is that the command inside it serves. Diagnose: serena-daemon.sh doctor    (log: $LOG_FILE)"
+        exit 1
+      fi
+      if [ "$probe_rc" -eq 2 ]; then
+        warn "Serena service installed and enabled (Linux systemd), but its health could NOT be verified (curl unavailable, or the port could not be read). Confirm with: serena-daemon.sh doctor"
+        exit 0
+      fi
+      ok "Serena service installed, enabled, and answering MCP on port $PORT (Linux systemd). Daemon will start at login."
       exit 0
       ;;
     *)
@@ -1354,6 +1516,140 @@ cmd_doctor() {
   exit 0
 }
 
+# ── project-config repair ─────────────────────────────────────────────────────
+# Repair a .serena/project.yml whose `languages:` list was written as a list of
+# MAPPINGS instead of a list of plain strings. Prints nothing when there is
+# nothing to repair.
+#
+# THE DEFECT THIS CLEARS. Setup used to emit
+#
+#     languages:
+#       - name: go
+#
+# where Serena's ProjectConfig._from_dict() calls .lower() on each element
+# directly, so a mapping element raises `AttributeError: 'CommentedMap' object
+# has no attribute 'lower'` and activate_project aborts. Setup now emits a plain
+# string list, but that generator only runs on a manual /foundry:setup — so every
+# project configured before the fix stays broken until somebody re-runs setup by
+# hand. "Nothing re-runs setup" is precisely the silence GI-002 exists to end,
+# which is why the repair hangs off reconcile: the SessionStart hook runs
+# reconcile unconditionally on every session, and reconcile is this script's
+# designated idempotent, silent-when-converged repair surface (GI-008). `doctor`
+# could not host it — that command is READ-ONLY by contract.
+#
+# WHICH PROJECT, and why this is not a machine-wide sweep. Serena's own registry
+# (~/.serena/serena_config.yml `projects:`) does list every project on the box,
+# and sweeping it would make this cwd-independent. It is deliberately NOT used:
+# that would write into repositories the user has not opened, and this plugin
+# ships through a public marketplace to machines in unknown state (A-AUTO-007).
+# A broken config harms nothing until its project is activated, so the repair is
+# lazy — it fixes the ONE project this session is in, which is exactly the config
+# about to be loaded. Every project that matters is therefore repaired the first
+# time it is opened, and the blast radius of any single run is one directory the
+# user is demonstrably working in. $CLAUDE_PROJECT_DIR is preferred over $PWD
+# only as a robustness belt: the hook already runs with cwd at the project root.
+#
+# Return codes (the caller owns the exit-code policy):
+#   0  nothing to do — no config at this root, or its languages list is valid
+#   1  repaired      — the file was backed up and rewritten
+#   2  found broken but NOT repaired — the malformation is a shape this cannot
+#                      rewrite safely, or the backup/write failed. The file is
+#                      left exactly as it was found in every case.
+repair_project_config() {
+  local root="${1:-}" cfg tmp backup rc=0
+  [ -n "$root" ] || return 0
+  cfg="$root/.serena/project.yml"
+  # No Serena project here. The ordinary outcome for most directories, and the
+  # reason a manual `reconcile` run from anywhere else stays silent.
+  [ -f "$cfg" ] || return 0
+
+  tmp="$cfg.reconcile.$$.tmp"
+
+  # One awk pass both DETECTS and REWRITES, so the two can never disagree about
+  # what counts as broken. Its exit status is the verdict: 0 unchanged,
+  # 1 rewritten, 2 an unrecognised mapping shape was seen.
+  #
+  # Only items inside the top-level `languages:` block are considered — the
+  # block ends at the next top-level key — so an identically-shaped `- name:`
+  # entry under `ignored_paths:` is left untouched.
+  #
+  # Only `- name: <value>` is rewritten, because that is the exact shape the old
+  # generator produced. Any OTHER mapping item is reported and NOT guessed at:
+  # inventing a rewrite for a shape this script never wrote is how a repair
+  # destroys a hand-edited config. Note the END block checks `unknown` first, so
+  # a file mixing both shapes is refused rather than half-repaired.
+  #
+  # `|| rc=$?` because a non-zero awk status is the expected signal here, not a
+  # failure set -e should abort on.
+  awk '
+    BEGIN { inb = 0; changed = 0; unknown = 0 }
+    {
+      if (inb) {
+        if ($0 ~ /^[^ \t#-]/) {
+          inb = 0
+        } else if ($0 ~ /^[ \t]*-/) {
+          if ($0 ~ /^[ \t]*-[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*:/) {
+            if (match($0, /^[ \t]*-[ \t]*name[ \t]*:[ \t]*/)) {
+              val = substr($0, RSTART + RLENGTH)
+              sub(/[ \t]+$/, "", val)
+              ind = $0
+              sub(/-.*$/, "", ind)
+              if (val != "" && val !~ /[:#]/) {
+                print ind "- " val
+                changed = 1
+                next
+              }
+            }
+            unknown = 1
+          }
+        }
+      }
+      if (inb == 0 && $0 ~ /^languages:[ \t]*$/) { inb = 1 }
+      print
+    }
+    END { if (unknown) exit 2; if (changed) exit 1; exit 0 }
+  ' "$cfg" > "$tmp" 2>/dev/null || rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    # Already valid. Silent and no write — this runs on every session start.
+    rm -f "$tmp"
+    return 0
+  fi
+
+  if [ "$rc" -ne 1 ]; then
+    rm -f "$tmp"
+    warn "Serena project config has a languages list Serena cannot load, in a shape this repair does not recognise — left unchanged: $cfg"
+    warn "  fix it by hand (languages must be a flat list of plain strings), or re-run: /foundry:setup"
+    return 2
+  fi
+
+  # Backup FIRST, matching setup-prereqs.sh's convention byte for byte
+  # (timestamped .bak beside the original) so there is one backup scheme for
+  # this file and not two. Taking it before any write is what makes the
+  # non-atomic rewrite below safe: a partial write is always recoverable.
+  backup="$cfg.$(date +%Y%m%d-%H%M%S).bak"
+  if ! cp "$cfg" "$backup"; then
+    rm -f "$tmp"
+    fail "cannot back up $cfg — leaving it unchanged"
+    return 2
+  fi
+
+  # `cat >` rather than `mv`, deliberately: it rewrites in place and so
+  # preserves the file's existing mode and ownership. A rename would silently
+  # replace them with whatever the current umask produces.
+  if ! cat "$tmp" > "$cfg"; then
+    rm -f "$tmp"
+    fail "cannot write $cfg — restore from $backup"
+    return 2
+  fi
+  rm -f "$tmp"
+
+  # Reported, never silent: this modified a file in the user's repository.
+  warn "Serena project config had an unloadable languages list (a list of mappings, which aborts activate_project)."
+  ok   "Repaired $cfg — languages rewritten as a plain string list. Backup: $backup"
+  return 1
+}
+
 # ── reconcile ─────────────────────────────────────────────────────────────────
 # Converge the installed OS service definition onto whatever the current source
 # renders, repairing drift automatically and without being asked. This is
@@ -1376,6 +1672,24 @@ cmd_doctor() {
 #                            written to disk
 #   4  reload-failed         the new definition was written, but the service
 #                            manager would not reload it
+#   5  unconfirmed           the definition was written AND the service manager
+#                            reloaded it, but no MCP handshake came back inside
+#                            the probe budget. The supervisor accepting a job is
+#                            not evidence the job runs — this is the state the
+#                            29-day incident sat in while reporting success.
+#   6  config-unrepaired     the OS service converged, but this project's
+#                            .serena/project.yml carries a languages list Serena
+#                            cannot load and the repair declined to guess at it
+#
+# Precedence when more than one applies: the SERVICE-DEFINITION verdicts (2, 3,
+# 4, 5) outrank 6, because a project config matters only once something is
+# actually serving. 6 is never silent — it warns first — so nothing is lost when
+# a service verdict outranks it.
+#
+# All six codes are safe to add or reorder below 2 without breaking the only
+# caller: hooks/session-start-serena.sh:104 runs `daemon_rc reconcile || true`
+# and discards this status by explicit design, then asks `doctor` — which owns
+# the machine-readable verdict — what the model should be told.
 #
 # WHAT COUNTS AS DRIFT — two independent conditions, either of which triggers a
 # repair:
@@ -1411,9 +1725,22 @@ cmd_doctor() {
 # is `doctor`'s job (installed-but-stopped); repair is not re-attempted for a
 # condition that already looks converged on disk.
 cmd_reconcile() {
-  local os rendered=""
+  local os rendered="" cfg_rc=0 pc_rc=0 probe_rc=0
   os="$(uname)"
 
+  # ── Pass 1 of 2: this project's Serena config ──
+  # Platform-independent, and run before the service branch so it still happens
+  # on a host whose OS has no supported service manager. Silent unless it
+  # actually repairs (or refuses to repair) something, which is what keeps the
+  # converged session start silent overall.
+  repair_project_config "${CLAUDE_PROJECT_DIR:-$PWD}" || pc_rc=$?
+  if [ "$pc_rc" -eq 2 ]; then
+    # Already warned by the helper. Carried as a sticky code rather than an
+    # immediate exit: the OS service is the primary job and still has to run.
+    cfg_rc=6
+  fi
+
+  # ── Pass 2 of 2: the OS service definition ──
   case "$os" in
     Darwin)
       local legacy="no" drifted="no"
@@ -1438,9 +1765,10 @@ cmd_reconcile() {
       fi
 
       # Converged on both conditions: write nothing, reload nothing, print
-      # nothing. This is the path every ordinary session start takes.
+      # nothing. This is the path every ordinary session start takes — and with
+      # a valid project config $cfg_rc is 0, so it stays a silent success.
       if [ "$drifted" = "no" ] && [ "$legacy" = "no" ]; then
-        exit 0
+        exit "$cfg_rc"
       fi
 
       if [ "$drifted" = "yes" ]; then
@@ -1493,10 +1821,30 @@ cmd_reconcile() {
           fail "definition written but launchctl could not load $PLIST_FILE"
           exit 4
         fi
+
+        # launchd accepted the job. Confirm the job actually SERVES before
+        # claiming this reconcile worked — a plist whose command can never be
+        # satisfied loads without complaint, and announcing "reconciled" on the
+        # strength of that acceptance would reproduce the 29-day silent failure,
+        # now automatically on every session start.
+        #
+        # Reached only on a repair path, so the converged run pays nothing for
+        # it and stays silent (GI-008). Bounded by construction, so it cannot
+        # stall a session (GI-003).
+        probe_rc=0
+        await_daemon_healthy "$RECONCILE_PROBE_SECONDS" || probe_rc=$?
+        if [ "$probe_rc" -eq 1 ]; then
+          warn "Serena service definition repaired and reloaded, but the daemon did not answer an MCP handshake on port $PORT within ${RECONCILE_PROBE_SECONDS}s — it may still be starting, or its command may be unsatisfiable. Diagnose with: serena-daemon.sh doctor"
+          exit 5
+        fi
+        if [ "$probe_rc" -eq 2 ]; then
+          warn "Serena service definition repaired and reloaded, but its health could NOT be verified (curl unavailable, or the port could not be read). Confirm with: serena-daemon.sh doctor"
+          exit "$cfg_rc"
+        fi
       fi
 
       ok "Serena service reconciled (macOS launchd)."
-      exit 0
+      exit "$cfg_rc"
       ;;
     Linux)
       # No legacy-agent condition here: com.codsworth.serena was a launchd
@@ -1511,7 +1859,7 @@ cmd_reconcile() {
         drifted="yes"
       fi
       if [ "$drifted" = "no" ]; then
-        exit 0
+        exit "$cfg_rc"
       fi
 
       info "Serena service definition is out of date — regenerating..."
@@ -1545,8 +1893,26 @@ cmd_reconcile() {
         exit 4
       fi
 
+      # `restart` blocks on the unit starting, so an ExecStart that cannot run
+      # at all is already caught above. It is NOT caught that the unit started
+      # and then serves nothing: Type=forking judges the launcher's exit, and
+      # this script's `start` never attempts a handshake. Same probe as the
+      # Darwin arm — it is an HTTP handshake and so platform-independent, which
+      # is why sharing it does not force the two RELOAD paths (legitimately
+      # different under A-007) any closer together.
+      probe_rc=0
+      await_daemon_healthy "$RECONCILE_PROBE_SECONDS" || probe_rc=$?
+      if [ "$probe_rc" -eq 1 ]; then
+        warn "Serena unit definition repaired and restarted, but the daemon did not answer an MCP handshake on port $PORT within ${RECONCILE_PROBE_SECONDS}s — it may still be starting, or its command may be unsatisfiable. Diagnose with: serena-daemon.sh doctor"
+        exit 5
+      fi
+      if [ "$probe_rc" -eq 2 ]; then
+        warn "Serena unit definition repaired and restarted, but its health could NOT be verified (curl unavailable, or the port could not be read). Confirm with: serena-daemon.sh doctor"
+        exit "$cfg_rc"
+      fi
+
       ok "Serena service reconciled (Linux systemd)."
-      exit 0
+      exit "$cfg_rc"
       ;;
     *)
       fail "unsupported OS: $os"
@@ -1565,7 +1931,7 @@ Subcommands:
   stop               Stop the Serena MCP HTTP daemon
   status             Report daemon status and PID
   doctor             Full health/drift diagnosis (distinct exit code per state)
-  reconcile          Repair a drifted service definition (silent when converged)
+  reconcile          Repair drifted service definition + project config (silent when converged)
   restart            Stop then start
   install-service    Install OS service (launchd on macOS, systemd on Linux)
   uninstall-service  Remove OS service
