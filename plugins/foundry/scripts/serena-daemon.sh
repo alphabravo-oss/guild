@@ -66,14 +66,21 @@ SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd 
 # machine's first install after SERENA_PKG is repinned, because uvx must fetch
 # and unpack the pinned artifact before the server binds anything.
 INSTALL_PROBE_SECONDS=15
-# reconcile runs unattended from the SessionStart hook on every single session,
-# so its budget is sized to that caller rather than to a cold cache: the hook
-# bounds each subcommand at DAEMON_TIMEOUT=5s (hooks/session-start-serena.sh:47)
-# and its own comment budgets reconcile's heaviest path at ~3s. 4s is the settle
-# window that hook already measured for this exact wait
-# (hooks/session-start-serena.sh:49-54: launchctl load returns in 0.020s, the
-# daemon it spawns binds 1.473s later), and because the poll is adaptive a
-# healthy reload returns at about that 1.5s mark, not at 4s.
+# reconcile runs unattended from the SessionStart hook on every single session
+# (hooks/session-start-serena.sh), so its budget is sized to that caller rather
+# than to a cold cache. That hook bounds its subcommands UNEQUALLY, and on
+# purpose: reconcile is guarded by its own RECONCILE_TIMEOUT, deliberately
+# larger than the DAEMON_TIMEOUT covering doctor and start, because reconcile's
+# repair path is the longest one the hook issues. So this number is NOT squeezed
+# under a bound shared with the other subcommands — the dependency runs the
+# other way. That hook derives its bound partly from THIS constant, counting the
+# post-load probe as this budget plus one more curl --max-time. Raise this and
+# RECONCILE_TIMEOUT must be re-derived; check it by name over there.
+#
+# 4s is also the window that hook's SETTLE_SECONDS uses for this exact wait, off
+# the same measurement: `launchctl load` returns in 0.020s and the daemon it
+# spawns binds 1.473s later. Because the poll is adaptive, a healthy reload
+# returns at about that 1.5s mark, not at 4s.
 RECONCILE_PROBE_SECONDS=4
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -336,10 +343,11 @@ serena_mcp_healthy() {
 #
 # WHY A POLL AND NOT A FIXED SLEEP. A reload is asynchronous — `launchctl load`
 # returns in 0.020s while the daemon it spawns needs another 1.473s to bind
-# (measured; hooks/session-start-serena.sh:49-54 records the same figures). A
-# fixed sleep would charge that wait to every SUCCESS. Polling charges it only
-# until the daemon answers, so the budget below is spent in full only when
-# something is genuinely wrong — which is the case that can afford to wait.
+# (measured; the SessionStart hook sizes its SETTLE_SECONDS off the same two
+# figures). A fixed sleep would charge that wait to every SUCCESS. Polling
+# charges it only until the daemon answers, so the budget below is spent in full
+# only when something is genuinely wrong — which is the case that can afford to
+# wait.
 #
 # BOUNDED BY CONSTRUCTION, never by hope, because reconcile calls this from the
 # SessionStart hook and a foundry run must not block on a dead Serena (GI-003).
@@ -1731,9 +1739,9 @@ repair_project_config() {
 # a service verdict outranks it.
 #
 # All six codes are safe to add or reorder below 2 without breaking the only
-# caller: hooks/session-start-serena.sh:104 runs `daemon_rc reconcile || true`
-# and discards this status by explicit design, then asks `doctor` — which owns
-# the machine-readable verdict — what the model should be told.
+# caller: the SessionStart hook invokes reconcile through its own daemon_rc
+# watchdog and DISCARDS this status by explicit design, then asks `doctor` —
+# which owns the machine-readable verdict — what the model should be told.
 #
 # WHAT COUNTS AS DRIFT — two independent conditions, either of which triggers a
 # repair:
