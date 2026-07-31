@@ -58,31 +58,30 @@ SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-# Echo the PID(s) of any Serena MCP server process currently bound to $PORT.
-#
-# uvx (uv tool run) does NOT serve under the PID captured by `$!` at launch — it
-# spawns/execs the real server under a different PID. So the recorded PID alone
-# cannot be trusted to find, monitor, or terminate the daemon. Resolving by port
-# is the only reliable way to locate the actual long-lived process, regardless of
-# how it was started (manual `start` or an OS service manager).
+# Echo the PID of EVERY process currently holding $PORT — Serena or not, one per
+# line. This is the ONLY port-resolver chain in this script; every other function
+# that needs to know who holds the port comes through here.
 #
 # Three resolvers are tried in order because no single one is universally
 # present: lsof ships on macOS but is absent from Debian-slim, Alpine and most
-# container images, where iproute2's `ss` (the fallback cmd_start already leans
-# on at :205) or `fuser` generally is. lsof stays first so behaviour on a host
-# that has it is unchanged. Whichever resolver answers, every candidate PID is
-# still confirmed to be a Serena server by cmdline — never skipped for a
-# "trusted" tool, because cmd_stop SIGKILLs everything this function emits and a
-# misattributed PID would terminate an unrelated user process.
+# container images, where iproute2's `ss` or `fuser` generally is. lsof stays
+# first so behaviour on a host that has it is unchanged.
 #
-# ALWAYS returns 0, reporting only through stdout: cmd_stop consumes this as a
-# bare `targets="$targets $(serena_port_pids)"`, whose exit status IS the
-# substitution's, so a non-zero return here would abort cmd_stop under set -e.
-# An empty result is therefore ambiguous by construction — "no Serena on the
-# port" and "nothing could look" are the same empty string. Any caller that
-# must tell those apart asks serena_port_owners_known().
-serena_port_pids() {
-  local pids="" p cmdline out=""
+# Deliberately UNFILTERED. Callers asking "is a Serena server on the port?" want
+# serena_port_pids() below, which filters this by cmdline. Callers asking "is
+# ANYONE squatting the port?" — cmd_start, deciding between adopting a daemon,
+# refusing a contended port, and launching — need the raw census, because the
+# holders the filter discards are exactly the foreign processes that make a
+# launch fail. Deriving both readings from one chain is the point: a private
+# inline copy of it in cmd_start is what let that step keep an lsof-only view
+# after this chain grew its ss and fuser fallbacks.
+#
+# ALWAYS returns 0, reporting only through stdout — same contract, and for the
+# same reason, as serena_port_pids(). An empty result is ambiguous by
+# construction ("port free" and "nothing could look" are the same empty string);
+# serena_port_owners_known() is what tells those apart.
+serena_port_holder_pids() {
+  local pids=""
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -i :"$PORT" -t 2>/dev/null || true)"
   elif command -v ss >/dev/null 2>&1; then
@@ -97,6 +96,32 @@ serena_port_pids() {
     # Writes the "9121/tcp:" label to stderr and the bare PIDs to stdout.
     pids="$(fuser "$PORT"/tcp 2>/dev/null || true)"
   fi
+  printf '%s' "$pids"
+}
+
+# Echo the PID(s) of any Serena MCP server process currently bound to $PORT.
+#
+# uvx (uv tool run) does NOT serve under the PID captured by `$!` at launch — it
+# spawns/execs the real server under a different PID. So the recorded PID alone
+# cannot be trusted to find, monitor, or terminate the daemon. Resolving by port
+# is the only reliable way to locate the actual long-lived process, regardless of
+# how it was started (manual `start` or an OS service manager).
+#
+# This is serena_port_holder_pids() narrowed to Serena: whichever resolver
+# answered up there, every candidate PID is confirmed to be a Serena server by
+# cmdline — never skipped for a "trusted" tool, because cmd_stop SIGKILLs
+# everything this function emits and a misattributed PID would terminate an
+# unrelated user process.
+#
+# ALWAYS returns 0, reporting only through stdout: cmd_stop consumes this as a
+# bare `targets="$targets $(serena_port_pids)"`, whose exit status IS the
+# substitution's, so a non-zero return here would abort cmd_stop under set -e.
+# An empty result is therefore ambiguous by construction — "no Serena on the
+# port" and "nothing could look" are the same empty string. Any caller that
+# must tell those apart asks serena_port_owners_known().
+serena_port_pids() {
+  local pids="" p cmdline out=""
+  pids="$(serena_port_holder_pids || true)"
   for p in $pids; do
     cmdline="$(ps -p "$p" -o command= 2>/dev/null || true)"
     # Match the server invocation, not a package name: uvx execs the `serena`
@@ -303,34 +328,55 @@ cmd_start() {
     rm -f "$PID_FILE"
   fi
 
-  # 2. Port in-use check.
-  local port_pids=""
-  if command -v lsof >/dev/null 2>&1; then
-    port_pids="$(lsof -i :"$PORT" -t 2>/dev/null || true)"
-    if [ -n "$port_pids" ]; then
-      local found_serena=""
-      local p cmdline
-      for p in $port_pids; do
-        cmdline="$(ps -p "$p" -o command= 2>/dev/null || true)"
-        if printf '%s' "$cmdline" | grep -q "start-mcp-server"; then
-          found_serena="$p"
-        fi
-      done
-      if [ -n "$found_serena" ]; then
-        # Serena already on the port but no valid PID file — adopt it.
-        echo "$found_serena" > "$PID_FILE"
-        ok "Serena daemon already running (PID $found_serena)"
-        exit 0
-      fi
-      fail "port $PORT in use by another process"
-      exit 1
-    fi
-  elif command -v ss >/dev/null 2>&1; then
-    # Linux fallback: detect occupancy only (cannot identify the process).
-    if ss -tlnp "sport = :$PORT" 2>/dev/null | grep -q "$PORT"; then
-      fail "port $PORT in use by another process"
-      exit 1
-    fi
+  # 2. Port in-use check, delegated entirely to the shared resolvers.
+  #
+  # This step used to carry its own inline lsof -> ss chain, and that private
+  # copy went stale the moment serena_port_pids() grew ss and fuser fallbacks:
+  # the adopt-a-running-daemon path lived only in the lsof arm, so an ss-only
+  # host (Debian-slim, Alpine) reported a perfectly healthy daemon as "port in
+  # use by another process", and a fuser-only host ran no port check whatsoever
+  # — the elif chain simply ended — and launched a duplicate against a live
+  # server. Reading both questions off the one chain in the Helpers section is
+  # what keeps every resolver on equal footing.
+  local serena_pids="" port_holders=""
+  # `|| true` is load-bearing here and below: these are plain assignments, not
+  # `local` declarations, so under set -e the command substitution's status is
+  # the statement's.
+  serena_pids="$(serena_port_pids || true)"
+  if [ -n "$serena_pids" ]; then
+    # Serena already on the port but no valid PID file — adopt it. First PID
+    # only, matching how step 6 below resolves real_pid.
+    local found_serena="${serena_pids%% *}"
+    echo "$found_serena" > "$PID_FILE"
+    ok "Serena daemon already running (PID $found_serena)"
+    exit 0
+  fi
+
+  port_holders="$(serena_port_holder_pids || true)"
+  if [ -n "$port_holders" ]; then
+    # Something holds the port and the cmdline filter cleared none of them as a
+    # Serena server, so this is genuine contention. Refuse rather than spawn a
+    # process that cannot bind.
+    fail "port $PORT in use by another process"
+    exit 1
+  fi
+
+  # Nothing was found holding the port — which is a real "free" only if a
+  # resolver actually managed to look. serena_port_owners_known() separates the
+  # two, and they differ only in whether the uncertainty is said out loud: both
+  # go on to launch.
+  #
+  # Launching is the right default even when the port could not be read. This
+  # path is now automatic — the SessionStart hook runs `start` whenever doctor
+  # reports nothing serving — so refusing on a host with no usable resolver
+  # would leave that host permanently without a daemon, strictly worse than the
+  # inline check this replaces, which in that situation fell through and
+  # launched silently. The launch is also self-limiting: if something really
+  # does hold the port, the bind fails and step 6 reports it with the same
+  # exit 1. What changes is that "I could not tell" is no longer silently
+  # indistinguishable from "the port is free".
+  if ! serena_port_owners_known; then
+    warn "could not determine whether port $PORT is free; starting anyway"
   fi
 
   # 3. uvx availability.
