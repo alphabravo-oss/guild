@@ -169,23 +169,34 @@ fi
 
 # Wall-clock bound on the probe, in seconds. Rule 1 above holds on the exit-code
 # axis for free; without this it does NOT hold on the latency axis. doctor's own
-# curl handshake is capped at 3s (serena-daemon.sh:248), but the lsof/ps,
-# launchctl/systemctl and drift-comparison steps around it carry no bound of
-# their own — so a wedged launchctl, a stuck systemctl or a hung NFS mount under
-# $HOME would stall the START of a foundry run indefinitely. That is the
-# blocking GI-003 forbids, arriving by latency instead of by exit status.
+# MCP handshake is bounded from inside serena-daemon.sh, by the `curl
+# --max-time` in serena_mcp_healthy — but the lsof/ps, launchctl/systemctl and
+# drift-comparison steps around it carry no bound of their own, so a wedged
+# launchctl, a stuck systemctl or a hung NFS mount under $HOME would stall the
+# START of a foundry run indefinitely. That is the blocking GI-003 forbids,
+# arriving by latency instead of by exit status.
 #
-# 5s is exactly the per-invocation bound the SessionStart hook applies to this
-# same subcommand on this same script (session-start-serena.sh:47), and it is
-# deliberately kept equal: two different bounds on one call would be a
-# maintenance trap. Only the budgets AROUND the call differ, and neither differs
-# in a direction that argues for a bigger number here. The hook may spend
-# 4*5+4=24s because it can issue up to four subcommands around a SETTLE_SECONDS
-# wait, and hooks.json's "timeout": 30 stands behind it as a second, outer
-# backstop. This preflight issues exactly ONE subcommand and has no outer
-# backstop at all, which makes this value the only bound that exists on this
-# path — a reason to keep it tight, not to relax it. Change it only in step with
-# session-start-serena.sh:47.
+# This bound is deliberately kept EQUAL to DAEMON_TIMEOUT in
+# hooks/session-start-serena.sh — the per-invocation bound that hook applies to
+# this same doctor subcommand on this same script. Two callers of one subcommand
+# must not disagree about how long it may take, so change the two only in step.
+# That is a mutual obligation, not a one-way one: DAEMON_TIMEOUT's own comment
+# names SERENA_PROBE_TIMEOUT and asks the same of anyone editing from that side.
+#
+# Only the budgets AROUND the call differ, and not in a direction that argues
+# for a bigger number here. The hook can issue several bounded subcommands in
+# one session start, and its hooks.json entry carries a "timeout" key behind it
+# as a second, framework-enforced backstop. This preflight issues exactly ONE
+# subcommand and has no outer backstop at all, which makes this value the only
+# bound that exists on this path — a reason to keep it tight, not to relax it.
+#
+# Deliberately, no figure or line number from either of those files is restated
+# here. Three successive cycles restated one; each time the other file moved and
+# left a false premise behind in this one, and the argument above was then being
+# re-derived from stale inputs (concerns.md C-021). Names cross a file boundary
+# intact, numbers and line pointers do not. The hook's worst-case arithmetic is
+# maintained in session-start-serena.sh beside the constants it sums, which is
+# the only place it can stay true; read it there.
 SERENA_PROBE_TIMEOUT=5
 
 # Poll granularity while waiting on the probe, in seconds. Sets how long the
@@ -241,10 +252,12 @@ serena_probe_rc() {
   #
   # $SECONDS advances on whole-second boundaries of the shell's own clock, which
   # this script may have started part-way through, so the kill lands anywhere in
-  # (SERENA_PROBE_TIMEOUT-1, SERENA_PROBE_TIMEOUT] — 4s to 5s at the current
-  # value, not 5s on the nose. Erring early is the direction GI-003 favours, and
-  # even the 4s floor stays clear of doctor's real worst case: a curl handshake
-  # capped at 3s plus a handful of fast local queries.
+  # (SERENA_PROBE_TIMEOUT-1, SERENA_PROBE_TIMEOUT], not on the nose. Erring
+  # early is the direction GI-003 favours, and even that floor stays clear of
+  # doctor's real worst case — one MCP handshake, bounded by serena_mcp_healthy's
+  # own `curl --max-time`, plus a handful of fast local queries. That clearance
+  # is a RELATIONSHIP, not a constant: it holds only while that --max-time stays
+  # under SERENA_PROBE_TIMEOUT-1. Check it by name over there if either moves.
   deadline=$(( SECONDS + SERENA_PROBE_TIMEOUT ))
   expired=false
   while kill -0 "$probe_pid" 2>/dev/null; do
