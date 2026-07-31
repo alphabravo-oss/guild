@@ -700,6 +700,45 @@ render_service_definition() {
         fail "uvx not found; cannot render launchd plist"
         return 2
       fi
+      # PATH for the launchd job — the macOS counterpart of the systemd unit's
+      # Environment=PATH line below, which macOS went without.
+      #
+      # launchd hands a job a bare PATH=/usr/bin:/bin:/usr/sbin:/sbin. That is
+      # enough to EXEC the daemon, because ProgramArguments carries an absolute
+      # uvx path — which is exactly why the gap stayed invisible: the daemon
+      # loads, runs, and answers an MCP handshake perfectly. What it cannot do
+      # is spawn its language servers, because Serena's LSP manager launches
+      # those by BARE NAME. On a Homebrew Mac node/npx/uvx all live outside
+      # those four directories, so every find_symbol / get_symbols_overview
+      # call fails with "node is not installed" against a daemon that reports
+      # healthy on every other axis.
+      #
+      # Derived, never hardcoded: /opt/homebrew/bin is Apple-silicon-only and
+      # /usr/local/bin is Intel, so the tool directories are read off the real
+      # resolved binaries. node is resolved defensively — absent, it is simply
+      # omitted rather than rendering an empty element, since a Python-only
+      # install is still a working install.
+      #
+      # The system directories are appended as a strict SUPERSET of launchd's
+      # default; a fix that widens PATH must not quietly narrow it. Order is
+      # fixed and entries are deduplicated so the bytes stay REPRODUCIBLE:
+      # reconcile rewrites and reloads the job on any byte difference, so a
+      # render that varied between callers would bounce the daemon on every
+      # session start instead of converging silently.
+      local uvx_dir node_path node_dir dir svc_path=""
+      uvx_dir="$(dirname "$uvx_path")"
+      node_path="$(command -v node || true)"
+      node_dir=""
+      if [ -n "$node_path" ]; then
+        node_dir="$(dirname "$node_path")"
+      fi
+      for dir in "$uvx_dir" "$node_dir" /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+        [ -n "$dir" ] || continue
+        case ":$svc_path:" in
+          *":$dir:"*) continue ;;
+        esac
+        svc_path="${svc_path:+$svc_path:}$dir"
+      done
       # Launch site 2 of 2. cmd_start()'s `nohup uvx` invocation is the other,
       # and the two carry an IDENTICAL flag set — a divergence between them is
       # what produced the original incident. launchd gives every token its own
@@ -726,6 +765,11 @@ render_service_definition() {
     <string>--port</string>
     <string>$PORT</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$svc_path</string>
+  </dict>
   <key>WorkingDirectory</key>
   <string>$HOME</string>
   <key>RunAtLoad</key>
