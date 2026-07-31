@@ -83,6 +83,61 @@ INSTALL_PROBE_SECONDS=15
 # returns at about that 1.5s mark, not at 4s.
 RECONCILE_PROBE_SECONDS=4
 
+# Wall-clock bounds, in seconds, on ONE service-manager call issued by
+# cmd_reconcile's repair path. Enforced by run_bounded(). Only the repair path
+# pays them, so a converged session start neither waits on nor prints anything
+# because of them (GI-008).
+#
+# WHY THE BOUND LIVES HERE and not only in the caller. The SessionStart hook
+# already runs this subcommand under its own RECONCILE_TIMEOUT watchdog, but
+# that bounds the caller's PATIENCE, not this process's progress. `launchctl
+# unload` of a job that ignores SIGTERM blocks for launchd's own ExitTimeOut,
+# and `systemctl restart` blocks on unit start for systemd's TimeoutStartSec;
+# both defaults exceed anything a session start tolerates. The watchdog's only
+# recourse against either is to kill this process mid-repair, which can leave
+# the definition written and the service NOT reloaded, and makes exit 4 and
+# exit 5 unreachable on exactly the legacy-agent (A-003) and wedged-daemon
+# branches this file exists for. A bound INSIDE the call site is what lets the
+# repair either finish or report honestly.
+#
+# The two numbers are UNEQUAL, deliberately, because the calls are not alike.
+#
+# A supervisor-only call — both launchctl unloads, launchctl load, systemctl
+# daemon-reload, systemctl enable — talks to the service manager and returns.
+# It does NOT wait on the daemon: `launchctl load` returns in 0.020s while the
+# daemon it just spawned takes 1.473s more to bind the port, which is the same
+# measurement RECONCILE_PROBE_SECONDS above is drawn from. 2s is 100x that, so
+# no working machine reaches it.
+RECONCILE_SERVICE_CALL_SECONDS=2
+
+# `systemctl --user restart`, by contrast, BLOCKS on the unit starting, and this
+# unit is Type=forking with ExecStart routed through this script's own `start` —
+# which takes its 2s liveness sleep before returning. A real Linux restart is
+# therefore seconds, not milliseconds, and bounding it at the figure above would
+# manufacture a false exit 4 on every healthy repair while systemd carried the
+# job on regardless (killing the systemctl client does not cancel a queued job).
+# 8s clears the observed path with headroom while staying an order of magnitude
+# under systemd's own default.
+RECONCILE_UNIT_START_SECONDS=8
+
+# Poll granularity while waiting on a bounded call, in seconds. Sets how long
+# the common case over-waits after the call has already answered against how
+# many `sleep` forks the worst case costs.
+SERVICE_CALL_POLL_INTERVAL=0.2
+
+# RESIDUAL, stated rather than papered over. These bounds make the repair path
+# finite where it was previously open-ended, and on the path that ENDS in an
+# expiry they keep it well inside the hook's patience — which is what makes
+# exit 4 reachable again. They do not make every path fit: a run where the
+# best-effort calls burn their full bounds AND the status-bearing call then
+# succeeds AND the post-load probe runs to RECONCILE_PROBE_SECONDS can still
+# outlast the hook's watchdog. That compound is improbable — a wedged unload
+# normally makes the following load fail, which takes the expiry path — and it
+# truncates only the exit-5 REPORT, after every mutation has already happened.
+# Closing it needs the hook's own bound re-derived against these; that
+# arithmetic is maintained beside RECONCILE_TIMEOUT in the hook, which is the
+# only place it can stay true. Check it by name over there if either moves.
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 # Echo the PID of EVERY process currently holding $PORT — Serena or not, one per
 # line. This is the ONLY port-resolver chain in this script; every other function
@@ -1702,15 +1757,123 @@ repair_project_config() {
   return 1
 }
 
+# ── bounded command execution ─────────────────────────────────────────────────
+# Run a command under a wall-clock bound and RETURN its exit status, reporting
+# an expiry as 124 the way timeout(1) would.
+#
+# DELIBERATE DUPLICATION — this is a third copy of a mechanism that already
+# exists twice, as serena_probe_rc() in scripts/setup-foundry.sh and daemon_rc()
+# in hooks/session-start-serena.sh. A shared sourced helper was considered again
+# here and rejected again, for a reason that is STRONGER in this file than in
+# either of those: both of them are CALLERS of this script, whereas this is the
+# script itself, so a new sourced file would put `start`, `stop`, `status`,
+# `doctor` and `reconcile` alike behind a load path that can be missing on a
+# partially-synced plugin directory (A-AUTO-007). The two existing copies also
+# ECHO their status and hard-code the command they bound; this one RETURNS the
+# status and bounds any command, so sharing would mean rewriting all three, not
+# reusing one. Fix bugs in ALL THREE.
+#
+# No external binary is involved, and that is the entire point. timeout(1) is
+# absent from stock macOS — it arrives only with coreutils, as gtimeout or as a
+# PATH-shadowing gnubin — so detecting it and degrading to an unbounded call
+# when it is missing leaves no bound at all on the priority platform (A-007),
+# which is precisely the machine population this plugin reaches through a public
+# marketplace in an unknown install state (A-AUTO-007). A bound that is absent
+# where it is most needed is not a bound. Everything below is bash builtins plus
+# ps/kill/sleep, so the bound holds everywhere this script itself runs.
+#
+# The subshell is load-bearing, and it lives INSIDE this function rather than at
+# the call site: it confines job control to the bounded command, and it is where
+# bash writes the "Terminated" job notice for a killed one. Its stderr therefore
+# goes to /dev/null to discard that notice, and the command's OWN stderr is
+# routed around that to fd 3 — so a genuine launchctl or systemctl diagnosis
+# still reaches the user, and a caller that wants the command silenced composes
+# exactly as it did on a bare call by writing `run_bounded ... 2>/dev/null`.
+#
+# Callers must guard the return under set -e (`if !` or `|| true`).
+run_bounded() {
+  local budget="$1"; shift
+  (
+    # fd 3 = the real stderr, captured BEFORE fd 2 is silenced. Redirections in
+    # one exec are processed left to right, so this order is what makes fd 3 the
+    # caller's stderr rather than a second handle on /dev/null.
+    exec 3>&2 2>/dev/null
+
+    local job_pid deadline expired rc pgid target
+
+    # Job control, just long enough to fork the command, so it becomes the
+    # leader of its OWN process group. Killing the leader alone is not enough:
+    # bash does not forward signals to whatever the command shells out to, and a
+    # wedged service-manager call would outlive it as an orphan still holding
+    # the very resource that timed us out. Signalling the group takes the tree.
+    #
+    # stdin comes from /dev/null because under job control a background job that
+    # reads the terminal is STOPPED by SIGTTIN rather than killed, and a stopped
+    # job would sit in the wait below neither finishing nor dying.
+    set -m
+    "$@" 2>&3 </dev/null &
+    job_pid=$!
+    set +m
+
+    # Poll, rather than race a background killer against the command. Escalation
+    # then runs on this thread, so there is no second process to cancel and no
+    # window where cancelling it skips the follow-up KILL and strands a child
+    # that ignored TERM.
+    #
+    # The deadline is wall-clock via $SECONDS rather than a count of iterations,
+    # so the bound stays honest even where `sleep` rejects a fractional argument
+    # (some busybox builds). There the guarded sleep fails, this loop spins, and
+    # it still ends on the same second — degraded to a busy wait, never to an
+    # unbounded one and never to a wrong verdict.
+    deadline=$(( SECONDS + budget ))
+    expired=false
+    while kill -0 "$job_pid" 2>/dev/null; do
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        expired=true
+        break
+      fi
+      sleep "$SERVICE_CALL_POLL_INTERVAL" || true
+    done
+
+    if [ "$expired" = true ]; then
+      # Never signal a process group we do not own. `kill -TERM -$pid` on a pid
+      # that is NOT a group leader lands on THIS script's group — and this
+      # script runs inside the user's session, so that is the user's whole
+      # session. So the group id is read back and the negative form is used only
+      # where it provably equals the pid; anything else, including a ps that
+      # answers nothing, falls back to signalling the single process. Read here
+      # rather than at fork time because the command is known to be alive at
+      # this instant, whereas one that had already exited would answer nothing.
+      pgid="$(ps -o pgid= -p "$job_pid" 2>/dev/null | tr -d ' ' || true)"
+      if [ "$pgid" = "$job_pid" ]; then
+        target="-$job_pid"
+      else
+        target="$job_pid"
+      fi
+      kill -TERM "$target" 2>/dev/null || true
+      sleep 0.5 || true
+      kill -KILL "$target" 2>/dev/null || true
+    fi
+
+    rc=0
+    wait "$job_pid" || rc=$?
+    # A signalled command reports 143 or 137. Normalise to 124 so "the bound
+    # expired" carries one code on every path.
+    if [ "$expired" = true ]; then rc=124; fi
+    exit "$rc"
+  )
+}
+
 # ── reconcile ─────────────────────────────────────────────────────────────────
 # Converge the installed OS service definition onto whatever the current source
 # renders, repairing drift automatically and without being asked. This is
 # invoked on every session start, so the converged path must cost nothing and
 # say nothing.
 #
-# EXIT CODE CONTRACT — stable and machine-consumed. The SessionStart hook
-# branches on the exit code and MUST NOT parse stdout text: the wording below is
-# for humans and may be reworded at any time, the codes may not.
+# EXIT CODES — one code per terminal state, so a failed repair says WHICH stage
+# failed rather than just "non-zero". Read WHAT IS ACTUALLY FROZEN HERE below
+# before treating any of them as a contract: unlike doctor's, these are a
+# diagnosis for whoever is reading a broken machine, not a value a caller reads.
 #
 #   0  converged | repaired  nothing needed, or drift was found and fully
 #                            repaired. Both are success — a caller cannot and
@@ -1723,7 +1886,12 @@ repair_project_config() {
 #   3  write-failed          drift was found but the new definition could not be
 #                            written to disk
 #   4  reload-failed         the new definition was written, but the service
-#                            manager would not reload it
+#                            manager would not reload it — either it refused
+#                            outright, or its call did not return inside the
+#                            bound run_bounded holds it to. Those are one state
+#                            deliberately: a supervisor that will not answer in
+#                            bounded time has not reloaded anything, and an
+#                            expiry earns no code of its own
 #   5  unconfirmed           the definition was written AND the service manager
 #                            reloaded it, but no MCP handshake came back inside
 #                            the probe budget. The supervisor accepting a job is
@@ -1738,10 +1906,43 @@ repair_project_config() {
 # actually serving. 6 is never silent — it warns first — so nothing is lost when
 # a service verdict outranks it.
 #
-# All six codes are safe to add or reorder below 2 without breaking the only
-# caller: the SessionStart hook invokes reconcile through its own daemon_rc
-# watchdog and DISCARDS this status by explicit design, then asks `doctor` —
-# which owns the machine-readable verdict — what the model should be told.
+# WHAT IS ACTUALLY FROZEN HERE — established by reading the call sites, not by
+# assuming. The distinction is between two DIFFERENT tables, and confusing them
+# is the trap this paragraph exists to close.
+#
+#   NOTHING BRANCHES ON THE CODES ABOVE. The SessionStart hook is reconcile's
+#   only caller: it runs the subcommand through its own daemon_rc watchdog under
+#   RECONCILE_TIMEOUT and DISCARDS this status by explicit design, then asks
+#   `doctor` what the model should be told. The foundry preflight never invokes
+#   reconcile at all — commands/start.md forbids foundry from running any repair
+#   subcommand, and the preflight bounds `doctor` alone. So no caller can be
+#   broken by a change to the codes above. They are documented, and kept stable,
+#   because a human reading a failed repair needs to know what the number meant
+#   — not because a script reads it.
+#
+#   `doctor`'s SEPARATE 0-4 table is the frozen one. BOTH the hook and the
+#   foundry preflight branch on it, which is exactly why GI-009 forbids parsing
+#   its stdout: the integer is doctor's contract. A renumbering that is free
+#   here is breaking there. Do not carry a conclusion from one table to the
+#   other in either direction.
+#
+# An earlier revision of this paragraph claimed the codes were "safe to add or
+# reorder below 2". Nothing exists below 2 except 0, so that described an empty
+# set and gave a future editor no usable rule.
+#
+# BOUNDED SERVICE-MANAGER CALLS — every launchctl and systemctl call on the
+# repair path runs under run_bounded, and an expiry is MAPPED onto the table
+# above rather than given a code of its own:
+#
+#   * A STATUS-BEARING call — `launchctl load`, `systemctl restart` — that
+#     expires is exit 4, for the reason recorded in that entry.
+#   * A BEST-EFFORT call — both unloads, `daemon-reload`, `enable` — that
+#     expires is absorbed exactly as its non-zero status already was, and the
+#     post-load health probe adjudicates the consequence instead of this code
+#     guessing at it. A legacy agent that survived its unload still holds $PORT,
+#     so the handshake does not come back and the run ends at exit 5. That is
+#     the honest verdict rather than a lost one, which is the whole point of
+#     bounding these calls from inside this function.
 #
 # WHAT COUNTS AS DRIFT — two independent conditions, either of which triggers a
 # repair:
@@ -1840,7 +2041,15 @@ cmd_reconcile() {
 
       if [ "$legacy" = "yes" ]; then
         info "Removing legacy launchd agent (com.codsworth.serena)..."
-        launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
+        # Best-effort and bounded: this is the agent most likely to be wedged,
+        # since its command can no longer be satisfied. An expiry is absorbed
+        # here and adjudicated by the post-load probe — see BOUNDED
+        # SERVICE-MANAGER CALLS in the header above. The file is removed either
+        # way, so the legacy trigger still self-clears and the next run is
+        # silent. Kept 2>/dev/null: unloading an agent that is present on disk
+        # but not loaded is a normal outcome here, not something to report.
+        run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
+          launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
         rm -f "$LEGACY_PLIST_FILE"
       fi
 
@@ -1868,9 +2077,18 @@ cmd_reconcile() {
       fi
 
       if [ "$reload" = "yes" ]; then
-        launchctl unload "$PLIST_FILE" 2>/dev/null || true
-        if ! launchctl load "$PLIST_FILE"; then
-          fail "definition written but launchctl could not load $PLIST_FILE"
+        # Both bounded. The unload is best-effort — 2>/dev/null because "not
+        # currently loaded" is the ordinary case on a machine being repaired for
+        # the first time — and an expiry there is absorbed; the load below is
+        # status-bearing, so its expiry is a verdict. launchctl's own stderr is
+        # deliberately NOT silenced on the load: it carries launchd's reason,
+        # which is the only diagnosis a user gets on a machine nobody debugging
+        # this can see (A-AUTO-007).
+        run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
+          launchctl unload "$PLIST_FILE" 2>/dev/null || true
+        if ! run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
+             launchctl load "$PLIST_FILE"; then
+          fail "definition written but launchctl could not load $PLIST_FILE (it refused, or did not return within ${RECONCILE_SERVICE_CALL_SECONDS}s)"
           exit 4
         fi
 
@@ -1938,10 +2156,21 @@ cmd_reconcile() {
         fail "definition written but systemctl is unavailable; unit not reloaded"
         exit 4
       fi
-      systemctl --user daemon-reload 2>/dev/null || true
-      systemctl --user enable serena-daemon.service 2>/dev/null || true
-      if ! systemctl --user restart serena-daemon.service; then
-        fail "definition written but systemctl could not restart serena-daemon.service"
+      # All three are bounded, and the restart is bounded DIFFERENTLY on
+      # purpose. daemon-reload and enable are supervisor-only bookkeeping and
+      # return immediately; restart blocks on the unit actually starting, and
+      # this unit's ExecStart routes through this script's own `start`, so a
+      # perfectly healthy restart legitimately takes seconds. Holding it to the
+      # short bound would manufacture a false exit 4 on every good repair while
+      # systemd carried the job on regardless — killing the systemctl client
+      # does not cancel a queued job. See the two constants for the derivation.
+      run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
+        systemctl --user daemon-reload 2>/dev/null || true
+      run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
+        systemctl --user enable serena-daemon.service 2>/dev/null || true
+      if ! run_bounded "$RECONCILE_UNIT_START_SECONDS" \
+           systemctl --user restart serena-daemon.service; then
+        fail "definition written but systemctl could not restart serena-daemon.service (it refused, or the unit did not start within ${RECONCILE_UNIT_START_SECONDS}s)"
         exit 4
       fi
 
