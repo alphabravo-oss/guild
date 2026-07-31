@@ -42,14 +42,49 @@ DAEMON_TIMEOUT=5
 
 # RECONCILE_TIMEOUT covers reconcile alone — the one subcommand the preflight
 # never calls, which is why it can diverge without breaking the equality above.
-# reconcile's CONVERGED path is 0.025s, but its REPAIR path now ends in a
-# post-load health probe (serena-daemon.sh, RECONCILE_PROBE_SECONDS=4) whose
-# budget is only checked AFTER each attempt, so a final attempt can begin just
-# under budget and then spend curl's full 3s cap: 4 + 3 = 7s worst case. Under
-# the old shared 5s bound that repair was killed mid-probe — recorded as concern
-# C-019 while the missing timeout(1) on stock macOS still masked it. 8s lets the
-# repair finish and report instead of being truncated.
-RECONCILE_TIMEOUT=8
+#
+# reconcile's CONVERGED path is 0.025s and is what nearly every session start
+# takes. The REPAIR path is what this is sized for, and it runs TWO probes in
+# series rather than one. The longest is the legacy-agent branch — a pre-rename
+# com.codsworth.serena plist present (A-003) while the current definition has
+# NOT drifted — because only that branch consults health to decide whether a
+# legacy-only removal also warrants bouncing the daemon:
+#
+#   pre-reload health probe    3   the reload decision on the legacy-only
+#                                  branch; capped by that probe's own curl
+#                                  --max-time inside serena-daemon.sh
+#   3x service-manager call    -   unload legacy, unload current, load current;
+#                                  see the RESIDUAL note below
+#   post-load health probe     7   serena-daemon.sh's RECONCILE_PROBE_SECONDS
+#                                  (4) plus one more curl --max-time (3): that
+#                                  budget is checked only AFTER each attempt, so
+#                                  a final attempt can begin just under it and
+#                                  then spend the full cap
+#                               --
+#                               10
+#
+# plus 2s for the three service-manager calls, which measure 0.020s apiece. 12s.
+# The drifted branch reloads unconditionally and so skips the first probe; it is
+# strictly shorter and covered by the same bound.
+#
+# An earlier revision set this to 8 from a 7s figure that counted the post-load
+# probe ONLY. Concern C-019 repeated that same incomplete sum. Both missed the
+# pre-reload probe and the unloads, so the bound was under the path it claimed
+# to cover and truncated the very repair it was raised for.
+#
+# RESIDUAL — stated rather than papered over, because no finite value fixes it.
+# `launchctl unload` of a job that ignores SIGTERM blocks for launchd's own
+# ExitTimeOut, and the Linux arm's `systemctl restart` blocks on unit start for
+# systemd's TimeoutStartSec. Both defaults exceed anything a session start can
+# tolerate, so when one of them blocks, the watchdog truncates reconcile and its
+# exit 5 ("written and reloaded but unconfirmed") is lost. Deliberately not
+# chased: reconcile mutates nothing after the load — everything past it is
+# warn/ok/exit — this hook discards reconcile's status by design, and doctor
+# runs immediately after and reports the real state either way. 12s buys the
+# case that is actually common on the two machine populations this hook exists
+# for, a stale legacy agent or a wedged daemon whose service manager still
+# answers promptly.
+RECONCILE_TIMEOUT=12
 
 # Settle window, in seconds, between a doctor verdict of "installed but stopped"
 # and acting on it. See the long comment at the settle block below for why this
@@ -68,21 +103,26 @@ DAEMON_POLL_INTERVAL=0.2
 # The longest path this hook can take is the stopped-daemon repair path, which
 # issues four subcommands around one settle wait:
 #
-#     reconcile          RECONCILE_TIMEOUT     8
+#     reconcile          RECONCILE_TIMEOUT    12
 #     doctor             DAEMON_TIMEOUT        5
 #     settle sleep       SETTLE_SECONDS        4
 #     doctor re-probe    DAEMON_TIMEOUT        5
 #     start              DAEMON_TIMEOUT        5
 #                                             --
-#                                             27
+#                                             31
 #
 # plus the watchdog's own escalation: an expiry costs a TERM, a 0.5s grace and a
-# KILL, so four expiries add 2.0s. Worst case 29s — an upper bound rather than
+# KILL, so four expiries add 2.0s. Worst case 33s — an upper bound rather than
 # an estimate, because the watchdog can only fire EARLY: $SECONDS ticks on whole
 # second boundaries of a clock this script may have started part-way through, so
 # a bound of N expires somewhere in (N-1, N] and never past N.
 #
-# hooks.json carries "timeout": 36 as an outer, framework-enforced backstop, and
+# This is the PATHOLOGICAL total — every subcommand hanging to its own bound in
+# one session. A healthy machine takes the converged reconcile and one doctor
+# and is done in well under a second, having reached neither the settle nor the
+# start. Growing the sum is therefore paid only by machines already broken.
+#
+# hooks.json carries "timeout": 40 as an outer, framework-enforced backstop, and
 # the 7s gap between the two is deliberate: if every subcommand hung, the
 # per-invocation bounds must expire FIRST so this script survives to report the
 # hang through additionalContext. Were the two equal the framework could kill
