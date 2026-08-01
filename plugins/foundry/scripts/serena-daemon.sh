@@ -294,7 +294,8 @@ serena_port_owners_known() {
     fi
     # A listener exists, so the answer is authoritative only if -p actually
     # attributed it: ss can report occupancy without naming an owner, which is
-    # the case cmd_start's ss branch (:205) already notes it cannot resolve.
+    # the case serena_port_holder_pids()'s own ss branch already notes it
+    # cannot resolve.
     if printf '%s' "$listen" | grep -q 'pid='; then
       return 0
     fi
@@ -1932,7 +1933,16 @@ run_bounded() {
 #   0  converged | repaired  nothing needed, or drift was found and fully
 #                            repaired. Both are success — a caller cannot and
 #                            need not tell them apart from the code alone.
-#   1  unsupported           OS is neither Darwin nor Linux; nothing was touched
+#   1  unsupported           OS is neither Darwin nor Linux, so no service
+#                            definition was evaluated, written or reloaded.
+#                            This is NOT a claim that nothing on disk changed.
+#                            The project-config pass runs BEFORE this branch —
+#                            deliberately, so a host with no service manager
+#                            still gets that repair — and by the time this code
+#                            is returned it may already have rewritten
+#                            .serena/project.yml, leaving a backup beside it.
+#                            See SILENCE, NOT ANY CODE below for the property a
+#                            caller actually wants
 #   2  render-failed         the definition could not be rendered, so drift
 #                            could not even be determined. Nothing is written
 #                            and nothing is unloaded: a machine that cannot be
@@ -1951,14 +1961,37 @@ run_bounded() {
 #                            the probe budget. The supervisor accepting a job is
 #                            not evidence the job runs — this is the state the
 #                            29-day incident sat in while reporting success.
-#   6  config-unrepaired     the OS service converged, but this project's
+#   6  config-unrepaired     no service-definition failure occurred — the
+#                            service either converged or has no manager on this
+#                            host at all — but this project's
 #                            .serena/project.yml carries a languages list Serena
-#                            cannot load and the repair declined to guess at it
+#                            cannot load and the repair did not complete: it
+#                            either declined to guess at an unrecognised shape,
+#                            or could not take its backup, or could not write
+#                            back what it had already backed up
 #
-# Precedence when more than one applies: the SERVICE-DEFINITION verdicts (2, 3,
-# 4, 5) outrank 6, because a project config matters only once something is
-# actually serving. 6 is never silent — it warns first — so nothing is lost when
-# a service verdict outranks it.
+# Precedence when more than one applies: a service-definition FAILURE (2, 3, 4,
+# 5) outranks 6, because a project config matters only once something is
+# actually serving.
+#
+# 1 does NOT outrank 6, and that asymmetry is deliberate. 1 reports the ABSENCE
+# of a service dimension on this host rather than a failure within one — there
+# is nothing to converge and never will be — so when the config pass has left a
+# verdict it is the only actionable finding remaining and it wins. Earlier this
+# arm returned 1 unconditionally, which made 6 unreachable on the one platform
+# where it is the whole story. Nothing is lost in either direction: 6 is never
+# silent (it warns or fails first) and 1's own `fail` line always prints.
+#
+# SILENCE, NOT ANY CODE, IS WHAT PROVES NOTHING WAS TOUCHED. No single code
+# above carries that guarantee — 1 does not, because the config pass precedes
+# it — and a caller that needs one should read the OUTPUT instead. Every path
+# that changes machine state announces itself: repair_project_config warns on a
+# rewrite and warns or fails on a refusal, each drift branch opens with an
+# `info`, the legacy removal opens with its own, and every failure ends in a
+# `warn` or a `fail`. No path mutates anything quietly. So a run that printed
+# nothing changed nothing — which is exactly the converged session start, and
+# exactly what GI-008 requires of it. The converse does not hold and is not
+# claimed: 1 and 2 both print while changing no service state.
 #
 # WHAT IS ACTUALLY FROZEN HERE — established by reading the call sites, not by
 # assuming. The distinction is between two DIFFERENT tables, and confusing them
@@ -1990,7 +2023,8 @@ run_bounded() {
 #
 #   * A STATUS-BEARING call — `launchctl load`, `systemctl restart` — that
 #     expires is exit 4, for the reason recorded in that entry.
-#   * A BEST-EFFORT call — both unloads, `daemon-reload`, `enable` — that
+#   * A BEST-EFFORT call — both unloads, `daemon-reload`, `enable`,
+#     `reset-failed` — that
 #     expires is absorbed exactly as its non-zero status already was, and the
 #     post-load health probe adjudicates the consequence instead of this code
 #     guessing at it. A legacy agent that survived its unload still holds $PORT,
@@ -2030,7 +2064,18 @@ run_bounded() {
 # the definition but the reload fails (exit 4), later runs see a matching
 # artifact and stay silent rather than retrying the reload. Reporting that state
 # is `doctor`'s job (installed-but-stopped); repair is not re-attempted for a
-# condition that already looks converged on disk.
+# condition that already looks converged on disk. That division of labour is
+# only safe because doctor genuinely runs afterwards — the SessionStart hook
+# calls it on every session and acts on its code — so the machine is not left
+# unattended, only unrepaired.
+#
+# It is safe for a second reason too, added after this exact trap was found on
+# Linux: the reload failure most likely to be PERMANENT is no longer reachable.
+# A unit that had spent its start-limit budget stayed latched in `failed`, so
+# every restart reconcile attempted was refused on account of the definition it
+# had just replaced, and the run ended at exit 4 with a matching artifact on
+# disk and silence forever after. The Linux arm now clears that latch as part of
+# the repair; see the reset-failed call there.
 cmd_reconcile() {
   local os rendered="" cfg_rc=0 pc_rc=0 probe_rc=0
   os="$(uname)"
@@ -2210,9 +2255,10 @@ cmd_reconcile() {
         fail "definition written but systemctl is unavailable; unit not reloaded"
         exit 4
       fi
-      # All three are bounded, and the restart is bounded DIFFERENTLY on
-      # purpose. daemon-reload and enable are supervisor-only bookkeeping and
-      # return immediately; restart blocks on the unit actually starting, and
+      # All four are bounded, and the restart is bounded DIFFERENTLY on
+      # purpose. daemon-reload, enable and reset-failed are supervisor-only
+      # bookkeeping and return immediately; restart blocks on the unit
+      # actually starting, and
       # this unit's ExecStart routes through this script's own `start`, so a
       # perfectly healthy restart legitimately takes seconds. Holding it to the
       # short bound would manufacture a false exit 4 on every good repair while
@@ -2222,6 +2268,39 @@ cmd_reconcile() {
         systemctl --user daemon-reload 2>/dev/null || true
       run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
         systemctl --user enable serena-daemon.service 2>/dev/null || true
+
+      # Clear a latched failure before restarting, or the repair cannot land.
+      # Once systemd spends the unit's start-limit budget it parks the unit in
+      # `failed` and REFUSES every subsequent start until that state is reset —
+      # daemon-reload does not clear it. So a unit that crash-looped under the
+      # OLD definition could never be started from the NEW one: reconcile wrote
+      # the file, the restart was refused, the run ended at exit 4, and from
+      # then on the artifact MATCHED, so every later session took the silent
+      # converged path and the machine stayed wedged. Advising the reset in a
+      # message, which is all detect_crash_loop can do, is not a repair — it is
+      # the same silent degradation this subcommand exists to end (A-014).
+      #
+      # This does NOT blind crash-loop detection, and the reasoning is what
+      # makes it safe rather than the call being small:
+      #   * It is gated on DRIFT, so it is not a per-session counter reset. A
+      #     converged start never reaches this line, and drift self-clears after
+      #     one repair.
+      #   * The state it clears is a verdict on an ExecStart that was just
+      #     overwritten. Carrying it forward would block the repair using the
+      #     failure of the very thing being repaired.
+      #   * The signal returns on its own. A new definition that still cannot
+      #     run re-spends the unit's start-limit budget inside one window and
+      #     latches again, so what detect_crash_loop and doctor read afterwards
+      #     describes the definition actually installed.
+      #   * Nothing is masked in between: await_daemon_healthy below adjudicates
+      #     this same repair and exits 5 loudly when the daemon does not serve.
+      #   * The Darwin arm has always done the equivalent — unload+load resets
+      #     launchd's successive-crash count on every repair — so this closes an
+      #     asymmetry in which only Linux could be blocked from repairing
+      #     itself, rather than opening a new one (A-007).
+      run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
+        systemctl --user reset-failed serena-daemon.service 2>/dev/null || true
+
       if ! run_bounded "$RECONCILE_UNIT_START_SECONDS" \
            systemctl --user restart serena-daemon.service; then
         fail "definition written but systemctl could not restart serena-daemon.service (it refused, or the unit did not start within ${RECONCILE_UNIT_START_SECONDS}s)"
@@ -2251,6 +2330,14 @@ cmd_reconcile() {
       ;;
     *)
       fail "unsupported OS: $os"
+      # There is no service dimension on this host, so a verdict left by the
+      # config pass above is the only actionable one and outranks this arm's own
+      # code — see PRECEDENCE in the header. Returning 1 unconditionally here is
+      # what previously made 6 unreachable on this platform, while also implying
+      # an untouched machine that the config pass may already have written to.
+      if [ "$cfg_rc" -ne 0 ]; then
+        exit "$cfg_rc"
+      fi
       exit 1
       ;;
   esac
