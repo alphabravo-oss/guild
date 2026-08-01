@@ -30,22 +30,32 @@ DAEMON="$HOOK_DIR/../scripts/serena-daemon.sh"
 # no reason; sized to the fastest, it truncates reconcile mid-repair. Each bound
 # is instead derived from the real worst case of the subcommand it guards.
 #
-# DAEMON_TIMEOUT covers doctor, the settle re-probe, and start. doctor's
-# handshake is capped by curl's own --max-time 3 and the rest of it is fast
-# local queries; start runs no handshake at all, only port resolvers plus the 2s
-# liveness sleep it takes after launching detached (~3s worst). 5s clears both
-# with headroom. It is also, deliberately, the SAME number the foundry preflight
-# bounds its own doctor probe with (setup-foundry.sh, SERENA_PROBE_TIMEOUT): two
-# callers of one subcommand must not disagree about how long it may take, and
-# that file's comment asks for the two to be changed only in step. Honour that.
+# DAEMON_TIMEOUT covers doctor, the settle re-probe, and start. Neither cost is
+# restated here as a figure, for the reason recorded beside RECONCILE_TIMEOUT
+# below: both live in serena-daemon.sh, and a number copied across that boundary
+# goes stale silently when the owning symbol moves. Read them by name instead.
+#   doctor  — its handshake is capped by serena_mcp_healthy's own
+#             `curl --max-time`; everything else it does is fast local queries.
+#   start   — cmd_start runs no handshake at all, only port resolvers plus the
+#             liveness `sleep` it takes after launching detached.
+# The RELATIONSHIP this value must keep is that it stays clear of the LARGER of
+# those two, with enough margin left that daemon_rc's window floor — one below
+# this value, per the (N-1, N] rule below — still clears it. Re-derive against
+# both symbols if either moves; do not assume the margin survived.
+#
+# It is also, deliberately, the SAME number the foundry preflight bounds its own
+# doctor probe with (setup-foundry.sh, SERENA_PROBE_TIMEOUT): two callers of one
+# subcommand must not disagree about how long it may take, and that file's
+# comment asks for the two to be changed only in step. Honour that.
 DAEMON_TIMEOUT=5
 
 # RECONCILE_TIMEOUT covers reconcile alone — the one subcommand the preflight
 # never calls, which is why it can diverge without breaking the equality above.
 #
-# reconcile's CONVERGED path is 0.025s and is what nearly every session start
-# takes; everything below sizes the REPAIR path, which only a broken machine
-# reaches. reconcile now bounds each of its own service-manager calls
+# reconcile's CONVERGED path is a render and a byte comparison — no service
+# call, no probe, sub-millisecond in practice — and is what nearly every session
+# start takes; everything below sizes the REPAIR path, which only a broken
+# machine reaches. reconcile now bounds each of its own service-manager calls
 # INTERNALLY, so this number is derived from those constants BY NAME —
 # RECONCILE_SERVICE_CALL_SECONDS, RECONCILE_UNIT_START_SECONDS and
 # RECONCILE_PROBE_SECONDS in serena-daemon.sh. Their literal values are
@@ -101,11 +111,14 @@ DAEMON_TIMEOUT=5
 # This bound covers Darwin IN FULL — the priority platform (A-007) — because
 # its window FLOOR, one below the value itself, already clears that 17.5s path.
 # That is coverage earned on the D <= N-1 rule above, not on the kill happening
-# to land late in its window. It also covers the REALISTIC Linux path:
-# daemon-reload and enable are supervisor-only bookkeeping that serena-daemon.sh
-# documents as returning in 0.020s, and at their measured cost Linux is ~15.5s.
-# Only the compound case where BOTH of those wedge to their full bounds reaches
-# 20.5s and overruns this.
+# to land late in its window. It also covers the REALISTIC Linux path: only the
+# restart genuinely blocks on the daemon, while daemon-reload and enable are
+# supervisor-only bookkeeping that serena-daemon.sh documents, beside
+# RECONCILE_SERVICE_CALL_SECONDS, as returning near-instantly. At their recorded
+# cost the Linux path lands well inside this bound. Only the compound case where
+# BOTH of those bookkeeping calls wedge to their full bounds reaches the 20.5s
+# above and overruns this — the sum in the table is what they cost EXPIRED, not
+# what they cost working.
 #
 # NOT raised far enough to cover that compound case either, and that is a
 # judgement rather than an oversight. Covering 20.5s needs a bound whose window
@@ -150,9 +163,14 @@ RECONCILE_TIMEOUT=19
 
 # Settle window, in seconds, between a doctor verdict of "installed but stopped"
 # and acting on it. See the long comment at the settle block below for why this
-# exists. Sized from measurement, not guesswork: `launchctl load` returns in
-# 0.020s while the daemon it just spawned takes 1.473s more to bind the port
-# (measured on a warm uv cache), so 4s is ~2.7x the observed window.
+# exists. Sized from measurement, not guesswork: serena-daemon.sh records, beside
+# RECONCILE_PROBE_SECONDS, how long `launchctl load` takes to return against how
+# much longer the daemon it spawned then needs to bind the port (measured on a
+# warm uv cache). This window must comfortably exceed that gap — it is set at
+# roughly triple it, not at its edge, because a cold uv cache is far slower and
+# repinning SERENA_PKG guarantees a cold one on a machine's first session start
+# after an upgrade. Read the two figures by name over there before changing this;
+# they are deliberately not copied here, where they would go stale unnoticed.
 SETTLE_SECONDS=4
 
 # Poll granularity while waiting on a bounded subcommand, in seconds. Sets how
@@ -339,11 +357,13 @@ doctor_rc="$(daemon_rc "$DAEMON_TIMEOUT" doctor 2>/dev/null)"
 
 # ── 2a. Settle before believing "stopped" ────────────────────────────────────
 # The reconcile above may have just reloaded the service, and a reload is
-# ASYNCHRONOUS: `launchctl load` returns as soon as launchd accepts the job,
-# which is 0.020s, while the daemon it spawns under RunAtLoad needs another
-# 1.473s to bind the port (both measured on a warm uv cache; a cold one is far
-# slower, and repinning SERENA_PKG guarantees a cold cache on every machine's
-# first session start after an upgrade).
+# ASYNCHRONOUS: `launchctl load` returns as soon as launchd ACCEPTS the job,
+# while the daemon it spawns under RunAtLoad needs materially longer to bind the
+# port. Both figures are measured and recorded in serena-daemon.sh beside
+# RECONCILE_PROBE_SECONDS; they are not copied here, where a later change over
+# there would leave them stale. What matters at this call site is only the
+# ordering — acceptance returns first, binding completes later — and that
+# SETTLE_SECONDS above is sized to span the gap between them.
 #
 # Inside that window nothing is on the port, so serena_mcp_healthy takes its
 # cheap "nothing is listening" path — no handshake, no curl — and doctor
