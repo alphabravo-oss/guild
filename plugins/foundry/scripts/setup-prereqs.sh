@@ -165,29 +165,125 @@ if [ -f "$SERENA_CONFIG" ]; then
     warn "Existing Serena config backed up to $SERENA_BACKUP"
 fi
 
-# `languages` must be a flat list of plain strings. Serena's
+# Directories excluded from BOTH the language census below and the generated
+# ignored_paths block. One array feeds both, so the two can never drift apart:
+# a directory the census counted but Serena then ignored would put a language
+# server in the config with no files to serve.
+SERENA_IGNORED_PATHS=(
+    node_modules vendor .git dist build __pycache__ .venv
+    forge-specs foundry-archive .serena
+)
+
+# Used only when the census finds nothing. It must stay non-empty: an empty
+# languages list disables Serena's LSP backend outright, which is the same
+# silent degradation this generator exists to prevent. Held to interpreters
+# whose language servers are cheap to install, since by definition nothing was
+# found here to justify more.
+SERENA_FALLBACK_LANGUAGES=(python bash)
+
+# Census the tree instead of assuming a language set. setup-prereqs.sh ships to
+# other people's repositories, so any fixed list is wrong for most of them — and
+# a list that names languages the project does not contain, while omitting the
+# ones it does, leaves the LSP backend with nothing to parse.
+#
+# Extensions resolve through a whitelist because Serena matches each entry
+# against its Language enum: an identifier it does not know raises at config
+# load, the same class of failure as the mapping-shaped list this generator used
+# to write. Markup and data formats are deliberately absent — they match in
+# nearly every repository and would start language servers TRACE has no use for,
+# ranked ahead of the code the run is actually verifying.
+#
+# Ordered by file count, descending. Serena treats the first entry as the
+# default language server, so the repository's dominant language leads.
+detect_serena_languages() {
+    local root="$1" dir
+    local prune=()
+    for dir in "${SERENA_IGNORED_PATHS[@]}"; do
+        [ "${#prune[@]}" -eq 0 ] || prune+=( -o )
+        prune+=( -name "$dir" )
+    done
+
+    find "$root" \( "${prune[@]}" \) -prune -o -type f -print 2>/dev/null |
+    awk '
+        BEGIN {
+            map["sh"]="bash";        map["bash"]="bash"
+            map["py"]="python"
+            map["go"]="go"
+            map["ts"]="typescript";  map["tsx"]="typescript"
+            map["js"]="typescript";  map["jsx"]="typescript"
+            map["mjs"]="typescript"; map["cjs"]="typescript"
+            map["rs"]="rust"
+            map["java"]="java"
+            map["rb"]="ruby"
+            map["php"]="php"
+            map["cs"]="csharp"
+            map["kt"]="kotlin";      map["kts"]="kotlin"
+            map["swift"]="swift"
+            map["c"]="cpp";          map["h"]="cpp"
+            map["cpp"]="cpp";        map["cc"]="cpp"
+            map["cxx"]="cpp";        map["hpp"]="cpp"
+            map["lua"]="lua"
+            map["ex"]="elixir";      map["exs"]="elixir"
+            map["dart"]="dart"
+            map["scala"]="scala"
+            map["zig"]="zig"
+            map["tf"]="terraform"
+            map["nix"]="nix"
+            map["clj"]="clojure";    map["cljs"]="clojure"
+            map["pl"]="perl";        map["pm"]="perl"
+            map["ps1"]="powershell"
+            map["sol"]="solidity"
+            map["vue"]="vue"
+            map["svelte"]="svelte"
+            map["hs"]="haskell"
+            map["ml"]="ocaml"
+            map["erl"]="erlang"
+        }
+        {
+            base = $0
+            sub(/^.*\//, "", base)
+            if (base !~ /\./) next
+            ext = base
+            sub(/^.*\./, "", ext)
+            lang = map[tolower(ext)]
+            if (lang != "") count[lang]++
+        }
+        END { for (l in count) printf "%d\t%s\n", count[l], l }
+    ' | sort -k1,1nr -k2,2 | cut -f2
+}
+
+# `|| true` because a census that finds nothing is an ordinary outcome handled
+# by SERENA_FALLBACK_LANGUAGES below, not a failure set -e should abort on.
+SERENA_LANGUAGES=()
+while IFS= read -r serena_lang; do
+    [ -n "$serena_lang" ] || continue
+    SERENA_LANGUAGES+=("$serena_lang")
+done < <(detect_serena_languages "$PROJECT_ROOT" || true)
+
+if [ "${#SERENA_LANGUAGES[@]}" -eq 0 ]; then
+    SERENA_LANGUAGES=("${SERENA_FALLBACK_LANGUAGES[@]}")
+    warn "No recognised source files under $PROJECT_ROOT."
+    warn "Serena languages set to: ${SERENA_LANGUAGES[*]} — edit $SERENA_CONFIG if that is wrong."
+else
+    info "Detected Serena languages: ${SERENA_LANGUAGES[*]}"
+fi
+
+# One redirection for the whole file: a single truncation and a single write
+# path, so a failure part-way cannot leave a half-written config that the backup
+# taken above is the only record of.
+#
+# Every element of `languages` is emitted as a plain string. Serena's
 # ProjectConfig._from_dict() calls .lower() on each element directly, so a
 # mapping element (a list item carrying a `name:` key) raises AttributeError
 # when the config loads.
-cat > "$SERENA_CONFIG" << 'SERENA_EOF'
-# Serena LSP configuration for Foundry TRACE verification
-languages:
-  - go
-  - typescript
-  - python
-
-ignored_paths:
-  - node_modules
-  - vendor
-  - .git
-  - dist
-  - build
-  - __pycache__
-  - .venv
-  - forge-specs
-  - foundry-archive
-  - .serena
-SERENA_EOF
+{
+    printf '%s\n' '# Serena LSP configuration for Foundry TRACE verification'
+    printf 'languages:\n'
+    printf '  - %s\n' "${SERENA_LANGUAGES[@]}"
+    printf '\n'
+    printf 'ignored_paths:\n'
+    printf '  - %s\n' "${SERENA_IGNORED_PATHS[@]}"
+} > "$SERENA_CONFIG"
 ok "Serena config written at $SERENA_CONFIG"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
