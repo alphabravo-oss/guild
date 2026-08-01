@@ -198,11 +198,7 @@ RECONCILE_PROBE_SECONDS=4
 # the service manager and returns WITHOUT waiting on the daemon. `launchctl
 # load` returns in 0.020s while the daemon it just spawned takes 1.473s more to
 # bind the port, which is the same measurement RECONCILE_PROBE_SECONDS above is
-# drawn from. This bound is set orders of magnitude above that gap by design, so
-# no working machine reaches it. Stating the RELATIONSHIP rather than repeating
-# the number keeps one fewer copy of the value in prose, but it is not immune to
-# the value changing — the relationship is what a change has to preserve, and
-# what to re-check when one is made.
+# drawn from. No working machine reaches this bound.
 RECONCILE_SERVICE_CALL_SECONDS=2
 
 # `systemctl --user restart`, by contrast, BLOCKS on the unit starting, and this
@@ -212,9 +208,7 @@ RECONCILE_SERVICE_CALL_SECONDS=2
 # manufacture a false exit 4 on every healthy repair while systemd carried the
 # job on regardless (killing the systemctl client does not cancel a queued job).
 # This bound clears the observed path with headroom while staying an order of
-# magnitude under systemd's own default — again the relationship rather than a
-# restated number, and again something a change to the value has to preserve
-# rather than something the wording makes safe.
+# magnitude under systemd's own default.
 RECONCILE_UNIT_START_SECONDS=8
 
 # Poll granularity while waiting on a bounded call, in seconds. Sets how long
@@ -2200,27 +2194,22 @@ run_bounded() {
 #                            rather than inferring its contents from this code
 #   4  reload-failed         the repair reached the reload stage and came out of
 #                            it with NO CONFIRMED reload. That property is what
-#                            this code asserts; the routes to it are examples,
-#                            not a closed set. Observed so far: the supervisor
+#                            this code asserts. Observed so far: the supervisor
 #                            refused; its call did not return inside the bound
 #                            run_bounded holds it to; or there was no supervisor
 #                            to call at all, which is how the Linux arm arrives
 #                            here when systemctl is absent, having issued
 #                            nothing. One code covers them because they share the
-#                            property above, NOT because they share a remedy —
-#                            they do not, which is why each prints a different
-#                            message and why the message, not this code, is what
-#                            an operator acts on. An expiry is NOT a
-#                            claim that the supervisor did nothing — killing a
-#                            client does not cancel a request already delivered,
-#                            as the restart bound's own note records — which is
-#                            why this code says only that nothing was confirmed,
-#                            and why `doctor`, run afterwards, is what settles
-#                            what the machine is really doing. WHAT was repaired
-#                            before this stage is not encoded here either: the
-#                            reload is reached from a definition rewrite, from a
-#                            macOS-only legacy-agent removal, or from both, so
-#                            this code does not imply a rewrite happened
+#                            property above. An expiry is NOT a claim that the
+#                            supervisor did nothing — killing a client does not
+#                            cancel a request already delivered, as the restart
+#                            bound's own note records — which is why this code
+#                            says only that nothing was confirmed. WHAT was
+#                            repaired before this stage is not encoded here
+#                            either: the reload is reached from a definition
+#                            rewrite, from a macOS-only legacy-agent removal, or
+#                            from both, so this code does not imply a rewrite
+#                            happened
 #   5  unconfirmed           the service manager accepted the reload, but no MCP
 #                            handshake came back inside the probe budget. The
 #                            supervisor accepting a job is not evidence the job
@@ -2247,17 +2236,14 @@ run_bounded() {
 # 6, because a project config matters only once something is actually serving.
 #
 # FAILURE is the word the code branches on, and it has a mechanical tell: a
-# failing branch calls `exit` with its own literal code, while every other branch
-# ends in `exit "$cfg_rc"` and so defers to the config verdict. That tell is the
-# rule — a branch added later inherits it by how it is written, with no list of
-# numbers here to go stale. It also settles the two cases a looser word got
-# wrong. "A stage that did not complete" selected the WRONG SET both ways: exit 5
-# is a failure that outranks 6 even though its reload and its probe both ran to
-# completion, and a probe that could not run at all completes nothing yet is not
-# a failure — it defers, because an unverifiable probe is not evidence of failure
-# (entry 0). It also over-selected 1, which must NOT outrank 6; that arm reads
-# $cfg_rc before exiting, so the tell excludes it correctly and for the reason
-# spelled out just below.
+# failing branch calls `exit` with its own literal code. It settles the two cases
+# a looser word got wrong. "A stage that did not complete" selected the WRONG SET
+# both ways: exit 5 is a failure that outranks 6 even though its reload and its
+# probe both ran to completion, and a probe that could not run at all completes
+# nothing yet is not a failure — it defers, because an unverifiable probe is not
+# evidence of failure (entry 0). It also over-selected 1, which must NOT outrank
+# 6; that arm reads $cfg_rc before exiting, so the tell excludes it correctly and
+# for the reason spelled out just below.
 #
 # 1 does NOT outrank 6, and that asymmetry is deliberate. 1 reports the ABSENCE
 # of a service dimension on this host rather than a failure within one — there
