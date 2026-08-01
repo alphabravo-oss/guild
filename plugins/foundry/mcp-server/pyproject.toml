@@ -1,8 +1,15 @@
 [project]
 name = "foundry-mcp"
-version = "1.7.0"
+version = "1.7.1"
 description = "MCP server for the Foundry build-verify-fix loop. Phase gates, defect tracking, verification orchestration."
-requires-python = ">=3.11"
+# 3.12, not 3.11. display.py and foundry_orchestrator.py use backslash escapes
+# inside f-string expression parts (f"{'\\u2550' * n}"), which PEP 701 only
+# made legal in 3.12 — 3.11 raises SyntaxError at import. Declaring ">=3.11"
+# was a claim the source cannot honour: uvx believed it, resolved 3.11, and
+# the server failed to start. The old .mcp.json entry hid this by pinning
+# --python 3.13; version-free registration correctly dropped that pin and
+# exposed the real floor.
+requires-python = ">=3.12"
 # mcp is capped below 2.0. server.py uses the 1.x low-level decorator API
 # (@server.list_tools() / @server.call_tool()); mcp 2.0.0 removed it, so an
 # unbounded ">=1.0.0" resolves to a version that crashes on import. Raise the
