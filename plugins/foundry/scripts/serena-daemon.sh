@@ -176,12 +176,28 @@ RECONCILE_PROBE_SECONDS=4
 #
 # The two numbers are UNEQUAL, deliberately, because the calls are not alike.
 #
-# A supervisor-only call — both launchctl unloads, launchctl load, systemctl
-# daemon-reload, systemctl enable — talks to the service manager and returns.
-# It does NOT wait on the daemon: `launchctl load` returns in 0.020s while the
-# daemon it just spawned takes 1.473s more to bind the port, which is the same
-# measurement RECONCILE_PROBE_SECONDS above is drawn from. 2s is 100x that, so
-# no working machine reaches it.
+# WHICH CALLS SIT AT THIS BOUND IS NOT LISTED HERE, and the omission is the fix
+# rather than a gap. Two prose enumerations of that set used to exist — this one
+# and BOUNDED SERVICE-MANAGER CALLS in cmd_reconcile's header — so when a call
+# was added to the Linux arm and only the second was updated, the two disagreed
+# and neither announced it. A list in prose is a copy of something the code
+# already states exactly. Ask the code, from the repo root:
+#
+#     grep -n -A1 'run_bounded "\$RECONCILE' plugins/foundry/scripts/serena-daemon.sh
+#
+# Each site prints with the constant it passes AND the command it runs, so that
+# output is the enumeration, current by construction. It is also what answers
+# "how many bounded calls does the Linux arm issue?" — the question the
+# SessionStart hook's cost table sends its reader here to settle, and the one a
+# stale list answered wrongly.
+#
+# WHAT PUTS A CALL AT THIS BOUND rather than the longer one below: it talks to
+# the service manager and returns WITHOUT waiting on the daemon. `launchctl
+# load` returns in 0.020s while the daemon it just spawned takes 1.473s more to
+# bind the port, which is the same measurement RECONCILE_PROBE_SECONDS above is
+# drawn from. This bound is two orders of magnitude above that gap — stated as a
+# ratio rather than as a number, so that changing the constant cannot falsify the
+# sentence justifying it — and no working machine reaches it.
 RECONCILE_SERVICE_CALL_SECONDS=2
 
 # `systemctl --user restart`, by contrast, BLOCKS on the unit starting, and this
@@ -190,8 +206,9 @@ RECONCILE_SERVICE_CALL_SECONDS=2
 # therefore seconds, not milliseconds, and bounding it at the figure above would
 # manufacture a false exit 4 on every healthy repair while systemd carried the
 # job on regardless (killing the systemctl client does not cancel a queued job).
-# 8s clears the observed path with headroom while staying an order of magnitude
-# under systemd's own default.
+# This bound clears the observed path with headroom while staying an order of
+# magnitude under systemd's own default — again a ratio rather than a restated
+# number, for the reason given above.
 RECONCILE_UNIT_START_SECONDS=8
 
 # Poll granularity while waiting on a bounded call, in seconds. Sets how long
@@ -2125,6 +2142,16 @@ run_bounded() {
 # SERVICE state it touched, because that is decided inside the branch the code is
 # returned from.
 #
+# AN ENTRY'S CAUSES ARE EXAMPLES, NOT A CLOSED SET, unless the branch condition
+# itself closes them. Each code names a terminal STATE; the routes to that state
+# are whatever the arms currently contain, and arms grow. Entry 4 was written as
+# a two-item either/or and was outgrown by a third route on the same arm — a
+# reader triaging it found neither listed cause and had no entry describing what
+# had happened. So each entry states the PROPERTY its code asserts first, and
+# offers causes only as observed examples. When adding a branch that exits with
+# an existing code, the check is whether that property still covers it — not
+# whether a list needs a fourth item.
+#
 #   0  converged | repaired  nothing needed, or a repair was made and no stage
 #                            of it failed. Both are success — a caller cannot
 #                            and need not tell them apart from the code alone.
@@ -2165,18 +2192,27 @@ run_bounded() {
 #                            it EMPTIED, because `>` truncates at open, before
 #                            any rendered byte is fed in. Read the path itself
 #                            rather than inferring its contents from this code
-#   4  reload-failed         the repair reached the reload stage and the service
-#                            manager would not complete it — either it refused
-#                            outright, or its call did not return inside the
-#                            bound run_bounded holds it to. Those are one state
-#                            deliberately: a supervisor that will not answer in
-#                            bounded time has not reloaded anything, and an
-#                            expiry earns no code of its own. WHAT was repaired
-#                            before that stage is not encoded here: the reload
-#                            is reached from a definition rewrite, from a
+#   4  reload-failed         the repair reached the reload stage and came out of
+#                            it with NO CONFIRMED reload. That property is what
+#                            this code asserts; the routes to it are examples,
+#                            not a closed set. Observed so far: the supervisor
+#                            refused; its call did not return inside the bound
+#                            run_bounded holds it to; or there was no supervisor
+#                            to call at all, which is how the Linux arm arrives
+#                            here when systemctl is absent, having issued
+#                            nothing. One code covers them because the operator's
+#                            next move is the same for each, and the printed
+#                            message names which occurred. An expiry is NOT a
+#                            claim that the supervisor did nothing — killing a
+#                            client does not cancel a request already delivered,
+#                            as the restart bound's own note records — which is
+#                            why this code says only that nothing was confirmed,
+#                            and why `doctor`, run afterwards, is what settles
+#                            what the machine is really doing. WHAT was repaired
+#                            before this stage is not encoded here either: the
+#                            reload is reached from a definition rewrite, from a
 #                            macOS-only legacy-agent removal, or from both, so
-#                            this code does not imply a rewrite happened. The
-#                            printed message names the one that applied
+#                            this code does not imply a rewrite happened
 #   5  unconfirmed           the service manager accepted the reload, but no MCP
 #                            handshake came back inside the probe budget. The
 #                            supervisor accepting a job is not evidence the job
@@ -2184,19 +2220,27 @@ run_bounded() {
 #                            while reporting success. As with 4, this says
 #                            nothing about which trigger reached the reload and
 #                            does not imply the definition was rewritten
-#   6  config-unrepaired     no service-definition failure occurred — the
-#                            service converged, or was repaired without a stage
-#                            failing, or has no manager on this host at all —
-#                            but this project's .serena/project.yml carries a
+#   6  config-unrepaired     this project's .serena/project.yml carries a
 #                            languages list Serena cannot load and the repair
 #                            did not complete: it either declined to guess at an
 #                            unrecognised shape, or could not take its backup,
 #                            or could not write back what it had already backed
-#                            up
+#                            up. About the SERVICE it asserts one property only
+#                            — that nothing on that side failed hard enough to
+#                            outrank this finding (see Precedence below). It
+#                            deliberately does not distinguish a converged
+#                            service from a repaired one, from a repair whose
+#                            health could not be verified, from a host with no
+#                            service manager at all. This entry used to list
+#                            those states instead, and had already been outgrown
+#                            by one of them
 #
-# Precedence when more than one applies: a service-definition FAILURE (2, 3, 4,
-# 5) outranks 6, because a project config matters only once something is
-# actually serving.
+# Precedence when more than one applies: a service-definition FAILURE outranks
+# 6, because a project config matters only once something is actually serving. A
+# failure means any code above whose entry describes a stage of the service pass
+# that did not complete — stated as that property rather than as a list of
+# numbers, so a code added later inherits the rule instead of needing this line
+# edited.
 #
 # 1 does NOT outrank 6, and that asymmetry is deliberate. 1 reports the ABSENCE
 # of a service dimension on this host rather than a failure within one — there
@@ -2243,18 +2287,29 @@ run_bounded() {
 #
 # BOUNDED SERVICE-MANAGER CALLS — every launchctl and systemctl call on the
 # repair path runs under run_bounded, and an expiry is MAPPED onto the table
-# above rather than given a code of its own:
+# above rather than given a code of its own. WHICH mapping applies is decided by
+# how each call is INVOKED, so it is read off the call site and no membership
+# list is kept here. One was, and it disagreed with its twin beside
+# RECONCILE_SERVICE_CALL_SECONDS from the moment a call was added to the Linux
+# arm and only one copy was updated:
 #
-#   * A STATUS-BEARING call — `launchctl load`, `systemctl restart` — that
-#     expires is exit 4, for the reason recorded in that entry.
-#   * A BEST-EFFORT call — both unloads, `daemon-reload`, `enable`,
-#     `reset-failed` — that
-#     expires is absorbed exactly as its non-zero status already was, and the
-#     post-load health probe adjudicates the consequence instead of this code
-#     guessing at it. A legacy agent that survived its unload still holds $PORT,
-#     so the handshake does not come back and the run ends at exit 5. That is
-#     the honest verdict rather than a lost one, which is the whole point of
-#     bounding these calls from inside this function.
+#   * STATUS-BEARING — written as `if ! run_bounded ...`, so the status decides
+#     what happens next. An expiry is exit 4, for the reason recorded in that
+#     entry.
+#   * BEST-EFFORT — written as a bare statement ending `|| true`, so the status
+#     is discarded by construction. An expiry is absorbed exactly as its
+#     non-zero status already was, and the post-load health probe adjudicates
+#     the consequence instead of this code guessing at it. A legacy agent that
+#     survived its unload still holds $PORT, so the handshake does not come back
+#     and the run ends at exit 5. That is the honest verdict rather than a lost
+#     one, which is the whole point of bounding these calls from inside this
+#     function.
+#
+# The split is TOTAL — a call is written one way or the other, there is no third
+# form — so a call added later classifies itself and leaves nothing here to
+# update. To see the current set, run the grep recorded beside
+# RECONCILE_SERVICE_CALL_SECONDS: its output shows each site's invocation form
+# alongside the command, which is both questions answered from one place.
 #
 # WHAT COUNTS AS DRIFT — two independent conditions, either of which triggers a
 # repair:
