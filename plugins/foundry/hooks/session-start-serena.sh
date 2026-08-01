@@ -98,32 +98,40 @@ DAEMON_TIMEOUT=5
 #
 # Linux has NO pre-reload probe. Drift is its only trigger and the arm goes
 # straight from the byte comparison to the systemctl calls; serena_mcp_healthy
-# is reached only on the Darwin legacy branch above. Its sum is therefore three
-# service-manager calls and one probe, not four and one:
+# is reached only on the Darwin legacy branch above. Its sum is therefore EVERY
+# bounded service-manager call that arm issues plus the single post-load probe.
+# How many calls that is, is deliberately not asserted here as a word: D-028
+# added one to the arm after this table was first written, and a spelled-out
+# count is what went stale. Count the run_bounded calls in cmd_reconcile and
+# re-derive the rows:
 #
 #   daemon-reload      RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
 #   enable             RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
+#   reset-failed       RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
 #   restart            RECONCILE_UNIT_START_SECONDS   + grace    8.5
 #   post-load probe    as above                                  7
 #                                                               ----
-#                                                               20.5
+#                                                                 23
 #
 # This bound covers Darwin IN FULL — the priority platform (A-007) — because
 # its window FLOOR, one below the value itself, already clears that 17.5s path.
 # That is coverage earned on the D <= N-1 rule above, not on the kill happening
 # to land late in its window. It also covers the REALISTIC Linux path: only the
-# restart genuinely blocks on the daemon, while daemon-reload and enable are
-# supervisor-only bookkeeping that serena-daemon.sh documents, beside
+# restart genuinely blocks on the daemon, while every OTHER systemd call on that
+# arm is supervisor-only bookkeeping that serena-daemon.sh documents, beside
 # RECONCILE_SERVICE_CALL_SECONDS, as returning near-instantly. At their recorded
 # cost the Linux path lands well inside this bound. Only the compound case where
-# BOTH of those bookkeeping calls wedge to their full bounds reaches the 20.5s
-# above and overruns this — the sum in the table is what they cost EXPIRED, not
-# what they cost working.
+# ALL of those bookkeeping calls wedge to their full bounds reaches the Linux
+# total in the table above and overruns this — that total is what they cost
+# EXPIRED, not what they cost working. Which is also why adding a call to the
+# arm moves the table without moving the realistic path, and so without
+# disturbing any conclusion here.
 #
 # NOT raised far enough to cover that compound case either, and that is a
-# judgement rather than an oversight. Covering 20.5s needs a bound whose window
-# FLOOR clears it, which is several seconds above this one — not the single
-# second the bare figures suggest. Doing so pushes this hook's pathological
+# judgement rather than an oversight. Covering the Linux total in the table
+# above needs a bound whose window FLOOR clears it, which is several seconds
+# above this one — not the single second the bare figures suggest, and D-028
+# widened that distance further. Doing so pushes this hook's pathological
 # total past the hooks.json backstop and forces that up too, adding real dead
 # air to session start on machines in the unknown install states this plugin
 # reaches through a public marketplace (A-AUTO-007) — while buying, per the
