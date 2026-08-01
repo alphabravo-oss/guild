@@ -89,6 +89,17 @@ if ! command -v uvx &>/dev/null; then
     warn "Serena MCP (TRACE) and Foundry MCP require uvx."
 fi
 
+# curl carries the MCP `initialize` handshake in serena-daemon.sh's health probe.
+# Advisory, not fatal: the probe already degrades to a port-only check without it
+# and the daemon itself runs fine, so this warns at the same level as uvx — a
+# strictly harder dependency this script also declines to hard-fail on. Naming
+# the later symptom here is the point: it is otherwise invisible why a healthy
+# daemon reports as unverifiable.
+if ! command -v curl &>/dev/null; then
+    warn "curl not found. Serena MCP health probing degrades to a port-only check."
+    warn "Expect 'MCP handshake ... unverifiable' from serena-daemon.sh doctor and the SessionStart hook."
+fi
+
 # ── Plugin dependencies ──────────────────────────────────────────────────────
 # Previously this installed ralph-loop (billed as the "teammate execution
 # engine") and hookify, and added the claude-plugins-official marketplace to do
@@ -102,10 +113,13 @@ fi
 # the install here AND make something actually call it.
 
 # ── Start the Serena daemon ─────────────────────────────────────────────────
-# The serena MCP entry is an HTTP pointer at localhost:9121. Writing that entry
-# without a daemon behind it produces a dead server that fails to connect on
-# every session start, which is how this shipped previously. Bring the daemon up
-# first and only register serena if it actually answers.
+# Bring the daemon up now so a fresh install is usable in this session rather
+# than the next one. Whether it comes up does NOT gate the serena MCP entry:
+# the SessionStart hook runs reconcile -> doctor -> start on every session, so a
+# daemon that is down right now is repaired automatically later. Deleting the
+# entry here would make that repair unreachable — the hook would start a daemon
+# with nothing configured to connect to it. So a failure below is reported, not
+# acted on.
 SERENA_UP=0
 SERENA_DAEMON="$PLUGIN_ROOT/scripts/serena-daemon.sh"
 
@@ -187,13 +201,18 @@ if "playwright" not in servers:
 configured.append("playwright")
 
 # Serena MCP — shared HTTP daemon (all sessions connect; none fork).
-# Only registered when the daemon is confirmed up; a stale entry pointing at a
-# dead port is worse than no entry, because TRACE silently falls back to grep.
-if serena_up:
-    servers["serena"] = {"type": "http", "url": "http://localhost:9121/mcp"}
-    configured.append("serena")
-else:
-    servers.pop("serena", None)
+# Registered unconditionally. The entry is a pointer, not a promise: the
+# SessionStart hook reconciles and starts the daemon on every session, so an
+# entry written while the daemon is down is repaired before anything reads it.
+# Removing it instead would strand that repair — the hook would bring a daemon
+# up with nothing configured to reach it.
+#
+# The hazard that once justified removal was TRACE silently degrading to grep
+# behind a dead port. It cannot: agents/tracer.md emits NOT_VERIFIED with cause
+# SERENA_UNAVAILABLE per symbol, and grep evidence can never yield WIRED, so a
+# dead port produces a visibly degraded report rather than a false clean one.
+servers["serena"] = {"type": "http", "url": "http://localhost:9121/mcp"}
+configured.append("serena")
 
 with open(mcp_file, "w") as f:
     json.dump(cfg, f, indent=2)
@@ -201,7 +220,8 @@ with open(mcp_file, "w") as f:
 
 print(f"Configured: {', '.join(configured)} in {mcp_file}")
 if not serena_up:
-    print("Skipped: serena (daemon not running)")
+    print("Note: serena registered, but its daemon is not up yet — "
+          "the SessionStart hook will start it on the next session.")
 PYEOF
 
 ok "MCP servers configured in $MCP_FILE"
@@ -226,28 +246,142 @@ fi
 
 # ── Serena project config ────────────────────────────────────────────────────
 SERENA_DIR="$PROJECT_ROOT/.serena"
+SERENA_CONFIG="$SERENA_DIR/project.yml"
 info "Writing Serena project config..."
 mkdir -p "$SERENA_DIR"
-cat > "$SERENA_DIR/project.yml" << 'SERENA_EOF'
-# Serena LSP configuration for Foundry TRACE verification
-languages:
-  - name: go
-  - name: typescript
-  - name: python
 
-ignored_paths:
-  - node_modules
-  - vendor
-  - .git
-  - dist
-  - build
-  - __pycache__
-  - .venv
-  - forge-specs
-  - foundry-archive
-  - .serena
-SERENA_EOF
-ok "Serena config written at $SERENA_DIR/project.yml"
+# Check the destination before writing, the same discipline the .mcp.json block
+# above uses. An existing config is preserved to a timestamped backup and then
+# rewritten — never skipped: configs written by earlier versions carry a
+# list-of-mappings languages block that Serena cannot load, and only a rewrite
+# repairs them. Under `set -e` a failed cp aborts before the overwrite, so the
+# file is never destroyed without a backup landing first.
+if [ -f "$SERENA_CONFIG" ]; then
+    SERENA_BACKUP="$SERENA_CONFIG.$(date +%Y%m%d-%H%M%S).bak"
+    cp "$SERENA_CONFIG" "$SERENA_BACKUP"
+    warn "Existing Serena config backed up to $SERENA_BACKUP"
+fi
+
+# Directories excluded from BOTH the language census below and the generated
+# ignored_paths block. One array feeds both, so the two can never drift apart:
+# a directory the census counted but Serena then ignored would put a language
+# server in the config with no files to serve.
+SERENA_IGNORED_PATHS=(
+    node_modules vendor .git dist build __pycache__ .venv
+    forge-specs foundry-archive .serena
+)
+
+# Used only when the census finds nothing. It must stay non-empty: an empty
+# languages list disables Serena's LSP backend outright, which is the same
+# silent degradation this generator exists to prevent. Held to interpreters
+# whose language servers are cheap to install, since by definition nothing was
+# found here to justify more.
+SERENA_FALLBACK_LANGUAGES=(python bash)
+
+# Census the tree instead of assuming a language set. setup-prereqs.sh ships to
+# other people's repositories, so any fixed list is wrong for most of them — and
+# a list that names languages the project does not contain, while omitting the
+# ones it does, leaves the LSP backend with nothing to parse.
+#
+# Extensions resolve through a whitelist because Serena matches each entry
+# against its Language enum: an identifier it does not know raises at config
+# load, the same class of failure as the mapping-shaped list this generator used
+# to write. Markup and data formats are deliberately absent — they match in
+# nearly every repository and would start language servers TRACE has no use for,
+# ranked ahead of the code the run is actually verifying.
+#
+# Ordered by file count, descending. Serena treats the first entry as the
+# default language server, so the repository's dominant language leads.
+detect_serena_languages() {
+    local root="$1" dir
+    local prune=()
+    for dir in "${SERENA_IGNORED_PATHS[@]}"; do
+        [ "${#prune[@]}" -eq 0 ] || prune+=( -o )
+        prune+=( -name "$dir" )
+    done
+
+    find "$root" \( "${prune[@]}" \) -prune -o -type f -print 2>/dev/null |
+    awk '
+        BEGIN {
+            map["sh"]="bash";        map["bash"]="bash"
+            map["py"]="python"
+            map["go"]="go"
+            map["ts"]="typescript";  map["tsx"]="typescript"
+            map["js"]="typescript";  map["jsx"]="typescript"
+            map["mjs"]="typescript"; map["cjs"]="typescript"
+            map["rs"]="rust"
+            map["java"]="java"
+            map["rb"]="ruby"
+            map["php"]="php"
+            map["cs"]="csharp"
+            map["kt"]="kotlin";      map["kts"]="kotlin"
+            map["swift"]="swift"
+            map["c"]="cpp";          map["h"]="cpp"
+            map["cpp"]="cpp";        map["cc"]="cpp"
+            map["cxx"]="cpp";        map["hpp"]="cpp"
+            map["lua"]="lua"
+            map["ex"]="elixir";      map["exs"]="elixir"
+            map["dart"]="dart"
+            map["scala"]="scala"
+            map["zig"]="zig"
+            map["tf"]="terraform"
+            map["nix"]="nix"
+            map["clj"]="clojure";    map["cljs"]="clojure"
+            map["pl"]="perl";        map["pm"]="perl"
+            map["ps1"]="powershell"
+            map["sol"]="solidity"
+            map["vue"]="vue"
+            map["svelte"]="svelte"
+            map["hs"]="haskell"
+            map["ml"]="ocaml"
+            map["erl"]="erlang"
+        }
+        {
+            base = $0
+            sub(/^.*\//, "", base)
+            if (base !~ /\./) next
+            ext = base
+            sub(/^.*\./, "", ext)
+            lang = map[tolower(ext)]
+            if (lang != "") count[lang]++
+        }
+        END { for (l in count) printf "%d\t%s\n", count[l], l }
+    ' | sort -k1,1nr -k2,2 | cut -f2
+}
+
+# `|| true` because a census that finds nothing is an ordinary outcome handled
+# by SERENA_FALLBACK_LANGUAGES below, not a failure set -e should abort on.
+SERENA_LANGUAGES=()
+while IFS= read -r serena_lang; do
+    [ -n "$serena_lang" ] || continue
+    SERENA_LANGUAGES+=("$serena_lang")
+done < <(detect_serena_languages "$PROJECT_ROOT" || true)
+
+if [ "${#SERENA_LANGUAGES[@]}" -eq 0 ]; then
+    SERENA_LANGUAGES=("${SERENA_FALLBACK_LANGUAGES[@]}")
+    warn "No recognised source files under $PROJECT_ROOT."
+    warn "Serena languages set to: ${SERENA_LANGUAGES[*]} — edit $SERENA_CONFIG if that is wrong."
+else
+    info "Detected Serena languages: ${SERENA_LANGUAGES[*]}"
+fi
+
+# One redirection for the whole file: a single truncation and a single write
+# path, so a failure part-way cannot leave a half-written config that the backup
+# taken above is the only record of.
+#
+# Every element of `languages` is emitted as a plain string. Serena's
+# ProjectConfig._from_dict() calls .lower() on each element directly, so a
+# mapping element (a list item carrying a `name:` key) raises AttributeError
+# when the config loads.
+{
+    printf '%s\n' '# Serena LSP configuration for Foundry TRACE verification'
+    printf 'languages:\n'
+    printf '  - %s\n' "${SERENA_LANGUAGES[@]}"
+    printf '\n'
+    printf 'ignored_paths:\n'
+    printf '  - %s\n' "${SERENA_IGNORED_PATHS[@]}"
+} > "$SERENA_CONFIG"
+ok "Serena config written at $SERENA_CONFIG"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 # Report what actually happened. A setup script that prints "complete" over a
