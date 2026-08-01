@@ -208,6 +208,24 @@ SERENA_POLL_INTERVAL=0.2
 # Run `serena-daemon.sh doctor` under that bound and echo its exit status,
 # reporting an expiry as 124 the way timeout(1) would.
 #
+# DELIBERATE DUPLICATION: this bash-native watchdog exists three times over. The
+# other two are daemon_rc() in hooks/session-start-serena.sh, which bounds that
+# hook's serena-daemon.sh subcommands, and run_bounded() in
+# scripts/serena-daemon.sh, which bounds the launchctl and systemctl calls on
+# cmd_reconcile's repair path. daemon_rc() is the near twin: it ECHOES its
+# status exactly as this does, and differs mainly in taking its budget and its
+# subcommand as arguments where this one fixes both. run_bounded() sits further
+# off — it RETURNS the status and bounds an arbitrary command. But the deadline,
+# the poll loop and the TERM-then-KILL escalation below are common to all three,
+# so a fault found in that body is a fault in the other two. Fix bugs in ALL
+# THREE.
+#
+# Extracting a shared helper was considered and rejected rather than overlooked:
+# a sourced file adds a load path that can be missing on a partially-synced
+# plugin directory (A-AUTO-007), and none of the three sites may fail when it
+# is. That trade stays open as a standing item (concerns.md C-025) and is not
+# settled from inside this comment.
+#
 # No external binary is involved, and that is the entire point. timeout(1) is
 # absent from stock macOS — it arrives only with coreutils, as gtimeout or as a
 # PATH-shadowing gnubin — so detecting it and degrading to an unbounded call
