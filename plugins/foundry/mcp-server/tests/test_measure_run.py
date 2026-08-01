@@ -554,8 +554,15 @@ def test_known_phase9_stream_ids_matches_authoritative_sources() -> None:
 def test_known_phase9_cohort_ids_matches_runs_dir() -> None:
     """Test 10 — set of subdirectory names under .planning/phases/09-.../runs/
     matches KNOWN_PHASE9_COHORT_IDS exactly.
+
+    Skipped when .planning/ is absent. Those cohort stubs are local planning
+    artifacts that are not committed, so on a clean clone this asserted against
+    a directory that cannot exist and failed for every contributor — which
+    trains people to ignore a red suite. Skip is the honest signal: the check is
+    real where the data is real, and silent where it is not.
     """
-    assert RUNS_DIR.exists(), f"runs dir missing: {RUNS_DIR}"
+    if not RUNS_DIR.exists():
+        pytest.skip(f"planning cohort stubs not present in this checkout: {RUNS_DIR}")
     on_disk = {p.name for p in RUNS_DIR.iterdir() if p.is_dir()}
     assert on_disk == EXPECTED_KNOWN_PHASE9_COHORT_IDS, (
         f"on-disk cohorts vs locked frozenset diff: "

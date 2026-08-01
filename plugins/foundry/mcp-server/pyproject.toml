@@ -3,7 +3,11 @@ name = "foundry-mcp"
 version = "1.7.0"
 description = "MCP server for the Foundry build-verify-fix loop. Phase gates, defect tracking, verification orchestration."
 requires-python = ">=3.11"
-dependencies = ["mcp>=1.0.0", "jsonschema>=4.20.0"]
+# mcp is capped below 2.0. server.py uses the 1.x low-level decorator API
+# (@server.list_tools() / @server.call_tool()); mcp 2.0.0 removed it, so an
+# unbounded ">=1.0.0" resolves to a version that crashes on import. Raise the
+# cap only alongside a port to the 2.x API.
+dependencies = ["mcp>=1.0.0,<2.0.0", "jsonschema>=4.20.0"]
 
 [build-system]
 requires = ["hatchling"]
