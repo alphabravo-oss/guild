@@ -10,6 +10,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from foundry_mcp import __version__
+
 from foundry_mcp.tools.citation import verify_citations
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
@@ -530,6 +532,11 @@ def main():
 
     parser = argparse.ArgumentParser(description="Guild MCP Server")
     parser.add_argument("--project-root", default=".", help="Project root directory.")
+    # The MCP entry is registered against an unpinned git URL, so the running
+    # server version is decoupled from the installed plugin version and uvx
+    # serves whatever commit it last resolved. --version is how a user (or
+    # update-mcp.sh) can tell which one that actually is.
+    parser.add_argument("--version", action="version", version=f"foundry-mcp {__version__}")
     args = parser.parse_args()
     _project_root = args.project_root
 
