@@ -2,9 +2,10 @@
 # serena-daemon.sh — Manage the shared Serena MCP HTTP daemon.
 #
 # All Claude Code sessions connect to one long-lived Serena MCP server over
-# streamable-HTTP at localhost:9121 instead of each session forking its own
-# stdio process. This script starts/stops/inspects that daemon and can install
-# an OS service so it survives reboots.
+# streamable-HTTP at localhost on $PORT (named rather than restated: a second
+# copy of that number is what went stale in this file's own usage block) instead
+# of each session forking its own stdio process. This script starts/stops/
+# inspects that daemon and can install an OS service so it survives reboots.
 #
 # Usage: serena-daemon.sh <subcommand>
 #
@@ -2081,9 +2082,27 @@ run_bounded() {
 # before treating any of them as a contract: unlike doctor's, these are a
 # diagnosis for whoever is reading a broken machine, not a value a caller reads.
 #
-#   0  converged | repaired  nothing needed, or drift was found and fully
-#                            repaired. Both are success — a caller cannot and
-#                            need not tell them apart from the code alone.
+# NO ENTRY BELOW MAY CLAIM THAT NOTHING ON DISK CHANGED. Every one of them is
+# reachable only AFTER the project-config pass has run, and that pass rewrites a
+# file in the user's repository. That claim has already been corrected here one
+# entry at a time, and the neighbouring entries kept it — a stronger wording than
+# the one being fixed sat twenty lines below the fix. The rule is therefore
+# stated once, above the whole table, so the next editor checks EVERY entry
+# rather than the one they were pointed at. What an entry MAY say is which
+# SERVICE state it touched, because that is decided inside the branch the code is
+# returned from.
+#
+#   0  converged | repaired  nothing needed, or a repair was made and no stage
+#                            of it failed. Both are success — a caller cannot
+#                            and need not tell them apart from the code alone.
+#                            It does NOT mean the machine was left untouched:
+#                            this is what the converged service path returns
+#                            after the config pass may have rewritten
+#                            .serena/project.yml, and what a completed repair
+#                            returns when the post-load probe could not be RUN
+#                            at all (no curl, unreadable port). An unverifiable
+#                            probe is not evidence of failure, and says so in
+#                            its own warn
 #   1  unsupported           OS is neither Darwin nor Linux, so no service
 #                            definition was evaluated, written or reloaded.
 #                            This is NOT a claim that nothing on disk changed.
@@ -2095,31 +2114,52 @@ run_bounded() {
 #                            See SILENCE, NOT ANY CODE below for the property a
 #                            caller actually wants
 #   2  render-failed         the definition could not be rendered, so drift
-#                            could not even be determined. Nothing is written
-#                            and nothing is unloaded: a machine that cannot be
-#                            evaluated is left exactly as it was found.
+#                            could not even be determined. No SERVICE state is
+#                            touched: nothing is written, nothing is unloaded,
+#                            and a legacy agent — cleared only on the repair
+#                            path further down — is left in place. That is the
+#                            whole of the claim. Like 1, and for the same
+#                            reason, it is NOT a claim that nothing on disk
+#                            changed: the config pass precedes this branch too
 #   3  write-failed          drift was found but the new definition could not be
-#                            written to disk
-#   4  reload-failed         the new definition was written, but the service
-#                            manager would not reload it — either it refused
+#                            put on disk. This code does NOT settle what is left
+#                            at that path, because that depends on how far the
+#                            attempt got. A directory that could not be created,
+#                            or a redirection that could not OPEN its target
+#                            (unwritable file, wrong type), leaves the previous
+#                            artifact standing untouched. A redirection that
+#                            opened and then failed — no space, quota — leaves
+#                            it EMPTIED, because `>` truncates at open, before
+#                            any rendered byte is fed in. Read the path itself
+#                            rather than inferring its contents from this code
+#   4  reload-failed         the repair reached the reload stage and the service
+#                            manager would not complete it — either it refused
 #                            outright, or its call did not return inside the
 #                            bound run_bounded holds it to. Those are one state
 #                            deliberately: a supervisor that will not answer in
 #                            bounded time has not reloaded anything, and an
-#                            expiry earns no code of its own
-#   5  unconfirmed           the definition was written AND the service manager
-#                            reloaded it, but no MCP handshake came back inside
-#                            the probe budget. The supervisor accepting a job is
-#                            not evidence the job runs — this is the state the
-#                            29-day incident sat in while reporting success.
+#                            expiry earns no code of its own. WHAT was repaired
+#                            before that stage is not encoded here: the reload
+#                            is reached from a definition rewrite, from a
+#                            macOS-only legacy-agent removal, or from both, so
+#                            this code does not imply a rewrite happened. The
+#                            printed message names the one that applied
+#   5  unconfirmed           the service manager accepted the reload, but no MCP
+#                            handshake came back inside the probe budget. The
+#                            supervisor accepting a job is not evidence the job
+#                            runs — this is the state the 29-day incident sat in
+#                            while reporting success. As with 4, this says
+#                            nothing about which trigger reached the reload and
+#                            does not imply the definition was rewritten
 #   6  config-unrepaired     no service-definition failure occurred — the
-#                            service either converged or has no manager on this
-#                            host at all — but this project's
-#                            .serena/project.yml carries a languages list Serena
-#                            cannot load and the repair did not complete: it
-#                            either declined to guess at an unrecognised shape,
-#                            or could not take its backup, or could not write
-#                            back what it had already backed up
+#                            service converged, or was repaired without a stage
+#                            failing, or has no manager on this host at all —
+#                            but this project's .serena/project.yml carries a
+#                            languages list Serena cannot load and the repair
+#                            did not complete: it either declined to guess at an
+#                            unrecognised shape, or could not take its backup,
+#                            or could not write back what it had already backed
+#                            up
 #
 # Precedence when more than one applies: a service-definition FAILURE (2, 3, 4,
 # 5) outranks 6, because a project config matters only once something is
@@ -2213,7 +2253,10 @@ run_bounded() {
 #
 # Deliberate consequence of the silent-when-converged rule: if a repair writes
 # the definition but the reload fails (exit 4), later runs see a matching
-# artifact and stay silent rather than retrying the reload. Reporting that state
+# artifact and stay silent rather than retrying the reload. The legacy trigger
+# behaves the same way and for the same reason — the stale agent is deleted
+# BEFORE the reload is attempted, so a reload that fails after it leaves nothing
+# on disk for the next run to notice either. Reporting that state
 # is `doctor`'s job (installed-but-stopped); repair is not re-attempted for a
 # condition that already looks converged on disk. That division of labour is
 # only safe because doctor genuinely runs afterwards — the SessionStart hook
@@ -2246,7 +2289,7 @@ cmd_reconcile() {
   # ── Pass 2 of 2: the OS service definition ──
   case "$os" in
     Darwin)
-      local legacy="no" drifted="no"
+      local legacy="no" drifted="no" plist_dir=""
       if [[ -f "$LEGACY_PLIST_FILE" ]]; then
         legacy="yes"
       fi
@@ -2276,8 +2319,12 @@ cmd_reconcile() {
 
       if [ "$drifted" = "yes" ]; then
         info "Serena service definition is out of date — regenerating..."
-        if ! mkdir -p "$HOME/Library/LaunchAgents"; then
-          fail "cannot create $HOME/Library/LaunchAgents"
+        # Derived from PLIST_FILE rather than retyped beside it: a restated
+        # literal here would create one directory while the write below targeted
+        # another the moment that constant moved.
+        plist_dir="$(dirname "$PLIST_FILE")"
+        if ! mkdir -p "$plist_dir"; then
+          fail "cannot create $plist_dir"
           exit 3
         fi
         # Write the very bytes that were just compared, rather than rendering a
@@ -2301,6 +2348,29 @@ cmd_reconcile() {
         run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
           launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
         rm -f "$LEGACY_PLIST_FILE"
+      fi
+
+      # WHAT THIS RUN ACTUALLY REPAIRED, in the words every message below is
+      # built from. Everything past this point is reachable from EITHER trigger,
+      # so a message that named only the rewrite told a legacy-only machine its
+      # plist had just been replaced when the bytes on disk were untouched —
+      # sending diagnosis to the wrong artifact and burying the real finding,
+      # which is launchd refusing a definition that already matches source. That
+      # branch is exactly the pre-rename machine the legacy cleanup exists for
+      # (A-003), so it is the last one that can afford a misleading report.
+      #
+      # Deriving the phrase is preferred over the alternative of writing the
+      # byte-identical plist on that branch to make one sentence true: rewriting
+      # correct bytes to justify a message repairs the report rather than the
+      # machine, spends a write on every legacy-only session start, and stamps a
+      # fresh mtime that is evidence of a rewrite nobody needed.
+      local repair_desc
+      if [ "$drifted" = "yes" ] && [ "$legacy" = "yes" ]; then
+        repair_desc="definition rewritten, legacy agent removed"
+      elif [ "$drifted" = "yes" ]; then
+        repair_desc="definition rewritten"
+      else
+        repair_desc="legacy agent removed; definition already matched source and was NOT rewritten"
       fi
 
       # Reload decision.
@@ -2338,7 +2408,7 @@ cmd_reconcile() {
           launchctl unload "$PLIST_FILE" 2>/dev/null || true
         if ! run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
              launchctl load "$PLIST_FILE"; then
-          fail "definition written but launchctl could not load $PLIST_FILE (it refused, or did not return within ${RECONCILE_SERVICE_CALL_SECONDS}s)"
+          fail "Serena reconcile could not reload launchd ($repair_desc): launchctl would not load $PLIST_FILE — it refused, or did not return within ${RECONCILE_SERVICE_CALL_SECONDS}s"
           exit 4
         fi
 
@@ -2354,23 +2424,23 @@ cmd_reconcile() {
         probe_rc=0
         await_daemon_healthy "$RECONCILE_PROBE_SECONDS" || probe_rc=$?
         if [ "$probe_rc" -eq 1 ]; then
-          warn "Serena service definition repaired and reloaded, but the daemon did not answer an MCP handshake on port $PORT within ${RECONCILE_PROBE_SECONDS}s — it may still be starting, or its command may be unsatisfiable. Diagnose with: serena-daemon.sh doctor"
+          warn "Serena service reloaded ($repair_desc), but the daemon did not answer an MCP handshake on port $PORT within ${RECONCILE_PROBE_SECONDS}s — it may still be starting, or its command may be unsatisfiable. Diagnose with: serena-daemon.sh doctor"
           exit 5
         fi
         if [ "$probe_rc" -eq 2 ]; then
-          warn "Serena service definition repaired and reloaded, but its health could NOT be verified (curl unavailable, or the port could not be read). Confirm with: serena-daemon.sh doctor"
+          warn "Serena service reloaded ($repair_desc), but its health could NOT be verified (curl unavailable, or the port could not be read). Confirm with: serena-daemon.sh doctor"
           exit "$cfg_rc"
         fi
       fi
 
-      ok "Serena service reconciled (macOS launchd)."
+      ok "Serena service reconciled — $repair_desc (macOS launchd)."
       exit "$cfg_rc"
       ;;
     Linux)
       # No legacy-agent condition here: com.codsworth.serena was a launchd
       # agent, so the pre-rename artifact only ever existed on macOS. Drift is
       # therefore the single trigger on this platform.
-      local drifted="no"
+      local drifted="no" unit_dir=""
       if ! rendered="$(render_service_definition Linux)"; then
         fail "cannot render systemd unit; leaving service state untouched"
         exit 2
@@ -2383,8 +2453,10 @@ cmd_reconcile() {
       fi
 
       info "Serena service definition is out of date — regenerating..."
-      if ! mkdir -p "$HOME/.config/systemd/user"; then
-        fail "cannot create $HOME/.config/systemd/user"
+      # Derived from SYSTEMD_FILE for the reason given on the Darwin arm.
+      unit_dir="$(dirname "$SYSTEMD_FILE")"
+      if ! mkdir -p "$unit_dir"; then
+        fail "cannot create $unit_dir"
         exit 3
       fi
       if ! printf '%s\n' "$rendered" > "$SYSTEMD_FILE"; then
@@ -2495,7 +2567,26 @@ cmd_reconcile() {
 }
 
 # ── usage ─────────────────────────────────────────────────────────────────────
+# Every value printed below is DERIVED from the constant that governs it, never
+# retyped beside it. The port used to be interpolated on the daemon line and
+# hardcoded two lines under it, so a build with a different PORT printed both
+# numbers in one screenful and contradicted itself on the user's terminal; the
+# two file paths restated their constants the same way. This is the one block in
+# the script whose staleness a user sees directly, so it is the last place that
+# can afford a second copy of a value.
+#
+# The flag list on the daemon line is the exception that cannot be derived: the
+# real launch sites are cmd_start's `nohup uvx` invocation and the plist's
+# ProgramArguments array in render_service_definition, which hold those flags as
+# literals and are documented as each other's counterpart. This line is a
+# DISPLAY copy of them and has to be updated with them.
 usage() {
+  # Display-only shortening of the home prefix to ~. The values themselves still
+  # come from PID_FILE and LOG_FILE, and a path outside $HOME prints in full
+  # rather than being mangled by an unconditional prefix strip.
+  local pid_disp="$PID_FILE" log_disp="$LOG_FILE"
+  if [[ "$pid_disp" == "$HOME"/* ]]; then pid_disp="~${pid_disp#"$HOME"}"; fi
+  if [[ "$log_disp" == "$HOME"/* ]]; then log_disp="~${log_disp#"$HOME"}"; fi
   cat << EOF
 Usage: serena-daemon.sh <subcommand>
 
@@ -2510,9 +2601,9 @@ Subcommands:
   uninstall-service  Remove OS service
 
 Daemon command: uvx --from $SERENA_PKG serena start-mcp-server --context claude-code --transport streamable-http --port $PORT
-PID file:       ~/.serena-daemon.pid
-Log file:       ~/.serena-daemon.log
-Port:           9121
+PID file:       $pid_disp
+Log file:       $log_disp
+Port:           $PORT
 EOF
 }
 
