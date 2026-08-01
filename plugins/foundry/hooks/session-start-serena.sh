@@ -218,11 +218,23 @@ DAEMON_POLL_INTERVAL=0.2
 # Run a serena-daemon.sh subcommand under a wall-clock bound and ECHO its exit
 # status, reporting an expiry as 124 the way timeout(1) would.
 #
-# DELIBERATE DUPLICATION: this is the same bash-native watchdog as
-# serena_probe_rc() in scripts/setup-foundry.sh, which bounds the foundry
-# preflight's doctor probe. Extracting a shared helper was considered and
-# rejected — a new sourced file would be a third component with its own load
-# path, and neither caller may fail if it is missing. Fix bugs in BOTH copies.
+# DELIBERATE DUPLICATION: this bash-native watchdog exists three times over. The
+# other two are serena_probe_rc() in scripts/setup-foundry.sh, which bounds the
+# foundry preflight's doctor probe, and run_bounded() in
+# scripts/serena-daemon.sh, which bounds the launchctl and systemctl calls on
+# cmd_reconcile's repair path. serena_probe_rc() is the near twin: it ECHOES its
+# status exactly as this does, and differs mainly in hard-coding its budget and
+# its subcommand where this one takes both as arguments. run_bounded() sits
+# further off — it RETURNS the status and bounds an arbitrary command. But the
+# deadline, the poll loop and the TERM-then-KILL escalation below are common to
+# all three, so a fault found in that body is a fault in the other two. Fix bugs
+# in ALL THREE.
+#
+# Extracting a shared helper was considered and rejected rather than overlooked:
+# a sourced file would add a FOURTH component with its own load path, one that
+# can be missing on a partially-synced plugin directory (A-AUTO-007), and none
+# of the three sites may fail when it is. That trade stays open as a standing
+# item (concerns.md C-025) and is not settled from inside this comment.
 #
 # No external binary is involved, and that is the entire point. timeout(1) is
 # absent from stock macOS — it arrives only with coreutils, as gtimeout or as a
