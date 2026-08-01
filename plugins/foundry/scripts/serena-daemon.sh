@@ -48,10 +48,20 @@ PORT=9121
 SERENA_PKG="serena-agent==1.6.1"
 PID_FILE="$HOME/.serena-daemon.pid"
 LOG_FILE="$HOME/.serena-daemon.log"
-PLIST_FILE="$HOME/Library/LaunchAgents/com.guild.serena.plist"
-# Pre-rename label. Installs that predate the codsworth -> guild rename still have
-# this agent loaded and holding $PORT, so install/uninstall must clear it too.
-LEGACY_PLIST_FILE="$HOME/Library/LaunchAgents/com.codsworth.serena.plist"
+# The launchd job label, and the ONE place it is spelled. launchd matches a job
+# by its Label, so the Label the plist carries, the filename that plist is
+# installed under, and every launchctl lookup all have to agree — and each of
+# them derives from this constant instead of repeating it. Spelling it in two
+# places is how a rename in one leaves the lookups asking about a label nobody
+# registered, which reports a running, healthy job as not loaded: a false
+# negative in the detector, not merely a detector that matches nothing.
+SERVICE_LABEL="com.guild.serena"
+PLIST_FILE="$HOME/Library/LaunchAgents/$SERVICE_LABEL.plist"
+# Pre-rename label, held to the same single-source rule and derived the same
+# way. Installs that predate the codsworth -> guild rename still have this agent
+# loaded and holding $PORT, so install/uninstall must clear it too.
+LEGACY_SERVICE_LABEL="com.codsworth.serena"
+LEGACY_PLIST_FILE="$HOME/Library/LaunchAgents/$LEGACY_SERVICE_LABEL.plist"
 SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
 
 # PATH handed to the daemon by BOTH service definitions, and the search list used
@@ -1009,7 +1019,7 @@ render_service_definition() {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.guild.serena</string>
+  <string>$SERVICE_LABEL</string>
   <key>ProgramArguments</key>
   <array>
     <string>$uvx_path</string>
@@ -1144,7 +1154,7 @@ cmd_install_service() {
       mkdir -p "$HOME/Library/LaunchAgents"
       render_service_definition Darwin > "$PLIST_FILE"
       if [[ -f "$LEGACY_PLIST_FILE" ]]; then
-        info "Removing legacy launchd agent (com.codsworth.serena)..."
+        info "Removing legacy launchd agent ($LEGACY_SERVICE_LABEL)..."
         launchctl unload "$LEGACY_PLIST_FILE" 2>/dev/null || true
         rm -f "$LEGACY_PLIST_FILE"
       fi
@@ -1339,7 +1349,11 @@ detect_crash_loop() {
   case "$os" in
     Darwin)
       artifact="$PLIST_FILE"
-      label="$(basename "$artifact" .plist)"
+      # Both of these come from SERVICE_LABEL, which is also what the installed
+      # plist carries — deriving the label from the artifact's filename instead
+      # would assume the two always match, and that assumption is exactly what
+      # a rename breaks.
+      label="$SERVICE_LABEL"
       if [ ! -f "$artifact" ] || ! command -v launchctl >/dev/null 2>&1; then
         loaded="no"
       else
@@ -1658,9 +1672,10 @@ cmd_doctor() {
     Darwin)
       if [ "$installed" = "yes" ] && command -v launchctl >/dev/null 2>&1; then
         local lc_label="" lc_out="" lc_status=""
-        # Derive the label from the artifact path rather than repeating the
-        # string the renderer already owns.
-        lc_label="$(basename "$artifact" .plist)"
+        # SERVICE_LABEL is the single source the renderer writes into the plist
+        # and the filename is built from, so this lookup names the same string
+        # launchd registered rather than reconstructing it from the path.
+        lc_label="$SERVICE_LABEL"
         lc_out="$(launchctl list "$lc_label" 2>/dev/null || true)"
         if [ -n "$lc_out" ]; then
           lc_status="$(printf '%s\n' "$lc_out" \
@@ -2233,11 +2248,12 @@ run_bounded() {
 #       Byte comparison is the whole test. No version stamp is read, written or
 #       relied on, because none exists in either artifact to consult (A-013).
 #
-#   (2) macOS only — a pre-rename com.codsworth.serena agent is still on disk.
+#   (2) macOS only — the pre-rename agent named by LEGACY_SERVICE_LABEL is still
+#       on disk.
 #       That agent is supervised, binds this same $PORT, and carries a command
 #       that can no longer be satisfied, so two agents contend for one port
 #       (A-003). Its presence is a divergence from what current source describes
-#       even when com.guild.serena.plist is itself byte-perfect, and A-014 has
+#       even when the current agent's own plist is byte-perfect, and A-014 has
 #       reconcile clear it unconditionally — so it cannot be nested inside (1),
 #       which may be false forever on exactly such a machine. Condition (1)
 #       remains a pure byte comparison; this is a second trigger beside it, not
@@ -2337,7 +2353,7 @@ cmd_reconcile() {
       fi
 
       if [ "$legacy" = "yes" ]; then
-        info "Removing legacy launchd agent (com.codsworth.serena)..."
+        info "Removing legacy launchd agent ($LEGACY_SERVICE_LABEL)..."
         # Best-effort and bounded: this is the agent most likely to be wedged,
         # since its command can no longer be satisfied. An expiry is absorbed
         # here and adjudicated by the post-load probe — see BOUNDED
@@ -2437,7 +2453,7 @@ cmd_reconcile() {
       exit "$cfg_rc"
       ;;
     Linux)
-      # No legacy-agent condition here: com.codsworth.serena was a launchd
+      # No legacy-agent condition here: LEGACY_SERVICE_LABEL named a launchd
       # agent, so the pre-rename artifact only ever existed on macOS. Drift is
       # therefore the single trigger on this platform.
       local drifted="no" unit_dir=""
