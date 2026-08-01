@@ -57,15 +57,24 @@ SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
 # to resolve the daemon's own launcher. One list serves both jobs, so the
 # launcher can never be resolved out of a directory the daemon is not then given.
 #
-# FIXED, never read from the environment. The rendered definition is the drift
-# oracle: doctor byte-compares it against the installed artifact and reconcile
-# rewrites and RELOADS the service on any difference. A list built from the
-# invoking shell's PATH answered differently for every caller — a login shell
-# carrying a node version-manager shim, the SessionStart hook without it — and
-# each disagreement read as drift, so the daemon was killed and the LSP cold-
-# reindexed on every single session, announcing itself as a repair each time.
-# Determinism here is what makes that byte comparison mean anything (GI-004),
-# and what lets a converged session stay silent (GI-008).
+# FIXED in the sense that matters: this list is not built from the invoking
+# shell's PATH. The rendered definition is the drift oracle: doctor
+# byte-compares it against the installed artifact and reconcile rewrites and
+# RELOADS the service on any difference. A list built from the caller's PATH
+# answered differently for every caller — a login shell carrying a node
+# version-manager shim, the SessionStart hook without it — and each disagreement
+# read as drift, so the daemon was killed and the LSP cold-reindexed on every
+# single session, announcing itself as a repair each time. Determinism here is
+# what makes that byte comparison mean anything (GI-004), and what lets a
+# converged session stay silent (GI-008).
+#
+# ONE EXCEPTION, and it is the caller-derived input this constant does NOT
+# remove: when uvx is found in none of these directories,
+# render_service_definition falls back to the caller's own PATH and PREPENDS the
+# directory it lands in. On those machines the rendered PATH is this list plus
+# one caller-derived entry, so it is NOT identical across callers. The trade,
+# and what it costs when callers disagree, is recorded at that fallback — read
+# it there before treating this list as the whole story.
 #
 # WHAT IT HAS TO COVER. Serena's LSP manager spawns its language servers
 # (bash-language-server, typescript-language-server) by BARE NAME. A daemon
@@ -87,8 +96,15 @@ SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
 # instability this constant exists to remove.
 SERVICE_PATH_DIRS="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# Absolute path to this script (used by the systemd unit's ExecStart so the
-# PID file is written on every launch — including service-managed boots).
+# Absolute path to the copy of this script that is running, with symlinked
+# directories resolved away by pwd -P.
+#
+# The systemd unit's ExecStart has to name a serena-daemon.sh, so that the PID
+# file is written on every launch including service-managed boots, and this is
+# the candidate offered for that job. It is NOT rendered directly: it names
+# whichever of a machine's several physical copies invoked us, which is caller
+# state rather than source state. resolve_service_script decides what the unit
+# actually carries, and why.
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 
 # Post-load health-probe budgets, in seconds. See await_daemon_healthy() for why
@@ -783,6 +799,100 @@ resolve_service_tool() {
   return 1
 }
 
+# ── systemd-home-path ─────────────────────────────────────────────────────────
+# Print <abspath> in the form a systemd unit file should carry it: a path under
+# the user's home is expressed against systemd's %h specifier, which is what the
+# installed unit has always used, and anything else is passed through absolute.
+# Pure: one line on stdout.
+#
+# Exists so the unit's PIDFile and its two log directives are DERIVED from
+# PID_FILE and LOG_FILE instead of restating them. They used to be literals, so
+# moving either constant left the service writing one path while cmd_start,
+# cmd_stop, cmd_status, detect_crash_loop and doctor's log dimension all read
+# the other: the log half of crash-loop detection would then match nothing, and
+# systemd's PIDFile tracking would break with it.
+#
+# A literal % introduces a specifier in a unit file, so one in the path is
+# escaped to %%. Without that, deriving from a constant would be a way to inject
+# unit syntax that the hardcoded literals could not.
+systemd_home_path() {
+  local abs="${1:-}" rel
+  case "$abs" in
+    "$HOME"/*) rel="${abs#"$HOME"/}"; printf '%s\n' "%h/${rel//%/%%}" ;;
+    *)         printf '%s\n' "${abs//%/%%}" ;;
+  esac
+}
+
+# ── resolve-service-script ────────────────────────────────────────────────────
+# Print the absolute path of the serena-daemon.sh that the systemd unit's
+# ExecStart should name. Pure: it reads the installed unit and stats two files,
+# and writes one line. It always succeeds, because there is always a fallback
+# answer. No macOS caller: the launchd plist names uvx directly and no script,
+# which is why that platform never had this problem.
+#
+# WHY NOT SIMPLY SCRIPT_PATH. That is derived from BASH_SOURCE, so it names the
+# copy of this script that invoked the renderer. Symlinked directories are
+# resolved away, but two PHYSICAL copies at different real paths are not, and a
+# machine normally carries several: a repo checkout, and one per installed
+# plugin version under the Claude plugin cache. The SessionStart hook runs one
+# and a developer runs another, and each rendered a different ExecStart. The
+# rendered unit IS the drift oracle, so that disagreement read as drift on every
+# single session — the unit rewritten and the daemon bounced each time, which
+# already violates the silent-when-converged rule (GI-008). Worse on this
+# platform specifically: each of those repairs also clears systemd's failed
+# latch and restart counter, the very signals detect_crash_loop and doctor read,
+# so a daemon in a genuine crash loop would report as not-failed with zero
+# restarts.
+#
+# THE RULE: copies that are byte-identical to the running one are
+# interchangeable, so an installed unit already naming one of them is left
+# alone, and every such caller renders the same bytes. Anything else renders the
+# invoking copy — nothing installed yet, a recorded path that no longer names a
+# runnable file, or one whose contents differ — which shows as drift and is
+# repaired exactly once, after which the recorded path matches and later runs
+# are silent.
+#
+# REQUIRING IDENTICAL CONTENTS is what keeps this from pinning a stale copy, and
+# is the reason the test is not merely "does the recorded path still exist". The
+# plugin cache retains the directory of every plugin version it has installed,
+# and each of those copies stays runnable forever, so an existence-only test
+# would keep launching a superseded version's script after an upgrade — exactly
+# the silent stale-artifact failure this subcommand set exists to end.
+#
+# KNOWN RESIDUAL, deliberate: two copies whose contents genuinely DIFFER are not
+# interchangeable, and alternating between them still drifts and still bounces.
+# That is unchanged from before this rule existed, and it is the honest reading
+# of a machine holding two different answers to which code the daemon should
+# run; silently pinning one of them is the staleness bug above. It is reachable
+# on a developer machine whose checkout is ahead of the installed plugin, and
+# not in a release configuration, where the copies are the same build.
+resolve_service_script() {
+  local recorded=""
+  if [ -f "$SYSTEMD_FILE" ]; then
+    # First match only, then strip the one argument this renderer ever writes.
+    # Stripping a suffix that is absent is a no-op, so a unit that lost its
+    # argument keeps its path here and has the argument restored below. A unit
+    # carrying DIFFERENT arguments does not survive the strip: what is left
+    # still has them attached, names no file, and fails the tests below, so the
+    # whole line is re-rendered from the invoking copy rather than half-parsed.
+    # Both outcomes repair the unit; only the first one reuses the path. grep
+    # matching nothing is an ordinary outcome here, not a failure, so it is
+    # guarded under set -e.
+    recorded="$(grep -m1 '^ExecStart=' "$SYSTEMD_FILE" 2>/dev/null || true)"
+    recorded="${recorded#ExecStart=}"
+    recorded="${recorded% start}"
+  fi
+  # -f before -x because a directory is executable too, and a dangling symlink
+  # fails both. Anything left carrying systemd's own ExecStart prefixes, or
+  # extra arguments, fails these tests and is re-rendered rather than parsed.
+  if [ -n "$recorded" ] && [ -f "$recorded" ] && [ -x "$recorded" ] \
+     && cmp -s "$recorded" "$SCRIPT_PATH"; then
+    printf '%s\n' "$recorded"
+    return 0
+  fi
+  printf '%s\n' "$SCRIPT_PATH"
+}
+
 # ── render-service-definition ─────────────────────────────────────────────────
 # Emit the complete text of the OS service definition for <platform> on stdout.
 #
@@ -794,6 +904,15 @@ resolve_service_tool() {
 # systemctl — installing what it renders is the caller's job. It also never
 # prints via info/ok/warn, because those write to stdout and would corrupt the
 # artifact mid-render; fail() is safe here only because it writes to stderr.
+#
+# PURE IS NOT HERMETIC, and the difference matters to anyone reading the drift
+# comparison. This render READS the machine: which directory holds uvx, and on
+# Linux which ExecStart the installed unit already carries (resolve_service_script
+# explains that one in full). Reading is not a side effect, but it does mean the
+# output is a function of machine state and not of this file's source alone. The
+# ExecStart path is carried forward rather than re-derived ON PURPOSE, so that
+# the byte comparison cannot be tripped by which of a machine's several copies
+# of this script happened to invoke it.
 #
 # Splitting generation from installation is the point: `install-service` and the
 # drift check render from this one template instead of keeping two copies that
@@ -833,16 +952,35 @@ render_service_definition() {
   # syntax, not in which launcher they start or which tools that launcher needs
   # to reach — and a per-arm copy of this is how one arm ended up with a PATH the
   # other lacked.
-  local uvx_path uvx_dir svc_path
+  local uvx_path uvx_dir svc_path service_script="" pid_spec="" log_spec=""
   uvx_path="$(resolve_service_tool uvx || true)"
   if [ -z "$uvx_path" ]; then
-    # The one input this render still takes from the caller, and a bounded one: a
-    # uvx installed outside every directory in SERVICE_PATH_DIRS — Nix, Linuxbrew,
-    # a version-manager shim, a project venv — is reachable only through the
-    # invoking shell. Refusing to render for those machines would break a working
-    # install to buy a determinism they cannot have anyway, and the standard
-    # layouts never reach this line. Its directory is prepended below so the
-    # daemon can still find the launcher.
+    # THE ONE CALLER-DERIVED INPUT LEFT IN THIS RENDER, kept deliberately, with
+    # its cost stated rather than argued away. A uvx installed outside every
+    # directory in SERVICE_PATH_DIRS — Nix, Linuxbrew, a version-manager shim, a
+    # project venv — is reachable only through the invoking shell, and the
+    # standard layouts never reach this line.
+    #
+    # WHAT IT COSTS when it is reached: two callers that see uvx at different
+    # paths render different bytes, in the launch arguments and in the PATH the
+    # directory below is prepended to. The rendered definition is the drift
+    # oracle, so that disagreement is drift which cannot self-clear — each
+    # session rewrites the definition and bounces the daemon, and on Linux each
+    # of those repairs also clears systemd's failed latch and restart counter
+    # before detect_crash_loop and doctor read them. The exposure is bounded to
+    # machines whose callers disagree about where uvx is; one consistently
+    # reachable uvx renders the same bytes for everyone.
+    #
+    # A WORKABLE ALTERNATIVE EXISTS and is not claimed otherwise: pinning the
+    # resolved path once and carrying it forward on later renders would give
+    # these machines the same determinism the rest of the render has —
+    # resolve_service_script does exactly that for the unit's ExecStart. It is
+    # not done here because the cost lands differently. Removing the fallback
+    # instead refuses to render for a uvx that is real and reachable, breaking
+    # installs that work today; and extending the carry-forward means reading
+    # back a path out of the launchd plist and out of the unit's PATH string as
+    # well, on both platforms, for a case that only bites when callers disagree.
+    # Weigh it with both of those visible.
     uvx_path="$(command -v uvx || true)"
   fi
   if [ -z "$uvx_path" ]; then
@@ -897,20 +1035,30 @@ render_service_definition() {
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$HOME/.serena-daemon.log</string>
+  <string>$LOG_FILE</string>
   <key>StandardErrorPath</key>
-  <string>$HOME/.serena-daemon.log</string>
+  <string>$LOG_FILE</string>
 </dict>
 </plist>
 EOF
       ;;
     Linux)
       # Route ExecStart through this script's `start` subcommand so the PID file
-      # is written on every launch (including boot). Type=forking + PIDFile lets
-      # systemd track the real daemon; Environment=PATH gives that launch the
-      # same tool directories the plist gives the launchd job — the launcher that
-      # starts the server, and node for the language servers the server spawns
-      # behind it. See SERVICE_PATH_DIRS for why it is one fixed list.
+      # is written on every launch (including boot), and so the launch inherits
+      # the trust-store handling that cmd_start does — a direct uvx invocation
+      # here would skip it. WHICH copy of this script it names is decided by
+      # resolve_service_script, not by whoever invoked this render; that
+      # distinction is the whole reason the unit stops drifting between callers,
+      # and the reasoning for it lives over there. PIDFile and both log
+      # directives are derived from PID_FILE and LOG_FILE through
+      # systemd_home_path rather than restated, so moving either constant moves
+      # the service with it.
+      #
+      # Type=forking + PIDFile lets systemd track the real daemon;
+      # Environment=PATH gives that launch the same tool directories the plist
+      # gives the launchd job — the launcher that starts the server, and node
+      # for the language servers the server spawns behind it. See
+      # SERVICE_PATH_DIRS for why it is one fixed list.
       #
       # Both artifacts pin WorkingDirectory to $HOME, and to $HOME rather than to
       # a repository. This daemon is user-scoped and serves every project the
@@ -939,6 +1087,9 @@ EOF
       # counterpart by design: launchd has no terminal give-up state at all, so
       # KeepAlive stays true in the plist above and macOS relies on
       # detect_crash_loop() reporting the loop instead.
+      service_script="$(resolve_service_script)"
+      pid_spec="$(systemd_home_path "$PID_FILE")"
+      log_spec="$(systemd_home_path "$LOG_FILE")"
       cat << EOF
 [Unit]
 Description=Serena MCP HTTP Daemon (guild)
@@ -948,14 +1099,14 @@ StartLimitBurst=5
 
 [Service]
 Type=forking
-PIDFile=%h/.serena-daemon.pid
+PIDFile=$pid_spec
 Environment=PATH=$svc_path
-ExecStart=$SCRIPT_PATH start
+ExecStart=$service_script start
 WorkingDirectory=$HOME
 Restart=on-failure
 RestartSec=5
-StandardOutput=append:%h/.serena-daemon.log
-StandardError=append:%h/.serena-daemon.log
+StandardOutput=append:$log_spec
+StandardError=append:$log_spec
 
 [Install]
 WantedBy=default.target
