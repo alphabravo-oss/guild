@@ -62,7 +62,20 @@ PLIST_FILE="$HOME/Library/LaunchAgents/$SERVICE_LABEL.plist"
 # loaded and holding $PORT, so install/uninstall must clear it too.
 LEGACY_SERVICE_LABEL="com.codsworth.serena"
 LEGACY_PLIST_FILE="$HOME/Library/LaunchAgents/$LEGACY_SERVICE_LABEL.plist"
-SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
+# The systemd user unit's name, and the ONE place it is spelled. systemd
+# identifies a unit BY its filename, so the file this script writes and every
+# systemctl argument acting on it are the same string by definition; each
+# derives from this constant instead of repeating it.
+#
+# Restating it is more dangerous than restating SERVICE_LABEL was, because these
+# calls MUTATE rather than look up. Rename the path alone and reconcile writes
+# the unit to the new file, then enables, resets and restarts a name that no
+# longer exists. Every one of those fails and the run reports exit 4 — but the
+# artifact on disk now MATCHES what the renderer emits, so the
+# silent-when-converged rule sends every later session down the quiet path with
+# the daemon never started and nothing reporting it again.
+SERVICE_UNIT="serena-daemon.service"
+SYSTEMD_FILE="$HOME/.config/systemd/user/$SERVICE_UNIT"
 
 # PATH handed to the daemon by BOTH service definitions, and the search list used
 # to resolve the daemon's own launcher. One list serves both jobs, so the
@@ -1151,7 +1164,9 @@ cmd_install_service() {
 
   case "$os" in
     Darwin)
-      mkdir -p "$HOME/Library/LaunchAgents"
+      # Same rule as the Linux arm below: the directory comes from PLIST_FILE
+      # rather than being spelled a second time.
+      mkdir -p "$(dirname "$PLIST_FILE")"
       render_service_definition Darwin > "$PLIST_FILE"
       if [[ -f "$LEGACY_PLIST_FILE" ]]; then
         info "Removing legacy launchd agent ($LEGACY_SERVICE_LABEL)..."
@@ -1180,10 +1195,13 @@ cmd_install_service() {
       exit 0
       ;;
     Linux)
-      mkdir -p "$HOME/.config/systemd/user"
+      # Derived from SYSTEMD_FILE, not spelled again, so the directory created
+      # is always the one the unit is about to be written into. cmd_reconcile
+      # already takes it from the same place.
+      mkdir -p "$(dirname "$SYSTEMD_FILE")"
       render_service_definition Linux > "$SYSTEMD_FILE"
       systemctl --user daemon-reload 2>/dev/null || true
-      systemctl --user enable --now serena-daemon.service
+      systemctl --user enable --now "$SERVICE_UNIT"
       # `--now` does block on unit start and does fail loudly under set -e, so
       # this platform was already partly guarded — but only against a unit that
       # cannot START. The unit is Type=forking with ExecStart routed through this
@@ -1229,7 +1247,7 @@ cmd_uninstall_service() {
       exit 0
       ;;
     Linux)
-      systemctl --user disable --now serena-daemon.service 2>/dev/null || true
+      systemctl --user disable --now "$SERVICE_UNIT" 2>/dev/null || true
       rm -f "$SYSTEMD_FILE"
       ok "Serena service uninstalled (Linux systemd)."
       exit 0
@@ -2506,7 +2524,7 @@ cmd_reconcile() {
       run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
         systemctl --user daemon-reload 2>/dev/null || true
       run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
-        systemctl --user enable serena-daemon.service 2>/dev/null || true
+        systemctl --user enable "$SERVICE_UNIT" 2>/dev/null || true
 
       # Clear a latched failure before restarting, or the repair cannot land.
       # Once systemd spends the unit's start-limit budget it parks the unit in
@@ -2538,11 +2556,11 @@ cmd_reconcile() {
       #     asymmetry in which only Linux could be blocked from repairing
       #     itself, rather than opening a new one (A-007).
       run_bounded "$RECONCILE_SERVICE_CALL_SECONDS" \
-        systemctl --user reset-failed serena-daemon.service 2>/dev/null || true
+        systemctl --user reset-failed "$SERVICE_UNIT" 2>/dev/null || true
 
       if ! run_bounded "$RECONCILE_UNIT_START_SECONDS" \
-           systemctl --user restart serena-daemon.service; then
-        fail "definition written but systemctl could not restart serena-daemon.service (it refused, or the unit did not start within ${RECONCILE_UNIT_START_SECONDS}s)"
+           systemctl --user restart "$SERVICE_UNIT"; then
+        fail "definition written but systemctl could not restart $SERVICE_UNIT (it refused, or the unit did not start within ${RECONCILE_UNIT_START_SECONDS}s)"
         exit 4
       fi
 
