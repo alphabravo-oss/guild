@@ -53,6 +53,40 @@ PLIST_FILE="$HOME/Library/LaunchAgents/com.guild.serena.plist"
 LEGACY_PLIST_FILE="$HOME/Library/LaunchAgents/com.codsworth.serena.plist"
 SYSTEMD_FILE="$HOME/.config/systemd/user/serena-daemon.service"
 
+# PATH handed to the daemon by BOTH service definitions, and the search list used
+# to resolve the daemon's own launcher. One list serves both jobs, so the
+# launcher can never be resolved out of a directory the daemon is not then given.
+#
+# FIXED, never read from the environment. The rendered definition is the drift
+# oracle: doctor byte-compares it against the installed artifact and reconcile
+# rewrites and RELOADS the service on any difference. A list built from the
+# invoking shell's PATH answered differently for every caller — a login shell
+# carrying a node version-manager shim, the SessionStart hook without it — and
+# each disagreement read as drift, so the daemon was killed and the LSP cold-
+# reindexed on every single session, announcing itself as a repair each time.
+# Determinism here is what makes that byte comparison mean anything (GI-004),
+# and what lets a converged session stay silent (GI-008).
+#
+# WHAT IT HAS TO COVER. Serena's LSP manager spawns its language servers
+# (bash-language-server, typescript-language-server) by BARE NAME. A daemon
+# without node's directory on this PATH loads, answers an MCP handshake, and then
+# fails every symbol lookup with "node is not installed" — healthy on every axis
+# but the one that matters. So the user-level install prefixes lead (uv, pipx,
+# and both Homebrew architectures — one machine's prefix is the other's dead
+# entry), and the system directories trail, including launchd's default in full:
+# widening a service PATH must never narrow it.
+#
+# The same string is rendered on both platforms, deliberately. A directory that
+# does not exist on a given machine is skipped at lookup time and costs nothing,
+# whereas a per-platform list is exactly how the two arms diverged before — one
+# carried a node directory and the other silently did not.
+#
+# A node installed ONLY under a version manager that mutates PATH rather than
+# keeping a fixed shim directory is not found here. That is the deliberate trade:
+# locating it means reading the caller's environment, which is precisely the
+# instability this constant exists to remove.
+SERVICE_PATH_DIRS="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 # Absolute path to this script (used by the systemd unit's ExecStart so the
 # PID file is written on every launch — including service-managed boots).
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
@@ -722,6 +756,32 @@ cmd_status() {
   exit 1
 }
 
+# ── resolve-service-tool ──────────────────────────────────────────────────────
+# Print the absolute path of <name> as found within SERVICE_PATH_DIRS, or print
+# nothing and return non-zero. Pure: it stats the filesystem and writes one line.
+#
+# Deliberately NOT `command -v`, which is the very thing that made the render
+# unstable. `command -v` answers from the caller's PATH, and from this shell's
+# hash table on top of that — two pieces of caller state, neither of which the
+# installed artifact should depend on. Searching the rendered directories by hand
+# gives the same answer to every caller on a given machine, and guarantees the
+# tool it finds is one the daemon can find too.
+resolve_service_tool() {
+  local name="${1:-}" dir
+  [ -n "$name" ] || return 1
+  local dirs=()
+  # read -ra splits on IFS without glob-expanding, so a directory containing a
+  # shell metacharacter cannot turn into a pattern match.
+  IFS=: read -ra dirs <<< "$SERVICE_PATH_DIRS"
+  for dir in "${dirs[@]}"; do
+    if [ -x "$dir/$name" ]; then
+      printf '%s\n' "$dir/$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ── render-service-definition ─────────────────────────────────────────────────
 # Emit the complete text of the OS service definition for <platform> on stdout.
 #
@@ -755,53 +815,49 @@ cmd_status() {
 # suspends set -e inside the function, so propagating cat's status is what lets a
 # failed write on the caller's redirection surface instead of silently passing.
 render_service_definition() {
-  case "${1:-}" in
+  local platform="${1:-}"
+
+  # Platform first, so an unsupported argument is reported as such even on a
+  # machine with no launcher to resolve — the unsupported code outranks the
+  # unrenderable one.
+  case "$platform" in
+    Darwin|Linux) ;;
+    *)
+      fail "unsupported OS: $platform"
+      return 1
+      ;;
+  esac
+
+  # Resolved ONCE for both platforms rather than per-arm. The arms differ in
+  # syntax, not in which launcher they start or which tools that launcher needs
+  # to reach — and a per-arm copy of this is how one arm ended up with a PATH the
+  # other lacked.
+  local uvx_path uvx_dir svc_path
+  uvx_path="$(resolve_service_tool uvx || true)"
+  if [ -z "$uvx_path" ]; then
+    # The one input this render still takes from the caller, and a bounded one: a
+    # uvx installed outside every directory in SERVICE_PATH_DIRS — Nix, Linuxbrew,
+    # a version-manager shim, a project venv — is reachable only through the
+    # invoking shell. Refusing to render for those machines would break a working
+    # install to buy a determinism they cannot have anyway, and the standard
+    # layouts never reach this line. Its directory is prepended below so the
+    # daemon can still find the launcher.
+    uvx_path="$(command -v uvx || true)"
+  fi
+  if [ -z "$uvx_path" ]; then
+    fail "uvx not found; cannot render the $platform service definition"
+    return 2
+  fi
+  uvx_dir="$(dirname "$uvx_path")"
+  svc_path="$SERVICE_PATH_DIRS"
+  case ":$svc_path:" in
+    *":$uvx_dir:"*) ;;
+    *) svc_path="$uvx_dir:$svc_path" ;;
+  esac
+
+  # Platform already validated above, so this branch needs no default arm.
+  case "$platform" in
     Darwin)
-      local uvx_path
-      uvx_path="$(command -v uvx || true)"
-      if [ -z "$uvx_path" ]; then
-        fail "uvx not found; cannot render launchd plist"
-        return 2
-      fi
-      # PATH for the launchd job — the macOS counterpart of the systemd unit's
-      # Environment=PATH line below, which macOS went without.
-      #
-      # launchd hands a job a bare PATH=/usr/bin:/bin:/usr/sbin:/sbin. That is
-      # enough to EXEC the daemon, because ProgramArguments carries an absolute
-      # uvx path — which is exactly why the gap stayed invisible: the daemon
-      # loads, runs, and answers an MCP handshake perfectly. What it cannot do
-      # is spawn its language servers, because Serena's LSP manager launches
-      # those by BARE NAME. On a Homebrew Mac node/npx/uvx all live outside
-      # those four directories, so every find_symbol / get_symbols_overview
-      # call fails with "node is not installed" against a daemon that reports
-      # healthy on every other axis.
-      #
-      # Derived, never hardcoded: /opt/homebrew/bin is Apple-silicon-only and
-      # /usr/local/bin is Intel, so the tool directories are read off the real
-      # resolved binaries. node is resolved defensively — absent, it is simply
-      # omitted rather than rendering an empty element, since a Python-only
-      # install is still a working install.
-      #
-      # The system directories are appended as a strict SUPERSET of launchd's
-      # default; a fix that widens PATH must not quietly narrow it. Order is
-      # fixed and entries are deduplicated so the bytes stay REPRODUCIBLE:
-      # reconcile rewrites and reloads the job on any byte difference, so a
-      # render that varied between callers would bounce the daemon on every
-      # session start instead of converging silently.
-      local uvx_dir node_path node_dir dir svc_path=""
-      uvx_dir="$(dirname "$uvx_path")"
-      node_path="$(command -v node || true)"
-      node_dir=""
-      if [ -n "$node_path" ]; then
-        node_dir="$(dirname "$node_path")"
-      fi
-      for dir in "$uvx_dir" "$node_dir" /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
-        [ -n "$dir" ] || continue
-        case ":$svc_path:" in
-          *":$dir:"*) continue ;;
-        esac
-        svc_path="${svc_path:+$svc_path:}$dir"
-      done
       # Launch site 2 of 2. cmd_start()'s `nohup uvx` invocation is the other,
       # and the two carry an IDENTICAL flag set — a divergence between them is
       # what produced the original incident. launchd gives every token its own
@@ -848,17 +904,21 @@ render_service_definition() {
 EOF
       ;;
     Linux)
-      local uvx_path
-      uvx_path="$(command -v uvx || true)"
-      if [ -z "$uvx_path" ]; then
-        fail "uvx not found; cannot render systemd unit"
-        return 2
-      fi
       # Route ExecStart through this script's `start` subcommand so the PID file
       # is written on every launch (including boot). Type=forking + PIDFile lets
-      # systemd track the real daemon; Environment=PATH ensures `uvx` resolves
-      # under the service's restricted PATH. WorkingDirectory pins the project
-      # tree so Serena indexes the correct repo after a reboot.
+      # systemd track the real daemon; Environment=PATH gives that launch the
+      # same tool directories the plist gives the launchd job — the launcher that
+      # starts the server, and node for the language servers the server spawns
+      # behind it. See SERVICE_PATH_DIRS for why it is one fixed list.
+      #
+      # Both artifacts pin WorkingDirectory to $HOME, and to $HOME rather than to
+      # a repository. This daemon is user-scoped and serves every project the
+      # user opens: its launch arguments name no project, and the client activates
+      # one per session, so there is no single project tree to pin and pinning one
+      # would be wrong. What $HOME buys is a working directory that always exists
+      # and is writable by the user the service runs as — a checkout can be
+      # renamed, deleted, or sit on a volume that is not mounted at login, and a
+      # service whose working directory has vanished does not start.
       #
       # The two start-limit directives below are set EXPLICITLY, and belong in
       # [Unit] rather than [Service]. Omitting them does not mean "unlimited" —
@@ -878,8 +938,6 @@ EOF
       # counterpart by design: launchd has no terminal give-up state at all, so
       # KeepAlive stays true in the plist above and macOS relies on
       # detect_crash_loop() reporting the loop instead.
-      local uvx_dir
-      uvx_dir="$(dirname "$uvx_path")"
       cat << EOF
 [Unit]
 Description=Serena MCP HTTP Daemon (guild)
@@ -890,7 +948,7 @@ StartLimitBurst=5
 [Service]
 Type=forking
 PIDFile=%h/.serena-daemon.pid
-Environment=PATH=$uvx_dir:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$svc_path
 ExecStart=$SCRIPT_PATH start
 WorkingDirectory=$HOME
 Restart=on-failure
@@ -901,10 +959,6 @@ StandardError=append:%h/.serena-daemon.log
 [Install]
 WantedBy=default.target
 EOF
-      ;;
-    *)
-      fail "unsupported OS: ${1:-}"
-      return 1
       ;;
   esac
 }
