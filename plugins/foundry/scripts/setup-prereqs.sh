@@ -153,13 +153,24 @@ else
 fi
 
 # Use python3 for safe JSON manipulation
-python3 << PYEOF
-import json
+# QUOTED heredoc, values passed through the environment. This is deliberate and
+# load-bearing: with an UNQUOTED heredoc the shell expands the block before
+# python sees it, so any backtick or $(...) in a comment here is EXECUTED. That
+# is not hypothetical — three such comments below once ran `uv run --directory`
+# and `uv cache prune`, the latter blocking forever on the long-lived uvx
+# processes setup itself had just started. Quoting also removes a quoting bug:
+# a path containing a double quote used to produce broken python.
+MCP_FILE="$MCP_FILE" \
+MCP_SERVER_SRC="$MCP_SERVER_SRC" \
+SERENA_UP="$SERENA_UP" \
+USE_LOCAL_SRC="$USE_LOCAL_SRC" \
+python3 << 'PYEOF'
+import json, os
 
-mcp_file = "$MCP_FILE"
-mcp_server_src = "$MCP_SERVER_SRC"
-serena_up = "$SERENA_UP" == "1"
-use_local = "$USE_LOCAL_SRC" == "1"
+mcp_file = os.environ["MCP_FILE"]
+mcp_server_src = os.environ["MCP_SERVER_SRC"]
+serena_up = os.environ["SERENA_UP"] == "1"
+use_local = os.environ["USE_LOCAL_SRC"] == "1"
 
 with open(mcp_file) as f:
     cfg = json.load(f)
