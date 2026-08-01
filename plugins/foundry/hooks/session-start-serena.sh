@@ -47,27 +47,39 @@ DAEMON_TIMEOUT=5
 # takes; everything below sizes the REPAIR path, which only a broken machine
 # reaches. reconcile now bounds each of its own service-manager calls
 # INTERNALLY, so this number is derived from those constants BY NAME —
-# RECONCILE_SERVICE_CALL_SECONDS (2), RECONCILE_UNIT_START_SECONDS (8) and
-# RECONCILE_PROBE_SECONDS (4) in serena-daemon.sh. Each internal bound carries
-# that script's own TERM / 0.5s / KILL escalation, run synchronously, so an
-# EXPIRED call costs its budget plus 0.5s. Re-derive this if any of the three
-# changes; check them by name over there.
+# RECONCILE_SERVICE_CALL_SECONDS, RECONCILE_UNIT_START_SECONDS and
+# RECONCILE_PROBE_SECONDS in serena-daemon.sh. Their literal values are
+# deliberately NOT restated here: names cross a file boundary intact, numbers do
+# not, and a number left stranded here by a change over there is how earlier
+# revisions of this very constant went wrong. Read each by name, then re-derive
+# the two sums below. Each internal bound carries that script's own
+# TERM / grace / KILL escalation in run_bounded, run synchronously, so an
+# EXPIRED call costs its own budget plus that grace — written "+ grace" below.
+#
+# HOW A BOUND HERE RELATES TO A PATH LENGTH, because getting this backwards is
+# what made the previous value wrong. daemon_rc's watchdog anchors to $SECONDS,
+# a clock this shell may have started part-way through, so a bound of N fires
+# anywhere in (N-1, N] and ERRS EARLY by design — the same rule serena_probe_rc
+# states beside SERENA_PROBE_TIMEOUT in setup-foundry.sh. A bound therefore
+# covers a path of length D IN FULL only when D <= N-1. Sizing N to D itself
+# leaves the path truncated whenever the kill lands in the lower part of its
+# window, so every claim of coverage below is made against N-1, never against N.
 #
 # Darwin, legacy-agent branch — a pre-rename com.codsworth.serena plist present
 # (A-003) while the current definition has NOT drifted. This is the longest
 # Darwin path, because only this branch consults health to decide whether a
 # legacy-only removal also warrants bouncing the daemon:
 #
-#   unload legacy      RECONCILE_SERVICE_CALL_SECONDS 2, +0.5    2.5
+#   unload legacy      RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
 #   pre-reload probe   serena_mcp_healthy, capped by its own
 #                      curl --max-time                            3
-#   unload current     RECONCILE_SERVICE_CALL_SECONDS 2, +0.5    2.5
-#   load current       RECONCILE_SERVICE_CALL_SECONDS 2, +0.5    2.5
-#   post-load probe    RECONCILE_PROBE_SECONDS (4) plus one more
-#                      curl --max-time (3): that budget is checked
-#                      only AFTER each attempt, so a final attempt
-#                      can begin just under it and then spend the
-#                      full cap                                   7
+#   unload current     RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
+#   load current       RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
+#   post-load probe    await_daemon_healthy: RECONCILE_PROBE_SECONDS
+#                      plus one more curl --max-time. That budget is
+#                      checked only AFTER each attempt, so a final
+#                      attempt can begin just under it and then
+#                      spend the full cap                          7
 #                                                               ----
 #                                                               17.5
 #
@@ -79,31 +91,39 @@ DAEMON_TIMEOUT=5
 # is reached only on the Darwin legacy branch above. Its sum is therefore three
 # service-manager calls and one probe, not four and one:
 #
-#   daemon-reload      RECONCILE_SERVICE_CALL_SECONDS 2, +0.5    2.5
-#   enable             RECONCILE_SERVICE_CALL_SECONDS 2, +0.5    2.5
-#   restart            RECONCILE_UNIT_START_SECONDS   8, +0.5    8.5
+#   daemon-reload      RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
+#   enable             RECONCILE_SERVICE_CALL_SECONDS + grace    2.5
+#   restart            RECONCILE_UNIT_START_SECONDS   + grace    8.5
 #   post-load probe    as above                                  7
 #                                                               ----
 #                                                               20.5
 #
-# 18 covers Darwin IN FULL — the priority platform (A-007) — and covers the
-# REALISTIC Linux path: daemon-reload and enable are supervisor-only
-# bookkeeping that serena-daemon.sh documents as returning in 0.020s, and at
-# their measured cost Linux is ~15.5s. Only the compound case where BOTH of
-# those wedge to their full bounds reaches 20.5s and overruns this.
+# This bound covers Darwin IN FULL — the priority platform (A-007) — because
+# its window FLOOR, one below the value itself, already clears that 17.5s path.
+# That is coverage earned on the D <= N-1 rule above, not on the kill happening
+# to land late in its window. It also covers the REALISTIC Linux path:
+# daemon-reload and enable are supervisor-only bookkeeping that serena-daemon.sh
+# documents as returning in 0.020s, and at their measured cost Linux is ~15.5s.
+# Only the compound case where BOTH of those wedge to their full bounds reaches
+# 20.5s and overruns this.
 #
-# NOT raised to 21 to cover that compound case, and that is a judgement rather
-# than an oversight. Doing so pushes this hook's pathological total past the
-# hooks.json backstop and forces that up too, adding real dead air to session
-# start on machines in the unknown install states this plugin reaches through a
-# public marketplace (A-AUTO-007) — while buying, per the residual below,
-# almost nothing. A converged session start is unaffected either way.
+# NOT raised far enough to cover that compound case either, and that is a
+# judgement rather than an oversight. Covering 20.5s needs a bound whose window
+# FLOOR clears it, which is several seconds above this one — not the single
+# second the bare figures suggest. Doing so pushes this hook's pathological
+# total past the hooks.json backstop and forces that up too, adding real dead
+# air to session start on machines in the unknown install states this plugin
+# reaches through a public marketplace (A-AUTO-007) — while buying, per the
+# residual below, almost nothing. A converged session start is unaffected.
 #
-# History, because this number has been wrong twice in the SAME direction: an
-# earlier revision set it to 8 from a 7s figure counting the post-load probe
-# ONLY, and concern C-019 repeated that same incomplete sum. Both missed the
-# pre-reload probe and the unloads. Both errors were undercounts, so check any
-# new derivation against the two tables above rather than against intuition.
+# History, because this number has now been wrong THREE times and every error
+# ran the SAME direction — always too small. An early revision sized it from a
+# figure counting the post-load probe ONLY, and concern C-019 repeated that same
+# incomplete sum; both missed the pre-reload probe and the unloads. The revision
+# after those fixed the two sums but then set the bound EQUAL to the Darwin path
+# length, forgetting that the watchdog errs early, and so claimed a full-Darwin
+# coverage it did not actually have (D-025). Check any new derivation against
+# BOTH tables above AND against the D <= N-1 rule, never against intuition.
 #
 # RESIDUAL — restated after D-018, which made it far smaller than it was. This
 # note previously read "no finite value fixes it", and that is now FALSE. Before
@@ -126,7 +146,7 @@ DAEMON_TIMEOUT=5
 # output goes to /dev/null. doctor runs immediately after and is what the model
 # is actually told. So the overrun costs a report that nothing reads, on a path
 # needing two independently improbable wedges to be reached at all.
-RECONCILE_TIMEOUT=18
+RECONCILE_TIMEOUT=19
 
 # Settle window, in seconds, between a doctor verdict of "installed but stopped"
 # and acting on it. See the long comment at the settle block below for why this
@@ -145,32 +165,37 @@ DAEMON_POLL_INTERVAL=0.2
 # The longest path this hook can take is the stopped-daemon repair path, which
 # issues four subcommands around one settle wait:
 #
-#     reconcile          RECONCILE_TIMEOUT    18
+#     reconcile          RECONCILE_TIMEOUT    19
 #     doctor             DAEMON_TIMEOUT        5
 #     settle sleep       SETTLE_SECONDS        4
 #     doctor re-probe    DAEMON_TIMEOUT        5
 #     start              DAEMON_TIMEOUT        5
 #                                             --
-#                                             37
+#                                             38
 #
-# plus the watchdog's own escalation: an expiry costs a TERM, a 0.5s grace and a
-# KILL, so four expiries add 2.0s. Worst case 39s — an upper bound rather than
-# an estimate, because the watchdog can only fire EARLY: $SECONDS ticks on whole
-# second boundaries of a clock this script may have started part-way through, so
-# a bound of N expires somewhere in (N-1, N] and never past N.
+# plus daemon_rc's own escalation: an expiry costs a TERM, a grace sleep and a
+# KILL, and four of the five rows are bounded subcommands that can each pay it,
+# adding 2.0s. Worst case 40s — an upper bound rather than an estimate, by the
+# same (N-1, N] argument recorded beside RECONCILE_TIMEOUT above: the watchdog
+# can only ever fire EARLY, never past its own bound.
 #
 # This is the PATHOLOGICAL total — every subcommand hanging to its own bound in
 # one session. A healthy machine takes the converged reconcile and one doctor
 # and is done in well under a second, having reached neither the settle nor the
 # start. Growing the sum is therefore paid only by machines already broken.
 #
-# hooks.json carries "timeout": 46 as an outer, framework-enforced backstop, and
-# the 7s gap between the two is deliberate: if every subcommand hung, the
-# per-invocation bounds must expire FIRST so this script survives to report the
-# hang through additionalContext. Were the two equal the framework could kill
-# the hook mid-flight and the failure report — the entire point of the hook —
-# would be lost on exactly the machine that needed it. Raise both together or
-# neither.
+# hooks.json carries a "timeout" key as an outer, framework-enforced backstop,
+# set ABOVE that total with deliberate headroom. The gap is the point: if every
+# subcommand hung, the per-invocation bounds must expire FIRST so this script
+# survives to report the hang through additionalContext. Were the two equal the
+# framework could kill the hook mid-flight and the failure report — the entire
+# point of the hook — would be lost on exactly the machine that needed it.
+#
+# That headroom is a RELATIONSHIP, not a constant, and the figure is deliberately
+# not restated here: raising any bound above raises this total, and the key in
+# hooks.json must move with it by the same amount or the ordering silently
+# narrows toward inversion. Read the current value there, subtract the total
+# above, and keep the difference unchanged. Raise both together or neither.
 
 # Run a serena-daemon.sh subcommand under a wall-clock bound and ECHO its exit
 # status, reporting an expiry as 124 the way timeout(1) would.
