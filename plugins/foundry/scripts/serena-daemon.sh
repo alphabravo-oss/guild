@@ -186,18 +186,23 @@ RECONCILE_PROBE_SECONDS=4
 #     grep -n -A1 'run_bounded "\$RECONCILE' plugins/foundry/scripts/serena-daemon.sh
 #
 # Each site prints with the constant it passes AND the command it runs, so that
-# output is the enumeration, current by construction. It is also what answers
-# "how many bounded calls does the Linux arm issue?" — the question the
-# SessionStart hook's cost table sends its reader here to settle, and the one a
-# stale list answered wrongly.
+# output is the enumeration, current by construction. It also answers "how many
+# bounded calls does the Linux arm issue?" — the question the SessionStart hook's
+# cost table sends its reader here to settle, and the one a stale list answered
+# wrongly — but only once the reader splits the output by tool: the systemctl
+# sites are the Linux arm's and the launchctl sites are Darwin's. The grep does
+# not label them, so counting every line as one arm's is the way to get this
+# wrong.
 #
 # WHAT PUTS A CALL AT THIS BOUND rather than the longer one below: it talks to
 # the service manager and returns WITHOUT waiting on the daemon. `launchctl
 # load` returns in 0.020s while the daemon it just spawned takes 1.473s more to
 # bind the port, which is the same measurement RECONCILE_PROBE_SECONDS above is
-# drawn from. This bound is two orders of magnitude above that gap — stated as a
-# ratio rather than as a number, so that changing the constant cannot falsify the
-# sentence justifying it — and no working machine reaches it.
+# drawn from. This bound is set orders of magnitude above that gap by design, so
+# no working machine reaches it. Stating the RELATIONSHIP rather than repeating
+# the number keeps one fewer copy of the value in prose, but it is not immune to
+# the value changing — the relationship is what a change has to preserve, and
+# what to re-check when one is made.
 RECONCILE_SERVICE_CALL_SECONDS=2
 
 # `systemctl --user restart`, by contrast, BLOCKS on the unit starting, and this
@@ -207,8 +212,9 @@ RECONCILE_SERVICE_CALL_SECONDS=2
 # manufacture a false exit 4 on every healthy repair while systemd carried the
 # job on regardless (killing the systemctl client does not cancel a queued job).
 # This bound clears the observed path with headroom while staying an order of
-# magnitude under systemd's own default — again a ratio rather than a restated
-# number, for the reason given above.
+# magnitude under systemd's own default — again the relationship rather than a
+# restated number, and again something a change to the value has to preserve
+# rather than something the wording makes safe.
 RECONCILE_UNIT_START_SECONDS=8
 
 # Poll granularity while waiting on a bounded call, in seconds. Sets how long
@@ -2200,9 +2206,11 @@ run_bounded() {
 #                            run_bounded holds it to; or there was no supervisor
 #                            to call at all, which is how the Linux arm arrives
 #                            here when systemctl is absent, having issued
-#                            nothing. One code covers them because the operator's
-#                            next move is the same for each, and the printed
-#                            message names which occurred. An expiry is NOT a
+#                            nothing. One code covers them because they share the
+#                            property above, NOT because they share a remedy —
+#                            they do not, which is why each prints a different
+#                            message and why the message, not this code, is what
+#                            an operator acts on. An expiry is NOT a
 #                            claim that the supervisor did nothing — killing a
 #                            client does not cancel a request already delivered,
 #                            as the restart bound's own note records — which is
@@ -2236,11 +2244,20 @@ run_bounded() {
 #                            by one of them
 #
 # Precedence when more than one applies: a service-definition FAILURE outranks
-# 6, because a project config matters only once something is actually serving. A
-# failure means any code above whose entry describes a stage of the service pass
-# that did not complete — stated as that property rather than as a list of
-# numbers, so a code added later inherits the rule instead of needing this line
-# edited.
+# 6, because a project config matters only once something is actually serving.
+#
+# FAILURE is the word the code branches on, and it has a mechanical tell: a
+# failing branch calls `exit` with its own literal code, while every other branch
+# ends in `exit "$cfg_rc"` and so defers to the config verdict. That tell is the
+# rule — a branch added later inherits it by how it is written, with no list of
+# numbers here to go stale. It also settles the two cases a looser word got
+# wrong. "A stage that did not complete" selected the WRONG SET both ways: exit 5
+# is a failure that outranks 6 even though its reload and its probe both ran to
+# completion, and a probe that could not run at all completes nothing yet is not
+# a failure — it defers, because an unverifiable probe is not evidence of failure
+# (entry 0). It also over-selected 1, which must NOT outrank 6; that arm reads
+# $cfg_rc before exiting, so the tell excludes it correctly and for the reason
+# spelled out just below.
 #
 # 1 does NOT outrank 6, and that asymmetry is deliberate. 1 reports the ABSENCE
 # of a service dimension on this host rather than a failure within one — there
@@ -2305,11 +2322,19 @@ run_bounded() {
 #     one, which is the whole point of bounding these calls from inside this
 #     function.
 #
-# The split is TOTAL — a call is written one way or the other, there is no third
-# form — so a call added later classifies itself and leaves nothing here to
-# update. To see the current set, run the grep recorded beside
+# THE TWO FORMS COVER EVERY CALL WRITTEN SO FAR — they are not the only ways to
+# write one. `run_bounded ... || rc=$?` is this file's most common idiom for a
+# command whose non-zero status is expected, and a bounded call in that shape,
+# or under `if run_bounded`, or in an `&&` list, matches neither bullet above and
+# has NO mapping here. That is a trigger, not an impossibility: a call written in
+# any third shape must arrive with its own mapping added to this block, or be
+# rewritten into one of the two. An earlier revision claimed the split was total
+# and that a later call would therefore classify itself — which told an editor
+# using the file's dominant idiom that their call could not exist, while the grep
+# below went on listing it. To see the current set, run the grep recorded beside
 # RECONCILE_SERVICE_CALL_SECONDS: its output shows each site's invocation form
-# alongside the command, which is both questions answered from one place.
+# alongside the command, so a call in an unmapped shape is visible there as one
+# matching neither bullet.
 #
 # WHAT COUNTS AS DRIFT — two independent conditions, either of which triggers a
 # repair:
