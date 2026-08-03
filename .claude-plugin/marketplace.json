@@ -37,6 +37,16 @@
       }
     },
     {
+      "name": "tldr",
+      "source": "./plugins/tldr",
+      "description": "Always-on response shaping. A SessionStart hook loads a 10-rule ruleset into every new session — first line is the action, numbered multi-step work, restate where we are each turn, one concrete next action, concrete time estimates, visible wins, flat tone on failure, lists capped at 5, no preamble/recap/sign-off — plus six break-glass exceptions (depth requested, destructive action, debug spiral, real ambiguity, rule-would-delete-the-answer, harness outranks) and a pre-send delete pass. A UserPromptSubmit hook re-reads the state file every turn, so /tldr:off suspends the loaded ruleset immediately mid-session instead of next session. /tldr:verbose exempts a single turn and auto-reverts. /tldr:off, /tldr:on, /tldr:status, /tldr:help.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
       "name": "crew",
       "source": "./plugins/crew",
       "description": "Throw an AI dev at a problem and have it own the outcome. Five Opus agents (router, scout, worker, critic, fresh-eyes) collaborate to investigate, plan, execute, and verify — SSH into systems, spin up infra, edit code, ship features, debug deploys, get airgap bundles working. Worker self-switches between investigating, planning, executing, and verifying modes — one persistent persona, not five different ones. Bounded scout budget (25 tool calls / 5 min, doubled in --paranoid), multi-agent reflexion on stuck (N=2-3 parallel variants + judge — fixes Reflexion's degeneration-of-thought failure mode), critic and fresh-eyes both produce mandatory evidence ledgers of commands they actually ran. One checkpoint (plan approval) for side-effecting tasks, zero for pure investigation. Plan and debrief render in chat; state files exist in .crew/runs/ for resume. Production beats --yolo always. /crew:goal sets a completion condition and runs the worker→critic→fresh-eyes loop unattended — cycle after cycle until critic and fresh-eyes both return pass, or a cycle/time cap stops it — enforced by a Stop hook (goal-gate.py) that blocks the run from ending while the goal is unmet.",

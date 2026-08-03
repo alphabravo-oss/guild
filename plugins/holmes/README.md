@@ -1,4 +1,20 @@
-# holmes
+<p align="center">
+  <b>holmes</b> — macro-architecture and design-cohesion review.<br/>
+  <i>Is this shaped right, or accreted? Report only — never edits.</i>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/>
+  <img src="https://img.shields.io/badge/guild-review%20only-00897B?style=flat-square" alt="guild reviewer"/>
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
+</p>
+
+---
 
 A **design-quality / cohesion review** for Claude Code that reads the codebase like a detective — deducing the real design problem from the detail that's out of place. The senior-engineer critique, not bug-hunting or lint:
 
