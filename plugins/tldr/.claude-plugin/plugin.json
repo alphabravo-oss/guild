@@ -1,0 +1,8 @@
+{
+  "name": "tldr",
+  "description": "Always-on response shaping. A SessionStart hook loads a 10-rule ruleset into every new session — first line is the action, numbered multi-step work, restate where we are each turn, one concrete next action, concrete time estimates, visible wins, flat tone on failure, lists capped at 5, no preamble/recap/sign-off — plus six break-glass exceptions (depth requested, destructive action, debug spiral, real ambiguity, rule-would-delete-the-answer, harness outranks) and a pre-send delete pass. A UserPromptSubmit hook re-reads the state file every turn, so /tldr:off suspends the loaded ruleset immediately mid-session instead of next session. /tldr:verbose exempts a single turn and auto-reverts. /tldr:off, /tldr:on, /tldr:status, /tldr:help.",
+  "version": "0.1.0",
+  "author": {
+    "name": "AlphaBravo"
+  }
+}
