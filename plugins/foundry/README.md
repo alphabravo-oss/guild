@@ -1,11 +1,17 @@
 <p align="center">
-  <b>Foundry</b> — the autonomous build-verify-fix loop for Claude Code.<br/>
+  <b>foundry</b> — the autonomous build-verify-fix loop for Claude Code.<br/>
   <i>Forge plans. Foundry builds.</i>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-v4.3.0-F57C00?style=flat-square" alt="Foundry v4.3.0"/>
+  <img src="https://img.shields.io/badge/foundry-4.6.1-F57C00?style=flat-square" alt="foundry 4.6.1"/>
+  <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
 </p>
 
 ---

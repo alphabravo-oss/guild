@@ -1,4 +1,20 @@
-# tldr — always-on response shaping for Claude Code
+<p align="center">
+  <b>tldr</b> — always-on response shaping for Claude Code.<br/>
+  <i>Action first. One next step. No preamble, no sign-off.</i>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/>
+  <img src="https://img.shields.io/badge/guild-always--on-43A047?style=flat-square" alt="guild always-on"/>
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
+</p>
+
+---
 
 > **Claude answers like it is being paid by the word.** Preamble, a plan to make a plan, three paragraphs of context before the command you actually needed, then a sign-off asking if you want anything else. The information was in there. You had to mine it.
 >

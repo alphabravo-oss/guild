@@ -1,4 +1,20 @@
-# crucible — a mini-foundry
+<p align="center">
+  <b>crucible</b> — a mini-foundry — the build engine without the MCP server or the interview.<br/>
+  <i>You bring the spec. Crucible builds it and refuses to let it drift.</i>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/>
+  <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
+</p>
+
+---
 
 `foundry` is a full autonomous build engine: an MCP server, phase gates, spec/prompt hashing, isolated-
 worktree evidence, an interactive planning interview. **crucible** is its build-verify-fix heart

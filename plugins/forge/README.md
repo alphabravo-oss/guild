@@ -1,11 +1,17 @@
 <p align="center">
-  <b>Forge</b> — the codebase-aware specification engine for Claude Code.<br/>
+  <b>forge</b> — the codebase-aware specification engine for Claude Code.<br/>
   <i>Forge plans. Foundry builds.</i>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/forge-v4.3.0-1E88E5?style=flat-square" alt="Forge v4.3.0"/>
+  <img src="https://img.shields.io/badge/forge-4.3.1-1E88E5?style=flat-square" alt="forge 4.3.1"/>
+  <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
 </p>
 
 ---

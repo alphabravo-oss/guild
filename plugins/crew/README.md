@@ -4,8 +4,14 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/crew-v0.1.1-1E88E5?style=flat-square" alt="crew v0.1.1"/>
+  <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/>
+  <img src="https://img.shields.io/badge/guild-worker-6D4C41?style=flat-square" alt="guild worker"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
 </p>
 
 ---

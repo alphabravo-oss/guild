@@ -1,4 +1,20 @@
-# adhoc — methodical-mode for Claude Code
+<p align="center">
+  <b>adhoc</b> — methodical-mode for Claude Code.<br/>
+  <i>Stops Claude from racing. Blocks citations it never verified.</i>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/>
+  <img src="https://img.shields.io/badge/guild-always--on-43A047?style=flat-square" alt="guild always-on"/>
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
+</p>
+
+---
 
 > **Stops Claude from racing.** An always-on UserPromptSubmit hook injects a methodical pre-response checklist into every turn — restate the task, mark assumptions VERIFIED-DIRECT or UNVERIFIED, cite CLAUDE.md and memory rules in play, surface alternatives, run a citation check, confirm before editing.
 >

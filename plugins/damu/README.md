@@ -1,4 +1,20 @@
-# damu — De-AI My UI
+<p align="center">
+  <b>damu</b> — De-AI My UI — strips the tells that make an interface read as AI-made.<br/>
+  <i>~19 slop signatures, one catalog, two modes.</i>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/>
+  <img src="https://img.shields.io/badge/guild-review%20only-00897B?style=flat-square" alt="guild reviewer"/>
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
+  <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
+</p>
+
+<p align="center">
+  <a href="../../README.md">← back to the Guild marketplace</a>
+</p>
+
+---
 
 AI loves the same UI flavor, every time: 4–5 competing fonts, purple-on-near-black, a parallax hero
 that means nothing, neon gradient borders, the same rocket/bolt/shield icons recycled like Pokémon
