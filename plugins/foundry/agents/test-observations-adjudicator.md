@@ -28,7 +28,7 @@ decision Layer 2.
 ## Tool-Call Sequence
 
 1. **Read** `foundry-archive/{run}/test_observations/test-deriver-cycle-{N}.json` for the current cycle.
-2. **Bash** `python plugins/foundry/scripts/validate-test-observations.py <channel-json> --spec foundry-archive/{run}/spec.md` — if exit code != 0, halt and emit a structural failure (the channel itself is malformed; TEST-01 stream re-runs).
+2. **Bash** `python "${CLAUDE_PLUGIN_ROOT}/scripts/validate-test-observations.py" <channel-json> --spec foundry-archive/{run}/spec.md` — the script ships with the plugin, not with the project under build, so it must be addressed through the plugin root; a repo-relative path resolves against the user's cwd and will not be found. If exit code != 0, halt and emit a structural failure (the channel itself is malformed; TEST-01 stream re-runs).
 3. For each observation in the channel:
    - If validator already flagged the observation as a wrong-test pattern (TEST_OBSERVATION_*, WRONG_TEST_*, TEST_HEADER_*) → assay_verdict = `WRONG_TEST`.
    - Else if `status == "PASS"` → not routed (informational; no assay_verdict needed but record `assay_verdict = "INFO"` for completeness if your local convention requires it; default: omit the field).
