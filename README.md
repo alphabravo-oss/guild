@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/assets/banner.jpg" alt="Guild" width="100%"/>
+<img src=".github/assets/the-guild.png" alt="The Guild — smiths and scribes at work: one hammers at the anvil, one drafts at the bench, one carries the finished piece away" width="760"/>
 
 <img src=".github/assets/tagline.svg" alt="Forge plans. Foundry builds. adhoc keeps Claude honest. tldr says it in one line. You ship." width="760"/>
 
