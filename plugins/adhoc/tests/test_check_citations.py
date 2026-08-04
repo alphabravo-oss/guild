@@ -290,7 +290,12 @@ def test_grep_counts_as_verification():
 
 
 def test_log_written_on_block():
-    """Hook should append a structured log entry for every check."""
+    """Hook should append a structured log entry for every check.
+
+    The log entry nests per-check results under `checks.<name>`, and the
+    citations check's `details` is the unverified list as (path, line) pairs
+    — which survive the JSON round-trip as two-element lists.
+    """
     t = write_transcript([
         msg("user", "Where is X?"),
         msg("assistant", [
@@ -305,7 +310,11 @@ def test_log_written_on_block():
     assert len(log_lines) >= 1
     entry = json.loads(log_lines[-1])
     assert entry["decision"] == "block"
-    assert any(c["path"].endswith("up.go") for c in entry["unverified"])
+    citations = entry["checks"]["citations"]
+    assert citations["blocked"] is True
+    assert any(
+        path.endswith("up.go") for path, _line in citations["details"]
+    ), f"unverified citation not recorded in log: {citations['details']}"
     print("  ✓ log_written_on_block")
 
 
