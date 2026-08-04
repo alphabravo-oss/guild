@@ -1,4 +1,5 @@
 ---
+name: spec-reviewer
 id: PROBE-01
 min_spec_format_version: v2.1
 model: sonnet

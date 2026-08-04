@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
+.venv/
+# Workflow-authoring plugins npm-install a Codex SDK under plugins/*/flows/,
+# which lands 300MB+ of node_modules in the tree. Nothing here is ever vendored.
+node_modules/
 .DS_Store
 .claude/
 .idea/
