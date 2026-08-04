@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="52" viewBox="0 0 760 52" role="img" aria-label="Forge plans. Foundry builds. adhoc keeps Claude honest. tldr says it in one line. You ship.">
+  <title>Forge plans. Foundry builds. adhoc keeps Claude honest. tldr says it in one line. You ship.</title>
+  <style>
+    text {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 25px;
+      font-weight: 800;
+      fill: #1E88E5;
+    }
+    /* Five taglines share one 15s cycle; each is visible for its own 3s slice. */
+    text { opacity: 0; animation: cycle 15s linear infinite; }
+    text:nth-of-type(2) { animation-delay: 3s; }
+    text:nth-of-type(3) { animation-delay: 6s; }
+    text:nth-of-type(4) { animation-delay: 9s; }
+    text:nth-of-type(5) { animation-delay: 12s; }
+    @keyframes cycle {
+      0%    { opacity: 0; }
+      1.5%  { opacity: 1; }
+      18.5% { opacity: 1; }
+      20%   { opacity: 0; }
+      100%  { opacity: 0; }
+    }
+    .cursor { animation: blink 1s steps(1, end) infinite; }
+    @keyframes blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+    /* Motion is decorative — honour a reader who has asked for less of it. */
+    @media (prefers-reduced-motion: reduce) {
+      text { animation: none; opacity: 0; }
+      text:nth-of-type(1) { opacity: 1; }
+      .cursor { animation: none; }
+    }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #4FA8F5; }
+    }
+  </style>
+  <text x="380" y="35" text-anchor="middle">Forge plans.<tspan class="cursor" dx="4">▌</tspan></text>
+  <text x="380" y="35" text-anchor="middle">Foundry builds.<tspan class="cursor" dx="4">▌</tspan></text>
+  <text x="380" y="35" text-anchor="middle">adhoc keeps Claude honest.<tspan class="cursor" dx="4">▌</tspan></text>
+  <text x="380" y="35" text-anchor="middle">tldr says it in one line.<tspan class="cursor" dx="4">▌</tspan></text>
+  <text x="380" y="35" text-anchor="middle">You ship.<tspan class="cursor" dx="4">▌</tspan></text>
+</svg>

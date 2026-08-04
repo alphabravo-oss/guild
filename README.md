@@ -2,7 +2,7 @@
 
 <img src=".github/assets/banner.jpg" alt="Guild" width="100%"/>
 
-<img src="https://readme-typing-svg.demolab.com/?font=JetBrains+Mono&weight=800&size=26&duration=2600&pause=700&color=1E88E5&center=true&vCenter=true&width=760&height=45&lines=Forge+plans.;Foundry+builds.;adhoc+keeps+Claude+honest.;tldr+says+it+in+one+line.;You+ship." alt="Forge plans. Foundry builds. adhoc keeps Claude honest. tldr says it in one line. You ship."/>
+<img src=".github/assets/tagline.svg" alt="Forge plans. Foundry builds. adhoc keeps Claude honest. tldr says it in one line. You ship." width="760"/>
 
 <br/>
 
@@ -358,7 +358,7 @@ Together they take the F0.9 gate from 9 dimensions to 11.
 
 **License** — [MIT](./LICENSE)
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0,2,12,20&height=90&section=footer" width="100%" alt=""/>
+<img src=".github/assets/wave.svg" width="100%" alt=""/>
 
 <i>Forge plans. Foundry builds. adhoc keeps Claude honest. tldr says it in one line.<br/><b>You ship.</b></i>
 

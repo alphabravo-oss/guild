@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="90" viewBox="0 0 1200 90" preserveAspectRatio="none" role="presentation">
+  <style>
+    /* The wave paths are 2400 wide with a 600px period, so translating one
+       full 1200 loops seamlessly with no visible seam or snap-back. */
+    .w1 { animation: drift 14s linear infinite; }
+    .w2 { animation: drift 22s linear infinite reverse; }
+    @keyframes drift {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-1200px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .w1, .w2 { animation: none; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="guild" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1200" y2="0">
+      <!-- forge blue -> Claude purple -> foundry orange. Deliberately three
+           stops: adding green/teal on the tail blends through olive mud. -->
+      <stop offset="0%"   stop-color="#1E88E5"/>
+      <stop offset="50%"  stop-color="#8E44AD"/>
+      <stop offset="100%" stop-color="#F57C00"/>
+    </linearGradient>
+    <mask id="crest">
+      <path class="w1" fill="#fff" d="M0,44 C100,24 200,24 300,44 C400,64 500,64 600,44 C700,24 800,24 900,44 C1000,64 1100,64 1200,44 C1300,24 1400,24 1500,44 C1600,64 1700,64 1800,44 C1900,24 2000,24 2100,44 C2200,64 2300,64 2400,44 L2400,90 L0,90 Z"/>
+    </mask>
+    <mask id="trough">
+      <path class="w2" fill="#fff" d="M0,56 C100,74 200,74 300,56 C400,38 500,38 600,56 C700,74 800,74 900,56 C1000,38 1100,38 1200,56 C1300,74 1400,74 1500,56 C1600,38 1700,38 1800,56 C1900,74 2000,74 2100,56 C2200,38 2300,38 2400,56 L2400,90 L0,90 Z"/>
+    </mask>
+  </defs>
+  <rect width="1200" height="90" fill="url(#guild)" mask="url(#trough)" opacity="0.4"/>
+  <rect width="1200" height="90" fill="url(#guild)" mask="url(#crest)"/>
+</svg>
