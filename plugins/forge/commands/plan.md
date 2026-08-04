@@ -134,7 +134,7 @@ After writing `reality.md`, identify 2-4 **targeted** research domains grounded 
 1. Read `reality.md` that R1 just produced
 2. Identify specific technical claims that would be wrong if your training data is stale (library versions, API surface, deprecated patterns, ecosystem shifts)
 3. Pick 1-4 narrow domains. **R1.5 always runs** when survey ran — at minimum, spawn 1 researcher covering ecosystem orientation for the feature category (common shapes, known failure modes, gotchas worth flagging to the R2 interviewer), even if no library versions need verifying. If technical claims exist, add up to 3 more researchers to cover them — total 2-4. The only reason to run 0 researchers is the `--no-survey` skip below.
-4. Spawn all chosen `researcher` agents in parallel (single message). Use `subagent_type: "Agent"` with the full content of `${CLAUDE_PLUGIN_ROOT}/agents/researcher.md` as the prompt
+4. Spawn all chosen `researcher` agents in parallel (single message). Use `subagent_type: "forge:researcher"`, or `subagent_type: "general-purpose"` with the full content of `${CLAUDE_PLUGIN_ROOT}/agents/researcher.md` as the prompt
 5. Pass to each researcher: domain name, either the specific claim from reality.md to verify OR the "ecosystem orientation for <feature category>" framing, and the output path `{survey_dir}/research-{domain-slug}.md`
 6. Each researcher uses WebSearch + WebFetch (Context7 if available in this project's .mcp.json)
 7. Wait for all researchers to complete
