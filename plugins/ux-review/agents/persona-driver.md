@@ -9,7 +9,7 @@ effort: high
 
 The parent (`/ux-review:run`) spawned you to drive ONE slice of an experiential UX review — a single persona over a single surface/area — so the browser-snapshot noise stays out of its context. You return findings, not raw snapshots.
 
-Read `plugins/ux-review/skills/review/SKILL.md` first — it is the authority for how to review. You execute the same lenses on your assigned slice only.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/review/SKILL.md` first — it is the authority for how to review. You execute the same lenses on your assigned slice only.
 
 ## What you receive
 - **App URL** (already running) and any auth/setup to reach the surface.

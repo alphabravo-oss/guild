@@ -7,7 +7,7 @@ The user wants you to run the test suite and triage failures. Optional `--fix` f
 ## Preflight
 
 1. `playwright.config.ts` exists.
-2. Read `plugins/e2e/skills/diagnose/SKILL.md` (or invoke the diagnose skill) — it has the trace-reading methodology and failure taxonomy.
+2. Read `${CLAUDE_PLUGIN_ROOT}/skills/diagnose/SKILL.md` (or invoke the diagnose skill) — it has the trace-reading methodology and failure taxonomy.
 
 ## Run the suite
 

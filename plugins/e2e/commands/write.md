@@ -7,7 +7,7 @@ The user wants you to write a Playwright E2E test for a specific user flow. Flow
 ## Preflight
 
 1. Confirm `playwright.config.ts` exists in cwd. If not, tell them to run `/e2e:init` first and STOP.
-2. Read `plugins/e2e/skills/author/SKILL.md` from this plugin's directory (or invoke the author skill) — it has the selector/wait/idempotency rules you must follow.
+2. Read `${CLAUDE_PLUGIN_ROOT}/skills/author/SKILL.md` (or invoke the author skill) — it has the selector/wait/idempotency rules you must follow.
 3. Confirm Playwright MCP tools are loaded (browser_navigate, browser_snapshot, etc.). If they aren't loaded, tell the user to restart Claude Code and STOP.
 4. Confirm their dev server is reachable at the baseURL in `playwright.config.ts`. Try `curl -sI $BASE_URL` (default `http://localhost:3000`). If unreachable, ask the user to start it.
 

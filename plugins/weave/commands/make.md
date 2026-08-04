@@ -74,8 +74,10 @@ Keep this to a short spec, not prose. This spec is what you are about to encode.
 
 ## PHASE 2 — author the script
 
-Write the script to `${CLAUDE_PLUGIN_ROOT}/../../.claude/workflows/<save-name>.js` (create
-`.claude/workflows/` if missing). Follow the rulebook exactly:
+Write the script to `.claude/workflows/<save-name>.js` in the **current project** (create
+`.claude/workflows/` if missing). That directory — not one inside the plugin — is where the
+Workflow tool resolves `Workflow({name})` lookups from, so a script saved anywhere else is
+never invokable by name. Follow the rulebook exactly:
 
 - Start with the **pure-literal** `export const meta = { name, description, phases }`.
   `phases` titles must match your `phase()` calls.

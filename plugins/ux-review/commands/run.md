@@ -6,7 +6,7 @@ The user wants an experiential UX review of a running application. This is a USE
 
 ## Preflight
 
-1. **Load the methodology.** Read `plugins/ux-review/skills/review/SKILL.md` (or invoke the `ux-review:review` skill). It is the authority for how to review — the phases, the five lenses, the coverage grid, the completeness loop, and the finding format. Follow it.
+1. **Load the methodology.** Read `${CLAUDE_PLUGIN_ROOT}/skills/review/SKILL.md` (or invoke the `ux-review:review` skill). It is the authority for how to review — the phases, the five lenses, the coverage grid, the completeness loop, and the finding format. Follow it.
 2. **Get the app running in a real browser.** Determine the URL:
    - If `$ARGUMENTS` gives a URL, use it.
    - Else look for a dev/preview/start script (e.g. package.json scripts, a Makefile target, a Procfile) and start it in the background, then wait for it to be reachable.

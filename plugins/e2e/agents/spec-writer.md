@@ -27,7 +27,7 @@ If any of these are missing or contradictory, STOP and return a one-line clarifi
 
 ### 1. Read the author skill
 
-Read `plugins/e2e/skills/author/SKILL.md` from this repo (or invoke skill `e2e:author`). Internalize the rules:
+Read `${CLAUDE_PLUGIN_ROOT}/skills/author/SKILL.md` (or invoke skill `e2e:author`). Internalize the rules:
 - Locator priority: `getByRole` → `getByLabel` → `getByText` → `getByTestId` → CSS (last)
 - No `waitForTimeout`; auto-wait via `expect(...).toBeVisible({ timeout })`
 - One `test.describe`, scoped `test()` blocks, `test.step()` for multi-action tests
