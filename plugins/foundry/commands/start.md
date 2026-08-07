@@ -121,12 +121,11 @@ After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and bef
 
 2b. **Enumerate the version-gated stream agent roster and emit `manifest.stream_skips` (Phase 3 / TYPE-02).** The roster is the following hardcoded path list spanning BOTH plugins (one-way read across plugin boundary — F0.5 reads the Forge-side agents but never writes to forge/):
 
-   **Path resolution (read here, record as written).** The roster entries below are *stable stream identifiers*, not filesystem paths — they are what gets recorded verbatim in each `manifest.stream_skips` record's `agent_path` field, so a manifest stays comparable across machines and checkouts. To actually READ a roster entry, resolve it against the installed plugin root, because the `plugins/<name>/` prefix exists only in the Guild source repo and NOT in an installed plugin (whose `agents/`, `commands/` and `scripts/` sit at its top level):
+   **Path resolution (read here, record as written).** The roster entries below are *stable stream identifiers*, not filesystem paths — they are what gets recorded verbatim in each `manifest.stream_skips` record's `agent_path` field, so a manifest stays comparable across machines and checkouts. To actually READ a roster entry, strip the `plugins/foundry/` prefix and resolve against `${CLAUDE_PLUGIN_ROOT}` — that prefix exists only in the Guild source repo, and an installed plugin has its `agents/`, `commands/` and `scripts/` at the top level with no `plugins/` wrapper. Reading an entry by its literal `plugins/…` form resolves against the *user's project cwd*, not the plugin, and will not be found.
 
-   - `plugins/foundry/…` → `${CLAUDE_PLUGIN_ROOT}/…` (strip the `plugins/foundry/` prefix)
-   - `plugins/forge/…` → `${CLAUDE_PLUGIN_ROOT}/../forge/…` (strip the `plugins/forge/` prefix; the sibling walk holds in both layouts — Forge and Foundry are siblings under `plugins/` in the source repo and under the marketplace cache directory once installed)
+   **Every readable entry is Foundry-side, on purpose.** There is no cross-plugin read here, because there is no path expression that can perform one. `${CLAUDE_PLUGIN_ROOT}` names Foundry's own directory, and Forge is only a filesystem sibling in the source repo — once installed, each plugin lives under its own *version* directory (`…/cache/<marketplace>/forge/4.3.1/`), whose name Foundry cannot know and which may sit alongside stale versions of the same plugin. So Forge-side streams declare their gating inline, exactly as EVID-01 does for the MCP server.
 
-   Reading an entry by its literal `plugins/…` form resolves against the *user's project cwd*, not the plugin, and will not be found. If a resolved read fails, halt decompose with `ROSTER_AGENT_UNREADABLE` naming the entry — never silently drop a stream from the roster, since a dropped entry makes the F0.9 sub-check 7k comparison agree with a roster that was never enumerated.
+   If a resolved read fails, halt decompose with `ROSTER_AGENT_UNREADABLE` naming the entry — never silently drop a stream from the roster, since a dropped entry makes the F0.9 sub-check 7k comparison agree with a roster that was never enumerated.
 
 
    - `plugins/foundry/agents/tracer.md` (TRACE)
@@ -135,7 +134,7 @@ After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and bef
    - `plugins/foundry/agents/research-auditor.md` (RESEARCH_AUDIT)
    - `plugins/foundry/agents/coverage-diff.md` (COVERAGE_DIFF)
    - **EVID-01** (virtual stream — `agent_path: null`; `min_spec_format_version: v2.1`; owned by `Foundry-Accept-Casting` / `plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py`). Phase 4 / EVID-01 server-side evidence re-execution. Has no agent markdown file; the min-version comes from the Python constant `MIN_SPEC_FORMAT_VERSION_FOR_EVID_01 = (2, 1)` in `evidence.py` rather than from agent frontmatter.
-   - `plugins/forge/agents/spec-reviewer.md` (PROBE-01)
+   - **PROBE-01** (Forge-side stream — `agent_path: "plugins/forge/agents/spec-reviewer.md"` recorded verbatim as the identifier; `min_spec_format_version: v2.1` declared inline, NOT read). The agent markdown lives in the Forge plugin, which has no resolvable path from Foundry's plugin root (see the resolution note above), so the min-version is carried here rather than parsed from its frontmatter. `plugins/forge/tests/test_versioned_spec_format.py` (`test_probe01_inline_min_version_matches_forge_frontmatter`) asserts this inline value still matches `spec-reviewer.md`'s real frontmatter, so the two cannot drift unnoticed — that test runs in the source repo, where both plugins are present.
    - `plugins/foundry/agents/spec-test-deriver.md` (TEST-01)
    - `plugins/foundry/agents/intent-carrier.md` (INTENT-01)
 

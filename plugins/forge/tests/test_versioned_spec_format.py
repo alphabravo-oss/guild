@@ -452,6 +452,61 @@ def test_f09_subcheck_7k_catches_unexpected(
 # -----------------------------------------------------------------------------
 
 
+def test_probe01_inline_min_version_matches_forge_frontmatter():
+    """PROBE-01's min version is declared inline in F0.5 step 2b, and must
+    still match spec-reviewer.md's real frontmatter.
+
+    Every other readable roster entry is Foundry-side, so F0.5 parses its
+    ``min_spec_format_version`` straight from the agent file. PROBE-01
+    cannot be: it lives in the Forge plugin, and ``${CLAUDE_PLUGIN_ROOT}``
+    names Foundry's own directory. Once installed, each plugin sits under
+    its own *version* directory (``.../cache/<marketplace>/forge/4.3.1/``)
+    whose name Foundry cannot know, so no relative walk reaches it. The
+    roster therefore carries PROBE-01's gate inline.
+
+    That trades an unresolvable read for a drift risk — bump the version in
+    spec-reviewer.md's frontmatter and the roster keeps gating on the stale
+    one, silently running or skipping PROBE-01 against the wrong spec
+    versions. This test closes that gap. It can only run here, in the source
+    repo, because this is the one layout where both plugins are present.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+
+    reviewer = (
+        repo_root / "plugins" / "forge" / "agents" / "spec-reviewer.md"
+    ).read_text(encoding="utf-8")
+    fm_match = re.search(
+        r"^min_spec_format_version:\s*(\S+)\s*$", reviewer, re.MULTILINE
+    )
+    assert fm_match, (
+        "spec-reviewer.md has no min_spec_format_version in its frontmatter "
+        "— F0.5 step 2b's inline PROBE-01 gate has nothing to align against."
+    )
+    frontmatter_version = fm_match.group(1).strip("\"'")
+
+    start_md = (
+        repo_root / "plugins" / "foundry" / "commands" / "start.md"
+    ).read_text(encoding="utf-8")
+    probe_match = re.search(
+        r"\*\*PROBE-01\*\*.*?`min_spec_format_version:\s*(\S+?)`",
+        start_md,
+        re.DOTALL,
+    )
+    assert probe_match, (
+        "F0.5 step 2b has no inline `min_spec_format_version: ...` on its "
+        "PROBE-01 roster entry. If PROBE-01 became a readable path again, "
+        "delete this test; otherwise restore the inline declaration."
+    )
+    roster_version = probe_match.group(1)
+
+    assert roster_version == frontmatter_version, (
+        "PROBE-01 gate drift: F0.5 step 2b's roster declares "
+        f"{roster_version!r} but plugins/forge/agents/spec-reviewer.md "
+        f"declares {frontmatter_version!r}. Update the roster entry in "
+        "plugins/foundry/commands/start.md to match."
+    )
+
+
 def test_f05_step_2b_and_f09_7k_reference_same_roster():
     """RESEARCH.md Pitfall 7 — F0.5 step 2b and F0.9 sub-check 7k reference
     the same hardcoded agent roster.
