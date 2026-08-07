@@ -119,7 +119,15 @@ After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and bef
    - `manifest.spec_format_version` — the literal string (e.g., `"v2.1"` or `"v2.0"` for the implicit-default path)
    - `manifest.spec_format_version_tuple` — the parsed `(major, minor)` tuple
 
-2b. **Enumerate the version-gated stream agent roster and emit `manifest.stream_skips` (Phase 3 / TYPE-02).** The roster is the following hardcoded path list spanning BOTH plugins (one-way read across plugin boundary — F0.5 reads `plugins/forge/agents/*.md` for Forge-side streams but never writes to forge/):
+2b. **Enumerate the version-gated stream agent roster and emit `manifest.stream_skips` (Phase 3 / TYPE-02).** The roster is the following hardcoded path list spanning BOTH plugins (one-way read across plugin boundary — F0.5 reads the Forge-side agents but never writes to forge/):
+
+   **Path resolution (read here, record as written).** The roster entries below are *stable stream identifiers*, not filesystem paths — they are what gets recorded verbatim in each `manifest.stream_skips` record's `agent_path` field, so a manifest stays comparable across machines and checkouts. To actually READ a roster entry, resolve it against the installed plugin root, because the `plugins/<name>/` prefix exists only in the Guild source repo and NOT in an installed plugin (whose `agents/`, `commands/` and `scripts/` sit at its top level):
+
+   - `plugins/foundry/…` → `${CLAUDE_PLUGIN_ROOT}/…` (strip the `plugins/foundry/` prefix)
+   - `plugins/forge/…` → `${CLAUDE_PLUGIN_ROOT}/../forge/…` (strip the `plugins/forge/` prefix; the sibling walk holds in both layouts — Forge and Foundry are siblings under `plugins/` in the source repo and under the marketplace cache directory once installed)
+
+   Reading an entry by its literal `plugins/…` form resolves against the *user's project cwd*, not the plugin, and will not be found. If a resolved read fails, halt decompose with `ROSTER_AGENT_UNREADABLE` naming the entry — never silently drop a stream from the roster, since a dropped entry makes the F0.9 sub-check 7k comparison agree with a roster that was never enumerated.
+
 
    - `plugins/foundry/agents/tracer.md` (TRACE)
    - `plugins/foundry/agents/flow-tracer.md` (FLOW_TRACE)
@@ -426,7 +434,7 @@ Call `Foundry-Validate-Castings` — runs 10 dimensions:
 
    - **7j. `<contracts>` propagation byte-identical to manifest.** Same shape as 7h, applied to the `<contracts>` block and `manifest.contracts_table`. Sentinel rows MUST propagate byte-identical (same rationale as 7i). Skipped for V3.
 
-   - **7k. `manifest.stream_skips` matches re-derived expected set (Phase 3 / TYPE-02).** Re-enumerate the version-gated agent roster using the **same hardcoded list as F0.5 step 2b** (cross-plugin `plugins/forge/agents/*.md` + `plugins/foundry/agents/*.md` paths); re-parse each agent's `min_spec_format_version` and `id` (defaulting absent fields to `v2.0` and a filename-derived slug, identical to F0.5 step 2b); recompute the expected skip set against `manifest.spec_format_version_tuple`; compare to the recorded `manifest.stream_skips` array.
+   - **7k. `manifest.stream_skips` matches re-derived expected set (Phase 3 / TYPE-02).** Re-enumerate the version-gated agent roster using the **same hardcoded list as F0.5 step 2b**, resolving each entry for reading through the **same `${CLAUDE_PLUGIN_ROOT}` rule as F0.5 step 2b** (identifiers compare as written; only the read location is resolved); re-parse each agent's `min_spec_format_version` and `id` (defaulting absent fields to `v2.0` and a filename-derived slug, identical to F0.5 step 2b); recompute the expected skip set against `manifest.spec_format_version_tuple`; compare to the recorded `manifest.stream_skips` array.
      - Error `STREAM_SKIP_INCOMPLETE` if an agent whose `min_spec_format_version` tuple > `manifest.spec_format_version_tuple` is missing from `manifest.stream_skips`. Names the missing `stream_id` + `agent_path` so the reviewer can grep both step 2b's roster and the manifest.
      - Error `STREAM_SKIP_UNEXPECTED` if `manifest.stream_skips` contains a record for an agent whose `min_spec_format_version` tuple ≤ `manifest.spec_format_version_tuple` (false positive — emission rule fired when it shouldn't have).
      - Error `STREAM_SKIP_MALFORMED` if any record is missing one or more of the five required fields (`stream_id` / `reason` / `spec_version` / `stream_min` / `agent_path`).
