@@ -101,12 +101,16 @@ SYSTEMD_FILE="$HOME/.config/systemd/user/$SERVICE_UNIT"
 # it there before treating this list as the whole story.
 #
 # WHAT IT HAS TO COVER. Serena's LSP manager spawns its language servers
-# (bash-language-server, typescript-language-server) by BARE NAME. A daemon
+# (bash-language-server, typescript-language-server) by BARE NAME, and the
+# servers shell out further still — gopls runs `go` to load packages, so a Go
+# reachable only through a version manager has to be reachable HERE. A daemon
 # without node's directory on this PATH loads, answers an MCP handshake, and then
 # fails every symbol lookup with "node is not installed" — healthy on every axis
-# but the one that matters. So the user-level install prefixes lead (uv, pipx,
-# and both Homebrew architectures — one machine's prefix is the other's dead
-# entry), and the system directories trail, including launchd's default in full:
+# but the one that matters; a daemon without go's directory does the same for
+# every Go repo while every other language keeps working. So the user-level
+# install prefixes lead (uv, pipx, mise's shim directory, and both Homebrew
+# architectures — one machine's prefix is the other's dead entry), and the
+# system directories trail, including launchd's default in full:
 # widening a service PATH must never narrow it.
 #
 # The same string is rendered on both platforms, deliberately. A directory that
@@ -114,11 +118,15 @@ SYSTEMD_FILE="$HOME/.config/systemd/user/$SERVICE_UNIT"
 # whereas a per-platform list is exactly how the two arms diverged before — one
 # carried a node directory and the other silently did not.
 #
-# A node installed ONLY under a version manager that mutates PATH rather than
-# keeping a fixed shim directory is not found here. That is the deliberate trade:
-# locating it means reading the caller's environment, which is precisely the
-# instability this constant exists to remove.
-SERVICE_PATH_DIRS="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# A toolchain installed ONLY under a version manager that mutates PATH rather
+# than keeping a fixed shim directory is not found here. That is the deliberate
+# trade: locating it means reading the caller's environment, which is precisely
+# the instability this constant exists to remove. mise sits on the other side of
+# that line — its shims live at a fixed default ($HOME/.local/share/mise/shims)
+# no matter which tools or versions are active — so its entry belongs on this
+# list. A relocated XDG_DATA_HOME moves that directory and is NOT chased, for
+# the same reason the caller's PATH is not read.
+SERVICE_PATH_DIRS="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Absolute path to the copy of this script that is running, with symlinked
 # directories resolved away by pwd -P.
