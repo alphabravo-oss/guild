@@ -1,7 +1,7 @@
 {
   "name": "foundry",
   "description": "Autonomous build-verify-fix loop for Claude Code. Reads a Forge spec, decomposes it into castings with pre-authored teammate prompts, validates through an 11-dimension F0.9 gate (including F0.7 intent-carrier coverage), builds in parallel waves with server-side evidence re-execution and per-requirement-ID binding, runs up to 8 verification streams (TRACE, FLOW_TRACE, PROVE, RESEARCH_AUDIT, COVERAGE_DIFF, SIGHT, TEST/PROBE, TEST_OBSERVATIONS), grinds defects to zero, then assays with fresh eyes. Brownfield runs consume a flow delta; greenfield and cosmetic runs use the end-state pipeline. Forge plans. Foundry builds.",
-  "version": "4.6.2",
+  "version": "4.6.3",
   "author": {
     "name": "AlphaBravo"
   }
