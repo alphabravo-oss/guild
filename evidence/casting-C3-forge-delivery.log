@@ -8,7 +8,7 @@
    → ${user_config.model} ←
 
    - **Nothing between the arrows** — or an unsubstituted `${...}` placeholder still sitting between them, meaning the option is not declared in this installed build: the option is unconfigured. Spawn `spec-reviewer` with **no `model` parameter at all**. Never pass `model=""`; an unset option substitutes as an empty string, and an empty string at a spawn is a malformed spawn rather than a no-op. The agent's own frontmatter pin governs, and behavior is byte-identical to a build that never had this option.
-   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn, and on **this spawn only**. No other forge spawn takes its model from this option — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
+   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `foundry:flow-mapper` spawn at V3 R0 (§V3 BROWNFIELD OVERRIDES → R0 step 1) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
    - **Anything else:** refuse. Do not spawn, and do not guess at a nearest match. Report to the user:
 
      `forge model option: "<value>" is not an accepted value. Accepted values are: opus, sonnet, haiku, fable, inherit.`

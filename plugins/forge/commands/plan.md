@@ -188,7 +188,7 @@ When the user says "done", "finalize", "finished", or similar:
    → ${user_config.model} ←
 
    - **Nothing between the arrows** — or an unsubstituted `${...}` placeholder still sitting between them, meaning the option is not declared in this installed build: the option is unconfigured. Spawn `spec-reviewer` with **no `model` parameter at all**. Never pass `model=""`; an unset option substitutes as an empty string, and an empty string at a spawn is a malformed spawn rather than a no-op. The agent's own frontmatter pin governs, and behavior is byte-identical to a build that never had this option.
-   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn, and on **this spawn only**. No other forge spawn takes its model from this option — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
+   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `foundry:flow-mapper` spawn at V3 R0 (§V3 BROWNFIELD OVERRIDES → R0 step 1) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
    - **Anything else:** refuse. Do not spawn, and do not guess at a nearest match. Report to the user:
 
      `forge model option: "<value>" is not an accepted value. Accepted values are: opus, sonnet, haiku, fable, inherit.`
@@ -301,6 +301,21 @@ In brownfield mode, R0 produces a grounded flow graph instead of the four-agent 
 **Procedure:**
 
 1. Spawn ONE `flow-mapper` agent (full content of `${CLAUDE_PLUGIN_ROOT}/../foundry/agents/flow-mapper.md` as prompt, or `subagent_type: "foundry:flow-mapper"` if registered).
+
+   **Model for this spawn — forge's `model` user config option.** `flow-mapper` ships in foundry, but forge is what spawns it, so the value that reaches it is **forge's** `model` option — the one set under `forge@guild`, not the identically-named option under `foundry@guild`. The configured value is substituted between the arrows on the line below. This is a second, independent substitution of that option, so resolve it here on its own rather than carrying a decision over from FINALIZATION SEQUENCE step 4.5. Read what is actually sitting between the arrows, then follow whichever of the three cases matches. The arrows are delimiters only and are never part of the value.
+
+   → ${user_config.model} ←
+
+   - **Nothing between the arrows** — or an unsubstituted `${...}` placeholder still sitting between them, meaning the option is not declared in this installed build: the option is unconfigured. Spawn `flow-mapper` with **no `model` parameter at all**. Never pass `model=""`; an unset option substitutes as an empty string, and an empty string at a spawn is a malformed spawn rather than a no-op. The agent's own frontmatter pin governs — or, on the inline-content fallback above, the inherited session model — and behavior is byte-identical to a build that never had this option.
+   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `forge:spec-reviewer` spawn at R3.5 (FINALIZATION SEQUENCE step 4.5) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and this main thread keeps inheriting the session model. V3 brownfield does not run the four V2 `Explore` surveyors at all, and in V2 they keep inheriting the session model too.
+   - **Anything else:** refuse. Do not spawn, and do not guess at a nearest match. Report to the user:
+
+     `forge model option: "<value>" is not an accepted value. Accepted values are: opus, sonnet, haiku, fable, inherit.`
+
+     R0 does not run until the option is corrected or cleared. Without a flow graph there is nothing for R2 FLOW-INTERVIEW to confirm hops against, so the V3 pipeline cannot start and `<promise>SPEC FORGED</promise>` stays unreachable.
+
+   Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — R0 still runs either way.
+
 2. Input to flow-mapper:
    - `project_root`: the target codebase.
    - `scope_hint`: natural-language description of the subsystem the user's feature will touch. Derive from the feature name + any `--focus` dirs. If you cannot derive a tight scope, ask the user via AskUserQuestion before spawning.
