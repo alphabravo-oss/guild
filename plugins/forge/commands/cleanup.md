@@ -1,7 +1,7 @@
 ---
 description: "Clean up all Forge interview state files"
 allowed-tools: ["Bash(rm:*)", "Bash(ls:*)", "AskUserQuestion"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Forge Cleanup Command

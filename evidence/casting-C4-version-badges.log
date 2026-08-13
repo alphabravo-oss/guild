@@ -1,0 +1,7 @@
+# evidence-cmd: sh -c 'echo "== foundry README badge (src + alt must both read 4.7.0):"; grep -n "shields.io/badge/foundry" plugins/foundry/README.md | sed "s/^/  | /"; echo "== forge README badge (src + alt must both read 4.4.0):"; grep -n "shields.io/badge/forge-" plugins/forge/README.md | sed "s/^/  | /"'
+# evidence-for: FR-012, NFR-004
+
+== foundry README badge (src + alt must both read 4.7.0):
+  | 7:  <img src="https://img.shields.io/badge/foundry-4.7.0-F57C00?style=flat-square" alt="foundry 4.7.0"/>
+== forge README badge (src + alt must both read 4.4.0):
+  | 7:  <img src="https://img.shields.io/badge/forge-4.4.0-1E88E5?style=flat-square" alt="forge 4.4.0"/>

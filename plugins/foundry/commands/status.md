@@ -1,7 +1,7 @@
 ---
 description: "Show current foundry run status"
 allowed-tools: ["Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "Read", "Glob"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Foundry Status Command

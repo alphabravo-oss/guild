@@ -1,0 +1,22 @@
+# evidence-cmd: sh -c 'echo "AC-015 (setup-forge.sh must refuse unknown flags rather than absorb them into the"; echo "feature slug) is NOT owned by casting C4. It is part of the same FR-014 foundation-issue"; echo "bundle, but plugins/forge/scripts/setup-forge.sh belongs to another casting. C4 owns only"; echo "the Stale-model-docs, Model-policy-consolidation and Legacy-frontmatter-key quarters."; echo; echo "The eight key_files C4 owns and is the sole editor of:"; for f in plugins/foundry/skills/temper/SKILL.md plugins/foundry/skills/prove/SKILL.md plugins/foundry/README.md plugins/forge/README.md plugins/forge/commands/cleanup.md plugins/forge/commands/resume.md plugins/foundry/commands/status.md plugins/foundry/commands/update.md; do echo "  $f"; done; echo; echo "setup-forge.sh is absent from that list. Its unknown-flag case branch, unmodified by C4:"; grep -n "[*])" plugins/forge/scripts/setup-forge.sh | sed "s/^/  | /"'
+# evidence-for: AC-015
+
+AC-015 (setup-forge.sh must refuse unknown flags rather than absorb them into the
+feature slug) is NOT owned by casting C4. It is part of the same FR-014 foundation-issue
+bundle, but plugins/forge/scripts/setup-forge.sh belongs to another casting. C4 owns only
+the Stale-model-docs, Model-policy-consolidation and Legacy-frontmatter-key quarters.
+
+The eight key_files C4 owns and is the sole editor of:
+  plugins/foundry/skills/temper/SKILL.md
+  plugins/foundry/skills/prove/SKILL.md
+  plugins/foundry/README.md
+  plugins/forge/README.md
+  plugins/forge/commands/cleanup.md
+  plugins/forge/commands/resume.md
+  plugins/foundry/commands/status.md
+  plugins/foundry/commands/update.md
+
+setup-forge.sh is absent from that list. Its unknown-flag case branch, unmodified by C4:
+  | 120:      # existed they fell through to *) and were appended to FEATURE_NAME,
+  | 124:    -*)
+  | 131:    *)

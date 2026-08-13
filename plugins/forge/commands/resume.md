@@ -1,7 +1,7 @@
 ---
 description: "Resume an interrupted forge specification interview"
 allowed-tools: ["AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "Bash(ls:*)", "Bash(cat:*)"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Forge Resume Command

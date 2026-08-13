@@ -217,9 +217,12 @@ covered. Temper never declares itself done.
 
 ## Effort Level
 
-**Recommended effort: max (Opus only).** Micro-domain probing requires maximum reasoning
+**Recommended effort: max.** Micro-domain probing requires maximum reasoning
 depth to catch subtle bugs in individual function bodies. When building API requests, use
-`effort: "max"`. On Sonnet, fall back to `effort: "high"`.
+`effort: "max"`. If the running model's effort ladder does not reach `max`, request the
+highest level it does offer. Effort is calibrated per model, so a given level on one
+model is not equivalent to the same level on another — read any cross-model comparison
+with that in mind.
 
 ## Anti-Patterns
 

@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.6.3-F57C00?style=flat-square" alt="foundry 4.6.3"/>
+  <img src="https://img.shields.io/badge/foundry-4.7.0-F57C00?style=flat-square" alt="foundry 4.7.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -149,16 +149,22 @@ Foundry-Sight runs these as Claude Code skills directly during the corresponding
 | Agent | Phase | Model | Notes |
 |---|---|---|---|
 | `researcher.md` | F0 | sonnet | Per-domain research; parallel up to 4 |
-| `research-synthesizer.md` | F0 | sonnet | Merges 4+ research outputs into `SUMMARY.md` |
-| `codebase-mapper.md` | F0 (optional) | sonnet | Extracts MANDATORY_RULES + STACK + ARCHITECTURE + STRUCTURE + CONVENTIONS + INTEGRATIONS + CONCERNS |
-| `flow-mapper.md` | F0 (V3 brownfield) | — | Grounded `flow-graph.json` from LSP/grep |
+| `research-synthesizer.md` | F0 | haiku | Merges 4+ research outputs into `SUMMARY.md` |
+| `codebase-mapper.md` | F0 (optional) | haiku | Extracts MANDATORY_RULES + STACK + ARCHITECTURE + STRUCTURE + CONVENTIONS + INTEGRATIONS + CONCERNS |
+| `flow-mapper.md` | F0 (V3 brownfield) | opus | Grounded `flow-graph.json` from LSP/grep |
+| `pattern-mapper.md` | F0.6 PATTERN | opus | Maps every spec target to its closest analog; emits `PATTERNS.md` |
 | `tracer.md` | F2 TRACE | sonnet | Three-level EXISTS → SUBSTANTIVE → WIRED |
 | `flow-tracer.md` | F2 FLOW_TRACE | sonnet | Mirror of tracer for downstream verification |
 | `assayer.md` | F2 PROVE / F4 ASSAY | opus | Spec-before-code + stub detection |
-| `research-auditor.md` | F2 RESEARCH_AUDIT | sonnet | Verifies code honours research |
-| `coverage-diff.md` | F2 COVERAGE_DIFF | sonnet | 1:1 MIGRATION check |
+| `research-auditor.md` | F2 RESEARCH_AUDIT | haiku | Verifies code honours research |
+| `coverage-diff.md` | F2 COVERAGE_DIFF | haiku | 1:1 MIGRATION check |
+| `spec-test-deriver.md` | F2 TEST_OBSERVATIONS | opus | Code-blind Hypothesis test derivation from the `## Contracts` table |
+| `test-observations-adjudicator.md` | F4 ASSAY | opus | Adjudicates the `test_observations` channel |
+| `intent-carrier.md` | F0.7 INTENT | opus | A-NNN × casting coverage matrix |
 | `nyquist-auditor.md` | F5.5 | sonnet | Regression test generation |
 | `teammate.md` | F1 CAST / F3 GRIND | opus | Methodical implementation; CAST deliberates, GRIND stays surgical |
+
+The `Model` column mirrors each agent's `model:` frontmatter, which is the single source of truth for which model an agent runs on. Which of these the `model` config option can steer is documented under [Model selection](#model-selection); the allocation of foundry's *orchestration* roles — the Lead itself, F0.5 DECOMPOSE — lives in `commands/start.md`'s MODEL ALLOCATION table.
 
 The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, F1/F3 dispatch them verbatim. The Lead is a router, not an interpreter.
 
@@ -210,21 +216,53 @@ Current baseline: **113 passed + 1 skipped** (synthetic-fixture suite covering e
 
 ---
 
-## Model allocation
+## Model selection
 
-| Role | Model |
+Foundry declares one `userConfig` option, `model`, in `.claude-plugin/plugin.json`. It moves a curated subset of agents onto a different model without editing a single frontmatter pin.
+
+| Property | Value |
 |---|---|
-| Lead | opus |
-| F0 researchers | sonnet |
-| F0.5 decompose | opus |
-| F0.6 pattern-mapper | sonnet |
-| F1 CAST teammates | opus |
-| F2 TRACE / FLOW_TRACE | sonnet |
-| F2 PROVE | opus |
-| F3 GRIND teammates | opus |
-| F4 ASSAY | opus |
-| F5 TEMPER | sonnet |
-| F5.5 NYQUIST | sonnet |
+| Option key | `model` |
+| Accepted values | `opus`, `sonnet`, `haiku`, `fable`, `inherit` |
+| Any other value | Refused, with a message naming the accepted set |
+| Unset | No model parameter is emitted at any spawn. Every agent's frontmatter pin governs and behaviour is identical to today |
+
+Set it per plugin, for one session:
+
+```bash
+claude --config model=fable
+```
+
+`pluginConfigs` is read from user settings, `--settings`, and managed settings only — project and local settings are ignored for it.
+
+**The option is declared per plugin.** Foundry and Forge each declare their own identically-named `model` option, and there is no shared cross-plugin store. Set it once under `foundry@guild` and once under `forge@guild` if you want both steered.
+
+### What the option reaches
+
+| Agent | Baseline pin | Steerable by `model`? |
+|---|---|---|
+| `foundry:teammate` | opus, `effort: xhigh` | Yes |
+| `foundry:flow-mapper` | opus, `effort: high` (was sonnet) | Yes |
+| `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
+| `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
+| `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
+| `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
+| `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
+
+Every other agent keeps the model it ships with and is not reachable by the option at any setting: foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, `forge:researcher` stays sonnet, and foundry's four haiku agents — `codebase-mapper`, `coverage-diff`, `research-auditor`, `research-synthesizer` — stay haiku. **No agent in any plugin other than foundry and forge changes model at any setting of this option.**
+
+### How the value is delivered
+
+Frontmatter pins are always literal. An agent declaring `model: ${user_config.model}` fails at spawn time — the placeholder reaches the model resolver unsubstituted — so the option can never rewrite a pin. Each pin is the floor, and the configured value is applied at spawn time on top of it.
+
+Foundry's manifest passes `${user_config.model}` into the MCP server declaration's environment as `FOUNDRY_MODEL`. The MCP server validates it against the accepted set and emits it in the `agent_config` it already returns to the Lead, **omitting the `model` key entirely when the value is empty** — an unset option substitutes as an empty string rather than as an absent variable, so the omission is what makes "unset" indistinguishable from "never implemented". The MCP server is the single owner of foundry's model policy: the Lead uses the model the MCP tells it to use rather than deciding one itself.
+
+### If you cannot reach the configured model
+
+A blocked model does not fail the spawn. Claude Code checks the value against your organisation's `availableModels` allowlist; for a blocked family alias it runs the subagent on the newest permitted version of that family, and for any other blocked value — or when the allowlist permits no version of the family at all — it runs the subagent on the **inherited model** instead, warning in interactive sessions and naming both models.
+
+`fable` in particular is a Covered Model with mandatory 30-day retention and is **not available under Zero Data Retention**, so ZDR-bound consumers get the inherited model rather than a failed run. Foundry stays fully usable without `fable`.
 
 ---
 

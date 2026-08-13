@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/forge-4.3.1-1E88E5?style=flat-square" alt="forge 4.3.1"/>
+  <img src="https://img.shields.io/badge/forge-4.4.0-1E88E5?style=flat-square" alt="forge 4.4.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -103,6 +103,59 @@ The `spec.md` carries:
 |---|---|---|
 | `flow-interviewer.md` | R2 (brownfield) | Walks the user node-by-node through the LSP-anchored graph |
 | `researcher.md` | R1.5 | Targeted ecosystem research per identified domain |
+| `spec-reviewer.md` | R3.5 (PROBE-01) | Adversarial review of the draft spec; emits `spec-review.json` with a binary block/pass verdict |
+
+Forge's own interview thread — R1 SYNTHESIZE, R1.75, R2 INTERVIEW, R3 SPEC and R4 VALIDATE — and its four R0 Explore surveyors all run on your **session model**, so `/model` already steers them. The agents above are the only ones carrying a pin of their own.
+
+---
+
+## Model selection
+
+Forge declares one `userConfig` option, `model`, in `.claude-plugin/plugin.json`. It moves a curated subset of agents onto a different model without editing a single frontmatter pin.
+
+| Property | Value |
+|---|---|
+| Option key | `model` |
+| Accepted values | `opus`, `sonnet`, `haiku`, `fable`, `inherit` |
+| Any other value | Refused, with a message naming the accepted set |
+| Unset | No model parameter is emitted at any spawn. Every agent's frontmatter pin governs and behaviour is identical to today |
+
+Set it per plugin, for one session:
+
+```bash
+claude --config model=fable
+```
+
+`pluginConfigs` is read from user settings, `--settings`, and managed settings only — project and local settings are ignored for it.
+
+**The option is declared per plugin.** Forge and Foundry each declare their own identically-named `model` option, and there is no shared cross-plugin store. Set it once under `forge@guild` and once under `foundry@guild` if you want both steered.
+
+### What the option reaches
+
+| Agent | Baseline pin | Steerable by `model`? |
+|---|---|---|
+| `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:teammate` | opus, `effort: xhigh` | Yes |
+| `foundry:flow-mapper` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
+| `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
+| `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
+| `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
+| `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
+
+`forge:spec-reviewer` is the only forge agent the option reaches. Every other agent keeps the model it ships with and is not reachable at any setting: `forge:researcher` stays sonnet, foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, and foundry's four haiku agents stay haiku. **No agent in any plugin other than forge and foundry changes model at any setting of this option.**
+
+### How the value is delivered
+
+Frontmatter pins are always literal. An agent declaring `model: ${user_config.model}` fails at spawn time — the placeholder reaches the model resolver unsubstituted — so the option can never rewrite a pin. Each pin is the floor, and the configured value is applied at spawn time on top of it.
+
+Forge ships no MCP server, so the value travels through command content instead: `/forge:plan`'s R3.5 step carries a `${user_config.model}` token that the harness substitutes before the Lead reads it, and the Lead passes the substituted value as the spawn `model` parameter for `forge:spec-reviewer` and for no other agent. **An empty substitution yields no parameter at all** — an unset option substitutes as an empty string rather than as an absent token, so the emptiness check is what makes "unset" indistinguishable from "never implemented". Foundry's half of the pilot uses a different path: its MCP server receives the value as an environment variable and owns the policy centrally.
+
+### If you cannot reach the configured model
+
+A blocked model does not fail the spawn. Claude Code checks the value against your organisation's `availableModels` allowlist; for a blocked family alias it runs the subagent on the newest permitted version of that family, and for any other blocked value — or when the allowlist permits no version of the family at all — it runs the subagent on the **inherited model** instead, warning in interactive sessions and naming both models.
+
+`fable` in particular is a Covered Model with mandatory 30-day retention and is **not available under Zero Data Retention**, so ZDR-bound consumers get the inherited model rather than a failed run. Forge stays fully usable without `fable`.
 
 ---
 

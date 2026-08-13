@@ -1,0 +1,107 @@
+# evidence-cmd: sh -c 'echo "########## plugins/foundry/README.md :: ## Model selection ##########"; sed -n "/^## Model selection/,/^## What.s new/p" plugins/foundry/README.md; echo "########## plugins/forge/README.md :: ## Model selection ##########"; sed -n "/^## Model selection/,/^## Scripts/p" plugins/forge/README.md'
+# evidence-for: FR-011, FR-022, NFR-003, US-001, US-002, US-003
+
+########## plugins/foundry/README.md :: ## Model selection ##########
+## Model selection
+
+Foundry declares one `userConfig` option, `model`, in `.claude-plugin/plugin.json`. It moves a curated subset of agents onto a different model without editing a single frontmatter pin.
+
+| Property | Value |
+|---|---|
+| Option key | `model` |
+| Accepted values | `opus`, `sonnet`, `haiku`, `fable`, `inherit` |
+| Any other value | Refused, with a message naming the accepted set |
+| Unset | No model parameter is emitted at any spawn. Every agent's frontmatter pin governs and behaviour is identical to today |
+
+Set it per plugin, for one session:
+
+```bash
+claude --config model=fable
+```
+
+`pluginConfigs` is read from user settings, `--settings`, and managed settings only — project and local settings are ignored for it.
+
+**The option is declared per plugin.** Foundry and Forge each declare their own identically-named `model` option, and there is no shared cross-plugin store. Set it once under `foundry@guild` and once under `forge@guild` if you want both steered.
+
+### What the option reaches
+
+| Agent | Baseline pin | Steerable by `model`? |
+|---|---|---|
+| `foundry:teammate` | opus, `effort: xhigh` | Yes |
+| `foundry:flow-mapper` | opus, `effort: high` (was sonnet) | Yes |
+| `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
+| `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
+| `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
+| `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
+| `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
+
+Every other agent keeps the model it ships with and is not reachable by the option at any setting: foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, `forge:researcher` stays sonnet, and foundry's four haiku agents — `codebase-mapper`, `coverage-diff`, `research-auditor`, `research-synthesizer` — stay haiku. **No agent in any plugin other than foundry and forge changes model at any setting of this option.**
+
+### How the value is delivered
+
+Frontmatter pins are always literal. An agent declaring `model: ${user_config.model}` fails at spawn time — the placeholder reaches the model resolver unsubstituted — so the option can never rewrite a pin. Each pin is the floor, and the configured value is applied at spawn time on top of it.
+
+Foundry's manifest passes `${user_config.model}` into the MCP server declaration's environment as `FOUNDRY_MODEL`. The MCP server validates it against the accepted set and emits it in the `agent_config` it already returns to the Lead, **omitting the `model` key entirely when the value is empty** — an unset option substitutes as an empty string rather than as an absent variable, so the omission is what makes "unset" indistinguishable from "never implemented". The MCP server is the single owner of foundry's model policy: the Lead uses the model the MCP tells it to use rather than deciding one itself.
+
+### If you cannot reach the configured model
+
+A blocked model does not fail the spawn. Claude Code checks the value against your organisation's `availableModels` allowlist; for a blocked family alias it runs the subagent on the newest permitted version of that family, and for any other blocked value — or when the allowlist permits no version of the family at all — it runs the subagent on the **inherited model** instead, warning in interactive sessions and naming both models.
+
+`fable` in particular is a Covered Model with mandatory 30-day retention and is **not available under Zero Data Retention**, so ZDR-bound consumers get the inherited model rather than a failed run. Foundry stays fully usable without `fable`.
+
+---
+
+## What's new since v4.2.0
+########## plugins/forge/README.md :: ## Model selection ##########
+## Model selection
+
+Forge declares one `userConfig` option, `model`, in `.claude-plugin/plugin.json`. It moves a curated subset of agents onto a different model without editing a single frontmatter pin.
+
+| Property | Value |
+|---|---|
+| Option key | `model` |
+| Accepted values | `opus`, `sonnet`, `haiku`, `fable`, `inherit` |
+| Any other value | Refused, with a message naming the accepted set |
+| Unset | No model parameter is emitted at any spawn. Every agent's frontmatter pin governs and behaviour is identical to today |
+
+Set it per plugin, for one session:
+
+```bash
+claude --config model=fable
+```
+
+`pluginConfigs` is read from user settings, `--settings`, and managed settings only — project and local settings are ignored for it.
+
+**The option is declared per plugin.** Forge and Foundry each declare their own identically-named `model` option, and there is no shared cross-plugin store. Set it once under `forge@guild` and once under `foundry@guild` if you want both steered.
+
+### What the option reaches
+
+| Agent | Baseline pin | Steerable by `model`? |
+|---|---|---|
+| `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:teammate` | opus, `effort: xhigh` | Yes |
+| `foundry:flow-mapper` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
+| `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
+| `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
+| `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
+| `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
+
+`forge:spec-reviewer` is the only forge agent the option reaches. Every other agent keeps the model it ships with and is not reachable at any setting: `forge:researcher` stays sonnet, foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, and foundry's four haiku agents stay haiku. **No agent in any plugin other than forge and foundry changes model at any setting of this option.**
+
+### How the value is delivered
+
+Frontmatter pins are always literal. An agent declaring `model: ${user_config.model}` fails at spawn time — the placeholder reaches the model resolver unsubstituted — so the option can never rewrite a pin. Each pin is the floor, and the configured value is applied at spawn time on top of it.
+
+Forge ships no MCP server, so the value travels through command content instead: `/forge:plan`'s R3.5 step carries a `${user_config.model}` token that the harness substitutes before the Lead reads it, and the Lead passes the substituted value as the spawn `model` parameter for `forge:spec-reviewer` and for no other agent. **An empty substitution yields no parameter at all** — an unset option substitutes as an empty string rather than as an absent token, so the emptiness check is what makes "unset" indistinguishable from "never implemented". Foundry's half of the pilot uses a different path: its MCP server receives the value as an environment variable and owns the policy centrally.
+
+### If you cannot reach the configured model
+
+A blocked model does not fail the spawn. Claude Code checks the value against your organisation's `availableModels` allowlist; for a blocked family alias it runs the subagent on the newest permitted version of that family, and for any other blocked value — or when the allowlist permits no version of the family at all — it runs the subagent on the **inherited model** instead, warning in interactive sessions and naming both models.
+
+`fable` in particular is a Covered Model with mandatory 30-day retention and is **not available under Zero Data Retention**, so ZDR-bound consumers get the inherited model rather than a failed run. Forge stays fully usable without `fable`.
+
+---
+
+## Scripts

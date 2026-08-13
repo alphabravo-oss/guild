@@ -1,7 +1,7 @@
 ---
 description: "Update the foundry MCP server to the latest version"
 allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/update-mcp.sh:*)"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Foundry Update Command
