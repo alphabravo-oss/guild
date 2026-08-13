@@ -1,0 +1,14 @@
+# evidence-cmd: python3 -c 'import json;fo=json.load(open("plugins/foundry/.claude-plugin/plugin.json"));fg=json.load(open("plugins/forge/.claude-plugin/plugin.json"));V=["opus","sonnet","haiku","fable","inherit"];a=fo["userConfig"]["model"];b=fg["userConfig"]["model"];print("FR-001   userConfig.model declared in foundry manifest:", "model" in fo["userConfig"]);print("FR-011   userConfig.model declared in forge manifest:", "model" in fg["userConfig"]);print("AC-011   identically-named option, both plugins, no extra keys:", sorted(fo["userConfig"])==sorted(fg["userConfig"])==["model"]);print("CT-001   declared type (foundry/forge):", a["type"], "/", b["type"]);print("AC-009   description names all five accepted values (foundry/forge):", all(v in a["description"] for v in V), "/", all(v in b["description"] for v in V));print("AC-009   accepted set as written in the description:", ", ".join(v for v in V if v in a["description"]));print("AC-010   description text is identical in both manifests:", a["description"]==b["description"]);print("AC-012   no default key declared (foundry/forge):", "default" not in a, "/", "default" not in b);print("CT-002   required explicitly false (foundry/forge):", a.get("required"), "/", b.get("required"));print("GI-003   foundry mcpServers.foundry.env.FOUNDRY_MODEL =", json.dumps(fo["mcpServers"]["foundry"]["env"]["FOUNDRY_MODEL"]));print("GI-003   forge declares no mcpServers (ships no MCP server):", "mcpServers" not in fg)'
+# evidence-for: US-001, US-003, FR-001, FR-011, FR-013, AC-009, AC-010, AC-011, AC-012
+
+FR-001   userConfig.model declared in foundry manifest: True
+FR-011   userConfig.model declared in forge manifest: True
+AC-011   identically-named option, both plugins, no extra keys: True
+CT-001   declared type (foundry/forge): string / string
+AC-009   description names all five accepted values (foundry/forge): True / True
+AC-009   accepted set as written in the description: opus, sonnet, haiku, fable, inherit
+AC-010   description text is identical in both manifests: True
+AC-012   no default key declared (foundry/forge): True / True
+CT-002   required explicitly false (foundry/forge): False / False
+GI-003   foundry mcpServers.foundry.env.FOUNDRY_MODEL = "${user_config.model}"
+GI-003   forge declares no mcpServers (ships no MCP server): True
