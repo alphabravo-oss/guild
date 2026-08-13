@@ -1,0 +1,16 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && D=../agents/spec-test-deriver.md && B=$(mktemp) && cp "$D" "$B" && { echo '== model: line deleted           -> assertion MUST still fail =='; grep -v '^model:' "$B" > "$D"; uv run --with pytest pytest tests/test_spec_test_deriver.py::test_agent_file_frontmatter_shape -q -p no:cacheprovider 2>/dev/null | tail -1; echo '== model: gpt-4 (outside the set) -> assertion MUST still fail =='; sed 's/^model: .*/model: gpt-4/' "$B" > "$D"; uv run --with pytest pytest tests/test_spec_test_deriver.py::test_agent_file_frontmatter_shape -q -p no:cacheprovider 2>/dev/null | tail -1; echo '== model: sonnet (pre-bump value) -> MUST pass (no casting-ordering dependency) =='; sed 's/^model: .*/model: sonnet/' "$B" > "$D"; uv run --with pytest pytest tests/test_spec_test_deriver.py::test_agent_file_frontmatter_shape -q -p no:cacheprovider 2>/dev/null | tail -1; echo '== model: opus   (shipped value)  -> MUST pass =='; cp "$B" "$D"; uv run --with pytest pytest tests/test_spec_test_deriver.py::test_agent_file_frontmatter_shape -q -p no:cacheprovider 2>/dev/null | tail -1; echo '== intent-carrier.md, model: line deleted -> assertion MUST still fail =='; I=../agents/intent-carrier.md; C=$(mktemp); cp "$I" "$C"; grep -v '^model:' "$C" > "$I"; uv run --with pytest pytest tests/test_intent_coverage.py::test_agent_frontmatter_shape -q -p no:cacheprovider 2>/dev/null | tail -1; cp "$C" "$I"; echo '== intent-carrier.md restored             -> MUST pass =='; uv run --with pytest pytest tests/test_intent_coverage.py::test_agent_frontmatter_shape -q -p no:cacheprovider 2>/dev/null | tail -1; }
+# evidence-for: US-002, AC-007, FR-010, FR-017, OT-012
+# evidence-volatile: (in )[0-9]+\.[0-9]+s
+
+== model: line deleted           -> assertion MUST still fail ==
+1 failed in 0.02s
+== model: gpt-4 (outside the set) -> assertion MUST still fail ==
+1 failed in 0.02s
+== model: sonnet (pre-bump value) -> MUST pass (no casting-ordering dependency) ==
+1 passed in 0.00s
+== model: opus   (shipped value)  -> MUST pass ==
+1 passed in 0.00s
+== intent-carrier.md, model: line deleted -> assertion MUST still fail ==
+1 failed in 0.02s
+== intent-carrier.md restored             -> MUST pass ==
+1 passed in 0.01s

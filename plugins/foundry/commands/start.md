@@ -2,7 +2,7 @@
 description: "Start a foundry build-verify-fix loop"
 argument-hint: "<SCOPE> [--spec PATH] [--url URL] [--temper] [--nyquist] [--max-cycles N] [--no-ui] [--output-dir DIR]"
 allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/foundry.sh:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Foundry Lead
@@ -27,18 +27,23 @@ You are the **Foundry Lead**. Follow `Foundry-Next` literally at every step. It 
 
 ## MODEL ALLOCATION
 
-| Role | Model |
-|------|-------|
-| Lead (you) | opus |
-| F0 Researchers | sonnet |
-| F0.5 Decompose | opus |
-| F1 CAST teammates | opus |
-| F2 TRACE | sonnet |
-| F2 PROVE | opus |
-| F3 GRIND teammates | opus |
-| F4 ASSAY | opus |
-| F5 TEMPER | sonnet |
-| F5.5 Nyquist | sonnet |
+**The MCP server decides the model; you do not.** `Foundry-Next` returns an `agent_config` and `Foundry-Cast-Wave` returns a model clause in its `instructions`. Pass `model=` **only** when what you were returned contains a model, and pass no `model` parameter at all when it does not. Never substitute your own choice, and never re-derive a model from this table — the table documents what the server emits, it is not a second source of truth.
+
+| Role | Baseline | Follows the `model` option |
+|------|----------|----------------------------|
+| Lead (you) | opus | no |
+| F0 Researchers | sonnet | no |
+| F0.5 Decompose | opus | no |
+| F1 CAST teammates | opus | **yes** |
+| F2 TRACE | sonnet | no |
+| F2 PROVE | opus | no |
+| F2 TEST | opus | no |
+| F3 GRIND teammates | opus | **yes** |
+| F4 ASSAY | opus | no |
+| F5 TEMPER | opus | no |
+| F5.5 Nyquist | sonnet | no |
+
+The `model` option is set per-plugin (`foundry@guild` → `model`) and accepts `opus`, `sonnet`, `haiku`, `fable` or `inherit`. A value outside that set is refused with a message naming it. **Unset means no override anywhere:** every agent's frontmatter pin stands and a run behaves exactly as it did before the option existed. Setting it moves only the roles marked **yes** above — the rest hold their baseline at every setting, which is what keeps the haiku/sonnet/opus tiering intact.
 
 ## PHASE EXECUTION
 
@@ -484,7 +489,7 @@ Call `Foundry-Gate(phase='cast')`.
 
 1. Determine wave from `manifest.json` dependency graph. Max 5 teammates per wave.
 2. `TeamCreate("cast-{run}-wave-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug from `Foundry-Next`)
-3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns prompts for every casting in the wave. Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, `prompt=<that casting's prompt VERBATIM>`. No modification. (foundry:teammate's frontmatter carries `model=opus + effort=xhigh` — don't override.) Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
+3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns prompts for every casting in the wave. Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, `prompt=<that casting's prompt VERBATIM>`. No modification. **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured it names the model to pass on every teammate Agent call; when it is not, it tells you to pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself. Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
    - GRIND phase or single re-dispatch: fall back to per-casting `Foundry-Spawn-Teammate(casting_id=N, phase="cast"|"grind")`.
 4. Wait for teammates to finish their **work** (report "complete" or task list empty). Then send shutdown in ONE parallel SendMessage batch and **immediately** `TeamDelete` + `Foundry-Team-Down` — do NOT wait for shutdown_response/ack/idle confirmations. Idle panes are the signal; `TeamDelete` kills zombies.
 5. Build + test → commit → advance to next wave
@@ -534,7 +539,7 @@ If a teammate says "this defect requires a spec change": halt, log `SPEC_CHANGE_
 
 ### F4: ASSAY
 
-Split requirements into 4 groups → spawn 4 parallel `foundry:assayer` agents (frontmatter sets model=opus + effort=max). Each reads spec FIRST, forms expectations, THEN reads code.
+Split requirements into 4 groups → spawn 4 parallel `foundry:assayer` agents using the `agent_config` `Foundry-Next` returns. That config carries no `model` key — assayer holds a fixed opus baseline the `model` option cannot steer — so pass no `model` parameter and let its frontmatter (`model=opus + effort=max`) govern. Each reads spec FIRST, forms expectations, THEN reads code.
 
 **If `test_observations/test-deriver-cycle-{N}.json` exists for the current cycle (Phase 7 / TEST-01)**: spawn a 5th parallel agent — `agents/test-observations-adjudicator.md` (opus + effort=max). It runs `validate-test-observations.py` against the channel file (rejects schema/header/source-leak/wrong-test-pattern violations), then for each pattern-clean FAIL observation classifies a verdict from the closed vocabulary `KNOWN_TEST_OBSERVATION_VERDICTS = {DEFECT, WRONG_TEST, INCONCLUSIVE}`. Routing rule: `status: FAIL` + wrong-test patterns clean → `DEFECT` (route to GRIND with `# defect-source: TEST-01 OBS-NNN` annotation); any wrong-test pattern hit → `WRONG_TEST` (logged for next-cycle drop, NOT routed); `status: ERROR` or `SKIP` → `WRONG_TEST`; `status: PASS` → not routed. Adjudicator appends an `assay_verdict` field per observation to the source JSON. Backwards compat: if the channel file does NOT exist for the current cycle (v2.0 spec stream-skip case, or TEST-01 disabled), the 5th parallel agent is NOT spawned — only the 4 default assayer agents run; Phase 4/5/6 byte-equivalent semantics preserved.
 

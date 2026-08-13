@@ -407,7 +407,13 @@ def test_agent_file_frontmatter_shape() -> None:
       - id: TEST-01 (referenced by F0.5 step 2b roster +
         manifest.stream_skips)
       - min_spec_format_version: v2.1 (Phase 3 stream-skip gate)
-      - model: sonnet (test generation is well-bounded)
+      - model: any recognised alias (opus/sonnet/haiku/fable/inherit).
+        Deliberately an allowlist rather than one literal: the assertion's
+        real job is catching a missing or malformed ``model:`` line, not
+        freezing which model it names. This agent's shipped baseline moved
+        sonnet -> opus, and the option can move steerable agents further,
+        so a single-literal assertion would have to be re-edited on every
+        model decision.
       - effort: high
       - tools: includes Read/Write/Bash/Grep/Glob; excludes Edit/Task
         (code-blind enforcement layer 1)
@@ -432,8 +438,11 @@ def test_agent_file_frontmatter_shape() -> None:
         r"^min_spec_format_version:\s*v2\.1\s*$", front, re.MULTILINE
     ), f"frontmatter missing 'min_spec_format_version: v2.1':\n{front}"
     assert re.search(
-        r"^model:\s*sonnet\s*$", front, re.MULTILINE
-    ), f"frontmatter missing 'model: sonnet':\n{front}"
+        r"^model:\s*(opus|sonnet|haiku|fable|inherit)\s*$", front, re.MULTILINE
+    ), (
+        "frontmatter missing or malformed 'model:' line — must name exactly one "
+        f"of opus, sonnet, haiku, fable, inherit:\n{front}"
+    )
     assert re.search(
         r"^effort:\s*high\s*$", front, re.MULTILINE
     ), f"frontmatter missing 'effort: high':\n{front}"

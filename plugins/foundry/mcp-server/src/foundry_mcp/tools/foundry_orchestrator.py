@@ -10,6 +10,7 @@ All operations are local file reads/writes. Zero API calls. Zero cost.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,91 @@ _BGREEN = f"{_BOLD}{_GREEN}"
 _BYELLOW = f"{_BOLD}{_YELLOW}"
 _BRED = f"{_BOLD}{_RED}"
 _BWHITE = f"{_BOLD}{_WHITE}"
+
+
+# --------------------------------------------------------------------------- #
+# Model selection policy — the MCP server owns it (GI-003 / FR-009 / A-012).
+#
+# Delivery: foundry's plugin manifest declares a ``model`` userConfig option and
+# this MCP server's declaration substitutes ``${user_config.model}`` into its
+# ``env`` as FOUNDRY_MODEL. That is the ONLY path that works — ``${user_config
+# .KEY}`` never interpolates into agent frontmatter (an agent pinned
+# ``model: ${user_config.model}`` dies at spawn with "There's an issue with the
+# selected model"), so every agent keeps a literal frontmatter pin as its floor
+# and any override is applied at spawn time on top of it.
+#
+# The one dangerous detail: an UNSET option substitutes as the EMPTY STRING,
+# not as an absent variable. Absence and "" must therefore resolve identically,
+# and ``"model": ""`` must never reach an agent config — that is a malformed
+# spawn, not a no-op (FR-003 "Absence = no override", FR-004 "Emit no model key
+# at all", CT-002, CT-003, OT-001, OT-004).
+# --------------------------------------------------------------------------- #
+
+MODEL_ENV_VAR = "FOUNDRY_MODEL"
+
+# CT-001 / FR-002 "Aliases + inherit". ``inherit`` is a real, forwardable value
+# — the sentinel that makes an agent follow the session model. It is NOT a
+# synonym for unset, and must not be collapsed into the empty-string path.
+ACCEPTED_MODELS = ("opus", "sonnet", "haiku", "fable", "inherit")
+
+# FR-005 "The good fits only" (AC-001). EXACTLY these foundry agents follow the
+# option. Everything else this server configures keeps its own baseline at every
+# setting (AC-004): ``foundry:assayer`` and ``foundry:tracer`` hold their
+# frontmatter pins, and the ``general-purpose`` decompose / test / temper agents
+# hold the explicit opus baseline they have always carried.
+#
+# ``foundry:flow-mapper`` has no spawn site in this server — forge's plan.md
+# spawns it during V3 R0 — but it belongs in the set so the policy states the
+# full foundry membership in one place rather than implying it.
+STEERABLE_SUBAGENT_TYPES = ("foundry:teammate", "foundry:flow-mapper")
+
+
+def configured_model() -> str:
+    """Return the validated configured model, or ``""`` when unconfigured.
+
+    ``""`` means "the user configured nothing" — both an absent FOUNDRY_MODEL
+    and the empty string the harness substitutes for an unset option.
+
+    Raises:
+        ValueError: the value is outside ACCEPTED_MODELS. The message names the
+            accepted set (CT-001, OT-003, FR-020). Refusal is loud rather than
+            silently degrading, so a typo surfaces at the first tool call
+            instead of as a confusing mid-run API error.
+    """
+    raw = os.environ.get(MODEL_ENV_VAR, "")
+    value = raw.strip()
+    if not value:
+        return ""
+    if value not in ACCEPTED_MODELS:
+        raise ValueError(
+            f"{MODEL_ENV_VAR}={raw!r} is not an accepted model. "
+            f"Accepted values: {', '.join(ACCEPTED_MODELS)}."
+        )
+    return value
+
+
+def agent_model(subagent_type: str, baseline: str = "") -> dict:
+    """Return the ``{"model": ...}`` fragment to splat into one agent config.
+
+    Args:
+        subagent_type: the agent this config spawns. Only members of
+            STEERABLE_SUBAGENT_TYPES follow the configured value.
+        baseline: the model this site emitted before the option existed, or
+            ``""`` when the site emitted no model key and the agent's own
+            frontmatter pin governs.
+
+    Returns:
+        ``{"model": <value>}``, or ``{}`` when nothing resolves. An empty
+        fragment emits NO key at all, so an unset option is indistinguishable
+        from a build where this feature was never implemented (A-023, AC-003,
+        CT-003, OT-004).
+    """
+    configured = configured_model()
+    if configured and subagent_type in STEERABLE_SUBAGENT_TYPES:
+        resolved = configured
+    else:
+        resolved = baseline
+    return {"model": resolved} if resolved else {}
 
 
 def _load_json(path: Path) -> dict:
@@ -1891,12 +1977,19 @@ def _compute_next_action(project_root: str) -> dict:
 
     # --- Agent config per phase (ENFORCED, not suggestions) ---
     # These are the exact parameters the lead MUST use when spawning agents.
+    #
+    # Every model decision routes through ``agent_model`` so this server is the
+    # single source of truth (GI-003). A site passes its own ``baseline`` — the
+    # model it emitted before the option existed — and only the steerable
+    # subagent types can be moved off it. Sites with no baseline emit no
+    # ``model`` key, leaving the agent's frontmatter pin in charge.
     CAST_AGENT_CONFIG = {
         "subagent_type": "foundry:teammate",
+        **agent_model("foundry:teammate"),
         "mode": "bypassPermissions",
     }
     DECOMPOSE_AGENT_CONFIG = {
-        "model": "opus",
+        **agent_model("general-purpose", baseline="opus"),
         "subagent_type": "general-purpose",
         "mode": "bypassPermissions",
         "run_in_background": True,
@@ -1913,6 +2006,7 @@ def _compute_next_action(project_root: str) -> dict:
     }
     GRIND_AGENT_CONFIG = {
         "subagent_type": "foundry:teammate",
+        **agent_model("foundry:teammate"),
         "mode": "bypassPermissions",
     }
     ASSAY_AGENT_CONFIG = {
@@ -1978,7 +2072,10 @@ def _compute_next_action(project_root: str) -> dict:
                 "agent_configs": {
                     "trace": INSPECT_TRACE_CONFIG,
                     "prove": INSPECT_PROVE_CONFIG,
-                    "test": {"model": "opus", "subagent_type": "general-purpose"},
+                    "test": {
+                        **agent_model("general-purpose", baseline="opus"),
+                        "subagent_type": "general-purpose",
+                    },
                 },
             },
         }
@@ -2002,7 +2099,10 @@ def _compute_next_action(project_root: str) -> dict:
                     "agent_configs": {
                         "trace": INSPECT_TRACE_CONFIG,
                         "prove": INSPECT_PROVE_CONFIG,
-                        "test": {"model": "opus", "subagent_type": "general-purpose"},
+                        "test": {
+                            **agent_model("general-purpose", baseline="opus"),
+                            "subagent_type": "general-purpose",
+                        },
                     },
                 },
             }
@@ -2057,7 +2157,10 @@ def _compute_next_action(project_root: str) -> dict:
                 "agent_configs": {
                     "trace": INSPECT_TRACE_CONFIG,
                     "prove": INSPECT_PROVE_CONFIG,
-                    "test": {"model": "opus", "subagent_type": "general-purpose"},
+                    "test": {
+                        **agent_model("general-purpose", baseline="opus"),
+                        "subagent_type": "general-purpose",
+                    },
                 },
             },
         }
@@ -2106,7 +2209,10 @@ def _compute_next_action(project_root: str) -> dict:
                     "Run TEMPER micro-domain stress testing."
                 ),
                 "details": {
-                    "agent_config": {"model": "opus", "subagent_type": "general-purpose"},
+                    "agent_config": {
+                        **agent_model("general-purpose", baseline="opus"),
+                        "subagent_type": "general-purpose",
+                    },
                 },
             }
 

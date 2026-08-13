@@ -517,9 +517,14 @@ def test_agent_frontmatter_shape() -> None:
     """Plan 08-03 territory — intent-carrier.md frontmatter discipline.
 
     Locked frontmatter: id=INTENT-01, min_spec_format_version=v2.1,
-    model=opus, effort=max, tools includes Read/Write/Grep/Glob and
-    EXCLUDES Bash/Edit/Task. Defense-in-depth: forbidden tools blocked
-    at the agent file level even if rubric prose drifts.
+    effort=max, tools includes Read/Write/Grep/Glob and EXCLUDES
+    Bash/Edit/Task. Defense-in-depth: forbidden tools blocked at the
+    agent file level even if rubric prose drifts.
+
+    ``model`` is asserted as an allowlist (opus/sonnet/haiku/fable/inherit)
+    rather than the single literal ``opus``. The assertion's real job is
+    catching a missing or malformed ``model:`` line; freezing the literal
+    only guarantees a re-edit on every future model decision.
     """
     if not AGENT_PATH.exists():
         pytest.skip("intent-carrier.md not yet shipped — Plan 08-03 territory")
@@ -531,7 +536,12 @@ def test_agent_frontmatter_shape() -> None:
     assert re.search(
         r"^min_spec_format_version:\s*v2\.1\s*$", front, re.MULTILINE,
     ), front
-    assert re.search(r"^model:\s*opus\s*$", front, re.MULTILINE), front
+    assert re.search(
+        r"^model:\s*(opus|sonnet|haiku|fable|inherit)\s*$", front, re.MULTILINE
+    ), (
+        "frontmatter missing or malformed 'model:' line — must name exactly one "
+        f"of opus, sonnet, haiku, fable, inherit:\n{front}"
+    )
     assert re.search(r"^effort:\s*max\s*$", front, re.MULTILINE), front
     m_tools = re.search(r"^tools:\s*(.+?)\s*$", front, re.MULTILINE)
     assert m_tools, "missing tools field"
