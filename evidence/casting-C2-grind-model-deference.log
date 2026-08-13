@@ -8,11 +8,11 @@
 == bare parenthesised model literal in a spawn step (must be 0) ==
 0
 == guard tests, as shipped ==
-6 passed, 104 deselected in 0.01s
+10 passed, 109 deselected in 0.02s
 == F3 GRIND spawn step reverted to a hardcoded (opus) ==
 FAILED tests/test_model_config.py::test_spawn_step_has_no_bare_parenthesised_model[F3 GRIND]
 FAILED tests/test_model_config.py::test_spawn_step_names_a_model_only_inside_a_code_span[F3 GRIND]
 FAILED tests/test_model_config.py::test_spawn_step_defers_to_the_returned_instructions[F3 GRIND]
-3 failed, 3 passed, 104 deselected in 0.04s
+3 failed, 7 passed, 109 deselected in 0.04s
 == restored ==
-6 passed, 104 deselected in 0.01s
+10 passed, 109 deselected in 0.02s

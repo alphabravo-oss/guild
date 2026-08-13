@@ -392,7 +392,7 @@ no-op; orchestrator transitions directly to F0.9 VALIDATE.
 
 **Procedure (V2 mode, spec_format_version v2.1+):**
 
-1. Spawn the intent-carrier agent (model: opus, effort: max). Pass it the
+1. Spawn the intent-carrier agent (`${CLAUDE_PLUGIN_ROOT}/agents/intent-carrier.md`, effort: max). **Model: take the pin from the `model:` line of that same agent file** — `intent-carrier` is not steerable by the `model` option and no `agent_config` is returned for this step, so that agent file is the only source of truth: never name its model in this prose, and never re-derive one from the allocation table. Pass it the
    manifest path + spec.md path verbatim. Tool allowlist Read/Write/Grep/Glob
    (NO Bash, NO Edit, NO Task — defense against in-place casting-prompt
    amendment AND against embedding/fuzzy-overlap shortcut tools).

@@ -706,7 +706,33 @@ AGENTS_DIR = REPO_ROOT / "plugins" / "foundry" / "agents"
 # in the F0.5 roster as a bare identifier that is never resolved from here
 # (Forge has no path reachable from ${CLAUDE_PLUGIN_ROOT}), and this casting
 # does not read forge.
-_AGENT_REF_RE = re.compile(r"(?<!forge/)agents/([a-z0-9-]+)\.md")
+_AGENT_PATH_RE = re.compile(r"(?<!forge/)agents/([a-z0-9-]+)\.md")
+
+# ...and the same agents named WITHOUT a path. A path is the roster's house
+# style, but prose says "Spawn the intent-carrier agent (model: opus, effort:
+# max)" — a documented pin with no ``agents/*.md`` on the line, which a
+# path-only scanner never sees (D-016). The roster is read from disk so a new
+# agent file is covered the day it lands, and longest-first ordering plus
+# hyphen-aware boundaries stop ``tracer`` matching INSIDE ``flow-tracer``,
+# which would bind that line's alias to the wrong agent's frontmatter.
+_KNOWN_AGENT_NAMES = sorted(
+    (path.stem for path in AGENTS_DIR.glob("*.md")), key=len, reverse=True
+)
+_AGENT_NAME_RE = re.compile(
+    r"(?<![\w-])(?:%s)(?![\w-])"
+    % "|".join(re.escape(name) for name in _KNOWN_AGENT_NAMES)
+)
+
+
+def _agent_references(line: str) -> list[tuple[int, str]]:
+    """``(offset, agent)`` for every agent ``line`` names, in either form."""
+    return [
+        (match.start(1), match.group(1))
+        for match in _AGENT_PATH_RE.finditer(line)
+    ] + [
+        (match.start(), match.group(0))
+        for match in _AGENT_NAME_RE.finditer(line)
+    ]
 
 
 def _frontmatter_model(agent: str) -> str:
@@ -730,16 +756,19 @@ def _documented_pins() -> list[tuple[int, str, str]]:
     ``test-observations-adjudicator.md`` at the far end of the same line, and
     that row is exactly where a stale pin last hid. An alias on a line with no
     agent reference is not a documented pin and is ignored.
+
+    A reference is a path OR a bare agent name, because prose names agents both
+    ways and only one of the two forms was ever checked (D-016).
     """
     pins: list[tuple[int, str, str]] = []
     lines = START_MD.read_text(encoding="utf-8").splitlines()
     for number, line in enumerate(lines, start=1):
-        refs = list(_AGENT_REF_RE.finditer(line))
+        refs = _agent_references(line)
         if not refs:
             continue
         for alias in _MODEL_ALIAS_RE.finditer(line):
-            nearest = min(refs, key=lambda r: abs(r.start() - alias.start()))
-            pins.append((number, nearest.group(1), alias.group(0)))
+            _, agent = min(refs, key=lambda r: abs(r[0] - alias.start()))
+            pins.append((number, agent, alias.group(0)))
     return pins
 
 
@@ -769,18 +798,100 @@ def test_start_md_documented_pins_match_agent_frontmatter() -> None:
     )
 
 
-def test_f06_pattern_map_spawn_defers_to_the_agent_file() -> None:
-    """F0.6 points the lead at the agent file instead of restating a model.
+def test_the_agent_roster_backing_the_scanner_is_populated() -> None:
+    """A guard that cannot fail is not a guard.
 
-    F0.6 is the one spawn step with no MCP-returned ``agent_config`` to obey —
-    the server knows nothing about ``pattern-mapper`` — so deference here means
-    the agent file's own pin. Naming a model in this prose instead would be a
-    second source of truth for a value that already lives one file away, which
-    is precisely how the sonnet/opus drift got in.
+    ``_AGENT_NAME_RE`` is built from a directory listing: if that listing ever
+    came back empty the alternation would collapse to ``(?:)``, matching the
+    empty string at every offset and binding every alias to garbage. Assert the
+    roster is real before trusting anything built on top of it.
     """
-    step = _spawn_step("### F0.6: PATTERN MAPPING", "pattern-mapper")
-    assert "take the pin from the `model:` line of that same agent file" in step, (
-        "the F0.6 spawn step must send the lead to pattern-mapper.md's own "
+    assert len(_KNOWN_AGENT_NAMES) >= 10, _KNOWN_AGENT_NAMES
+    assert "intent-carrier" in _KNOWN_AGENT_NAMES, _KNOWN_AGENT_NAMES
+
+
+def test_the_pin_scanner_binds_a_pathless_agent_name() -> None:
+    """Positive control: an alias beside a bare agent NAME is a documented pin.
+
+    The exact escape hatch D-016 rode through: ``Spawn the intent-carrier agent
+    (model: opus, effort: max)`` carries no ``agents/*.md`` on the line, so the
+    path-only scanner bound nothing and that pin was the one model literal in
+    the whole command with no staleness guard behind it.
+    """
+    assert [
+        agent
+        for _, agent in _agent_references(
+            "Spawn the intent-carrier agent (model: opus, effort: max)."
+        )
+    ] == ["intent-carrier"], "a bare agent name must count as a reference"
+
+    assert {
+        agent
+        for _, agent in _agent_references(
+            "- **FLOW_TRACE** — agent with `agents/flow-tracer.md` (sonnet)."
+        )
+    } == {"flow-tracer"}, (
+        "`tracer` must not match inside `flow-tracer` — a substring hit would "
+        "bind this line's alias to a different agent's frontmatter"
+    )
+
+    assert not _agent_references(
+        "| F1 CAST teammates | opus | **yes** |"
+    ), "the MODEL ALLOCATION table names roles, not agents; it is not a pin"
+
+
+# --- Steps with no MCP agent_config defer to the agent file (D-016) ----------
+#
+# Two spawn steps have no server-returned ``agent_config`` to obey: F0.6
+# PATTERN MAPPING and F0.7 INTENT-CARRIER. Neither agent is steerable, and the
+# orchestrator names neither one, so each agent file's own ``model:`` line is
+# the only source of truth. Restating that model in the command is a second
+# source for a value living one file away — GI-003's named violation shape.
+#
+# Staleness checking alone cannot catch it: a restated literal is normally
+# ACCURATE the day it is written, which is why ``(model: opus, effort: max)``
+# beside intent-carrier read as correct for the whole build while still being
+# the defect. So these steps are held to naming NO model at all, accurate or
+# not, and to stating where the model actually comes from.
+
+_AGENT_FILE_SPAWN_STEPS = {
+    "F0.6 PATTERN MAPPING": ("### F0.6: PATTERN MAPPING", "pattern-mapper"),
+    "F0.7 INTENT-CARRIER": ("### F0.7: INTENT-CARRIER", "intent-carrier"),
+}
+
+_AGENT_FILE_DEFERRAL = "take the pin from the `model:` line of that same agent file"
+
+
+@pytest.mark.parametrize("label", sorted(_AGENT_FILE_SPAWN_STEPS))
+def test_agent_file_spawn_step_names_no_model(label: str) -> None:
+    """These steps quote no alias, not even the agent's current one.
+
+    The pin lives one file away and this command is not its second home; an
+    alias here is the lead being handed a model to pass rather than a place to
+    read one from (GI-003, FR-009). Code spans are stripped first so a phrase
+    like ``the `model:` line`` is not mistaken for a value.
+    """
+    step = _spawn_step(*_AGENT_FILE_SPAWN_STEPS[label])
+    stray = _MODEL_ALIAS_RE.findall(_BACKTICKED_RE.sub(" ", step))
+    assert not stray, (
+        f"{label} spawn step names {stray} in prose; this step has no "
+        "MCP-returned agent_config, so the agent file's own `model:` line is "
+        "the only source of truth and the command must point at it, not copy it"
+    )
+
+
+@pytest.mark.parametrize("label", sorted(_AGENT_FILE_SPAWN_STEPS))
+def test_agent_file_spawn_step_defers_to_the_agent_file(label: str) -> None:
+    """Dropping the literal is half the fix; the deferral must be stated.
+
+    Silence is not an instruction (GI-002): a step that says nothing about
+    model leaves the lead to improvise one — for F0.6 that improvisation is
+    what put a stale ``sonnet`` next to ``pattern-mapper``, the agent whose
+    wrong analog propagates into every casting prompt.
+    """
+    step = _spawn_step(*_AGENT_FILE_SPAWN_STEPS[label])
+    assert _AGENT_FILE_DEFERRAL in step, (
+        f"the {label} spawn step must send the lead to that agent file's own "
         f"frontmatter for the model; got: {step!r}"
     )
 

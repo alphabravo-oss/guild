@@ -1,0 +1,52 @@
+# evidence-cmd: M=plugins/foundry/commands/start.md; B=$(mktemp); cp "$M" "$B"; P() { (cd plugins/foundry/mcp-server && uv run --with pytest python -c "$1" 2>/dev/null); }; G() { (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -p no:cacheprovider -k "$1" 2>/dev/null | tail -"$2"); }; PINS="from tests.test_model_config import _documented_pins as Q,_frontmatter_model as F; [print('  start.md:%-4d %-30s documented=%-7s frontmatter=%-7s %s'%(n,a,al,F(a),'OK' if al==F(a) else 'STALE')) for n,a,al in Q()]"; echo '== agent-file spawn steps: aliases named in prose, code spans stripped =='; P "from tests.test_model_config import _AGENT_FILE_SPAWN_STEPS as S,_AGENT_FILE_DEFERRAL as D,_spawn_step as W,_MODEL_ALIAS_RE as A,_BACKTICKED_RE as C; [print('  %-22s aliases-in-prose=%-4s defers-to-agent-file=%s'%(l,A.findall(C.sub(' ',W(*S[l]))),D in W(*S[l]))) for l in sorted(S)]"; echo; echo '== every documented pin, path-bound AND name-bound, vs that agent file =='; P "$PINS"; echo; echo '== guards, as shipped =='; G 'documented_pins or agent_file_spawn or pin_scanner' 1; echo; echo '== D-016 reintroduced verbatim: (model: opus on the intent-carrier line =='; L=$(grep -n 'Spawn the intent-carrier agent' "$M" | cut -d: -f1); sed -i.tmp "${L}s|.*|1. Spawn the intent-carrier agent (model: opus, effort: max). Pass it the|" "$M"; rm -f "$M.tmp"; G 'agent_file_spawn' 4; echo '   -- the staleness guard alone, on that same mutation:'; G 'documented_pins' 1; echo '      (green: opus IS intent-carrier pin. Accuracy was never the defect,'; echo '       which is why a drift check alone could not have caught D-016.)'; echo; echo '== a STALE pathless pin — the case the path-only scanner could not see =='; sed -i.tmp "${L}s|.*|1. Spawn the intent-carrier agent (model: haiku, effort: max). Pass it the|" "$M"; rm -f "$M.tmp"; P "$PINS" | grep -E "start.md:${L} "; G 'documented_pins' 3; echo; cp "$B" "$M"; rm -f "$B"; echo '== restored =='; G 'documented_pins or agent_file_spawn or pin_scanner' 1
+# evidence-for: FR-009, NFR-001
+# evidence-volatile: (in )[0-9]+\.[0-9]+s
+
+== agent-file spawn steps: aliases named in prose, code spans stripped ==
+  F0.6 PATTERN MAPPING   aliases-in-prose=[]   defers-to-agent-file=True
+  F0.7 INTENT-CARRIER    aliases-in-prose=[]   defers-to-agent-file=True
+
+== every documented pin, path-bound AND name-bound, vs that agent file ==
+  start.md:71   researcher                     documented=sonnet  frontmatter=sonnet  OK
+  start.md:494  teammate                       documented=opus    frontmatter=opus    OK
+  start.md:511  tracer                         documented=sonnet  frontmatter=sonnet  OK
+  start.md:512  flow-tracer                    documented=sonnet  frontmatter=sonnet  OK
+  start.md:513  assayer                        documented=opus    frontmatter=opus    OK
+  start.md:514  research-auditor               documented=haiku   frontmatter=haiku   OK
+  start.md:515  coverage-diff                  documented=haiku   frontmatter=haiku   OK
+  start.md:516  spec-test-deriver              documented=opus    frontmatter=opus    OK
+  start.md:536  teammate                       documented=opus    frontmatter=opus    OK
+  start.md:544  assayer                        documented=opus    frontmatter=opus    OK
+  start.md:544  assayer                        documented=opus    frontmatter=opus    OK
+  start.md:546  test-observations-adjudicator  documented=opus    frontmatter=opus    OK
+  start.md:558  nyquist-auditor                documented=sonnet  frontmatter=sonnet  OK
+  start.md:596  tracer                         documented=sonnet  frontmatter=sonnet  OK
+  start.md:597  assayer                        documented=opus    frontmatter=opus    OK
+  start.md:598  codebase-mapper                documented=haiku   frontmatter=haiku   OK
+  start.md:599  researcher                     documented=sonnet  frontmatter=sonnet  OK
+  start.md:600  research-synthesizer           documented=haiku   frontmatter=haiku   OK
+  start.md:601  research-auditor               documented=haiku   frontmatter=haiku   OK
+  start.md:602  coverage-diff                  documented=haiku   frontmatter=haiku   OK
+  start.md:603  nyquist-auditor                documented=sonnet  frontmatter=sonnet  OK
+
+== guards, as shipped ==
+6 passed, 113 deselected in 0.02s
+
+== D-016 reintroduced verbatim: (model: opus on the intent-carrier line ==
+=========================== short test summary info ============================
+FAILED tests/test_model_config.py::test_agent_file_spawn_step_names_no_model[F0.7 INTENT-CARRIER]
+FAILED tests/test_model_config.py::test_agent_file_spawn_step_defers_to_the_agent_file[F0.7 INTENT-CARRIER]
+2 failed, 2 passed, 115 deselected in 0.03s
+   -- the staleness guard alone, on that same mutation:
+1 passed, 118 deselected in 0.02s
+      (green: opus IS intent-carrier pin. Accuracy was never the defect,
+       which is why a drift check alone could not have caught D-016.)
+
+== a STALE pathless pin — the case the path-only scanner could not see ==
+  start.md:395  intent-carrier                 documented=haiku   frontmatter=opus    STALE
+=========================== short test summary info ============================
+FAILED tests/test_model_config.py::test_start_md_documented_pins_match_agent_frontmatter
+1 failed, 118 deselected in 0.03s
+
+== restored ==
+6 passed, 113 deselected in 0.02s

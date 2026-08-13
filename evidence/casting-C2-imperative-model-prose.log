@@ -9,10 +9,10 @@ model literals in transition_to_grind imperative : []
 both imperatives defer to the returned clause    : True
 assayer imperatives still state their fixed pin  : 2
 == widened guard vs. the reintroduced D-013 literal (mutation cycle) ==
-2 passed, 112 deselected in 0.01s
+2 passed, 117 deselected in 0.02s
 -- reintroducing: (foundry:teammate's frontmatter carries model=opus ...) --
 =========================== short test summary info ============================
 FAILED tests/test_model_config.py::test_action_imperatives_name_no_model_for_a_steerable_agent
-1 failed, 1 passed, 112 deselected in 0.04s
+1 failed, 1 passed, 117 deselected in 0.04s
 -- restored --
-2 passed, 112 deselected in 0.02s
+2 passed, 117 deselected in 0.03s
