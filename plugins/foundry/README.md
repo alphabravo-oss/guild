@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.7.1-F57C00?style=flat-square" alt="foundry 4.7.1"/>
+  <img src="https://img.shields.io/badge/foundry-4.7.3-F57C00?style=flat-square" alt="foundry 4.7.3"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>

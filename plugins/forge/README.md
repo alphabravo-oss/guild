@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/forge-4.4.0-1E88E5?style=flat-square" alt="forge 4.4.0"/>
+  <img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -180,7 +180,7 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 cd plugins/forge && uvx pytest
 ```
 
-Current baseline: **54 passed + 1 skipped** (synthetic-fixture suite). The skipped test is the `RUN-01` real-run gate — empirical proof from a live cross-cohort matrix, deferred to a future milestone.
+Current baseline: **54 passed + 1 skipped** (synthetic-fixture suite). The skipped test is `test_typed_sections.py`'s Plan 02-03 gate — it waits for `check_typed_sections` to be extracted into an importable module.
 
 ---
 
