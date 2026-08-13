@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest -q 2>/dev/null | tail -1 && cd ../../forge && uv run --with pytest python -m pytest -q 2>/dev/null | tail -1
+# evidence-for: NFR-001, NFR-002
+# evidence-volatile: \d+\.\d+s
+
+327 passed, 4 skipped in 11.54s
+66 passed, 1 skipped in 1.12s

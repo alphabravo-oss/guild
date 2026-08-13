@@ -35,8 +35,11 @@ validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
 answer_id, and the omitted answer blocks the gate exactly like an answer
 whose every casting's cell is DROPPED. Without ``--spec`` the appendix
 answer-set is unknown and the completeness check cannot run (matrix-only
-validation applies); the Foundry-Intent-Coverage MCP gate always supplies
-``--spec``, so the completeness check always runs in production.
+validation applies); the Foundry-Intent-Coverage MCP gate resolves the
+run's spec canonically (run-dir spec.md, falling back to
+state.json['spec_path']) and supplies ``--spec`` whenever the spec is
+resolvable — the completeness check runs whenever the spec is resolvable
+and cannot run only when no spec is resolvable at all.
 
 Citation-only — never embeddings, never Jaccard, never fuzzy text-overlap.
 
@@ -355,7 +358,9 @@ def validate_intent_coverage(
         validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
         answer_id, and the omitted answer blocks the gate exactly like an answer
         whose every casting's cell is DROPPED. Without --spec this check
-        cannot run; the MCP gate always supplies --spec.
+        cannot run; the MCP gate supplies --spec whenever the run's spec
+        is resolvable (run-dir spec.md, falling back to
+        state.json['spec_path']).
       * INTENT_COVERAGE_VERDICT_MISMATCH — when casting-prompt locatable,
         validator's three-anchor re-derivation disagrees with agent's
         cell.verdict.
@@ -687,7 +692,8 @@ def main(argv: list[str]) -> int:
             "vacuous-PROPAGATED, spec-to-matrix completeness "
             "(INTENT_COVERAGE_MATRIX_INCOMPLETE), and three-anchor verdict "
             "re-derivation checks run. Without it the completeness check "
-            "cannot run; the MCP gate always supplies it."
+            "cannot run; the MCP gate supplies it whenever the run's "
+            "spec is resolvable."
         ),
     )
     parser.add_argument(

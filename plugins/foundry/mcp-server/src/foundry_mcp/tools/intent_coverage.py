@@ -40,6 +40,7 @@ import io
 import json
 from pathlib import Path
 
+from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path
 from foundry_mcp.tools.foundry_state import get_run_dir
 
 
@@ -130,7 +131,16 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         return {"passed": False, "reason": "No active foundry run"}
 
     coverage_path = fdir / "intent-coverage.json"
-    spec_path = fdir / "spec.md"
+    # GRIND D-012: resolve the spec via the canonical resolver (run-dir
+    # spec.md first, falling back to state.json['spec_path']) instead of
+    # hardcoding <run_dir>/spec.md. foundry.py copies the spec into the
+    # run dir only when the source exists, so a run whose spec lives
+    # OUTSIDE the run dir is a reachable production state — the hardcoded
+    # join silently dropped --spec and skipped the fold-in there,
+    # reopening the D-009 omission bypass. Read-only import of the
+    # single resolver from foundry_orchestrator (no duplicated fallback
+    # logic); None only when no spec is resolvable at all.
+    spec_path = _resolve_spec_path(project_root)
     if not coverage_path.exists():
         return {
             "passed": False,
@@ -190,7 +200,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # the canonical validator module (no second parser), guarded the same
     # way _run_validator_in_process guards its main() import.
     missing_from_matrix: list[str] = []
-    if spec_path.exists():
+    if spec_path is not None:
         try:
             from foundry_mcp.scripts.validate_intent_coverage import (
                 extract_answer_ids_from_spec,

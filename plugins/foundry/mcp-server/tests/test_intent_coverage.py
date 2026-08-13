@@ -1573,6 +1573,51 @@ def test_tool_omitted_spec_answer_blocks_via_redecompose(
     assert not (run_dir / ".f07-intent-clean").exists()
 
 
+def test_tool_omission_blocks_when_spec_resolvable_only_via_state_json(
+    intent_run: Callable[..., tuple[str, Path]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-012 — the completeness check reaches specs outside the run dir.
+
+    foundry.py makes spec_path optional and copies the spec into the run
+    dir only when the source exists, so a run whose spec lives OUTSIDE
+    the run dir (state.json['spec_path'] set, no run-dir copy) is a
+    reachable production state. Previously the tool hardcoded
+    <run_dir>/spec.md: no --spec reached the validator and the tool-layer
+    fold-in was skipped, so the D-009 omission bypass silently reopened
+    (passed=True / proceed_to_validate / stamp written). Now the tool
+    resolves the spec via the canonical _resolve_spec_path (run-dir copy
+    first, state.json['spec_path'] fallback resolved against
+    project_root): the omitted answer MUST block via redecompose and the
+    .f07-intent-clean marker MUST NOT be stamped.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(_OMISSION_SPEC, list(_OMISSION_MATRIX))
+    # Move the spec OUT of the run dir: no run-dir copy remains, and the
+    # spec is reachable ONLY through the state.json['spec_path'] fallback.
+    (run_dir / "spec.md").unlink()
+    external_spec = tmp_path / "specs" / "feature-spec.md"
+    external_spec.parent.mkdir()
+    external_spec.write_text(_OMISSION_SPEC, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps({"spec_path": "specs/feature-spec.md"}), encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-003"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-003"], result
+    assert result["redecompose_hints"][0]["suggested_casting"] is None, result
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in result["validator_stdout"], (
+        result
+    )
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
 def test_tool_redecompose_payload_carries_cell_counts_and_matrix_path(
     intent_run: Callable[..., tuple[str, Path]],
 ) -> None:
