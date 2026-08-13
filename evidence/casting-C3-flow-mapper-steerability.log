@@ -18,13 +18,15 @@
 
    Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — R0 still runs either way.
 
+   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning flow-mapper with model=<value>` when you are passing one, or `spawning flow-mapper with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
+
 2. Input to flow-mapper:
 == every substitution site in this command (expect 2: R3.5 and V3 R0)
 188:   → ${user_config.model} ←
-307:   → ${user_config.model} ←
+309:   → ${user_config.model} ←
 == each site names the other as the only other steerable spawn
 191:   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `foundry:flow-mapper` spawn at V3 R0 (§V3 BROWNFIELD OVERRIDES → R0 step 1) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
-310:   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `forge:spec-reviewer` spawn at R3.5 (FINALIZATION SEQUENCE step 4.5) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and this main thread keeps inheriting the session model. V3 brownfield does not run the four V2 `Explore` surveyors at all, and in V2 they keep inheriting the session model too.
+312:   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `forge:spec-reviewer` spawn at R3.5 (FINALIZATION SEQUENCE step 4.5) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and this main thread keeps inheriting the session model. V3 brownfield does not run the four V2 `Explore` surveyors at all, and in V2 they keep inheriting the session model too.
 == spawns the option must NOT reach (AC-008): Explore surveyors, researcher, main thread
 114:- Use `subagent_type: "Explore"` for each
 5:model: sonnet

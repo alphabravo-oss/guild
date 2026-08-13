@@ -1,0 +1,7 @@
+# evidence-cmd: command grep -nE "user_config\.model|Record the spawn" plugins/forge/commands/plan.md
+# evidence-for: NFR-001, FR-019
+
+188:   → ${user_config.model} ←
+200:   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning spec-reviewer with model=<value>` when you are passing one, or `spawning spec-reviewer with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
+309:   → ${user_config.model} ←
+321:   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning flow-mapper with model=<value>` when you are passing one, or `spawning flow-mapper with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.

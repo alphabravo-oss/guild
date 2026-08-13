@@ -17,4 +17,6 @@
 
    Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — the gate still runs either way.
 
+   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning spec-reviewer with model=<value>` when you are passing one, or `spawning spec-reviewer with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
+
    Then run:

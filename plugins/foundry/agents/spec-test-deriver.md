@@ -1,7 +1,7 @@
 ---
 id: TEST-01
 name: spec-test-deriver
-description: F2 INSPECT 8th stream. Code-blind: reads spec only. Derives hypothesis-jsonschema strategies from TYPE-01 contracts table, generates and runs failing tests, emits findings to test_observations channel for ASSAY mediation.
+description: "F2 INSPECT 8th stream. Code-blind: reads spec only. Derives hypothesis-jsonschema strategies from TYPE-01 contracts table, generates and runs failing tests, emits findings to test_observations channel for ASSAY mediation."
 min_spec_format_version: v2.1
 model: opus
 effort: high

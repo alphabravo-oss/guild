@@ -197,6 +197,8 @@ When the user says "done", "finalize", "finished", or similar:
 
    Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — the gate still runs either way.
 
+   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning spec-reviewer with model=<value>` when you are passing one, or `spawning spec-reviewer with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
+
    Then run:
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/validate_spec_review.py <SESSION_DIR>/spec-review.json <TRANSCRIPT_PATH>
@@ -315,6 +317,8 @@ In brownfield mode, R0 produces a grounded flow graph instead of the four-agent 
      R0 does not run until the option is corrected or cleared. Without a flow graph there is nothing for R2 FLOW-INTERVIEW to confirm hops against, so the V3 pipeline cannot start and `<promise>SPEC FORGED</promise>` stays unreachable.
 
    Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — R0 still runs either way.
+
+   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning flow-mapper with model=<value>` when you are passing one, or `spawning flow-mapper with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
 
 2. Input to flow-mapper:
    - `project_root`: the target codebase.

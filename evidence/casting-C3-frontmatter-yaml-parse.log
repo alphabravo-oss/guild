@@ -1,0 +1,7 @@
+# evidence-cmd: for f in plugins/foundry/agents/intent-carrier.md plugins/foundry/agents/spec-test-deriver.md; do echo "== $f"; uv run --with pyyaml python3 -c "import yaml,re,sys; t=open(sys.argv[1]).read(); m=re.match(r'^---\n(.*?)\n---\n', t, re.S); d=yaml.safe_load(m.group(1)); print('   frontmatter parses as YAML; model=' + d['model'] + ' effort=' + str(d.get('effort')) + ' keys=' + ','.join(d))" "$f" 2>/dev/null; done
+# evidence-for: US-002, AC-004, AC-005, FR-006, NFR-002
+
+== plugins/foundry/agents/intent-carrier.md
+   frontmatter parses as YAML; model=opus effort=max keys=id,name,description,min_spec_format_version,model,effort,tools
+== plugins/foundry/agents/spec-test-deriver.md
+   frontmatter parses as YAML; model=opus effort=high keys=id,name,description,min_spec_format_version,model,effort,tools
