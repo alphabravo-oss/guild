@@ -161,16 +161,12 @@ fi
 # processes setup itself had just started. Quoting also removes a quoting bug:
 # a path containing a double quote used to produce broken python.
 MCP_FILE="$MCP_FILE" \
-MCP_SERVER_SRC="$MCP_SERVER_SRC" \
 SERENA_UP="$SERENA_UP" \
-USE_LOCAL_SRC="$USE_LOCAL_SRC" \
 python3 << 'PYEOF'
 import json, os
 
 mcp_file = os.environ["MCP_FILE"]
-mcp_server_src = os.environ["MCP_SERVER_SRC"]
 serena_up = os.environ["SERENA_UP"] == "1"
-use_local = os.environ["USE_LOCAL_SRC"] == "1"
 
 with open(mcp_file) as f:
     cfg = json.load(f)
@@ -178,30 +174,18 @@ with open(mcp_file) as f:
 servers = cfg.setdefault("mcpServers", {})
 configured = []
 
-# Foundry MCP (the core state engine).
-# --project-root is relative and resolved against the server process cwd, which
-# Claude Code sets to the session's project directory. That is what makes this
-# entry portable enough to live at user scope instead of per-project.
-#
-# Two different launchers, on purpose:
-#   remote (default) — uvx against the git URL. Version-free, so the entry never
-#     goes stale, at the cost of needing an explicit refresh to move commits.
-#   local (--local)  — `uv run --directory`, NOT uvx. uvx caches a directory
-#     source and will not release it: --refresh, --refresh-package and
-#     --reinstall all keep serving the stale build, and only `uv cache prune`
-#     clears it. `uv run --directory` reads the tree on every launch, so a
-#     maintainer's edits take effect immediately with no cache step at all.
-if use_local:
-    servers["foundry"] = {
-        "command": "uv",
-        "args": ["run", "--directory", mcp_server_src, "foundry-mcp", "--project-root", "."]
-    }
-else:
-    servers["foundry"] = {
-        "command": "uvx",
-        "args": ["--from", mcp_server_src, "foundry-mcp", "--project-root", "."]
-    }
-configured.append("foundry")
+# Foundry MCP (the core state engine) is NOT written here anymore. Since 4.7.0
+# the plugin manifest declares the server itself (plugin.json mcpServers) so it
+# can receive `${user_config.model}` as FOUNDRY_MODEL — user-config substitution
+# only works in a plugin-scope declaration. A project-scope entry would not
+# shadow the plugin one: BOTH would start (verified on Claude Code 2.1.229),
+# doubling the server and exposing a second tool surface whose env lacks
+# FOUNDRY_MODEL, silently defeating the model option. So setup now MIGRATES:
+# any `foundry` entry a previous setup wrote is removed.
+if "foundry" in servers:
+    del servers["foundry"]
+    print("Migrated: removed the project-scope 'foundry' MCP entry — "
+          "foundry >= 4.7.0 bundles its own server in the plugin manifest.")
 
 # Playwright MCP (browser automation for SIGHT)
 if "playwright" not in servers:

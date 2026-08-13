@@ -174,11 +174,9 @@ The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, F1/F
 
 The `mcp-server/` directory ships a Python MCP server (`foundry-mcp`) that backs every Lead-side tool call. Without it the slash command loads but the workflow cannot drive — `Foundry-Init`, `Foundry-Next`, `Foundry-Validate-Castings` etc. are all served from there.
 
-Wire it into your project once:
+**Since 4.7.0 the plugin declares this server itself** (`.claude-plugin/plugin.json` → `mcpServers`), so installing the plugin is all the wiring there is — no `claude mcp add`, no `.mcp.json` entry. The plugin-scope declaration is also what delivers the `model` option: `${user_config.model}` substitutes only there, arriving in the server's environment as `FOUNDRY_MODEL`.
 
-```bash
-claude mcp add foundry -- uvx --from "git+https://github.com/alphabravo-oss/guild#subdirectory=plugins/foundry/mcp-server" foundry-mcp --project-root .
-```
+**Upgrading from < 4.7.0 — remove the old project-scope entry.** Earlier versions registered the server in your project's `.mcp.json` (via `setup-prereqs.sh` or a manual `claude mcp add foundry ...`). A project-scope entry does **not** shadow the plugin-declared one — both servers start (verified on Claude Code 2.1.229), doubling the process cost and exposing a second `Foundry-*` tool surface whose environment lacks `FOUNDRY_MODEL`, which silently defeats the model option. Re-running `/foundry:setup` removes the stale entry for you; or remove it by hand with `claude mcp remove foundry` (project scope) or by deleting the `"foundry"` key from `.mcp.json`.
 
 The server stores all run state under `foundry-archive/{run}/` in your project — castings, prompts, defects, handoffs, reports, every acceptance check. A full audit trail per build.
 
