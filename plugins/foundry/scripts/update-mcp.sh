@@ -120,11 +120,28 @@ else
     if [[ -n "$REGISTERED_SRC" ]]; then
         MCP_SERVER_SRC="$REGISTERED_SRC"
         info "Source: registered foundry entry"
+        warn "This is a legacy standalone registration — foundry >= 4.7.0 bundles its own"
+        warn "server in the plugin manifest, and a standalone entry runs a SECOND server"
+        warn "alongside it (one without FOUNDRY_MODEL, defeating the model option)."
+        warn "After this refresh, remove it: re-run /foundry:setup or 'claude mcp remove foundry'."
     else
-        MCP_SERVER_SRC="$FOUNDRY_MCP_GIT"
-        warn "No foundry MCP entry found — falling back to the default git remote"
-        warn "  Register it with:"
-        warn "  claude mcp add -s user foundry -- uvx --from \"$FOUNDRY_MCP_GIT\" foundry-mcp --project-root ."
+        # No standalone entry is the healthy state since 4.7.0: the plugin
+        # manifest declares the server, launched via `uv run --directory` from
+        # the installed plugin tree on every start — no uvx cache to refresh.
+        info "No standalone foundry MCP entry registered — none is needed."
+        info "The plugin bundles its own server (plugin.json mcpServers); it is"
+        info "launched fresh from the installed plugin tree on every session."
+        if VERSION="$(uv run --directory "$PLUGIN_ROOT/mcp-server" foundry-mcp --version 2>&1)"; then
+            echo ""
+            ok "Bundled server runs: $VERSION"
+            ok "To upgrade it: claude plugin update foundry@guild, then restart Claude Code."
+        else
+            echo ""
+            fail "Bundled server does not run:"
+            printf "%s\n" "$VERSION" >&2
+            exit 1
+        fi
+        exit 0
     fi
 fi
 info "  $MCP_SERVER_SRC"
