@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/forge && uv run --with pytest --with pytest-timeout pytest -q 2>/dev/null | tail -1 && cd ../foundry/mcp-server && uv run --with pytest --with pytest-timeout pytest -q 2>/dev/null | tail -1
+# evidence-for: NFR-001
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+66 passed, 1 skipped in 1.11s
+306 passed, 4 skipped in 10.94s

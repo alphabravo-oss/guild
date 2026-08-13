@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest --with pytest-timeout pytest tests/test_orchestrator_gates.py -q 2>/dev/null
+# evidence-for: US-004, AC-013, AC-014, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+.......................                                                  [100%]
+23 passed in 0.74s

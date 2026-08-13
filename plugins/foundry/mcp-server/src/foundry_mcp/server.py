@@ -21,6 +21,7 @@ from foundry_mcp.tools.foundry import (
     foundry_verify_coverage,
 )
 from foundry_mcp.tools.foundry_orchestrator import (
+    VALID_STREAMS,
     foundry_clear_directives,
     foundry_defects_to_tasks,
     foundry_gate,
@@ -248,7 +249,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["stream", "cycle", "items_checked"],
                 "properties": {
-                    "stream": {"type": "string", "enum": ["trace", "prove", "research_audit", "coverage_diff", "sight", "test", "probe"]},
+                    "stream": {"type": "string", "enum": sorted(VALID_STREAMS)},
                     "cycle": {"type": "integer"},
                     "items_checked": {"type": "integer"},
                     "items_total": {"type": "integer"},

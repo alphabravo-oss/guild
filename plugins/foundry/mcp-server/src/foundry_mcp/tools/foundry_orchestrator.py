@@ -598,6 +598,25 @@ def foundry_gate(
 
 # --- Stream markers ---
 
+# CLOSED VOCABULARY — verification streams recordable via Foundry-Stream.
+# Single source of truth for the runtime guard AND the MCP tool's JSON-Schema
+# enum (server.py derives its enum from this set), so the two sites cannot
+# drift — the AC-013 defect was exactly that drift: the schema advertised
+# streams the runtime rejected. Recordable is NOT required: the required-
+# stream computation in _check_streams_complete is intentionally independent.
+# Extend only via phase-level RFC.
+VALID_STREAMS = frozenset(
+    {
+        "trace",
+        "prove",
+        "sight",
+        "test",
+        "probe",
+        "research_audit",
+        "flow_trace",
+    }
+)
+
 
 def foundry_mark_stream(
     stream: str,
@@ -608,9 +627,8 @@ def foundry_mark_stream(
     project_root: str = ".",
 ) -> dict:
     """Mark a verification stream as complete for this cycle."""
-    valid = {"trace", "prove", "sight", "test", "probe"}
-    if stream not in valid:
-        return {"error": f"Invalid stream: {stream}. Must be one of: {', '.join(sorted(valid))}"}
+    if stream not in VALID_STREAMS:
+        return {"error": f"Invalid stream: {stream}. Must be one of: {', '.join(sorted(VALID_STREAMS))}"}
 
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
@@ -622,7 +640,8 @@ def foundry_mark_stream(
                      "You must report how many items were actually checked. "
                      "trace: symbols checked. prove: requirements checked. "
                      "sight: pages/elements exercised. test: tests run. "
-                     "probe: endpoints hit.",
+                     "probe: endpoints hit. research_audit: recommendations audited. "
+                     "flow_trace: flow-delta packets verified.",
             "hint": "If the stream genuinely checked 0 items, the scope may be wrong.",
         }
 
@@ -962,16 +981,19 @@ def foundry_mark_phase_complete(
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
 
     elif phase == "grind_start":
-        for marker in [".trace-complete", ".prove-complete", ".sight-complete",
-                       ".test-complete", ".probe-complete", ".inspect-clean", ".tasks-generated"]:
+        # Every recordable stream marker is cleared (derived from
+        # VALID_STREAMS so new streams cannot go stale across GRIND cycles),
+        # not just the required subset — completion state must stay honest.
+        stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
+        for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
             (fdir / marker).unlink(missing_ok=True)
         _update_phase(fdir, "F3")
         return {"ok": True, "phase": "F3",
                 "message": "All markers cleared \u2192 phase is now F3 (GRIND). Full INSPECT must re-run after."}
 
     elif phase == "assay_fail":
-        for marker in [".trace-complete", ".prove-complete", ".sight-complete",
-                       ".test-complete", ".probe-complete", ".inspect-clean", ".tasks-generated"]:
+        stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
+        for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
             (fdir / marker).unlink(missing_ok=True)
         _update_phase(fdir, "F3")
         return {"ok": True, "phase": "F3",
