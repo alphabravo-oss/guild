@@ -133,8 +133,16 @@ claude plugin install forge@guild foundry@guild adhoc@guild tldr@guild
 ```
 
 > [!NOTE]
-> `adhoc` and `tldr` need no setup — they are live on your next session. `foundry` needs its MCP server:
-> `claude mcp add foundry -- uvx --from "git+https://github.com/alphabravo-oss/guild#subdirectory=plugins/foundry/mcp-server" foundry-mcp --project-root .`
+> `adhoc` and `tldr` need no setup — they are live on your next session. `foundry` bundles its own MCP server since 4.7.0 — installing the plugin is all the wiring there is. If you ever registered the old standalone entry, remove it (`claude mcp remove foundry`): it starts a second server that silently defeats the `model` option.
+
+> [!TIP]
+> Forge and foundry each declare a `model` option that moves their config-steerable agents onto a different model — per session:
+>
+> ```bash
+> claude --settings '{"pluginConfigs": {"foundry@guild": {"options": {"model": "fable"}}, "forge@guild": {"options": {"model": "fable"}}}}'
+> ```
+>
+> or persistently via the same `pluginConfigs` block in `~/.claude/settings.json`. Which agents each option reaches is in the plugin READMEs under **Model selection**.
 
 <details>
 <summary><b>Install the other eight</b></summary>
