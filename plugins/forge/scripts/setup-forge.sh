@@ -1340,8 +1340,14 @@ R3.5 only activates for `spec_format_version: v2.1`+ specs. v2.0 specs skip R3.5
 behavior change for v4.2.0-era dependent projects).
 
 Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`,
-`id: PROBE-01`, `model: sonnet`) via the Agent tool. Its tools are
+`id: PROBE-01`) via the Agent tool. Its tools are
 `Read, Write, Grep, Glob` — read-and-emit only, no `Edit`/`Bash`/`Task`.
+
+This prompt names NO model for that spawn, deliberately. Resolve the model with
+the model resolution in the R3.5 step of `plan.md` (FINALIZATION SEQUENCE step
+4.5), which reads forge's `model` user config option. When that option is
+unconfigured, spawn with no `model` parameter at all and the agent's own
+frontmatter pin governs.
 
 ### MANDATORY TOOL-CALL ORDER (enforced)
 
@@ -1651,7 +1657,7 @@ When the user says "done", "finalize", "finished", or similar:
    ```
    Then paste the full byte content of `transcript.md` — every Q-NNN and A-NNN block, the file header, everything. No truncation, no summary, no "[transcript continues]" ellipses. A byte-for-byte copy.
 4. Write the complete draft spec (body + appendix) to the spec path in a single Write call. (Use the canonical SPEC_PATH — the script needs a real file to validate.)
-4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`, `model: sonnet`). The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict. Then run:
+4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`). This step names NO model for that spawn, deliberately — resolve it with the model resolution in the R3.5 step of `plan.md` (FINALIZATION SEQUENCE step 4.5), which reads forge's `model` user config option; when that option is unconfigured, spawn with no `model` parameter at all so the agent's own frontmatter pin governs. The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict. Then run:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_spec_review.py" <SESSION_DIR>/spec-review.json <TRANSCRIPT_PATH>
    ```

@@ -1,0 +1,14 @@
+# evidence-cmd: bash -c 'S="$PWD/plugins/forge/scripts/setup-forge.sh"; A="$PWD/plugins/forge/agents/spec-reviewer.md"; W=$(mktemp -d); cd "$W"; bash "$S" "evidence feature" --no-survey > prompt.txt 2>/dev/null; echo "setup-forge exit=$?"; echo "stale-spec-reviewer-model-literals=$(grep -c "model: sonnet" prompt.txt)"; echo "--- emitted spawn instructions (both sites) ---"; grep -n "Spawn the spec-reviewer agent" prompt.txt; echo "--- emitted deferral to plan.md model resolution ---"; echo "deferral-pointers=$(grep -c "model resolution in the R3.5 step of .plan.md." prompt.txt)"; echo "no-model-param-when-unconfigured=$(grep -c "spawn with no .model. parameter at all" prompt.txt)"; echo "--- governing frontmatter pin (spec-reviewer.md) ---"; grep -n "^model:" "$A"; cd /; rm -rf "$W"'
+# evidence-for: FR-019, AC-006, FR-007
+# evidence-timeout: 180
+
+setup-forge exit=0
+stale-spec-reviewer-model-literals=0
+--- emitted spawn instructions (both sites) ---
+722:Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`,
+1026:4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`). This step names NO model for that spawn, deliberately — resolve it with the model resolution in the R3.5 step of `plan.md` (FINALIZATION SEQUENCE step 4.5), which reads forge's `model` user config option; when that option is unconfigured, spawn with no `model` parameter at all so the agent's own frontmatter pin governs. The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict. Then run:
+--- emitted deferral to plan.md model resolution ---
+deferral-pointers=2
+no-model-param-when-unconfigured=2
+--- governing frontmatter pin (spec-reviewer.md) ---
+5:model: opus
