@@ -29,9 +29,19 @@ decision Layer 2.
 
 1. **Read** `foundry-archive/{run}/test_observations/test-deriver-cycle-{N}.json` for the current cycle.
 2. **Bash** `python "${CLAUDE_PLUGIN_ROOT}/scripts/validate-test-observations.py" <channel-json> --spec foundry-archive/{run}/spec.md` — the script ships with the plugin, not with the project under build, so it must be addressed through the plugin root; a repo-relative path resolves against the user's cwd and will not be found. If exit code != 0, halt and emit a structural failure (the channel itself is malformed; TEST-01 stream re-runs).
+   When weighing source-leak signals, apply the deriver's sanctioned
+   execution rule:
+   Referencing or executing a surface named in the spec's
+   `## Contracts` table is never a source leak; referencing
+   symbols absent from both the spec and the contracts table
+   still is.
+   The deriver executes documented surfaces (CLI entrypoints,
+   documented commands, declared APIs) while remaining source-blind —
+   do not classify an observation `WRONG_TEST` merely because its
+   test executed a `## Contracts` surface.
 3. For each observation in the channel:
    - If validator already flagged the observation as a wrong-test pattern (TEST_OBSERVATION_*, WRONG_TEST_*, TEST_HEADER_*) → assay_verdict = `WRONG_TEST`.
-   - Else if `status == "PASS"` → not routed (informational; no assay_verdict needed but record `assay_verdict = "INFO"` for completeness if your local convention requires it; default: omit the field).
+   - Else if `status == "PASS"` → not routed (informational; OMIT the `assay_verdict` field entirely — PASS observations carry no verdict, and any value outside `KNOWN_TEST_OBSERVATION_VERDICTS` fails validate-test-observations.py's closed-vocab value check).
    - Else if `status in {"ERROR", "SKIP"}` → assay_verdict = `WRONG_TEST` (test couldn't even run cleanly).
    - Else if `status == "FAIL"` AND wrong-test patterns clean → assay_verdict = `DEFECT`. Route to GRIND with `# defect-source: TEST-01 {observation_id}` annotation; preserve `citation_chain` in defect description.
    - Edge case: if your structural reasoning is unable to decide between DEFECT and WRONG_TEST (rare; <5% expected in healthy runs) → assay_verdict = `INCONCLUSIVE`. Surface to lead human for review.
@@ -85,10 +95,18 @@ FR-N IDs participate in the A-NNN × casting_id coverage matrix.
 
 ## Append-Only Writes
 
-Source JSON mutation rule: ADD `assay_verdict` field per observation;
-do NOT modify other fields; do NOT delete observations; do NOT reorder
-observations. The diff between pre-adjudication and post-adjudication
-JSON should be one new field per observation.
+Source JSON mutation rule: ADD `assay_verdict` field per observation
+(omitting it on PASS observations); do NOT modify other fields; do NOT
+delete observations; do NOT reorder observations. The diff between
+pre-adjudication and post-adjudication JSON should be one new field
+per adjudicated observation.
+
+The append keeps the channel valid: `assay_verdict` is an OPTIONAL
+known key in validate-test-observations.py's `KNOWN_OBSERVATION_KEYS`,
+value-checked against its `KNOWN_TEST_OBSERVATION_VERDICTS` frozenset
+(same three members as above). Re-running the validator on the file
+you wrote back MUST exit 0 — a channel file is valid before AND after
+adjudication.
 
 This append-to-source discipline mirrors CONTEXT.md
 "single-grep-target locality" — Phase 9 ablation can grep one file per

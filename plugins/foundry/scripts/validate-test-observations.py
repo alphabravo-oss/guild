@@ -7,6 +7,8 @@ Mirrors plugins/forge/scripts/validate_spec_review.py shape beat-for-beat
 * KNOWN_TEST_OBSERVATION_KEYS — top-level closed schema
 * KNOWN_OBSERVATION_KEYS — per-observation closed schema
 * KNOWN_OBSERVATION_STATUSES — status enum allowlist
+* KNOWN_TEST_OBSERVATION_VERDICTS — assay_verdict enum allowlist
+  (OPTIONAL adjudicator-appended key; absent = not yet adjudicated)
 * KNOWN_TEST_DERIVER_FAILURE_TOKENS — 9-token failure vocabulary
 * FORBIDDEN_SOURCE_ROOTS — code-blind audit denylist
 * ALLOWED_READ_PREFIXES — code-blind audit allowlist (by exception)
@@ -72,6 +74,12 @@ KNOWN_TEST_OBSERVATION_KEYS = frozenset(
 # CLOSED VOCABULARY — keys allowed inside each per-observation entry.
 # Mirrors KNOWN_TEST_OBSERVATION_KEYS discipline at the observation level
 # (parallel to Phase 6 KNOWN_FLAG_KEYS per-flag closed schema).
+# `assay_verdict` is OPTIONAL and adjudicator-appended: the
+# test-observations-adjudicator appends it per observation at ASSAY, so
+# a channel file must validate before AND after adjudication. The
+# spec-test-deriver never emits it. Absent = not yet adjudicated —
+# never itself a failure. When present, its value is enforced against
+# KNOWN_TEST_OBSERVATION_VERDICTS below.
 KNOWN_OBSERVATION_KEYS = frozenset(
     {
         "observation_id",
@@ -84,6 +92,7 @@ KNOWN_OBSERVATION_KEYS = frozenset(
         "negative_assertion_present",
         "shape_not_value_check",
         "citation_chain",
+        "assay_verdict",
     }
 )
 
@@ -91,6 +100,17 @@ KNOWN_OBSERVATION_KEYS = frozenset(
 # Pitfall: free-form status strings smuggle in advisory tiers. Validator
 # enforces FAIL/ERROR/SKIP/PASS only.
 KNOWN_OBSERVATION_STATUSES = frozenset({"FAIL", "ERROR", "SKIP", "PASS"})
+
+# CLOSED VOCABULARY — observation.assay_verdict enum (OPTIONAL key,
+# adjudicator-appended). Mirrors the test-observations-adjudicator
+# agent contract's KNOWN_TEST_OBSERVATION_VERDICTS byte-for-byte:
+# three members, no more. Pitfall: free-form verdict strings (e.g. an
+# informational "INFO" tier) smuggle in an open vocabulary; PASS
+# observations carry NO verdict — the adjudicator omits the field.
+# Extend only via phase-level RFC.
+KNOWN_TEST_OBSERVATION_VERDICTS = frozenset(
+    {"DEFECT", "WRONG_TEST", "INCONCLUSIVE"}
+)
 
 # CLOSED VOCABULARY — failure tokens emitted by this validator.
 # 9 tokens locked; mirrors Phase 4's 8-token KNOWN_EVIDENCE_FAILURE_TOKENS
@@ -189,7 +209,10 @@ def validate_test_observations(
     function returns 1):
 
       * TEST_OBSERVATION_SCHEMA_INVALID — malformed JSON, extra top-level
-        keys, extra per-observation keys, malformed observations list.
+        keys, extra per-observation keys, malformed observations list, or
+        an assay_verdict value outside KNOWN_TEST_OBSERVATION_VERDICTS
+        (the verdict-value detail surfaces after the token, not as a
+        parallel token — the 9-token roster stays closed).
       * TEST_OBSERVATION_UNKNOWN_STATUS — status not in
         KNOWN_OBSERVATION_STATUSES.
       * TEST_HEADER_MISSING — observation.tests_spec is empty (channel-side
@@ -321,6 +344,23 @@ def validate_test_observations(
                 f"{sorted(KNOWN_OBSERVATION_STATUSES)!r} allowed"
             )
 
+        # Step 4b: assay_verdict enum — OPTIONAL adjudicator-appended
+        # key. Absent means the observation is not yet adjudicated and
+        # is never itself a failure; the check runs only when the key
+        # is present. Value outside KNOWN_TEST_OBSERVATION_VERDICTS
+        # (e.g. a free-form "INFO" tier) is rejected under the
+        # existing TEST_OBSERVATION_SCHEMA_INVALID token so the
+        # 9-token failure roster stays closed.
+        if (
+            "assay_verdict" in obs
+            and obs["assay_verdict"] not in KNOWN_TEST_OBSERVATION_VERDICTS
+        ):
+            failures.append(
+                f"TEST_OBSERVATION_SCHEMA_INVALID: {obs_id} "
+                f"assay_verdict={obs['assay_verdict']!r}; only "
+                f"{sorted(KNOWN_TEST_OBSERVATION_VERDICTS)!r} allowed"
+            )
+
         # Step 5: tests_spec header check. Both tokens fire when empty —
         # diagnostic precision per CONTEXT.md "diagnostic-precision-over-
         # composite" (TEST_HEADER_MISSING is the channel-side missing-
@@ -378,6 +418,16 @@ def validate_test_observations(
                 "shape_not_value_check=failed"
             )
         # 7c: source-leak detection in test_path + captured_output.
+        # Shared GI-003 sentence (byte-mirrored, modulo comment prefix
+        # and wrapping, in spec-test-deriver.md wrong-test pattern 3):
+        # Referencing or executing a surface named in the spec's
+        # `## Contracts` table is never a source leak; referencing
+        # symbols absent from both the spec and the contracts table
+        # still is.
+        # Mechanically, contract surfaces are documented commands and
+        # entrypoints — never FORBIDDEN_SOURCE_ROOTS paths — so the
+        # anchored forbidden-root scan below already encodes exactly
+        # that rule.
         # Anchored boundary match (Pitfall D): ^src/ or /src/ but NOT
         # library/ or my-src/. We also accept Python-import boundaries
         # so `from src.handlers import x` and `import src.handlers`

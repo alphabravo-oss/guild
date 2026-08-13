@@ -1,0 +1,7 @@
+# evidence-cmd: uv run --project plugins/foundry/mcp-server --with pytest pytest plugins/foundry/mcp-server/tests/test_test_observations_validator.py -q
+# evidence-for: US-002, US-003, AC-006, AC-007, AC-008, AC-009, AC-010, AC-011, AC-012, NFR-001
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+........................                                                 [100%]
+24 passed in 0.81s
