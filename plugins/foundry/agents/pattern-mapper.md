@@ -2,7 +2,7 @@
 name: pattern-mapper
 description: Maps each new/modified file in the spec to its closest existing analog in the codebase and extracts concrete code excerpts to mirror. Produces PATTERNS.md consumed by F0.5 DECOMPOSE so every casting prompt can reference real code, not abstract conventions. Spawned by the Foundry Lead during F0, after codebase-mapper, before F0.5.
 tools: Read, Bash, Glob, Grep, Write
-model: sonnet
+model: opus
 ---
 
 # Pattern Mapper Agent

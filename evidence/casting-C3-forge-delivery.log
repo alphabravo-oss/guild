@@ -1,0 +1,20 @@
+# evidence-cmd: command awk '/^4\.5\. \*\*Run the R3\.5 spec-review gate/,/^   Then run:$/' plugins/forge/commands/plan.md
+# evidence-for: US-001, US-003, FR-002, FR-008, FR-013, FR-019, FR-020, NFR-003
+
+4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`). The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict.
+
+   **Model for this spawn — forge's `model` user config option.** The configured value is substituted between the arrows on the line below. Read what is actually sitting between them, then follow whichever of the three cases matches. The arrows are delimiters only and are never part of the value.
+
+   → ${user_config.model} ←
+
+   - **Nothing between the arrows** — or an unsubstituted `${...}` placeholder still sitting between them, meaning the option is not declared in this installed build: the option is unconfigured. Spawn `spec-reviewer` with **no `model` parameter at all**. Never pass `model=""`; an unset option substitutes as an empty string, and an empty string at a spawn is a malformed spawn rather than a no-op. The agent's own frontmatter pin governs, and behavior is byte-identical to a build that never had this option.
+   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn, and on **this spawn only**. No other forge spawn takes its model from this option — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
+   - **Anything else:** refuse. Do not spawn, and do not guess at a nearest match. Report to the user:
+
+     `forge model option: "<value>" is not an accepted value. Accepted values are: opus, sonnet, haiku, fable, inherit.`
+
+     R3.5 does not run until the option is corrected or cleared, so `<promise>SPEC FORGED</promise>` stays unreachable.
+
+   Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — the gate still runs either way.
+
+   Then run:

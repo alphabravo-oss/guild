@@ -2,7 +2,7 @@
 name: flow-mapper
 description: Produces a grounded flow graph (flow-graph.json) of a brownfield codebase's data and control flows. Every node is anchored to a real file:symbol via LSP or grep — nothing invented. Spawned during V3 Forge R0 in brownfield mode to provide the attention anchor that prevents endpoint-anchored plumbing hallucination downstream.
 tools: Read, Grep, Glob, Bash, Write
-model: sonnet
+model: opus
 effort: high
 ---
 

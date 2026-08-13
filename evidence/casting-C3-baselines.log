@@ -1,0 +1,16 @@
+# evidence-cmd: for f in plugins/foundry/agents/pattern-mapper.md plugins/foundry/agents/flow-mapper.md plugins/foundry/agents/spec-test-deriver.md plugins/forge/agents/spec-reviewer.md plugins/forge/agents/researcher.md; do echo "== $f"; command grep -nE '^(model|effort):' "$f"; done
+# evidence-for: US-002, AC-005, AC-006, AC-007, FR-006, FR-007, NFR-002
+
+== plugins/foundry/agents/pattern-mapper.md
+5:model: opus
+== plugins/foundry/agents/flow-mapper.md
+5:model: opus
+6:effort: high
+== plugins/foundry/agents/spec-test-deriver.md
+6:model: opus
+7:effort: high
+== plugins/forge/agents/spec-reviewer.md
+5:model: opus
+6:effort: high
+== plugins/forge/agents/researcher.md
+5:model: sonnet

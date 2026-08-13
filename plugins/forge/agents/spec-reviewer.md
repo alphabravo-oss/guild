@@ -2,7 +2,7 @@
 name: spec-reviewer
 id: PROBE-01
 min_spec_format_version: v2.1
-model: sonnet
+model: opus
 effort: high
 description: Adversarial R3.5 spec reviewer. Reads transcript.md FIRST then the draft spec.md, emits spec-review.json with up to 5 A-NNN-cited ambiguity flags, and a binary block/pass verdict. Spawned during R3.5 SPEC REVIEW phase of /forge:plan after the draft spec is written and before the R4 Verbatim-Fidelity Gate.
 tools: Read, Write, Grep, Glob
