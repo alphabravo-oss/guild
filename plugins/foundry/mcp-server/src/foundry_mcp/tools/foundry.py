@@ -124,6 +124,7 @@ def _generate_run_name(ticket: str = "", description: str = "") -> str:
 def foundry_init(
     spec_path: str | None = None,
     temper: bool = False,
+    nyquist: bool = False,
     no_ui: bool = False,
     resume: str | None = None,
     ticket: str = "",
@@ -142,6 +143,14 @@ def foundry_init(
             record the inspect gate readers load — foundry_orchestrator.py
             :531 / :1033), mirroring the bash init write at foundry.sh:176.
             NOT written into state.json.
+        nyquist: Enable the optional F5.5 NYQUIST phase. Persisted to BOTH
+            state.json and castings/manifest.json, mirroring ``temper`` and
+            the bash init writes at foundry.sh:178 / :196. state.json is the
+            store of record: ``_compute_next_action`` reads
+            ``state["nyquist"]`` to decide whether F4/F5 transition into F5.5
+            or straight to F6. Without this parameter the key was never
+            written, so that read was permanently False and F5.5 was
+            unreachable on the MCP path.
 
     Returns:
         {foundry_dir, run_name, files_created[], spec_copied}
@@ -221,6 +230,7 @@ def foundry_init(
         "cycle": 0,
         "spec_path": spec_path or "",
         "temper": temper,
+        "nyquist": nyquist,
         "no_ui": no_ui,
         "started_at": _init_now,
         "phase_times": {
@@ -249,6 +259,7 @@ def foundry_init(
         "updated_at": _init_now,
         "spec_path": spec_path or "",
         "temper": temper,
+        "nyquist": nyquist,
         "no_ui": no_ui,
         "target_url": url,
         "max_cycles": 0,

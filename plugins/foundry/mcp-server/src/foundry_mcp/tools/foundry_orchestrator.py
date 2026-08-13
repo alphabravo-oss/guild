@@ -10,6 +10,7 @@ All operations are local file reads/writes. Zero API calls. Zero cost.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,91 @@ _BGREEN = f"{_BOLD}{_GREEN}"
 _BYELLOW = f"{_BOLD}{_YELLOW}"
 _BRED = f"{_BOLD}{_RED}"
 _BWHITE = f"{_BOLD}{_WHITE}"
+
+
+# --------------------------------------------------------------------------- #
+# Model selection policy — the MCP server owns it (GI-003 / FR-009 / A-012).
+#
+# Delivery: foundry's plugin manifest declares a ``model`` userConfig option and
+# this MCP server's declaration substitutes ``${user_config.model}`` into its
+# ``env`` as FOUNDRY_MODEL. That is the ONLY path that works — ``${user_config
+# .KEY}`` never interpolates into agent frontmatter (an agent pinned
+# ``model: ${user_config.model}`` dies at spawn with "There's an issue with the
+# selected model"), so every agent keeps a literal frontmatter pin as its floor
+# and any override is applied at spawn time on top of it.
+#
+# The one dangerous detail: an UNSET option substitutes as the EMPTY STRING,
+# not as an absent variable. Absence and "" must therefore resolve identically,
+# and ``"model": ""`` must never reach an agent config — that is a malformed
+# spawn, not a no-op (FR-003 "Absence = no override", FR-004 "Emit no model key
+# at all", CT-002, CT-003, OT-001, OT-004).
+# --------------------------------------------------------------------------- #
+
+MODEL_ENV_VAR = "FOUNDRY_MODEL"
+
+# CT-001 / FR-002 "Aliases + inherit". ``inherit`` is a real, forwardable value
+# — the sentinel that makes an agent follow the session model. It is NOT a
+# synonym for unset, and must not be collapsed into the empty-string path.
+ACCEPTED_MODELS = ("opus", "sonnet", "haiku", "fable", "inherit")
+
+# FR-005 "The good fits only" (AC-001). EXACTLY these foundry agents follow the
+# option. Everything else this server configures keeps its own baseline at every
+# setting (AC-004): ``foundry:assayer`` and ``foundry:tracer`` hold their
+# frontmatter pins, and the ``general-purpose`` decompose / test / temper agents
+# hold the explicit opus baseline they have always carried.
+#
+# ``foundry:flow-mapper`` has no spawn site in this server — forge's plan.md
+# spawns it during V3 R0 — but it belongs in the set so the policy states the
+# full foundry membership in one place rather than implying it.
+STEERABLE_SUBAGENT_TYPES = ("foundry:teammate", "foundry:flow-mapper")
+
+
+def configured_model() -> str:
+    """Return the validated configured model, or ``""`` when unconfigured.
+
+    ``""`` means "the user configured nothing" — both an absent FOUNDRY_MODEL
+    and the empty string the harness substitutes for an unset option.
+
+    Raises:
+        ValueError: the value is outside ACCEPTED_MODELS. The message names the
+            accepted set (CT-001, OT-003, FR-020). Refusal is loud rather than
+            silently degrading, so a typo surfaces at the first tool call
+            instead of as a confusing mid-run API error.
+    """
+    raw = os.environ.get(MODEL_ENV_VAR, "")
+    value = raw.strip()
+    if not value:
+        return ""
+    if value not in ACCEPTED_MODELS:
+        raise ValueError(
+            f"{MODEL_ENV_VAR}={raw!r} is not an accepted model. "
+            f"Accepted values: {', '.join(ACCEPTED_MODELS)}."
+        )
+    return value
+
+
+def agent_model(subagent_type: str, baseline: str = "") -> dict:
+    """Return the ``{"model": ...}`` fragment to splat into one agent config.
+
+    Args:
+        subagent_type: the agent this config spawns. Only members of
+            STEERABLE_SUBAGENT_TYPES follow the configured value.
+        baseline: the model this site emitted before the option existed, or
+            ``""`` when the site emitted no model key and the agent's own
+            frontmatter pin governs.
+
+    Returns:
+        ``{"model": <value>}``, or ``{}`` when nothing resolves. An empty
+        fragment emits NO key at all, so an unset option is indistinguishable
+        from a build where this feature was never implemented (A-023, AC-003,
+        CT-003, OT-004).
+    """
+    configured = configured_model()
+    if configured and subagent_type in STEERABLE_SUBAGENT_TYPES:
+        resolved = configured
+    else:
+        resolved = baseline
+    return {"model": resolved} if resolved else {}
 
 
 def _load_json(path: Path) -> dict:
@@ -203,6 +289,7 @@ _ACTION_TO_GATE = {
     "transition_to_grind": "grind",
     "transition_to_assay": "assay",
     "transition_to_temper": "temper",
+    "transition_to_nyquist": "nyquist",
     "transition_to_done": "done",
 }
 
@@ -210,6 +297,41 @@ _ACTION_TO_GATE = {
 def _expected_gate_for_action(action: str) -> str | None:
     """Return the gate phase a given transition action asks the lead to run."""
     return _ACTION_TO_GATE.get(action)
+
+
+def _nyquist_transition(from_phase: str) -> dict:
+    """Return the 'enter F5.5 NYQUIST' step, emitted from F4 or F5.
+
+    Two entry points share one step: a --nyquist run without --temper arrives
+    from F4 (ASSAY passed), and one with both arrives from F5 (TEMPER clean).
+    ``from_phase`` is the phase the lead is currently IN, which the guidance
+    display keys on.
+
+    The agent config carries no ``model`` key on purpose: ``nyquist-auditor``
+    is not in STEERABLE_SUBAGENT_TYPES and holds its own sonnet frontmatter
+    pin, so this site emits nothing and lets the pin govern at every setting of
+    the option (AC-004, FR-005) — the same shape as INSPECT_TRACE_CONFIG.
+    """
+    return {
+        "phase": from_phase,
+        "action": "transition_to_nyquist",
+        "instructions": (
+            "--nyquist is set. Call Foundry-Gate(phase='nyquist'), then "
+            "Foundry-Phase(phase='nyquist') to enter F5.5. Batch VERIFIED "
+            "requirements by 5 and spawn one foundry:nyquist-auditor agent per "
+            "batch. Each classifies COVERED / UNTESTED / UNDERTESTED, generates "
+            "minimal behavioral tests, runs them, and commits the passing ones. "
+            "Any ESCALATE_IMPL_BUG result starts a new GRIND cycle. Never mark "
+            "an untested requirement as passing."
+        ),
+        "details": {
+            "agent_config": {
+                "subagent_type": "foundry:nyquist-auditor",
+                "description": "NYQUIST: regression tests for VERIFIED requirements",
+            },
+            "batch_size": 5,
+        },
+    }
 
 
 # --- Phase gate ---
@@ -396,6 +518,27 @@ def foundry_gate(
             reason = f"{non_verified} requirement(s) not verified"
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
 
+    elif phase == "nyquist":
+        # F5.5 generates regression tests for VERIFIED requirements, so the
+        # same precondition as TEMPER applies: there is nothing to lock in
+        # until every requirement has passed ASSAY. Additionally the flag must
+        # actually be set — entering F5.5 on a run that never asked for it
+        # would spawn auditors the invocation did not request.
+        verdicts = _load_json(fdir / "verdicts.json")
+        non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
+        if non_verified > 0:
+            passed = False
+            reason = f"{non_verified} requirement(s) not verified"
+        checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
+
+        state = _load_json(fdir / "state.json")
+        nyquist_on = state.get("nyquist", False)
+        if not nyquist_on:
+            passed = False
+            reason = "F5.5 NYQUIST is opt-in and this run was not started with --nyquist"
+            hint = "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done')."
+        checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
+
     elif phase == "done":
         verdicts = _load_json(fdir / "verdicts.json")
         verdict_list = verdicts.get("requirements", [])
@@ -432,7 +575,7 @@ def foundry_gate(
 
     else:
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
-                "hint": "Valid phases: cast, inspect, grind, assay, temper, done"}
+                "hint": "Valid phases: cast, inspect, grind, assay, temper, nyquist, done"}
 
     result = {"phase": phase, "passed": passed, "checklist": checklist}
     if not passed:
@@ -838,6 +981,25 @@ def foundry_mark_phase_complete(
         _update_phase(fdir, "F5")
         return {"ok": True, "phase": "F5", "message": "Phase is now F5 (TEMPER)"}
 
+    elif phase == "nyquist":
+        # Enter F5.5. Mirrors the "temper" token: the phase mark is what makes
+        # _compute_next_action's F5.5 branch reachable at all, since it
+        # dispatches on state["phase"].
+        _update_phase(fdir, "F5.5")
+        return {"ok": True, "phase": "F5.5", "message": "Phase is now F5.5 (NYQUIST)"}
+
+    elif phase == "nyquist_done":
+        # Leave F5.5 for F6. Distinct from the "temper" shape, which exits via
+        # "done", because NYQUIST has its own completion semantics: auditors
+        # can escalate ESCALATE_IMPL_BUG back into GRIND, so "the phase ran"
+        # and "the run is finished" are separate facts. The DONE gate still
+        # runs first — this token records the exit, it does not waive the
+        # verdict / open-defect preconditions.
+        _update_phase(fdir, "F6")
+        clear_active_run()
+        return {"ok": True, "phase": "F6",
+                "message": "NYQUIST complete → phase is now F6 (DONE). Run archived."}
+
     elif phase == "done":
         _update_phase(fdir, "F6")
         # Clear the active run — session is done with this run
@@ -845,7 +1007,7 @@ def foundry_mark_phase_complete(
         return {"ok": True, "phase": "F6", "message": "Phase is now F6 (DONE). Run archived. Start a new run with foundry_init."}
 
     else:
-        return {"error": f"Invalid phase: {phase}. Valid: cast, inspect_clean, grind_start, assay_fail, temper, done"}
+        return {"error": f"Invalid phase: {phase}. Valid: cast, inspect_clean, grind_start, assay_fail, temper, nyquist, nyquist_done, done"}
 
 
 # --- Team lifecycle ---
@@ -1649,7 +1811,11 @@ _ACTION_IMPERATIVES = {
         "  (6) In a SINGLE message (parallel tool use), spawn one Agent per returned casting: "
         "subagent_type='foundry:teammate', mode='bypassPermissions', "
         "prompt=<that casting's prompt text VERBATIM \u2014 no edits>. "
-        "(foundry:teammate's frontmatter carries model=opus + effort=xhigh + all tools.) "
+        "For the model: obey the model clause in the `instructions` Foundry-Cast-Wave just "
+        "returned \u2014 it names the model to pass when the foundry `model` option is configured "
+        "(foundry:teammate follows that option) and tells you to pass no model parameter when it "
+        "is not. This server owns that decision; never re-derive it here. (foundry:teammate's "
+        "frontmatter carries effort=xhigh + all tools.) "
         "Do NOT send multiple messages with one Agent each \u2014 that serializes what should be parallel.\n"
         "Rules still apply: NEVER run_in_background=true for foundry:teammate. NEVER "
         "subagent_type='Explore' or 'general-purpose' for CAST. F0.5 DECOMPOSE uses background "
@@ -1692,7 +1858,10 @@ _ACTION_IMPERATIVES = {
         "response if present \u2014 lists files changed in prior cycles so the teammate reads current state "
         "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block. Order: prompt \u2192 "
         "cycle_context \u2192 defects. Both appended BELOW the prompt, never inside it.>). "
-        "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates."
+        "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates. "
+        "For the model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
+        "returned \u2014 pass the model it names, or no model parameter when it names none. This "
+        "server owns that decision; never re-derive it here."
     ),
     "fix_defects": (
         "YOUR NEXT ACTION depends on GRIND state:\n"
@@ -1794,7 +1963,9 @@ def _format_status_display(project_root: str) -> str:
             icon = f"{_GREEN}\u2713{_RESET}"
             label = f"{_DIM}{pid} {pname}{_RESET}"
             right = f"  {_DIM}{dur}{_RESET}" if dur else ""
-        elif pid == "F5" and not state.get("temper", False):
+        elif (pid == "F5" and not state.get("temper", False)) or (
+            pid == "F5.5" and not state.get("nyquist", False)
+        ):
             icon = f"{_DIM}\u2500{_RESET}"
             label = f"{_DIM}{pid} {pname}{_RESET}"
             right = f"  {_DIM}skip{_RESET}"
@@ -1891,12 +2062,19 @@ def _compute_next_action(project_root: str) -> dict:
 
     # --- Agent config per phase (ENFORCED, not suggestions) ---
     # These are the exact parameters the lead MUST use when spawning agents.
+    #
+    # Every model decision routes through ``agent_model`` so this server is the
+    # single source of truth (GI-003). A site passes its own ``baseline`` — the
+    # model it emitted before the option existed — and only the steerable
+    # subagent types can be moved off it. Sites with no baseline emit no
+    # ``model`` key, leaving the agent's frontmatter pin in charge.
     CAST_AGENT_CONFIG = {
         "subagent_type": "foundry:teammate",
+        **agent_model("foundry:teammate"),
         "mode": "bypassPermissions",
     }
     DECOMPOSE_AGENT_CONFIG = {
-        "model": "opus",
+        **agent_model("general-purpose", baseline="opus"),
         "subagent_type": "general-purpose",
         "mode": "bypassPermissions",
         "run_in_background": True,
@@ -1913,6 +2091,7 @@ def _compute_next_action(project_root: str) -> dict:
     }
     GRIND_AGENT_CONFIG = {
         "subagent_type": "foundry:teammate",
+        **agent_model("foundry:teammate"),
         "mode": "bypassPermissions",
     }
     ASSAY_AGENT_CONFIG = {
@@ -1978,7 +2157,10 @@ def _compute_next_action(project_root: str) -> dict:
                 "agent_configs": {
                     "trace": INSPECT_TRACE_CONFIG,
                     "prove": INSPECT_PROVE_CONFIG,
-                    "test": {"model": "opus", "subagent_type": "general-purpose"},
+                    "test": {
+                        **agent_model("general-purpose", baseline="opus"),
+                        "subagent_type": "general-purpose",
+                    },
                 },
             },
         }
@@ -2002,7 +2184,10 @@ def _compute_next_action(project_root: str) -> dict:
                     "agent_configs": {
                         "trace": INSPECT_TRACE_CONFIG,
                         "prove": INSPECT_PROVE_CONFIG,
-                        "test": {"model": "opus", "subagent_type": "general-purpose"},
+                        "test": {
+                            **agent_model("general-purpose", baseline="opus"),
+                            "subagent_type": "general-purpose",
+                        },
                     },
                 },
             }
@@ -2057,7 +2242,10 @@ def _compute_next_action(project_root: str) -> dict:
                 "agent_configs": {
                     "trace": INSPECT_TRACE_CONFIG,
                     "prove": INSPECT_PROVE_CONFIG,
-                    "test": {"model": "opus", "subagent_type": "general-purpose"},
+                    "test": {
+                        **agent_model("general-purpose", baseline="opus"),
+                        "subagent_type": "general-purpose",
+                    },
                 },
             },
         }
@@ -2106,9 +2294,18 @@ def _compute_next_action(project_root: str) -> dict:
                     "Run TEMPER micro-domain stress testing."
                 ),
                 "details": {
-                    "agent_config": {"model": "opus", "subagent_type": "general-purpose"},
+                    "agent_config": {
+                        **agent_model("general-purpose", baseline="opus"),
+                        "subagent_type": "general-purpose",
+                    },
                 },
             }
+
+        # F5.5 is the second optional phase. It is reached from here when
+        # --nyquist was set and --temper was not; the --temper path reaches it
+        # from F5 instead, so the two options compose as F4 → F5 → F5.5 → F6.
+        if state.get("nyquist", False):
+            return _nyquist_transition("F4")
 
         return {
             "phase": "F4",
@@ -2122,6 +2319,13 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F5":
+        # A --temper --nyquist run reaches F5.5 from here; --temper alone goes
+        # straight to F6. Same guard as the F4 path so the two options compose.
+        tail = (
+            "When clean, call Foundry-Gate(phase='nyquist'), update to F5.5."
+            if state.get("nyquist", False)
+            else "When clean, call Foundry-Gate(phase='done'), update to F6."
+        )
         return {
             "phase": "F5",
             "action": "run_temper",
@@ -2129,9 +2333,33 @@ def _compute_next_action(project_root: str) -> dict:
                 "TEMPER phase: micro-domain stress testing. "
                 "Decompose into domains (min 15), probe each, cross-domain test, "
                 "continuous sweep. Defects go through GRIND \u2192 INSPECT \u2192 ASSAY loop. "
-                "When clean, call Foundry-Gate(phase='done'), update to F6."
+                + tail
             ),
             "details": {},
+        }
+
+    elif phase == "F5.5":
+        return {
+            "phase": "F5.5",
+            "action": "run_nyquist",
+            "instructions": (
+                "NYQUIST phase: regression tests for VERIFIED requirements that "
+                "lack automated coverage. Batch requirements by 5 and spawn one "
+                "foundry:nyquist-auditor agent per batch. Each classifies "
+                "COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral "
+                "tests, runs them, and commits the passing ones. Any "
+                "ESCALATE_IMPL_BUG result goes through the GRIND \u2192 INSPECT \u2192 "
+                "ASSAY loop. Never mark an untested requirement as passing. "
+                "When done, call Foundry-Gate(phase='done'), then "
+                "Foundry-Phase(phase='nyquist_done') to enter F6."
+            ),
+            "details": {
+                "agent_config": {
+                    "subagent_type": "foundry:nyquist-auditor",
+                    "description": "NYQUIST: regression tests for VERIFIED requirements",
+                },
+                "batch_size": 5,
+            },
         }
 
     elif phase == "F6":
@@ -2281,6 +2509,7 @@ def foundry_get_context(
             "cycle": state.get("cycle", 0),
             "spec_path": state.get("spec_path", ""),
             "temper": state.get("temper", False),
+            "nyquist": state.get("nyquist", False),
             "no_ui": state.get("no_ui", False),
             "started_at": state.get("started_at", ""),
             "total_duration": state.get("total_duration", ""),

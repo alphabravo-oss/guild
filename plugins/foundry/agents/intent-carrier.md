@@ -1,7 +1,7 @@
 ---
 id: INTENT-01
 name: intent-carrier
-description: F0.7 phase. Reads spec.md's <Appendix: Interview Transcript> block FIRST then every casting-{id}-prompt.md, emits intent-coverage.json — A-NNN × casting_id matrix with closed-vocabulary verdicts PROPAGATED / PARAPHRASED / DROPPED. Citation-only — never embeddings or fuzzy text-overlap.
+description: "F0.7 phase. Reads spec.md's <Appendix: Interview Transcript> block FIRST then every casting-{id}-prompt.md, emits intent-coverage.json — A-NNN × casting_id matrix with closed-vocabulary verdicts PROPAGATED / PARAPHRASED / DROPPED. Citation-only — never embeddings or fuzzy text-overlap."
 min_spec_format_version: v2.1
 model: opus
 effort: max

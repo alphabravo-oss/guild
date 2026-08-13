@@ -2,7 +2,7 @@
 description: "Start a foundry build-verify-fix loop"
 argument-hint: "<SCOPE> [--spec PATH] [--url URL] [--temper] [--nyquist] [--max-cycles N] [--no-ui] [--output-dir DIR]"
 allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/foundry.sh:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Foundry Lead
@@ -27,24 +27,31 @@ You are the **Foundry Lead**. Follow `Foundry-Next` literally at every step. It 
 
 ## MODEL ALLOCATION
 
-| Role | Model |
-|------|-------|
-| Lead (you) | opus |
-| F0 Researchers | sonnet |
-| F0.5 Decompose | opus |
-| F1 CAST teammates | opus |
-| F2 TRACE | sonnet |
-| F2 PROVE | opus |
-| F3 GRIND teammates | opus |
-| F4 ASSAY | opus |
-| F5 TEMPER | sonnet |
-| F5.5 Nyquist | sonnet |
+**The MCP server decides the model; you do not.** `Foundry-Next` returns an `agent_config` and `Foundry-Cast-Wave` returns a model clause in its `instructions`. Pass `model=` **only** when what you were returned contains a model, and pass no `model` parameter at all when it does not. Never substitute your own choice, and never re-derive a model from this table — the table documents what the server emits, it is not a second source of truth.
+
+| Role | Baseline | Follows the `model` option |
+|------|----------|----------------------------|
+| Lead (you) | opus | no |
+| F0 Researchers | sonnet | no |
+| F0.5 Decompose | opus | no |
+| F1 CAST teammates | opus | **yes** |
+| F2 TRACE | sonnet | no |
+| F2 PROVE | opus | no |
+| F2 TEST | opus | no |
+| F3 GRIND teammates | opus | **yes** |
+| F4 ASSAY | opus | no |
+| F5 TEMPER | opus | no |
+| F5.5 Nyquist | sonnet | no |
+
+The `model` option is set per-plugin (`foundry@guild` → `model`) and accepts `opus`, `sonnet`, `haiku`, `fable` or `inherit`. A value outside that set is refused with a message naming it. **Unset means no override anywhere:** every agent's frontmatter pin stands and a run behaves exactly as it did before the option existed. Setting it moves only the roles marked **yes** above — the rest hold their baseline at every setting, which is what keeps the haiku/sonnet/opus tiering intact.
 
 ## PHASE EXECUTION
 
 Call `Foundry-Next` after every step. It returns a `YOUR NEXT CALL:` imperative — follow it literally. The phases below are a reference for what each phase's goal is, not a substitute for `Foundry-Next`.
 
 **Creating the run (F0):** when you call `Foundry-Init`, thread the `--url URL` invocation flag through by passing `url=<FOUNDRY_URL>` (the value `setup-foundry.sh` echoed as `FOUNDRY_URL=...`). `Foundry-Init` persists it to `castings/manifest.json` as `target_url`, which the SIGHT/inspect gate reads. Omit it (or pass an empty string) when no `--url` was given — the gate then stays blocked for any run that has frontend files but no target URL.
+
+**Creating the run (F0), continued:** in the same call, thread the `--nyquist` invocation flag through by passing `nyquist=<FOUNDRY_NYQUIST>` (the value `setup-foundry.sh` echoed as `FOUNDRY_NYQUIST=...`, `true` or `false`). `Foundry-Init` persists it to both `state.json` and `castings/manifest.json` as `nyquist`, which is what `Foundry-Next` reads to route F4/F5 into F5.5 NYQUIST. Omit it (or pass `false`) when no `--nyquist` was given — F5.5 is then skipped and the run goes straight to F6 DONE. **Not passing it on a `--nyquist` run silently drops the flag:** the phase becomes unreachable and no regression tests are generated.
 
 **Serena preflight (F0):** `setup-foundry.sh` probes Serena on every run and echoes `FOUNDRY_SERENA_HEALTH=<TOKEN>` alongside the other `FOUNDRY_*` lines. The token is a closed set of exactly six values — no other value is ever emitted:
 
@@ -71,7 +78,7 @@ Before F0.5, if the codebase is unfamiliar or has strict patterns: spawn one `co
 
 ### F0.6: PATTERN MAPPING
 
-After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and before F0.5 DECOMPOSE: spawn ONE `pattern-mapper` agent (`subagent_type: "general-purpose"` with prompt = full content of `${CLAUDE_PLUGIN_ROOT}/agents/pattern-mapper.md`, model: sonnet).
+After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and before F0.5 DECOMPOSE: spawn ONE `pattern-mapper` agent (`subagent_type: "general-purpose"` with prompt = full content of `${CLAUDE_PLUGIN_ROOT}/agents/pattern-mapper.md`). **Model: take the pin from the `model:` line of that same agent file** — a `general-purpose` spawn hands the file over as prompt text, so its frontmatter is not applied for you. `pattern-mapper` is not steerable by the `model` option and no `agent_config` is returned for this step, so that agent file is the only source of truth: never name its model in this prose, and never re-derive one from the allocation table.
 
 **Why:** Casting prompts that reference an analog file:line + 20-30 line code excerpt produce sharper builds than prompts that say "follow conventions." Without a pattern map, every casting independently re-discovers (or fabricates) the same shape. With one, every casting gets a concrete excerpt to mirror.
 
@@ -385,7 +392,7 @@ no-op; orchestrator transitions directly to F0.9 VALIDATE.
 
 **Procedure (V2 mode, spec_format_version v2.1+):**
 
-1. Spawn the intent-carrier agent (model: opus, effort: max). Pass it the
+1. Spawn the intent-carrier agent (`${CLAUDE_PLUGIN_ROOT}/agents/intent-carrier.md`, effort: max). **Model: take the pin from the `model:` line of that same agent file** — `intent-carrier` is not steerable by the `model` option and no `agent_config` is returned for this step, so that agent file is the only source of truth: never name its model in this prose, and never re-derive one from the allocation table. Pass it the
    manifest path + spec.md path verbatim. Tool allowlist Read/Write/Grep/Glob
    (NO Bash, NO Edit, NO Task — defense against in-place casting-prompt
    amendment AND against embedding/fuzzy-overlap shortcut tools).
@@ -484,7 +491,7 @@ Call `Foundry-Gate(phase='cast')`.
 
 1. Determine wave from `manifest.json` dependency graph. Max 5 teammates per wave.
 2. `TeamCreate("cast-{run}-wave-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug from `Foundry-Next`)
-3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns prompts for every casting in the wave. Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, `prompt=<that casting's prompt VERBATIM>`. No modification. (foundry:teammate's frontmatter carries `model=opus + effort=xhigh` — don't override.) Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
+3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns prompts for every casting in the wave. Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, `prompt=<that casting's prompt VERBATIM>`. No modification. **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured it names the model to pass on every teammate Agent call; when it is not, it tells you to pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself. Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
    - GRIND phase or single re-dispatch: fall back to per-casting `Foundry-Spawn-Teammate(casting_id=N, phase="cast"|"grind")`.
 4. Wait for teammates to finish their **work** (report "complete" or task list empty). Then send shutdown in ONE parallel SendMessage batch and **immediately** `TeamDelete` + `Foundry-Team-Down` — do NOT wait for shutdown_response/ack/idle confirmations. Idle panes are the signal; `TeamDelete` kills zombies.
 5. Build + test → commit → advance to next wave
@@ -504,9 +511,9 @@ Call `Foundry-Gate(phase='cast')`.
 - **TRACE** — agent with `agents/tracer.md` (sonnet). Upstream wiring: EXISTS → SUBSTANTIVE → WIRED → PLACED.
 - **FLOW_TRACE** — V3 only, when `flow-delta.json` exists. Agent with `agents/flow-tracer.md` (sonnet). Downstream wiring: PRODUCED → CONSUMES_UPSTREAM → SUBSTANTIVE → CHAIN_INTACT. Pairs with TRACE to cover both directions. Primary catcher of "endpoint exists but is disconnected from its declared upstream" — the exact failure V3 is engineered to prevent.
 - **PROVE** — agent with `agents/assayer.md` (opus). Spec-before-code + stub detection + research compliance.
-- **RESEARCH_AUDIT** — agent with `agents/research-auditor.md` (sonnet). Verifies code honors research. Skip if no research + no Informational items.
-- **COVERAGE_DIFF** — MIGRATION only. Agent with `agents/coverage-diff.md` (sonnet). 1:1 source → destination check.
-- **TEST-01** — agent with `agents/spec-test-deriver.md` (sonnet, code-blind). Reads spec only; derives hypothesis-jsonschema strategies from TYPE-01 contracts table; runs generated tests in ephemeral worktree; emits findings to `test_observations/test-deriver-cycle-{N}.json`. ASSAY (F4) routes via 5th parallel agent (`agents/test-observations-adjudicator.md`).
+- **RESEARCH_AUDIT** — agent with `agents/research-auditor.md` (haiku). Verifies code honors research. Skip if no research + no Informational items.
+- **COVERAGE_DIFF** — MIGRATION only. Agent with `agents/coverage-diff.md` (haiku). 1:1 source → destination check.
+- **TEST-01** — agent with `agents/spec-test-deriver.md` (opus, code-blind). Reads spec only; derives hypothesis-jsonschema strategies from TYPE-01 contracts table; runs generated tests in ephemeral worktree; emits findings to `test_observations/test-deriver-cycle-{N}.json`. ASSAY (F4) routes via 5th parallel agent (`agents/test-observations-adjudicator.md`).
 - **SIGHT** — lead runs Playwright directly (only exception to "lead never does work").
 - **TEST / PROBE** — inline test suite / API smoke.
 
@@ -526,7 +533,7 @@ Same router principle as F1. Lead does NOT draft GRIND prompts.
 
 1. `Foundry-Tasks` — convert defects to per-casting task groups.
 2. `TeamCreate("grind-{run}-cycle-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug)
-3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent (opus) with returned prompt verbatim, APPEND a separate `## Defects to fix this cycle:` block below (the ONLY thing lead may append).
+3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent with the returned prompt verbatim, APPEND a separate `## Defects to fix this cycle:` block below (the ONLY thing lead may append). **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured the response also carries a `model` field and the clause names the model to pass on that Agent call; when it does not, pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself.
 4. Max 3 teammates per GRIND cycle.
 5. Shut down → build + test → commit → back to F2 INSPECT.
 
@@ -534,7 +541,7 @@ If a teammate says "this defect requires a spec change": halt, log `SPEC_CHANGE_
 
 ### F4: ASSAY
 
-Split requirements into 4 groups → spawn 4 parallel `foundry:assayer` agents (frontmatter sets model=opus + effort=max). Each reads spec FIRST, forms expectations, THEN reads code.
+Split requirements into 4 groups → spawn 4 parallel `foundry:assayer` agents using the `agent_config` `Foundry-Next` returns. That config carries no `model` key — assayer holds a fixed opus baseline the `model` option cannot steer — so pass no `model` parameter and let its frontmatter (`model=opus + effort=max`) govern. Each reads spec FIRST, forms expectations, THEN reads code.
 
 **If `test_observations/test-deriver-cycle-{N}.json` exists for the current cycle (Phase 7 / TEST-01)**: spawn a 5th parallel agent — `agents/test-observations-adjudicator.md` (opus + effort=max). It runs `validate-test-observations.py` against the channel file (rejects schema/header/source-leak/wrong-test-pattern violations), then for each pattern-clean FAIL observation classifies a verdict from the closed vocabulary `KNOWN_TEST_OBSERVATION_VERDICTS = {DEFECT, WRONG_TEST, INCONCLUSIVE}`. Routing rule: `status: FAIL` + wrong-test patterns clean → `DEFECT` (route to GRIND with `# defect-source: TEST-01 OBS-NNN` annotation); any wrong-test pattern hit → `WRONG_TEST` (logged for next-cycle drop, NOT routed); `status: ERROR` or `SKIP` → `WRONG_TEST`; `status: PASS` → not routed. Adjudicator appends an `assay_verdict` field per observation to the source JSON. Backwards compat: if the channel file does NOT exist for the current cycle (v2.0 spec stream-skip case, or TEST-01 disabled), the 5th parallel agent is NOT spawned — only the 4 default assayer agents run; Phase 4/5/6 byte-equivalent semantics preserved.
 
@@ -546,11 +553,17 @@ Micro-domain stress testing. Walk filesystem, classify domains, probe each with 
 
 ### F5.5: NYQUIST (--nyquist only)
 
-Generate regression tests for VERIFIED requirements. Batch by 5 → spawn `nyquist-auditor` agents (sonnet). Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral tests, runs them, commits passing ones. Any `ESCALATE_IMPL_BUG` result → new GRIND cycle. Never mark untested requirements as passing.
+Reached only when the run was created with `nyquist=true` (see **Creating the run (F0), continued**). Enter with `Foundry-Gate(phase="nyquist")` → `Foundry-Phase(phase="nyquist")`.
+
+Generate regression tests for VERIFIED requirements. Batch by 5 → spawn `foundry:nyquist-auditor` agents using the `agent_config` `Foundry-Next` returns. That config carries no `model` key — nyquist-auditor holds a fixed sonnet baseline the `model` option cannot steer — so pass no `model` parameter and let its frontmatter govern. Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral tests, runs them, commits passing ones. Any `ESCALATE_IMPL_BUG` result → new GRIND cycle. Never mark untested requirements as passing.
+
+Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")` → F6.
 
 ### F6: DONE
 
 Shut down all teammates → generate report → `Foundry-Phase("done")`.
+
+**Evidence lifecycle (mandatory F6 step):** teammates commit `evidence/*.log` during the run because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted, the logs are consumed and inert. As part of F6 DONE — after the report, before `Foundry-Phase("done")` — remove them from git in one commit: `git rm -r evidence/ && git commit -m "chore(foundry): strip consumed run evidence"`. Do not leave evidence logs in the branch; they rot (they pin file contents and line numbers at one commit) and are never read again after acceptance.
 
 ## CONTEXT MANAGEMENT
 
@@ -560,7 +573,7 @@ Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `es
 
 | Tool | When |
 |------|------|
-| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate |
+| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate, and `nyquist=<FOUNDRY_NYQUIST from setup-foundry.sh>` so the `--nyquist` flag is persisted to `state.json` and reaches the F5.5 routing |
 | `Foundry-Next` | Every step: what to do next (returns `YOUR NEXT CALL:` imperative) |
 | `Foundry-Gate` | Before phase transitions |
 | `Foundry-Phase` | Mark phase transitions |
@@ -584,9 +597,9 @@ Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `es
 
 - `agents/tracer.md` — TRACE (sonnet, three-level EXISTS→SUBSTANTIVE→WIRED)
 - `agents/assayer.md` — PROVE / ASSAY (opus, spec-before-code + stub detection)
-- `agents/codebase-mapper.md` — F0 mapping (sonnet, extracts mandatory_rules)
+- `agents/codebase-mapper.md` — F0 mapping (haiku, extracts mandatory_rules)
 - `agents/researcher.md` — F0 research (sonnet)
-- `agents/research-synthesizer.md` — F0 synthesis (sonnet)
-- `agents/research-auditor.md` — F2 research compliance (sonnet)
-- `agents/coverage-diff.md` — F2 MIGRATION 1:1 check (sonnet)
+- `agents/research-synthesizer.md` — F0 synthesis (haiku)
+- `agents/research-auditor.md` — F2 research compliance (haiku)
+- `agents/coverage-diff.md` — F2 MIGRATION 1:1 check (haiku)
 - `agents/nyquist-auditor.md` — F5.5 test generation (sonnet)

@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.6.3-F57C00?style=flat-square" alt="foundry 4.6.3"/>
+  <img src="https://img.shields.io/badge/foundry-4.7.0-F57C00?style=flat-square" alt="foundry 4.7.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -149,16 +149,22 @@ Foundry-Sight runs these as Claude Code skills directly during the corresponding
 | Agent | Phase | Model | Notes |
 |---|---|---|---|
 | `researcher.md` | F0 | sonnet | Per-domain research; parallel up to 4 |
-| `research-synthesizer.md` | F0 | sonnet | Merges 4+ research outputs into `SUMMARY.md` |
-| `codebase-mapper.md` | F0 (optional) | sonnet | Extracts MANDATORY_RULES + STACK + ARCHITECTURE + STRUCTURE + CONVENTIONS + INTEGRATIONS + CONCERNS |
-| `flow-mapper.md` | F0 (V3 brownfield) | — | Grounded `flow-graph.json` from LSP/grep |
+| `research-synthesizer.md` | F0 | haiku | Merges 4+ research outputs into `SUMMARY.md` |
+| `codebase-mapper.md` | F0 (optional) | haiku | Extracts MANDATORY_RULES + STACK + ARCHITECTURE + STRUCTURE + CONVENTIONS + INTEGRATIONS + CONCERNS |
+| `flow-mapper.md` | F0 (V3 brownfield) | opus | Grounded `flow-graph.json` from LSP/grep |
+| `pattern-mapper.md` | F0.6 PATTERN | opus | Maps every spec target to its closest analog; emits `PATTERNS.md` |
 | `tracer.md` | F2 TRACE | sonnet | Three-level EXISTS → SUBSTANTIVE → WIRED |
 | `flow-tracer.md` | F2 FLOW_TRACE | sonnet | Mirror of tracer for downstream verification |
 | `assayer.md` | F2 PROVE / F4 ASSAY | opus | Spec-before-code + stub detection |
-| `research-auditor.md` | F2 RESEARCH_AUDIT | sonnet | Verifies code honours research |
-| `coverage-diff.md` | F2 COVERAGE_DIFF | sonnet | 1:1 MIGRATION check |
+| `research-auditor.md` | F2 RESEARCH_AUDIT | haiku | Verifies code honours research |
+| `coverage-diff.md` | F2 COVERAGE_DIFF | haiku | 1:1 MIGRATION check |
+| `spec-test-deriver.md` | F2 TEST_OBSERVATIONS | opus | Code-blind Hypothesis test derivation from the `## Contracts` table |
+| `test-observations-adjudicator.md` | F4 ASSAY | opus | Adjudicates the `test_observations` channel |
+| `intent-carrier.md` | F0.7 INTENT | opus | A-NNN × casting coverage matrix |
 | `nyquist-auditor.md` | F5.5 | sonnet | Regression test generation |
 | `teammate.md` | F1 CAST / F3 GRIND | opus | Methodical implementation; CAST deliberates, GRIND stays surgical |
+
+The `Model` column mirrors each agent's `model:` frontmatter, which is the single source of truth for which model an agent runs on. Which of these the `model` config option can steer is documented under [Model selection](#model-selection); the allocation of foundry's *orchestration* roles — the Lead itself, F0.5 DECOMPOSE — lives in `commands/start.md`'s MODEL ALLOCATION table.
 
 The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, F1/F3 dispatch them verbatim. The Lead is a router, not an interpreter.
 
@@ -168,11 +174,9 @@ The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, F1/F
 
 The `mcp-server/` directory ships a Python MCP server (`foundry-mcp`) that backs every Lead-side tool call. Without it the slash command loads but the workflow cannot drive — `Foundry-Init`, `Foundry-Next`, `Foundry-Validate-Castings` etc. are all served from there.
 
-Wire it into your project once:
+**Since 4.7.0 the plugin declares this server itself** (`.claude-plugin/plugin.json` → `mcpServers`), so installing the plugin is all the wiring there is — no `claude mcp add`, no `.mcp.json` entry. The plugin-scope declaration is also what delivers the `model` option: `${user_config.model}` substitutes only there, arriving in the server's environment as `FOUNDRY_MODEL`.
 
-```bash
-claude mcp add foundry -- uvx --from "git+https://github.com/alphabravo-oss/guild#subdirectory=plugins/foundry/mcp-server" foundry-mcp --project-root .
-```
+**Upgrading from < 4.7.0 — remove the old project-scope entry.** Earlier versions registered the server in your project's `.mcp.json` (via `setup-prereqs.sh` or a manual `claude mcp add foundry ...`). A project-scope entry does **not** shadow the plugin-declared one — both servers start (verified on Claude Code 2.1.229), doubling the process cost and exposing a second `Foundry-*` tool surface whose environment lacks `FOUNDRY_MODEL`, which silently defeats the model option. Re-running `/foundry:setup` removes the stale entry for you; or remove it by hand with `claude mcp remove foundry` (project scope) or by deleting the `"foundry"` key from `.mcp.json`.
 
 The server stores all run state under `foundry-archive/{run}/` in your project — castings, prompts, defects, handoffs, reports, every acceptance check. A full audit trail per build.
 
@@ -206,25 +210,63 @@ cd plugins/foundry/mcp-server && uv run --with pytest pytest
 
 `uv run` is required, not `uvx pytest` — the suite imports `foundry_mcp.server`, which imports `mcp`, so it needs the project's declared dependencies on the path. `uvx` builds an isolated pytest environment without them and two tests fail on `ModuleNotFoundError`.
 
-Current baseline: **113 passed + 1 skipped** (synthetic-fixture suite covering every MCP tool's parsers, schemas, and handoff state). The skipped test is the `measure-run` planning-cohort gate, which needs real-run stubs not carried in this checkout. The empirical cross-cohort matrix (`measure-run.py`) ships as a separate consolidation tooling under `plugins/foundry/scripts/measure-run.py` (397 LOC, stdlib-only) for future milestone-level RUN-01 closure.
+Current baseline: **259 passed + 1 skipped** (synthetic-fixture suite covering every MCP tool's parsers, schemas, and handoff state). The skipped test is the `measure-run` planning-cohort gate, which needs real-run stubs not carried in this checkout. The empirical cross-cohort matrix (`measure-run.py`) ships as a separate consolidation tooling under `plugins/foundry/scripts/measure-run.py` (397 LOC, stdlib-only) for future milestone-level RUN-01 closure.
 
 ---
 
-## Model allocation
+## Model selection
 
-| Role | Model |
+Foundry declares one `userConfig` option, `model`, in `.claude-plugin/plugin.json`. It moves a curated subset of agents onto a different model without editing a single frontmatter pin.
+
+| Property | Value |
 |---|---|
-| Lead | opus |
-| F0 researchers | sonnet |
-| F0.5 decompose | opus |
-| F0.6 pattern-mapper | sonnet |
-| F1 CAST teammates | opus |
-| F2 TRACE / FLOW_TRACE | sonnet |
-| F2 PROVE | opus |
-| F3 GRIND teammates | opus |
-| F4 ASSAY | opus |
-| F5 TEMPER | sonnet |
-| F5.5 NYQUIST | sonnet |
+| Option key | `model` |
+| Accepted values | `opus`, `sonnet`, `haiku`, `fable`, `inherit` |
+| Any other value | Refused, with a message naming the accepted set |
+| Unset | No model parameter is emitted at any spawn. Every agent's frontmatter pin governs and behaviour is identical to today |
+
+Set it per plugin, for one session:
+
+```bash
+claude --config model=fable
+```
+
+`pluginConfigs` is read from user settings, `--settings`, and managed settings only — project and local settings are ignored for it.
+
+**The option is declared per plugin.** Foundry and Forge each declare their own identically-named `model` option, and there is no shared cross-plugin store. Set it once under `foundry@guild` and once under `forge@guild` if you want both steered.
+
+### What the option reaches
+
+| Agent | Baseline pin | Steerable by `model`? |
+|---|---|---|
+| `foundry:teammate` | opus, `effort: xhigh` | Yes |
+| `foundry:flow-mapper` † | opus, `effort: high` (was sonnet) | Yes — but by **forge's** option, not this one |
+| `forge:spec-reviewer` ‡ | opus, `effort: high` (was sonnet) | Yes — but by **forge's** option, not this one |
+| `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
+| `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
+| `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
+| `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
+| `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
+
+† Not by foundry's own option. `foundry:flow-mapper` ships in foundry, but foundry never spawns it — its only spawn site is `/forge:plan`'s V3 brownfield R0 flow-map step, so the value that steers it comes from **forge's** `model` option, set under `forge@guild`. Foundry's MCP server carries `foundry:flow-mapper` in its steerable set so the policy names foundry's full membership in one place, but it has no spawn site to apply it at. **Set only `foundry@guild` and flow-mapper stays on its frontmatter pin, with no diagnostic** — an option that reaches nothing looks exactly like one that was never set. If you run `/forge:plan` in brownfield mode and want flow-mapper steered, set the option under `forge@guild` too.
+
+‡ Not by foundry's own option either. `forge:spec-reviewer` ships in forge, and its only spawn site is `/forge:plan`'s R3.5 spec-review step, which substitutes **forge's** `model` option into the command body. Foundry's MCP server carries no forge agent in its steerable set at all, so nothing set under `foundry@guild` can reach it. Set the option under `forge@guild`.
+
+**Which option steers which agent.** Each of the three is reached by exactly one plugin's option, because each has exactly one spawn site: `foundry:teammate` spawns only from foundry's MCP server, so **foundry's** option under `foundry@guild` steers it; `foundry:flow-mapper` (V3 brownfield R0) and `forge:spec-reviewer` (R3.5) both spawn from `/forge:plan`, so **forge's** option under `forge@guild` steers both. Setting one plugin's option never moves an agent the other plugin spawns, and the plugin an agent *ships* in does not decide which option reaches it — the plugin that *spawns* it does.
+
+Every other agent keeps the model it ships with and is not reachable by the option at any setting: foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, `forge:researcher` stays sonnet, and foundry's four haiku agents — `codebase-mapper`, `coverage-diff`, `research-auditor`, `research-synthesizer` — stay haiku. **No agent in any plugin other than foundry and forge changes model at any setting of this option.**
+
+### How the value is delivered
+
+Frontmatter pins are always literal. An agent declaring `model: ${user_config.model}` fails at spawn time — the placeholder reaches the model resolver unsubstituted — so the option can never rewrite a pin. Each pin is the floor, and the configured value is applied at spawn time on top of it.
+
+Foundry's manifest passes `${user_config.model}` into the MCP server declaration's environment as `FOUNDRY_MODEL`. The MCP server validates it against the accepted set and emits it in the `agent_config` it already returns to the Lead, **omitting the `model` key entirely when the value is empty** — an unset option substitutes as an empty string rather than as an absent variable, so the omission is what makes "unset" indistinguishable from "never implemented". The MCP server is the single owner of foundry's model policy: the Lead uses the model the MCP tells it to use rather than deciding one itself.
+
+### If you cannot reach the configured model
+
+A blocked model does not fail the spawn. Claude Code checks the value against your organisation's `availableModels` allowlist; for a blocked family alias it runs the subagent on the newest permitted version of that family, and for any other blocked value — or when the allowlist permits no version of the family at all — it runs the subagent on the **inherited model** instead, warning in interactive sessions and naming both models.
+
+`fable` in particular is a Covered Model with mandatory 30-day retention and is **not available under Zero Data Retention**, so ZDR-bound consumers get the inherited model rather than a failed run. Foundry stays fully usable without `fable`.
 
 ---
 

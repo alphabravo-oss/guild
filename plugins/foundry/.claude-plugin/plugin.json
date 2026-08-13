@@ -1,8 +1,32 @@
 {
   "name": "foundry",
   "description": "Autonomous build-verify-fix loop for Claude Code. Reads a Forge spec, decomposes it into castings with pre-authored teammate prompts, validates through an 11-dimension F0.9 gate (including F0.7 intent-carrier coverage), builds in parallel waves with server-side evidence re-execution and per-requirement-ID binding, runs up to 8 verification streams (TRACE, FLOW_TRACE, PROVE, RESEARCH_AUDIT, COVERAGE_DIFF, SIGHT, TEST/PROBE, TEST_OBSERVATIONS), grinds defects to zero, then assays with fresh eyes. Brownfield runs consume a flow delta; greenfield and cosmetic runs use the end-state pipeline. Forge plans. Foundry builds.",
-  "version": "4.6.3",
+  "version": "4.7.0",
   "author": {
     "name": "AlphaBravo"
+  },
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "title": "Agent model",
+      "description": "Model for this plugin's config-steerable agents. Accepted values: opus, sonnet, haiku, fable, inherit. Leave unset to change nothing — each agent's own model pin governs.",
+      "required": false
+    }
+  },
+  "mcpServers": {
+    "foundry": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/mcp-server",
+        "foundry-mcp",
+        "--project-root",
+        "."
+      ],
+      "env": {
+        "FOUNDRY_MODEL": "${user_config.model}"
+      }
+    }
   }
 }

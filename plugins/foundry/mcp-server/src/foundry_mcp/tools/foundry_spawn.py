@@ -18,7 +18,20 @@ import hashlib
 import json
 from pathlib import Path
 
+from foundry_mcp.tools.foundry_orchestrator import agent_model
 from foundry_mcp.tools.foundry_state import get_run_dir
+
+
+# Both spawn paths in this module dispatch the same agent, so the model the
+# lead must pass is resolved in one place. ``""`` means "pass no model
+# parameter" — teammate's frontmatter pin (model=opus + effort=xhigh) governs
+# and behavior is identical to a build without the option (FR-003, OT-001).
+TEAMMATE_SUBAGENT_TYPE = "foundry:teammate"
+
+
+def _teammate_model() -> str:
+    """Return the model to spawn ``foundry:teammate`` with, or ``""``."""
+    return agent_model(TEAMMATE_SUBAGENT_TYPE).get("model", "")
 
 
 def foundry_spawn_teammate(
@@ -102,7 +115,12 @@ def foundry_spawn_teammate(
     # Hash the prompt for audit tracking.
     prompt_hash = "sha256:" + hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
 
-    # Log the spawn for the audit trail.
+    model = _teammate_model()
+
+    # Log the spawn for the audit trail. When a model is configured the record
+    # names it, so which model each steerable agent was asked to run on is
+    # observable in the run's spawn log rather than inferred (OT-011, NFR-001).
+    # With nothing configured the entry is byte-identical to before.
     spawn_log = fdir / "spawns.log"
     try:
         from datetime import datetime, timezone
@@ -113,6 +131,8 @@ def foundry_spawn_teammate(
             "prompt_hash": prompt_hash,
             "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
         }
+        if model:
+            entry["model"] = model
         with spawn_log.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception:
@@ -134,6 +154,17 @@ def foundry_spawn_teammate(
             "failure mode this architecture was built to prevent."
         ),
     }
+
+    # Model steering. Present ONLY when the option is configured — an absent
+    # key means "pass no model parameter", indistinguishable from a build where
+    # this was never implemented (FR-004, CT-003, OT-004).
+    if model:
+        result["model"] = model
+        result["instructions"] += (
+            f" Model: pass model='{model}' on the Agent call — the foundry `model` "
+            f"option is configured and {TEAMMATE_SUBAGENT_TYPE} follows it. Effort "
+            "stays at the agent's frontmatter value."
+        )
 
     # GRIND cycle context. When the teammate respawns to fix defects, the code
     # has already moved past CAST — earlier GRIND cycles may have
@@ -302,6 +333,7 @@ def foundry_cast_wave(
     from datetime import datetime, timezone
     spawn_log = fdir / "spawns.log"
     results = []
+    model = _teammate_model()
 
     for cid in casting_ids:
         prompt_path = fdir / "castings" / f"casting-{cid}-prompt.md"
@@ -335,6 +367,8 @@ def foundry_cast_wave(
                 "prompt_hash": prompt_hash,
                 "bulk": True,
             }
+            if model:
+                entry["model"] = model
             with spawn_log.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
         except Exception:
@@ -349,7 +383,23 @@ def foundry_cast_wave(
     suffix_word = "wave" if phase == "cast" else "cycle"
     team_suggestion = f"{phase_prefix}-{run_name}-{suffix_word}-{wave}"
 
-    return {
+    # The model clause states what to do rather than asserting a static
+    # frontmatter pin: this server owns the decision, and the lead's job is to
+    # pass exactly what it is told (GI-003). Both branches are explicit so the
+    # "pass nothing" case is an instruction, not an omission the lead has to
+    # infer (FR-003, OT-001).
+    if model:
+        model_clause = (
+            f"Also pass model='{model}' \u2014 the foundry `model` option is configured "
+            "and foundry:teammate follows it (effort stays at its frontmatter xhigh). "
+        )
+    else:
+        model_clause = (
+            "Pass NO model parameter \u2014 the foundry `model` option is not configured, "
+            "so foundry:teammate's frontmatter pin governs (model=opus + effort=xhigh). "
+        )
+
+    result: dict = {
         "ok": True,
         "wave": wave,
         "phase": phase,
@@ -359,10 +409,13 @@ def foundry_cast_wave(
             f"Spawn {len(results)} Agent tool calls in a SINGLE MESSAGE (parallel tool use). "
             "Each Agent call gets its corresponding casting's prompt VERBATIM \u2014 no modification. "
             "Required per-Agent params: subagent_type='foundry:teammate', "
-            "mode='bypassPermissions'. (foundry:teammate's frontmatter sets model=opus + effort=xhigh.) "
+            f"mode='bypassPermissions'. {model_clause}"
             "NEVER run_in_background=true (foreground, TeamCreate-managed). "
             "Before spawning: TeamCreate(team_name_suggestion) + Foundry-Team-Up(team_name_suggestion). "
             "GRIND phase only: append the grind_cycle_context block (if returned) then a "
             "'## Defects to fix this cycle:' block BELOW each prompt, never inside it."
         ),
     }
+    if model:
+        result["model"] = model
+    return result

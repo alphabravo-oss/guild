@@ -223,9 +223,11 @@ everything is VERIFIED or max cycles are reached.
 
 ## Effort Level
 
-**Recommended effort: max (Opus only).** Exhaustive spec-to-code verification demands
-maximum reasoning depth. When building API requests, use `effort: "max"`. On Sonnet,
-fall back to `effort: "high"`.
+**Recommended effort: max.** Exhaustive spec-to-code verification demands
+maximum reasoning depth. When building API requests, use `effort: "max"`. If the running
+model's effort ladder does not reach `max`, request the highest level it does offer.
+Effort is calibrated per model, so a given level on one model is not equivalent to the
+same level on another — read any cross-model comparison with that in mind.
 
 ## Spec as Citable Document
 

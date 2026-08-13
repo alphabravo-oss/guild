@@ -2,7 +2,7 @@
 description: "Start a codebase-aware specification interview for a feature"
 argument-hint: "FEATURE_NAME [--context FILE] [--output-dir DIR] [--no-survey] [--focus DIRS] [--first-principles] [--brownfield] [--greenfield] [--cosmetic]"
 allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-forge.sh:*)", "Bash(python3:*)", "Bash(find:*)", "Bash(wc:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Forge Plan Command
@@ -53,7 +53,7 @@ Before R0, detect which pipeline this run uses. Three modes:
 4. **R1.75: IMPLICIT-FACT EXTRACTION** — Walk the closed vocabulary (DEPLOYMENT, SCALE, RUNTIME, FRAMEWORK_VERSION, SECURITY, NETWORK, OTHER) and emit a gap-list. Auto-discover environmental facts from reality.md as `## A-AUTO-NNN [IMPLICIT_FACT:CATEGORY]` entries with `[from <source>]` citations; ask the user only the gaps via AskUserQuestion. Under `--no-survey`, ask the full closed vocabulary as a single batched AskUserQuestion at the start of R2. Every implicit fact lands in transcript.md before R2 free-form opens, so downstream Foundry agents (especially INTENT-01 in Phase 8) have citation anchors for constraints the user assumed but never explicitly stated.
 5. **R2: INTERVIEW** — Multi-round adaptive interview grounded in codebase + research findings, with **spec_type detection and migration source enumeration**. R2 rule #10 requires that any environmental fact volunteered during free-form is also tagged `[IMPLICIT_FACT:CATEGORY]` in the transcript heading immediately after AskUserQuestion returns.
 6. **R3: SPEC** — Generate foundry-ready specification when user says "done". R3 now emits typed tables: populate `## Global Invariants` (5-column table with GI-NNN rows from `[ARCH_INVARIANT]`-tagged answers), `## State Transitions` (6-column ST-NNN table or sentinel row), and `## Contracts` (6-column CT-NNN table or sentinel row). See FINALIZATION SEQUENCE step 2.5 for typed-table synthesis discipline. Phase 6 PROBE-01, Phase 7 TEST-01, and Phase 8 INTENT-01 grep these typed tables as their citation surface — Locked-only `[from A-NNN]` citations preserve the structural anchor.
-7. **R3.5: SPEC REVIEW (PROBE-01)** — Adversarial spec reviewer (`plugins/forge/agents/spec-reviewer.md`, `model: sonnet`) reads `transcript.md` FIRST then the draft spec, emits `spec-review.json` with up to 5 A-NNN-cited ambiguity flags. Validator (`plugins/forge/scripts/validate_spec_review.py`) enforces budget ceiling (5 flags max), citation presence (every flag MUST cite an A-NNN), citation resolves to existing transcript A-NNN, closed schema (no `suggested_fix` / `recommendation` / `warnings` keys at top-level OR per-flag), binary block/pass verdict (no advisory mode), and transcript-first read order via `REVIEWER_ORDER_VIOLATION` token. On block, returns to R2 INTERVIEW for spec revision; loop until pass. SPEC FORGED unreachable until R3.5 clears. Phase 6 PROBE-01 only activates for `spec_format_version: v2.1`+ specs; v2.0 specs skip R3.5 (F0.5 step 2b stream-skip roster covers PROBE-01 for legacy v2.0 specs — no behavior change for v4.2.0-era dependent projects).
+7. **R3.5: SPEC REVIEW (PROBE-01)** — Adversarial spec reviewer (`plugins/forge/agents/spec-reviewer.md`; the model it runs on is resolved at spawn time — see FINALIZATION SEQUENCE step 4.5) reads `transcript.md` FIRST then the draft spec, emits `spec-review.json` with up to 5 A-NNN-cited ambiguity flags. Validator (`plugins/forge/scripts/validate_spec_review.py`) enforces budget ceiling (5 flags max), citation presence (every flag MUST cite an A-NNN), citation resolves to existing transcript A-NNN, closed schema (no `suggested_fix` / `recommendation` / `warnings` keys at top-level OR per-flag), binary block/pass verdict (no advisory mode), and transcript-first read order via `REVIEWER_ORDER_VIOLATION` token. On block, returns to R2 INTERVIEW for spec revision; loop until pass. SPEC FORGED unreachable until R3.5 clears. Phase 6 PROBE-01 only activates for `spec_format_version: v2.1`+ specs; v2.0 specs skip R3.5 (F0.5 step 2b stream-skip roster covers PROBE-01 for legacy v2.0 specs — no behavior change for v4.2.0-era dependent projects).
 8. **R4: VALIDATE** — Verify all file references, pattern references, coverage. validate-spec.py enforces the IMPLICIT_FACT contract: closed vocabulary, A-AUTO-NNN well-formedness ([IMPLICIT_FACT:CATEGORY] tag + [from <source>] citation required), and IMPLICIT_FACT_SKIPPED (warning in Phase 1, will become a hard failure in Phase 3 / TYPE-02 when `spec_format_version >= v2.1`). Phase 2 / TYPE-01 typed tables are also enforced here: presence of `## State Transitions` and `## Contracts` headings (`TYPE_TABLES_MISSING` warns in Phase 2, will become a hard failure in Phase 3 when `spec_format_version >= v2.1`); citation integrity (`TYPED_ROW_BAD_CITATION`, `TYPED_ROW_DANGLING`, `TYPED_ROW_NOT_VERBATIM`); content-difference (`TYPED_ROW_PARAPHRASE`, Jaccard ≥0.7 against same-section prose).
 
 **R0 vs R1.5 vs R1.75:**
@@ -181,7 +181,25 @@ When the user says "done", "finalize", "finished", or similar:
    - **The 70% Jaccard rule provides backstop discipline against fabrication:** any row whose content-cell tokens overlap the same `## ` section's prose at Jaccard ≥0.7 is rejected by `validate-spec.py` as `TYPED_ROW_PARAPHRASE`. If you find yourself paraphrasing spec prose to fill a row, the row should not exist — go back to the transcript. Phase 6 PROBE-01, Phase 7 TEST-01, and Phase 8 INTENT-01 grep these typed tables as their citation surface; the structural anchor is what makes their work tractable.
 3. **Append `## Appendix: Interview Transcript`** with the full byte content of transcript.md pasted verbatim. No truncation.
 4. Write the draft spec (body + appendix) to the canonical spec path in one Write call.
-4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`, `model: sonnet`). The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict. Then run:
+4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`). The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict.
+
+   **Model for this spawn — forge's `model` user config option.** The configured value is substituted between the arrows on the line below. Read what is actually sitting between them, then follow whichever of the three cases matches. The arrows are delimiters only and are never part of the value.
+
+   → ${user_config.model} ←
+
+   - **Nothing between the arrows** — or an unsubstituted `${...}` placeholder still sitting between them, meaning the option is not declared in this installed build: the option is unconfigured. Spawn `spec-reviewer` with **no `model` parameter at all**. Never pass `model=""`; an unset option substitutes as an empty string, and an empty string at a spawn is a malformed spawn rather than a no-op. The agent's own frontmatter pin governs, and behavior is byte-identical to a build that never had this option.
+   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `foundry:flow-mapper` spawn at V3 R0 (§V3 BROWNFIELD OVERRIDES → R0 step 1) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and R0's four `Explore` surveyors and this main thread keep inheriting the session model.
+   - **Anything else:** refuse. Do not spawn, and do not guess at a nearest match. Report to the user:
+
+     `forge model option: "<value>" is not an accepted value. Accepted values are: opus, sonnet, haiku, fable, inherit.`
+
+     R3.5 does not run until the option is corrected or cleared, so `<promise>SPEC FORGED</promise>` stays unreachable.
+
+   Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — the gate still runs either way.
+
+   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning spec-reviewer with model=<value>` when you are passing one, or `spawning spec-reviewer with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
+
+   Then run:
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/validate_spec_review.py <SESSION_DIR>/spec-review.json <TRANSCRIPT_PATH>
    ```
@@ -285,6 +303,23 @@ In brownfield mode, R0 produces a grounded flow graph instead of the four-agent 
 **Procedure:**
 
 1. Spawn ONE `flow-mapper` agent (full content of `${CLAUDE_PLUGIN_ROOT}/../foundry/agents/flow-mapper.md` as prompt, or `subagent_type: "foundry:flow-mapper"` if registered).
+
+   **Model for this spawn — forge's `model` user config option.** `flow-mapper` ships in foundry, but forge is what spawns it, so the value that reaches it is **forge's** `model` option — the one set under `forge@guild`, not the identically-named option under `foundry@guild`. The configured value is substituted between the arrows on the line below. This is a second, independent substitution of that option, so resolve it here on its own rather than carrying a decision over from FINALIZATION SEQUENCE step 4.5. Read what is actually sitting between the arrows, then follow whichever of the three cases matches. The arrows are delimiters only and are never part of the value.
+
+   → ${user_config.model} ←
+
+   - **Nothing between the arrows** — or an unsubstituted `${...}` placeholder still sitting between them, meaning the option is not declared in this installed build: the option is unconfigured. Spawn `flow-mapper` with **no `model` parameter at all**. Never pass `model=""`; an unset option substitutes as an empty string, and an empty string at a spawn is a malformed spawn rather than a no-op. The agent's own frontmatter pin governs — or, on the inline-content fallback above, the inherited session model — and behavior is byte-identical to a build that never had this option.
+   - **Exactly one of `opus`, `sonnet`, `haiku`, `fable`, `inherit`:** pass that value as the `model` parameter on this Agent spawn. This spawn and the `forge:spec-reviewer` spawn at R3.5 (FINALIZATION SEQUENCE step 4.5) are the only two spawns in this command that take their model from the option. No other spawn does — `forge:researcher` (R1.5) keeps its own frontmatter pin, and this main thread keeps inheriting the session model. V3 brownfield does not run the four V2 `Explore` surveyors at all, and in V2 they keep inheriting the session model too.
+   - **Anything else:** refuse. Do not spawn, and do not guess at a nearest match. Report to the user:
+
+     `forge model option: "<value>" is not an accepted value. Accepted values are: opus, sonnet, haiku, fable, inherit.`
+
+     R0 does not run until the option is corrected or cleared. Without a flow graph there is nothing for R2 FLOW-INTERVIEW to confirm hops against, so the V3 pipeline cannot start and `<promise>SPEC FORGED</promise>` stays unreachable.
+
+   Naming a model the consumer cannot reach does not break the spawn: Claude Code runs the subagent on the newest permitted version of that family, or on the inherited model when the allowlist permits none, and warns — R0 still runs either way.
+
+   **Record the spawn.** Before spawning, state the resolved outcome in your response — `spawning flow-mapper with model=<value>` when you are passing one, or `spawning flow-mapper with no model parameter (option unset)` when you are not. Forge ships no MCP server and so writes no spawn log; this line is the record of which model the agent was asked to run on.
+
 2. Input to flow-mapper:
    - `project_root`: the target codebase.
    - `scope_hint`: natural-language description of the subsystem the user's feature will touch. Derive from the feature name + any `--focus` dirs. If you cannot derive a tight scope, ask the user via AskUserQuestion before spawning.

@@ -38,7 +38,13 @@ OPTIONS:
   --no-survey           Skip codebase survey (for greenfield/empty projects)
   --first-principles    Challenge assumptions before detailed spec gathering
   --focus <dirs>        Comma-separated directories to focus survey on (e.g., src/auth,src/api)
+  --brownfield          Force V3 brownfield mode (skips mode auto-detection)
+  --greenfield          Force V2 greenfield mode (skips mode auto-detection)
+  --cosmetic            Force cosmetic mode (skips mode auto-detection)
   -h, --help            Show this help
+
+  Any other option starting with '-' is refused with a non-zero exit rather
+  than being folded into FEATURE_NAME.
 
 DESCRIPTION:
   Forge runs parallel codebase research, then conducts a grounded interview,
@@ -105,6 +111,22 @@ HELP_EOF
     --focus)
       FOCUS_DIRS="$2"
       shift 2
+      ;;
+    --brownfield|--greenfield|--cosmetic)
+      # Mode-selection flags, documented in commands/plan.md's argument-hint.
+      # The interview reads the mode from the invocation itself (plan.md step 1
+      # "use that mode verbatim"); the script's only job is to CONSUME them so
+      # they never reach the positional accumulator below. Before this arm
+      # existed they fell through to *) and were appended to FEATURE_NAME,
+      # corrupting FEATURE_SLUG (e.g. "my-feature-greenfield").
+      shift
+      ;;
+    -*)
+      # Refuse unknown options instead of absorbing them into the feature name.
+      echo "Error: Unknown option '$1'" >&2
+      echo "" >&2
+      echo "   Run: /forge:plan --help   to see the supported options" >&2
+      exit 1
       ;;
     *)
       if [[ -z "$FEATURE_NAME" ]]; then
@@ -1318,8 +1340,14 @@ R3.5 only activates for `spec_format_version: v2.1`+ specs. v2.0 specs skip R3.5
 behavior change for v4.2.0-era dependent projects).
 
 Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`,
-`id: PROBE-01`, `model: sonnet`) via the Agent tool. Its tools are
+`id: PROBE-01`) via the Agent tool. Its tools are
 `Read, Write, Grep, Glob` — read-and-emit only, no `Edit`/`Bash`/`Task`.
+
+This prompt names NO model for that spawn, deliberately. Resolve the model with
+the model resolution in the R3.5 step of `plan.md` (FINALIZATION SEQUENCE step
+4.5), which reads forge's `model` user config option. When that option is
+unconfigured, spawn with no `model` parameter at all and the agent's own
+frontmatter pin governs.
 
 ### MANDATORY TOOL-CALL ORDER (enforced)
 
@@ -1629,7 +1657,7 @@ When the user says "done", "finalize", "finished", or similar:
    ```
    Then paste the full byte content of `transcript.md` — every Q-NNN and A-NNN block, the file header, everything. No truncation, no summary, no "[transcript continues]" ellipses. A byte-for-byte copy.
 4. Write the complete draft spec (body + appendix) to the spec path in a single Write call. (Use the canonical SPEC_PATH — the script needs a real file to validate.)
-4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`, `model: sonnet`). The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict. Then run:
+4.5. **Run the R3.5 spec-review gate (PROBE-01 — `spec_format_version: v2.1`+ only).** Spawn the spec-reviewer agent (`plugins/forge/agents/spec-reviewer.md`, `id: PROBE-01`). This step names NO model for that spawn, deliberately — resolve it with the model resolution in the R3.5 step of `plan.md` (FINALIZATION SEQUENCE step 4.5), which reads forge's `model` user config option; when that option is unconfigured, spawn with no `model` parameter at all so the agent's own frontmatter pin governs. The agent reads `transcript.md` FIRST then the draft `spec.md`, and writes `{SESSION_DIR}/spec-review.json` with up to 5 A-NNN-cited ambiguity flags and a binary block/pass verdict. Then run:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_spec_review.py" <SESSION_DIR>/spec-review.json <TRANSCRIPT_PATH>
    ```
