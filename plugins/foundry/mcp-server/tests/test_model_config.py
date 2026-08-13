@@ -468,6 +468,90 @@ def test_start_md_defers_to_the_mcp_returned_model() -> None:
     assert "hide-from-slash-command-tool" not in text
 
 
+# --- The two steerable spawn steps carry no model of their own (GI-003) ------
+#
+# ``foundry:teammate`` is steerable, and it is spawned from exactly two places
+# in this command: the F1 CAST step and the F3 GRIND step. Both must take the
+# model from what the MCP returned. The guard below is scoped to those two
+# steps rather than the whole file because the F2/AGENT-PROMPTS sections
+# legitimately DOCUMENT other agents' frontmatter pins ("agents/tracer.md
+# (sonnet)"), and documenting a pin is not deciding a model.
+
+_SPAWN_STEP_SECTIONS = {
+    "F1 CAST": ("### F1: CAST", "Foundry-Cast-Wave"),
+    "F3 GRIND": ("### F3: GRIND", "Foundry-Spawn-Teammate"),
+}
+
+# A bare parenthesised alias — the "spawn Agent (opus)" directive form.
+_BARE_PAREN_MODEL_RE = re.compile(
+    r"\((?:%s)\)" % "|".join(fo.ACCEPTED_MODELS)
+)
+_MODEL_ALIAS_RE = re.compile(r"\b(?:%s)\b" % "|".join(fo.ACCEPTED_MODELS))
+_BACKTICKED_RE = re.compile(r"`[^`]*`")
+
+
+def _spawn_step(section_heading: str, step_marker: str) -> str:
+    """Return the one line of ``section_heading`` that spawns the teammate."""
+    text = START_MD.read_text(encoding="utf-8")
+    start = text.index(section_heading)
+    nxt = text.find("\n### ", start + 1)
+    section = text[start : nxt if nxt != -1 else len(text)]
+    steps = [ln for ln in section.splitlines() if step_marker in ln]
+    assert steps, f"no {step_marker} spawn step found under {section_heading}"
+    return "\n".join(steps)
+
+
+@pytest.mark.parametrize("label", sorted(_SPAWN_STEP_SECTIONS))
+def test_spawn_step_has_no_bare_parenthesised_model(label: str) -> None:
+    """`spawn Agent (opus)` is the lead deciding a model. The MCP decides.
+
+    This is the exact regression that made the F3 GRIND step contradict the
+    F1 CAST step: a parenthesised literal reads as a spawn parameter, so the
+    lead passes it instead of the model the server returned (GI-003, FR-009,
+    AC-001, OT-002).
+    """
+    step = _spawn_step(*_SPAWN_STEP_SECTIONS[label])
+    stray = _BARE_PAREN_MODEL_RE.findall(step)
+    assert not stray, (
+        f"{label} spawn step hardcodes {stray} — the model must come from what "
+        "Foundry-Cast-Wave / Foundry-Spawn-Teammate returned, never from this prose"
+    )
+
+
+@pytest.mark.parametrize("label", sorted(_SPAWN_STEP_SECTIONS))
+def test_spawn_step_names_a_model_only_inside_a_code_span(label: str) -> None:
+    """Any alias in these steps must be a quoted frontmatter-pin reference.
+
+    A pin reference reads as ``(`model=opus + effort=xhigh`)`` — inside a code
+    span, describing the floor that applies when nothing is configured. Bare
+    prose naming a model is an instruction, and instructions about model belong
+    to the MCP server. Catches `spawn Agent with model=fable`, which the
+    parenthesis guard above would miss.
+    """
+    step = _spawn_step(*_SPAWN_STEP_SECTIONS[label])
+    uncoded = _BACKTICKED_RE.sub(" ", step)
+    stray = _MODEL_ALIAS_RE.findall(uncoded)
+    assert not stray, (
+        f"{label} spawn step names {stray} outside a code span; a model literal "
+        "in lead prose is a second source of truth for a policy the MCP owns"
+    )
+
+
+@pytest.mark.parametrize("label", sorted(_SPAWN_STEP_SECTIONS))
+def test_spawn_step_defers_to_the_returned_instructions(label: str) -> None:
+    """Removing the literal is only half the fix — the deferral must be stated.
+
+    Without this the guards above pass for a step that says nothing about model
+    at all, and the lead falls back to guessing (GI-002: absence of guidance is
+    not the same as an instruction to pass nothing).
+    """
+    step = _spawn_step(*_SPAWN_STEP_SECTIONS[label])
+    assert "obey the returned `instructions` clause" in step, (
+        f"{label} spawn step must tell the lead to obey the model clause the "
+        f"MCP returned; got: {step!r}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # The relaxed frontmatter assertions still bite
 # --------------------------------------------------------------------------- #

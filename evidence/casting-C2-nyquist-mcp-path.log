@@ -1,0 +1,26 @@
+# evidence-cmd: cd plugins/foundry/mcp-server; echo "== persistence: Foundry-Init writes nyquist to BOTH stores of record =="; uv run python -c "import json,tempfile,pathlib; from foundry_mcp.tools.foundry import foundry_init; R=[(v, pathlib.Path(foundry_init(nyquist=v, description='ev', project_root=tempfile.mkdtemp())['foundry_dir'])) for v in (True, False)]; [print('Foundry-Init(nyquist=%-5s) -> state.json nyquist=%-5s   manifest.json nyquist=%s' % (v, json.loads((f/'state.json').read_text())['nyquist'], json.loads((f/'castings'/'manifest.json').read_text())['nyquist'])) for v,f in R]"; echo; echo "== gate + phase tokens: both advertised tokens now resolve to real branches =="; uv run python -c "import json,tempfile,pathlib; from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state; fo._check_active_teams=lambda _p:{'active':False,'teams':[],'live_panes':[]}; D=pathlib.Path(tempfile.mkdtemp()); F=D/'foundry-archive'/'ev'; (F/'castings').mkdir(parents=True); foundry_state.set_active_run('ev'); P=lambda kw,v: ((F/'state.json').write_text(json.dumps(kw)), (F/'verdicts.json').write_text(json.dumps({'requirements':[{'id':'FR-1','verdict':v}]})), (F/'.next-action-called').write_text('x'))[0]; G=lambda kw,v: (P(kw,v), fo.foundry_gate('nyquist', str(D)))[1]; [print('Foundry-Gate(nyquist)      state=%-38s verdict=%-8s -> passed=%-5s %s' % (json.dumps(kw), v, r['passed'], r.get('reason',''))) for kw,v,r in [(kw,v,G(kw,v)) for kw,v in (({'phase':'F4','nyquist':True},'VERIFIED'),({'phase':'F4'},'VERIFIED'),({'phase':'F4','nyquist':True},'THIN'))]]; M=lambda kw,tok: (P(kw,'VERIFIED'), fo.foundry_mark_phase_complete(tok, str(D)))[1]; [print('Foundry-Phase(%-12s) state=%-38s -> phase=%s' % (tok, json.dumps(kw), M(kw,tok).get('phase','REJECTED'))) for kw,tok in (({'phase':'F4','nyquist':True},'nyquist'),({'phase':'F5.5','nyquist':True},'nyquist_done'))]"; echo; echo "== routing: state.json nyquist reaches _compute_next_action (F5.5 reachable) =="; uv run python -c "import json,tempfile,pathlib; from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state; fo._check_active_teams=lambda _p:{'active':False,'teams':[],'live_panes':[]}; D=pathlib.Path(tempfile.mkdtemp()); F=D/'foundry-archive'/'ev'; (F/'castings').mkdir(parents=True); (F/'verdicts.json').write_text(json.dumps({'requirements':[{'id':'FR-1','verdict':'VERIFIED'}]})); foundry_state.set_active_run('ev'); A=lambda kw: ((F/'state.json').write_text(json.dumps(kw)), fo._compute_next_action(str(D)))[1]; g=lambda i: ([s for s in i.split('. ') if 'Foundry-Gate' in s] or [i.split('. ')[-1]])[0].strip(); [print('%-48s -> %-22s | %s' % (json.dumps(kw), A(kw)['action'], g(A(kw)['instructions']))) for kw in ({'phase':'F4'},{'phase':'F4','nyquist':True},{'phase':'F4','temper':True,'nyquist':True},{'phase':'F5','temper':True},{'phase':'F5','temper':True,'nyquist':True},{'phase':'F5.5','nyquist':True})]"; echo; echo "== regression suite for the whole chain =="; uv run --with pytest pytest tests/test_nyquist_flag.py -q -p no:cacheprovider 2>/dev/null | tail -1
+# evidence-for: FR-014
+# evidence-volatile: (in )[0-9]+\.[0-9]+s
+# evidence-timeout: 300
+
+== persistence: Foundry-Init writes nyquist to BOTH stores of record ==
+Foundry-Init(nyquist=True ) -> state.json nyquist=True    manifest.json nyquist=True
+Foundry-Init(nyquist=False) -> state.json nyquist=False   manifest.json nyquist=False
+
+== gate + phase tokens: both advertised tokens now resolve to real branches ==
+Foundry-Gate(nyquist)      state={"phase": "F4", "nyquist": true}       verdict=VERIFIED -> passed=True  
+Foundry-Gate(nyquist)      state={"phase": "F4"}                        verdict=VERIFIED -> passed=False F5.5 NYQUIST is opt-in and this run was not started with --nyquist
+Foundry-Gate(nyquist)      state={"phase": "F4", "nyquist": true}       verdict=THIN     -> passed=False 1 requirement(s) not verified
+Foundry-Phase(nyquist     ) state={"phase": "F4", "nyquist": true}       -> phase=F5.5
+Foundry-Phase(nyquist_done) state={"phase": "F5.5", "nyquist": true}     -> phase=F6
+
+== routing: state.json nyquist reaches _compute_next_action (F5.5 reachable) ==
+{"phase": "F4"}                                  -> transition_to_done     | Call Foundry-Gate(phase='done'), update state to F6
+{"phase": "F4", "nyquist": true}                 -> transition_to_nyquist  | Call Foundry-Gate(phase='nyquist'), then Foundry-Phase(phase='nyquist') to enter F5.5
+{"phase": "F4", "temper": true, "nyquist": true} -> transition_to_temper   | Call Foundry-Gate(phase='temper'), update state to F5
+{"phase": "F5", "temper": true}                  -> run_temper             | When clean, call Foundry-Gate(phase='done'), update to F6.
+{"phase": "F5", "temper": true, "nyquist": true} -> run_temper             | When clean, call Foundry-Gate(phase='nyquist'), update to F5.5.
+{"phase": "F5.5", "nyquist": true}               -> run_nyquist            | When done, call Foundry-Gate(phase='done'), then Foundry-Phase(phase='nyquist_done') to enter F6.
+
+== regression suite for the whole chain ==
+27 passed in 0.20s

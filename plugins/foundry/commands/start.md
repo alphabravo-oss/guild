@@ -51,6 +51,8 @@ Call `Foundry-Next` after every step. It returns a `YOUR NEXT CALL:` imperative 
 
 **Creating the run (F0):** when you call `Foundry-Init`, thread the `--url URL` invocation flag through by passing `url=<FOUNDRY_URL>` (the value `setup-foundry.sh` echoed as `FOUNDRY_URL=...`). `Foundry-Init` persists it to `castings/manifest.json` as `target_url`, which the SIGHT/inspect gate reads. Omit it (or pass an empty string) when no `--url` was given — the gate then stays blocked for any run that has frontend files but no target URL.
 
+**Creating the run (F0), continued:** in the same call, thread the `--nyquist` invocation flag through by passing `nyquist=<FOUNDRY_NYQUIST>` (the value `setup-foundry.sh` echoed as `FOUNDRY_NYQUIST=...`, `true` or `false`). `Foundry-Init` persists it to both `state.json` and `castings/manifest.json` as `nyquist`, which is what `Foundry-Next` reads to route F4/F5 into F5.5 NYQUIST. Omit it (or pass `false`) when no `--nyquist` was given — F5.5 is then skipped and the run goes straight to F6 DONE. **Not passing it on a `--nyquist` run silently drops the flag:** the phase becomes unreachable and no regression tests are generated.
+
 **Serena preflight (F0):** `setup-foundry.sh` probes Serena on every run and echoes `FOUNDRY_SERENA_HEALTH=<TOKEN>` alongside the other `FOUNDRY_*` lines. The token is a closed set of exactly six values — no other value is ever emitted:
 
 | Token | Meaning |
@@ -531,7 +533,7 @@ Same router principle as F1. Lead does NOT draft GRIND prompts.
 
 1. `Foundry-Tasks` — convert defects to per-casting task groups.
 2. `TeamCreate("grind-{run}-cycle-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug)
-3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent (opus) with returned prompt verbatim, APPEND a separate `## Defects to fix this cycle:` block below (the ONLY thing lead may append).
+3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent with the returned prompt verbatim, APPEND a separate `## Defects to fix this cycle:` block below (the ONLY thing lead may append). **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured the response also carries a `model` field and the clause names the model to pass on that Agent call; when it does not, pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself.
 4. Max 3 teammates per GRIND cycle.
 5. Shut down → build + test → commit → back to F2 INSPECT.
 
@@ -551,7 +553,11 @@ Micro-domain stress testing. Walk filesystem, classify domains, probe each with 
 
 ### F5.5: NYQUIST (--nyquist only)
 
-Generate regression tests for VERIFIED requirements. Batch by 5 → spawn `nyquist-auditor` agents (sonnet). Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral tests, runs them, commits passing ones. Any `ESCALATE_IMPL_BUG` result → new GRIND cycle. Never mark untested requirements as passing.
+Reached only when the run was created with `nyquist=true` (see **Creating the run (F0), continued**). Enter with `Foundry-Gate(phase="nyquist")` → `Foundry-Phase(phase="nyquist")`.
+
+Generate regression tests for VERIFIED requirements. Batch by 5 → spawn `foundry:nyquist-auditor` agents using the `agent_config` `Foundry-Next` returns. That config carries no `model` key — nyquist-auditor holds a fixed sonnet baseline the `model` option cannot steer — so pass no `model` parameter and let its frontmatter govern. Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral tests, runs them, commits passing ones. Any `ESCALATE_IMPL_BUG` result → new GRIND cycle. Never mark untested requirements as passing.
+
+Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")` → F6.
 
 ### F6: DONE
 
@@ -565,7 +571,7 @@ Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `es
 
 | Tool | When |
 |------|------|
-| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate |
+| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate, and `nyquist=<FOUNDRY_NYQUIST from setup-foundry.sh>` so the `--nyquist` flag is persisted to `state.json` and reaches the F5.5 routing |
 | `Foundry-Next` | Every step: what to do next (returns `YOUR NEXT CALL:` imperative) |
 | `Foundry-Gate` | Before phase transitions |
 | `Foundry-Phase` | Mark phase transitions |

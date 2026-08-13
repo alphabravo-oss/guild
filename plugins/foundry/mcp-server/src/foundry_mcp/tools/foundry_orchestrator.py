@@ -289,6 +289,7 @@ _ACTION_TO_GATE = {
     "transition_to_grind": "grind",
     "transition_to_assay": "assay",
     "transition_to_temper": "temper",
+    "transition_to_nyquist": "nyquist",
     "transition_to_done": "done",
 }
 
@@ -296,6 +297,41 @@ _ACTION_TO_GATE = {
 def _expected_gate_for_action(action: str) -> str | None:
     """Return the gate phase a given transition action asks the lead to run."""
     return _ACTION_TO_GATE.get(action)
+
+
+def _nyquist_transition(from_phase: str) -> dict:
+    """Return the 'enter F5.5 NYQUIST' step, emitted from F4 or F5.
+
+    Two entry points share one step: a --nyquist run without --temper arrives
+    from F4 (ASSAY passed), and one with both arrives from F5 (TEMPER clean).
+    ``from_phase`` is the phase the lead is currently IN, which the guidance
+    display keys on.
+
+    The agent config carries no ``model`` key on purpose: ``nyquist-auditor``
+    is not in STEERABLE_SUBAGENT_TYPES and holds its own sonnet frontmatter
+    pin, so this site emits nothing and lets the pin govern at every setting of
+    the option (AC-004, FR-005) — the same shape as INSPECT_TRACE_CONFIG.
+    """
+    return {
+        "phase": from_phase,
+        "action": "transition_to_nyquist",
+        "instructions": (
+            "--nyquist is set. Call Foundry-Gate(phase='nyquist'), then "
+            "Foundry-Phase(phase='nyquist') to enter F5.5. Batch VERIFIED "
+            "requirements by 5 and spawn one foundry:nyquist-auditor agent per "
+            "batch. Each classifies COVERED / UNTESTED / UNDERTESTED, generates "
+            "minimal behavioral tests, runs them, and commits the passing ones. "
+            "Any ESCALATE_IMPL_BUG result starts a new GRIND cycle. Never mark "
+            "an untested requirement as passing."
+        ),
+        "details": {
+            "agent_config": {
+                "subagent_type": "foundry:nyquist-auditor",
+                "description": "NYQUIST: regression tests for VERIFIED requirements",
+            },
+            "batch_size": 5,
+        },
+    }
 
 
 # --- Phase gate ---
@@ -482,6 +518,27 @@ def foundry_gate(
             reason = f"{non_verified} requirement(s) not verified"
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
 
+    elif phase == "nyquist":
+        # F5.5 generates regression tests for VERIFIED requirements, so the
+        # same precondition as TEMPER applies: there is nothing to lock in
+        # until every requirement has passed ASSAY. Additionally the flag must
+        # actually be set — entering F5.5 on a run that never asked for it
+        # would spawn auditors the invocation did not request.
+        verdicts = _load_json(fdir / "verdicts.json")
+        non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
+        if non_verified > 0:
+            passed = False
+            reason = f"{non_verified} requirement(s) not verified"
+        checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
+
+        state = _load_json(fdir / "state.json")
+        nyquist_on = state.get("nyquist", False)
+        if not nyquist_on:
+            passed = False
+            reason = "F5.5 NYQUIST is opt-in and this run was not started with --nyquist"
+            hint = "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done')."
+        checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
+
     elif phase == "done":
         verdicts = _load_json(fdir / "verdicts.json")
         verdict_list = verdicts.get("requirements", [])
@@ -518,7 +575,7 @@ def foundry_gate(
 
     else:
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
-                "hint": "Valid phases: cast, inspect, grind, assay, temper, done"}
+                "hint": "Valid phases: cast, inspect, grind, assay, temper, nyquist, done"}
 
     result = {"phase": phase, "passed": passed, "checklist": checklist}
     if not passed:
@@ -924,6 +981,25 @@ def foundry_mark_phase_complete(
         _update_phase(fdir, "F5")
         return {"ok": True, "phase": "F5", "message": "Phase is now F5 (TEMPER)"}
 
+    elif phase == "nyquist":
+        # Enter F5.5. Mirrors the "temper" token: the phase mark is what makes
+        # _compute_next_action's F5.5 branch reachable at all, since it
+        # dispatches on state["phase"].
+        _update_phase(fdir, "F5.5")
+        return {"ok": True, "phase": "F5.5", "message": "Phase is now F5.5 (NYQUIST)"}
+
+    elif phase == "nyquist_done":
+        # Leave F5.5 for F6. Distinct from the "temper" shape, which exits via
+        # "done", because NYQUIST has its own completion semantics: auditors
+        # can escalate ESCALATE_IMPL_BUG back into GRIND, so "the phase ran"
+        # and "the run is finished" are separate facts. The DONE gate still
+        # runs first — this token records the exit, it does not waive the
+        # verdict / open-defect preconditions.
+        _update_phase(fdir, "F6")
+        clear_active_run()
+        return {"ok": True, "phase": "F6",
+                "message": "NYQUIST complete → phase is now F6 (DONE). Run archived."}
+
     elif phase == "done":
         _update_phase(fdir, "F6")
         # Clear the active run — session is done with this run
@@ -931,7 +1007,7 @@ def foundry_mark_phase_complete(
         return {"ok": True, "phase": "F6", "message": "Phase is now F6 (DONE). Run archived. Start a new run with foundry_init."}
 
     else:
-        return {"error": f"Invalid phase: {phase}. Valid: cast, inspect_clean, grind_start, assay_fail, temper, done"}
+        return {"error": f"Invalid phase: {phase}. Valid: cast, inspect_clean, grind_start, assay_fail, temper, nyquist, nyquist_done, done"}
 
 
 # --- Team lifecycle ---
@@ -1880,7 +1956,9 @@ def _format_status_display(project_root: str) -> str:
             icon = f"{_GREEN}\u2713{_RESET}"
             label = f"{_DIM}{pid} {pname}{_RESET}"
             right = f"  {_DIM}{dur}{_RESET}" if dur else ""
-        elif pid == "F5" and not state.get("temper", False):
+        elif (pid == "F5" and not state.get("temper", False)) or (
+            pid == "F5.5" and not state.get("nyquist", False)
+        ):
             icon = f"{_DIM}\u2500{_RESET}"
             label = f"{_DIM}{pid} {pname}{_RESET}"
             right = f"  {_DIM}skip{_RESET}"
@@ -2216,6 +2294,12 @@ def _compute_next_action(project_root: str) -> dict:
                 },
             }
 
+        # F5.5 is the second optional phase. It is reached from here when
+        # --nyquist was set and --temper was not; the --temper path reaches it
+        # from F5 instead, so the two options compose as F4 → F5 → F5.5 → F6.
+        if state.get("nyquist", False):
+            return _nyquist_transition("F4")
+
         return {
             "phase": "F4",
             "action": "transition_to_done",
@@ -2228,6 +2312,13 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F5":
+        # A --temper --nyquist run reaches F5.5 from here; --temper alone goes
+        # straight to F6. Same guard as the F4 path so the two options compose.
+        tail = (
+            "When clean, call Foundry-Gate(phase='nyquist'), update to F5.5."
+            if state.get("nyquist", False)
+            else "When clean, call Foundry-Gate(phase='done'), update to F6."
+        )
         return {
             "phase": "F5",
             "action": "run_temper",
@@ -2235,9 +2326,33 @@ def _compute_next_action(project_root: str) -> dict:
                 "TEMPER phase: micro-domain stress testing. "
                 "Decompose into domains (min 15), probe each, cross-domain test, "
                 "continuous sweep. Defects go through GRIND \u2192 INSPECT \u2192 ASSAY loop. "
-                "When clean, call Foundry-Gate(phase='done'), update to F6."
+                + tail
             ),
             "details": {},
+        }
+
+    elif phase == "F5.5":
+        return {
+            "phase": "F5.5",
+            "action": "run_nyquist",
+            "instructions": (
+                "NYQUIST phase: regression tests for VERIFIED requirements that "
+                "lack automated coverage. Batch requirements by 5 and spawn one "
+                "foundry:nyquist-auditor agent per batch. Each classifies "
+                "COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral "
+                "tests, runs them, and commits the passing ones. Any "
+                "ESCALATE_IMPL_BUG result goes through the GRIND \u2192 INSPECT \u2192 "
+                "ASSAY loop. Never mark an untested requirement as passing. "
+                "When done, call Foundry-Gate(phase='done'), then "
+                "Foundry-Phase(phase='nyquist_done') to enter F6."
+            ),
+            "details": {
+                "agent_config": {
+                    "subagent_type": "foundry:nyquist-auditor",
+                    "description": "NYQUIST: regression tests for VERIFIED requirements",
+                },
+                "batch_size": 5,
+            },
         }
 
     elif phase == "F6":
@@ -2387,6 +2502,7 @@ def foundry_get_context(
             "cycle": state.get("cycle", 0),
             "spec_path": state.get("spec_path", ""),
             "temper": state.get("temper", False),
+            "nyquist": state.get("nyquist", False),
             "no_ui": state.get("no_ui", False),
             "started_at": state.get("started_at", ""),
             "total_duration": state.get("total_duration", ""),

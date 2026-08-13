@@ -98,6 +98,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "spec_path": {"type": "string", "description": "Path to spec file to copy."},
                     "temper": {"type": "boolean", "default": False},
+                    "nyquist": {"type": "boolean", "default": False, "description": "Enable the optional F5.5 NYQUIST phase; persisted to state.json and castings/manifest.json."},
                     "no_ui": {"type": "boolean", "default": False},
                     "resume": {"type": "string", "description": "Name of existing run to resume (e.g. 'bold-falcon')."},
                     "ticket": {"type": "string", "default": ""},
@@ -137,7 +138,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["phase"],
                 "properties": {
-                    "phase": {"type": "string", "enum": ["research_done", "decompose_done", "validate_done", "start_cast", "cast", "inspect_clean", "grind_start", "assay_fail", "temper", "nyquist_done", "done"]},
+                    "phase": {"type": "string", "enum": ["research_done", "decompose_done", "validate_done", "start_cast", "cast", "inspect_clean", "grind_start", "assay_fail", "temper", "nyquist", "nyquist_done", "done"]},
                 },
             },
         ),
@@ -458,7 +459,8 @@ _DISPATCH = {
         spec_path=args["spec_path"], report_path=args["report_path"],
         strict=args.get("strict", False), project_root=_project_root),
     "Foundry-Init": lambda args: foundry_init(
-        spec_path=args.get("spec_path"), temper=args.get("temper", False), no_ui=args.get("no_ui", False),
+        spec_path=args.get("spec_path"), temper=args.get("temper", False),
+        nyquist=args.get("nyquist", False), no_ui=args.get("no_ui", False),
         resume=args.get("resume"), ticket=args.get("ticket", ""), description=args.get("description", ""),
         url=args.get("url", ""), project_root=_project_root),
     "Foundry-Next": lambda args: foundry_next_action(project_root=_project_root),
