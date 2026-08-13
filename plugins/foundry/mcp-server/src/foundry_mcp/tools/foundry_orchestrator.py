@@ -603,9 +603,12 @@ def foundry_gate(
 # enum (server.py derives its enum from this set), so the two sites cannot
 # drift — the AC-013 defect was exactly that drift: the schema advertised
 # streams the runtime rejected. coverage_diff joined per D-008: the phase
-# guide defines it as an F2 INSPECT stream (MIGRATION runs) and the
-# next-action guidance names it, so rejecting it contradicted the module's
-# own guidance. Recordable is NOT required: the required-stream computation
+# guide (plugins/foundry/commands/start.md, F2 INSPECT stream roster)
+# defines COVERAGE_DIFF as an F2 INSPECT stream for MIGRATION runs, and the
+# agent contract (plugins/foundry/agents/coverage-diff.md) emits
+# "stream": "coverage_diff" — rejecting a name an agent contract declares
+# was the same validator/contract disagreement (GI-003) this vocabulary
+# repairs. Recordable is NOT required: the required-stream computation
 # in _check_streams_complete is intentionally independent.
 # Extend only via phase-level RFC.
 VALID_STREAMS = frozenset(
