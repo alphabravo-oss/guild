@@ -225,13 +225,13 @@ Foundry declares one `userConfig` option, `model`, in `.claude-plugin/plugin.jso
 | Any other value | Refused, with a message naming the accepted set |
 | Unset | No model parameter is emitted at any spawn. Every agent's frontmatter pin governs and behaviour is identical to today |
 
-Set it per plugin, for one session:
+Set it per plugin, under `pluginConfigs[<plugin-id>].options`. For one session, pass it inline:
 
 ```bash
-claude --config model=fable
+claude --settings '{"pluginConfigs": {"foundry@guild": {"options": {"model": "fable"}}}}'
 ```
 
-`pluginConfigs` is read from user settings, `--settings`, and managed settings only — project and local settings are ignored for it.
+To persist it, put the same `pluginConfigs` block in `~/.claude/settings.json`. The sources honored are, in precedence order: managed settings, `--settings`, then user settings — project and local settings are ignored for it. The `${user_config.model}` substitution happens when the plugin's MCP server launches, so a change takes effect on the next session start. (Both forms verified live; the flat shape without the `options` level silently delivers nothing — the server sees an empty `FOUNDRY_MODEL`.)
 
 **The option is declared per plugin.** Foundry and Forge each declare their own identically-named `model` option, and there is no shared cross-plugin store. Set it once under `foundry@guild` and once under `forge@guild` if you want both steered.
 
