@@ -457,6 +457,142 @@ def test_orchestrator_has_no_hardcoded_model_literal() -> None:
     )
 
 
+# --- Instruction PROSE names no model for a steerable agent (D-013) ---------
+#
+# The grep above sees only the dict-literal form (``"model": "opus"``), so it
+# is blind to English sentences — and ``_ACTION_IMPERATIVES`` is nothing but
+# English sentences. ``_format_imperative_header`` prepends the matching entry
+# into the very ``instructions`` field whose response also carries the
+# config-derived ``agent_config``, so a sentence asserting that
+# ``foundry:teammate`` "carries model=opus" makes ONE response contradict
+# itself the moment the option is set to something else — and the lead reads
+# the imperative header first (GI-003, FR-009, AC-001, OT-002).
+#
+# Documenting a NON-steerable agent's pin stays legitimate: the assayer really
+# does hold opus at every setting (AC-004), and the decompose/test spawns are
+# ``general-purpose``. So each model literal binds to the NEAREST agent
+# reference and only a steerable one fails — the same nearest-reference
+# binding ``_documented_pins`` uses for start.md below.
+
+_PROSE_MODEL_LITERAL_RE = re.compile(
+    r"model\s*[=:]\s*['\"]?(?:%s)\b" % "|".join(fo.ACCEPTED_MODELS)
+)
+_QUALIFIED_AGENT_RE = re.compile(r"(?:foundry|forge):[a-z0-9-]+")
+
+_STEERABLE_NAMES = frozenset(fo.STEERABLE_SUBAGENT_TYPES) | {
+    name.split(":", 1)[1] for name in fo.STEERABLE_SUBAGENT_TYPES
+}
+
+
+def _agent_reference_re() -> re.Pattern[str]:
+    """Match every way the imperatives name an agent.
+
+    Derived from the imperatives themselves rather than hand-listed: an agent
+    named in qualified form anywhere in the map also gets its bare form
+    recognised ("the assayer's frontmatter ..."), so adding an agent to the map
+    does not silently create a blind spot here.
+
+    The steerable set is seeded unconditionally rather than derived, because
+    ``foundry:flow-mapper`` has no spawn site in this server today (forge's
+    plan.md spawns it) — deriving alone would leave the agent this guard exists
+    to protect unrecognised until the day someone adds prose about it.
+    """
+    qualified = sorted(
+        {
+            name
+            for text in fo._ACTION_IMPERATIVES.values()
+            for name in _QUALIFIED_AGENT_RE.findall(text)
+        }
+        | set(fo.STEERABLE_SUBAGENT_TYPES)
+    )
+    bare = sorted({q.split(":", 1)[1] for q in qualified}, key=len, reverse=True)
+    alternatives = (
+        [re.escape(q) for q in qualified]
+        + ["general-purpose"]
+        + [rf"\b{re.escape(b)}\b" for b in bare]
+    )
+    return re.compile("|".join(alternatives))
+
+
+_AGENT_REFERENCE_RE = _agent_reference_re()
+
+
+def _steerable_model_claims(text: str) -> list[str]:
+    """Model literals in ``text`` whose nearest agent reference is steerable."""
+    refs = list(_AGENT_REFERENCE_RE.finditer(text))
+    if not refs:
+        return []
+    claims = []
+    for literal in _PROSE_MODEL_LITERAL_RE.finditer(text):
+        nearest = min(refs, key=lambda r: abs(r.start() - literal.start()))
+        if nearest.group(0) in _STEERABLE_NAMES:
+            claims.append(f"{nearest.group(0)} ... {literal.group(0)}")
+    return claims
+
+
+def test_action_imperatives_name_no_model_for_a_steerable_agent() -> None:
+    """No imperative may state a steerable agent's model as settled fact.
+
+    Reproduced live with FOUNDRY_MODEL=fable: one Foundry-Next response carried
+    ``agent_config {"model": "fable"}`` AND an instructions field asserting
+    foundry:teammate carries model=opus. The server must not contradict itself
+    about an agent the option can steer.
+    """
+    stray = {
+        action: claims
+        for action, text in sorted(fo._ACTION_IMPERATIVES.items())
+        if (claims := _steerable_model_claims(text))
+    }
+    assert not stray, (
+        "_ACTION_IMPERATIVES prose states a model for a steerable agent: "
+        f"{stray} — a steerable agent's model comes from the returned "
+        "agent_config / Foundry-Cast-Wave clause, never from frozen prose"
+    )
+
+
+def test_the_prose_guard_catches_the_claim_it_was_written_for() -> None:
+    """Positive control: the scanner bites on D-013 and spares the legal cases.
+
+    Without this, the guard above would still pass if the scanner silently
+    stopped matching — which is exactly how the dict-literal grep let prose
+    through in the first place.
+    """
+    assert _steerable_model_claims(
+        "subagent_type='foundry:teammate', mode='bypassPermissions'. "
+        "(foundry:teammate's frontmatter carries model=opus + effort=xhigh + all tools.)"
+    ), "the exact D-013 sentence must fail this guard"
+    assert _steerable_model_claims(
+        "spawn Agent(subagent_type='foundry:flow-mapper') with model: fable"
+    ), "the other steerable agent must be covered too"
+
+    assert not _steerable_model_claims(
+        "Spawn 4 parallel Agent(subagent_type='foundry:assayer', prompt='...'). "
+        "(The assayer's frontmatter carries model=opus and effort=max.)"
+    ), "documenting a FIXED-baseline agent's pin is accurate, not a violation"
+    assert not _steerable_model_claims(
+        "Per-Agent params: model='opus', subagent_type='general-purpose'"
+    ), "the decompose/test spawns are outside the pilot and keep their baseline"
+    assert not _steerable_model_claims(
+        "spawn one Agent per casting: subagent_type='foundry:teammate' "
+        "(frontmatter carries effort=xhigh + all tools)"
+    ), "effort and tools are not model claims (NFR-002 keeps effort out of scope)"
+
+
+@pytest.mark.parametrize("action", ["transition_to_cast", "transition_to_grind"])
+def test_steerable_spawn_imperative_defers_to_the_returned_clause(action: str) -> None:
+    """Dropping the literal is half the fix; the deferral must be stated.
+
+    Silence is not an instruction (GI-002): an imperative that says nothing
+    about model leaves the lead to improvise one, which is the same defect in
+    a quieter form.
+    """
+    text = fo._ACTION_IMPERATIVES[action]
+    assert "obey the model clause in the `instructions`" in text, (
+        f"the {action} imperative must send the lead to the model clause the "
+        f"MCP returned; got: {text!r}"
+    )
+
+
 def test_start_md_defers_to_the_mcp_returned_model() -> None:
     """The lead is told to obey what the server returns, not to never override."""
     text = START_MD.read_text(encoding="utf-8")

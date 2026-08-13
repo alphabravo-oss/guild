@@ -1,0 +1,18 @@
+# evidence-cmd: S=plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py; B=$(mktemp); cp "$S" "$B"; (cd plugins/foundry/mcp-server && uv run python -c 'import os,re,sys; sys.path.insert(0,"src"); os.environ["FOUNDRY_MODEL"]="fable"; import foundry_mcp.tools.foundry_orchestrator as fo; cast=fo._ACTION_IMPERATIVES["transition_to_cast"]; grind=fo._ACTION_IMPERATIVES["transition_to_grind"]; pat=re.compile(r"model[ =:]+(opus|sonnet|haiku|fable|inherit)"); defer="obey the model clause in the "; print("== FOUNDRY_MODEL=fable: the two surfaces of ONE Foundry-Next response =="); print("agent_config fragment  (orchestrator:2066/:2087) :", fo.agent_model("foundry:teammate")); print("model literals in transition_to_cast imperative  :", pat.findall(cast)); print("model literals in transition_to_grind imperative :", pat.findall(grind)); print("both imperatives defer to the returned clause    :", all(defer in t for t in (cast,grind))); print("assayer imperatives still state their fixed pin  :", sum("model=opus" in fo._ACTION_IMPERATIVES[a] for a in ("transition_to_assay","run_assay")))'); echo "== widened guard vs. the reintroduced D-013 literal (mutation cycle) =="; (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -k "action_imperatives or hardcoded_model_literal" -p no:cacheprovider 2>/dev/null | tail -1); echo "-- reintroducing: (foundry:teammate's frontmatter carries model=opus ...) --"; sed -i.tmp "s|frontmatter carries effort=xhigh|frontmatter carries model=opus + effort=xhigh|" "$S"; rm -f "$S.tmp"; (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -k "action_imperatives or hardcoded_model_literal" -p no:cacheprovider 2>/dev/null | tail -3); cp "$B" "$S"; rm -f "$B"; echo "-- restored --"; (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -k "action_imperatives or hardcoded_model_literal" -p no:cacheprovider 2>/dev/null | tail -1)
+# evidence-for: FR-009, AC-001, NFR-001
+# evidence-volatile: (in )[0-9]+\.[0-9]+s
+
+== FOUNDRY_MODEL=fable: the two surfaces of ONE Foundry-Next response ==
+agent_config fragment  (orchestrator:2066/:2087) : {'model': 'fable'}
+model literals in transition_to_cast imperative  : []
+model literals in transition_to_grind imperative : []
+both imperatives defer to the returned clause    : True
+assayer imperatives still state their fixed pin  : 2
+== widened guard vs. the reintroduced D-013 literal (mutation cycle) ==
+2 passed, 112 deselected in 0.01s
+-- reintroducing: (foundry:teammate's frontmatter carries model=opus ...) --
+=========================== short test summary info ============================
+FAILED tests/test_model_config.py::test_action_imperatives_name_no_model_for_a_steerable_agent
+1 failed, 1 passed, 112 deselected in 0.04s
+-- restored --
+2 passed, 112 deselected in 0.02s
