@@ -563,6 +563,8 @@ Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")`
 
 Shut down all teammates → generate report → `Foundry-Phase("done")`.
 
+**Evidence lifecycle:** teammates commit `evidence/*.log` during the run (`git add -f`; `/evidence/` is gitignored) because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted and the run reaches F6, the logs are inert. Before merging the run's branch, strip them in one commit (`git rm -r evidence/`) — commit during the run, strip after acceptance, before merge.
+
 ## CONTEXT MANAGEMENT
 
 Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `estimated_usage: "high"`: save state via `Foundry-Context`, suggest `/foundry:resume` (fresh context). Do NOT continue in degraded context — it causes more GRIND cycles than it saves.
