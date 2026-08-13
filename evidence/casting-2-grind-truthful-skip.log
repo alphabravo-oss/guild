@@ -1,0 +1,7 @@
+# evidence-cmd: python3 -c "import json,subprocess,tempfile,os; V='plugins/foundry/scripts/validate-test-observations.py'; F='plugins/foundry/mcp-server/tests/fixtures/test_observations/test-deriver-cycle-skip-no-surface.json'; S='plugins/foundry/mcp-server/tests/fixtures/specs/spec_test_deriver_simple.md'; print('truthful SKIP exit:', subprocess.run(['python3',V,F]).returncode); print('truthful SKIP + --spec exit:', subprocess.run(['python3',V,F,'--spec',S]).returncode); d=json.load(open(F)); d['observations'][0]['status']='FAIL'; t=tempfile.mkdtemp(); p=os.path.join(t,'m.json'); open(p,'w').write(json.dumps(d)); r=subprocess.run(['python3',V,p],capture_output=True,text=True); print(r.stdout,end=''); print('same shape as FAIL exit:', r.returncode)"
+# evidence-for: US-002, AC-008
+
+truthful SKIP exit: 0
+truthful SKIP + --spec exit: 0
+WRONG_TEST_NO_NEGATIVE_ASSERTION: OBS-100 negative_assertion_present=false
+same shape as FAIL exit: 1

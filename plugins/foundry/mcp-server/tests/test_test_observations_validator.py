@@ -26,11 +26,28 @@ AC-006/AC-007/AC-009 + GI-003 territory (contract <-> validator mirroring):
 AC-008 territory (SKIP-on-no-surface deriver contract):
   13. test_deriver_skip_on_no_surface_rule
 
+GRIND cycle 2 — D-002 (AC-007 contract-surface exemption IMPLEMENTED,
+not just narrated):
+  14. test_contract_surface_references_exempt_with_spec
+  15. test_contract_surface_exemption_requires_spec
+  16. test_undeclared_reference_still_leaks_with_spec
+  17. test_mixed_declared_and_undeclared_still_leaks
+  18. test_surface_directory_prefix_is_not_the_surface
+  19. test_contract_surface_exemption_statement_mirrored
+
+GRIND cycle 2 — D-003 (AC-008 truthful SKIP validates):
+  20. test_truthful_skip_observation_validates (x2, bare + --spec)
+  21. test_fail_without_negative_assertion_still_fires
+  22. test_skip_exempt_from_shape_not_value_rule
+  23. test_skip_with_source_leak_still_fires
+  24. test_truthful_skip_statement_mirrored
+
 The validator is a dash-named script invoked via subprocess (not an
 importable module); the ``run_test_observations_validator`` conftest
 fixture provides the runner and SKIPs cleanly when the script is
-missing. Prose-contract tests (9-13) are the mechanical GI-003 guard:
-agent .md and validator must state the same rule in the same words.
+missing. Prose-contract tests (9-13, 19, 24) are the mechanical
+GI-003 guard: agent .md and validator must state the same rule in the
+same words.
 """
 
 from __future__ import annotations
@@ -76,6 +93,39 @@ SHARED_SOURCE_LEAK_SENTENCE = (
     "still is."
 )
 
+# GRIND D-002 shared statement — the MECHANICAL half of AC-007. Pasted
+# into spec-test-deriver.md (wrong-test pattern 3) and
+# validate-test-observations.py (7c comment). Names the no-spec
+# behavior explicitly per the defect's requirement.
+SHARED_CONTRACT_SURFACE_EXEMPTION_STATEMENT = (
+    "Contract-surface exemption (mechanical rule): when `--spec` "
+    "is provided, the validator parses the spec's `## Contracts` "
+    "table surface column and masks verbatim references to its "
+    "declared path or module tokens before the forbidden-root "
+    "scan; every forbidden-root reference that survives the "
+    "masking still leaks. When no `--spec` is passed there is no "
+    "contracts table to consult, so no exemption applies and "
+    "every forbidden-root reference leaks — the adjudicator "
+    "always passes `--spec`, so production adjudication always "
+    "honors the exemption."
+)
+
+# GRIND D-003 shared statement — the accepted truthful SKIP shape.
+# Pasted into spec-test-deriver.md (§ Test Derivation Procedure) and
+# validate-test-observations.py (Step 7 comment).
+SHARED_TRUTHFUL_SKIP_STATEMENT = (
+    "Truthful SKIP shape: a SKIP-on-no-surface observation "
+    "carries `status: SKIP`, a `captured_output` reason naming "
+    "the missing surface, `negative_assertion_present: false` "
+    "(no test body exists to assert anything), and "
+    "`shape_not_value_check: passed` (vacuous — no assertions "
+    "were written). Wrong-test rules 7a (negative-assertion "
+    "mandate) and 7b (shape-not-value rule) presume an executed "
+    "test body and never fire on `status: SKIP`; the source-leak "
+    "scan (7c) and the header rules still apply to SKIP "
+    "observations."
+)
+
 
 if not VALIDATE_PATH.exists():
     pytest.skip(
@@ -99,13 +149,16 @@ def _normalized(path: Path) -> str:
     return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
 
-def _load_clean_channel(fixtures_dir: Path) -> dict[str, Any]:
+def _load_channel(fixtures_dir: Path, name: str) -> dict[str, Any]:
     return json.loads(
-        (
-            fixtures_dir / "test_observations"
-            / "test-deriver-cycle-clean.json"
-        ).read_text(encoding="utf-8")
+        (fixtures_dir / "test_observations" / name).read_text(
+            encoding="utf-8"
+        )
     )
+
+
+def _load_clean_channel(fixtures_dir: Path) -> dict[str, Any]:
+    return _load_channel(fixtures_dir, "test-deriver-cycle-clean.json")
 
 
 def _write_channel(tmp_path: Path, payload: dict[str, Any]) -> Path:
@@ -422,3 +475,279 @@ def test_deriver_skip_on_no_surface_rule() -> None:
     assert "`status: SKIP`" in text
     assert "names the missing surface" in text
     assert "tautology" in text
+
+
+# ---------------------------------------------------------------------------
+# GRIND D-002 — AC-007 contract-surface exemption is IMPLEMENTED
+# ---------------------------------------------------------------------------
+
+
+def test_contract_surface_references_exempt_with_spec(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+) -> None:
+    """The four PROVE-disproven shapes validate once the spec declares them.
+
+    The contract-surface fixture's captured_output invokes
+    ``python plugins/foundry/scripts/validate-test-observations.py``,
+    ``go run ./cmd/mytool``, ``python src/cli.py``, and
+    ``node lib/bin/mytool.js`` — every one under a forbidden root, every
+    one declared in spec_contract_surfaces.md's ``## Contracts`` surface
+    column. With --spec, none is a leak (AC-006/AC-007).
+    """
+    observation = (
+        fixtures_dir / "test_observations"
+        / "test-deriver-cycle-contract-surface.json"
+    )
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        observation, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"declared-surface references must not leak; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+def test_contract_surface_exemption_requires_spec(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+) -> None:
+    """No --spec means no contracts table to consult — no exemption.
+
+    The shared statement's stated no-spec behavior: every
+    forbidden-root reference leaks. All four observations trip.
+    """
+    observation = (
+        fixtures_dir / "test_observations"
+        / "test-deriver-cycle-contract-surface.json"
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        observation
+    )
+    assert exit_code != 0, (
+        f"without --spec the same channel must leak; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    combined = stdout + stderr
+    assert "WRONG_TEST_SOURCE_LEAK" in combined
+    for obs_id in ("OBS-090", "OBS-091", "OBS-092", "OBS-093"):
+        assert obs_id in combined, (
+            f"every declared-surface observation must leak without "
+            f"--spec; missing {obs_id} in: {combined}"
+        )
+
+
+def test_undeclared_reference_still_leaks_with_spec(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """Symbols absent from both spec and contracts table still leak."""
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-contract-surface.json"
+    )
+    channel["observations"][0]["captured_output"] = (
+        "import src.secret_impl  # module never declared anywhere"
+    )
+    mutated = _write_channel(tmp_path, channel)
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        mutated, spec_path=spec
+    )
+    assert exit_code != 0, (
+        f"undeclared src.secret_impl import must leak; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    combined = stdout + stderr
+    assert "WRONG_TEST_SOURCE_LEAK" in combined
+    assert "OBS-090" in combined
+
+
+def test_mixed_declared_and_undeclared_still_leaks(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """A declared surface does not launder an undeclared path beside it."""
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-contract-surface.json"
+    )
+    channel["observations"][2]["captured_output"] = (
+        "$ python src/cli.py --help\n"
+        "cat src/impl/core.py  # peeking at internals is still a leak"
+    )
+    mutated = _write_channel(tmp_path, channel)
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        mutated, spec_path=spec
+    )
+    assert exit_code != 0, (
+        f"undeclared src/impl/core.py must leak even next to a "
+        f"declared surface; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "WRONG_TEST_SOURCE_LEAK" in stdout + stderr
+
+
+def test_surface_directory_prefix_is_not_the_surface(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """Referencing the declared surface's parent DIRECTORY still leaks.
+
+    The exemption masks verbatim declared tokens only —
+    ``plugins/foundry/scripts/`` bare is not the declared
+    ``plugins/foundry/scripts/validate-test-observations.py`` surface.
+    """
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-contract-surface.json"
+    )
+    channel["observations"][0]["captured_output"] = (
+        "ls plugins/foundry/scripts/ shows sibling validators"
+    )
+    mutated = _write_channel(tmp_path, channel)
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        mutated, spec_path=spec
+    )
+    assert exit_code != 0, (
+        f"directory-prefix reference must still leak; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "WRONG_TEST_SOURCE_LEAK" in stdout + stderr
+
+
+def test_contract_surface_exemption_statement_mirrored() -> None:
+    """D-002/GI-003: mechanical rule stated in the same words twice.
+
+    Deriver contract (wrong-test pattern 3) and validator (7c comment)
+    must carry the exemption statement — including the no-spec
+    behavior — whitespace-normalized identical.
+    """
+    for path in (DERIVER_MD, VALIDATE_PATH):
+        assert (
+            SHARED_CONTRACT_SURFACE_EXEMPTION_STATEMENT
+            in _normalized(path)
+        ), (
+            f"{path.name} must carry the contract-surface exemption "
+            "statement (whitespace-normalized) verbatim"
+        )
+
+
+# ---------------------------------------------------------------------------
+# GRIND D-003 — AC-008 truthful SKIP validates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("with_spec", [False, True])
+def test_truthful_skip_observation_validates(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    with_spec: bool,
+) -> None:
+    """A truthful SKIP-on-no-surface channel exits 0.
+
+    The fixture carries the exact accepted shape from the shared
+    statement: status SKIP, reason naming the missing surface,
+    negative_assertion_present false, shape_not_value_check passed.
+    Pre-fix this exited 1 (WRONG_TEST_NO_NEGATIVE_ASSERTION) and
+    halted the adjudicator into a TEST-01 re-run loop.
+    """
+    observation = (
+        fixtures_dir / "test_observations"
+        / "test-deriver-cycle-skip-no-surface.json"
+    )
+    spec = (
+        fixtures_dir / "specs" / "spec_test_deriver_simple.md"
+        if with_spec
+        else None
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        observation, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"truthful SKIP must validate (spec={with_spec}); "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+def test_fail_without_negative_assertion_still_fires(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """The 7a exemption is SKIP-only: FAIL + false still trips.
+
+    (PASS + false is covered by the shipped no-negative-assertion
+    fixture in the AC-011 table.)
+    """
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-skip-no-surface.json"
+    )
+    channel["observations"][0]["status"] = "FAIL"
+    channel["observations"][0]["captured_output"] = (
+        "AssertionError: happy path only; no negative branch"
+    )
+    mutated = _write_channel(tmp_path, channel)
+    exit_code, stdout, stderr = run_test_observations_validator(mutated)
+    assert exit_code != 0, (
+        f"FAIL without negative assertion must still trip 7a; "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "WRONG_TEST_NO_NEGATIVE_ASSERTION" in stdout + stderr
+
+
+def test_skip_exempt_from_shape_not_value_rule(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """7b also presumes an executed test body — SKIP is exempt.
+
+    The truthful shape sets shape_not_value_check to "passed"
+    (vacuous), but the validator's exemption is status-keyed: even a
+    contradictory "failed" on a SKIP is not judged, because there was
+    no test body whose assertions could be shape-checked.
+    """
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-skip-no-surface.json"
+    )
+    channel["observations"][0]["shape_not_value_check"] = "failed"
+    mutated = _write_channel(tmp_path, channel)
+    exit_code, stdout, stderr = run_test_observations_validator(mutated)
+    assert exit_code == 0, (
+        f"7b must not fire on SKIP; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+def test_skip_with_source_leak_still_fires(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """The SKIP exemption covers 7a/7b only — 7c still scans SKIPs."""
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-skip-no-surface.json"
+    )
+    channel["observations"][0]["captured_output"] = (
+        "SKIP: consulted src/handlers/login.py to decide the surface"
+    )
+    mutated = _write_channel(tmp_path, channel)
+    exit_code, stdout, stderr = run_test_observations_validator(mutated)
+    assert exit_code != 0, (
+        f"a SKIP reason referencing a forbidden root must leak; "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "WRONG_TEST_SOURCE_LEAK" in stdout + stderr
+
+
+def test_truthful_skip_statement_mirrored() -> None:
+    """D-003/GI-003: accepted SKIP shape stated in the same words twice."""
+    for path in (DERIVER_MD, VALIDATE_PATH):
+        assert SHARED_TRUTHFUL_SKIP_STATEMENT in _normalized(path), (
+            f"{path.name} must carry the truthful SKIP shape statement "
+            "(whitespace-normalized) verbatim"
+        )

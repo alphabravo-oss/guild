@@ -157,6 +157,50 @@ FORBIDDEN_SOURCE_ROOTS = frozenset(
 # test_observations/ subdir it writes its own outputs to.
 ALLOWED_READ_PREFIXES: tuple[str, ...] = ("foundry-archive/",)
 
+# Path-or-module token shape shared by the 7c source-leak scan's
+# contract-surface exemption and the `## Contracts` surface-column
+# parser: a maximal run of word chars, dots, slashes, and hyphens —
+# the shape of file paths, CLI entrypoints, and dotted module refs.
+_PATH_TOKEN_RE = re.compile(r"[\w./-]+")
+
+
+def _build_forbidden_root_patterns() -> list[tuple[str, "re.Pattern[str]"]]:
+    """Precompile the anchored forbidden-root patterns used by check 7c.
+
+    Byte-identical semantics to the historical inline construction:
+    per root, TWO alternatives —
+
+      1. literal "src/" with leading boundary (slash, whitespace,
+         paren, or start-of-line) — catches "from src/handlers" prose,
+         file-path references like "src/handlers/login.py", and
+         bare-leading "src/".
+      2. Python-import dotted form "src." — trailing slash replaced
+         with a dot. Catches "from src.handlers" and
+         "import src.handlers". Same boundary as (1).
+
+    Anchored boundary match (Pitfall D): ^src/ or /src/ but NOT
+    library/ or my-src/. Iteration order is sorted for deterministic
+    failure messages when multiple roots match.
+    """
+    patterns: list[tuple[str, "re.Pattern[str]"]] = []
+    for root in sorted(FORBIDDEN_SOURCE_ROOTS):
+        root_dotted = root.rstrip("/").replace("/", ".") + "."
+        slashed = re.escape(root)
+        dotted = re.escape(root_dotted)
+        patterns.append(
+            (
+                root,
+                re.compile(
+                    r"(?:^|[\s/(])(?:" + slashed + r"|" + dotted + r")",
+                    re.MULTILINE,
+                ),
+            )
+        )
+    return patterns
+
+
+_FORBIDDEN_ROOT_PATTERNS = _build_forbidden_root_patterns()
+
 # Future enhancement (Pitfall C) — Jaccard prose-overlap heuristic for
 # "literal == comparison whose RHS overlaps spec prose at >= 0.7" detection
 # is documented in 07-CONTEXT.md but NOT enforced in v1. v1 trusts the
@@ -191,6 +235,86 @@ _TESTS_SPEC_HEADER_RE = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# Contract-surface exemption (AC-006/AC-007) — `## Contracts` parsing
+# ---------------------------------------------------------------------------
+
+
+def _contract_surface_leak_tokens(spec_text: str) -> frozenset[str]:
+    """Path/module tokens declared in the spec's ``## Contracts`` surface
+    column that would otherwise trip the forbidden-root scan.
+
+    Shared GI-003 sentence (byte-mirrored, modulo comment prefix and
+    wrapping, in spec-test-deriver.md wrong-test pattern 3):
+    Referencing or executing a surface named in the spec's
+    `## Contracts` table is never a source leak; referencing
+    symbols absent from both the spec and the contracts table
+    still is.
+
+    Mechanics: locate the ``## Contracts`` section, find the header
+    row's ``surface`` column, then for each data row extract every
+    path token (backticks stripped) that trips a forbidden-root
+    pattern when standing alone. Those tokens are the declared
+    surfaces the 7c scan exempts (via :func:`_mask_contract_surface_tokens`).
+    A ``./``-prefixed token also declares its unprefixed form so
+    ``./cmd/mytool`` and ``cmd/mytool`` reference the same surface.
+    Prose, input/output/errors cells, and every other spec section
+    contribute NO exemptions — a spec's file-changes table naming
+    ``src/`` paths does not sanction referencing them.
+    """
+    tokens: set[str] = set()
+    in_contracts = False
+    surface_idx: int | None = None
+    for line in spec_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            in_contracts = bool(
+                re.fullmatch(r"#{2,6}\s*Contracts\s*", stripped)
+            )
+            surface_idx = None
+            continue
+        if not in_contracts or not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        lowered = [c.lower() for c in cells]
+        if surface_idx is None:
+            if "surface" in lowered:
+                surface_idx = lowered.index("surface")
+            continue
+        if surface_idx >= len(cells):
+            continue
+        cell_text = cells[surface_idx].replace("`", " ")
+        for token in _PATH_TOKEN_RE.findall(cell_text):
+            if any(p.search(token) for _, p in _FORBIDDEN_ROOT_PATTERNS):
+                tokens.add(token)
+                if token.startswith("./"):
+                    tokens.add(token[2:])
+    return frozenset(tokens)
+
+
+def _mask_contract_surface_tokens(
+    text: str, tokens: frozenset[str]
+) -> str:
+    """Replace verbatim declared-surface tokens with an inert marker.
+
+    Boundary-anchored on both sides so ``src/cli.py`` masks inside
+    ``python src/cli.py --help`` and ``File "src/cli.py"`` but NOT
+    inside ``src/cli.pyc`` (a different, undeclared path). Longest
+    token first so a long declared path is masked before any shorter
+    declared token that happens to nest inside it. With an empty
+    token set (no --spec, or a contracts table naming no
+    forbidden-root surfaces) this is the identity function — the 7c
+    scan then behaves exactly as it always has.
+    """
+    for token in sorted(tokens, key=len, reverse=True):
+        text = re.sub(
+            r"(?<![\w./-])" + re.escape(token) + r"(?![\w./-])",
+            "CONTRACT-SURFACE",
+            text,
+        )
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Core validator
 # ---------------------------------------------------------------------------
 
@@ -221,12 +345,16 @@ def validate_test_observations(
       * TEST_HEADER_DANGLING_REQ — when --spec provided, FR/US IDs in
         tests_spec that don't appear in spec's <spec_requirements> block.
       * WRONG_TEST_NO_NEGATIVE_ASSERTION — observation.negative_assertion_present
-        is false (only fires on FAIL/ERROR/SKIP — Pitfall B).
+        is false (fires on PASS/FAIL/ERROR; never on status SKIP — a
+        SKIP-on-no-surface observation has no test body to assert).
       * WRONG_TEST_VALUE_NOT_SHAPE — observation.shape_not_value_check ==
-        "failed" (only fires on FAIL/ERROR/SKIP — Pitfall B).
+        "failed" (fires on PASS/FAIL/ERROR; never on status SKIP — same
+        no-test-body exemption as 7a).
       * WRONG_TEST_SOURCE_LEAK — observation.test_path or .captured_output
         contains anchored substring match against any FORBIDDEN_SOURCE_ROOTS
-        entry (Pitfall D).
+        entry (Pitfall D), after verbatim references to surfaces declared
+        in the --spec's `## Contracts` table are masked (AC-006/AC-007;
+        no --spec means no masking).
       * WRONG_TEST_HEADER_MISSING — observation.tests_spec is empty
         (wrong-test stub-pattern token; co-fires with TEST_HEADER_MISSING).
       * TEST_DERIVER_READ_SOURCE — when --tool-call-log provided, any
@@ -238,10 +366,11 @@ def validate_test_observations(
       * Pitfall A (closed-vocab smuggling): top-level + per-observation
         BOTH closed (mirror Phase 6 two-layer KNOWN_REVIEW_KEYS +
         KNOWN_FLAG_KEYS).
-      * Pitfall B (wrong-test pattern catches PASS): patterns 7a-d
-        (NO_NEGATIVE_ASSERTION / VALUE_NOT_SHAPE / SOURCE_LEAK /
-        HEADER_MISSING) only run on observations with status != "PASS".
-        PASS observations are informational and are not routed to ASSAY.
+      * Pitfall B (status-gating the wrong-test patterns): 7a/7b run on
+        every status EXCEPT "SKIP" (a happy-path PASS without a negative
+        branch is the canonical wrong-test, so PASS is NOT exempt; a
+        SKIP-on-no-surface observation has no test body, so SKIP is).
+        7c (SOURCE_LEAK) and the header rules run on ALL statuses.
       * Pitfall C (Jaccard prose-overlap): not in v1; v1 trusts the
         agent's self-reported shape_not_value_check field. Threshold
         constant defined for symmetry but unused.
@@ -286,8 +415,10 @@ def validate_test_observations(
         observations = []
 
     # Optional spec parse — done once before the per-observation loop so the
-    # spec-requirement-ID set is available for every dangling-req check.
+    # spec-requirement-ID set is available for every dangling-req check and
+    # the contract-surface exemption tokens are available for every 7c scan.
     spec_requirement_ids: set[str] = set()
+    contract_surface_tokens: frozenset[str] = frozenset()
     if spec_path is not None:
         try:
             spec_text = spec_path.read_text()
@@ -314,6 +445,9 @@ def validate_test_observations(
                 spec_requirement_ids = set(
                     _REQUIREMENT_ID_RE.findall(spec_text)
                 )
+            contract_surface_tokens = _contract_surface_leak_tokens(
+                spec_text
+            )
 
     # ----- Step 3+4+5+6+7: per-observation -----
     for idx, obs in enumerate(observations):
@@ -391,28 +525,48 @@ def validate_test_observations(
                         f"({sorted(spec_requirement_ids)!r})"
                     )
 
-        # Step 7: wrong-test stub patterns — fire regardless of status.
+        # Step 7: wrong-test stub patterns.
         # The "wrong-test" concept is about tests whose STATUS doesn't
         # faithfully reflect spec compliance: a happy-path PASS without
         # a negative branch is the canonical wrong-test (test passes but
-        # the absence is the bug). FAIL/ERROR/SKIP wrong-tests catch the
+        # the absence is the bug). FAIL/ERROR wrong-tests catch the
         # rest of the surface (literal-value asserts that happen to
-        # diverge, source-leak imports, missing headers). Gating these
-        # checks on status != PASS would silence the most important
-        # signal — a passing test that shouldn't have been written that
-        # way. (Plan 07-02's Pitfall B prose suggested status-gating but
-        # the fixtures shipped in Plan 07-01 show status=PASS for the
-        # NO_NEGATIVE_ASSERTION wrong-test, so the fixture contract wins.)
-        # Rule 1 deviation from plan prose; documented in 07-02-SUMMARY.md.
+        # diverge, source-leak imports, missing headers). Gating 7a/7b
+        # on status != PASS would silence the most important signal — a
+        # passing test that shouldn't have been written that way. The
+        # ONE status 7a/7b never fire on is "SKIP" (AC-008): a
+        # SKIP-on-no-surface observation reports that no test was
+        # written, so shape rules that presume an executed test body
+        # have nothing to judge.
+        #
+        # Shared GI-003 statement (byte-mirrored, modulo comment prefix
+        # and wrapping, in spec-test-deriver.md § Test Derivation
+        # Procedure):
+        # Truthful SKIP shape: a SKIP-on-no-surface observation
+        # carries `status: SKIP`, a `captured_output` reason naming
+        # the missing surface, `negative_assertion_present: false`
+        # (no test body exists to assert anything), and
+        # `shape_not_value_check: passed` (vacuous — no assertions
+        # were written). Wrong-test rules 7a (negative-assertion
+        # mandate) and 7b (shape-not-value rule) presume an executed
+        # test body and never fire on `status: SKIP`; the source-leak
+        # scan (7c) and the header rules still apply to SKIP
+        # observations.
 
-        # 7a: negative-assertion mandate.
-        if obs.get("negative_assertion_present") is False:
+        # 7a: negative-assertion mandate (never fires on SKIP).
+        if (
+            status != "SKIP"
+            and obs.get("negative_assertion_present") is False
+        ):
             failures.append(
                 f"WRONG_TEST_NO_NEGATIVE_ASSERTION: {obs_id} "
                 "negative_assertion_present=false"
             )
-        # 7b: shape-not-value rule.
-        if obs.get("shape_not_value_check") == "failed":
+        # 7b: shape-not-value rule (never fires on SKIP).
+        if (
+            status != "SKIP"
+            and obs.get("shape_not_value_check") == "failed"
+        ):
             failures.append(
                 f"WRONG_TEST_VALUE_NOT_SHAPE: {obs_id} "
                 "shape_not_value_check=failed"
@@ -424,44 +578,29 @@ def validate_test_observations(
         # `## Contracts` table is never a source leak; referencing
         # symbols absent from both the spec and the contracts table
         # still is.
-        # Mechanically, contract surfaces are documented commands and
-        # entrypoints — never FORBIDDEN_SOURCE_ROOTS paths — so the
-        # anchored forbidden-root scan below already encodes exactly
-        # that rule.
-        # Anchored boundary match (Pitfall D): ^src/ or /src/ but NOT
-        # library/ or my-src/. We also accept Python-import boundaries
-        # so `from src.handlers import x` and `import src.handlers`
-        # match via the "src." form (replace trailing slash with dot
-        # for import-style references).
+        #
+        # Shared GI-003 statement (byte-mirrored likewise, in
+        # spec-test-deriver.md wrong-test pattern 3):
+        # Contract-surface exemption (mechanical rule): when `--spec`
+        # is provided, the validator parses the spec's `## Contracts`
+        # table surface column and masks verbatim references to its
+        # declared path or module tokens before the forbidden-root
+        # scan; every forbidden-root reference that survives the
+        # masking still leaks. When no `--spec` is passed there is no
+        # contracts table to consult, so no exemption applies and
+        # every forbidden-root reference leaks — the adjudicator
+        # always passes `--spec`, so production adjudication always
+        # honors the exemption.
         target_text = (
             str(obs.get("test_path", ""))
             + "\n"
             + str(obs.get("captured_output", ""))
         )
-        for root in FORBIDDEN_SOURCE_ROOTS:
-            # root is e.g. "src/" or "plugins/foundry/agents/".
-            # Build TWO patterns per root:
-            #   1. literal "src/" with leading boundary (slash,
-            #      whitespace, or start-of-line) — catches "from
-            #      src/handlers" prose, file-path references like
-            #      "src/handlers/login.py", and bare-leading "src/".
-            #   2. Python-import dotted form "src." — replace trailing
-            #      slash with dot. Catches "from src.handlers" and
-            #      "import src.handlers". Boundary: same as (1).
-            root_dotted = root.rstrip("/").replace("/", ".") + "."
-            slashed = re.escape(root)
-            dotted = re.escape(root_dotted)
-            pattern = (
-                r"(?:^|[\s/(])(?:" + slashed + r"|" + dotted + r")"
-            )
-            if re.search(pattern, target_text, re.MULTILINE):
-                # Skip when the only match is the test_path itself
-                # (which lives under foundry-archive/ and is allowed).
-                # The captured_output is where source-leak imports show
-                # up; test_path under foundry-archive/ never triggers a
-                # forbidden-root match by construction (allowed-prefix
-                # test_path values don't contain "src/" etc. as anchored
-                # tokens). Continue to emit the failure.
+        scan_text = _mask_contract_surface_tokens(
+            target_text, contract_surface_tokens
+        )
+        for root, pattern in _FORBIDDEN_ROOT_PATTERNS:
+            if pattern.search(scan_text):
                 failures.append(
                     f"WRONG_TEST_SOURCE_LEAK: {obs_id} references "
                     f"forbidden root {root!r} in test_path or "

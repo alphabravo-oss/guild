@@ -1,0 +1,59 @@
+{
+  "stream": "TEST-01",
+  "cycle": 4,
+  "spec_format_version": "v2.1",
+  "spec_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+  "agent_path": "plugins/foundry/agents/spec-test-deriver.md",
+  "wall_clock_seconds": 18.7,
+  "uvx_subprocess_seconds": 15.2,
+  "observations": [
+    {
+      "observation_id": "OBS-090",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_validator_cli_contract.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-001",
+      "hypothesis_seed": 424242,
+      "status": "FAIL",
+      "captured_output": "$ python plugins/foundry/scripts/validate-test-observations.py ch.json\nTEST_OBSERVATION_SCHEMA_INVALID: malformed JSON\nAssertionError: expected exit 0 for in-contract channel; got 1",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-001", "FR-1"]
+    },
+    {
+      "observation_id": "OBS-091",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_mytool_version_contract.py",
+      "tests_spec": ["FR-1"],
+      "derived_from_contract_row": "CT-002",
+      "hypothesis_seed": 424243,
+      "status": "FAIL",
+      "captured_output": "$ go run ./cmd/mytool --version\nmytool 1.2.3\nAssertionError: expected shape {version: str}; stdout was bare prose",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-002", "FR-1"]
+    },
+    {
+      "observation_id": "OBS-092",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_cli_help_contract.py",
+      "tests_spec": ["FR-2"],
+      "derived_from_contract_row": "CT-003",
+      "hypothesis_seed": 424244,
+      "status": "FAIL",
+      "captured_output": "$ python src/cli.py --help\nusage: cli [-h]\nFile \"src/cli.py\", line 42, in main\nAssertionError: expected exit 2 on bad flag; got 0",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-003", "FR-2"]
+    },
+    {
+      "observation_id": "OBS-093",
+      "test_path": "foundry-archive/run-001/test_observations/generated/test_mytool_json_contract.py",
+      "tests_spec": ["FR-2"],
+      "derived_from_contract_row": "CT-004",
+      "hypothesis_seed": 424245,
+      "status": "FAIL",
+      "captured_output": "$ node lib/bin/mytool.js --json\n{\"ok\": false}\nAssertionError: expected non-zero exit alongside ok=false",
+      "negative_assertion_present": true,
+      "shape_not_value_check": "passed",
+      "citation_chain": ["A-001", "CT-004", "FR-2"]
+    }
+  ]
+}

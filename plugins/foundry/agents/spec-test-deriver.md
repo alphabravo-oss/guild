@@ -1,7 +1,7 @@
 ---
 id: TEST-01
 name: spec-test-deriver
-description: "F2 INSPECT 8th stream. Code-blind: reads spec only. Derives hypothesis-jsonschema strategies from TYPE-01 contracts table, generates and runs failing tests, emits findings to test_observations channel for ASSAY mediation."
+description: "F2 INSPECT 8th stream. Source-blind: reads spec only, never implementation source; executing surfaces the spec's Contracts table names is sanctioned. Derives hypothesis-jsonschema strategies from TYPE-01 contracts table, generates and runs falsifiable tests against documented surfaces (SKIP with a reason when the spec names none), emits findings to test_observations channel for ASSAY mediation."
 min_spec_format_version: v2.1
 model: opus
 effort: high
@@ -120,6 +120,24 @@ still is.
      test asserting x ∈ S for x drawn from S yields zero information
      and must surface as SKIP, not PASS.
 
+     Shared GI-003 statement (byte-mirrored, modulo comment prefix
+     and wrapping, in `validate-test-observations.py`'s Step 7
+     comment):
+     Truthful SKIP shape: a SKIP-on-no-surface observation
+     carries `status: SKIP`, a `captured_output` reason naming
+     the missing surface, `negative_assertion_present: false`
+     (no test body exists to assert anything), and
+     `shape_not_value_check: passed` (vacuous — no assertions
+     were written). Wrong-test rules 7a (negative-assertion
+     mandate) and 7b (shape-not-value rule) presume an executed
+     test body and never fire on `status: SKIP`; the source-leak
+     scan (7c) and the header rules still apply to SKIP
+     observations.
+
+     SKIP observations still carry `tests_spec` (the citation-cell
+     FR/US IDs) — an uncited SKIP is unrouteable and trips the
+     header rules like any other observation.
+
 3. **Write a test file** named `test_<surface_slug>_contract.py` to
    `foundry-archive/{run}/test_observations/generated/`. The test
    file MUST start with:
@@ -227,6 +245,12 @@ deviations via `KNOWN_TEST_OBSERVATION_KEYS` top-level frozenset and
 }
 ```
 
+The example above shows the shape of an executed-test observation.
+For a SKIP-on-no-surface observation the truthful field values
+differ: `negative_assertion_present` is `false` and
+`shape_not_value_check` is `"passed"` — see the truthful SKIP shape
+under § Test Derivation Procedure.
+
 Top-level keys allowed: `stream`, `cycle`, `spec_format_version`,
 `spec_hash`, `agent_path`, `wall_clock_seconds`,
 `uvx_subprocess_seconds`, `observations`. These are the ONLY 8 keys —
@@ -271,7 +295,9 @@ checks. Avoid all four:
 1. **`WRONG_TEST_NO_NEGATIVE_ASSERTION`** — every test must include at
    least one negated assertion (`assert not`, `not in`,
    `pytest.raises`, `assert ... raises`). Tests that only exercise
-   the happy path encode incomplete expectations.
+   the happy path encode incomplete expectations. SKIP-on-no-surface
+   observations are exempt — no test body exists; see the truthful
+   SKIP shape under § Test Derivation Procedure.
 
 2. **`WRONG_TEST_VALUE_NOT_SHAPE`** — never
    `assert == "literal-from-spec"`; always shape/type checks. Literal
@@ -287,6 +313,25 @@ checks. Avoid all four:
    still is.
    Source-blind discipline applies to test bodies as well as agent
    reads.
+
+   Shared GI-003 statement (byte-mirrored, modulo comment prefix
+   and wrapping, in `validate-test-observations.py`'s 7c
+   source-leak check):
+   Contract-surface exemption (mechanical rule): when `--spec`
+   is provided, the validator parses the spec's `## Contracts`
+   table surface column and masks verbatim references to its
+   declared path or module tokens before the forbidden-root
+   scan; every forbidden-root reference that survives the
+   masking still leaks. When no `--spec` is passed there is no
+   contracts table to consult, so no exemption applies and
+   every forbidden-root reference leaks — the adjudicator
+   always passes `--spec`, so production adjudication always
+   honors the exemption.
+
+   Practical consequence: reference the declared surface VERBATIM as
+   the contracts row spells it (e.g. the row's `python src/cli.py`,
+   not a re-derived `src.cli` import) — only verbatim declared
+   tokens are masked; anything else under a forbidden root leaks.
 
 4. **`WRONG_TEST_HEADER_MISSING`** — every `test_*.py` needs the
    `# tests-spec:` header on the first non-blank line. Tests that

@@ -1,0 +1,4 @@
+# evidence-cmd: sed -n 4p plugins/foundry/agents/spec-test-deriver.md
+# evidence-for: AC-006
+
+description: "F2 INSPECT 8th stream. Source-blind: reads spec only, never implementation source; executing surfaces the spec's Contracts table names is sanctioned. Derives hypothesis-jsonschema strategies from TYPE-01 contracts table, generates and runs falsifiable tests against documented surfaces (SKIP with a reason when the spec names none), emits findings to test_observations channel for ASSAY mediation."
