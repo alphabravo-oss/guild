@@ -10,7 +10,7 @@
       "name": "forge",
       "source": "./plugins/forge",
       "description": "Codebase-aware specification engine. Runs a grounded interview that captures implicit facts as A-AUTO-NNN entries, emits typed Global Invariants / State Transitions / Contracts tables, runs an adversarial spec review at R3.5, and writes a foundry-ready spec with version frontmatter \u2014 locked, classified, and verifiable. Brownfield runs produce a flow delta against the existing system; greenfield runs produce an end-state spec; cosmetic runs skip flow mapping. Forge plans. Foundry builds.",
-      "version": "4.4.0",
+      "version": "4.4.1",
       "category": "development",
       "author": {
         "name": "AlphaBravo"
