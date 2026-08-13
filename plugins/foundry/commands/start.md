@@ -563,7 +563,7 @@ Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")`
 
 Shut down all teammates → generate report → `Foundry-Phase("done")`.
 
-**Evidence lifecycle:** teammates commit `evidence/*.log` during the run (`git add -f`; `/evidence/` is gitignored) because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted and the run reaches F6, the logs are inert. Before merging the run's branch, strip them in one commit (`git rm -r evidence/`) — commit during the run, strip after acceptance, before merge.
+**Evidence lifecycle (mandatory F6 step):** teammates commit `evidence/*.log` during the run because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted, the logs are consumed and inert. As part of F6 DONE — after the report, before `Foundry-Phase("done")` — remove them from git in one commit: `git rm -r evidence/ && git commit -m "chore(foundry): strip consumed run evidence"`. Do not leave evidence logs in the branch; they rot (they pin file contents and line numbers at one commit) and are never read again after acceptance.
 
 ## CONTEXT MANAGEMENT
 
