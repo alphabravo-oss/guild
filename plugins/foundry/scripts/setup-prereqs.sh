@@ -4,10 +4,14 @@
 # Usage: bash scripts/setup-prereqs.sh [--project /path/to/project]
 #
 # Installs:
-#   - Foundry MCP server (via uvx from this plugin)
 #   - Playwright MCP (browser automation for SIGHT)
 #   - Serena MCP (LSP wiring for TRACE) — only if its daemon starts
 #   - Configures .mcp.json in the target project
+#
+# The Foundry MCP server itself is NOT registered here: since 4.7.0 the plugin
+# manifest declares it (plugin.json mcpServers), launched from the installed
+# plugin tree. This script only verifies it runs and migrates away any legacy
+# project-scope entry.
 
 set -euo pipefail
 
@@ -66,7 +70,7 @@ else
 fi
 
 info "Plugin root:  $PLUGIN_ROOT"
-info "MCP server:   $MCP_SERVER_SRC"
+info "MCP server:   bundled with the plugin (plugin.json mcpServers)"
 info "Project root: $PROJECT_ROOT"
 
 # ── Check prerequisites ─────────────────────────────────────────────────────
@@ -392,7 +396,7 @@ fi
 echo ""
 echo "Installed:"
 if [[ $MCP_SERVER_OK -eq 1 ]]; then
-  echo "  MCP Servers: foundry (uvx)"
+  echo "  MCP Servers: foundry (bundled with the plugin)"
 else
   echo "  MCP Servers: foundry FAILED — see the error above, then /foundry:update"
 fi
@@ -409,11 +413,10 @@ else
   echo "                 Start it with:   bash $SERENA_DAEMON start"
   echo "                 Survive reboots: bash $SERENA_DAEMON install-service"
 fi
-echo "  MCP source:  $MCP_SERVER_SRC"
 echo "  Config:      $MCP_FILE, $SERENA_DIR/project.yml"
 echo ""
-echo "To upgrade the foundry MCP server later, run /foundry:update."
-echo "Your .mcp.json carries no version and never needs hand-editing."
+echo "The foundry server ships inside the plugin — upgrade it with"
+echo "'claude plugin update foundry@guild' (or /foundry:update), then restart."
 echo ""
 echo "Commands available:"
 echo "  /foundry:start \"scope\" --spec path/to/spec.md    Start building"
