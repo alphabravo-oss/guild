@@ -1,0 +1,37 @@
+# evidence-cmd: M=plugins/foundry/commands/start.md; B=$(mktemp); cp "$M" "$B"; echo '== F0.6 names no model alias at all (it used to say "model: sonnet") =='; awk '/^### F0.6: PATTERN MAPPING/,/^### F0.5: DECOMPOSE/' "$M" | grep -cE '\b(opus|sonnet|haiku|fable|inherit)\b'; echo '== it sends the lead to the agent file instead =='; grep -o 'take the pin from the .model:. line of that same agent file' "$M" | sed 's/^/  /'; echo; echo '== every model alias start.md prints beside an agent path, vs that agent file =='; (cd plugins/foundry/mcp-server && uv run --with pytest python -c "from tests.test_model_config import _documented_pins as P, _frontmatter_model as F; [print('  start.md:%-4d %-30s documented=%-7s frontmatter=%-7s %s'%(n,a,al,F(a),'OK' if al==F(a) else 'STALE')) for n,a,al in P()]" 2>/dev/null); echo; echo '== guards, as shipped =='; (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -p no:cacheprovider -k 'documented_pins or f06' 2>/dev/null | tail -1); echo; echo '== D-011 reintroduced: F0.6 asserts model: sonnet again =='; L=$(grep -n 'spawn ONE .pattern-mapper. agent' "$M" | cut -d: -f1); sed -i.tmp "${L}s|.*|F0.6: spawn ONE pattern-mapper agent with prompt = full content of agents/pattern-mapper.md, model: sonnet.|" "$M"; rm -f "$M.tmp"; (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -p no:cacheprovider -k 'documented_pins or f06' 2>/dev/null | tail -3); cp "$B" "$M"; rm -f "$B"; echo; echo '== restored =='; (cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_model_config.py -q -p no:cacheprovider -k 'documented_pins or f06' 2>/dev/null | tail -1)
+# evidence-for: FR-009, NFR-001
+# evidence-volatile: (in )[0-9]+\.[0-9]+s
+
+== F0.6 names no model alias at all (it used to say "model: sonnet") ==
+0
+== it sends the lead to the agent file instead ==
+  take the pin from the `model:` line of that same agent file
+
+== every model alias start.md prints beside an agent path, vs that agent file ==
+  start.md:71   researcher                     documented=sonnet  frontmatter=sonnet  OK
+  start.md:511  tracer                         documented=sonnet  frontmatter=sonnet  OK
+  start.md:512  flow-tracer                    documented=sonnet  frontmatter=sonnet  OK
+  start.md:513  assayer                        documented=opus    frontmatter=opus    OK
+  start.md:514  research-auditor               documented=haiku   frontmatter=haiku   OK
+  start.md:515  coverage-diff                  documented=haiku   frontmatter=haiku   OK
+  start.md:516  spec-test-deriver              documented=opus    frontmatter=opus    OK
+  start.md:546  test-observations-adjudicator  documented=opus    frontmatter=opus    OK
+  start.md:596  tracer                         documented=sonnet  frontmatter=sonnet  OK
+  start.md:597  assayer                        documented=opus    frontmatter=opus    OK
+  start.md:598  codebase-mapper                documented=haiku   frontmatter=haiku   OK
+  start.md:599  researcher                     documented=sonnet  frontmatter=sonnet  OK
+  start.md:600  research-synthesizer           documented=haiku   frontmatter=haiku   OK
+  start.md:601  research-auditor               documented=haiku   frontmatter=haiku   OK
+  start.md:602  coverage-diff                  documented=haiku   frontmatter=haiku   OK
+  start.md:603  nyquist-auditor                documented=sonnet  frontmatter=sonnet  OK
+
+== guards, as shipped ==
+2 passed, 108 deselected in 0.01s
+
+== D-011 reintroduced: F0.6 asserts model: sonnet again ==
+FAILED tests/test_model_config.py::test_start_md_documented_pins_match_agent_frontmatter
+FAILED tests/test_model_config.py::test_f06_pattern_map_spawn_defers_to_the_agent_file
+2 failed, 108 deselected in 0.03s
+
+== restored ==
+2 passed, 108 deselected in 0.01s

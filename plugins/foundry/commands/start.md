@@ -78,7 +78,7 @@ Before F0.5, if the codebase is unfamiliar or has strict patterns: spawn one `co
 
 ### F0.6: PATTERN MAPPING
 
-After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and before F0.5 DECOMPOSE: spawn ONE `pattern-mapper` agent (`subagent_type: "general-purpose"` with prompt = full content of `${CLAUDE_PLUGIN_ROOT}/agents/pattern-mapper.md`, model: sonnet).
+After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and before F0.5 DECOMPOSE: spawn ONE `pattern-mapper` agent (`subagent_type: "general-purpose"` with prompt = full content of `${CLAUDE_PLUGIN_ROOT}/agents/pattern-mapper.md`). **Model: take the pin from the `model:` line of that same agent file** — a `general-purpose` spawn hands the file over as prompt text, so its frontmatter is not applied for you. `pattern-mapper` is not steerable by the `model` option and no `agent_config` is returned for this step, so that agent file is the only source of truth: never name its model in this prose, and never re-derive one from the allocation table.
 
 **Why:** Casting prompts that reference an analog file:line + 20-30 line code excerpt produce sharper builds than prompts that say "follow conventions." Without a pattern map, every casting independently re-discovers (or fabricates) the same shape. With one, every casting gets a concrete excerpt to mirror.
 
@@ -511,9 +511,9 @@ Call `Foundry-Gate(phase='cast')`.
 - **TRACE** — agent with `agents/tracer.md` (sonnet). Upstream wiring: EXISTS → SUBSTANTIVE → WIRED → PLACED.
 - **FLOW_TRACE** — V3 only, when `flow-delta.json` exists. Agent with `agents/flow-tracer.md` (sonnet). Downstream wiring: PRODUCED → CONSUMES_UPSTREAM → SUBSTANTIVE → CHAIN_INTACT. Pairs with TRACE to cover both directions. Primary catcher of "endpoint exists but is disconnected from its declared upstream" — the exact failure V3 is engineered to prevent.
 - **PROVE** — agent with `agents/assayer.md` (opus). Spec-before-code + stub detection + research compliance.
-- **RESEARCH_AUDIT** — agent with `agents/research-auditor.md` (sonnet). Verifies code honors research. Skip if no research + no Informational items.
-- **COVERAGE_DIFF** — MIGRATION only. Agent with `agents/coverage-diff.md` (sonnet). 1:1 source → destination check.
-- **TEST-01** — agent with `agents/spec-test-deriver.md` (sonnet, code-blind). Reads spec only; derives hypothesis-jsonschema strategies from TYPE-01 contracts table; runs generated tests in ephemeral worktree; emits findings to `test_observations/test-deriver-cycle-{N}.json`. ASSAY (F4) routes via 5th parallel agent (`agents/test-observations-adjudicator.md`).
+- **RESEARCH_AUDIT** — agent with `agents/research-auditor.md` (haiku). Verifies code honors research. Skip if no research + no Informational items.
+- **COVERAGE_DIFF** — MIGRATION only. Agent with `agents/coverage-diff.md` (haiku). 1:1 source → destination check.
+- **TEST-01** — agent with `agents/spec-test-deriver.md` (opus, code-blind). Reads spec only; derives hypothesis-jsonschema strategies from TYPE-01 contracts table; runs generated tests in ephemeral worktree; emits findings to `test_observations/test-deriver-cycle-{N}.json`. ASSAY (F4) routes via 5th parallel agent (`agents/test-observations-adjudicator.md`).
 - **SIGHT** — lead runs Playwright directly (only exception to "lead never does work").
 - **TEST / PROBE** — inline test suite / API smoke.
 
@@ -595,9 +595,9 @@ Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `es
 
 - `agents/tracer.md` — TRACE (sonnet, three-level EXISTS→SUBSTANTIVE→WIRED)
 - `agents/assayer.md` — PROVE / ASSAY (opus, spec-before-code + stub detection)
-- `agents/codebase-mapper.md` — F0 mapping (sonnet, extracts mandatory_rules)
+- `agents/codebase-mapper.md` — F0 mapping (haiku, extracts mandatory_rules)
 - `agents/researcher.md` — F0 research (sonnet)
-- `agents/research-synthesizer.md` — F0 synthesis (sonnet)
-- `agents/research-auditor.md` — F2 research compliance (sonnet)
-- `agents/coverage-diff.md` — F2 MIGRATION 1:1 check (sonnet)
+- `agents/research-synthesizer.md` — F0 synthesis (haiku)
+- `agents/research-auditor.md` — F2 research compliance (haiku)
+- `agents/coverage-diff.md` — F2 MIGRATION 1:1 check (haiku)
 - `agents/nyquist-auditor.md` — F5.5 test generation (sonnet)

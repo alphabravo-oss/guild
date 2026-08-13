@@ -552,6 +552,103 @@ def test_spawn_step_defers_to_the_returned_instructions(label: str) -> None:
     )
 
 
+# --- Documented pins must match the agent files (D-011) ---------------------
+#
+# Outside the two MCP-driven spawn steps, start.md DOCUMENTS each agent's pin
+# next to the agent file it names ("agents/tracer.md (sonnet)"). Documenting a
+# pin is not deciding a model, so the guards above deliberately leave those
+# lines alone — but a STALE pin is worse than no annotation at all: a lead
+# following "model: sonnet" for an agent whose frontmatter now reads opus
+# silently undoes the baseline raise. The agent file is the only source of
+# truth (A-AUTO-011: a pin can never be made dynamic), so every alias this
+# command prints beside an agent path is checked against it. A baseline change
+# that forgets start.md is then a test failure, not a run-time surprise.
+
+AGENTS_DIR = REPO_ROOT / "plugins" / "foundry" / "agents"
+
+# Foundry's own agents only. ``plugins/forge/agents/spec-reviewer.md`` appears
+# in the F0.5 roster as a bare identifier that is never resolved from here
+# (Forge has no path reachable from ${CLAUDE_PLUGIN_ROOT}), and this casting
+# does not read forge.
+_AGENT_REF_RE = re.compile(r"(?<!forge/)agents/([a-z0-9-]+)\.md")
+
+
+def _frontmatter_model(agent: str) -> str:
+    """The ``model:`` an agent file declares, or ``""`` when it declares none."""
+    path = AGENTS_DIR / f"{agent}.md"
+    assert path.exists(), f"start.md names {path.name}, which does not exist"
+    found = re.search(
+        r"^model:\s*(\S+)\s*$", path.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    return found.group(1) if found else ""
+
+
+def _documented_pins() -> list[tuple[int, str, str]]:
+    """``(line_no, agent, alias)`` for every documented pin in start.md.
+
+    Each alias binds to the NEAREST agent reference on its line, in either
+    direction: the F2 roster writes the path first (``agents/tracer.md
+    (sonnet)``) while F0 RESEARCH writes the alias first (``(model: sonnet,
+    prompt: .../agents/researcher.md)``). Binding by proximity also keeps the
+    TEST-01 row honest — it names ``spec-test-deriver.md`` beside its pin and
+    ``test-observations-adjudicator.md`` at the far end of the same line, and
+    that row is exactly where a stale pin last hid. An alias on a line with no
+    agent reference is not a documented pin and is ignored.
+    """
+    pins: list[tuple[int, str, str]] = []
+    lines = START_MD.read_text(encoding="utf-8").splitlines()
+    for number, line in enumerate(lines, start=1):
+        refs = list(_AGENT_REF_RE.finditer(line))
+        if not refs:
+            continue
+        for alias in _MODEL_ALIAS_RE.finditer(line):
+            nearest = min(refs, key=lambda r: abs(r.start() - alias.start()))
+            pins.append((number, nearest.group(1), alias.group(0)))
+    return pins
+
+
+def test_start_md_documented_pins_match_agent_frontmatter() -> None:
+    """Every alias documented beside an agent path is that agent's real pin.
+
+    The F0.6 PATTERN MAPPING prose kept saying "model: sonnet" for
+    ``pattern-mapper`` after its frontmatter moved to opus — and
+    ``pattern-mapper`` is the agent whose wrong analog propagates into every
+    casting prompt. Staleness is the defect, not the annotation, so this
+    checks the annotations rather than banning them.
+    """
+    pins = _documented_pins()
+    assert len(pins) >= 10, (
+        f"only {len(pins)} documented pin(s) found — the F2 INSPECT and AGENT "
+        "PROMPTS rosters carry more than that, so the scan is matching too "
+        "little to prove anything"
+    )
+    drift = [
+        f"start.md:{number} documents {agent} as '{alias}', but "
+        f"agents/{agent}.md declares '{_frontmatter_model(agent) or '<none>'}'"
+        for number, agent, alias in pins
+        if alias != _frontmatter_model(agent)
+    ]
+    assert not drift, "stale model literal(s) in start.md prose:\n  " + "\n  ".join(
+        drift
+    )
+
+
+def test_f06_pattern_map_spawn_defers_to_the_agent_file() -> None:
+    """F0.6 points the lead at the agent file instead of restating a model.
+
+    F0.6 is the one spawn step with no MCP-returned ``agent_config`` to obey —
+    the server knows nothing about ``pattern-mapper`` — so deference here means
+    the agent file's own pin. Naming a model in this prose instead would be a
+    second source of truth for a value that already lives one file away, which
+    is precisely how the sonnet/opus drift got in.
+    """
+    step = _spawn_step("### F0.6: PATTERN MAPPING", "pattern-mapper")
+    assert "take the pin from the `model:` line of that same agent file" in step, (
+        "the F0.6 spawn step must send the lead to pattern-mapper.md's own "
+        f"frontmatter for the model; got: {step!r}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # The relaxed frontmatter assertions still bite
 # --------------------------------------------------------------------------- #
