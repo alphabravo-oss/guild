@@ -126,8 +126,10 @@ else
         warn "After this refresh, remove it: re-run /foundry:setup or 'claude mcp remove foundry'."
     else
         # No standalone entry is the healthy state since 4.7.0: the plugin
-        # manifest declares the server, launched via `uv run --directory` from
-        # the installed plugin tree on every start — no uvx cache to refresh.
+        # manifest declares the server, launched via `uv run --project` from
+        # the installed plugin tree on every start (cwd stays the user's
+        # project; --project-root gets ${CLAUDE_PROJECT_DIR}) — no uvx cache
+        # to refresh.
         info "No standalone foundry MCP entry registered — none is needed."
         info "The plugin bundles its own server (plugin.json mcpServers); it is"
         info "launched fresh from the installed plugin tree on every session."
