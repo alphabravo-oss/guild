@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py::test_aggregation_rule_stated_identically tests/test_intent_coverage.py::test_tool_summary_carries_per_cell_verdict_counts -q 2>/dev/null
+# evidence-for: AC-002, AC-003
+# evidence-volatile: \d+\.\d+s
+
+..                                                                       [100%]
+2 passed in 0.02s

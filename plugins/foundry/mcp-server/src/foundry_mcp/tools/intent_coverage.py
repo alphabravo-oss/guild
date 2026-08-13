@@ -184,6 +184,14 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     propagated_count = sum(
         1 for c in matrix if c.get("verdict") == "PROPAGATED"
     )
+    # GRIND D-006 / AC-002: per-cell verdict counts — the reported summary
+    # must carry the full per-cell picture, including DROPPED cells that
+    # do not block the gate because their answer is covered elsewhere.
+    # Per-cell derivation stays per-cell; gate semantics are untouched.
+    cell_verdict_counts = {
+        verdict: sum(1 for c in matrix if c.get("verdict") == verdict)
+        for verdict in ("PROPAGATED", "PARAPHRASED", "DROPPED")
+    }
 
     if validator_exit == 0 and not dropped:
         # Locked decision (Open Question 2): stamp marker file on pass.
@@ -203,6 +211,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "propagated_count": propagated_count,
             "paraphrased_count": len(paraphrased),
             "paraphrased_answers": paraphrased,
+            "cell_verdict_counts": cell_verdict_counts,
             "dropped_answers": [],
             "matrix_path": str(coverage_path),
         }
@@ -224,6 +233,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "action": "proceed_to_validate",
             "propagated_count": propagated_count,
             "paraphrased_answers": paraphrased,
+            "cell_verdict_counts": cell_verdict_counts,
             "dropped_answers": [],
             "matrix_path": str(coverage_path),
             "intent_coverage_summary": summary,

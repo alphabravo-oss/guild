@@ -1166,33 +1166,70 @@ TOOL_MODULE_PATH = (
     / "foundry_mcp" / "tools" / "intent_coverage.py"
 )
 
+SERVER_MODULE_PATH = (
+    REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src"
+    / "foundry_mcp" / "server.py"
+)
+
+START_MD_PATH = REPO_ROOT / "plugins" / "foundry" / "commands" / "start.md"
+
+# Every surface that states the F0.7 gate rule. GRIND D-007: the original
+# guard checked only the first three, which is exactly how D-001
+# (server.py Tool description) and D-004 (start.md F0.7 steps) shipped
+# still stating the superseded per-cell rule.
+_GATE_RULE_SURFACES = (
+    CANONICAL_VALIDATOR_PATH,
+    AGENT_PATH,
+    TOOL_MODULE_PATH,
+    SERVER_MODULE_PATH,
+    START_MD_PATH,
+)
+
+# Superseded per-cell phrasings (compared lowercase against
+# whitespace-normalized file text). "any cell with verdict==dropped" was
+# the old docstring rule; "on any dropped" / "zero dropped" were the
+# server.py description and start.md step phrasings that keyed the gate
+# on a single DROPPED cell rather than on a zero-coverage answer.
+_SUPERSEDED_PER_CELL_PHRASINGS = (
+    "any cell with verdict==dropped",
+    "on any dropped",
+    "zero dropped",
+)
+
 
 def test_aggregation_rule_stated_identically() -> None:
-    """AC-003 / GI-003 — validator and agent contract state the same rule.
+    """AC-003 / GI-003 — every gate surface states the same per-answer rule.
 
     The per-answer aggregation rule must appear word-for-word (modulo
     line-wrapping) in ALL of:
       1. the validator docstring (canonical module),
       2. plugins/foundry/agents/intent-carrier.md,
-      3. the Foundry-Intent-Coverage MCP tool module docstring
-    so no surface is left stating the superseded per-cell rule.
+      3. the Foundry-Intent-Coverage MCP tool module docstring,
+      4. the Foundry-Intent-Coverage Tool description in server.py,
+      5. the F0.7 step descriptions in commands/start.md
+    AND no surface may retain a superseded per-cell phrasing — so no
+    surface is left stating the superseded per-cell rule.
     """
-    for path in (CANONICAL_VALIDATOR_PATH, AGENT_PATH, TOOL_MODULE_PATH):
-        normalized = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-        # Comment/prose prefixes ("# ", markdown bullets) never interrupt
-        # the sentence mid-line in any of the three files, so plain
-        # whitespace normalization suffices.
+    for path in _GATE_RULE_SURFACES:
+        # Double quotes are stripped before whitespace normalization so
+        # that Python's implicitly-concatenated string literals (the
+        # server.py Tool description spells the sentence across '"..."'
+        # chunks) reconstruct to their runtime text. The sentence itself
+        # contains no double quote, so this is lossless for the check.
+        raw = path.read_text(encoding="utf-8").replace('"', " ")
+        normalized = re.sub(r"\s+", " ", raw)
         assert _AGGREGATION_SENTENCE in normalized, (
             f"per-answer aggregation sentence missing or reworded in "
-            f"{path.name} — AC-003 requires the SAME words in the "
-            f"validator and the agent contract"
+            f"{path.name} — AC-003 requires the SAME words on every "
+            f"surface that states the gate rule"
         )
-    # No surface still states the superseded per-cell block rule.
-    for path in (CANONICAL_VALIDATOR_PATH, AGENT_PATH, TOOL_MODULE_PATH):
-        normalized = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-        assert "any cell with verdict==DROPPED" not in normalized, (
-            f"{path.name} still carries the superseded per-cell rule"
-        )
+        # No surface still states the superseded per-cell block rule.
+        lowered = normalized.lower()
+        for phrase in _SUPERSEDED_PER_CELL_PHRASINGS:
+            assert phrase not in lowered, (
+                f"{path.name} still carries the superseded per-cell rule "
+                f"phrasing {phrase!r}"
+            )
 
 
 def test_tool_partial_dropped_covered_elsewhere_passes(
@@ -1223,6 +1260,70 @@ def test_tool_partial_dropped_covered_elsewhere_passes(
     assert result["action"] == "proceed_to_validate", result
     assert result["dropped_answers"] == [], result
     assert (run_dir / ".f07-intent-clean").is_file()
+
+
+def test_tool_summary_carries_per_cell_verdict_counts(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-006 / AC-002 — reported summary keeps the per-cell picture.
+
+    On a pilot-shaped matrix the gate passes with DROPPED cells present;
+    the summary persisted to castings/manifest.json AND the passing
+    return payload must carry per-cell counts for ALL THREE verdicts —
+    including the DROPPED cell count — so the non-blocking DROPPED cells
+    are not hidden from the report (must-have truth 3: per-cell verdicts
+    survive "in the emitted matrix and in the reported summary").
+    Existing per-answer fields (dropped_answers, paraphrased_answers)
+    and gate semantics are unchanged.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    spec_text = (
+        "---\nspec_format_version: v2.1\n---\n"
+        "## Appendix: Interview Transcript\n\n"
+        "## A-001 [Locked]\nFirst answer. [from Q-001]\n\n"
+        "## A-002 [Locked]\nSecond answer. [from Q-002]\n\n"
+        "## A-003 [Locked]\nThird answer. [from Q-003]\n"
+    )
+    # Pilot shape: every answer covered in >= 1 casting, DROPPED cells
+    # elsewhere. 6 cells: 3 PROPAGATED, 1 PARAPHRASED, 2 DROPPED.
+    project_root, run_dir = intent_run(
+        spec_text,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+            {"answer_id": "A-001", "casting_id": "2",
+             "verdict": "DROPPED", "citation_chain": ["A-001"]},
+            {"answer_id": "A-002", "casting_id": "1",
+             "verdict": "DROPPED", "citation_chain": ["A-002"]},
+            {"answer_id": "A-002", "casting_id": "2",
+             "verdict": "PROPAGATED", "citation_chain": ["A-002"]},
+            {"answer_id": "A-003", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-003"]},
+            {"answer_id": "A-003", "casting_id": "2",
+             "verdict": "PARAPHRASED", "citation_chain": ["A-003"]},
+        ],
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    expected_counts = {"PROPAGATED": 3, "PARAPHRASED": 1, "DROPPED": 2}
+    assert result["passed"] is True, result
+    assert result["cell_verdict_counts"] == expected_counts, result
+    assert (
+        result["intent_coverage_summary"]["cell_verdict_counts"]
+        == expected_counts
+    ), result
+    # Existing per-answer reporting unchanged (AC-002).
+    assert result["dropped_answers"] == [], result
+    assert result["intent_coverage_summary"]["dropped_answers"] == [], result
+    # Persisted manifest summary carries the same per-cell counts.
+    manifest = json.loads(
+        (run_dir / "castings" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert (
+        manifest["intent_coverage_summary"]["cell_verdict_counts"]
+        == expected_counts
+    ), manifest
 
 
 def test_tool_redecompose_hints_list_exactly_zero_coverage_answers(

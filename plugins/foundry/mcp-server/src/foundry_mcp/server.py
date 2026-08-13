@@ -269,9 +269,13 @@ async def list_tools() -> list[Tool]:
                 "transcript-in-spec-appendix and emitted casting prompts. Runs at "
                 "F0.7 between F0.5 DECOMPOSE and F0.9 VALIDATE. Returns "
                 "{passed, dropped_answers, paraphrased_answers, propagated_count, "
-                "matrix_path}. On any DROPPED, returns {action: 'redecompose'} "
-                "with the missing A-NNN list as re-decompose guidance — never "
-                "amends casting prompts in place."
+                "matrix_path}. An answer_id is DROPPED (gate-blocking) only when "
+                "every casting's cell for it is DROPPED; a PROPAGATED or "
+                "PARAPHRASED cell in any casting keeps the gate open for that "
+                "answer, and per-cell DROPPED verdicts remain recorded in the "
+                "matrix without blocking. On any zero-coverage answer, returns "
+                "{action: 'redecompose'} with the missing A-NNN list as "
+                "re-decompose guidance — never amends casting prompts in place."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
