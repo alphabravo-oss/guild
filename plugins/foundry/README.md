@@ -242,13 +242,15 @@ claude --config model=fable
 | Agent | Baseline pin | Steerable by `model`? |
 |---|---|---|
 | `foundry:teammate` | opus, `effort: xhigh` | Yes |
-| `foundry:flow-mapper` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:flow-mapper` † | opus, `effort: high` (was sonnet) | Yes — but by **forge's** option, not this one |
 | `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
 | `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
 | `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
 | `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
 | `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
 | `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
+
+† Not by foundry's own option. `foundry:flow-mapper` ships in foundry, but foundry never spawns it — its only spawn site is `/forge:plan`'s V3 brownfield R0 flow-map step, so the value that steers it comes from **forge's** `model` option, set under `forge@guild`. Foundry's MCP server carries `foundry:flow-mapper` in its steerable set so the policy names foundry's full membership in one place, but it has no spawn site to apply it at. **Set only `foundry@guild` and flow-mapper stays on its frontmatter pin, with no diagnostic** — an option that reaches nothing looks exactly like one that was never set. If you run `/forge:plan` in brownfield mode and want flow-mapper steered, set the option under `forge@guild` too.
 
 Every other agent keeps the model it ships with and is not reachable by the option at any setting: foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, `forge:researcher` stays sonnet, and foundry's four haiku agents — `codebase-mapper`, `coverage-diff`, `research-auditor`, `research-synthesizer` — stay haiku. **No agent in any plugin other than foundry and forge changes model at any setting of this option.**
 

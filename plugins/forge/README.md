@@ -136,20 +136,22 @@ claude --config model=fable
 |---|---|---|
 | `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
 | `foundry:teammate` | opus, `effort: xhigh` | Yes |
-| `foundry:flow-mapper` | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:flow-mapper` † | opus, `effort: high` (was sonnet) | Yes |
 | `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
 | `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
 | `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
 | `foundry:pattern-mapper` | opus (was sonnet) | No — fixed baseline |
 | `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
 
-`forge:spec-reviewer` is the only forge agent the option reaches. Every other agent keeps the model it ships with and is not reachable at any setting: `forge:researcher` stays sonnet, foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, and foundry's four haiku agents stay haiku. **No agent in any plugin other than forge and foundry changes model at any setting of this option.**
+† `foundry:flow-mapper` ships in **foundry**, not forge — but `/forge:plan`'s V3 brownfield R0 flow-map step is its only spawn site, so the value that steers it is **forge's** `model` option, the one set under `forge@guild`. The identically-named option under `foundry@guild` never reaches it, because foundry has no flow-mapper spawn site of its own.
+
+`forge:spec-reviewer` is the only agent forge itself ships that the option reaches. Every agent not listed above keeps the model it ships with and is not reachable at any setting: `forge:researcher` stays sonnet, foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, and foundry's four haiku agents stay haiku. **No agent in any plugin other than forge and foundry changes model at any setting of this option.**
 
 ### How the value is delivered
 
 Frontmatter pins are always literal. An agent declaring `model: ${user_config.model}` fails at spawn time — the placeholder reaches the model resolver unsubstituted — so the option can never rewrite a pin. Each pin is the floor, and the configured value is applied at spawn time on top of it.
 
-Forge ships no MCP server, so the value travels through command content instead: `/forge:plan`'s R3.5 step carries a `${user_config.model}` token that the harness substitutes before the Lead reads it, and the Lead passes the substituted value as the spawn `model` parameter for `forge:spec-reviewer` and for no other agent. **An empty substitution yields no parameter at all** — an unset option substitutes as an empty string rather than as an absent token, so the emptiness check is what makes "unset" indistinguishable from "never implemented". Foundry's half of the pilot uses a different path: its MCP server receives the value as an environment variable and owns the policy centrally.
+Forge ships no MCP server, so the value travels through command content instead: `/forge:plan` carries a `${user_config.model}` token at each of its two steerable spawn sites — the R3.5 spec-review step and the V3 brownfield R0 flow-map step — and the harness substitutes each one before the Lead reads it. The Lead passes the substituted value as the spawn `model` parameter for `forge:spec-reviewer` at R3.5 and for `foundry:flow-mapper` at R0 (the † agent above), and for no other spawn: `forge:researcher` at R1.5 keeps its own frontmatter pin, and R0's four `Explore` surveyors (V2 only — V3 brownfield replaces them with the flow-map step) and the interview main thread keep inheriting your session model. The two substitutions are independent; each site resolves the option on its own. **An empty substitution yields no parameter at all** — an unset option substitutes as an empty string rather than as an absent token, so the emptiness check is what makes "unset" indistinguishable from "never implemented". Foundry's half of the pilot uses a different path: its MCP server receives the value as an environment variable and owns the policy centrally.
 
 ### If you cannot reach the configured model
 
