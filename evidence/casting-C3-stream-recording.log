@@ -3,5 +3,5 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-.......................                                                  [100%]
-23 passed in 0.74s
+........................                                                 [100%]
+24 passed in 0.24s

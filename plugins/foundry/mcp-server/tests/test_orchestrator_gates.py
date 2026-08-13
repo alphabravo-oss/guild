@@ -17,9 +17,12 @@ P4 (FR-005 / FR-008 / ST-002) — passing-gate guidance advance + token decouple
 NFR-002 — no regression: the refactored ``_count_spec_requirements`` counts
 identically, and synthesis is a no-op when verdicts are already complete.
 
-US-004 (AC-013 / AC-014) — every INSPECT stream is recordable:
+US-004 (AC-013 / AC-014, + D-008) — every INSPECT stream is recordable:
   ``research_audit`` and ``flow_trace`` join the ``Foundry-Stream`` valid set
-  (recordable, NOT required), the invalid-stream error lists all seven names
+  (AC-013), and ``coverage_diff`` joins per the D-008 lead ruling ("all
+  streams the phase guide defines" — coverage_diff is the MIGRATION-run F2
+  stream the orchestrator's own next-action guidance names). All are
+  recordable, NOT required. The invalid-stream error lists all eight names
   sorted, the MCP tool's JSON-Schema enum and the runtime guard agree exactly,
   and state written by the old five-name build still loads and gates
   identically.
@@ -414,10 +417,13 @@ def test_synthesis_is_noop_when_verdicts_already_complete(run_env):
 # US-004 — every INSPECT stream is recordable (AC-013 / AC-014)
 # --------------------------------------------------------------------------- #
 
-# The closed seven-name vocabulary AC-013 lands on. No eighth name (notably
-# NOT coverage_diff — never accepted by the runtime, not added by AC-013).
+# The closed eight-name vocabulary: AC-013's two additions plus coverage_diff
+# per the D-008 lead ruling (US-004's "all streams the phase guide defines"
+# governs; the phase guide defines COVERAGE_DIFF as the MIGRATION-run F2
+# stream, and foundry_next_action's own guidance tells the lead to record it).
 EXPECTED_STREAMS = {
     "trace", "prove", "sight", "test", "probe", "research_audit", "flow_trace",
+    "coverage_diff",
 }
 
 OLD_FIVE = ["trace", "prove", "sight", "test", "probe"]
@@ -434,8 +440,9 @@ def _old_marker_body(items_checked: int = 10, items_total: int = 10) -> str:
     )
 
 
-def test_valid_streams_vocabulary_is_exactly_seven():
-    """AC-013 (closed vocabulary): the valid set is exactly the seven names."""
+def test_valid_streams_vocabulary_is_exactly_eight():
+    """AC-013 + D-008 (closed vocabulary): the valid set is exactly the eight
+    names — the old five, AC-013's two, and coverage_diff. No ninth."""
     assert set(fo.VALID_STREAMS) == EXPECTED_STREAMS
 
 
@@ -462,9 +469,24 @@ def test_flow_trace_stream_recordable_writes_marker(run_env):
     assert "items_checked=4" in marker.read_text(encoding="utf-8")
 
 
-def test_all_seven_streams_recordable(run_env):
-    """AC-013 + AC-014: every name in the valid set records ok, and the five
-    pre-existing names produce byte-identical marker filenames."""
+def test_coverage_diff_stream_recordable_writes_marker(run_env):
+    """D-008: recording coverage_diff succeeds instead of 'Invalid stream'
+    (the tool the next-action guidance names accepts the stream the guidance
+    names) and writes .coverage_diff-complete."""
+    project_root, fdir = run_env
+    result = foundry_mark_stream(
+        "coverage_diff", cycle=1, items_checked=9, project_root=project_root
+    )
+    assert result.get("ok") is True, result
+    assert result["stream"] == "coverage_diff"
+    marker = fdir / ".coverage_diff-complete"
+    assert marker.exists()
+    assert "items_checked=9" in marker.read_text(encoding="utf-8")
+
+
+def test_all_eight_streams_recordable(run_env):
+    """AC-013 + AC-014 + D-008: every name in the valid set records ok, and
+    the five pre-existing names produce byte-identical marker filenames."""
     project_root, fdir = run_env
     for stream in sorted(fo.VALID_STREAMS):
         result = foundry_mark_stream(
@@ -476,22 +498,24 @@ def test_all_seven_streams_recordable(run_env):
         assert (fdir / f".{old}-complete").exists()
 
 
-def test_invalid_stream_error_lists_all_seven_sorted(run_env):
-    """AC-013: an unknown stream errors with the sorted seven-name list."""
+def test_invalid_stream_error_lists_all_eight_sorted(run_env):
+    """AC-013 + D-008: an unknown stream errors with the sorted eight-name
+    list, derived from the guard's own set."""
     project_root, _fdir = run_env
     result = foundry_mark_stream(
         "bogus", cycle=1, items_checked=1, project_root=project_root
     )
     assert "error" in result
     assert (
-        "flow_trace, probe, prove, research_audit, sight, test, trace"
+        "coverage_diff, flow_trace, probe, prove, research_audit, sight, "
+        "test, trace"
         in result["error"]
     )
 
 
-def test_zero_items_hint_enumerates_all_seven_streams(run_env):
+def test_zero_items_hint_enumerates_all_eight_streams(run_env):
     """key_link 5: the items_checked<=0 hint prose names a counting unit for
-    every stream in the enum it sits beside — including the two new names."""
+    every stream in the enum it sits beside — including all three new names."""
     project_root, _fdir = run_env
     result = foundry_mark_stream(
         "research_audit", cycle=1, items_checked=0, project_root=project_root
@@ -518,6 +542,7 @@ def test_old_five_name_state_still_loads_and_gates_identically(run_env):
     assert streams["required"] == ["trace", "prove", "test", "sight"]
     assert "research_audit" not in streams["required"]
     assert "flow_trace" not in streams["required"]
+    assert "coverage_diff" not in streams["required"]
 
     # Re-recording over an old-format marker parses its items_checked= line:
     # 3 < 10 * 0.7 triggers the coverage-drop warning (proof the old body
@@ -530,10 +555,11 @@ def test_old_five_name_state_still_loads_and_gates_identically(run_env):
 
 
 def test_new_streams_recordable_but_not_required(run_env):
-    """NFR-002: recording both new streams does not alter the required set or
-    satisfy the gate — recordable is not required."""
+    """NFR-002: recording the new streams does not alter the required set or
+    satisfy the gate — recordable is not required (coverage_diff included:
+    D-008 makes it recordable, never required, MIGRATION or not)."""
     project_root, fdir = run_env
-    for new in ["research_audit", "flow_trace"]:
+    for new in ["research_audit", "flow_trace", "coverage_diff"]:
         result = foundry_mark_stream(
             new, cycle=1, items_checked=2, project_root=project_root
         )
@@ -546,8 +572,9 @@ def test_new_streams_recordable_but_not_required(run_env):
 
 def test_tool_schema_enum_matches_runtime_valid_set():
     """must_have truth 5: the Foundry-Stream JSON-Schema enum and the runtime
-    guard accept exactly the same seven names — nothing advertised that the
-    runtime rejects (the AC-013 defect), and nothing accepted but hidden."""
+    guard accept exactly the same eight names — nothing advertised that the
+    runtime rejects (the AC-013 / D-008 defect), and nothing accepted but
+    hidden."""
     from foundry_mcp import server as foundry_server
 
     tools = asyncio.run(foundry_server.list_tools())
@@ -557,9 +584,9 @@ def test_tool_schema_enum_matches_runtime_valid_set():
     assert enum == sorted(fo.VALID_STREAMS)
 
 
-def test_grind_start_clears_all_seven_stream_markers(run_env):
+def test_grind_start_clears_all_eight_stream_markers(run_env):
     """Honest completion state across GRIND cycles: grind_start clears every
-    recordable stream's marker — including the two new names — so no stale
+    recordable stream's marker — including all three new names — so no stale
     'complete' survives into the next INSPECT. Required set is untouched."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F3")

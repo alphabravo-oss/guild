@@ -602,8 +602,11 @@ def foundry_gate(
 # Single source of truth for the runtime guard AND the MCP tool's JSON-Schema
 # enum (server.py derives its enum from this set), so the two sites cannot
 # drift — the AC-013 defect was exactly that drift: the schema advertised
-# streams the runtime rejected. Recordable is NOT required: the required-
-# stream computation in _check_streams_complete is intentionally independent.
+# streams the runtime rejected. coverage_diff joined per D-008: the phase
+# guide defines it as an F2 INSPECT stream (MIGRATION runs) and the
+# next-action guidance names it, so rejecting it contradicted the module's
+# own guidance. Recordable is NOT required: the required-stream computation
+# in _check_streams_complete is intentionally independent.
 # Extend only via phase-level RFC.
 VALID_STREAMS = frozenset(
     {
@@ -614,6 +617,7 @@ VALID_STREAMS = frozenset(
         "probe",
         "research_audit",
         "flow_trace",
+        "coverage_diff",
     }
 )
 
@@ -641,7 +645,8 @@ def foundry_mark_stream(
                      "trace: symbols checked. prove: requirements checked. "
                      "sight: pages/elements exercised. test: tests run. "
                      "probe: endpoints hit. research_audit: recommendations audited. "
-                     "flow_trace: flow-delta packets verified.",
+                     "flow_trace: flow-delta packets verified. "
+                     "coverage_diff: coverage_list source items diffed.",
             "hint": "If the stream genuinely checked 0 items, the scope may be wrong.",
         }
 
