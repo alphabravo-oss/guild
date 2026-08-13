@@ -18,7 +18,13 @@ VALIDATE (the deterministic Verbatim-Fidelity Gate). Your single output
 is `foundry-archive/{run}/intent-coverage.json` — an A-NNN × casting_id
 matrix with closed-vocabulary verdicts. The MCP gate
 (`Foundry-Intent-Coverage`) runs `validate-intent-coverage.py` over your
-matrix; on any DROPPED, control routes BACK to F0.5 DECOMPOSE with the
+matrix and applies the per-answer aggregation rule (stated word-for-word
+in the validator's docstring — GI-003 mirroring): An answer_id
+is DROPPED (gate-blocking) only when
+every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+in any casting keeps the gate open for that answer, and per-cell DROPPED
+verdicts remain recorded in the matrix without blocking. On any such
+zero-coverage answer, control routes BACK to F0.5 DECOMPOSE with the
 missing A-NNN list as additional citation anchors. Control NEVER routes
 to in-place casting-prompt amendment — that is REQUIREMENTS.md "Out of
 Scope: Auto-inject constraints (INTENT-01)" structurally.
@@ -101,10 +107,16 @@ Three values, no severity tiers:
   indirection (typed-table row's `[from A-NNN]` citation inside
   `<invariants>` / `<state_transitions>` / `<contracts>`). First-class
   PASS — the typed-row IS a deliberate paraphrase, not a defect.
-- `DROPPED` — A-NNN absent from both anchors. **DEFECT.** Routes to
-  F0.5 re-decompose. NEVER auto-resolved, NEVER routed to in-place
-  casting-prompt amendment (REQUIREMENTS.md "Out of Scope: Auto-inject
-  constraints (INTENT-01)").
+- `DROPPED` — A-NNN absent from both anchors in THIS casting's prompt
+  (per-cell verdict — still recorded and reported). Gate aggregation is
+  per-answer: An answer_id
+  is DROPPED (gate-blocking) only when
+  every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+  in any casting keeps the gate open for that answer, and per-cell DROPPED
+  verdicts remain recorded in the matrix without blocking. **A
+  zero-coverage answer is a DEFECT.** It routes to F0.5 re-decompose.
+  NEVER auto-resolved, NEVER routed to in-place casting-prompt amendment
+  (REQUIREMENTS.md "Out of Scope: Auto-inject constraints (INTENT-01)").
 
 PARAPHRASED is NOT a severity-tier weaker than PROPAGATED. PARAPHRASED is
 NOT an "advisory" tier. The closed vocabulary is enforced by the
@@ -196,7 +208,7 @@ them by claiming a vacuously-clean coverage.
 
 ## Failure Routing
 
-On any DROPPED verdict, you emit the matrix to `intent-coverage.json`
+Whatever the verdicts, you emit the matrix to `intent-coverage.json`
 and EXIT. You do NOT:
 
 - Call F0.5 DECOMPOSE yourself (you have no `Task` tool).
@@ -206,7 +218,13 @@ and EXIT. You do NOT:
 - Run any Bash subprocess (no `Bash`).
 
 The Foundry-Intent-Coverage MCP gate reads your matrix, runs the
-deterministic validator, and on any DROPPED returns
+deterministic validator, and applies the per-answer aggregation rule:
+An answer_id
+is DROPPED (gate-blocking) only when
+every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+in any casting keeps the gate open for that answer, and per-cell DROPPED
+verdicts remain recorded in the matrix without blocking. On any
+zero-coverage answer the gate returns
 `{action: 'redecompose', dropped_answers, redecompose_hints}` to the
 foundry orchestrator — which routes the lead BACK to F0.5 with the
 missing A-NNN list as additional citation anchors. This re-runs F0.5

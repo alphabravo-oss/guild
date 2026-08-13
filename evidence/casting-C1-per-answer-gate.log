@@ -1,0 +1,8 @@
+# evidence-cmd: python3 plugins/foundry/scripts/validate-intent-coverage.py plugins/foundry/mcp-server/tests/fixtures/intent_coverage/intent_coverage_one_dropped.json; echo "one_dropped exit=$?"; python3 plugins/foundry/scripts/validate-intent-coverage.py plugins/foundry/mcp-server/tests/fixtures/intent_coverage/intent_coverage_pilot_partition.json; echo "pilot_partition exit=$?"; python3 plugins/foundry/scripts/validate-intent-coverage.py plugins/foundry/mcp-server/tests/fixtures/intent_coverage/intent_coverage_zero_coverage.json; echo "zero_coverage exit=$?"; grep -c "\"verdict\": \"DROPPED\"" plugins/foundry/mcp-server/tests/fixtures/intent_coverage/intent_coverage_one_dropped.json
+# evidence-for: US-001, AC-001, AC-002, AC-004
+
+one_dropped exit=0
+pilot_partition exit=0
+INTENT_COVERAGE_DROPPED: 1 answer_id(s) with zero coverage — every casting's cell is DROPPED: ['A-004']; F0.7 gate blocks; route to F0.5 re-decompose with these IDs as guidance
+zero_coverage exit=1
+1

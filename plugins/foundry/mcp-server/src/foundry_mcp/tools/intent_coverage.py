@@ -2,16 +2,22 @@
 
 In-process wrapper around foundry_mcp.scripts.validate_intent_coverage.
 Returns structured result with action='proceed_to_validate' on pass,
-action='redecompose' on any DROPPED verdict, action='rerun_intent_carrier'
-when intent-coverage.json is missing.
+action='redecompose' on any zero-coverage answer, action=
+'rerun_intent_carrier' when intent-coverage.json is missing.
 
-F0.7 gate semantics:
-  - PASS (zero DROPPED): stamps .f07-intent-clean marker; orchestrator
-    transitions to F0.9 VALIDATE.
-  - FAIL (any DROPPED): returns redecompose action + dropped_answers list
-    + redecompose_hints; orchestrator routes lead BACK to F0.5 DECOMPOSE
-    with the missing A-NNN list as guidance. NEVER amends casting prompts
-    in place (REQUIREMENTS.md Out of Scope).
+F0.7 gate semantics (per-answer aggregation rule — stated word-for-word
+in the validator docstring and agents/intent-carrier.md): An answer_id
+is DROPPED (gate-blocking) only when
+every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+in any casting keeps the gate open for that answer, and per-cell DROPPED
+verdicts remain recorded in the matrix without blocking.
+
+  - PASS (no zero-coverage answer): stamps .f07-intent-clean marker;
+    orchestrator transitions to F0.9 VALIDATE.
+  - FAIL (any zero-coverage answer): returns redecompose action +
+    dropped_answers list + redecompose_hints; orchestrator routes lead
+    BACK to F0.5 DECOMPOSE with the missing A-NNN list as guidance.
+    NEVER amends casting prompts in place (REQUIREMENTS.md Out of Scope).
 
 Locked decisions (per 08-RESEARCH.md Open Questions 2 + 3):
   - On pass: stamp .f07-intent-clean marker file in run dir.
@@ -157,8 +163,20 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         }
 
     matrix = coverage.get("matrix", [])
+    # Per-answer gate aggregation — the same rule, in the same words, as
+    # the validator docstring and agents/intent-carrier.md: an answer_id
+    # blocks the gate only when EVERY recorded cell for it is DROPPED.
+    cell_verdicts_by_answer: dict[str, list[str]] = {}
+    for c in matrix:
+        cell_answer_id = c.get("answer_id")
+        if cell_answer_id:
+            cell_verdicts_by_answer.setdefault(cell_answer_id, []).append(
+                c.get("verdict")
+            )
     dropped = sorted(
-        {c["answer_id"] for c in matrix if c.get("verdict") == "DROPPED"}
+        ans
+        for ans, cell_verdicts in cell_verdicts_by_answer.items()
+        if all(v == "DROPPED" for v in cell_verdicts)
     )
     paraphrased = sorted(
         {c["answer_id"] for c in matrix if c.get("verdict") == "PARAPHRASED"}

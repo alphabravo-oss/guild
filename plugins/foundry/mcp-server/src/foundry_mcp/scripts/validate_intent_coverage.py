@@ -18,7 +18,15 @@ Three-anchor citation graph (RESEARCH.md Pattern 1):
 2. Direct A-AUTO-NNN literal → PROPAGATED
 3. Typed-row [from A-NNN] inside <invariants>/<state_transitions>/<contracts>
    (Phase 2 / TYPE-01 indirection) → PARAPHRASED
-4. Otherwise → DROPPED (gate blocks)
+4. Otherwise → DROPPED (per-cell verdict; gate aggregation is per-answer,
+   see below)
+
+Gate aggregation rule (stated word-for-word in
+plugins/foundry/agents/intent-carrier.md — GI-003 mirroring): An answer_id
+is DROPPED (gate-blocking) only when
+every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+in any casting keeps the gate open for that answer, and per-cell DROPPED
+verdicts remain recorded in the matrix without blocking.
 
 Citation-only — never embeddings, never Jaccard, never fuzzy text-overlap.
 
@@ -333,8 +341,11 @@ def validate_intent_coverage(
       * INTENT_COVERAGE_VERDICT_MISMATCH — when casting-prompt locatable,
         validator's three-anchor re-derivation disagrees with agent's
         cell.verdict.
-      * INTENT_COVERAGE_DROPPED — any cell with verdict==DROPPED;
-        F0.7 gate's primary block condition.
+      * INTENT_COVERAGE_DROPPED — F0.7 gate's primary block condition.
+        An answer_id is DROPPED (gate-blocking) only when
+        every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+        in any casting keeps the gate open for that answer, and per-cell DROPPED
+        verdicts remain recorded in the matrix without blocking.
       * INTENT_COVERAGE_AGENT_USED_EMBEDDING — when --tool-call-log
         provided, any FORBIDDEN_AGENT_TOOLS match or any Bash pattern
         containing an embedding-API marker.
@@ -442,8 +453,11 @@ def validate_intent_coverage(
         if candidate_castings_dir.is_dir():
             casting_dir = candidate_castings_dir
 
-    any_dropped = False
-    dropped_ids: list[str] = []
+    # Per-answer cell-verdict accumulator (gate aggregation rule — stated
+    # word-for-word in agents/intent-carrier.md and the docstrings above):
+    # an answer_id blocks the gate only when EVERY recorded cell for it is
+    # DROPPED.
+    cell_verdicts_by_answer: dict[str, list[str]] = {}
     for idx, cell in enumerate(matrix):
         if not isinstance(cell, dict):
             failures.append(
@@ -520,18 +534,24 @@ def validate_intent_coverage(
                             f"validator_re-derived={expected_verdict!r}"
                         )
 
-        # Step 8: track DROPPED cells (block condition; primary success
-        # criterion 3).
-        if verdict == "DROPPED":
-            any_dropped = True
-            if answer_id:
-                dropped_ids.append(answer_id)
+        # Step 8: accumulate per-answer cell verdicts (block condition;
+        # primary success criterion 3). Cells without an answer_id cannot
+        # be attributed to any answer and are excluded from aggregation.
+        if answer_id:
+            cell_verdicts_by_answer.setdefault(answer_id, []).append(verdict)
 
-    if any_dropped:
-        unique_dropped = sorted(set(dropped_ids)) if dropped_ids else ["?"]
+    # Per-answer aggregation: an answer blocks only when every one of its
+    # recorded cells is DROPPED (zero coverage across all castings).
+    zero_coverage_answers = sorted(
+        ans
+        for ans, cell_verdicts in cell_verdicts_by_answer.items()
+        if all(v == "DROPPED" for v in cell_verdicts)
+    )
+    if zero_coverage_answers:
         failures.append(
-            f"INTENT_COVERAGE_DROPPED: {len(unique_dropped)} answer_id(s) "
-            f"DROPPED across matrix: {unique_dropped!r}; F0.7 gate blocks; "
+            f"INTENT_COVERAGE_DROPPED: {len(zero_coverage_answers)} "
+            f"answer_id(s) with zero coverage — every casting's cell is "
+            f"DROPPED: {zero_coverage_answers!r}; F0.7 gate blocks; "
             "route to F0.5 re-decompose with these IDs as guidance"
         )
 

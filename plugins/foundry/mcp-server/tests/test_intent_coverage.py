@@ -12,8 +12,11 @@ Plan 08-02 territory (validator behavior — 10 stubs):
   4. test_a_nnn_literal_in_prompt_propagated
   5. test_a_auto_nnn_literal_propagated
   6. test_typed_row_indirection_paraphrased
-  7. test_a_nnn_absent_dropped
-  8. test_any_dropped_blocks
+  7. test_zero_coverage_answer_dropped (was test_a_nnn_absent_dropped;
+     rewritten to per-answer aggregation semantics — Casting C1 / AC-005)
+  8. test_partial_dropped_covered_elsewhere_passes (was
+     test_any_dropped_blocks; expected exit inverted under the per-answer
+     aggregation rule — Casting C1 / AC-005)
   9. test_a1_not_substring_matched_in_a12
   10. test_missing_appendix_vacuous
   11. test_agent_used_embedding_audit
@@ -313,43 +316,70 @@ def test_typed_row_indirection_paraphrased(
     ), data
 
 
-def test_a_nnn_absent_dropped(
+def test_zero_coverage_answer_dropped(
     run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
     tmp_path: Path,
 ) -> None:
-    """Plan 08-02 territory — A-NNN absent from body AND typed-row -> DROPPED.
+    """Casting C1 / AC-001 — answer DROPPED in EVERY casting -> gate blocks.
 
-    Mirrors casting-1-prompt-dropped.md scenario: A-005 absent from body
-    and absent from any [from A-005] typed-row. Resulting verdict for
-    (A-005, casting-1) MUST be DROPPED; validator exits 1 with
-    INTENT_COVERAGE_DROPPED token in stdout.
+    Per-answer aggregation semantics: A-005's cell is DROPPED in BOTH
+    castings (zero coverage) while A-001 is PROPAGATED everywhere.
+    Validator exits 1 with INTENT_COVERAGE_DROPPED naming exactly A-005
+    and no other answer_id.
     """
-    spec_text = (FIXTURES_DIR / "specs" / "spec_intent_clean.md").read_text(
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "---\nspec_format_version: v2.1\n---\n"
+        "## Appendix: Interview Transcript\n\n"
+        "## A-001 [Locked]\nSurface contract. [from Q-001]\n\n"
+        "## A-005 [Locked]\nDropped everywhere. [from Q-005]\n",
         encoding="utf-8",
     )
-    spec = tmp_path / "spec.md"
-    spec.write_text(spec_text, encoding="utf-8")
-    coverage_data = json.loads(
-        (FIXTURES_DIR / "intent_coverage" / "intent_coverage_one_dropped.json"
-         ).read_text(encoding="utf-8")
-    )
     coverage = tmp_path / "coverage.json"
-    coverage.write_text(json.dumps(coverage_data), encoding="utf-8")
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 2,
+            "casting_count": 2,
+            "summary": {"PROPAGATED": 2, "PARAPHRASED": 0, "DROPPED": 2},
+            "matrix": [
+                {"answer_id": "A-001", "casting_id": "1",
+                 "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+                {"answer_id": "A-001", "casting_id": "2",
+                 "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+                {"answer_id": "A-005", "casting_id": "1",
+                 "verdict": "DROPPED", "citation_chain": ["A-005"]},
+                {"answer_id": "A-005", "casting_id": "2",
+                 "verdict": "DROPPED", "citation_chain": ["A-005"]},
+            ],
+        }),
+        encoding="utf-8",
+    )
     exit_code, stdout, _ = run_intent_coverage_validator(
         coverage, spec_path=spec,
     )
     assert exit_code != 0
     assert "INTENT_COVERAGE_DROPPED" in stdout, stdout
+    assert "A-005" in stdout, stdout
+    # A-001 is covered — it MUST NOT be named as dropped.
+    assert "A-001" not in stdout, stdout
 
 
-def test_any_dropped_blocks(
+def test_partial_dropped_covered_elsewhere_passes(
     run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
 ) -> None:
-    """Plan 08-02 territory — gate blocks on any DROPPED cell.
+    """Casting C1 / AC-001+AC-004 — per-cell DROPPED with coverage elsewhere passes.
 
-    intent_coverage_one_dropped.json has 1 DROPPED + 11 PROPAGATED;
-    validator MUST reject with INTENT_COVERAGE_DROPPED token. Even one
-    DROPPED is enough to block — gate is all-or-nothing.
+    intent_coverage_one_dropped.json has (A-005, casting-1) DROPPED but
+    (A-005, casting-2) PROPAGATED — A-005 reaches at least one casting.
+    Under the per-answer aggregation rule the gate MUST NOT block: the
+    per-cell DROPPED verdict stays recorded in the matrix (AC-002), but
+    exit code is 0 and no INTENT_COVERAGE_DROPPED line is emitted.
     """
     coverage = (
         FIXTURES_DIR / "intent_coverage" / "intent_coverage_one_dropped.json"
@@ -358,8 +388,58 @@ def test_any_dropped_blocks(
     exit_code, stdout, _ = run_intent_coverage_validator(
         coverage, spec_path=spec,
     )
+    assert exit_code == 0, stdout
+    assert "INTENT_COVERAGE_DROPPED" not in stdout, stdout
+    # AC-002: the per-cell DROPPED verdict is still recorded in the matrix.
+    data = json.loads(coverage.read_text(encoding="utf-8"))
+    dropped_cells = [
+        c for c in data["matrix"] if c["verdict"] == "DROPPED"
+    ]
+    assert len(dropped_cells) == 1, data
+    assert dropped_cells[0]["answer_id"] == "A-005", data
+
+
+def test_pilot_shaped_partition_passes(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+) -> None:
+    """Casting C1 / AC-004 regression — pilot-shaped partition passes the gate.
+
+    intent_coverage_pilot_partition.json mirrors the pilot's pre-splice
+    decomposition shape: every answer reaches at least one casting
+    (PROPAGATED or PARAPHRASED) while most castings do NOT carry most
+    answers (8 of 12 cells are DROPPED). An honest domain-partitioned
+    decomposition MUST exit 0 with no INTENT_COVERAGE_DROPPED line.
+    """
+    coverage = (
+        FIXTURES_DIR / "intent_coverage"
+        / "intent_coverage_pilot_partition.json"
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(coverage)
+    assert exit_code == 0, stdout
+    assert "INTENT_COVERAGE_DROPPED" not in stdout, stdout
+
+
+def test_zero_coverage_in_partition_blocks_naming_only_that_answer(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+) -> None:
+    """Casting C1 / AC-004 — zero-coverage answer still fails, naming it.
+
+    intent_coverage_zero_coverage.json is the pilot-shaped partition with
+    A-004 DROPPED in ALL three castings. The gate MUST block with
+    INTENT_COVERAGE_DROPPED naming exactly A-004 — and none of the
+    partition-covered answers (A-001/A-002/A-003, each with per-cell
+    DROPPED verdicts but coverage elsewhere).
+    """
+    coverage = (
+        FIXTURES_DIR / "intent_coverage"
+        / "intent_coverage_zero_coverage.json"
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(coverage)
     assert exit_code != 0
     assert "INTENT_COVERAGE_DROPPED" in stdout, stdout
+    assert "A-004" in stdout, stdout
+    for covered in ("A-001", "A-002", "A-003"):
+        assert covered not in stdout, stdout
 
 
 def test_a1_not_substring_matched_in_a12(
@@ -1054,3 +1134,133 @@ def test_legit_dropped_still_redecomposes_and_surfaces_stderr(
     assert result["dropped_answers"] == ["A-005"], result
     assert "validator_stderr" in result, result
     assert result["validator_exit"] == 1, result
+
+
+# ---------------------------------------------------------------------------
+# Casting C1 — per-answer aggregation rule (US-001 / AC-001..AC-004).
+#
+# The F0.7 gate blocks only when an answer reaches ZERO castings (every
+# cell for that answer_id is DROPPED), not on any single DROPPED cell.
+# Validator-level cases live above (test_zero_coverage_answer_dropped,
+# test_partial_dropped_covered_elsewhere_passes,
+# test_pilot_shaped_partition_passes,
+# test_zero_coverage_in_partition_blocks_naming_only_that_answer); the
+# tests below cover the AC-003 wording contract and the MCP tool layer's
+# independent copy of the aggregation.
+# ---------------------------------------------------------------------------
+
+
+# AC-003 / GI-003 — the canonical aggregation sentence, written once and
+# pasted word-for-word into the validator docstring, the agent contract,
+# and the MCP tool docstring. Whitespace-normalized before comparison so
+# line-wrapping differences don't count as wording differences.
+_AGGREGATION_SENTENCE = (
+    "An answer_id is DROPPED (gate-blocking) only when every casting's "
+    "cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell in any "
+    "casting keeps the gate open for that answer, and per-cell DROPPED "
+    "verdicts remain recorded in the matrix without blocking."
+)
+
+TOOL_MODULE_PATH = (
+    REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src"
+    / "foundry_mcp" / "tools" / "intent_coverage.py"
+)
+
+
+def test_aggregation_rule_stated_identically() -> None:
+    """AC-003 / GI-003 — validator and agent contract state the same rule.
+
+    The per-answer aggregation rule must appear word-for-word (modulo
+    line-wrapping) in ALL of:
+      1. the validator docstring (canonical module),
+      2. plugins/foundry/agents/intent-carrier.md,
+      3. the Foundry-Intent-Coverage MCP tool module docstring
+    so no surface is left stating the superseded per-cell rule.
+    """
+    for path in (CANONICAL_VALIDATOR_PATH, AGENT_PATH, TOOL_MODULE_PATH):
+        normalized = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+        # Comment/prose prefixes ("# ", markdown bullets) never interrupt
+        # the sentence mid-line in any of the three files, so plain
+        # whitespace normalization suffices.
+        assert _AGGREGATION_SENTENCE in normalized, (
+            f"per-answer aggregation sentence missing or reworded in "
+            f"{path.name} — AC-003 requires the SAME words in the "
+            f"validator and the agent contract"
+        )
+    # No surface still states the superseded per-cell block rule.
+    for path in (CANONICAL_VALIDATOR_PATH, AGENT_PATH, TOOL_MODULE_PATH):
+        normalized = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+        assert "any cell with verdict==DROPPED" not in normalized, (
+            f"{path.name} still carries the superseded per-cell rule"
+        )
+
+
+def test_tool_partial_dropped_covered_elsewhere_passes(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """AC-001 end-to-end — MCP tool passes when the DROPPED cell has coverage elsewhere.
+
+    The tool layer independently recomputes the dropped set from the
+    matrix; fixing the validator alone would leave the gate blocking on
+    partition. A-005 DROPPED in casting 1 but PROPAGATED in casting 2
+    MUST yield passed=True / action=proceed_to_validate with an empty
+    dropped_answers list, and stamp the .f07-intent-clean marker.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _DROPPED_SPEC,
+        [
+            {"answer_id": "A-005", "casting_id": "1",
+             "verdict": "DROPPED", "citation_chain": ["A-005"]},
+            {"answer_id": "A-005", "casting_id": "2",
+             "verdict": "PROPAGATED", "citation_chain": ["A-005"]},
+        ],
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is True, result
+    assert result["action"] == "proceed_to_validate", result
+    assert result["dropped_answers"] == [], result
+    assert (run_dir / ".f07-intent-clean").is_file()
+
+
+def test_tool_redecompose_hints_list_exactly_zero_coverage_answers(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """AC-001 — redecompose_hints lists exactly the zero-coverage answers.
+
+    A-001 has a DROPPED cell in casting 1 but is PROPAGATED in casting 2
+    (covered — must NOT surface); A-005 is DROPPED in every casting
+    (zero coverage — must surface). dropped_answers and redecompose_hints
+    carry exactly A-005 and nothing else.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    spec_text = (
+        "---\nspec_format_version: v2.1\n---\n"
+        "## Appendix: Interview Transcript\n\n"
+        "## A-001 [Locked]\nCovered answer. [from Q-001]\n\n"
+        "## A-005 [Locked]\nDropped answer. [from Q-005]\n"
+    )
+    project_root, _ = intent_run(
+        spec_text,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "DROPPED", "citation_chain": ["A-001"]},
+            {"answer_id": "A-001", "casting_id": "2",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+            {"answer_id": "A-005", "casting_id": "1",
+             "verdict": "DROPPED", "citation_chain": ["A-005"]},
+            {"answer_id": "A-005", "casting_id": "2",
+             "verdict": "DROPPED", "citation_chain": ["A-005"]},
+        ],
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-005"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-005"], result
+    # The hint still resolves a per-cell DROPPED source for its target.
+    assert result["redecompose_hints"][0]["suggested_casting"] == "1", result

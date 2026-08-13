@@ -1,0 +1,8 @@
+# evidence-cmd: grep -c "keeps the gate open for that answer" plugins/foundry/agents/intent-carrier.md; grep -c "keeps the gate open for that answer" plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py; grep -c "keeps the gate open for that answer" plugins/foundry/mcp-server/src/foundry_mcp/tools/intent_coverage.py; wc -l < plugins/foundry/scripts/validate-intent-coverage.py; grep -c "from foundry_mcp.scripts.validate_intent_coverage import main" plugins/foundry/scripts/validate-intent-coverage.py
+# evidence-for: AC-003, AC-012
+
+3
+2
+1
+31
+2
