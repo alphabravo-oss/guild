@@ -135,8 +135,8 @@ claude --config model=fable
 | Agent | Baseline pin | Steerable by `model`? |
 |---|---|---|
 | `forge:spec-reviewer` | opus, `effort: high` (was sonnet) | Yes |
-| `foundry:teammate` | opus, `effort: xhigh` | Yes |
 | `foundry:flow-mapper` † | opus, `effort: high` (was sonnet) | Yes |
+| `foundry:teammate` ‡ | opus, `effort: xhigh` | Yes — but by **foundry's** option, not this one |
 | `foundry:assayer` | opus, `effort: max` | No — fixed baseline |
 | `foundry:intent-carrier` | opus, `effort: max` | No — fixed baseline |
 | `foundry:test-observations-adjudicator` | opus, `effort: max` | No — fixed baseline |
@@ -144,6 +144,10 @@ claude --config model=fable
 | `foundry:spec-test-deriver` | opus, `effort: high` (was sonnet) | No — fixed baseline |
 
 † `foundry:flow-mapper` ships in **foundry**, not forge — but `/forge:plan`'s V3 brownfield R0 flow-map step is its only spawn site, so the value that steers it is **forge's** `model` option, the one set under `forge@guild`. The identically-named option under `foundry@guild` never reaches it, because foundry has no flow-mapper spawn site of its own.
+
+‡ Not by forge's option. `foundry:teammate` ships in **foundry**, and every one of its spawn sites is foundry's — the CAST and GRIND `agent_config` foundry's MCP server hands the Foundry Lead. `/forge:plan` never spawns a teammate, so nothing set under `forge@guild` can reach it. Set the option under `foundry@guild` to steer CAST and GRIND. **Set only `forge@guild` and teammate stays on its frontmatter pin, with no diagnostic** — an option that reaches nothing looks exactly like one that was never set.
+
+**Which option steers which agent.** Each of the three is reached by exactly one plugin's option, because each has exactly one spawn site: `forge:spec-reviewer` (R3.5) and `foundry:flow-mapper` (V3 brownfield R0) both spawn from `/forge:plan`, so **forge's** option under `forge@guild` steers both; `foundry:teammate` spawns only from foundry's MCP server, so **foundry's** option under `foundry@guild` steers it. Setting one plugin's option never moves an agent the other plugin spawns, and the plugin an agent *ships* in does not decide which option reaches it — the plugin that *spawns* it does.
 
 `forge:spec-reviewer` is the only agent forge itself ships that the option reaches. Every agent not listed above keeps the model it ships with and is not reachable at any setting: `forge:researcher` stays sonnet, foundry's `tracer`, `flow-tracer`, `nyquist-auditor` and `researcher` stay sonnet, and foundry's four haiku agents stay haiku. **No agent in any plugin other than forge and foundry changes model at any setting of this option.**
 
@@ -176,7 +180,7 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 cd plugins/forge && uvx pytest
 ```
 
-Current baseline: **50 passed + 1 skipped** (synthetic-fixture suite). The skipped test is the `RUN-01` real-run gate — empirical proof from a live cross-cohort matrix, deferred to a future milestone.
+Current baseline: **54 passed + 1 skipped** (synthetic-fixture suite). The skipped test is the `RUN-01` real-run gate — empirical proof from a live cross-cohort matrix, deferred to a future milestone.
 
 ---
 
