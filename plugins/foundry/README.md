@@ -212,7 +212,7 @@ cd plugins/foundry/mcp-server && uv run --with pytest pytest
 
 `uv run` is required, not `uvx pytest` — the suite imports `foundry_mcp.server`, which imports `mcp`, so it needs the project's declared dependencies on the path. `uvx` builds an isolated pytest environment without them and two tests fail on `ModuleNotFoundError`.
 
-Current baseline: **254 passed + 1 skipped** (synthetic-fixture suite covering every MCP tool's parsers, schemas, and handoff state). The skipped test is the `measure-run` planning-cohort gate, which needs real-run stubs not carried in this checkout. The empirical cross-cohort matrix (`measure-run.py`) ships as a separate consolidation tooling under `plugins/foundry/scripts/measure-run.py` (397 LOC, stdlib-only) for future milestone-level RUN-01 closure.
+Current baseline: **259 passed + 1 skipped** (synthetic-fixture suite covering every MCP tool's parsers, schemas, and handoff state). The skipped test is the `measure-run` planning-cohort gate, which needs real-run stubs not carried in this checkout. The empirical cross-cohort matrix (`measure-run.py`) ships as a separate consolidation tooling under `plugins/foundry/scripts/measure-run.py` (397 LOC, stdlib-only) for future milestone-level RUN-01 closure.
 
 ---
 

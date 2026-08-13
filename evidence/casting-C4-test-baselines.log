@@ -4,9 +4,9 @@
 # evidence-timeout: 300
 
 == foundry-mcp suite, run at this commit:
-  254 passed, 1 skipped in 9.90s
+  259 passed, 1 skipped in 9.90s
 == forge suite, run at this commit:
   54 passed, 1 skipped in 1.08s
 == the two README baseline claims, which must match the counts above:
-  | plugins/foundry/README.md:215:Current baseline: **254 passed + 1 skipped** (synthetic-fixture suite covering every MCP tool's parsers, schemas, and handoff state). The skipped test is the `measure-run` planning-cohort gate, which needs real-run stubs not carried in this checkout. The empirical cross-cohort matrix (`measure-run.py`) ships as a separate consolidation tooling under `plugins/foundry/scripts/measure-run.py` (397 LOC, stdlib-only) for future milestone-level RUN-01 closure.
+  | plugins/foundry/README.md:215:Current baseline: **259 passed + 1 skipped** (synthetic-fixture suite covering every MCP tool's parsers, schemas, and handoff state). The skipped test is the `measure-run` planning-cohort gate, which needs real-run stubs not carried in this checkout. The empirical cross-cohort matrix (`measure-run.py`) ships as a separate consolidation tooling under `plugins/foundry/scripts/measure-run.py` (397 LOC, stdlib-only) for future milestone-level RUN-01 closure.
   | plugins/forge/README.md:183:Current baseline: **54 passed + 1 skipped** (synthetic-fixture suite). The skipped test is the `RUN-01` real-run gate — empirical proof from a live cross-cohort matrix, deferred to a future milestone.
