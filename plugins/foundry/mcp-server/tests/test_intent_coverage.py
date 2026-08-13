@@ -812,7 +812,7 @@ def test_synthetic_regression_zero_fp(
     Suite (>= 12 fixtures total):
       Plan 08-01 base (5 of 8 are matrix-curated for the FP gate):
         - intent_coverage_clean.json (12 PROPAGATED)
-        - intent_coverage_one_dropped.json (11 PROPAGATED + 1 DROPPED)
+        - intent_coverage_one_dropped.json (15 PROPAGATED + 1 DROPPED)
         - intent_coverage_paraphrased_via_typed.json (1 PARAPHRASED)
         - intent_coverage_dangling_citation.json (1 PROPAGATED + dangling)
         - intent_coverage_vacuous_propagated.json (1 PROPAGATED — vacuous)
@@ -1232,6 +1232,44 @@ def test_aggregation_rule_stated_identically() -> None:
             )
 
 
+# GRIND D-009 / GI-003 — the canonical spec→matrix completeness sentence,
+# written once and pasted word-for-word into the validator docstring, the
+# agent contract, and the MCP tool docstring. Same normalization contract
+# as _AGGREGATION_SENTENCE. server.py and start.md are NOT surfaces for
+# this rule (they describe gate routing, not validator internals).
+_COMPLETENESS_SENTENCE = (
+    "A spec appendix answer_id with no matrix cell at all is "
+    "zero-coverage: the validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE "
+    "naming each missing answer_id, and the omitted answer blocks the "
+    "gate exactly like an answer whose every casting's cell is DROPPED."
+)
+
+_COMPLETENESS_RULE_SURFACES = (
+    CANONICAL_VALIDATOR_PATH,
+    AGENT_PATH,
+    TOOL_MODULE_PATH,
+)
+
+
+def test_completeness_rule_stated_identically() -> None:
+    """GRIND D-009 / GI-003 — the completeness rule uses the same words everywhere.
+
+    The spec→matrix completeness rule (omission IS zero coverage) must
+    appear word-for-word (modulo line-wrapping) in the validator
+    docstring, agents/intent-carrier.md, and the MCP tool module — so no
+    surface is left stating only the weaker every-RECORDED-cell rule that
+    let omitted answers pass the gate.
+    """
+    for path in _COMPLETENESS_RULE_SURFACES:
+        raw = path.read_text(encoding="utf-8").replace('"', " ")
+        normalized = re.sub(r"\s+", " ", raw)
+        assert _COMPLETENESS_SENTENCE in normalized, (
+            f"spec→matrix completeness sentence missing or reworded in "
+            f"{path.name} — GI-003 requires the SAME words on every "
+            f"surface that states the completeness rule"
+        )
+
+
 def test_tool_partial_dropped_covered_elsewhere_passes(
     intent_run: Callable[..., tuple[str, Path]],
 ) -> None:
@@ -1365,3 +1403,213 @@ def test_tool_redecompose_hints_list_exactly_zero_coverage_answers(
     assert hint_ids == ["A-005"], result
     # The hint still resolves a per-cell DROPPED source for its target.
     assert result["redecompose_hints"][0]["suggested_casting"] == "1", result
+
+
+# ---------------------------------------------------------------------------
+# GRIND D-009 (US-001) — omission bypass: a spec appendix answer with NO
+# matrix cell at all is zero-coverage and blocks the gate; and
+# GRIND D-010 (AC-002) — the redecompose payload carries the per-cell
+# picture (cell_verdict_counts) and the matrix pointer (matrix_path).
+# ---------------------------------------------------------------------------
+
+
+_OMISSION_SPEC = (
+    "---\nspec_format_version: v2.1\n---\n"
+    "## Appendix: Interview Transcript\n\n"
+    "## A-001 [Locked]\nFirst answer. [from Q-001]\n\n"
+    "## A-002 [Locked]\nSecond answer. [from Q-002]\n\n"
+    "## A-003 [Locked]\nOmitted from the matrix. [from Q-003]\n"
+)
+
+_OMISSION_MATRIX = [
+    {"answer_id": "A-001", "casting_id": "1",
+     "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+    {"answer_id": "A-002", "casting_id": "1",
+     "verdict": "PROPAGATED", "citation_chain": ["A-002"]},
+    # A-003: NO row at all — the ASSAY-reproduced omission shape.
+]
+
+
+def test_spec_answer_omitted_from_matrix_blocks(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-009 — omission IS zero coverage; the validator blocks on it.
+
+    ASSAY repro shape: spec declares A-001/A-002/A-003, matrix carries
+    rows for only A-001/A-002. The validator MUST exit 1 with
+    INTENT_COVERAGE_MATRIX_INCOMPLETE naming A-003 AND treat A-003 as
+    zero-coverage — it reaches the INTENT_COVERAGE_DROPPED failure line
+    exactly like an all-DROPPED answer. Covered answers are not named.
+    """
+    spec = tmp_path / "spec.md"
+    spec.write_text(_OMISSION_SPEC, encoding="utf-8")
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 3,
+            "casting_count": 1,
+            "summary": {"PROPAGATED": 2, "PARAPHRASED": 0, "DROPPED": 0},
+            "matrix": _OMISSION_MATRIX,
+        }),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(
+        coverage, spec_path=spec,
+    )
+    assert exit_code != 0
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in stdout, stdout
+    assert "INTENT_COVERAGE_DROPPED" in stdout, stdout
+    assert "A-003" in stdout, stdout
+    # Covered answers MUST NOT be flagged by either failure line.
+    assert "A-001" not in stdout, stdout
+    assert "A-002" not in stdout, stdout
+
+
+def test_matrix_covering_every_spec_answer_passes(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-009 (b) — full spec→matrix coverage keeps behavior unchanged.
+
+    Every spec appendix answer has at least one matrix cell: exit 0, no
+    INTENT_COVERAGE_MATRIX_INCOMPLETE line.
+    """
+    spec = tmp_path / "spec.md"
+    spec.write_text(_OMISSION_SPEC, encoding="utf-8")
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 3,
+            "casting_count": 1,
+            "summary": {"PROPAGATED": 3, "PARAPHRASED": 0, "DROPPED": 0},
+            "matrix": _OMISSION_MATRIX + [
+                {"answer_id": "A-003", "casting_id": "1",
+                 "verdict": "PROPAGATED", "citation_chain": ["A-003"]},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(
+        coverage, spec_path=spec,
+    )
+    assert exit_code == 0, stdout
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" not in stdout, stdout
+
+
+def test_no_spec_skips_completeness_check(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-009 (c) — without --spec the completeness check cannot run.
+
+    Documented behavior: the appendix answer-set is unknown without
+    --spec, so matrix-only validation applies and an omission is
+    invisible at the validator level. This is acceptable because the
+    Foundry-Intent-Coverage MCP gate ALWAYS supplies --spec (see
+    _run_validator_in_process), so the completeness check always runs
+    in production.
+    """
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 3,
+            "casting_count": 1,
+            "summary": {"PROPAGATED": 2, "PARAPHRASED": 0, "DROPPED": 0},
+            "matrix": _OMISSION_MATRIX,
+        }),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(coverage)
+    assert exit_code == 0, stdout
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" not in stdout, stdout
+
+
+def test_tool_omitted_spec_answer_blocks_via_redecompose(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-009 — the ASSAY live-repro through the real MCP gate.
+
+    Spec declares A-001/A-002/A-003; matrix carries rows for only two.
+    Previously: passed=True / proceed_to_validate (the omission bypass).
+    Now: action=redecompose with A-003 surfaced STRUCTURALLY — in
+    dropped_answers and redecompose_hints (suggested_casting None, no
+    cell to draw from) — not only in validator_stdout prose. The
+    .f07-intent-clean marker is NOT stamped.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(_OMISSION_SPEC, list(_OMISSION_MATRIX))
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-003"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-003"], result
+    assert result["redecompose_hints"][0]["suggested_casting"] is None, result
+    assert result["redecompose_hints"][0]["citation_chain"] == ["A-003"], result
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in result["validator_stdout"], (
+        result
+    )
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_redecompose_payload_carries_cell_counts_and_matrix_path(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-010 / AC-002 — redecompose payload keeps the per-cell picture.
+
+    The lead receiving redecompose is the reader who most needs
+    cell_verdict_counts and the matrix pointer; both were previously
+    present only on the pass path. Gate semantics unchanged: the
+    zero-coverage answer still routes to redecompose.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    spec_text = (
+        "---\nspec_format_version: v2.1\n---\n"
+        "## Appendix: Interview Transcript\n\n"
+        "## A-001 [Locked]\nCovered answer. [from Q-001]\n\n"
+        "## A-005 [Locked]\nDropped answer. [from Q-005]\n"
+    )
+    project_root, run_dir = intent_run(
+        spec_text,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "DROPPED", "citation_chain": ["A-001"]},
+            {"answer_id": "A-001", "casting_id": "2",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+            {"answer_id": "A-005", "casting_id": "1",
+             "verdict": "DROPPED", "citation_chain": ["A-005"]},
+            {"answer_id": "A-005", "casting_id": "2",
+             "verdict": "DROPPED", "citation_chain": ["A-005"]},
+        ],
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["action"] == "redecompose", result
+    assert result["cell_verdict_counts"] == {
+        "PROPAGATED": 1, "PARAPHRASED": 0, "DROPPED": 3,
+    }, result
+    assert result["matrix_path"] == str(run_dir / "intent-coverage.json"), (
+        result
+    )

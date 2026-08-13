@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "omitted or covering_every_spec or no_spec_skips or completeness or redecompose_payload" 2>/dev/null
+# evidence-for: US-001, AC-001, AC-002, AC-003
+# evidence-volatile: \d+\.\d+s
+
+......                                                                   [100%]
+6 passed, 30 deselected in 0.14s

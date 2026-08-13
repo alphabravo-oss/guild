@@ -2,5 +2,5 @@
 # evidence-for: NFR-001
 # evidence-volatile: \d+\.\d+s
 
-307 passed, 4 skipped in 10.65s
-66 passed, 1 skipped in 1.07s
+326 passed, 4 skipped in 12.28s
+66 passed, 1 skipped in 1.24s

@@ -12,6 +12,15 @@ every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
 in any casting keeps the gate open for that answer, and per-cell DROPPED
 verdicts remain recorded in the matrix without blocking.
 
+Spec→matrix completeness rule (same words as the validator docstring and
+agents/intent-carrier.md): A spec
+appendix answer_id with no matrix cell at all is zero-coverage: the
+validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+answer_id, and the omitted answer blocks the gate exactly like an answer
+whose every casting's cell is DROPPED. This tool folds those omitted
+answers into ``dropped_answers`` / ``redecompose_hints`` so re-decompose
+routing sees them structurally, not only in validator_stdout prose.
+
   - PASS (no zero-coverage answer): stamps .f07-intent-clean marker;
     orchestrator transitions to F0.9 VALIDATE.
   - FAIL (any zero-coverage answer): returns redecompose action +
@@ -110,7 +119,9 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
       OR
       {passed: False, action: 'redecompose', dropped_answers: [...],
        redecompose_hints: [{answer_id, suggested_casting, citation_chain}],
-       hint: str, validator_stdout: str, validator_exit: int}
+       cell_verdict_counts: {PROPAGATED, PARAPHRASED, DROPPED: int},
+       matrix_path: str, hint: str, validator_stdout: str,
+       validator_exit: int}
       OR
       {passed: False, action: 'rerun_intent_carrier', reason: str}
     """
@@ -165,7 +176,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     matrix = coverage.get("matrix", [])
     # Per-answer gate aggregation — the same rule, in the same words, as
     # the validator docstring and agents/intent-carrier.md: an answer_id
-    # blocks the gate only when EVERY recorded cell for it is DROPPED.
+    # blocks the gate only when every casting's cell for it is DROPPED.
     cell_verdicts_by_answer: dict[str, list[str]] = {}
     for c in matrix:
         cell_answer_id = c.get("answer_id")
@@ -173,10 +184,35 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             cell_verdicts_by_answer.setdefault(cell_answer_id, []).append(
                 c.get("verdict")
             )
+    # Spec→matrix completeness (D-009 — omission IS zero coverage): a spec
+    # appendix answer with NO matrix cell at all must block exactly like
+    # an all-DROPPED answer. The answer-set extraction is imported from
+    # the canonical validator module (no second parser), guarded the same
+    # way _run_validator_in_process guards its main() import.
+    missing_from_matrix: list[str] = []
+    if spec_path.exists():
+        try:
+            from foundry_mcp.scripts.validate_intent_coverage import (
+                extract_answer_ids_from_spec,
+            )
+
+            spec_answer_ids = extract_answer_ids_from_spec(
+                spec_path.read_text(encoding="utf-8")
+            )
+        except Exception:  # noqa: BLE001 — a broken validator module or
+            # unreadable spec is already surfaced via the validator run
+            # above; the fold-in stays best-effort here.
+            spec_answer_ids = set()
+        missing_from_matrix = sorted(
+            spec_answer_ids - set(cell_verdicts_by_answer)
+        )
     dropped = sorted(
-        ans
-        for ans, cell_verdicts in cell_verdicts_by_answer.items()
-        if all(v == "DROPPED" for v in cell_verdicts)
+        set(missing_from_matrix)
+        | {
+            ans
+            for ans, cell_verdicts in cell_verdicts_by_answer.items()
+            if all(v == "DROPPED" for v in cell_verdicts)
+        }
     )
     paraphrased = sorted(
         {c["answer_id"] for c in matrix if c.get("verdict") == "PARAPHRASED"}
@@ -242,8 +278,10 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # Build redecompose_hints: per dropped answer_id, name the first
     # casting_id with a DROPPED cell + the citation_chain from the matrix.
     # Heuristic only — author can refine; the structural guarantee is
-    # that every dropped answer_id surfaces with at least one suggested
-    # casting target.
+    # that every zero-coverage answer_id surfaces as a hint entry. Answers
+    # omitted from the matrix entirely (D-009) have no cell to draw from:
+    # they surface with suggested_casting=None and a singleton
+    # citation_chain of their own answer_id.
     redecompose_hints = []
     for ans in dropped:
         first_drop_cell = next(
@@ -276,6 +314,10 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         "action": "redecompose",
         "dropped_answers": dropped,
         "redecompose_hints": redecompose_hints,
+        # D-010 / AC-002: the lead receiving redecompose needs the per-cell
+        # picture and the matrix pointer just as much as the pass path does.
+        "cell_verdict_counts": cell_verdict_counts,
+        "matrix_path": str(coverage_path),
         "validator_stdout": validator_stdout,
         "validator_stderr": validator_stderr,
         "validator_exit": validator_exit,

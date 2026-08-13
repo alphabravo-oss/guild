@@ -28,6 +28,16 @@ every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
 in any casting keeps the gate open for that answer, and per-cell DROPPED
 verdicts remain recorded in the matrix without blocking.
 
+Spec→matrix completeness rule (stated word-for-word in
+plugins/foundry/agents/intent-carrier.md — GI-003 mirroring): A spec
+appendix answer_id with no matrix cell at all is zero-coverage: the
+validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+answer_id, and the omitted answer blocks the gate exactly like an answer
+whose every casting's cell is DROPPED. Without ``--spec`` the appendix
+answer-set is unknown and the completeness check cannot run (matrix-only
+validation applies); the Foundry-Intent-Coverage MCP gate always supplies
+``--spec``, so the completeness check always runs in production.
+
 Citation-only — never embeddings, never Jaccard, never fuzzy text-overlap.
 
 Exits 0 on pass, 1 on any failure, 2 on usage error.
@@ -338,6 +348,14 @@ def validate_intent_coverage(
         discipline).
       * INTENT_COVERAGE_DANGLING_CITATION — cell.answer_id not present
         in spec's appendix answer-set.
+      * INTENT_COVERAGE_MATRIX_INCOMPLETE — spec→matrix completeness
+        (only when --spec provided and the appendix answer-set is
+        non-empty). A spec
+        appendix answer_id with no matrix cell at all is zero-coverage: the
+        validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+        answer_id, and the omitted answer blocks the gate exactly like an answer
+        whose every casting's cell is DROPPED. Without --spec this check
+        cannot run; the MCP gate always supplies --spec.
       * INTENT_COVERAGE_VERDICT_MISMATCH — when casting-prompt locatable,
         validator's three-anchor re-derivation disagrees with agent's
         cell.verdict.
@@ -455,8 +473,10 @@ def validate_intent_coverage(
 
     # Per-answer cell-verdict accumulator (gate aggregation rule — stated
     # word-for-word in agents/intent-carrier.md and the docstrings above):
-    # an answer_id blocks the gate only when EVERY recorded cell for it is
-    # DROPPED.
+    # an answer_id blocks the gate only when every casting's cell for it
+    # is DROPPED. Spec-declared answers with NO recorded cell at all are
+    # zero-coverage too — the spec→matrix completeness check below the
+    # loop catches those (omission IS zero coverage).
     cell_verdicts_by_answer: dict[str, list[str]] = {}
     for idx, cell in enumerate(matrix):
         if not isinstance(cell, dict):
@@ -540,19 +560,45 @@ def validate_intent_coverage(
         if answer_id:
             cell_verdicts_by_answer.setdefault(answer_id, []).append(verdict)
 
-    # Per-answer aggregation: an answer blocks only when every one of its
-    # recorded cells is DROPPED (zero coverage across all castings).
+    # Spec→matrix completeness (only when --spec provided and the appendix
+    # answer-set is non-empty — same predicate as the dangling-citation
+    # direction above, run spec→matrix instead of matrix→spec). Omission
+    # IS zero coverage: an answer the intent-carrier never recorded a cell
+    # for must not slip past the gate. Without --spec the appendix
+    # answer-set is unknown and this check cannot run.
+    missing_from_matrix: list[str] = []
+    if spec_path is not None and spec_answer_ids:
+        missing_from_matrix = sorted(
+            spec_answer_ids - set(cell_verdicts_by_answer)
+        )
+        if missing_from_matrix:
+            failures.append(
+                f"INTENT_COVERAGE_MATRIX_INCOMPLETE: "
+                f"{len(missing_from_matrix)} spec appendix answer_id(s) "
+                f"have no matrix cell in any casting: "
+                f"{missing_from_matrix!r}; omission IS zero coverage — "
+                "these answers block the gate exactly like all-DROPPED "
+                "answers"
+            )
+
+    # Per-answer aggregation: an answer blocks when every one of its
+    # recorded cells is DROPPED (zero coverage across all castings) OR
+    # when the spec declares it and the matrix carries no cell for it.
     zero_coverage_answers = sorted(
-        ans
-        for ans, cell_verdicts in cell_verdicts_by_answer.items()
-        if all(v == "DROPPED" for v in cell_verdicts)
+        set(missing_from_matrix)
+        | {
+            ans
+            for ans, cell_verdicts in cell_verdicts_by_answer.items()
+            if all(v == "DROPPED" for v in cell_verdicts)
+        }
     )
     if zero_coverage_answers:
         failures.append(
             f"INTENT_COVERAGE_DROPPED: {len(zero_coverage_answers)} "
-            f"answer_id(s) with zero coverage — every casting's cell is "
-            f"DROPPED: {zero_coverage_answers!r}; F0.7 gate blocks; "
-            "route to F0.5 re-decompose with these IDs as guidance"
+            f"answer_id(s) with zero coverage — no casting's cell is "
+            f"PROPAGATED or PARAPHRASED: {zero_coverage_answers!r}; "
+            "F0.7 gate blocks; route to F0.5 re-decompose with these IDs "
+            "as guidance"
         )
 
     # ----- Step 9: code-blind / embedding-blind tool-call audit -----
@@ -638,8 +684,10 @@ def main(argv: list[str]) -> int:
         default=None,
         help=(
             "Optional path to spec.md; when provided, dangling-citation, "
-            "vacuous-PROPAGATED, and three-anchor verdict re-derivation "
-            "checks run."
+            "vacuous-PROPAGATED, spec-to-matrix completeness "
+            "(INTENT_COVERAGE_MATRIX_INCOMPLETE), and three-anchor verdict "
+            "re-derivation checks run. Without it the completeness check "
+            "cannot run; the MCP gate always supplies it."
         ),
     )
     parser.add_argument(

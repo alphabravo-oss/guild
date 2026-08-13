@@ -23,7 +23,15 @@ in the validator's docstring — GI-003 mirroring): An answer_id
 is DROPPED (gate-blocking) only when
 every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
 in any casting keeps the gate open for that answer, and per-cell DROPPED
-verdicts remain recorded in the matrix without blocking. On any such
+verdicts remain recorded in the matrix without blocking. The validator
+also enforces spec→matrix completeness (same words as its docstring —
+GI-003 mirroring): A spec
+appendix answer_id with no matrix cell at all is zero-coverage: the
+validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+answer_id, and the omitted answer blocks the gate exactly like an answer
+whose every casting's cell is DROPPED. You therefore MUST emit a cell for
+every (answer_id, casting_id) pair — never silently omit an answer you
+could not anchor; record its cells as DROPPED instead. On any such
 zero-coverage answer, control routes BACK to F0.5 DECOMPOSE with the
 missing A-NNN list as additional citation anchors. Control NEVER routes
 to in-place casting-prompt amendment — that is REQUIREMENTS.md "Out of
@@ -223,7 +231,12 @@ An answer_id
 is DROPPED (gate-blocking) only when
 every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
 in any casting keeps the gate open for that answer, and per-cell DROPPED
-verdicts remain recorded in the matrix without blocking. On any
+verdicts remain recorded in the matrix without blocking. Omission is
+caught the same way: A spec
+appendix answer_id with no matrix cell at all is zero-coverage: the
+validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+answer_id, and the omitted answer blocks the gate exactly like an answer
+whose every casting's cell is DROPPED. On any
 zero-coverage answer the gate returns
 `{action: 'redecompose', dropped_answers, redecompose_hints}` to the
 foundry orchestrator — which routes the lead BACK to F0.5 with the
