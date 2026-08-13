@@ -1,0 +1,11 @@
+# evidence-cmd: cd plugins/forge && uvx pytest tests/test_setup_forge_smoke.py -v 2>/dev/null | grep -E "PASSED|FAILED|ERROR"
+# evidence-for: NFR-001, AC-015
+# evidence-timeout: 300
+
+tests/test_setup_forge_smoke.py::test_implicit_fact_phase_emitted PASSED [ 14%]
+tests/test_setup_forge_smoke.py::test_closed_vocab_in_prompt PASSED      [ 28%]
+tests/test_setup_forge_smoke.py::test_spec_template_emits_typed_tables PASSED [ 42%]
+tests/test_setup_forge_smoke.py::test_unknown_flag_is_refused PASSED     [ 57%]
+tests/test_setup_forge_smoke.py::test_unknown_flag_does_not_reach_the_feature_slug PASSED [ 71%]
+tests/test_setup_forge_smoke.py::test_mode_flags_are_accepted_and_kept_out_of_the_slug PASSED [ 85%]
+tests/test_setup_forge_smoke.py::test_multi_word_feature_name_still_accumulates PASSED [100%]

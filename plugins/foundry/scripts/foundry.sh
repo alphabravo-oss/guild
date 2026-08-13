@@ -4,7 +4,7 @@
 # and forge log. All state lives in PROJECT_ROOT/foundry-archive/{run}/.
 #
 # Usage:
-#   foundry.sh init [--spec <path>] [--url <url>] [--temper] [--no-ui] [--max-cycles N] [--ticket ID] [--desc TEXT]
+#   foundry.sh init [--spec <path>] [--url <url>] [--temper] [--nyquist] [--no-ui] [--max-cycles N] [--ticket ID] [--desc TEXT]
 #   foundry.sh init --resume <name>
 #   foundry.sh add-casting <id> "<title>" [depends] [scope] [key_files]
 #   foundry.sh add-defect <cycle> <source> <json>
@@ -90,6 +90,7 @@ ensure_foundry() {
 cmd_init() {
     local spec_path=""
     local temper=false
+    local nyquist=false
     local no_ui=false
     local url=""
     local max_cycles=0
@@ -101,6 +102,7 @@ cmd_init() {
         case "$1" in
             --spec)      spec_path="${2:-}"; shift 2 ;;
             --temper)    temper=true; shift ;;
+            --nyquist)   nyquist=true; shift ;;
             --no-ui)     no_ui=true; shift ;;
             --url)       url="${2:-}"; shift 2 ;;
             --max-cycles) max_cycles="${2:-0}"; shift 2 ;;
@@ -164,6 +166,7 @@ cmd_init() {
         --arg created "$now" \
         --argjson max_cycles "$max_cycles" \
         --argjson temper "$temper" \
+        --argjson nyquist "$nyquist" \
         --argjson no_ui "$no_ui" \
         --arg url "$url" \
         --arg spec "${spec_path:-}" \
@@ -172,6 +175,7 @@ cmd_init() {
             updated_at: $created,
             spec_path: $spec,
             temper: $temper,
+            nyquist: $nyquist,
             no_ui: $no_ui,
             target_url: $url,
             max_cycles: $max_cycles,
@@ -187,8 +191,9 @@ cmd_init() {
         --arg started "$now" \
         --arg spec "${spec_path:-}" \
         --argjson temper "$temper" \
+        --argjson nyquist "$nyquist" \
         --argjson no_ui "$no_ui" \
-        '{phase: $phase, cycle: 0, spec_path: $spec, temper: $temper, no_ui: $no_ui, started_at: $started, phase_times: {}}' \
+        '{phase: $phase, cycle: 0, spec_path: $spec, temper: $temper, nyquist: $nyquist, no_ui: $no_ui, started_at: $started, phase_times: {}}' \
         > "${FOUNDRY_DIR}/state.json"
 
     # Initialize defects.json
@@ -247,7 +252,7 @@ LESSONS
         jq -n '{ domains: [], status: "pending" }' > "${FOUNDRY_DIR}/temper/domains.json"
     fi
 
-    echo "{\"ok\":true, \"run_name\":\"${run_name}\", \"foundry_dir\":\"${FOUNDRY_DIR}\", \"temper\":${temper}, \"no_ui\":${no_ui}}"
+    echo "{\"ok\":true, \"run_name\":\"${run_name}\", \"foundry_dir\":\"${FOUNDRY_DIR}\", \"temper\":${temper}, \"nyquist\":${nyquist}, \"no_ui\":${no_ui}}"
 }
 
 cmd_list() {
@@ -1210,7 +1215,7 @@ case "$cmd" in
         echo "Usage: foundry.sh <command> [args]"
         echo ""
         echo "Commands:"
-        echo "  init [--spec <path>] [--url <url>] [--temper] [--no-ui] [--ticket ID] [--desc TEXT]"
+        echo "  init [--spec <path>] [--url <url>] [--temper] [--nyquist] [--no-ui] [--ticket ID] [--desc TEXT]"
         echo "  init --resume <name>                Resume an existing run"
         echo "  list                                 List all runs in foundry-archive/"
         echo "  add-casting <id> <title> [depends] [scope] [key_files]"

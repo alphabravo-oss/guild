@@ -1,7 +1,7 @@
 ---
 description: "Install foundry MCP server and all prerequisites"
 allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-prereqs.sh:*)", "AskUserQuestion", "Read", "Write", "Glob"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Foundry Setup Command

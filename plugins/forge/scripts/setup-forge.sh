@@ -38,7 +38,13 @@ OPTIONS:
   --no-survey           Skip codebase survey (for greenfield/empty projects)
   --first-principles    Challenge assumptions before detailed spec gathering
   --focus <dirs>        Comma-separated directories to focus survey on (e.g., src/auth,src/api)
+  --brownfield          Force V3 brownfield mode (skips mode auto-detection)
+  --greenfield          Force V2 greenfield mode (skips mode auto-detection)
+  --cosmetic            Force cosmetic mode (skips mode auto-detection)
   -h, --help            Show this help
+
+  Any other option starting with '-' is refused with a non-zero exit rather
+  than being folded into FEATURE_NAME.
 
 DESCRIPTION:
   Forge runs parallel codebase research, then conducts a grounded interview,
@@ -105,6 +111,22 @@ HELP_EOF
     --focus)
       FOCUS_DIRS="$2"
       shift 2
+      ;;
+    --brownfield|--greenfield|--cosmetic)
+      # Mode-selection flags, documented in commands/plan.md's argument-hint.
+      # The interview reads the mode from the invocation itself (plan.md step 1
+      # "use that mode verbatim"); the script's only job is to CONSUME them so
+      # they never reach the positional accumulator below. Before this arm
+      # existed they fell through to *) and were appended to FEATURE_NAME,
+      # corrupting FEATURE_SLUG (e.g. "my-feature-greenfield").
+      shift
+      ;;
+    -*)
+      # Refuse unknown options instead of absorbing them into the feature name.
+      echo "Error: Unknown option '$1'" >&2
+      echo "" >&2
+      echo "   Run: /forge:plan --help   to see the supported options" >&2
+      exit 1
       ;;
     *)
       if [[ -z "$FEATURE_NAME" ]]; then

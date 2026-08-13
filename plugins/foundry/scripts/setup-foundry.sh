@@ -12,6 +12,7 @@ SCOPE=""
 SPEC_PATH=""
 URL=""
 TEMPER=false
+NYQUIST=false
 MAX_CYCLES=0
 NO_UI=false
 OUTPUT_DIR=""
@@ -52,6 +53,7 @@ OPTIONS:
   --url <url>              Browser audit URL for SIGHT verification
   --output-dir <dir>       Output directory (default: auto-generated)
   --temper                 Enable micro-domain stress testing (F5)
+  --nyquist                Enable regression test generation (F5.5)
   --max-cycles <n>         Cap verify-fix cycles (default: unlimited)
   --no-ui                  Skip browser audit (SIGHT)
   --ticket <id>            Ticket ID for commit messages
@@ -95,6 +97,10 @@ HELP_EOF
       ;;
     --temper)
       TEMPER=true
+      shift
+      ;;
+    --nyquist)
+      NYQUIST=true
       shift
       ;;
     --max-cycles)
@@ -338,6 +344,7 @@ if [[ -n "$SPEC_PATH" ]]; then echo "Spec: $SPEC_PATH"; fi
 if [[ -n "$URL" ]]; then echo "URL: $URL"; fi
 if [[ -n "$OUTPUT_DIR" ]]; then echo "Output: $OUTPUT_DIR"; fi
 if [[ "$TEMPER" == "true" ]]; then echo "Temper: enabled"; fi
+if [[ "$NYQUIST" == "true" ]]; then echo "Nyquist: enabled"; fi
 if [[ "$MAX_CYCLES" -gt 0 ]]; then echo "Max Cycles: $MAX_CYCLES"; fi
 if [[ "$NO_UI" == "true" ]]; then echo "UI: disabled"; fi
 if [[ -n "$TICKET" ]]; then echo "Ticket: $TICKET"; fi
@@ -349,6 +356,7 @@ echo "FOUNDRY_SPEC=$SPEC_PATH"
 echo "FOUNDRY_URL=$URL"
 echo "FOUNDRY_OUTPUT=$OUTPUT_DIR"
 echo "FOUNDRY_TEMPER=$TEMPER"
+echo "FOUNDRY_NYQUIST=$NYQUIST"
 echo "FOUNDRY_MAX_CYCLES=$MAX_CYCLES"
 echo "FOUNDRY_NO_UI=$NO_UI"
 echo "FOUNDRY_TICKET=$TICKET"

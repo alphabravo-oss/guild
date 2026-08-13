@@ -1,7 +1,7 @@
 ---
 description: "Gracefully stop the current foundry run"
 allowed-tools: ["Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "Bash(tmux:*)", "Bash(kill:*)", "Read", "Write", "AskUserQuestion", "TaskUpdate", "TaskList", "TeamDelete", "SendMessage"]
-hide-from-slash-command-tool: "true"
+disable-model-invocation: "true"
 ---
 
 # Foundry Stop Command

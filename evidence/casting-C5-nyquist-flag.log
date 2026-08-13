@@ -1,0 +1,18 @@
+# evidence-cmd: bash -c 'S="$PWD/plugins/foundry/scripts/setup-foundry.sh"; F="$PWD/plugins/foundry/scripts/foundry.sh"; W=$(mktemp -d); mkdir -p "$W/scripts"; cp "$F" "$W/scripts/"; echo "-- setup-foundry.sh WITH --nyquist:"; bash "$S" myscope --nyquist 2>/dev/null | grep -E "^FOUNDRY_(SCOPE|TEMPER|NYQUIST)="; echo "-- setup-foundry.sh WITHOUT:"; bash "$S" myscope 2>/dev/null | grep -E "^FOUNDRY_(SCOPE|TEMPER|NYQUIST)="; echo "-- foundry.sh init --nyquist -> state.json, manifest.json:"; bash "$W/scripts/foundry.sh" init --nyquist --desc "nyq on" >/dev/null; jq -c "{temper,nyquist,no_ui}" "$W/foundry-archive/nyq-on/state.json"; jq -c "{temper,nyquist,no_ui}" "$W/foundry-archive/nyq-on/castings/manifest.json"; echo "-- foundry.sh init WITHOUT --nyquist:"; bash "$W/scripts/foundry.sh" init --desc "nyq off" >/dev/null; jq -c "{temper,nyquist,no_ui}" "$W/foundry-archive/nyq-off/state.json"; jq -c "{temper,nyquist,no_ui}" "$W/foundry-archive/nyq-off/castings/manifest.json"; rm -rf "$W"'
+# evidence-for: US-004, FR-014
+# evidence-timeout: 180
+
+-- setup-foundry.sh WITH --nyquist:
+FOUNDRY_SCOPE=myscope
+FOUNDRY_TEMPER=false
+FOUNDRY_NYQUIST=true
+-- setup-foundry.sh WITHOUT:
+FOUNDRY_SCOPE=myscope
+FOUNDRY_TEMPER=false
+FOUNDRY_NYQUIST=false
+-- foundry.sh init --nyquist -> state.json, manifest.json:
+{"temper":false,"nyquist":true,"no_ui":false}
+{"temper":false,"nyquist":true,"no_ui":false}
+-- foundry.sh init WITHOUT --nyquist:
+{"temper":false,"nyquist":false,"no_ui":false}
+{"temper":false,"nyquist":false,"no_ui":false}
