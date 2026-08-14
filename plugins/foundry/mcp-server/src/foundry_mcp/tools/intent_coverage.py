@@ -33,6 +33,27 @@ whose every casting's cell is DROPPED. This tool folds those omitted
 answers into ``dropped_answers`` / ``redecompose_hints`` so re-decompose
 routing sees them structurally, not only in validator_stdout prose.
 
+Cell-verifiability rule (same words as the validator docstring and
+agents/intent-carrier.md — D-017/D-018/D-019): A matrix
+cell that cannot be verified cannot contribute coverage: a cell missing
+answer_id, casting_id, or verdict, a cell citing a casting_id absent from
+castings/manifest.json, and a cell citing a manifest-declared casting
+whose prompt file is missing or unreadable all count as DROPPED in the
+per-answer aggregation, so an answer whose only non-DROPPED cells are
+such cells blocks as zero-coverage. The tool's aggregation applies this
+normalization through the validator module's ``aggregate_matrix_coverage``
+— the SAME function the validator's blocking decision uses — so the two
+layers cannot diverge (D-019): zero-coverage-by-ghost answers land in
+``dropped_answers`` / ``redecompose_hints`` and route as ``redecompose``,
+while ``rerun_intent_carrier`` stays reserved for genuinely non-coverage
+failures (malformed JSON/schema with no zero-coverage answers). The gate
+always threads the run's castings dir to the validator via
+``--castings-dir`` (D-018b), and every verdict-bearing payload plus the
+persisted summary disclose ``verification_checked`` — True only when
+castings/manifest.json was loadable and the ghost/unverifiable integrity
+checks actually ran (D-018c), so a dark state is visible instead of
+silently green.
+
   - PASS (no zero-coverage answer): stamps .f07-intent-clean marker;
     orchestrator transitions to F0.9 VALIDATE.
   - FAIL (any zero-coverage answer): returns redecompose action +
@@ -69,7 +90,9 @@ def _save_json_atomic(path: Path, data: dict) -> None:
 
 
 def _run_validator_in_process(
-    coverage_path: Path, spec_path: Path | None
+    coverage_path: Path,
+    spec_path: Path | None,
+    castings_dir: Path | None,
 ) -> tuple[int, str, str] | None:
     """Call the canonical validator's main() in-process.
 
@@ -95,6 +118,14 @@ def _run_validator_in_process(
     argv: list[str] = ["validate-intent-coverage", str(coverage_path)]
     if spec_path is not None and spec_path.exists():
         argv += ["--spec", str(spec_path)]
+    # D-018b: always thread the run's castings dir explicitly so the
+    # ghost-casting / unverifiable-casting / re-derivation checks run
+    # regardless of where the spec resolved (the spec-adjacent derivation
+    # went dark when the spec lived outside the run dir). The validator
+    # treats a nonexistent directory as "checks cannot run" — disclosed
+    # via verification_checked below.
+    if castings_dir is not None:
+        argv += ["--castings-dir", str(castings_dir)]
     # tool-call-log is advisory — passed only when the orchestrator has
     # captured an agent tool-call log for this run (08-RESEARCH.md Open
     # Question 5; advisory shape locked per Phase 7 precedent).
@@ -129,12 +160,14 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     Returns one of:
       {passed: True, action: 'proceed_to_validate', propagated_count: int,
        paraphrased_answers: [...], dropped_answers: [],
-       completeness_checked: bool, matrix_path: str}
+       completeness_checked: bool, verification_checked: bool,
+       matrix_path: str}
       OR
       {passed: False, action: 'redecompose', dropped_answers: [...],
        redecompose_hints: [{answer_id, suggested_casting, citation_chain}],
        cell_verdict_counts: {PROPAGATED, PARAPHRASED, DROPPED: int},
-       completeness_checked: bool, matrix_path: str, hint: str,
+       completeness_checked: bool, verification_checked: bool,
+       matrix_path: str, hint: str,
        validator_stdout: str, validator_exit: int}
       OR
       {passed: False, action: 'rerun_intent_carrier', reason: str}
@@ -142,7 +175,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         when the validator fails for non-coverage reasons (zero-coverage
         answer set empty, validator exit nonzero); in the latter case the
         payload also carries cell_verdict_counts / completeness_checked /
-        matrix_path / validator output.
+        verification_checked / matrix_path / validator output.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -159,6 +192,11 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # single resolver from foundry_orchestrator (no duplicated fallback
     # logic); None only when no spec is resolvable at all.
     spec_path = _resolve_spec_path(project_root)
+    # D-018b: the gate knows the run dir; thread its castings dir to the
+    # validator explicitly instead of relying on the spec-adjacent
+    # derivation (which goes dark when the spec resolves via the
+    # state.json fallback).
+    castings_dir = fdir / "castings"
     if not coverage_path.exists():
         return {
             "passed": False,
@@ -171,7 +209,9 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # FR-001 / CT-002: run the validator IN-PROCESS. A missing or erroring
     # validator returns None here and is surfaced as an explicit tooling
     # error below — NEVER a fake action=redecompose.
-    validator_result = _run_validator_in_process(coverage_path, spec_path)
+    validator_result = _run_validator_in_process(
+        coverage_path, spec_path, castings_dir,
+    )
     if validator_result is None:
         return {
             "passed": False,
@@ -205,13 +245,36 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # Per-answer gate aggregation — the same rule, in the same words, as
     # the validator docstring and agents/intent-carrier.md: an answer_id
     # blocks the gate only when every casting's cell for it is DROPPED.
-    cell_verdicts_by_answer: dict[str, list[str]] = {}
-    for c in matrix:
-        cell_answer_id = c.get("answer_id")
-        if cell_answer_id:
-            cell_verdicts_by_answer.setdefault(cell_answer_id, []).append(
-                c.get("verdict")
-            )
+    # D-019: computed through the validator module's
+    # aggregate_matrix_coverage — the SAME function the validator's
+    # blocking decision uses — so the cannot-contribute normalization
+    # (missing required keys, ghost casting, unverifiable casting) can
+    # never diverge between the two layers. The import cannot realistically
+    # fail here (_run_validator_in_process just imported the module), but
+    # a failure is still surfaced as a tooling error, never a fake verdict.
+    try:
+        from foundry_mcp.scripts.validate_intent_coverage import (
+            aggregate_matrix_coverage,
+        )
+
+        cell_verdicts_by_answer, verification_checked = (
+            aggregate_matrix_coverage(matrix, castings_dir=castings_dir)
+        )
+    except Exception:  # noqa: BLE001 — mirror the CT-002 tooling-error stance.
+        return {
+            "passed": False,
+            "action": "tooling_error",
+            "reason": (
+                "intent-coverage validator module lost between the "
+                "validator run and the aggregation fold — "
+                "aggregate_matrix_coverage could not be imported or "
+                "raised. This is a tooling failure, NOT a spec-coverage "
+                "problem; do not re-decompose."
+            ),
+            "validator_exit": validator_exit,
+            "validator_stdout": validator_stdout,
+            "validator_stderr": validator_stderr,
+        }
     # Spec→matrix completeness (D-009 — omission IS zero coverage): a spec
     # appendix answer with NO matrix cell at all must block exactly like
     # an all-DROPPED answer. The answer-set extraction is imported from
@@ -285,6 +348,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "cell_verdict_counts": cell_verdict_counts,
             "dropped_answers": [],
             "completeness_checked": completeness_checked,
+            "verification_checked": verification_checked,
             "matrix_path": str(coverage_path),
         }
         manifest_path = fdir / "castings" / "manifest.json"
@@ -308,6 +372,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "cell_verdict_counts": cell_verdict_counts,
             "dropped_answers": [],
             "completeness_checked": completeness_checked,
+            "verification_checked": verification_checked,
             "matrix_path": str(coverage_path),
             "intent_coverage_summary": summary,
         }
@@ -317,7 +382,12 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # answer set empty, validator exit nonzero) the gate returns action:
     # rerun_intent_carrier with the validator output, because
     # re-decomposition cannot fix a malformed matrix (schema violation,
-    # verdict mismatch, ghost casting_id, embedding-audit hit).
+    # verdict mismatch, embedding-audit hit, or a ghost/unverifiable cell
+    # whose answer has real coverage elsewhere). D-019: because the
+    # aggregation above normalizes cannot-contribute cells to DROPPED, an
+    # answer whose only coverage was a ghost or unverifiable cell lands in
+    # the dropped set and routes as redecompose below, with its answer_id
+    # named in dropped_answers / redecompose_hints.
     if not dropped:
         return {
             "passed": False,
@@ -331,6 +401,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             ),
             "cell_verdict_counts": cell_verdict_counts,
             "completeness_checked": completeness_checked,
+            "verification_checked": verification_checked,
             "matrix_path": str(coverage_path),
             "validator_stdout": validator_stdout,
             "validator_stderr": validator_stderr,
@@ -380,6 +451,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         # picture and the matrix pointer just as much as the pass path does.
         "cell_verdict_counts": cell_verdict_counts,
         "completeness_checked": completeness_checked,
+        "verification_checked": verification_checked,
         "matrix_path": str(coverage_path),
         "validator_stdout": validator_stdout,
         "validator_stderr": validator_stderr,

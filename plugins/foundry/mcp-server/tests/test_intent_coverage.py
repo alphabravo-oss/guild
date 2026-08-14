@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1216,15 +1217,69 @@ def _coverage_doc(matrix: list[dict]) -> dict:
     }
 
 
+_DECLARED_CASTING_IDS = ("1", "2")
+
+
+def _auto_prompts_from_matrix(matrix: list[dict]) -> dict[str, str]:
+    """Derive production-consistent casting prompts from a test matrix.
+
+    D-018a made manifest-declared-but-promptless castings unverifiable, so
+    the intent_run layout must be production-shaped: every declared casting
+    gets a prompt file whose anchors AGREE with the matrix's claimed
+    verdicts (PROPAGATED ids appear as body literals, PARAPHRASED ids as
+    ``[from A-NNN]`` typed rows inside <contracts>, DROPPED ids nowhere) —
+    otherwise the validator's three-anchor re-derivation would reject the
+    honest test matrices with INTENT_COVERAGE_VERDICT_MISMATCH.
+    """
+    prompts: dict[str, str] = {}
+    for cid in _DECLARED_CASTING_IDS:
+        body_ids = [
+            str(c.get("answer_id"))
+            for c in matrix
+            if str(c.get("casting_id") or "") == cid
+            and c.get("verdict") == "PROPAGATED"
+            and c.get("answer_id")
+        ]
+        typed_ids = [
+            str(c.get("answer_id"))
+            for c in matrix
+            if str(c.get("casting_id") or "") == cid
+            and c.get("verdict") == "PARAPHRASED"
+            and c.get("answer_id")
+        ]
+        text = f"# Casting {cid}\n\n"
+        if body_ids:
+            text += "Implements " + " and ".join(body_ids) + ".\n\n"
+        if typed_ids:
+            rows = "".join(
+                f"| CT-00{i + 1} | surface | [from {aid}] |\n"
+                for i, aid in enumerate(typed_ids)
+            )
+            text += (
+                "<contracts>\n| ID | surface | citation |\n"
+                "|----|---------|----------|\n" + rows + "</contracts>\n"
+            )
+        prompts[cid] = text
+    return prompts
+
+
 @pytest.fixture
 def intent_run(tmp_path: Path):  # noqa: ANN201 — pytest fixture, builder callable
     """Set up a temp foundry run dir and activate it for foundry_intent_coverage.
 
-    Yields a builder ``make(spec_text, matrix, *, with_manifest=True)`` that
-    writes ``spec.md`` + ``intent-coverage.json`` (+ optional
-    ``castings/manifest.json``) into the run dir and returns
-    ``(project_root, run_dir)``. Restores the module-global active run on
-    teardown so tests never leak run state into each other.
+    Yields a builder ``make(spec_text, matrix, *, with_manifest=True,
+    prompts=None)`` that writes ``spec.md`` + ``intent-coverage.json``
+    (+ optional ``castings/manifest.json`` and casting prompt files) into
+    the run dir and returns ``(project_root, run_dir)``.
+
+    PRODUCTION layout (D-018): when the manifest is written, prompt files
+    are written too — auto-derived from the matrix so honest matrices
+    survive re-derivation — because the gate now always threads the run's
+    castings dir to the validator and a declared-but-promptless casting is
+    unverifiable. Pass ``prompts={...}`` (possibly ``{}``) to control the
+    prompt-file surface explicitly, e.g. to create a promptless declared
+    casting on purpose. Restores the module-global active run on teardown
+    so tests never leak run state into each other.
     """
     from foundry_mcp.tools import foundry_state
 
@@ -1238,6 +1293,7 @@ def intent_run(tmp_path: Path):  # noqa: ANN201 — pytest fixture, builder call
         matrix: list[dict],
         *,
         with_manifest: bool = True,
+        prompts: dict[str, str] | None = None,
     ) -> tuple[str, Path]:
         (run_dir / "spec.md").write_text(spec_text, encoding="utf-8")
         (run_dir / "intent-coverage.json").write_text(
@@ -1251,9 +1307,18 @@ def intent_run(tmp_path: Path):  # noqa: ANN201 — pytest fixture, builder call
             # from the manifest is a ghost cell and cannot contribute
             # coverage, so an empty castings list would fail every test.
             (castings_dir / "manifest.json").write_text(
-                json.dumps({"castings": [{"id": "1"}, {"id": "2"}]}),
+                json.dumps(
+                    {"castings": [{"id": cid} for cid in _DECLARED_CASTING_IDS]}
+                ),
                 encoding="utf-8",
             )
+            prompt_files = (
+                _auto_prompts_from_matrix(matrix) if prompts is None else prompts
+            )
+            for cid, text in prompt_files.items():
+                (castings_dir / f"casting-{cid}-prompt.md").write_text(
+                    text, encoding="utf-8",
+                )
         foundry_state.set_active_run(run_name)
         return str(tmp_path), run_dir
 
@@ -1997,6 +2062,8 @@ def test_tool_redecompose_payload_carries_cell_counts_and_matrix_path(
     )
     # D-014b: the redecompose payload discloses that completeness ran.
     assert result["completeness_checked"] is True, result
+    # D-018c: and that the ghost/unverifiable integrity checks ran too.
+    assert result["verification_checked"] is True, result
 
 
 # ---------------------------------------------------------------------------
@@ -2053,17 +2120,18 @@ def test_tool_non_coverage_failure_routes_rerun_not_redecompose(
 def test_tool_ghost_only_coverage_no_longer_passes(
     intent_run: Callable[..., tuple[str, Path]],
 ) -> None:
-    """GRIND D-014a — the ASSAY ghost-casting probe through the real gate.
+    """GRIND D-014a + D-019 — the ghost-casting probe through the real gate.
 
     A-001's only cell cites casting_id 'ghost', absent from
-    castings/manifest.json. Previously: exit 0 / passed=True although the
-    answer reaches zero real castings. Now the validator flags the ghost
-    cell (INTENT_COVERAGE_MATRIX_INCOMPLETE) and blocks the answer as
-    zero-coverage; the gate must NOT pass and must NOT stamp the marker.
-    The tool-layer fold-in sees a (claimed) covered answer, so the
-    zero-coverage set is empty → the D-015 routing sends this to
-    rerun_intent_carrier: the matrix itself is invalid, and an honest
-    re-emitted matrix converges to redecompose if coverage is truly zero.
+    castings/manifest.json. D-014a made the validator flag the ghost cell
+    (INTENT_COVERAGE_MATRIX_INCOMPLETE) and block the answer as
+    zero-coverage — but the tool's independent aggregation did NOT apply
+    the normalization, so this blocked as rerun_intent_carrier with EMPTY
+    dropped_answers/redecompose_hints while the validator stdout named
+    the answer (D-019 layer divergence). Now both layers share
+    aggregate_matrix_coverage: the ghost cell contributes DROPPED, A-001
+    lands in dropped_answers and redecompose_hints, and the gate routes
+    as redecompose (AC-001: hints list exactly the zero-coverage answers).
     """
     from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
 
@@ -2077,7 +2145,13 @@ def test_tool_ghost_only_coverage_no_longer_passes(
     result = foundry_intent_coverage(project_root=project_root)
 
     assert result["passed"] is False, result
-    assert result["action"] == "rerun_intent_carrier", result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-001"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-001"], result
+    # No DROPPED cell exists for A-001 (its only cell claims PROPAGATED
+    # via the ghost casting), so the hint has no cell to draw from.
+    assert result["redecompose_hints"][0]["suggested_casting"] is None, result
     assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in result["validator_stdout"], (
         result
     )
@@ -2111,11 +2185,21 @@ def test_tool_pass_payload_and_summary_carry_completeness_checked(
     assert (
         result["intent_coverage_summary"]["completeness_checked"] is True
     ), result
+    # D-018c: manifest + prompts are resolvable, so the ghost/unverifiable
+    # integrity checks ran — disclosed on every surface next to
+    # completeness_checked.
+    assert result["verification_checked"] is True, result
+    assert (
+        result["intent_coverage_summary"]["verification_checked"] is True
+    ), result
     manifest = json.loads(
         (run_dir / "castings" / "manifest.json").read_text(encoding="utf-8")
     )
     assert (
         manifest["intent_coverage_summary"]["completeness_checked"] is True
+    ), manifest
+    assert (
+        manifest["intent_coverage_summary"]["verification_checked"] is True
     ), manifest
 
 
@@ -2156,3 +2240,388 @@ def test_tool_discloses_completeness_skip_when_no_spec_resolvable(
     assert (
         manifest["intent_coverage_summary"]["completeness_checked"] is False
     ), manifest
+
+
+# ---------------------------------------------------------------------------
+# GRIND D-017 / D-018 / D-019 — matrix input validation: a cell that
+# cannot be verified must not contribute coverage, and every dark-state
+# must block or be disclosed.
+# ---------------------------------------------------------------------------
+
+
+# D-018 / GI-003 — the canonical cell-verifiability sentence, written once
+# and pasted word-for-word into the validator module docstring, the agent
+# contract, and the MCP tool module docstring (the tool implements the
+# same normalization via the shared aggregate_matrix_coverage). Same
+# normalization contract as _AGGREGATION_SENTENCE.
+_UNVERIFIABLE_SENTENCE = (
+    "A matrix cell that cannot be verified cannot contribute coverage: "
+    "a cell missing answer_id, casting_id, or verdict, a cell citing a "
+    "casting_id absent from castings/manifest.json, and a cell citing a "
+    "manifest-declared casting whose prompt file is missing or unreadable "
+    "all count as DROPPED in the per-answer aggregation, so an answer "
+    "whose only non-DROPPED cells are such cells blocks as zero-coverage."
+)
+
+_UNVERIFIABLE_RULE_SURFACES = (
+    CANONICAL_VALIDATOR_PATH,
+    AGENT_PATH,
+    TOOL_MODULE_PATH,
+)
+
+
+def test_unverifiable_rule_stated_identically() -> None:
+    """GRIND D-018 / GI-003 — the cell-verifiability rule uses the same words everywhere.
+
+    The unverifiable-cell rule must appear word-for-word (modulo
+    line-wrapping) in the validator docstring, agents/intent-carrier.md,
+    and the MCP tool module — the D-017/D-018/D-019 defect family is
+    exactly a rule enforced (or not) differently across surfaces.
+    """
+    for path in _UNVERIFIABLE_RULE_SURFACES:
+        raw = path.read_text(encoding="utf-8").replace('"', " ")
+        normalized = re.sub(r"\s+", " ", raw)
+        assert _UNVERIFIABLE_SENTENCE in normalized, (
+            f"cell-verifiability sentence missing or reworded in "
+            f"{path.name} — GI-003 requires the SAME words on every "
+            f"surface that states the rule"
+        )
+
+
+_A001_ONLY_SPEC = (
+    "---\nspec_format_version: v2.1\n---\n"
+    "## Appendix: Interview Transcript\n\n"
+    "## A-001 [Locked]\nSurface contract. [from Q-001]\n"
+)
+
+
+def test_cell_missing_casting_id_cannot_contribute(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-017 — a cell naming NO casting must not count as coverage.
+
+    ASSAY live probe: {"answer_id": "A-001", "verdict": "PROPAGATED",
+    "citation_chain": [...]} with no casting_id escaped the allow-list-only
+    key check AND both truthy-casting_id-gated integrity guards, and
+    contributed PROPAGATED (exit 0, gate passed). Now the required-key
+    validation flags it (existing SCHEMA_INVALID token — GI-002) and the
+    cell is normalized to non-contributing exactly like a ghost cell, so
+    A-001 blocks as zero-coverage via INTENT_COVERAGE_DROPPED.
+    """
+    spec = _write_production_layout(
+        tmp_path,
+        _A001_ONLY_SPEC,
+        {"1": "# Casting 1\n\nNothing anchors the answer here.\n"},
+    )
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 1,
+            "casting_count": 1,
+            "summary": {"PROPAGATED": 1, "PARAPHRASED": 0, "DROPPED": 0},
+            "matrix": [
+                {"answer_id": "A-001",
+                 "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(
+        coverage, spec_path=spec,
+    )
+    assert exit_code != 0
+    assert "INTENT_COVERAGE_SCHEMA_INVALID" in stdout, stdout
+    assert "casting_id" in stdout, stdout
+    assert "INTENT_COVERAGE_DROPPED" in stdout, stdout
+    assert "A-001" in stdout, stdout
+
+
+def test_promptless_declared_casting_blocks(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-018a — a manifest-declared casting with NO prompt file.
+
+    Re-derivation used to skip silently (prompt_path.is_file() guard)
+    while the ghost guard passed (the casting IS declared) — an
+    unverifiable PROPAGATED claim survived as coverage. Now the
+    non-DROPPED cell of a promptless declared casting is flagged with the
+    existing MATRIX_INCOMPLETE token and normalized to DROPPED, so an
+    answer whose only coverage cites the promptless casting blocks as
+    zero-coverage.
+    """
+    spec = _write_production_layout(
+        tmp_path,
+        _A001_ONLY_SPEC,
+        {"1": "# Casting 1\n\nNothing anchors the answer here.\n"},
+    )
+    # Declare casting "2" in the manifest WITHOUT writing its prompt file.
+    (tmp_path / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": [{"id": "1"}, {"id": "2"}]}),
+        encoding="utf-8",
+    )
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 1,
+            "casting_count": 2,
+            "summary": {"PROPAGATED": 1, "PARAPHRASED": 0, "DROPPED": 1},
+            "matrix": [
+                {"answer_id": "A-001", "casting_id": "1",
+                 "verdict": "DROPPED", "citation_chain": ["A-001"]},
+                {"answer_id": "A-001", "casting_id": "2",
+                 "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = run_intent_coverage_validator(
+        coverage, spec_path=spec,
+    )
+    assert exit_code != 0
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in stdout, stdout
+    assert "casting-2-prompt.md" in stdout, stdout
+    assert "INTENT_COVERAGE_DROPPED" in stdout, stdout
+    assert "A-001" in stdout, stdout
+
+
+def test_castings_dir_flag_threads_integrity_checks(
+    run_intent_coverage_validator: Callable[..., tuple[int, str, str]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-018b — --castings-dir closes the spec-location dark state.
+
+    The D-012/D-013 composition bug: casting_dir derived as
+    spec_path.parent / 'castings', so when the spec resolves outside the
+    run dir the ghost guard and re-derivation silently go dark — the
+    IDENTICAL matrix flips from blocked to passing purely on spec
+    location. The --castings-dir argument (which the MCP gate always
+    passes) threads the run's castings dir explicitly: the same matrix
+    that blocks in the run-dir layout must block in the fallback layout.
+    """
+    # Castings live in the run dir; the spec lives elsewhere with NO
+    # adjacent castings/ directory.
+    run_dir = tmp_path / "run"
+    castings = run_dir / "castings"
+    castings.mkdir(parents=True)
+    (castings / "manifest.json").write_text(
+        json.dumps({"castings": [{"id": "1"}]}), encoding="utf-8",
+    )
+    (castings / "casting-1-prompt.md").write_text(
+        "# Casting 1\n\nNothing anchors the answer here.\n", encoding="utf-8",
+    )
+    spec = tmp_path / "specs" / "feature-spec.md"
+    spec.parent.mkdir()
+    spec.write_text(_A001_ONLY_SPEC, encoding="utf-8")
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps({
+            "stream": "INTENT-01",
+            "phase": "F0.7",
+            "spec_format_version": "v2.1",
+            "spec_hash": "sha256:abc",
+            "agent_path": "plugins/foundry/agents/intent-carrier.md",
+            "wall_clock_seconds": 1.0,
+            "answer_count": 1,
+            "casting_count": 1,
+            "summary": {"PROPAGATED": 1, "PARAPHRASED": 0, "DROPPED": 0},
+            "matrix": [
+                {"answer_id": "A-001", "casting_id": "ghost",
+                 "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    # Without --castings-dir: no castings/ next to the spec — the
+    # integrity checks cannot run and the ghost claim passes (the dark
+    # state, now disclosed at the gate via verification_checked=False).
+    exit_code, stdout, _ = run_intent_coverage_validator(
+        coverage, spec_path=spec,
+    )
+    assert exit_code == 0, stdout
+    # With --castings-dir threading the run's castings dir: the SAME
+    # matrix blocks — ghost flagged, answer named as zero-coverage.
+    # (Direct subprocess over the shim — the shared runner fixture
+    # predates the --castings-dir flag and is out of this casting's
+    # file scope.)
+    result = subprocess.run(
+        [
+            "python3", str(VALIDATE_PATH), str(coverage),
+            "--spec", str(spec),
+            "--castings-dir", str(castings),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    exit_code, stdout = result.returncode, result.stdout
+    assert exit_code != 0
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in stdout, stdout
+    assert "ghost" in stdout, stdout
+    assert "INTENT_COVERAGE_DROPPED" in stdout, stdout
+    assert "A-001" in stdout, stdout
+
+
+def test_tool_cell_missing_casting_id_blocks_via_redecompose(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-017 mirror — the no-casting_id probe through the real gate.
+
+    Live repro shape: the cell escaped everything and the gate stamped
+    .f07-intent-clean (exit 0, passed=True). Now the shared aggregation
+    normalizes the structurally-invalid cell to DROPPED: A-001 lands in
+    dropped_answers / redecompose_hints, the gate routes as redecompose,
+    and no marker is stamped.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-001"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-001"], result
+    assert "INTENT_COVERAGE_SCHEMA_INVALID" in result["validator_stdout"], (
+        result
+    )
+    assert "INTENT_COVERAGE_DROPPED" in result["validator_stdout"], result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_promptless_declared_casting_blocks(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-018a mirror — promptless declared casting through the gate.
+
+    The manifest declares casting "1" but no prompt file exists
+    (prompts={} suppresses the fixture's production-shaped prompt
+    writing). The PROPAGATED claim citing it is unverifiable → normalized
+    to DROPPED by the shared aggregation → A-001 blocks via redecompose
+    with the answer named in the hints.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+        prompts={},
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-001"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-001"], result
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in result["validator_stdout"], (
+        result
+    )
+    assert "casting-1-prompt.md" in result["validator_stdout"], result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_ghost_blocks_in_state_json_fallback_layout(
+    intent_run: Callable[..., tuple[str, Path]],
+    tmp_path: Path,
+) -> None:
+    """GRIND D-018b — the same matrix blocks regardless of spec location.
+
+    Live repro: an identical ghost-coverage matrix flipped from blocked
+    (run-dir spec) to passing (spec resolvable only via
+    state.json['spec_path']) because BOTH integrity guards derived the
+    castings dir from the spec's parent. The gate now threads the run's
+    castings dir explicitly, so the fallback layout blocks exactly like
+    the run-dir layout — redecompose, answer named, no marker.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "ghost",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    # Move the spec OUT of the run dir: reachable ONLY through the
+    # state.json['spec_path'] fallback (the D-012 layout).
+    (run_dir / "spec.md").unlink()
+    external_spec = tmp_path / "specs" / "feature-spec.md"
+    external_spec.parent.mkdir()
+    external_spec.write_text(_CLEAN_SPEC, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps({"spec_path": "specs/feature-spec.md"}), encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-001"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-001"], result
+    assert result["completeness_checked"] is True, result
+    assert result["verification_checked"] is True, result
+    assert "INTENT_COVERAGE_MATRIX_INCOMPLETE" in result["validator_stdout"], (
+        result
+    )
+    assert "ghost" in result["validator_stdout"], result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_no_castings_resolvable_disclosed(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-018c — no castings dir/manifest resolvable is disclosed.
+
+    With no castings/ directory at all, the ghost-casting and
+    unverifiable-casting checks are off by design. The gate must not fail
+    the run for that, but the dark state must be visible: the pass
+    payload and the returned summary carry verification_checked=False
+    (no castings/manifest.json exists, so no summary can be persisted —
+    the returned surfaces are the disclosure).
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+        with_manifest=False,
+    )
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is True, result
+    assert result["verification_checked"] is False, result
+    assert (
+        result["intent_coverage_summary"]["verification_checked"] is False
+    ), result
+    # The spec IS resolvable, so completeness still ran — the two
+    # disclosures are independent.
+    assert result["completeness_checked"] is True, result

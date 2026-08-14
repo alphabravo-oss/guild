@@ -250,7 +250,16 @@ caught the same way: A spec
 appendix answer_id with no matrix cell at all is zero-coverage: the
 validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
 answer_id, and the omitted answer blocks the gate exactly like an answer
-whose every casting's cell is DROPPED. On any
+whose every casting's cell is DROPPED. Unverifiable cells cannot keep
+the gate open either (cell-verifiability rule — same words as the
+validator docstring, GI-003 mirroring): A matrix
+cell that cannot be verified cannot contribute coverage: a cell missing
+answer_id, casting_id, or verdict, a cell citing a casting_id absent from
+castings/manifest.json, and a cell citing a manifest-declared casting
+whose prompt file is missing or unreadable all count as DROPPED in the
+per-answer aggregation, so an answer whose only non-DROPPED cells are
+such cells blocks as zero-coverage. Emit every cell with all four
+schema keys, and cite only casting_ids the manifest declares. On any
 zero-coverage answer the gate returns
 `{action: 'redecompose', dropped_answers, redecompose_hints}` to the
 foundry orchestrator — which routes the lead BACK to F0.5 with the

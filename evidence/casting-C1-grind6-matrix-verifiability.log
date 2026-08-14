@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "missing_casting_id or promptless_declared or castings_dir_flag" 2>/dev/null | tail -1
+# evidence-for: AC-001, AC-004, AC-005
+# evidence-volatile: \d+\.\d+s
+
+5 passed, 49 deselected in 0.17s

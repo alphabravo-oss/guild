@@ -49,13 +49,28 @@ state.json['spec_path']) and supplies ``--spec`` whenever the spec is
 resolvable — the completeness check runs whenever the spec is resolvable
 and cannot run only when no spec is resolvable at all.
 
+Cell-verifiability rule (stated word-for-word in
+plugins/foundry/agents/intent-carrier.md — GI-003 mirroring): A matrix
+cell that cannot be verified cannot contribute coverage: a cell missing
+answer_id, casting_id, or verdict, a cell citing a casting_id absent from
+castings/manifest.json, and a cell citing a manifest-declared casting
+whose prompt file is missing or unreadable all count as DROPPED in the
+per-answer aggregation, so an answer whose only non-DROPPED cells are
+such cells blocks as zero-coverage. The manifest and prompt files are
+located via ``--castings-dir`` (the Foundry-Intent-Coverage MCP gate
+always passes the run's castings dir — D-018b), falling back to the
+spec-adjacent ``castings/`` directory for CLI compatibility; when
+neither resolves, these integrity checks cannot run and the gate
+discloses the skip via ``verification_checked=False``.
+
 Citation-only — never embeddings, never Jaccard, never fuzzy text-overlap.
 
 Exits 0 on pass, 1 on any failure, 2 on usage error.
 
 Usage:
     validate-intent-coverage.py <intent-coverage.json> \\
-        [--spec <spec.md>] [--tool-call-log <log.json>]
+        [--spec <spec.md>] [--tool-call-log <log.json>] \\
+        [--castings-dir <castings/>]
 
 This script is the authoritative INTENT-01 F0.7 gate. The
 intent-carrier agent's prompt rubric is advisory; this script is
@@ -328,6 +343,150 @@ def verdict_for_cell(
     return "DROPPED", [answer_id]
 
 
+# D-017: keys every matrix cell must carry. A cell missing (or carrying an
+# empty) answer_id, casting_id, or verdict is structurally invalid and
+# cannot contribute coverage. Subset of KNOWN_CELL_KEYS (citation_chain
+# stays optional); no existing frozenset grows (GI-002).
+REQUIRED_CELL_KEYS: tuple[str, ...] = ("answer_id", "casting_id", "verdict")
+
+
+def load_manifest_casting_ids(castings_dir: Path | None) -> set[str] | None:
+    """Return manifest.castings[].id (str-normalized) or None when unavailable.
+
+    D-014a manifest read, extracted so the validator body AND the
+    Foundry-Intent-Coverage gate tool resolve the same id-set through one
+    code path. ``None`` means "manifest unavailable — the ghost-casting
+    and unverifiable-casting checks cannot run" (matrix-only validation),
+    mirroring the --spec-absent completeness stance; the gate discloses
+    that state as ``verification_checked=False`` (D-018c).
+    """
+    if castings_dir is None:
+        return None
+    manifest_path = castings_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(manifest_data, dict) and isinstance(
+        manifest_data.get("castings"), list
+    ):
+        return {
+            str(c.get("id"))
+            for c in manifest_data["castings"]
+            if isinstance(c, dict) and c.get("id") is not None
+        }
+    return None
+
+
+def _read_casting_prompt(
+    castings_dir: Path,
+    casting_id: Any,
+    cache: dict[str, str | None],
+) -> str | None:
+    """Read (and cache) a casting prompt's text; None when missing/unreadable.
+
+    ``None`` is the D-018a unverifiable state — no prompt text exists to
+    re-derive against. An empty-but-readable prompt file returns ``""``
+    and re-derivation runs against it (deriving DROPPED for any answer).
+    """
+    prompt_path = castings_dir / f"casting-{casting_id}-prompt.md"
+    cache_key = str(prompt_path)
+    if cache_key not in cache:
+        try:
+            cache[cache_key] = prompt_path.read_text(encoding="utf-8")
+        except OSError:
+            cache[cache_key] = None
+    return cache[cache_key]
+
+
+def cell_cannot_contribute_reason(
+    cell: dict,
+    *,
+    manifest_casting_ids: set[str] | None,
+    castings_dir: Path | None,
+    prompt_cache: dict[str, str | None] | None = None,
+) -> str | None:
+    """Classify why a cell's verdict cannot contribute coverage, or None.
+
+    The single classification behind the cell-verifiability rule (module
+    docstring — D-017/D-018/D-019). Returns one of:
+
+      * ``"missing_required_keys"`` — a REQUIRED_CELL_KEYS entry is
+        absent or empty (D-017);
+      * ``"ghost_casting"`` — manifest ids are known and the cell cites a
+        casting_id the manifest does not declare (D-014a);
+      * ``"unverifiable_casting"`` — the manifest declares the casting
+        but its prompt file is missing or unreadable (D-018a);
+      * ``None`` — the cell is verifiable and contributes its verdict.
+
+    Used by the validator's per-cell failure lines AND by
+    ``aggregate_matrix_coverage`` (which both layers call for the gate
+    decision), so the classification cannot diverge between layers.
+    """
+    if prompt_cache is None:
+        prompt_cache = {}
+    if any(not cell.get(k) for k in REQUIRED_CELL_KEYS):
+        return "missing_required_keys"
+    if manifest_casting_ids is None:
+        return None
+    casting_id = cell["casting_id"]
+    if str(casting_id) not in manifest_casting_ids:
+        return "ghost_casting"
+    if (
+        castings_dir is not None
+        and _read_casting_prompt(castings_dir, casting_id, prompt_cache)
+        is None
+    ):
+        return "unverifiable_casting"
+    return None
+
+
+def aggregate_matrix_coverage(
+    matrix: Any,
+    *,
+    castings_dir: Path | None,
+    prompt_cache: dict[str, str | None] | None = None,
+) -> tuple[dict[str, list[str]], bool]:
+    """Per-answer contributed verdicts with cannot-contribute normalization.
+
+    THE shared aggregation (D-019: one rule, no layer divergence): the
+    validator's blocking decision and the Foundry-Intent-Coverage gate
+    tool's ``dropped_answers`` / ``redecompose_hints`` fold both flow
+    through this function. Cells whose ``cell_cannot_contribute_reason``
+    is non-None contribute DROPPED regardless of their claimed verdict;
+    cells without an answer_id cannot be attributed to any answer and are
+    excluded (their missing-key state still fails validation).
+
+    Returns ``(cell_verdicts_by_answer, verification_checked)`` where
+    ``verification_checked`` is True only when castings/manifest.json was
+    loadable — i.e. the ghost-casting and unverifiable-casting integrity
+    checks actually ran (D-018c disclosure).
+    """
+    manifest_casting_ids = load_manifest_casting_ids(castings_dir)
+    verification_checked = manifest_casting_ids is not None
+    if prompt_cache is None:
+        prompt_cache = {}
+    cell_verdicts_by_answer: dict[str, list[str]] = {}
+    for cell in matrix if isinstance(matrix, list) else []:
+        if not isinstance(cell, dict):
+            continue
+        answer_id = cell.get("answer_id")
+        if not answer_id:
+            continue
+        reason = cell_cannot_contribute_reason(
+            cell,
+            manifest_casting_ids=manifest_casting_ids,
+            castings_dir=castings_dir,
+            prompt_cache=prompt_cache,
+        )
+        cell_verdicts_by_answer.setdefault(answer_id, []).append(
+            "DROPPED" if reason is not None else cell.get("verdict")
+        )
+    return cell_verdicts_by_answer, verification_checked
+
+
 def _spec_format_version_meets_v21(version: str | None) -> bool:
     """True iff version is v2.1 or higher.
 
@@ -371,6 +530,7 @@ def validate_intent_coverage(
     *,
     spec_path: Path | None = None,
     tool_call_log_path: Path | None = None,
+    castings_dir: Path | None = None,
 ) -> int:
     """Validate intent-coverage.json against the closed-vocab schema.
 
@@ -408,7 +568,13 @@ def validate_intent_coverage(
         (Token reuse per GI-002; INTENT_COVERAGE_VERDICT_MISMATCH stays
         reserved for re-derivation disagreement over an EXISTING casting
         prompt — a remediation, re-labeling, that cannot apply to a
-        nonexistent casting.)
+        nonexistent casting.) The same token also fires per
+        unverifiable cell (D-018a): a non-DROPPED cell citing a
+        manifest-declared casting whose prompt file is missing or
+        unreadable cannot be re-derived against anything, so it cannot
+        contribute coverage and is normalized to DROPPED in the
+        aggregation exactly like a ghost cell (cell-verifiability rule,
+        module docstring).
       * INTENT_COVERAGE_VERDICT_MISMATCH — when casting-prompt locatable,
         validator's three-anchor re-derivation disagrees with agent's
         cell.verdict.
@@ -516,10 +682,18 @@ def validate_intent_coverage(
         )
 
     # ----- Step 3+4+6+7+8: per-cell -----
-    # Casting-prompt cache (resolve relative to spec.md's directory if possible).
-    casting_prompt_cache: dict[str, str] = {}
+    # Casting-prompt cache (str path -> prompt text, None = missing or
+    # unreadable). Castings-dir resolution (D-018b): an explicit
+    # --castings-dir wins (the Foundry-Intent-Coverage MCP gate always
+    # passes the run's castings dir, so the checks no longer go dark when
+    # the spec resolves outside the run dir via the state.json fallback);
+    # the spec-adjacent derivation remains as the CLI-compat default.
+    casting_prompt_cache: dict[str, str | None] = {}
     casting_dir: Path | None = None
-    if spec_path is not None:
+    if castings_dir is not None:
+        if castings_dir.is_dir():
+            casting_dir = castings_dir
+    elif spec_path is not None:
         candidate_castings_dir = spec_path.parent / "castings"
         if candidate_castings_dir.is_dir():
             casting_dir = candidate_castings_dir
@@ -530,32 +704,15 @@ def validate_intent_coverage(
     # str(c.get("id")) == str(casting_id), ids may be ints). None means
     # "manifest unavailable — check cannot run" (matrix-only validation),
     # mirroring the --spec-absent completeness stance.
-    manifest_casting_ids: set[str] | None = None
-    if casting_dir is not None:
-        manifest_path = casting_dir / "manifest.json"
-        if manifest_path.is_file():
-            try:
-                manifest_data = json.loads(
-                    manifest_path.read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError):
-                manifest_data = None
-            if isinstance(manifest_data, dict) and isinstance(
-                manifest_data.get("castings"), list
-            ):
-                manifest_casting_ids = {
-                    str(c.get("id"))
-                    for c in manifest_data["castings"]
-                    if isinstance(c, dict) and c.get("id") is not None
-                }
+    manifest_casting_ids = load_manifest_casting_ids(casting_dir)
 
-    # Per-answer cell-verdict accumulator (gate aggregation rule — stated
-    # word-for-word in agents/intent-carrier.md and the docstrings above):
-    # an answer_id blocks the gate only when every casting's cell for it
-    # is DROPPED. Spec-declared answers with NO recorded cell at all are
+    # The loop below emits per-cell failure lines only. The gate-blocking
+    # per-answer aggregation runs AFTER the loop through
+    # aggregate_matrix_coverage — the SAME function the
+    # Foundry-Intent-Coverage gate tool calls (D-019: one rule, no layer
+    # divergence). Spec-declared answers with NO recorded cell at all are
     # zero-coverage too — the spec→matrix completeness check below the
     # loop catches those (omission IS zero coverage).
-    cell_verdicts_by_answer: dict[str, list[str]] = {}
     for idx, cell in enumerate(matrix):
         if not isinstance(cell, dict):
             failures.append(
@@ -573,17 +730,46 @@ def validate_intent_coverage(
                 f"{sorted(KNOWN_CELL_KEYS)!r} allowed"
             )
 
-        # Step 4: verdict enum.
+        answer_id = cell.get("answer_id", "")
+        casting_id = cell.get("casting_id", "")
         verdict = cell.get("verdict")
-        if verdict not in KNOWN_INTENT_COVERAGE_VERDICTS:
+
+        # Step 3b (D-017) + 6b (D-014a) + 6c (D-018a): one classification —
+        # cell_cannot_contribute_reason — drives the failure lines AND
+        # (via aggregate_matrix_coverage below the loop) the gate
+        # decision, so the two can never disagree (D-019).
+        reason = cell_cannot_contribute_reason(
+            cell,
+            manifest_casting_ids=manifest_casting_ids,
+            castings_dir=casting_dir,
+            prompt_cache=casting_prompt_cache,
+        )
+
+        # Step 3b (D-017): required-key validation — the inverse of the
+        # allow-list check above. Every matrix cell must carry answer_id,
+        # casting_id, and verdict; a cell missing any of them is
+        # structurally invalid (existing SCHEMA_INVALID token — GI-002)
+        # and its verdict cannot contribute coverage.
+        if reason == "missing_required_keys":
+            missing_keys = sorted(
+                k for k in REQUIRED_CELL_KEYS if not cell.get(k)
+            )
+            failures.append(
+                f"INTENT_COVERAGE_SCHEMA_INVALID: matrix[{idx}] missing "
+                f"required cell key(s) {missing_keys!r}; every matrix cell "
+                f"must carry answer_id, casting_id, and verdict — a "
+                f"structurally-invalid cell cannot contribute coverage"
+            )
+
+        # Step 4: verdict enum (a MISSING verdict is already flagged as a
+        # missing required key above; this fires for present-but-unknown
+        # values only).
+        if verdict and verdict not in KNOWN_INTENT_COVERAGE_VERDICTS:
             failures.append(
                 f"INTENT_COVERAGE_UNKNOWN_VERDICT: matrix[{idx}] verdict="
                 f"{verdict!r}; only "
                 f"{sorted(KNOWN_INTENT_COVERAGE_VERDICTS)!r} allowed"
             )
-
-        answer_id = cell.get("answer_id", "")
-        casting_id = cell.get("casting_id", "")
 
         # Step 6: dangling citation (only when --spec provided AND spec's
         # answer-set is non-empty).
@@ -605,12 +791,7 @@ def validate_intent_coverage(
         # justification in the docstring above) and counts as DROPPED in
         # the per-answer aggregation below, so an answer whose only
         # non-DROPPED cells are ghosts blocks as zero-coverage.
-        cell_is_ghost = (
-            manifest_casting_ids is not None
-            and bool(casting_id)
-            and str(casting_id) not in manifest_casting_ids
-        )
-        if cell_is_ghost:
+        if reason == "ghost_casting":
             failures.append(
                 f"INTENT_COVERAGE_MATRIX_INCOMPLETE: matrix[{idx}] "
                 f"casting_id={casting_id!r} not present in "
@@ -619,51 +800,60 @@ def validate_intent_coverage(
                 f"citing an unknown casting cannot contribute coverage"
             )
 
-        # Step 7: three-anchor verdict re-derivation (when casting-prompt
-        # resolvable). For fixtures that don't ship full casting-prompt
-        # trees, we skip the re-derivation silently — the matrix's own
-        # DROPPED markers are still sufficient to block the gate. Ghost
-        # cells are excluded structurally: no prompt exists to re-derive
-        # against, and the MATRIX_INCOMPLETE line above already blocks.
+        # Step 6c (D-018a): unverifiable-casting cell. The manifest
+        # declares the casting but no readable prompt file exists, so
+        # re-derivation has nothing to check the claimed verdict against.
+        # Its non-DROPPED cells are flagged (same MATRIX_INCOMPLETE token
+        # as ghosts — GI-002 reuse) and normalized to DROPPED in the
+        # aggregation; a claimed-DROPPED cell contributes nothing either
+        # way and is not flagged.
+        if reason == "unverifiable_casting" and verdict != "DROPPED":
+            failures.append(
+                f"INTENT_COVERAGE_MATRIX_INCOMPLETE: matrix[{idx}] "
+                f"casting_id={casting_id!r} is declared in "
+                f"castings/manifest.json but casting-{casting_id}-prompt.md "
+                f"is missing or unreadable; an unverifiable casting cannot "
+                f"contribute coverage"
+            )
+
+        # Step 7: three-anchor verdict re-derivation — only for cells
+        # whose classification is clean (all required keys present,
+        # casting declared, prompt readable). For fixtures that don't
+        # ship full casting-prompt trees (no castings dir resolvable), we
+        # skip the re-derivation silently — the matrix's own DROPPED
+        # markers are still sufficient to block the gate, and the MCP
+        # gate discloses the skip via verification_checked=False.
         if (
-            casting_dir is not None
-            and answer_id
-            and casting_id
-            and not cell_is_ghost
+            reason is None
+            and casting_dir is not None
             and verdict in KNOWN_INTENT_COVERAGE_VERDICTS
         ):
-            prompt_path = casting_dir / f"casting-{casting_id}-prompt.md"
-            if prompt_path.is_file():
-                cache_key = str(prompt_path)
-                if cache_key not in casting_prompt_cache:
-                    try:
-                        casting_prompt_cache[cache_key] = prompt_path.read_text(
-                            encoding="utf-8",
-                        )
-                    except OSError:
-                        casting_prompt_cache[cache_key] = ""
-                prompt_text = casting_prompt_cache[cache_key]
-                if prompt_text:
-                    expected_verdict, _expected_chain = verdict_for_cell(
-                        answer_id, prompt_text,
-                    )
-                    if expected_verdict != verdict:
-                        failures.append(
-                            f"INTENT_COVERAGE_VERDICT_MISMATCH: matrix[{idx}] "
-                            f"answer_id={answer_id!r} casting_id="
-                            f"{casting_id!r} agent_verdict={verdict!r} "
-                            f"validator_re-derived={expected_verdict!r}"
-                        )
-
-        # Step 8: accumulate per-answer cell verdicts (block condition;
-        # primary success criterion 3). Cells without an answer_id cannot
-        # be attributed to any answer and are excluded from aggregation.
-        # Ghost cells (D-014a) contribute DROPPED regardless of their
-        # claimed verdict — an unknown casting cannot provide coverage.
-        if answer_id:
-            cell_verdicts_by_answer.setdefault(answer_id, []).append(
-                "DROPPED" if cell_is_ghost else verdict
+            prompt_text = _read_casting_prompt(
+                casting_dir, casting_id, casting_prompt_cache,
             )
+            if prompt_text is not None:
+                expected_verdict, _expected_chain = verdict_for_cell(
+                    answer_id, prompt_text,
+                )
+                if expected_verdict != verdict:
+                    failures.append(
+                        f"INTENT_COVERAGE_VERDICT_MISMATCH: matrix[{idx}] "
+                        f"answer_id={answer_id!r} casting_id="
+                        f"{casting_id!r} agent_verdict={verdict!r} "
+                        f"validator_re-derived={expected_verdict!r}"
+                    )
+
+    # Step 8: per-answer aggregation through THE shared function (D-019 —
+    # the Foundry-Intent-Coverage gate tool calls the same one, so the
+    # two layers cannot diverge). Cells that cannot be verified (missing
+    # required keys, ghost casting, unverifiable casting) contribute
+    # DROPPED regardless of their claimed verdict; cells without an
+    # answer_id cannot be attributed to any answer and are excluded.
+    cell_verdicts_by_answer, _verification_checked = aggregate_matrix_coverage(
+        matrix,
+        castings_dir=casting_dir,
+        prompt_cache=casting_prompt_cache,
+    )
 
     # Spec→matrix completeness (only when --spec provided and the appendix
     # answer-set is non-empty — same predicate as the dangling-citation
@@ -797,6 +987,23 @@ def main(argv: list[str]) -> int:
         ),
     )
     parser.add_argument(
+        "--castings-dir",
+        dest="castings_dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to the run's castings/ directory (manifest.json "
+            "+ casting-{id}-prompt.md files). When provided it wins over "
+            "the spec-adjacent derivation, so the ghost-casting, "
+            "unverifiable-casting, and verdict re-derivation checks run "
+            "even when the spec resolves outside the run dir (D-018b). "
+            "The Foundry-Intent-Coverage MCP gate always passes it. "
+            "Without it, the directory is derived next to --spec for CLI "
+            "compatibility; when neither resolves, those checks cannot "
+            "run."
+        ),
+    )
+    parser.add_argument(
         "--tool-call-log",
         dest="tool_call_log_path",
         type=Path,
@@ -813,6 +1020,7 @@ def main(argv: list[str]) -> int:
         args.coverage_path,
         spec_path=args.spec_path,
         tool_call_log_path=args.tool_call_log_path,
+        castings_dir=args.castings_dir,
     )
 
 
