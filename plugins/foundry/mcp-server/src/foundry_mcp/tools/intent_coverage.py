@@ -11,6 +11,15 @@ nonzero) the gate returns action: rerun_intent_carrier with the
 validator output, because re-decomposition cannot fix a malformed
 matrix.
 
+Malformed-matrix tolerance (D-020): the gate's own folds over the matrix
+carry the same guards as the validator's aggregation — isinstance checks
+on the coverage doc and the matrix, non-dict cells skipped, missing keys
+skipped — so a malformed shape (non-dict matrix element, cell missing
+answer_id, matrix as a JSON object, coverage doc top level a JSON array)
+flows through the routing above instead of raising: zero-coverage
+answers, when present, are still named in dropped_answers /
+redecompose_hints.
+
 Completeness disclosure (D-014b): every verdict-bearing payload and the
 persisted intent_coverage_summary carry a ``completeness_checked``
 boolean — True only when a spec was resolvable and the spec→matrix
@@ -241,7 +250,28 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "validator_exit": validator_exit,
         }
 
-    matrix = coverage.get("matrix", [])
+    # D-020: the gate's own folds over the matrix (paraphrased answers,
+    # propagated_count, cell_verdict_counts, redecompose_hints) must carry
+    # the same malformed-input tolerance as the validator's counterparts
+    # (aggregate_matrix_coverage's guards in validate_intent_coverage.py):
+    # isinstance checks on the coverage doc and the matrix, non-dict cells
+    # skipped, missing keys skipped via .get(). The matrix is LLM-authored —
+    # a cell missing one key is the ANTICIPATED failure class this gate's
+    # documented routing exists for, so malformed shapes (non-dict matrix
+    # element, cell missing answer_id, matrix as JSON object, coverage doc
+    # top level a JSON array) must flow through the validator-backed
+    # routing below — redecompose when zero-coverage answers exist and are
+    # named in dropped_answers/redecompose_hints, rerun_intent_carrier for
+    # purely-structural failures — never an unhandled exception. No
+    # behavior change on well-formed input.
+    raw_matrix = (
+        coverage.get("matrix", []) if isinstance(coverage, dict) else []
+    )
+    matrix = [
+        c
+        for c in (raw_matrix if isinstance(raw_matrix, list) else [])
+        if isinstance(c, dict)
+    ]
     # Per-answer gate aggregation — the same rule, in the same words, as
     # the validator docstring and agents/intent-carrier.md: an answer_id
     # blocks the gate only when every casting's cell for it is DROPPED.
@@ -312,8 +342,15 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             if all(v == "DROPPED" for v in cell_verdicts)
         }
     )
+    # D-020: cells without an answer_id cannot be attributed to any answer
+    # (same skip as aggregate_matrix_coverage) — a raw c["answer_id"] here
+    # was a live KeyError on the anticipated LLM-authored malformed cell.
     paraphrased = sorted(
-        {c["answer_id"] for c in matrix if c.get("verdict") == "PARAPHRASED"}
+        {
+            c["answer_id"]
+            for c in matrix
+            if c.get("verdict") == "PARAPHRASED" and c.get("answer_id")
+        }
     )
     propagated_count = sum(
         1 for c in matrix if c.get("verdict") == "PROPAGATED"

@@ -2625,3 +2625,220 @@ def test_tool_no_castings_resolvable_disclosed(
     # The spec IS resolvable, so completeness still ran — the two
     # disclosures are independent.
     assert result["completeness_checked"] is True, result
+
+
+# ---------------------------------------------------------------------------
+# GRIND D-020 — gate robustness on malformed matrices the validator already
+# handles. The gate's own folds over the matrix (paraphrased answers,
+# propagated_count, cell_verdict_counts, redecompose_hints) previously
+# assumed list-of-dicts with all keys present and crashed
+# (KeyError/AttributeError) before any payload was built, on exactly the
+# input class the gate's rerun_intent_carrier contract exists for. Each
+# test asserts the documented action payload, never an exception.
+# ---------------------------------------------------------------------------
+
+
+def test_tool_cell_missing_answer_id_no_crash(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-020 shape 2 — PARAPHRASED cell missing answer_id.
+
+    The gate's paraphrased fold dereferenced c["answer_id"] raw — a live
+    KeyError on the anticipated LLM-authored malformed cell — while the
+    validator's aggregation skips cells without an answer_id. A-001 keeps
+    real coverage, so the zero-coverage set is empty and the validator's
+    schema failure routes rerun_intent_carrier (D-015), with the per-cell
+    counts proving the folds ran over the malformed cell without raising.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    doc = _coverage_doc([
+        {"answer_id": "A-001", "casting_id": "1",
+         "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        # The malformed cell: verdict present, answer_id absent — the key
+        # the gate dereferenced.
+        {"casting_id": "1", "verdict": "PARAPHRASED",
+         "citation_chain": ["A-001"]},
+    ])
+    (run_dir / "intent-coverage.json").write_text(
+        json.dumps(doc), encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "rerun_intent_carrier", result
+    assert result["validator_exit"] == 1, result
+    # The per-cell folds ran over the malformed dict cell without a
+    # KeyError: it still counts per-cell (AC-002 reporting) even though it
+    # cannot be attributed to any answer.
+    assert result["cell_verdict_counts"]["PROPAGATED"] == 1, result
+    assert result["cell_verdict_counts"]["PARAPHRASED"] == 1, result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_non_dict_matrix_element_no_crash(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-020 shape 1 — non-dict matrix element.
+
+    A bare string in the matrix list crashed every gate fold with
+    AttributeError (str.get). The validator skips non-dict cells and fails
+    schema validation; A-001 keeps real coverage, so the empty
+    zero-coverage set routes rerun_intent_carrier.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    doc = _coverage_doc([
+        {"answer_id": "A-001", "casting_id": "1",
+         "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        "not-a-cell",
+    ])
+    (run_dir / "intent-coverage.json").write_text(
+        json.dumps(doc), encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "rerun_intent_carrier", result
+    assert result["validator_exit"] == 1, result
+    assert result["cell_verdict_counts"]["PROPAGATED"] == 1, result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_matrix_as_object_routes_redecompose(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-020 shape 3 — matrix as a JSON object, not a list.
+
+    coverage["matrix"] as a dict made every fold iterate string keys and
+    crash on str.get. Normalized to no verifiable cells, every spec answer
+    is zero-coverage — named in dropped_answers/redecompose_hints and
+    routed as redecompose per the D-015/D-019 rules.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    doc = _coverage_doc([])
+    doc["matrix"] = {"A-001": "PROPAGATED"}
+    (run_dir / "intent-coverage.json").write_text(
+        json.dumps(doc), encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-001"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-001"], result
+    # No cell exists to draw a suggestion from.
+    assert result["redecompose_hints"][0]["suggested_casting"] is None, result
+    assert result["validator_exit"] == 1, result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_top_level_array_routes_redecompose(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-020 shape 4 — coverage doc top level is a JSON array.
+
+    A top-level array parses cleanly (no JSONDecodeError) but
+    coverage.get() crashed with AttributeError before any payload was
+    built. Normalized to no matrix at all, every spec answer is
+    zero-coverage — named and routed as redecompose.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    project_root, run_dir = intent_run(
+        _CLEAN_SPEC,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    (run_dir / "intent-coverage.json").write_text(
+        json.dumps([
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ]),
+        encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-001"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-001"], result
+    assert result["validator_exit"] == 1, result
+    assert not (run_dir / ".f07-intent-clean").exists()
+
+
+def test_tool_malformed_cell_coexisting_zero_coverage_names_answer(
+    intent_run: Callable[..., tuple[str, Path]],
+) -> None:
+    """GRIND D-020 — malformed cell + genuine zero-coverage answer.
+
+    The adversarial repro: A-003 genuinely reaches no casting while a
+    malformed cell (missing answer_id) sits in the same matrix. The
+    validator CLI named A-003 correctly but the gate threw before building
+    any payload — zero redecompose_hints produced (AC-001's clause). Now
+    the malformed cell is skipped and A-003 IS named in
+    dropped_answers/redecompose_hints via the redecompose route.
+    """
+    from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
+
+    two_answer_spec = (
+        "---\nspec_format_version: v2.1\n---\n"
+        "## Appendix: Interview Transcript\n\n"
+        "## A-001 [Locked]\nSurface contract. [from Q-001]\n\n"
+        "## A-003 [Locked]\nGenuinely uncovered answer. [from Q-003]\n"
+    )
+    project_root, run_dir = intent_run(
+        two_answer_spec,
+        [
+            {"answer_id": "A-001", "casting_id": "1",
+             "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        ],
+    )
+    doc = _coverage_doc([
+        {"answer_id": "A-001", "casting_id": "1",
+         "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
+        {"casting_id": "1", "verdict": "PARAPHRASED",
+         "citation_chain": ["A-001"]},
+    ])
+    (run_dir / "intent-coverage.json").write_text(
+        json.dumps(doc), encoding="utf-8",
+    )
+
+    result = foundry_intent_coverage(project_root=project_root)
+
+    assert result["passed"] is False, result
+    assert result["action"] == "redecompose", result
+    assert result["dropped_answers"] == ["A-003"], result
+    hint_ids = [h["answer_id"] for h in result["redecompose_hints"]]
+    assert hint_ids == ["A-003"], result
+    assert not (run_dir / ".f07-intent-clean").exists()
