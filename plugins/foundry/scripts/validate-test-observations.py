@@ -239,7 +239,9 @@ _TESTS_SPEC_HEADER_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
-def _contract_surface_leak_tokens(spec_text: str) -> frozenset[str]:
+def _contract_surface_leak_tokens(
+    spec_text: str,
+) -> tuple[frozenset[str], list[str]]:
     """Path/module tokens declared in the spec's ``## Contracts`` surface
     column that would otherwise trip the forbidden-root scan.
 
@@ -250,35 +252,72 @@ def _contract_surface_leak_tokens(spec_text: str) -> frozenset[str]:
     symbols absent from both the spec and the contracts table
     still is.
 
-    Mechanics: locate the ``## Contracts`` section, find the header
-    row's ``surface`` column, then for each data row extract every
-    path token (backticks stripped) that trips a forbidden-root
-    pattern when standing alone. Those tokens are the declared
-    surfaces the 7c scan exempts (via :func:`_mask_contract_surface_tokens`).
-    A ``./``-prefixed token also declares its unprefixed form so
-    ``./cmd/mytool`` and ``cmd/mytool`` reference the same surface.
-    Prose, input/output/errors cells, and every other spec section
+    Shared GI-003 statement (byte-mirrored, modulo comment prefix and
+    wrapping, in spec-test-deriver.md wrong-test pattern 3):
+    Contracts parsing rule (mechanical): the Contracts section
+    opens at any markdown heading of level 2-6 whose heading text
+    begins with `Contracts` (case-insensitive; suffixed headings
+    like `Contracts (TYPE-01)` are tolerated, mirroring forge
+    validate-spec.py's startswith section matching), and the
+    surface column is the first header-row cell whose lowercased
+    text begins with `surface` (so `surface (CLI)` and
+    `Surface / entrypoint` qualify). When a Contracts section has
+    table rows but no such header cell, the validator prints a
+    non-fatal `note:` diagnostic to stderr — no failure token,
+    exit code unchanged — so an exemption blackout is visible
+    instead of silent.
+
+    Mechanics: locate the Contracts section per the parsing rule
+    above, find the surface column, then for each data row extract
+    every path token (backticks stripped) that trips a
+    forbidden-root pattern when standing alone. Those tokens are the
+    declared surfaces the 7c scan exempts (via
+    :func:`_mask_contract_surface_tokens`). The ``./`` normalization
+    is symmetric: a ``./``-prefixed token also declares its
+    unprefixed form AND an unprefixed token also declares its
+    ``./``-prefixed form, so ``./cmd/mytool`` and ``cmd/mytool``
+    reference the same surface in either direction. Prose,
+    input/output/errors cells, and every other spec section
     contribute NO exemptions — a spec's file-changes table naming
     ``src/`` paths does not sanction referencing them.
+
+    Returns ``(tokens, notes)`` — the declared-surface token set plus
+    zero or more non-fatal diagnostic lines the caller surfaces on
+    stderr. "Contracts table legitimately names no forbidden-root
+    surface" yields ``(frozenset(), [])`` (benign, silent);
+    "Contracts section has table rows but no identifiable surface
+    column" yields a diagnostic so the two states are
+    distinguishable.
     """
     tokens: set[str] = set()
+    notes: list[str] = []
     in_contracts = False
     surface_idx: int | None = None
+    saw_contracts_rows = False
+    found_surface_column = False
     for line in spec_text.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
+            heading = re.match(r"#{2,6}\s*(.*)", stripped)
             in_contracts = bool(
-                re.fullmatch(r"#{2,6}\s*Contracts\s*", stripped)
+                heading
+                and heading.group(1).strip().lower().startswith(
+                    "contracts"
+                )
             )
             surface_idx = None
             continue
         if not in_contracts or not stripped.startswith("|"):
             continue
+        saw_contracts_rows = True
         cells = [c.strip() for c in stripped.strip("|").split("|")]
         lowered = [c.lower() for c in cells]
         if surface_idx is None:
-            if "surface" in lowered:
-                surface_idx = lowered.index("surface")
+            for i, cell in enumerate(lowered):
+                if cell.startswith("surface"):
+                    surface_idx = i
+                    found_surface_column = True
+                    break
             continue
         if surface_idx >= len(cells):
             continue
@@ -288,7 +327,15 @@ def _contract_surface_leak_tokens(spec_text: str) -> frozenset[str]:
                 tokens.add(token)
                 if token.startswith("./"):
                     tokens.add(token[2:])
-    return frozenset(tokens)
+                else:
+                    tokens.add("./" + token)
+    if saw_contracts_rows and not found_surface_column:
+        notes.append(
+            "note: --spec Contracts section has table rows but no "
+            "header cell beginning with 'surface'; contract-surface "
+            "exemption inactive (zero declared surfaces)"
+        )
+    return frozenset(tokens), notes
 
 
 def _mask_contract_surface_tokens(
@@ -296,18 +343,27 @@ def _mask_contract_surface_tokens(
 ) -> str:
     """Replace verbatim declared-surface tokens with an inert marker.
 
-    Boundary-anchored on both sides so ``src/cli.py`` masks inside
-    ``python src/cli.py --help`` and ``File "src/cli.py"`` but NOT
-    inside ``src/cli.pyc`` (a different, undeclared path). Longest
-    token first so a long declared path is masked before any shorter
-    declared token that happens to nest inside it. With an empty
-    token set (no --spec, or a contracts table naming no
-    forbidden-root surfaces) this is the identity function — the 7c
-    scan then behaves exactly as it always has.
+    The leading boundary class is a SUPERSET of the 7c scan's leading
+    boundary class (``(?:^|[\\s/(])``): every position where the scan
+    can detect a forbidden root — start-of-line, whitespace, ``/``,
+    ``(`` — is a position the mask can exempt. In particular ``/`` is
+    a valid mask boundary, so a declared surface referenced by
+    absolute path (``File "/home/u/proj/src/cli.py"`` — the shape a
+    real failing test's traceback prints), by ``./`` prefix, or by a
+    repo-relative parent path is masked, never false-leaked
+    (AC-006/AC-007). The trailing boundary stays strict so
+    ``src/cli.py`` masks inside ``python src/cli.py --help`` but NOT
+    inside ``src/cli.pyc`` (a different, undeclared path), and a
+    declared bare root like ``src/`` never blanket-exempts paths
+    beneath it. Longest token first so a long declared path is masked
+    before any shorter declared token that happens to nest inside it.
+    With an empty token set (no --spec, or a contracts table naming
+    no forbidden-root surfaces) this is the identity function — the
+    7c scan then behaves exactly as it always has.
     """
     for token in sorted(tokens, key=len, reverse=True):
         text = re.sub(
-            r"(?<![\w./-])" + re.escape(token) + r"(?![\w./-])",
+            r"(?<![\w.-])" + re.escape(token) + r"(?![\w./-])",
             "CONTRACT-SURFACE",
             text,
         )
@@ -336,9 +392,12 @@ def validate_test_observations(
         keys, extra per-observation keys, malformed observations list, or
         an assay_verdict value outside KNOWN_TEST_OBSERVATION_VERDICTS
         (the verdict-value detail surfaces after the token, not as a
-        parallel token — the 9-token roster stays closed).
+        parallel token — the 9-token roster stays closed; the value
+        check is total: non-string values, including unhashable JSON
+        arrays/objects, reject with this token, never a traceback).
       * TEST_OBSERVATION_UNKNOWN_STATUS — status not in
-        KNOWN_OBSERVATION_STATUSES.
+        KNOWN_OBSERVATION_STATUSES (total over every JSON value
+        class: non-string status values reject with this same token).
       * TEST_HEADER_MISSING — observation.tests_spec is empty (channel-side
         token; co-fires with WRONG_TEST_HEADER_MISSING for diagnostic
         precision per CONTEXT.md "diagnostic-precision-over-composite").
@@ -445,9 +504,15 @@ def validate_test_observations(
                 spec_requirement_ids = set(
                     _REQUIREMENT_ID_RE.findall(spec_text)
                 )
-            contract_surface_tokens = _contract_surface_leak_tokens(
-                spec_text
+            contract_surface_tokens, surface_notes = (
+                _contract_surface_leak_tokens(spec_text)
             )
+            # Non-fatal diagnostics (e.g. exemption blackout: Contracts
+            # rows present but no surface column identified). Stderr,
+            # not stdout — never a failure token, never an exit-code
+            # change (GI-002 keeps the 9-token roster closed).
+            for note in surface_notes:
+                print(note, file=sys.stderr)
 
     # ----- Step 3+4+5+6+7: per-observation -----
     for idx, obs in enumerate(observations):
@@ -469,9 +534,16 @@ def validate_test_observations(
                 f"{sorted(KNOWN_OBSERVATION_KEYS)!r} allowed"
             )
 
-        # Step 4: status enum.
+        # Step 4: status enum. Type-guarded so the membership test is
+        # total over every JSON value class: non-string values
+        # (including unhashable arrays/objects, which a bare frozenset
+        # membership test would crash on) reject with the same token,
+        # never with a traceback.
         status = obs.get("status")
-        if status not in KNOWN_OBSERVATION_STATUSES:
+        if (
+            not isinstance(status, str)
+            or status not in KNOWN_OBSERVATION_STATUSES
+        ):
             failures.append(
                 f"TEST_OBSERVATION_UNKNOWN_STATUS: {obs_id} status="
                 f"{status!r}; only "
@@ -484,10 +556,12 @@ def validate_test_observations(
         # is present. Value outside KNOWN_TEST_OBSERVATION_VERDICTS
         # (e.g. a free-form "INFO" tier) is rejected under the
         # existing TEST_OBSERVATION_SCHEMA_INVALID token so the
-        # 9-token failure roster stays closed.
-        if (
-            "assay_verdict" in obs
-            and obs["assay_verdict"] not in KNOWN_TEST_OBSERVATION_VERDICTS
+        # 9-token failure roster stays closed. Type-guarded like the
+        # status enum: non-string values (including unhashable
+        # arrays/objects) reject with the token, never a traceback.
+        if "assay_verdict" in obs and (
+            not isinstance(obs["assay_verdict"], str)
+            or obs["assay_verdict"] not in KNOWN_TEST_OBSERVATION_VERDICTS
         ):
             failures.append(
                 f"TEST_OBSERVATION_SCHEMA_INVALID: {obs_id} "

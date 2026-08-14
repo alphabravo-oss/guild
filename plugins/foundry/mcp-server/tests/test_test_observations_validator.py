@@ -42,6 +42,27 @@ GRIND cycle 2 — D-003 (AC-008 truthful SKIP validates):
   23. test_skip_with_source_leak_still_fires
   24. test_truthful_skip_statement_mirrored
 
+F5 TEMPER T-D1 (AC-006/AC-007 — mask boundary is a superset of the
+7c scan boundary; `./` normalization symmetric):
+  25. test_real_failing_test_traceback_against_declared_surface_is_clean
+  26. test_undeclared_absolute_path_still_leaks_with_spec
+  27. test_scan_boundary_positions_are_subset_of_mask_boundary
+  28. test_dot_slash_normalization_is_symmetric
+  29. test_undeclared_references_still_leak_after_boundary_widening (x4)
+
+F5 TEMPER T-D2 (AC-006 — exemption blackout made loud; tolerant
+Contracts parse):
+  30. test_contracts_heading_suffix_tolerated
+  31. test_surface_prefixed_column_header_tolerated (x2)
+  32. test_surface_column_blackout_prints_diagnostic_and_keeps_exit_semantics
+  33. test_no_diagnostic_when_surface_column_identified
+  34. test_contracts_parsing_rule_statement_mirrored
+
+F5 TEMPER T-D3 (AC-010/GI-003 — closed-vocab membership tests total
+over every JSON value class):
+  35. test_non_string_status_rejected_by_token (x3)
+  36. test_non_string_assay_verdict_rejected_by_token (x3)
+
 The validator is a dash-named script invoked via subprocess (not an
 importable module); the ``run_test_observations_validator`` conftest
 fixture provides the runner and SKIPs cleanly when the script is
@@ -54,6 +75,9 @@ from __future__ import annotations
 
 import json
 import re
+import string
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -108,6 +132,42 @@ SHARED_CONTRACT_SURFACE_EXEMPTION_STATEMENT = (
     "every forbidden-root reference leaks — the adjudicator "
     "always passes `--spec`, so production adjudication always "
     "honors the exemption."
+)
+
+# F5 TEMPER T-D2 shared statement — the mechanical Contracts parsing
+# rule (tolerant heading/header matching + loud exemption blackout).
+# Pasted into spec-test-deriver.md (wrong-test pattern 3) and
+# validate-test-observations.py (_contract_surface_leak_tokens
+# docstring).
+SHARED_CONTRACTS_PARSING_RULE_STATEMENT = (
+    "Contracts parsing rule (mechanical): the Contracts section "
+    "opens at any markdown heading of level 2-6 whose heading text "
+    "begins with `Contracts` (case-insensitive; suffixed headings "
+    "like `Contracts (TYPE-01)` are tolerated, mirroring forge "
+    "validate-spec.py's startswith section matching), and the "
+    "surface column is the first header-row cell whose lowercased "
+    "text begins with `surface` (so `surface (CLI)` and "
+    "`Surface / entrypoint` qualify). When a Contracts section has "
+    "table rows but no such header cell, the validator prints a "
+    "non-fatal `note:` diagnostic to stderr — no failure token, "
+    "exit code unchanged — so an exemption blackout is visible "
+    "instead of silent."
+)
+
+# The validator's full 9-token closed failure vocabulary (GI-002) —
+# used to assert the T-D2 diagnostic line smuggles no token.
+KNOWN_TEST_DERIVER_FAILURE_TOKENS = frozenset(
+    {
+        "TEST_DERIVER_READ_SOURCE",
+        "TEST_HEADER_MISSING",
+        "TEST_HEADER_DANGLING_REQ",
+        "WRONG_TEST_NO_NEGATIVE_ASSERTION",
+        "WRONG_TEST_VALUE_NOT_SHAPE",
+        "WRONG_TEST_SOURCE_LEAK",
+        "WRONG_TEST_HEADER_MISSING",
+        "TEST_OBSERVATION_SCHEMA_INVALID",
+        "TEST_OBSERVATION_UNKNOWN_STATUS",
+    }
 )
 
 # GRIND D-003 shared statement — the accepted truthful SKIP shape.
@@ -751,3 +811,491 @@ def test_truthful_skip_statement_mirrored() -> None:
             f"{path.name} must carry the truthful SKIP shape statement "
             "(whitespace-normalized) verbatim"
         )
+
+
+# ---------------------------------------------------------------------------
+# F5 TEMPER T-D1 — mask boundary ⊇ scan boundary (AC-006/AC-007)
+# ---------------------------------------------------------------------------
+
+
+def _cli_observation_channel(
+    fixtures_dir: Path, tmp_path: Path, captured_output: str
+) -> Path:
+    """Channel with only OBS-092 (the declared `src/cli.py` surface).
+
+    Derived from the shipped contract-surface fixture so top-level
+    keys, citation chains, and tests_spec stay canonical; only the
+    captured_output under test varies.
+    """
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-contract-surface.json"
+    )
+    obs = channel["observations"][2]
+    assert obs["observation_id"] == "OBS-092"
+    obs["captured_output"] = captured_output
+    channel["observations"] = [obs]
+    return _write_channel(tmp_path, channel)
+
+
+def test_real_failing_test_traceback_against_declared_surface_is_clean(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """T-D1 decisive case: a REAL failing test's traceback validates clean.
+
+    The deriver's mandated shape is ``subprocess.run`` of the
+    contract-row CLI entrypoint (spec-test-deriver.md § Build the test
+    body). Python tracebacks print the ``__main__`` file by ABSOLUTE
+    path regardless of how the script was invoked, so the captured
+    output of a genuinely failing test against declared ``src/cli.py``
+    contains ``File "/abs/.../src/cli.py"`` — a `/`-preceded reference
+    the pre-fix mask could never exempt. A genuine DEFECT must not be
+    branded WRONG_TEST_SOURCE_LEAK (AC-006/AC-007).
+    """
+    proj = tmp_path / "proj"
+    (proj / "src").mkdir(parents=True)
+    (proj / "src" / "cli.py").write_text(
+        "import sys\n"
+        "\n"
+        "\n"
+        "def main() -> None:\n"
+        '    if "--bad" in sys.argv:\n'
+        '        raise RuntimeError("boom: bad flag accepted")\n'
+        "\n"
+        "\n"
+        "main()\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, "src/cli.py", "--bad"],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode != 0, "the probe script must genuinely fail"
+    traceback_text = proc.stderr
+    assert re.search(r'File "/.*/src/cli\.py"', traceback_text), (
+        "precondition: the real traceback must reference the declared "
+        f"surface by ABSOLUTE path; got:\n{traceback_text}"
+    )
+
+    channel_path = _cli_observation_channel(
+        fixtures_dir,
+        tmp_path,
+        "$ python src/cli.py --bad\n" + traceback_text,
+    )
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        "a failing test's absolute-path traceback referencing the "
+        f"declared surface must not leak; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+def test_undeclared_absolute_path_still_leaks_with_spec(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """The widened mask exempts DECLARED surfaces only, at any position."""
+    channel_path = _cli_observation_channel(
+        fixtures_dir,
+        tmp_path,
+        "Traceback (most recent call last):\n"
+        '  File "/home/u/proj/src/secret_impl.py", line 3, in <module>\n'
+        "RuntimeError: boom\n",
+    )
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code != 0, (
+        f"undeclared absolute path must still leak; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    combined = stdout + stderr
+    assert "WRONG_TEST_SOURCE_LEAK" in combined
+    assert "OBS-092" in combined
+
+
+def test_scan_boundary_positions_are_subset_of_mask_boundary(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """Mechanical regression for the T-D1 root cause.
+
+    Every position where the 7c scan can detect a forbidden root must
+    be a position the contract-surface mask can exempt. One
+    observation per printable prefix character around the declared
+    ``src/cli.py`` surface: if ANY prefix is scan-detectable but not
+    maskable (the pre-fix `/` asymmetry), that observation false-leaks
+    and the channel exits 1.
+    """
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-contract-surface.json"
+    )
+    template = channel["observations"][2]
+    channel["observations"] = [
+        {
+            **template,
+            "observation_id": f"OBS-B{i:03d}",
+            "captured_output": f"probe {ch}src/cli.py probe",
+        }
+        for i, ch in enumerate(sorted(set(string.printable)))
+    ]
+    channel_path = _write_channel(tmp_path, channel)
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        "a declared-surface reference false-leaked at some boundary "
+        f"position the mask cannot cover; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "WRONG_TEST_SOURCE_LEAK" not in stdout + stderr
+
+
+def test_dot_slash_normalization_is_symmetric(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """Declared ``X`` covers ``./X`` and declared ``./X`` covers ``X``."""
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+
+    # Direction 1 (the T-D1 gap): spec declares bare `src/cli.py`
+    # (CT-003); a `./`-prefixed reference must not leak.
+    channel_path = _cli_observation_channel(
+        fixtures_dir,
+        tmp_path,
+        "$ python ./src/cli.py --help\nusage: cli [-h]",
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"./-prefixed reference to declared bare surface leaked; "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+
+    # Direction 2 (pre-existing): spec declares `./cmd/mytool`
+    # (CT-002); a bare reference must not leak.
+    channel = _load_channel(
+        fixtures_dir, "test-deriver-cycle-contract-surface.json"
+    )
+    assert channel["observations"][1]["observation_id"] == "OBS-091"
+    channel["observations"][1]["captured_output"] = (
+        "$ go run cmd/mytool --version\nmytool 1.2.3"
+    )
+    channel_path = _write_channel(tmp_path, channel)
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"bare reference to declared ./-prefixed surface leaked; "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+@pytest.mark.parametrize(
+    "leak_output",
+    [
+        "cat /abs/path/src/cli.pyc",
+        "cat ./src/cli.py.bak",
+        "$ python src/cli2.py --help",
+        "ls /abs/src/ shows internals",
+    ],
+    ids=["abs-tail-neighbour", "dot-tail-neighbour", "sibling", "bare-root"],
+)
+def test_undeclared_references_still_leak_after_boundary_widening(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+    leak_output: str,
+) -> None:
+    """Widening the mask's leading boundary must not widen its SCOPE.
+
+    Tail-neighbours, truncated prefixes, siblings, and bare roots stay
+    leaks — the trailing boundary and verbatim-token discipline are
+    untouched (temper Q1/Q2/Q3/Q4 re-verification).
+    """
+    channel_path = _cli_observation_channel(
+        fixtures_dir, tmp_path, leak_output
+    )
+    spec = fixtures_dir / "specs" / "spec_contract_surfaces.md"
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code != 0, (
+        f"undeclared reference {leak_output!r} must still leak; "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "WRONG_TEST_SOURCE_LEAK" in stdout + stderr
+
+
+# ---------------------------------------------------------------------------
+# F5 TEMPER T-D2 — tolerant Contracts parse + loud exemption blackout
+# ---------------------------------------------------------------------------
+
+
+def _write_surface_spec(
+    tmp_path: Path,
+    *,
+    heading: str = "## Contracts",
+    surface_header: str = "surface",
+) -> Path:
+    """Minimal v2.1 spec declaring `src/cli.py` under a variable shape."""
+    spec = tmp_path / "spec_temper_probe.md"
+    spec.write_text(
+        "---\n"
+        "spec_format_version: v2.1\n"
+        "---\n"
+        "\n"
+        "# Spec: temper-probe\n"
+        "\n"
+        f"{heading}\n"
+        "\n"
+        f"| ID | {surface_header} | input | output | errors | citation |\n"
+        "|----|---------|-------|--------|--------|----------|\n"
+        "| CT-003 | `python src/cli.py --help` | `{}` | `{usage: str}` |"
+        " `exit 2 on bad flag` | [from A-001] |\n"
+        "\n"
+        "<spec_requirements>\n"
+        "- FR-1: Declared surfaces are executable as documented."
+        " [from A-001]\n"
+        "- FR-2: Declared surfaces fail loudly on out-of-contract input."
+        " [from A-001]\n"
+        "</spec_requirements>\n",
+        encoding="utf-8",
+    )
+    return spec
+
+
+def test_contracts_heading_suffix_tolerated(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """`## Contracts (TYPE-01)` is forge-admissible and must not blackout.
+
+    forge validate-spec.py's extract_section matches headings by
+    startswith, so this spec clears the upstream gate; the exemption
+    parser must recognize the same section.
+    """
+    spec = _write_surface_spec(tmp_path, heading="## Contracts (TYPE-01)")
+    channel_path = _cli_observation_channel(
+        fixtures_dir,
+        tmp_path,
+        "$ python src/cli.py --help\nusage: cli [-h]",
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"suffixed Contracts heading caused an exemption blackout; "
+        f"got {exit_code}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+@pytest.mark.parametrize(
+    "surface_header", ["surface (CLI)", "Surface / entrypoint"]
+)
+def test_surface_prefixed_column_header_tolerated(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+    surface_header: str,
+) -> None:
+    """A `surface`-prefixed header cell identifies the surface column."""
+    spec = _write_surface_spec(tmp_path, surface_header=surface_header)
+    channel_path = _cli_observation_channel(
+        fixtures_dir,
+        tmp_path,
+        "$ python src/cli.py --help\nusage: cli [-h]",
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"surface-prefixed header {surface_header!r} caused an "
+        f"exemption blackout; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+
+
+def test_surface_column_blackout_prints_diagnostic_and_keeps_exit_semantics(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """Genuine parse failure is loud but non-fatal (no token, exit unchanged).
+
+    A Contracts section with table rows but no identifiable surface
+    column prints a `note:` diagnostic to stderr in BOTH the leaking
+    and the clean case; the exit code is still determined solely by
+    the failure list, and the diagnostic smuggles no failure token
+    (GI-002).
+    """
+    spec = _write_surface_spec(tmp_path, surface_header="entrypoint")
+
+    # Leaking channel: exemption is inactive, so the declared-in-spirit
+    # reference leaks — and the blackout is visible on stderr.
+    channel_path = _cli_observation_channel(
+        fixtures_dir, tmp_path, "$ python src/cli.py --help\n"
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code != 0
+    assert "WRONG_TEST_SOURCE_LEAK" in stdout
+    assert "note:" in stderr, (
+        f"exemption blackout must be loud on stderr; stderr: {stderr!r}"
+    )
+    assert "surface" in stderr
+    for token in KNOWN_TEST_DERIVER_FAILURE_TOKENS:
+        assert token not in stderr, (
+            f"diagnostic must not smuggle failure token {token}; "
+            f"stderr: {stderr!r}"
+        )
+
+    # Clean channel: diagnostic still visible, exit code still 0.
+    channel_path = _cli_observation_channel(
+        fixtures_dir, tmp_path, "all shape assertions passed"
+    )
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path, spec_path=spec
+    )
+    assert exit_code == 0, (
+        f"the diagnostic must not change the exit code; got {exit_code}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "note:" in stderr
+
+
+def test_no_diagnostic_when_surface_column_identified(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+) -> None:
+    """State 1 (legitimately parsed table) stays silent.
+
+    Both a benign-surface spec (nothing under a forbidden root) and a
+    forbidden-root-surface spec parse their surface columns — neither
+    is a blackout, so neither emits the note.
+    """
+    cases = [
+        (
+            fixtures_dir / "test_observations"
+            / "test-deriver-cycle-clean.json",
+            fixtures_dir / "specs" / "spec_test_deriver_simple.md",
+        ),
+        (
+            fixtures_dir / "test_observations"
+            / "test-deriver-cycle-contract-surface.json",
+            fixtures_dir / "specs" / "spec_contract_surfaces.md",
+        ),
+    ]
+    for observation, spec in cases:
+        exit_code, stdout, stderr = run_test_observations_validator(
+            observation, spec_path=spec
+        )
+        assert exit_code == 0, (
+            f"{observation.name} + {spec.name} regressed; "
+            f"stdout: {stdout}\nstderr: {stderr}"
+        )
+        assert "note:" not in stderr, (
+            f"no blackout occurred, so no diagnostic is due; "
+            f"stderr: {stderr!r}"
+        )
+
+
+def test_contracts_parsing_rule_statement_mirrored() -> None:
+    """T-D2/GI-003: the parsing rule stated in the same words twice."""
+    for path in (DERIVER_MD, VALIDATE_PATH):
+        assert (
+            SHARED_CONTRACTS_PARSING_RULE_STATEMENT in _normalized(path)
+        ), (
+            f"{path.name} must carry the Contracts parsing rule "
+            "statement (whitespace-normalized) verbatim"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F5 TEMPER T-D3 — closed-vocab membership tests are total
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_status",
+    [["SKIP"], {"SKIP": 1}, 7],
+    ids=["list", "dict", "int"],
+)
+def test_non_string_status_rejected_by_token(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+    bad_status: Any,
+) -> None:
+    """Every JSON value class rejects by token, never by traceback.
+
+    Pre-fix, unhashable values (arrays/objects) raised TypeError inside
+    the frozenset membership test — exit 1 with empty stdout and no
+    token, breaking the docstring's and the adjudicator contract's
+    closed-vocab promise (GI-003).
+    """
+    channel = _load_clean_channel(fixtures_dir)
+    channel["observations"][0]["status"] = bad_status
+    channel_path = _write_channel(tmp_path, channel)
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path
+    )
+    assert exit_code != 0
+    assert "TEST_OBSERVATION_UNKNOWN_STATUS" in stdout, (
+        f"non-string status must reject with the closed-vocab token; "
+        f"stdout: {stdout!r}\nstderr: {stderr!r}"
+    )
+    assert "OBS-001" in stdout, (
+        f"rejection must name the observation; stdout: {stdout!r}"
+    )
+    assert "Traceback" not in stderr and "TypeError" not in stderr, (
+        f"validator must not crash on unhashable status; "
+        f"stderr: {stderr!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_verdict",
+    [["DEFECT"], {"v": "DEFECT"}, 7],
+    ids=["list", "dict", "int"],
+)
+def test_non_string_assay_verdict_rejected_by_token(
+    run_test_observations_validator: Callable[..., tuple[int, str, str]],
+    fixtures_dir: Path,
+    tmp_path: Path,
+    bad_verdict: Any,
+) -> None:
+    """AC-010 totality: assay_verdict value check covers every value class."""
+    channel = _load_clean_channel(fixtures_dir)
+    channel["observations"][1]["assay_verdict"] = bad_verdict
+    channel_path = _write_channel(tmp_path, channel)
+    exit_code, stdout, stderr = run_test_observations_validator(
+        channel_path
+    )
+    assert exit_code != 0
+    assert "TEST_OBSERVATION_SCHEMA_INVALID" in stdout, (
+        f"non-string assay_verdict must reject with the closed-vocab "
+        f"token; stdout: {stdout!r}\nstderr: {stderr!r}"
+    )
+    assert "OBS-002" in stdout, (
+        f"rejection must name the observation; stdout: {stdout!r}"
+    )
+    assert "Traceback" not in stderr and "TypeError" not in stderr, (
+        f"validator must not crash on unhashable assay_verdict; "
+        f"stderr: {stderr!r}"
+    )

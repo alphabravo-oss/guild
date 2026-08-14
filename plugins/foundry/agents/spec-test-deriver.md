@@ -328,6 +328,22 @@ checks. Avoid all four:
    always passes `--spec`, so production adjudication always
    honors the exemption.
 
+   Shared GI-003 statement (byte-mirrored, modulo comment prefix
+   and wrapping, in `validate-test-observations.py`'s
+   contract-surface token parser):
+   Contracts parsing rule (mechanical): the Contracts section
+   opens at any markdown heading of level 2-6 whose heading text
+   begins with `Contracts` (case-insensitive; suffixed headings
+   like `Contracts (TYPE-01)` are tolerated, mirroring forge
+   validate-spec.py's startswith section matching), and the
+   surface column is the first header-row cell whose lowercased
+   text begins with `surface` (so `surface (CLI)` and
+   `Surface / entrypoint` qualify). When a Contracts section has
+   table rows but no such header cell, the validator prints a
+   non-fatal `note:` diagnostic to stderr — no failure token,
+   exit code unchanged — so an exemption blackout is visible
+   instead of silent.
+
    Practical consequence: reference the declared surface VERBATIM as
    the contracts row spells it (e.g. the row's `python src/cli.py`,
    not a re-derived `src.cli` import) — only verbatim declared

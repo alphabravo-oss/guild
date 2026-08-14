@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q 2>/dev/null | tail -n 1 && cd ../../forge && uv run --with pytest pytest -q 2>/dev/null | tail -n 1
+# evidence-for: US-002, AC-006, AC-007, AC-010
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+369 passed, 4 skipped in 12.39s
+66 passed, 1 skipped in 1.17s
