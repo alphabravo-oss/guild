@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "no_crash or matrix_as_object or top_level_array or coexisting" 2>/dev/null | tail -1
-# evidence-for: AC-001
-# evidence-volatile: \d+\.\d+s
-
-5 passed, 54 deselected in 0.02s

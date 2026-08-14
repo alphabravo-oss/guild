@@ -1,7 +1,0 @@
-# evidence-cmd: python3 -c "import json,subprocess,tempfile,os; V='plugins/foundry/scripts/validate-test-observations.py'; F='plugins/foundry/mcp-server/tests/fixtures/test_observations/test-deriver-cycle-contract-surface.json'; S='plugins/foundry/mcp-server/tests/fixtures/specs/spec_contract_surfaces.md'; p=os.path.join(tempfile.mkdtemp(),'m.json'); base=json.load(open(F)); tmpl=base['observations'][2]; cases=[('declared surface via ABSOLUTE traceback path + --spec','python src/cli.py --bad\nTraceback (most recent call last):\n  File \"/home/u/proj/src/cli.py\", line 6, in <module>\nRuntimeError: boom: bad flag accepted'),('UNDECLARED absolute path + --spec','Traceback (most recent call last):\n  File \"/home/u/proj/src/secret_impl.py\", line 3, in <module>\nRuntimeError: boom'),('declared bare surface referenced ./-prefixed + --spec','python ./src/cli.py --help\nusage: cli [-h]')]; results=[(lbl,(open(p,'w').write(json.dumps(dict(base,observations=[dict(tmpl,captured_output=co)]))),subprocess.run(['python3',V,p,'--spec',S],capture_output=True,text=True))[1]) for lbl,co in cases]; [print(lbl+' exit: '+str(r.returncode)+('\n'+r.stdout.strip() if r.stdout.strip() else '')) for lbl,r in results]"
-# evidence-for: US-002, AC-006, AC-007
-
-declared surface via ABSOLUTE traceback path + --spec exit: 0
-UNDECLARED absolute path + --spec exit: 1
-WRONG_TEST_SOURCE_LEAK: OBS-092 references forbidden root 'src/' in test_path or captured_output
-declared bare surface referenced ./-prefixed + --spec exit: 0

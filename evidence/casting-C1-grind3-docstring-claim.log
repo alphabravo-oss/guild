@@ -1,6 +1,0 @@
-# evidence-cmd: grep -c "always supplies" plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py; grep -c "resolvable" plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py; grep -c "_resolve_spec_path" plugins/foundry/mcp-server/src/foundry_mcp/tools/intent_coverage.py
-# evidence-for: US-001, AC-003
-
-0
-5
-2

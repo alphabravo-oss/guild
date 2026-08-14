@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "ghost_only or ghost_blocks or no_castings_resolvable or unverifiable_rule" 2>/dev/null | tail -1
-# evidence-for: AC-001, AC-002, AC-003
-# evidence-volatile: \d+\.\d+s
-
-4 passed, 50 deselected in 0.03s

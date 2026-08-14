@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "ghost or completeness_checked or completeness_skip or rerun_not_redecompose" 2>/dev/null | tail -1
-# evidence-for: AC-001, AC-002, AC-004
-# evidence-volatile: \d+\.\d+s
-
-6 passed, 40 deselected in 0.17s

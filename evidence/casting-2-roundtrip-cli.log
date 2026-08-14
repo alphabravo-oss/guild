@@ -1,7 +1,0 @@
-# evidence-cmd: python3 -c "import json,subprocess,tempfile,os; V='plugins/foundry/scripts/validate-test-observations.py'; F='plugins/foundry/mcp-server/tests/fixtures/test_observations/test-deriver-cycle-clean.json'; print('pre-adjudication exit:', subprocess.run(['python3',V,F]).returncode); d=json.load(open(F)); d['observations'][1]['assay_verdict']='DEFECT'; t=tempfile.mkdtemp(); p=os.path.join(t,'adj.json'); open(p,'w').write(json.dumps(d)); print('post-adjudication (DEFECT) exit:', subprocess.run(['python3',V,p]).returncode); d['observations'][0]['assay_verdict']='INFO'; open(p,'w').write(json.dumps(d)); r=subprocess.run(['python3',V,p],capture_output=True,text=True); print(r.stdout,end=''); print('post-adjudication (INFO) exit:', r.returncode)"
-# evidence-for: US-003, AC-009, AC-010, AC-011
-
-pre-adjudication exit: 0
-post-adjudication (DEFECT) exit: 0
-TEST_OBSERVATION_SCHEMA_INVALID: OBS-001 assay_verdict='INFO'; only ['DEFECT', 'INCONCLUSIVE', 'WRONG_TEST'] allowed
-post-adjudication (INFO) exit: 1

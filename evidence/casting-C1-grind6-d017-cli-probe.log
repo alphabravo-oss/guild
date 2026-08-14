@@ -1,6 +1,0 @@
-# evidence-cmd: SHIM="$PWD/plugins/foundry/scripts/validate-intent-coverage.py" && cd "$(mktemp -d)" && mkdir castings && printf '{"castings":[{"id":"1"}]}' > castings/manifest.json && printf '# Casting 1\n\nNothing here.\n' > castings/casting-1-prompt.md && printf -- '---\nspec_format_version: v2.1\n---\n## Appendix: Interview Transcript\n\n## A-001 [Locked]\nSurface contract. [from Q-001]\n' > spec.md && printf '{"stream":"INTENT-01","phase":"F0.7","spec_format_version":"v2.1","spec_hash":"sha256:abc","agent_path":"plugins/foundry/agents/intent-carrier.md","wall_clock_seconds":1.0,"answer_count":1,"casting_count":1,"summary":{"PROPAGATED":1,"PARAPHRASED":0,"DROPPED":0},"matrix":[{"answer_id":"A-001","verdict":"PROPAGATED","citation_chain":["A-001"]}]}' > coverage.json && python3 "$SHIM" coverage.json --spec spec.md; echo "exit=$?"
-# evidence-for: US-001, AC-001
-
-INTENT_COVERAGE_SCHEMA_INVALID: matrix[0] missing required cell key(s) ['casting_id']; every matrix cell must carry answer_id, casting_id, and verdict — a structurally-invalid cell cannot contribute coverage
-INTENT_COVERAGE_DROPPED: 1 answer_id(s) with zero coverage — no casting's cell is PROPAGATED or PARAPHRASED: ['A-001']; F0.7 gate blocks; route to F0.5 re-decompose with these IDs as guidance
-exit=1

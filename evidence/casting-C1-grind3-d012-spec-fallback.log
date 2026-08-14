@@ -1,6 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "state_json or omitted or omission" 2>/dev/null
-# evidence-for: US-001, AC-001, AC-004, AC-005
-# evidence-volatile: \d+\.\d+s
-
-...                                                                      [100%]
-3 passed, 34 deselected in 0.05s
