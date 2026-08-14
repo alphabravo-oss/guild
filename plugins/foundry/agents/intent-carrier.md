@@ -90,6 +90,17 @@ semantic comparison, NEVER by Jaccard / token-overlap, NEVER by embedding.
 None of the three → **DROPPED**. Citation chain: `["A-NNN"]` (singleton —
 the missing answer ID).
 
+Anchor-scope rule (stated word-for-word in the validator —
+GI-003 mirroring): Anchors
+1 and 2 search the prompt BODY only — the prompt text with the three
+typed-table blocks (<invariants> / <state_transitions> / <contracts>)
+excluded — so a typed-row [from A-NNN] citation can never fire
+PROPAGATED; when the body lacks the literal but a typed row inside
+one of those blocks cites [from A-NNN], the verdict is PARAPHRASED.
+The validator's re-derivation applies the same scoping, so a matrix
+that labels typed-row-carried answers PROPAGATED is rejected with
+`INTENT_COVERAGE_VERDICT_MISMATCH`.
+
 PROHIBITED tools: NEVER call any of the following (defense-in-depth; the
 Foundry-Intent-Coverage validator runs a post-hoc audit on the tool-call
 log and rejects with `INTENT_COVERAGE_AGENT_USED_EMBEDDING` /
@@ -189,10 +200,13 @@ Per-cell keys allowed: `answer_id`, `casting_id`, `verdict`,
 A-NNN literal lookup MUST be word-boundary anchored. The contract is:
 
 ```python
-re.search(r'\b' + re.escape(answer_id) + r'\b', prompt_text)
+re.search(r'\b' + re.escape(answer_id) + r'\b', prompt_body)
 ```
 
-Naïve substring lookup (`answer_id in prompt_text`) confuses `A-1`
+(`prompt_body` is the prompt text with the three typed-table blocks
+excluded, per the anchor-scope rule above.)
+
+Naïve substring lookup (`answer_id in prompt_body`) confuses `A-1`
 with `A-12` (both substrings of `A-12`). The validator's
 `ANSWER_REF_RE` constant uses the same word-boundary shape (mirror of
 `validate-spec.py:85`). Your matrix is rejected by the validator's
@@ -258,7 +272,9 @@ from `spec.md` with extra context, NOT from the existing prompts.
    (`<invariants>`, `<state_transitions>`, `<contracts>`) in memory.
 5. **For each (answer_id, casting_id) pair**, run the three-anchor
    lookup in order:
-   a. word-boundary `\b<answer_id>\b` in prompt body? → PROPAGATED.
+   a. word-boundary `\b<answer_id>\b` in prompt body — the prompt text
+      with the three typed-table blocks excluded, per the anchor-scope
+      rule above? → PROPAGATED.
    b. `[from <answer_id>]` inside one of the three typed-table blocks?
       → PARAPHRASED, citation_chain includes the block name.
    c. neither → DROPPED.
@@ -284,8 +300,9 @@ from `spec.md` with extra context, NOT from the existing prompts.
 **Example 2 — PARAPHRASED via typed-row indirection:**
 
 - Appendix has `## A-005 [Locked]\nDeployment runs in k8s manifest.\n[from Q-005]`.
-- `tests/fixtures/casting_prompts/casting-1-prompt-paraphrased.md`
-  body does NOT contain the literal `A-005` token.
+- The casting prompt's body — the prompt text outside the three
+  typed-table blocks, per the anchor-scope rule — does NOT contain the
+  literal `A-005` token.
 - The same prompt's `<contracts>` block contains a row:
   `| CT-001 | POST /deploy | manifest.yaml | 4xx on bad spec | [from A-005] |`.
 - → cell `(A-005, casting-1)` verdict = `PARAPHRASED`,

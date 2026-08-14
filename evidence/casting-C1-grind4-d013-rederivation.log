@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -m pytest tests/test_intent_coverage.py -q -k "pilot_shaped or honest_paraphrased or mislabeled_cell or anchor_scope" 2>/dev/null | tail -1
+# evidence-for: AC-003, AC-004, AC-005
+# evidence-volatile: \d+\.\d+s
+
+4 passed, 42 deselected in 0.21s

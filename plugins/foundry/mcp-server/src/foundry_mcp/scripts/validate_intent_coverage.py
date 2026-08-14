@@ -14,12 +14,20 @@ plugins/forge/scripts/validate_spec_review.py (Phase 6 / PROBE-01,
   embedding-blind tool-call audit denylist (advisory shape)
 
 Three-anchor citation graph (RESEARCH.md Pattern 1):
-1. Direct A-NNN literal in casting prompt → PROPAGATED
-2. Direct A-AUTO-NNN literal → PROPAGATED
+1. Direct A-NNN literal in casting prompt body → PROPAGATED
+2. Direct A-AUTO-NNN literal in prompt body → PROPAGATED
 3. Typed-row [from A-NNN] inside <invariants>/<state_transitions>/<contracts>
    (Phase 2 / TYPE-01 indirection) → PARAPHRASED
 4. Otherwise → DROPPED (per-cell verdict; gate aggregation is per-answer,
    see below)
+
+Anchor-scope rule (stated word-for-word in
+plugins/foundry/agents/intent-carrier.md — GI-003 mirroring): Anchors 1
+and 2 search the prompt BODY only — the prompt text with the three
+typed-table blocks (<invariants> / <state_transitions> / <contracts>)
+excluded — so a typed-row [from A-NNN] citation can never fire
+PROPAGATED; when the body lacks the literal but a typed row inside one
+of those blocks cites [from A-NNN], the verdict is PARAPHRASED.
 
 Gate aggregation rule (stated word-for-word in
 plugins/foundry/agents/intent-carrier.md — GI-003 mirroring): An answer_id
@@ -252,6 +260,20 @@ def extract_answer_ids_from_spec(spec_text: str) -> set[str]:
     return ids
 
 
+def _prompt_body_excluding_typed_blocks(prompt_text: str) -> str:
+    """Return the prompt BODY — prompt text with typed-table blocks removed.
+
+    D-013 anchor-scope discipline: the body/typed-block partition is
+    complementary — every region this function removes is exactly the
+    region the anchor-3 typed-row search inspects (same tag regex shape),
+    so no text is invisible to both anchors.
+    """
+    body = prompt_text
+    for tag in TYPED_BLOCK_TAGS:
+        body = re.sub(rf"<{tag}>.*?</{tag}>", "", body, flags=re.DOTALL)
+    return body
+
+
 def verdict_for_cell(
     answer_id: str, prompt_text: str
 ) -> tuple[str, list[str]]:
@@ -268,25 +290,40 @@ def verdict_for_cell(
        PARAPHRASED.
     3. Otherwise → DROPPED.
 
+    Anchor-scope rule (stated word-for-word in
+    plugins/foundry/agents/intent-carrier.md — GI-003 mirroring): Anchors
+    1 and 2 search the prompt BODY only — the prompt text with the three
+    typed-table blocks (<invariants> / <state_transitions> / <contracts>)
+    excluded — so a typed-row [from A-NNN] citation can never fire
+    PROPAGATED; when the body lacks the literal but a typed row inside
+    one of those blocks cites [from A-NNN], the verdict is PARAPHRASED.
+
     Citation-only — no embeddings, no Jaccard, no fuzzy text-overlap.
     """
     if not answer_id:
         return "DROPPED", []
 
-    # Anchor 1+2: direct literal (boundary-anchored).
+    # Anchor 1+2: direct literal (boundary-anchored) in the prompt BODY
+    # (D-013: typed-table blocks excluded, so `[from A-NNN]` typed rows
+    # cannot mask the PARAPHRASED signal).
     # re.escape to handle the dash inside "A-NNN" / "A-AUTO-NNN" literals.
-    if re.search(rf"\b{re.escape(answer_id)}\b", prompt_text):
+    body_text = _prompt_body_excluding_typed_blocks(prompt_text)
+    if re.search(rf"\b{re.escape(answer_id)}\b", body_text):
         return "PROPAGATED", [answer_id]
 
     # Anchor 3: typed-row indirection — search ONLY inside typed-table
-    # blocks (Pitfall 3 mirror at the casting-prompt scope).
+    # blocks (Pitfall 3 mirror at the casting-prompt scope). finditer
+    # over every same-tag block so the body-exclusion above and this
+    # search cover complementary regions with no gap.
     for tag in TYPED_BLOCK_TAGS:
-        m = re.search(rf"<{tag}>(.*?)</{tag}>", prompt_text, re.DOTALL)
-        if m is None:
-            continue
-        for cite in re.finditer(r"\[\s*from\s+(A-\d+)\s*\]", m.group(1)):
-            if cite.group(1) == answer_id:
-                return "PARAPHRASED", [answer_id, f"<{tag}>"]
+        for m in re.finditer(
+            rf"<{tag}>(.*?)</{tag}>", prompt_text, re.DOTALL
+        ):
+            for cite in re.finditer(
+                r"\[\s*from\s+(A-\d+)\s*\]", m.group(1)
+            ):
+                if cite.group(1) == answer_id:
+                    return "PARAPHRASED", [answer_id, f"<{tag}>"]
 
     return "DROPPED", [answer_id]
 
@@ -360,7 +397,18 @@ def validate_intent_coverage(
         whose every casting's cell is DROPPED. Without --spec this check
         cannot run; the MCP gate supplies --spec whenever the run's spec
         is resolvable (run-dir spec.md, falling back to
-        state.json['spec_path']).
+        state.json['spec_path']). The same token also fires per ghost
+        cell (D-014a): when castings/manifest.json is loadable next to
+        the casting prompts, a cell citing a casting_id absent from
+        manifest.castings[].id is structurally-invalid coverage — the
+        matrix cites a casting the manifest does not declare, the dual
+        of a spec answer with no cell — and cannot contribute coverage:
+        it counts as DROPPED in the per-answer aggregation, so an answer
+        whose only non-DROPPED cells are ghosts blocks as zero-coverage.
+        (Token reuse per GI-002; INTENT_COVERAGE_VERDICT_MISMATCH stays
+        reserved for re-derivation disagreement over an EXISTING casting
+        prompt — a remediation, re-labeling, that cannot apply to a
+        nonexistent casting.)
       * INTENT_COVERAGE_VERDICT_MISMATCH — when casting-prompt locatable,
         validator's three-anchor re-derivation disagrees with agent's
         cell.verdict.
@@ -476,6 +524,31 @@ def validate_intent_coverage(
         if candidate_castings_dir.is_dir():
             casting_dir = candidate_castings_dir
 
+    # D-014a: ghost-casting guard. When castings/manifest.json is loadable
+    # next to the casting prompts, matrix casting_ids are validated against
+    # manifest.castings[].id (str-normalized — foundry_spawn.py compares
+    # str(c.get("id")) == str(casting_id), ids may be ints). None means
+    # "manifest unavailable — check cannot run" (matrix-only validation),
+    # mirroring the --spec-absent completeness stance.
+    manifest_casting_ids: set[str] | None = None
+    if casting_dir is not None:
+        manifest_path = casting_dir / "manifest.json"
+        if manifest_path.is_file():
+            try:
+                manifest_data = json.loads(
+                    manifest_path.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                manifest_data = None
+            if isinstance(manifest_data, dict) and isinstance(
+                manifest_data.get("castings"), list
+            ):
+                manifest_casting_ids = {
+                    str(c.get("id"))
+                    for c in manifest_data["castings"]
+                    if isinstance(c, dict) and c.get("id") is not None
+                }
+
     # Per-answer cell-verdict accumulator (gate aggregation rule — stated
     # word-for-word in agents/intent-carrier.md and the docstrings above):
     # an answer_id blocks the gate only when every casting's cell for it
@@ -526,14 +599,37 @@ def validate_intent_coverage(
                 f"answer-set ({sorted(spec_answer_ids)!r})"
             )
 
+        # Step 6b (D-014a): ghost-casting cell. A cell citing a casting_id
+        # the manifest does not declare is structurally-invalid coverage:
+        # it is flagged with the MATRIX_INCOMPLETE token (GI-002 reuse —
+        # justification in the docstring above) and counts as DROPPED in
+        # the per-answer aggregation below, so an answer whose only
+        # non-DROPPED cells are ghosts blocks as zero-coverage.
+        cell_is_ghost = (
+            manifest_casting_ids is not None
+            and bool(casting_id)
+            and str(casting_id) not in manifest_casting_ids
+        )
+        if cell_is_ghost:
+            failures.append(
+                f"INTENT_COVERAGE_MATRIX_INCOMPLETE: matrix[{idx}] "
+                f"casting_id={casting_id!r} not present in "
+                f"castings/manifest.json casting ids "
+                f"({sorted(manifest_casting_ids or set())!r}); a cell "
+                f"citing an unknown casting cannot contribute coverage"
+            )
+
         # Step 7: three-anchor verdict re-derivation (when casting-prompt
         # resolvable). For fixtures that don't ship full casting-prompt
         # trees, we skip the re-derivation silently — the matrix's own
-        # DROPPED markers are still sufficient to block the gate.
+        # DROPPED markers are still sufficient to block the gate. Ghost
+        # cells are excluded structurally: no prompt exists to re-derive
+        # against, and the MATRIX_INCOMPLETE line above already blocks.
         if (
             casting_dir is not None
             and answer_id
             and casting_id
+            and not cell_is_ghost
             and verdict in KNOWN_INTENT_COVERAGE_VERDICTS
         ):
             prompt_path = casting_dir / f"casting-{casting_id}-prompt.md"
@@ -562,8 +658,12 @@ def validate_intent_coverage(
         # Step 8: accumulate per-answer cell verdicts (block condition;
         # primary success criterion 3). Cells without an answer_id cannot
         # be attributed to any answer and are excluded from aggregation.
+        # Ghost cells (D-014a) contribute DROPPED regardless of their
+        # claimed verdict — an unknown casting cannot provide coverage.
         if answer_id:
-            cell_verdicts_by_answer.setdefault(answer_id, []).append(verdict)
+            cell_verdicts_by_answer.setdefault(answer_id, []).append(
+                "DROPPED" if cell_is_ghost else verdict
+            )
 
     # Spec→matrix completeness (only when --spec provided and the appendix
     # answer-set is non-empty — same predicate as the dangling-citation

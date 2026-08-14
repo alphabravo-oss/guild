@@ -3,7 +3,19 @@
 In-process wrapper around foundry_mcp.scripts.validate_intent_coverage.
 Returns structured result with action='proceed_to_validate' on pass,
 action='redecompose' on any zero-coverage answer, action=
-'rerun_intent_carrier' when intent-coverage.json is missing.
+'rerun_intent_carrier' when intent-coverage.json is missing or
+malformed. Action routing rule (D-015): redecompose is reserved for a
+non-empty zero-coverage answer set; when the validator fails for
+non-coverage reasons (zero-coverage answer set empty, validator exit
+nonzero) the gate returns action: rerun_intent_carrier with the
+validator output, because re-decomposition cannot fix a malformed
+matrix.
+
+Completeness disclosure (D-014b): every verdict-bearing payload and the
+persisted intent_coverage_summary carry a ``completeness_checked``
+boolean — True only when a spec was resolvable and the spec→matrix
+completeness fold-in actually ran, so a silent skip (no resolvable spec)
+is visible instead of being masked by a stamped .f07-intent-clean.
 
 F0.7 gate semantics (per-answer aggregation rule — stated word-for-word
 in the validator docstring and agents/intent-carrier.md): An answer_id
@@ -116,15 +128,21 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
 
     Returns one of:
       {passed: True, action: 'proceed_to_validate', propagated_count: int,
-       paraphrased_answers: [...], dropped_answers: [], matrix_path: str}
+       paraphrased_answers: [...], dropped_answers: [],
+       completeness_checked: bool, matrix_path: str}
       OR
       {passed: False, action: 'redecompose', dropped_answers: [...],
        redecompose_hints: [{answer_id, suggested_casting, citation_chain}],
        cell_verdict_counts: {PROPAGATED, PARAPHRASED, DROPPED: int},
-       matrix_path: str, hint: str, validator_stdout: str,
-       validator_exit: int}
+       completeness_checked: bool, matrix_path: str, hint: str,
+       validator_stdout: str, validator_exit: int}
       OR
       {passed: False, action: 'rerun_intent_carrier', reason: str}
+        — when intent-coverage.json is missing or malformed, AND (D-015)
+        when the validator fails for non-coverage reasons (zero-coverage
+        answer set empty, validator exit nonzero); in the latter case the
+        payload also carries cell_verdict_counts / completeness_checked /
+        matrix_path / validator output.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -200,6 +218,12 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     # the canonical validator module (no second parser), guarded the same
     # way _run_validator_in_process guards its main() import.
     missing_from_matrix: list[str] = []
+    # D-014b: completeness_checked discloses whether the spec→matrix
+    # completeness fold-in actually ran. False when no spec is resolvable
+    # (or the answer-set extraction failed) — the skip is then visible in
+    # every verdict-bearing payload and the persisted summary instead of
+    # being masked by a stamped .f07-intent-clean.
+    completeness_checked = False
     if spec_path is not None:
         try:
             from foundry_mcp.scripts.validate_intent_coverage import (
@@ -209,6 +233,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             spec_answer_ids = extract_answer_ids_from_spec(
                 spec_path.read_text(encoding="utf-8")
             )
+            completeness_checked = True
         except Exception:  # noqa: BLE001 — a broken validator module or
             # unreadable spec is already surfaced via the validator run
             # above; the fold-in stays best-effort here.
@@ -259,6 +284,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "paraphrased_answers": paraphrased,
             "cell_verdict_counts": cell_verdict_counts,
             "dropped_answers": [],
+            "completeness_checked": completeness_checked,
             "matrix_path": str(coverage_path),
         }
         manifest_path = fdir / "castings" / "manifest.json"
@@ -281,8 +307,34 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
             "paraphrased_answers": paraphrased,
             "cell_verdict_counts": cell_verdict_counts,
             "dropped_answers": [],
+            "completeness_checked": completeness_checked,
             "matrix_path": str(coverage_path),
             "intent_coverage_summary": summary,
+        }
+
+    # D-015: redecompose is reserved for a non-empty zero-coverage answer
+    # set; when the validator fails for non-coverage reasons (zero-coverage
+    # answer set empty, validator exit nonzero) the gate returns action:
+    # rerun_intent_carrier with the validator output, because
+    # re-decomposition cannot fix a malformed matrix (schema violation,
+    # verdict mismatch, ghost casting_id, embedding-audit hit).
+    if not dropped:
+        return {
+            "passed": False,
+            "action": "rerun_intent_carrier",
+            "reason": (
+                "validator failed for non-coverage reasons (zero-coverage "
+                "answer set empty, validator exit nonzero) — the matrix "
+                "itself is invalid; re-run the intent-carrier agent "
+                "against the real spec + castings. Re-decomposition "
+                "cannot fix a malformed matrix."
+            ),
+            "cell_verdict_counts": cell_verdict_counts,
+            "completeness_checked": completeness_checked,
+            "matrix_path": str(coverage_path),
+            "validator_stdout": validator_stdout,
+            "validator_stderr": validator_stderr,
+            "validator_exit": validator_exit,
         }
 
     # Build redecompose_hints: per dropped answer_id, name the first
@@ -327,6 +379,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         # D-010 / AC-002: the lead receiving redecompose needs the per-cell
         # picture and the matrix pointer just as much as the pass path does.
         "cell_verdict_counts": cell_verdict_counts,
+        "completeness_checked": completeness_checked,
         "matrix_path": str(coverage_path),
         "validator_stdout": validator_stdout,
         "validator_stderr": validator_stderr,
