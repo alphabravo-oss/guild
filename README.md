@@ -6,20 +6,20 @@
 
 <br/>
 
-**12 plugins for Claude Code.** A spec engine, a build engine, two always-on rule layers, and a bench of specialists.
+**13 plugins for Claude Code.** A spec engine, a build engine, two always-on rule layers, and a bench of specialists.
 
 <br/>
 
 <a href="#-quick-start"><img src="https://img.shields.io/badge/QUICK_START-1E88E5?style=for-the-badge&logoColor=white" alt="Quick start"/></a>
-<a href="#-the-guild"><img src="https://img.shields.io/badge/12_PLUGINS-8E44AD?style=for-the-badge" alt="12 plugins"/></a>
+<a href="#-the-guild"><img src="https://img.shields.io/badge/13_PLUGINS-8E44AD?style=for-the-badge" alt="13 plugins"/></a>
 <a href="#-deeper"><img src="https://img.shields.io/badge/DOCS-F57C00?style=for-the-badge" alt="Docs"/></a>
 <a href="./LICENSE"><img src="https://img.shields.io/badge/MIT-2E7D32?style=for-the-badge" alt="MIT"/></a>
 
 <a href="https://github.com/alphabravo-oss/guild/stargazers"><img src="https://img.shields.io/github/stars/alphabravo-oss/guild?style=flat-square&color=FFC107" alt="Stars"/></a>
 <a href="https://github.com/alphabravo-oss/guild/issues"><img src="https://img.shields.io/github/issues/alphabravo-oss/guild?style=flat-square&color=607D8B" alt="Issues"/></a>
 <img src="https://img.shields.io/github/last-commit/alphabravo-oss/guild?style=flat-square&color=607D8B" alt="Last commit"/>
-<img src="https://img.shields.io/badge/agents-38-00897B?style=flat-square" alt="38 agents"/>
-<img src="https://img.shields.io/badge/commands-56-6D4C41?style=flat-square" alt="56 commands"/>
+<img src="https://img.shields.io/badge/agents-43-00897B?style=flat-square" alt="43 agents"/>
+<img src="https://img.shields.io/badge/commands-60-6D4C41?style=flat-square" alt="60 commands"/>
 
 <br/>
 
@@ -112,9 +112,18 @@
 <code>/weave:make</code>
 </td>
 </tr>
+<tr>
+<td align="center" valign="top">
+<h2>📖</h2>
+<b><a href="plugins/webster">webster</a></b><br/>
+<sub>Docs that carry<br/>their own sources.</sub><br/><br/>
+<code>/webster:plan</code>
+</td>
+<td colspan="3"></td>
+</tr>
 </table>
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.7.3-F57C00?style=flat-square" alt="foundry 4.7.3"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.7.3-F57C00?style=flat-square" alt="foundry 4.7.3"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.3.0-00897B?style=flat-square" alt="webster 0.3.0"/></sub>
 
 </div>
 
@@ -124,8 +133,12 @@
 
 ```bash
 claude plugin marketplace add alphabravo-oss/guild
-claude plugin install forge@guild foundry@guild adhoc@guild tldr@guild
+for p in forge foundry adhoc tldr; do claude plugin install "$p@guild"; done
 ```
+
+> [!WARNING]
+> `claude plugin install` takes **one** plugin. Extra arguments are discarded silently: no error,
+> no warning, exit 0. Install in a loop, or one command per plugin.
 
 ```bash
 /forge:plan "workloads page listing running pods with status and logs"   # → spec.md
@@ -137,11 +150,12 @@ claude plugin install forge@guild foundry@guild adhoc@guild tldr@guild
 > `claude mcp add foundry -- uvx --from "git+https://github.com/alphabravo-oss/guild#subdirectory=plugins/foundry/mcp-server" foundry-mcp --project-root .`
 
 <details>
-<summary><b>Install the other eight</b></summary>
+<summary><b>Install the other nine</b></summary>
 
 ```bash
-claude plugin install crucible@guild holmes@guild ux-review@guild damu@guild
-claude plugin install crew@guild tidy@guild e2e@guild weave@guild
+for p in crucible holmes ux-review damu crew tidy e2e weave webster; do
+  claude plugin install "$p@guild"
+done
 ```
 
 `e2e`, `ux-review`, and `damu:remediate` drive a real browser and want the Playwright MCP server.
@@ -306,7 +320,9 @@ flowchart LR
 
 **🕸️ weave** — classifies your task, picks the fan-out topology (pipeline by default, barrier only when a stage truly needs all prior results), and validates the script with `node --check` plus a 12-point audit before saving.
 
-→ [crew](plugins/crew) · [tidy](plugins/tidy) · [e2e](plugins/e2e) · [weave](plugins/weave)
+**📖 webster** — writes the docs you would publish, then proves them. A stack detector enumerates the real public surface with a `file:line` anchor on every entry (Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask, Go mux, plus middleware, CLI binaries, package exports, and env vars read from code rather than only from `.env.example`). Reference material is extracted with the right tool instead of composed in prose, because a reference written from a code read is correct on the day and wrong by the next commit. A drift manifest records the git HEAD and every cited anchor, so a later audit says which pages your diff invalidated instead of re-reading all of them. Six gates decide done, and a gate that could not run reports `not_checked` rather than a pass.
+
+→ [crew](plugins/crew) · [tidy](plugins/tidy) · [e2e](plugins/e2e) · [weave](plugins/weave) · [webster](plugins/webster)
 
 </details>
 
