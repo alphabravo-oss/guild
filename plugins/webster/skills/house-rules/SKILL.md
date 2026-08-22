@@ -84,7 +84,30 @@ background. Reads comfortably at about an 8th to 10th grade level.
 The corollary cuts both ways. Domain vocabulary is not jargon; **undefined** domain vocabulary is.
 A page about HTTP has to say "header". Judge the introduction of a term, not its existence.
 
-## 7. The gates
+## 7. Precedence over the vendored agents
+
+The five agents were vendored from `documentation-generation` and their pedagogy is worth
+keeping: progressive disclosure, prerequisites stated up front, concepts introduced before they
+are used, common errors anticipated. Follow all of that.
+
+Their instructions also predate these rules and contradict them in six specific places. **These
+rules win. Every time.** Precedence is not left to judgement, because a model reading two
+documents that disagree will follow whichever it read last.
+
+| The agent says | Do this instead |
+| --- | --- |
+| `architect`: comprehensive documents, 10 to 100+ pages | Write what is true and stop. Long documentation invents more than short documentation does |
+| `architect`: open with an executive summary | Open with what the thing is, in one sentence. A summary of a page nobody has read yet is padding |
+| `tutorial`: close with a Summary section | Cut it. It restates what the reader just read, and `slop.py` flags it |
+| `tutorial`: fail forward, include intentional errors | Allowed, but the broken example is labelled as deliberately broken. An unlabelled wrong example is a wrong example |
+| `tutorial`: show both correct and incorrect approaches | Same rule. Run the correct one, label the incorrect one |
+| `tutorial`: link to working code repositories | Only if the link resolves today. A dead pointer makes a page look explained when it is not |
+| all three: "Remember: your goal is to create documentation that serves as..." | Ignore the closing exhortation. It is press-release cadence and `slop.py` flags `copula-avoidance` on it |
+
+Their own prose is title case throughout, which these rules forbid. That is their prose, not
+yours. Write headings in sentence case regardless of what the agent file looks like.
+
+## 8. The gates
 
 A page is not finished until all six pass. Report the ones that did not, with the reason.
 

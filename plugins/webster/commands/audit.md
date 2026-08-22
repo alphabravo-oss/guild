@@ -42,7 +42,7 @@ Establish the repo category first, because the rubric weighting depends on it.
 
 ## Step 4, the five gates
 
-Run house-rules section 7 over every page. For each failure record the exact line, what is wrong,
+Run house-rules section 8 over every page. For each failure record the exact line, what is wrong,
 and the replacement text spelled out. Not "this section is too technical". Instead: "line 41 uses
 `--severity` as a known concept, but severity is not introduced until page 3."
 
