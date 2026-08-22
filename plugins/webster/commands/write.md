@@ -39,8 +39,9 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
 2. Anything you could not check gets `[?]` and a line saying what would settle it. Do not soften
    the sentence instead.
 3. Run every example. An example you did not run is labelled illustrative or it does not go in.
-4. Ignore `webster-architect`'s "10-100+ pages" instinct. Length is not the goal, and long
-   documentation invents more than short documentation does.
+4. The vendored agents contradict these rules in six named places. `house-rules` section 7 lists
+   each one and says which wins. Read it before dispatching, because the agent file is longer
+   than the rule and a model tends to follow whichever it read last.
 
 ## Step 3, check for slop before recording anything
 
