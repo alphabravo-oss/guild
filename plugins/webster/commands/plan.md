@@ -50,8 +50,15 @@ A subject is a thing in the product a user would say out loud. Derive them from 
 survey found and from the product's own vocabulary. Three to twelve. Not `utils`, not `core`,
 not `guides`, and never a code module name.
 
-Diataxis still governs how each page is written, tutorial or how-to or reference or explanation,
-and it never governs where the page lives. Record the mode per page in the plan.
+Load the `content-types` skill. Every page declares what it is, and the declaration is what
+makes it checkable later. Record the type per page in the plan: `tutorial`, `how-to`,
+`reference`, `explanation`, `quickstart`, `api-reference`, `glossary` or `troubleshooting`.
+
+Tutorial and how-to are the pair to get right. A tutorial teaches someone who does not know the
+product; a how-to answers someone who does. Choosing wrong is the most common failure there is.
+
+Content type never governs where a page lives. The directory is the subject, the type is how the
+page is written.
 
 Then scaffold the tree, which is cheap and makes the plan concrete:
 
@@ -76,7 +83,7 @@ Write `docs/docs-plan.md`:
 - the reader profile
 - the stack and the extractors that will be used, with their commands
 - the subject list, with why each one is a subject
-- one row per page: path inside the tree, mode, audience, which agent writes it, what evidence it needs
+- one row per page: path inside the tree, `doc_type`, audience, which agent writes it, what evidence it needs
 - the surface table straight from the survey, anchors included
 - claims already known to be unverifiable, so they start life tagged
 - what is deliberately not being documented, and why

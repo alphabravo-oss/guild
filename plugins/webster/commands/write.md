@@ -3,7 +3,7 @@ description: Write the planned pages, extracting reference material and anchorin
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Task
 ---
 
-Load `house-rules`, `structure`, `extraction` and `no-slop`. Read `docs/docs-plan.md`. If it does not exist, run
+Load `house-rules`, `structure`, `content-types`, `extraction` and `no-slop`. Read `docs/docs-plan.md`. If it does not exist, run
 `/webster:plan` first rather than guessing the shape.
 
 ## Step 1, extract before writing
@@ -28,6 +28,12 @@ before writing prose into it, because moving pages afterwards breaks every ancho
 
 Write into the scaffolded paths. Do not invent a page at the docs root, and do not delete a
 section because it would be short.
+
+Each scaffolded page already carries its `doc_type` and that type's skeleton. Keep the
+`doc_type`, and treat the skeleton as a starting shape rather than a form to fill in: rename its
+sections after the subject where that reads better. `Hardware requirements` beats `Overview`.
+What the checker tests is not the section names, it is whether the page does something another
+type should be doing.
 
 ## Step 3, dispatch
 
@@ -55,7 +61,20 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
    each one and says which wins. Read it before dispatching, because the agent file is longer
    than the rule and a model tends to follow whichever it read last.
 
-## Step 4, check for slop before recording anything
+## Step 4, check each page against its type
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
+```
+
+Defects fail: a page doing another type's job, an image with no alt text, a skipped heading
+level. Fix them. Advisories are reported and judged: a tutorial with no stated outcome, steps
+with no prerequisites, a reference page with no table, prose above the reading grade ceiling.
+
+Set `WEBSTER_READING_GRADE=10` when the reader is the non-technical person `house-rules`
+section 6 describes.
+
+## Step 5, check for slop before recording anything
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slop.py docs
@@ -66,7 +85,7 @@ mechanically: the detector cannot tell a legitimate short index from a template,
 only fires on repetition. Diagram rules run inside `mermaid`, `d2` and `dot` fences, so a diagram
 drawn in the default palette or with nodes named `[Service]` is caught here.
 
-## Step 5, validate the layout and record
+## Step 6, validate the layout and record
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
@@ -87,7 +106,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record
 cite. That is what makes the next `/webster:audit` able to tell you which pages a diff
 invalidated instead of re-reading everything.
 
-## Step 6, finish
+## Step 7, finish
 
 Run `/webster:audit` before reporting done, and report the gate results honestly, including
 any that came back `not_checked`.

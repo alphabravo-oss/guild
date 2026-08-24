@@ -18,6 +18,8 @@ The three scripts are runnable on their own, which is what makes them usable in 
 ```
 python3 scripts/survey.py .        stack, frameworks, and the public surface with anchors
 python3 scripts/scaffold.py check  the layout gate. exit 1 on any violation
+python3 scripts/doctype.py types   what each content type is for
+python3 scripts/doctype.py check   page against its declared type. exit 1 on a defect
 python3 scripts/drift.py check     which pages a diff invalidated. exit 1 on drift
 python3 scripts/llmstxt.py         an llms.txt built from pages that exist on disk
 ```

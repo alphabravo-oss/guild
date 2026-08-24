@@ -3,7 +3,7 @@ description: Run the five gates over existing documentation and return a priorit
 allowed-tools: Bash, Read, Glob, Grep, Task
 ---
 
-Load the `house-rules`, `structure` and `no-slop` skills. Works on documentation this plugin wrote and documentation it has
+Load the `house-rules`, `structure`, `content-types` and `no-slop` skills. Works on documentation this plugin wrote and documentation it has
 never seen. Read-only. Do not edit files unless the user asks.
 
 ## Step 1, drift, which is deterministic and comes first
@@ -45,12 +45,25 @@ Every violation is a P1, except a missing `index.md` or a subject with no overvi
 are P0 because navigation is broken without them. A page still carrying
 `<!-- webster: not written yet -->` is a stub and counts as an undocumented surface item.
 
-## Step 4, README
+## Step 4, content types
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
+```
+
+Every defect is a P1, except type mixing on a page a reader is likely to land on first, which is
+a P0 because it sends them to the wrong kind of page for their question.
+
+Accessibility and reading grade are checked on every page, including ones with no `doc_type`, so
+this works on documentation the plugin never wrote. A page with no `doc_type` cannot be checked
+against a type, and that is worth reporting rather than passing over.
+
+## Step 5, README
 
 Load the `readme-rubric` skill and walk its nine criteria, scoring each with cited line numbers.
 Establish the repo category first, because the rubric weighting depends on it.
 
-## Step 5, the six gates
+## Step 6, the six gates
 
 Run house-rules section 8 over every page. For each failure record the exact line, what is wrong,
 and the replacement text spelled out. Not "this section is too technical". Instead: "line 41 uses
@@ -59,7 +72,7 @@ and the replacement text spelled out. Not "this section is too technical". Inste
 `Sourced` is settled by step 1 for anchors that exist. What step 1 cannot settle is a behavioural
 claim carrying **no** anchor at all. Extract those by hand and check each one.
 
-## Step 6, slop
+## Step 7, slop
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slop.py docs
@@ -69,14 +82,14 @@ Every high severity finding is a P1, and `agent-attribution` is a P0 because it 
 authorship the page cannot support. If the docs are published as a site, run `redpen scan` over
 the site as well, and mark it `not_checked` if redpen is not installed.
 
-## Step 7, comprehension
+## Step 8, comprehension
 
 Reading your own documentation cannot find comprehension defects, because you already know the
 answer. If `courseware:learner` is installed, dispatch its redline pass over the pages. If it is
 not installed, say so and mark the Readable gate `not_checked`. Do not substitute your own read
 for it and call it a pass.
 
-## Step 8, punch list
+## Step 9, punch list
 
 - **P0**: broken anchors, documented surface that does not exist, unsourced claims, examples that
   do not run, missing mandatory pages.

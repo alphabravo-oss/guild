@@ -20,6 +20,8 @@ webster merges them into one surface and adds the missing half.
 | `documentation-standards` | The HADS tags: `[SPEC]`, `[NOTE]`, `[BUG]`, `[?]` |
 | `repo-doctor` | The nine-criterion README rubric, scored with cited evidence |
 | `redpen` | The copy and residue rule corpus, retargeted from rendered HTML to markdown and diagrams |
+| The Good Docs Project | The content types, their sections, and what each type may not contain |
+| ISO/IEC/IEEE 26514 | The quality characteristics. Four are measured, one is measured by `drift.py`, three need a person |
 
 Dropped on purpose: the generic `/doc-generate` command, which is a large stack-agnostic template
 dump written around Python, FastAPI and Sphinx, and produces noise in a repo that is none of those.
@@ -50,6 +52,7 @@ without an agent.
 | `scripts/survey.py` | Detects the stack, then enumerates the real public surface with a `file:line` anchor on every entry: HTTP routes from Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask and Go mux, plus CLI binaries, package exports, env vars and OpenAPI specs. Names the extractors that fit the stack |
 | `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree and every anchor the pages cite. `check` reports anchors that no longer resolve and pages whose cited code changed. Exit 1 on drift |
 | `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem. `check` validates an existing tree and exits 1 on any violation |
+| `scripts/doctype.py` | Per-page content types. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (type mixing, missing alt text, skipped heading levels) exit 1; advisories (no learning objective, no prerequisites, no table, reading grade) are reported |
 | `scripts/slop.py` | The redpen copy and residue corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk |
 
@@ -81,7 +84,7 @@ A page is not finished until all six pass, and a gate that could not be run repo
 | --- | --- |
 | Sourced | Every behavioural claim has a resolving anchor or a `[?]` tag |
 | Runnable | Every non-illustrative example has been executed |
-| Shaped | The page is tutorial, how-to, reference or explanation, and does not drift |
+| Shaped | The tree passes `scaffold.py check` and no page is doing another type's job |
 | Readable | A reader with no development background could follow it |
 | Honest | "What this is" and "what this deliberately does not do" both exist |
 | Unslopped | No high severity slop finding, and diagrams name real things rather than categories |

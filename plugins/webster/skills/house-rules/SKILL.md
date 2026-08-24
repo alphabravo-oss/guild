@@ -115,7 +115,7 @@ A page is not finished until all six pass. Report the ones that did not, with th
 | --- | --- |
 | Sourced | Every behavioural claim has a resolving anchor or a `[?]` tag |
 | Runnable | Every non-illustrative example has been executed |
-| Shaped | `scaffold.py check` passes, and the page is one of tutorial, how-to, reference, explanation without drifting between them |
+| Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
 | Readable | A reader matching §6 could follow it without stopping |
 | Honest | The two §4 pages exist and the page claims nothing from §3 |
 
