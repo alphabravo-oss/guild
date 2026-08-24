@@ -146,5 +146,5 @@ Two things the scaffold deliberately leaves to you. **The palette**, because
 `src/css/custom.css` is a stub and the Docusaurus default is a default; `no-slop` covers what to
 avoid. And **versioning**, because cutting a version is a release decision, not a docs decision.
 
-The published site is a UI. Judge it as one with `redpen scan`, and if redpen is not installed
-say so and mark it `not_checked` rather than eyeballing it.
+The published site is a UI. Judge it as one with a dedicated UI review tool run against the
+built site, and if none is available say so and mark it `not_checked` rather than eyeballing it.

@@ -130,7 +130,7 @@
       "name": "webster",
       "source": "./plugins/webster",
       "description": "Production documentation for an app you built, in a fixed layout modelled on Harvester: subject-first directories and a Docusaurus site whose navigation is the filesystem. Every page declares its content type, with sections from The Good Docs Project and quality checks from the ISO/IEC/IEEE 26514 characteristics: type mixing, alt text, heading order and reading grade. Extracts the reference material, anchors every claim to a file and line, measures drift against a recorded manifest, and refuses to state what it could not check.",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "category": "productivity",
       "author": {
         "name": "AlphaBravo"

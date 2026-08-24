@@ -5,8 +5,8 @@ description: The tells that make documentation, diagrams and a docs site read as
 
 # No slop
 
-Rules adapted from the redpen corpus (`rules/copy.yaml`, `rules/residue.yaml`), retargeted from
-rendered HTML to markdown, plus tells specific to documentation and to generated diagrams.
+Copy and residue rules retargeted from rendered HTML to markdown, plus tells specific to
+documentation and to generated diagrams.
 
 Run the detector rather than eyeballing it:
 
@@ -76,15 +76,11 @@ route that `scripts/survey.py` found, not one that seemed likely.
 
 ## A docs site
 
-When the docs get published as a site rather than read in the repo, the site is a UI and
-`redpen` already judges UIs against 151 rules with a real browser. Run it rather than
-reimplementing it here:
+When the docs get published as a site rather than read in the repo, the site is a UI, and the
+prose rules above cannot judge one. Reach for a dedicated UI review tool and run it against the
+built site in a real browser rather than reimplementing that here.
 
-```bash
-redpen scan ./site --url http://localhost:3000
-```
-
-If redpen is not installed, say so and mark the finding `not_checked`. Do not eyeball a design
+If no such tool is available, say so and mark the finding `not_checked`. Do not eyeball a design
 and call it a pass.
 
 ## The rule behind the rules

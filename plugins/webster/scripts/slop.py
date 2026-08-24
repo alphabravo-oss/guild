@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Slop detector for documentation prose and diagrams.
 
-Rules adapted from the redpen corpus (rules/copy.yaml, rules/residue.yaml), retargeted
-from rendered HTML to markdown, plus tells specific to docs and to generated diagrams.
+Copy and residue rules retargeted from rendered HTML to markdown, plus tells specific to
+documentation and to generated diagrams.
 
 Prints findings as file:line. Exit 1 when anything at high severity fires.
 """

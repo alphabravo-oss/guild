@@ -19,7 +19,7 @@ webster merges them into one surface and adds the missing half.
 | `code-documentation` | Nothing. It is a strict subset of the above |
 | `documentation-standards` | The HADS tags: `[SPEC]`, `[NOTE]`, `[BUG]`, `[?]` |
 | `repo-doctor` | The nine-criterion README rubric, scored with cited evidence |
-| `redpen` | The copy and residue rule corpus, retargeted from rendered HTML to markdown and diagrams |
+| A UI slop-rule corpus | Copy and residue rules, retargeted from rendered HTML to markdown and diagrams |
 | The Good Docs Project | The content types, their sections, and what each type may not contain |
 | ISO/IEC/IEEE 26514 | The quality characteristics. Four are measured, one is measured by `drift.py`, three need a person |
 
@@ -53,7 +53,7 @@ without an agent.
 | `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree and every anchor the pages cite. `check` reports anchors that no longer resolve and pages whose cited code changed. Exit 1 on drift |
 | `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem. `check` validates an existing tree and exits 1 on any violation |
 | `scripts/doctype.py` | Per-page content types. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (type mixing, missing alt text, skipped heading levels) exit 1; advisories (no learning objective, no prerequisites, no table, reading grade) are reported |
-| `scripts/slop.py` | The redpen copy and residue corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
+| `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk |
 
 ## The layout is fixed
@@ -98,7 +98,6 @@ and where they are absent it marks the affected gate `not_checked` rather than p
 - `plumb` or `hollis:checker`: anchor resolution, for the Sourced gate
 - `gsd:map-codebase`: the repo survey in `/webster:plan`
 - `repo-visuals`: hero images for a published docs site
-- `redpen`: judges a published docs site as a UI, against 151 rules in a real browser
 
 ## Status
 

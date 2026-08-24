@@ -79,8 +79,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slop.py docs
 ```
 
 Every high severity finding is a P1, and `agent-attribution` is a P0 because it is a claim about
-authorship the page cannot support. If the docs are published as a site, run `redpen scan` over
-the site as well, and mark it `not_checked` if redpen is not installed.
+authorship the page cannot support.
+
+A published docs site is also a UI, and prose rules cannot judge one. If a UI review tool is
+available, run it over the built site; if not, mark that finding `not_checked` rather than
+eyeballing a design and calling it a pass.
 
 ## Step 8, comprehension
 
