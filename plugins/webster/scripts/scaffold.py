@@ -12,8 +12,11 @@ import argparse, json, os, re, sys
 
 # Fixed sections and their sidebar positions. Subjects are numbered between install and advanced.
 FRONT = [("getting-started", "Getting Started", 2), ("install", "Installation", 3)]
-BACK = [("api", "API Reference", 90), ("advanced", "Advanced", 91),
-        ("troubleshooting", "Troubleshooting", 92), ("developer", "Developer", 93)]
+BACK = [("advanced", "Advanced", 91), ("troubleshooting", "Troubleshooting", 92),
+        ("developer", "Developer", 93)]
+# api/ is generated from an OpenAPI spec by docusaurus-plugin-openapi-docs, the way Harvester
+# builds docs/api from its swagger files. Scaffolded when asked for, never required.
+OPTIONAL = [("api", "API Reference", 90)]
 ROOT_PAGES = ["index.md", "faq.md"]
 # Pages every getting-started carries. Harvester ships both; they are cheap and they pay off.
 GETTING_STARTED = ["overview.md", "glossary.md", "document-conventions.md"]
@@ -81,20 +84,25 @@ def do_init(a):
                 t = page[:-3].replace("-", " ").capitalize()
                 if stub(os.path.join(d, page), t, i):
                     made.append(f"{name}/{page}")
+        elif stub(os.path.join(d, f"{name}.md"), label, 1):
+            made.append(f"{name}/{name}.md")
 
     subjects = parse_subjects(a.subject or [])
     for i, (key, label) in enumerate(subjects, start=4):
         d = os.path.join(docs, key)
         os.makedirs(d, exist_ok=True)
         category(d, label, i)
-        # the overview page is named after the subject, as Harvester names vm/virtual-machines.md
+        # the landing page. Its name is free; sidebar_position 1 is what makes it the landing page.
         if stub(os.path.join(d, f"{key}.md"), label, 1):
             made.append(f"{key}/{key}.md")
 
-    for name, label, pos in BACK:
+    sections = list(BACK) + (list(OPTIONAL) if a.api else [])
+    for name, label, pos in sections:
         d = os.path.join(docs, name)
         os.makedirs(d, exist_ok=True)
         category(d, label, pos)
+        if stub(os.path.join(d, f"{name}.md"), label, 1):
+            made.append(f"{name}/{name}.md")
 
     if a.site:
         made += write_site(a)
@@ -188,21 +196,29 @@ def do_check(a):
             bad.append({"where": f"{docs}/{page}", "problem": "required root page is missing"})
 
     required = [n for n, _, _ in FRONT] + [n for n, _, _ in BACK]
+    known = required + [n for n, _, _ in OPTIONAL]
     for name in required:
         if not os.path.isdir(os.path.join(docs, name)):
             bad.append({"where": f"{docs}/{name}/", "problem": "required section is missing"})
 
     top = sorted(d for d in os.listdir(docs)
                  if os.path.isdir(os.path.join(docs, d)) and not d.startswith("."))
-    subjects = [d for d in top if d not in required]
+    subjects = [d for d in top if d not in known]
 
     for d in top:
         p = os.path.join(docs, d)
         if not os.path.isfile(os.path.join(p, "_category_.json")):
             bad.append({"where": f"{docs}/{d}/", "problem": "no _category_.json, so sidebar order is undefined"})
-        if d in subjects and not os.path.isfile(os.path.join(p, f"{d}.md")):
-            bad.append({"where": f"{docs}/{d}/{d}.md",
-                        "problem": "subject has no overview page named after it"})
+        firsts = [f for f in sorted(os.listdir(p)) if f.endswith(".md")
+                  and re.search(r"^sidebar_position:\s*1\s*$",
+                                open(os.path.join(p, f), encoding="utf-8",
+                                     errors="replace").read(400), re.M)]
+        if not firsts:
+            bad.append({"where": f"{docs}/{d}/",
+                        "problem": "no landing page; one page in the directory needs sidebar_position: 1"})
+        elif len(firsts) > 1:
+            bad.append({"where": ", ".join(f"{d}/{f}" for f in firsts),
+                        "problem": "more than one page claims sidebar_position: 1"})
 
     positions = {}
     for d in top:
@@ -232,14 +248,16 @@ def do_check(a):
             elif "title:" not in head.split("---")[1]:
                 bad.append({"where": rel, "problem": "frontmatter has no title"})
 
-    flat = [f for f in os.listdir(docs)
-            if f.endswith(".md") and f not in ROOT_PAGES]
-    if flat:
+    # A root page is for a topic that genuinely crosses every subject. Harvester has two beyond
+    # index and faq. More than a handful means subjects were never named.
+    flat = sorted(f for f in os.listdir(docs)
+                  if f.endswith(".md") and f not in ROOT_PAGES)
+    if len(flat) > 4:
         bad.append({"where": ", ".join(flat),
-                    "problem": "loose page at the docs root; it belongs in a subject directory"})
+                    "problem": f"{len(flat)} cross-cutting root pages; more than 4 means a subject was never named"})
 
     print(json.dumps({"status": "ok" if not bad else "violations",
-                      "subjects": subjects, "sections": required,
+                      "subjects": subjects, "sections": known,
                       "violations": bad}, indent=2))
     return 0 if not bad else 1
 
@@ -254,6 +272,8 @@ def main():
     ap.add_argument("--subject", action="append",
                     help="key:Label, repeatable or comma separated")
     ap.add_argument("--site", action="store_true", help="also write the Docusaurus site")
+    ap.add_argument("--api", action="store_true",
+                    help="scaffold docs/api, for a product with an OpenAPI spec to generate from")
     ap.add_argument("--url", default="https://example.com")
     ap.add_argument("--org", default="")
     ap.add_argument("--project", default="docs")

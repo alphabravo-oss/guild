@@ -130,7 +130,7 @@
       "name": "webster",
       "source": "./plugins/webster",
       "description": "Production documentation for an app you built, in a fixed layout modelled on Harvester: subject-first directories, a Docusaurus site whose navigation is the filesystem, and Diataxis applied to how a page is written rather than where it lives. Extracts the reference material, anchors every claim to a file and line, measures drift against a recorded manifest, and refuses to state what it could not check.",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "category": "productivity",
       "author": {
         "name": "AlphaBravo"

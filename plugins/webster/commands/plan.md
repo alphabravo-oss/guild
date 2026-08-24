@@ -59,12 +59,14 @@ Then scaffold the tree, which is cheap and makes the plan concrete:
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py init \
   --title "<name>" --description "<one sentence>" \
   --subject "<key>:<Label>,<key>:<Label>" --site \
+  $([ -n "<openapi spec found by the survey>" ] && echo --api) \
   --url <docs url> --org <owner> --project <repo> \
   --edit-url https://github.com/<owner>/<repo>/edit/main/
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
 ```
 
-Pass `--site` unless the user has said they do not want a published site. The stub pages carry
+Pass `--site` unless the user has said they do not want a published site. Pass `--api`
+only when the survey found an OpenAPI spec, because that section is generated from one. The stub pages carry
 `<!-- webster: not written yet -->` so an unwritten page is visible rather than absent.
 
 ## Step 5, emit the plan

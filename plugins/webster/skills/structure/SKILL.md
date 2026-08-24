@@ -25,24 +25,36 @@ docs/
 ├── install/                    position 3, one page per target
 ├── <subject>/                  positions 4 upward, one per thing in the product
 │   ├── _category_.json
-│   ├── <subject>.md            the overview, named after the directory
+│   ├── <anything>.md           the landing page, marked sidebar_position: 1
 │   └── <verb>-<noun>.md        one task per page
-├── api/                        position 90, extracted reference
+├── api/                        position 90, only when there is a spec to generate from
 ├── advanced/                   position 91
 ├── troubleshooting/            position 92
 └── developer/                  position 93
 ```
+
+Plus up to four cross-cutting pages at the root beyond `index.md` and `faq.md`, for a topic that
+genuinely spans every subject. Harvester has two, `airgap.md` and `authentication.md`. More than
+four means a subject was never named.
 
 Scaffold it rather than creating it by hand:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py init \
   --title "Name" --description "one sentence" \
-  --subject "vm:VM Management,volume:Volumes" --site \
+  --subject "vm:VM Management,volume:Volumes" --site --api \
   --url https://docs.example.com --org owner --project repo \
   --edit-url https://github.com/owner/repo/edit/main/
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
 ```
+
+Pass `--api` only when `survey.py` found an OpenAPI spec. Harvester's `docs/api` is generated at
+build time from its swagger files by `docusaurus-plugin-openapi-docs`, so an empty `api/` on a
+product with no spec is a section nobody can fill.
+
+**These rules were checked against Harvester, not assumed.** Running the checker over
+`harvester/docs` returns one finding, and it is a real ordering bug in their tree rather than a
+disagreement about the layout.
 
 `check` exits 1 on any violation and is the Shaped gate.
 
@@ -75,8 +87,13 @@ honest gap rather than a decision nobody recorded. Do not delete sections to tid
 ## Naming
 
 - Directories and files are `lower-case-with-hyphens`. No underscores, no capitals.
-- A subject's overview page is named after its directory. `vm/virtual-machines.md` is Harvester's
-  choice; `vm/vm.md` is what the scaffold writes. Either is fine, the rule is that it exists.
+- **The landing page is the one carrying `sidebar_position: 1`, and its filename is free.**
+  Harvester uses `host/host.md`, `vm/virtual-machines.md`, `logging/harvester-logging.md`,
+  `image/upload-image.md` and `volume/create-volume.md`. Nine of its fifteen directories do not
+  name the landing page after the directory, so a naming rule would be inventing a convention
+  Harvester does not follow. What is invariant is that every directory has exactly one page at
+  position 1. Two pages claiming position 1 is a violation, because Docusaurus then breaks the
+  tie alphabetically and the sidebar stops matching the numbers.
 - Task pages are named for the task: `create-vm.md`, `hotplug-volume.md`, `restore-a-backup.md`.
   Not `vm-2.md`, not `advanced-vm.md`.
 
@@ -95,7 +112,9 @@ keywords:
 ---
 ```
 
-`_category_.json` per directory, and no two directories share a `position`:
+`_category_.json` per directory, and no two directories share a `position`. Harvester itself
+gets this wrong: `image` and `networking` are both at 10, so their real order is alphabetical
+rather than intended. The checker catches it.
 
 ```json
 { "position": 8, "label": "VM Management", "collapsible": true, "collapsed": true }
