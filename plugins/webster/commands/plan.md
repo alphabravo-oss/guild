@@ -41,17 +41,31 @@ the same map by hand.
 Name them concretely, per house-rules section 6. If the repo's own memory file states its
 audience, use that and say so.
 
-## Step 4, choose the shape
+## Step 4, choose the subjects
 
-Sort the pages into four modes and keep them apart:
+Load the `structure` skill. **The layout is fixed**, so this step is not about inventing a shape.
+It is about naming the subjects that go in it.
 
-- **Tutorial**: learning, start to finish, one path that works.
-- **How-to**: a specific goal, for someone who already knows the basics.
-- **Reference**: exhaustive, dry, looked up rather than read. Load the `extraction` skill. Most
-  of this is generated, not written.
-- **Explanation**: why it is built this way, what was refused.
+A subject is a thing in the product a user would say out loud. Derive them from the surface the
+survey found and from the product's own vocabulary. Three to twelve. Not `utils`, not `core`,
+not `guides`, and never a code module name.
 
-Plus the two mandatory pages from house-rules section 4.
+Diataxis still governs how each page is written, tutorial or how-to or reference or explanation,
+and it never governs where the page lives. Record the mode per page in the plan.
+
+Then scaffold the tree, which is cheap and makes the plan concrete:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py init \
+  --title "<name>" --description "<one sentence>" \
+  --subject "<key>:<Label>,<key>:<Label>" --site \
+  --url <docs url> --org <owner> --project <repo> \
+  --edit-url https://github.com/<owner>/<repo>/edit/main/
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
+```
+
+Pass `--site` unless the user has said they do not want a published site. The stub pages carry
+`<!-- webster: not written yet -->` so an unwritten page is visible rather than absent.
 
 ## Step 5, emit the plan
 
@@ -59,7 +73,8 @@ Write `docs/docs-plan.md`:
 
 - the reader profile
 - the stack and the extractors that will be used, with their commands
-- one row per page: path, mode, audience, which agent writes it, what evidence it needs
+- the subject list, with why each one is a subject
+- one row per page: path inside the tree, mode, audience, which agent writes it, what evidence it needs
 - the surface table straight from the survey, anchors included
 - claims already known to be unverifiable, so they start life tagged
 - what is deliberately not being documented, and why

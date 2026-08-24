@@ -3,7 +3,7 @@ description: Write the planned pages, extracting reference material and anchorin
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Task
 ---
 
-Load `house-rules`, `extraction` and `no-slop`. Read `docs/docs-plan.md`. If it does not exist, run
+Load `house-rules`, `structure`, `extraction` and `no-slop`. Read `docs/docs-plan.md`. If it does not exist, run
 `/webster:plan` first rather than guessing the shape.
 
 ## Step 1, extract before writing
@@ -17,7 +17,19 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . > /tmp/webster-survey.json
 Run every extractor the plan named. Reference pages are built from that output. Per the
 `extraction` skill, a reference page a model composed from memory is a page that drifts.
 
-## Step 2, dispatch
+## Step 2, make sure the tree exists
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
+```
+
+On exit 2 the tree was never scaffolded, so run `/webster:plan` first. On exit 1 fix the layout
+before writing prose into it, because moving pages afterwards breaks every anchor that cites them.
+
+Write into the scaffolded paths. Do not invent a page at the docs root, and do not delete a
+section because it would be short.
+
+## Step 3, dispatch
 
 One page at a time, to the agent the plan named:
 
@@ -43,7 +55,7 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
    each one and says which wins. Read it before dispatching, because the agent file is longer
    than the rule and a model tends to follow whichever it read last.
 
-## Step 3, check for slop before recording anything
+## Step 4, check for slop before recording anything
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slop.py docs
@@ -54,7 +66,14 @@ mechanically: the detector cannot tell a legitimate short index from a template,
 only fires on repetition. Diagram rules run inside `mermaid`, `d2` and `dot` fences, so a diagram
 drawn in the default palette or with nodes named `[Service]` is caught here.
 
-## Step 4, record and publish the index
+## Step 5, validate the layout and record
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
+```
+
+Every page carries frontmatter with a title, every directory has a `_category_.json` with a
+unique position, and no page sits loose at the docs root. Then:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/llmstxt.py > llms.txt
@@ -68,7 +87,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record
 cite. That is what makes the next `/webster:audit` able to tell you which pages a diff
 invalidated instead of re-reading everything.
 
-## Step 5, finish
+## Step 6, finish
 
 Run `/webster:audit` before reporting done, and report the gate results honestly, including
 any that came back `not_checked`.

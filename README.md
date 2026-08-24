@@ -116,14 +116,14 @@
 <td align="center" valign="top">
 <h2>📖</h2>
 <b><a href="plugins/webster">webster</a></b><br/>
-<sub>Docs that carry<br/>their own sources.</sub><br/><br/>
+<sub>Harvester-shaped docs<br/>that cite their sources.</sub><br/><br/>
 <code>/webster:plan</code>
 </td>
 <td colspan="3"></td>
 </tr>
 </table>
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.7.3-F57C00?style=flat-square" alt="foundry 4.7.3"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.3.1-00897B?style=flat-square" alt="webster 0.3.1"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.7.3-F57C00?style=flat-square" alt="foundry 4.7.3"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.4.0-00897B?style=flat-square" alt="webster 0.4.0"/></sub>
 
 </div>
 
@@ -320,7 +320,7 @@ flowchart LR
 
 **🕸️ weave** — classifies your task, picks the fan-out topology (pipeline by default, barrier only when a stage truly needs all prior results), and validates the script with `node --check` plus a 12-point audit before saving.
 
-**📖 webster** — writes the docs you would publish, then proves them. A stack detector enumerates the real public surface with a `file:line` anchor on every entry (Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask, Go mux, plus middleware, CLI binaries, package exports, and env vars read from code rather than only from `.env.example`). Reference material is extracted with the right tool instead of composed in prose, because a reference written from a code read is correct on the day and wrong by the next commit. A drift manifest records the git HEAD and every cited anchor, so a later audit says which pages your diff invalidated instead of re-reading all of them. Six gates decide done, and a gate that could not run reports `not_checked` rather than a pass.
+**📖 webster** — writes the docs you would publish, in a fixed Harvester-shaped tree, then proves them. A stack detector enumerates the real public surface with a `file:line` anchor on every entry (Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask, Go mux, plus middleware, CLI binaries, package exports, and env vars read from code rather than only from `.env.example`). Reference material is extracted with the right tool instead of composed in prose, because a reference written from a code read is correct on the day and wrong by the next commit. A drift manifest records the git HEAD and every cited anchor, so a later audit says which pages your diff invalidated instead of re-reading all of them. Six gates decide done, and a gate that could not run reports `not_checked` rather than a pass.
 
 → [crew](plugins/crew) · [tidy](plugins/tidy) · [e2e](plugins/e2e) · [weave](plugins/weave) · [webster](plugins/webster)
 

@@ -35,9 +35,9 @@ dump written around Python, FastAPI and Sphinx, and produces noise in a repo tha
 ## Use
 
 ```
-/webster:plan     survey the stack and the real surface, agree the shape
+/webster:plan     survey the stack, name the subjects, scaffold the tree and the site
 /webster:write    extract reference material, write the pages, record the manifest
-/webster:audit    drift check, then five gates, prioritised punch list
+/webster:audit    drift, layout, six gates, prioritised punch list
 ```
 
 ## The scripts
@@ -49,8 +49,25 @@ without an agent.
 | --- | --- |
 | `scripts/survey.py` | Detects the stack, then enumerates the real public surface with a `file:line` anchor on every entry: HTTP routes from Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask and Go mux, plus CLI binaries, package exports, env vars and OpenAPI specs. Names the extractors that fit the stack |
 | `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree and every anchor the pages cite. `check` reports anchors that no longer resolve and pages whose cited code changed. Exit 1 on drift |
+| `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem. `check` validates an existing tree and exits 1 on any violation |
 | `scripts/slop.py` | The redpen copy and residue corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk |
+
+## The layout is fixed
+
+Every set of documentation this plugin produces uses the same tree, modelled on
+[Harvester](https://github.com/harvester/docs): subject-first directories at the top level, a
+Docusaurus site whose navigation is the filesystem, and Diataxis applied one level down to decide
+how a page is written rather than where it lives.
+
+```
+docs/index.md  faq.md  getting-started/  install/  <subject>/...  api/  advanced/
+troubleshooting/  developer/
+```
+
+A reader who learns where things live in one product finds them in the same place in the next.
+A small product still gets the full tree, because an empty section is an honest visible gap and
+the shape can be grown into.
 
 Reference pages are extracted, not composed. A model writing an API reference from a code read
 produces a table that is correct on the day and wrong by the next commit. See `skills/extraction`.
