@@ -97,6 +97,28 @@ SHAPES = {
  "endpoint-schema": (r"^\s*(?:GET|POST|PUT|PATCH|DELETE)\s+/\S", "endpoint schemas"),
 }
 
+# Who a page is written for. The grade ceiling follows from the audience rather than being one
+# number for the whole site: a page for someone with no development background and a page for
+# whoever operates the deployment cannot be held to the same sentence length.
+AUDIENCES = {
+ "user": {
+   "who": "Uses the product. No development, sysadmin or DevOps background.",
+   "grade": 10,
+   "assumes": "general computer literacy and a real reason to be here",
+ },
+ "operator": {
+   "who": "Installs, configures and runs the product. Comfortable with a terminal.",
+   "grade": 13,
+   "assumes": "a terminal, a package manager, environment variables, a hosting dashboard",
+ },
+ "developer": {
+   "who": "Builds against the product or contributes to it.",
+   "grade": 15,
+   "assumes": "the language, the toolchain, and how to read source",
+ },
+}
+DEFAULT_AUDIENCE = "user"
+
 # ISO/IEC/IEEE 26514 quality characteristics. The four marked measurable are checked below.
 ISO_26514 = {
  "usability": "a human judges whether a reader can find and apply the information",
@@ -271,7 +293,7 @@ def reading_grade(text):
     return round(0.39 * (words / sentences) + 11.8 * (sylls / words) - 15.59, 1)
 
 
-def check_universal(rel, text, grade_ceiling):
+def check_universal(rel, text, audience, override):
     """Rules that hold for any page, typed or not, so documentation this plugin never wrote
     can still be audited."""
     defects, advisories = [], []
@@ -296,12 +318,14 @@ def check_universal(rel, text, grade_ceiling):
                                 "fix": f"use h{last + 1}, or a screen reader reports a gap in the outline"})
             last = lvl
 
-    # ADVISORY: reading grade against the stated reader. ISO 26514 understandability.
+    # ADVISORY: reading grade against this page's own reader. ISO 26514 understandability.
+    ceiling = override if override is not None else AUDIENCES[audience]["grade"]
     g = reading_grade(text)
-    if g is not None and g > grade_ceiling:
+    if g is not None and g > ceiling:
         advisories.append({"page": rel, "rule": "reading-grade",
-                           "problem": f"reads at grade {g}, above the {grade_ceiling} ceiling",
-                           "fix": "shorten the longest sentences; the grade is driven by sentence length"})
+                           "problem": f"reads at grade {g}, above {ceiling} for a '{audience}' page",
+                           "fix": "shorten the longest sentences; the grade is driven by "
+                                  "sentence length more than by vocabulary"})
     return defects, advisories
 
 
@@ -342,8 +366,8 @@ def check_typed(rel, text, dt, spec):
     return defects, advisories
 
 
-def run_check(docs, grade_ceiling):
-    defects, advisories, untyped, typed, stubs = [], [], [], 0, 0
+def run_check(docs, override):
+    defects, advisories, untyped, unaudienced, typed, stubs = [], [], [], [], 0, 0
     for dirpath, dirnames, filenames in os.walk(docs):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for fn in sorted(filenames):
@@ -356,11 +380,21 @@ def run_check(docs, grade_ceiling):
                 stubs += 1
                 continue
 
-            d, a = check_universal(rel, text, grade_ceiling)
+            fm = frontmatter(text)
+            audience = fm.get("audience", DEFAULT_AUDIENCE)
+            if audience not in AUDIENCES:
+                defects.append({"page": rel, "rule": "unknown-audience",
+                                "problem": f"audience '{audience}' is not a known reader",
+                                "fix": "one of: " + ", ".join(AUDIENCES)})
+                audience = DEFAULT_AUDIENCE
+            if "audience" not in fm:
+                unaudienced.append(rel)
+
+            d, a = check_universal(rel, text, audience, override)
             defects += d
             advisories += a
 
-            dt = frontmatter(text).get("doc_type")
+            dt = fm.get("doc_type")
             if not dt:
                 untyped.append(rel)
                 continue
@@ -373,7 +407,7 @@ def run_check(docs, grade_ceiling):
             d, a = check_typed(rel, text, dt, TYPES[dt])
             defects += d
             advisories += a
-    return defects, advisories, untyped, typed, stubs
+    return defects, advisories, untyped, unaudienced, typed, stubs
 
 
 def main():
@@ -388,6 +422,10 @@ def main():
                   (", ".join(SHAPES[f][1] for f in s["forbidden_shapes"]) or "no restriction"))
             print("  weighted toward:   " +
                   ", ".join(f"{k} {v}" for k, v in s["weights"].items()))
+        print("\nAudiences, and the reading grade each implies:")
+        for a, spec in AUDIENCES.items():
+            print(f"  {a:10} grade {spec['grade']:<3} {spec['who']}")
+            print(f"  {'':10} assumes {spec['assumes']}")
         print("\nISO/IEC/IEEE 26514 quality characteristics:")
         for k, v in ISO_26514.items():
             print(f"  {k:20} {v}")
@@ -401,11 +439,12 @@ def main():
         return 0
 
     docs = args[1] if len(args) > 1 else "docs"
-    ceiling = float(os.environ.get("WEBSTER_READING_GRADE", "12"))
+    env = os.environ.get("WEBSTER_READING_GRADE")
+    override = float(env) if env else None
     if not os.path.isdir(docs):
         print(f"no docs directory at {docs}")
         return 2
-    defects, advisories, untyped, typed, stubs = run_check(docs, ceiling)
+    defects, advisories, untyped, unaudienced, typed, stubs = run_check(docs, override)
 
     checked = typed + len(untyped)
     print(f"{checked} pages checked, {typed} against a declared type, "
@@ -418,6 +457,13 @@ def main():
         print(f"\nADVISORIES ({len(advisories)})")
         for a in advisories:
             print(f"  {a['page']}  [{a['rule']}] {a['problem']}\n      {a['fix']}")
+    if unaudienced:
+        print(f"\nNO audience ({len(unaudienced)}), so each was read against the "
+              f"'{DEFAULT_AUDIENCE}' default. Declare one when that is wrong.")
+        for u in unaudienced[:12]:
+            print(f"  {u}")
+        if len(unaudienced) > 12:
+            print(f"  ... and {len(unaudienced) - 12} more")
     if untyped:
         print(f"\nNO doc_type ({len(untyped)}). Accessibility and readability were still checked; "
               "the type rules were not.")
@@ -425,7 +471,7 @@ def main():
             print(f"  {u}")
         if len(untyped) > 12:
             print(f"  ... and {len(untyped) - 12} more")
-    if not defects and not advisories and not untyped:
+    if not defects and not advisories and not untyped and not unaudienced:
         print("every page matches its declared type")
     return 1 if defects else 0
 

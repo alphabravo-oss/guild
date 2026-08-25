@@ -5,13 +5,16 @@ description: What each kind of page is for, what belongs in it, what must never 
 
 # Content types
 
-Every page declares what it is, in frontmatter:
+Every page declares what it is and who it is for, in frontmatter:
 
 ```yaml
 doc_type: how-to
+audience: operator
 ```
 
-That declaration is what makes a page checkable. `scripts/doctype.py check` validates each page
+Those two declarations are what make a page checkable. `doc_type` decides which sections belong
+and what must never appear; `audience` decides the reading grade the page is held to, and is
+described in `house-rules` section 6. `scripts/doctype.py check` validates each page
 against its declared type, and reports two severities that must not be confused.
 
 ```bash
@@ -72,9 +75,11 @@ blocks.
   has been failed. Only 19 of Harvester's 94 pages with steps state prerequisites, so this is
   advice rather than law.
 - **A reference page with no table.** Reference reads best as structured entries.
-- **Reading grade above the ceiling.** Flesch-Kincaid, default 12, `WEBSTER_READING_GRADE` to
-  change it. Set it to 10 when the reader is the non-technical person `house-rules` section 6
-  describes. The grade is driven by sentence length more than by vocabulary.
+- **Reading grade above the ceiling.** Flesch-Kincaid, measured against the page's own
+  `audience`: 10 for `user`, 13 for `operator`, 15 for `developer`. A page with no declared
+  audience is read against `user`, so an undeclared operator page reports as too dense, which is
+  the correct nudge. `WEBSTER_READING_GRADE` overrides every page at once and should be rare.
+  The grade is driven by sentence length more than by vocabulary.
 
 ## What each type is judged on
 
@@ -99,7 +104,7 @@ characteristics. Four are measured here, one is measured elsewhere, three need a
 | Characteristic | How it is judged |
 | --- | --- |
 | Accessibility | Measured: alt text, heading levels |
-| Understandability | Measured: reading grade against the stated reader |
+| Understandability | Measured: reading grade against the page's own declared audience |
 | Conciseness | Measured: sentence length drives the grade |
 | Consistency | Measured in part: one term for one thing |
 | Correctness | Measured by `drift.py`, which resolves every cited anchor |

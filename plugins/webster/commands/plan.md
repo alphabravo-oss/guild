@@ -36,9 +36,19 @@ behind it is not a verified capability.
 If `gsd:map-codebase` is installed and the repo is unfamiliar, run it rather than re-deriving
 the same map by hand.
 
-## Step 3, fix the reader
+## Step 3, fix the readers
 
-Name them concretely, per house-rules section 6. If the repo's own memory file states its
+**There is more than one, and naming only the obvious one is the mistake this step exists to
+prevent.** Work out which of `user`, `operator` and `developer` this product actually has, per
+house-rules section 6. Most have at least two: the person who uses the thing and the person who
+runs it.
+
+For each, describe the actual person rather than the label. Not "developers" but "the person who
+built this with an AI coding tool, technical enough to deploy and not technical enough to read a
+bundle". What they know, what they do not know, and why they are here.
+
+If a reader genuinely does not exist for this product, say so and leave that section of the tree
+empty rather than writing pages nobody will read. If the repo's own memory file states its
 audience, use that and say so.
 
 ## Step 4, choose the subjects
@@ -80,10 +90,10 @@ only when the survey found an OpenAPI spec, because that section is generated fr
 
 Write `docs/docs-plan.md`:
 
-- the reader profile
+- every reader, named concretely, and which sections of the tree each one reads
 - the stack and the extractors that will be used, with their commands
 - the subject list, with why each one is a subject
-- one row per page: path inside the tree, `doc_type`, audience, which agent writes it, what evidence it needs
+- one row per page: path inside the tree, `doc_type`, `audience`, which agent writes it, what evidence it needs
 - the surface table straight from the survey, anchors included
 - claims already known to be unverifiable, so they start life tagged
 - what is deliberately not being documented, and why

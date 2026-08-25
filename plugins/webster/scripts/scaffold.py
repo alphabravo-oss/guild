@@ -27,6 +27,11 @@ SECTION_TYPE = {"install": "how-to", "advanced": "explanation",
                 "troubleshooting": "troubleshooting", "developer": "explanation",
                 "api": "api-reference"}
 
+# who each fixed section is written for. The tree serves more than one reader, and pretending
+# otherwise is what produced install and developer pages pitched at someone with no terminal.
+SECTION_AUDIENCE = {"getting-started": "user", "install": "operator", "advanced": "operator",
+                    "troubleshooting": "user", "developer": "developer", "api": "developer"}
+
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
@@ -48,7 +53,8 @@ def skeleton_for(doc_type):
         return ""
 
 
-def stub(path, title, position, label=None, slug=None, description="", doc_type=None):
+def stub(path, title, position, label=None, slug=None, description="",
+         doc_type=None, audience=None):
     if os.path.exists(path):
         return False
     fm = ["---", f"sidebar_position: {position}"]
@@ -59,6 +65,8 @@ def stub(path, title, position, label=None, slug=None, description="", doc_type=
     fm += [f'title: "{title}"']
     if doc_type:
         fm.append(f"doc_type: {doc_type}")
+    if audience:
+        fm.append(f"audience: {audience}")
     if description:
         fm.append(f"description: {description}")
     fm += ["---", "", f"# {title}", "", "<!-- webster: not written yet -->", ""]
@@ -91,9 +99,10 @@ def do_init(a):
 
     if stub(os.path.join(docs, "index.md"), a.title, 1,
             label=f"{a.title} Overview", slug="/", description=a.description,
-            doc_type="explanation"):
+            doc_type="explanation", audience="user"):
         made.append("index.md")
-    if stub(os.path.join(docs, "faq.md"), "FAQ", 99, doc_type="explanation"):
+    if stub(os.path.join(docs, "faq.md"), "FAQ", 99, doc_type="explanation",
+            audience="user"):
         made.append("faq.md")
 
     for name, label, pos in FRONT:
@@ -103,10 +112,11 @@ def do_init(a):
         if name == "getting-started":
             for i, (page, dtype) in enumerate(GETTING_STARTED, 1):
                 t = page[:-3].replace("-", " ").capitalize()
-                if stub(os.path.join(d, page), t, i, doc_type=dtype):
+                if stub(os.path.join(d, page), t, i, doc_type=dtype, audience="user"):
                     made.append(f"{name}/{page}")
         elif stub(os.path.join(d, f"{name}.md"), label, 1,
-                  doc_type=SECTION_TYPE.get(name, "how-to")):
+                  doc_type=SECTION_TYPE.get(name, "how-to"),
+                  audience=SECTION_AUDIENCE.get(name, "user")):
             made.append(f"{name}/{name}.md")
 
     subjects = parse_subjects(a.subject or [])
@@ -115,7 +125,8 @@ def do_init(a):
         os.makedirs(d, exist_ok=True)
         category(d, label, i)
         # the landing page. Its name is free; sidebar_position 1 is what makes it the landing page.
-        if stub(os.path.join(d, f"{key}.md"), label, 1, doc_type="explanation"):
+        if stub(os.path.join(d, f"{key}.md"), label, 1, doc_type="explanation",
+                audience=a.subject_audience):
             made.append(f"{key}/{key}.md")
 
     sections = list(BACK) + (list(OPTIONAL) if a.api else [])
@@ -124,7 +135,8 @@ def do_init(a):
         os.makedirs(d, exist_ok=True)
         category(d, label, pos)
         if stub(os.path.join(d, f"{name}.md"), label, 1,
-                doc_type=SECTION_TYPE.get(name, "explanation")):
+                doc_type=SECTION_TYPE.get(name, "explanation"),
+                audience=SECTION_AUDIENCE.get(name, "user")):
             made.append(f"{name}/{name}.md")
 
     if a.site:
@@ -282,6 +294,21 @@ def do_check(a):
             elif "title:" not in head.split("---")[1]:
                 bad.append({"where": rel, "problem": "frontmatter has no title"})
 
+    # A page sitting in a section whose reader is known should not claim a different one.
+    for section, expected in SECTION_AUDIENCE.items():
+        d = os.path.join(docs, section)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".md"):
+                continue
+            head = open(os.path.join(d, fn), encoding="utf-8", errors="replace").read(500)
+            m = re.search(r"^audience:\s*(\S+)", head, re.M)
+            if m and m.group(1) != expected:
+                bad.append({"where": f"{section}/{fn}",
+                            "problem": f"declares audience '{m.group(1)}' but sits in "
+                                       f"{section}/, which is written for '{expected}'"})
+
     # A root page is for a topic that genuinely crosses every subject. Harvester has two beyond
     # index and faq. More than a handful means subjects were never named.
     flat = sorted(f for f in os.listdir(docs)
@@ -308,6 +335,9 @@ def main():
     ap.add_argument("--site", action="store_true", help="also write the Docusaurus site")
     ap.add_argument("--site-dir", default="website",
                     help="where the site lives, its own directory so it cannot collide with the app")
+    ap.add_argument("--subject-audience", default="user", choices=["user", "operator", "developer"],
+                    help="who the subject directories are written for. Most products document "
+                         "their own features for the person using them")
     ap.add_argument("--api", action="store_true",
                     help="scaffold docs/api, for a product with an OpenAPI spec to generate from")
     ap.add_argument("--url", default="https://example.com")

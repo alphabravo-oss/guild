@@ -74,15 +74,58 @@ Two pages are not optional, whatever the repo is.
 
 ## 6. Who the reader is
 
-Fix this person before writing a word, and write it down in the plan. Vagueness about the reader
-produces documentation that serves nobody.
+**A set of documentation serves more than one reader, and a page serves exactly one.** Getting
+this wrong is the failure that produces an installation page pitched at somebody who has never
+opened a terminal, and a getting-started page that assumes they have.
 
-The default, unless the repo says otherwise: **an average adult of average intelligence with a
-real reason to be here.** General computer literacy. No development, sysadmin or DevOps
-background. Reads comfortably at about an 8th to 10th grade level.
+Every page declares its reader in frontmatter, the same way it declares its type:
 
-The corollary cuts both ways. Domain vocabulary is not jargon; **undefined** domain vocabulary is.
-A page about HTTP has to say "header". Judge the introduction of a term, not its existence.
+```yaml
+doc_type: how-to
+audience: operator
+```
+
+### The three readers
+
+| Audience | Who they are | Assumes | Reading grade |
+| --- | --- | --- | --- |
+| `user` | Uses the product. No development, sysadmin or DevOps background | General computer literacy and a real reason to be here | 10 |
+| `operator` | Installs, configures and runs it | A terminal, a package manager, environment variables, a hosting dashboard | 13 |
+| `developer` | Builds against it or contributes to it | The language, the toolchain, and how to read source | 15 |
+
+`user` is the default, and it is the right default: most people reading documentation are trying
+to use the thing rather than run or extend it. A page that does not declare an audience is read
+against `user`, which will report a page written for the other two as too dense. That is the
+correct failure, because it forces the declaration rather than silently lowering the bar.
+
+### Which sections serve which reader
+
+The layout in `structure` already splits them, so the mapping is fixed rather than decided per
+page:
+
+| Section | Reader |
+| --- | --- |
+| `index.md`, `faq.md`, `getting-started/` | `user` |
+| `<subject>/` | `user` unless the product is itself a tool for operators or developers |
+| `troubleshooting/` | `user`, because that is who hits an error first |
+| `install/`, `advanced/` | `operator` |
+| `api/`, `developer/` | `developer` |
+
+`scaffold.py check` reports a page whose declared audience disagrees with its section.
+
+### Naming the reader concretely
+
+The three audiences set the reading grade. They do not excuse you from describing the actual
+person in the plan, and the plan is where that happens: not "developers" but "the person who
+built this with an AI coding tool, technical enough to deploy and not technical enough to read a
+bundle". Vagueness about the reader produces documentation that serves nobody.
+
+### The rule that governs all of it
+
+Domain vocabulary is not jargon; **undefined** domain vocabulary is. A page about HTTP has to say
+"header". Judge the introduction of a term, not its existence. What changes with the audience is
+how much gets introduced: a `user` page defines "environment variable", a `developer` page does
+not.
 
 ## 7. Precedence over the vendored agents
 

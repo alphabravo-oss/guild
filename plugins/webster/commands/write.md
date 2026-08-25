@@ -29,8 +29,10 @@ before writing prose into it, because moving pages afterwards breaks every ancho
 Write into the scaffolded paths. Do not invent a page at the docs root, and do not delete a
 section because it would be short.
 
-Each scaffolded page already carries its `doc_type` and that type's skeleton. Keep the
-`doc_type`, and treat the skeleton as a starting shape rather than a form to fill in: rename its
+Each scaffolded page already carries its `doc_type`, its `audience` and that type's skeleton.
+Keep both declarations, and write to the audience the page names: an `install/` page may assume a
+terminal, a `getting-started/` page may not. Changing an audience means moving the page, not
+editing the field. Keep the `doc_type`, and treat the skeleton as a starting shape rather than a form to fill in: rename its
 sections after the subject where that reads better. `Hardware requirements` beats `Overview`.
 What the checker tests is not the section names, it is whether the page does something another
 type should be doing.

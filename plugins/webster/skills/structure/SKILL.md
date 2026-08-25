@@ -58,6 +58,18 @@ disagreement about the layout.
 
 `check` exits 1 on any violation and is the Shaped gate.
 
+## Each section has a reader
+
+The tree serves three of them, and that is the point of splitting it. `house-rules` section 6
+carries the full table; the short version is that `getting-started/` and `troubleshooting/` are
+for the person using the product, `install/` and `advanced/` are for whoever runs it, and `api/`
+and `developer/` are for whoever builds against it.
+
+`scaffold.py init` writes the right `audience:` into every page it creates, and
+`scaffold.py check` reports a page whose declared audience disagrees with the section it sits
+in. Pass `--subject-audience` when the subject directories serve operators or developers rather
+than users, which is the case for a product that is itself infrastructure.
+
 ## Subject-first, and why
 
 Harvester puts `vm/`, `volume/`, `networking/` at the top level, not `tutorials/` and
