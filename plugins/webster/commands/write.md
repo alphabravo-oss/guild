@@ -95,7 +95,7 @@ mechanically: the detector cannot tell a legitimate short index from a template,
 only fires on repetition. Diagram rules run inside `mermaid`, `d2` and `dot` fences, so a diagram
 drawn in the default palette or with nodes named `[Service]` is caught here.
 
-## Step 6, validate the layout and record
+## Step 6, validate the layout
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
@@ -115,6 +115,28 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record
 `drift.py record` stores the current HEAD, a hash of the docs tree, and every anchor the pages
 cite. That is what makes the next `/webster:audit` able to tell you which pages a diff
 invalidated instead of re-reading everything.
+
+## Step 6.5, build the site, because the checkers cannot see this
+
+```bash
+cd website && npm install && npm run build
+```
+
+**A green run of every checker above does not mean the documentation works.** All of them read
+markdown as text. None of them compiles it. Three defects have shipped past a fully green gate
+set and were only caught by building:
+
+- a colon inside an unquoted frontmatter `description`, which is invalid YAML and refuses the
+  whole build
+- a stray closing tag left at the end of a page, which fails MDX compilation
+- a link written as an absolute path including the docs directory, which resolves to nothing
+  because `routeBasePath` strips it
+
+The build is the only check that reads the pages the way a reader's browser will. Run it, fix
+what it reports, and run it again until it prints `[SUCCESS]` with no broken links. Then re-run
+`llmstxt.py` and `drift.py record`, because a fix here changes the pages they describe.
+
+If the repo has no site, say the build gate is `not_checked` and why. Do not report it as a pass.
 
 ## Step 7, finish
 

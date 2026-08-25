@@ -17,17 +17,47 @@ ORDER = ["index", "readme", "quickstart", "getting-started", "tutorial", "run",
          "how-to", "guide", "reference", "api", "config", "explanation", "architecture"]
 
 
+def frontmatter_field(text, field):
+    """Read one frontmatter field. The author wrote it for this purpose, so it wins."""
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    m = re.search(rf"^{field}:\s*(.+)$", text[3:end], re.M)
+    if not m:
+        return None
+    return m.group(1).strip().strip('"').strip("'") or None
+
+
 def title_and_summary(path):
-    title, summary = None, None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
+    """Title and one-line summary for a page.
+
+    The frontmatter `description` is what the author wrote to describe the page, so it is used
+    when present. Falling back to the first body line produces a fragment whenever that line is
+    short or runs past the cut, which is how entries like "They are two different things" and
+    summaries ending mid-clause get published."""
+    text = open(path, encoding="utf-8", errors="replace").read()
+    title = frontmatter_field(text, "title")
+    summary = frontmatter_field(text, "description")
+
+    if not title or not summary:
+        body_title, body_summary = None, None
+        for line in text.splitlines():
             s = line.strip()
-            if not title and s.startswith("# "):
-                title = s[2:].strip()
+            if not body_title and s.startswith("# "):
+                body_title = s[2:].strip()
                 continue
-            if title and s and not s.startswith("#"):
-                summary = re.sub(r"[*_`\[\]]|\(.*?\)", "", s)[:160].strip()
+            if body_title and s and not s.startswith("#") and not s.startswith("---"):
+                body_summary = re.sub(r"[*_`\[\]]|\(.*?\)", "", s).strip()
+                # a summary cut mid-sentence reads as a defect, so keep whole sentences
+                if len(body_summary) > 160:
+                    stop = body_summary.rfind(". ", 0, 161)
+                    body_summary = body_summary[:stop + 1] if stop > 40 else body_summary[:160].rstrip() + "..."
                 break
+        title = title or body_title
+        summary = summary or body_summary
+
     return title or os.path.basename(path), summary or ""
 
 

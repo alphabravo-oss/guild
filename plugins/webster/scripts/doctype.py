@@ -263,15 +263,23 @@ def frontmatter(text):
     return out
 
 
-def prose_lines(text):
-    """Lines outside code fences, which is where prose rules apply."""
+def prose_lines(text, tables=True):
+    """Lines outside code fences, which is where prose rules apply.
+
+    tables=False also drops table rows. A table cell contributes words but no sentence
+    terminator, so counting tables as prose inflates words-per-sentence in proportion to how
+    much of a page is tabular. A reference page of 80% tables scored above 40 on a reading
+    grade whose prose read at 9."""
     out, fenced = [], False
     for n, line in enumerate(text.splitlines(), 1):
         if FENCE.match(line):
             fenced = not fenced
             continue
-        if not fenced:
-            out.append((n, line))
+        if fenced:
+            continue
+        if not tables and line.lstrip().startswith("|"):
+            continue
+        out.append((n, line))
     return out
 
 
@@ -289,7 +297,7 @@ def syllables(word):
 def reading_grade(text):
     """Flesch-Kincaid grade level, on prose only. ISO 26514 understandability."""
     words, sentences, sylls = 0, 0, 0
-    for _, line in prose_lines(text):
+    for _, line in prose_lines(text, tables=False):
         line = re.sub(r"`[^`]*`|\[([^\]]*)\]\([^)]*\)|[|#>*_-]", r"\1", line)
         if not line.strip():
             continue

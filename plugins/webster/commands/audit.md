@@ -92,6 +92,19 @@ answer. If `courseware:learner` is installed, dispatch its redline pass over the
 not installed, say so and mark the Readable gate `not_checked`. Do not substitute your own read
 for it and call it a pass.
 
+## Step 7.5, build the site
+
+```bash
+cd website && npm install && npm run build
+```
+
+Every check above reads markdown as text. None compiles it, so a documentation set can pass all
+of them and still fail to build. Invalid YAML in frontmatter, a stray tag, and a link that
+resolves to nothing have each done exactly that. A broken build is a P0: the reader gets nothing
+at all.
+
+If there is no site to build, report this gate `not_checked` with that reason rather than a pass.
+
 ## Step 9, punch list
 
 - **P0**: broken anchors, documented surface that does not exist, unsourced claims, examples that

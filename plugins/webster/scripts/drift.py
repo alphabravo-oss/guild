@@ -15,7 +15,10 @@ MANIFEST = os.path.join(DOCS, ".webster.json")
 # Only real source/config extensions. Without this, "127.0.0.1:3000" reads as an anchor.
 SRC_EXT = ("ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cc|cpp|cs|php|sh|bash|zsh"
            "|sql|css|scss|html|vue|svelte|astro|json|jsonc|yaml|yml|toml|ini|env|md|mdx|txt|lock")
-ANCHOR = re.compile(rf"\b([\w./-]+\.(?:{SRC_EXT})):(\d+)\b")
+# A leading \b cannot match before a dot, so a dotfile citation such as `.air.server.toml:9`
+# was read as `air.server.toml:9` and never resolved. Anchor on the preceding character
+# instead, which admits a leading dot without matching mid-word.
+ANCHOR = re.compile(rf"(?<![\w./-])([\w./-]+\.(?:{SRC_EXT})):(\d+)\b")
 
 
 def git(*args):

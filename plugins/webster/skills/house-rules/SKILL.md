@@ -177,8 +177,15 @@ A page is not finished until all six pass. Report the ones that did not, with th
 | Sourced | Every behavioural claim has a resolving anchor, in a comment or in frontmatter |
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
+| Builds | The site compiles and reports no broken links |
 | Readable | A reader matching §6 could follow it without stopping |
 | Honest | The two §4 pages exist and the page claims nothing from §3 |
+
+**Builds is the gate the other five cannot stand in for.** They all read markdown as text and
+none of them compiles it, so a documentation set can pass every checker and still deliver a
+reader nothing. Invalid YAML in a frontmatter `description`, a stray closing tag at the end of a
+page, and a link written as an absolute path have each taken a whole site down while the
+checkers stayed green. Where there is no site to build, report it `not_checked`.
 
 **A gate that could not be run reports `not_checked` with a reason. It never reports a pass.**
 A false pass is the worst outcome this plugin can produce, because the reader trusts the page
