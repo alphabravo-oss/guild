@@ -53,11 +53,19 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
 
 ## Non-negotiables
 
-1. Anchor as you write. A claim about behaviour gets its `file:line`, its command and real
-   output, or its test name, at the moment the sentence is written. The drift script reads those
-   anchors back, so an anchor written carelessly becomes a false pass later.
-2. Anything you could not check gets `[?]` and a line saying what would settle it. Do not soften
-   the sentence instead.
+1. Anchor as you write, **in an HTML comment or in frontmatter, never in the prose**. A claim
+   about behaviour gets its `file:line` at the moment the sentence is written:
+
+   ```markdown
+   The scan stops after 40 requests. <!-- src/lib/net.ts:9 -->
+   ```
+
+   The reader sees the sentence; `drift.py` reads the comment. A published page that shows a
+   source path, a working-note tag or an internal instruction file is showing a reader the
+   tooling instead of the product, and no product does that.
+2. Anything you could not check gets said in ordinary words: "this has not been tested against a
+   live server". Never soften a sentence to hide the gap, and never ship the `[?]` notation
+   itself.
 3. Run every example. An example you did not run is labelled illustrative or it does not go in.
 4. The vendored agents contradict these rules in six named places. `house-rules` section 7 lists
    each one and says which wins. Read it before dispatching, because the agent file is longer

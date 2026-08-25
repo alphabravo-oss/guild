@@ -239,6 +239,15 @@ defined domain vocabulary is not.}
 
 FENCE = re.compile(r"^\s*```")
 
+# A published page is a product surface, not a working note. These are the ways a documentation
+# tool's own machinery leaks into what a reader sees.
+SRC_EXT = ("ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cc|cpp|cs|php|sh|bash|zsh"
+           "|sql|css|scss|vue|svelte|astro|toml|ini|lock")
+VISIBLE_ANCHOR = re.compile(rf"`[\w./-]+\.(?:{SRC_EXT}):\d+`")
+VISIBLE_SRC_PATH = re.compile(rf"`(?:src|lib|internal|pkg|app|cmd)/[\w./-]+\.(?:{SRC_EXT})`")
+WORKING_TAG = re.compile(r"(?:^|\s)\*{0,2}\[\?\]\*{0,2}(?:\s|$)|(?:^|\s)\[(?:SPEC|NOTE|BUG)\]")
+AGENT_FILE = re.compile(r"`?(?:CLAUDE|AGENTS|GEMINI)\.md`?", re.I)
+
 
 def frontmatter(text):
     if not text.startswith("---"):
@@ -317,6 +326,25 @@ def check_universal(rel, text, audience, override):
                                 "problem": f"h{last} followed by h{lvl}",
                                 "fix": f"use h{last + 1}, or a screen reader reports a gap in the outline"})
             last = lvl
+
+    # DEFECT: the implementation path a claim was checked against, shown to a reader. The
+    # anchor belongs in an HTML comment where drift.py reads it, not in the prose.
+    for pat, what, fix in (
+        (VISIBLE_ANCHOR, "a file:line reference in the prose",
+         "move it into an HTML comment beside the claim: <!-- src/foo.ts:12 -->"),
+        (VISIBLE_SRC_PATH, "a source file path in the prose",
+         "name the behaviour instead, or link to the file on the code host"),
+        (WORKING_TAG, "a working-note tag ([?], [SPEC], [NOTE], [BUG])",
+         "say the uncertainty in ordinary words, or cut the sentence"),
+        (AGENT_FILE, "an internal agent instruction file",
+         "these are internal to the repository and mean nothing to a reader"),
+    ):
+        for n, line in prose_lines(text):
+            if pat.search(line):
+                defects.append({"page": f"{rel}:{n}", "rule": "internals-leak",
+                                "problem": f"{what}, on a page a reader sees",
+                                "fix": fix})
+                break
 
     # ADVISORY: reading grade against this page's own reader. ISO 26514 understandability.
     ceiling = override if override is not None else AUDIENCES[audience]["grade"]

@@ -44,16 +44,30 @@ def tree_hash(paths):
 
 
 def collect_anchors(paths):
-    """Every file:line the docs cite, mapped back to the page that cites it."""
+    """Every file:line the docs cite, mapped back to the page that cites it.
+
+    Anchors are read from HTML comments and from a frontmatter `sources:` list, never from
+    visible prose. A reader of a published page should not see the implementation path a claim
+    was checked against; the anchor exists so the claim can be re-verified, and that is a job
+    for this script rather than for the reader.
+    """
     found = {}
     for p in paths:
-        with open(p, encoding="utf-8", errors="replace") as f:
-            for lineno, line in enumerate(f, 1):
-                if line.lstrip().startswith(("```", "    ")):
-                    continue
-                for target, tline in ANCHOR.findall(line):
-                    found.setdefault(f"{target}:{tline}", []).append(
-                        f"{os.path.relpath(p, ROOT)}:{lineno}")
+        text = open(p, encoding="utf-8", errors="replace").read()
+        rel = os.path.relpath(p, ROOT)
+
+        # inline: <!-- src/lib/net.ts:9 --> keeps the anchor beside the claim it supports
+        for m in re.finditer(r"<!--(.*?)-->", text, re.S):
+            lineno = text[:m.start()].count("\n") + 1
+            for target, tline in ANCHOR.findall(m.group(1)):
+                found.setdefault(f"{target}:{tline}", []).append(f"{rel}:{lineno}")
+
+        # frontmatter: a sources list, for claims that belong to the page as a whole
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end > 0:
+                for target, tline in ANCHOR.findall(text[3:end]):
+                    found.setdefault(f"{target}:{tline}", []).append(f"{rel}:1")
     return found
 
 

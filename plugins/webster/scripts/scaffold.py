@@ -19,8 +19,9 @@ BACK = [("advanced", "Advanced", 91), ("troubleshooting", "Troubleshooting", 92)
 OPTIONAL = [("api", "API Reference", 90)]
 ROOT_PAGES = ["index.md", "faq.md"]
 # Pages every getting-started carries. Harvester ships both; they are cheap and they pay off.
-GETTING_STARTED = [("overview.md", "quickstart"), ("glossary.md", "glossary"),
-                   ("document-conventions.md", "explanation")]
+# No page about how the documentation itself is written. A reader came to use the product, and
+# a product that explains its own notation before explaining itself has got the order wrong.
+GETTING_STARTED = [("overview.md", "quickstart"), ("glossary.md", "glossary")]
 
 # the content type each fixed section holds
 SECTION_TYPE = {"install": "how-to", "advanced": "explanation",

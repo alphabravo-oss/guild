@@ -24,9 +24,9 @@ A source is one of:
 Write the anchor down as you go. Reconstructing sources afterwards does not work, because by
 then you no longer remember which sentences you checked and which ones you assumed.
 
-## 2. The four tags
+## 2. Working notation, and where it stops
 
-Borrowed from HADS, because uncertainty has to be structural. Tone will not carry it.
+While drafting, mark what you have not verified. Four tags, borrowed from HADS:
 
 ```
 [SPEC]   Authoritative. Sourced. Terse.
@@ -35,12 +35,30 @@ Borrowed from HADS, because uncertainty has to be structural. Tone will not carr
 [?]      Inferred, not verified. Says what would settle it.
 ```
 
-A `[?]` block is a success, not a failure. It is the page telling the reader exactly how far
-the writer got. A page with three honest `[?]` blocks is worth more than a confident page with
-three wrong sentences in it, because the reader can act on the first and is misled by the second.
+**None of it ships.** These tags are for the draft and for the plan. A reader who opens a
+product's documentation and finds `[?]` in the middle of a sentence is being shown the tooling
+that produced the page, and no product does that.
 
-**Never promote `[?]` to `[SPEC]` without going and checking.** Rewriting the sentence to sound
-more certain is not checking.
+The honesty the tag carries is not optional, only the notation is. Before publishing, every `[?]`
+resolves one of three ways:
+
+1. **Go and check it.** Then it is a plain sentence.
+2. **Say it in ordinary words.** "This has not been tested against a live server" is honest,
+   readable, and belongs on the page.
+3. **Cut the sentence.** Silence is better than a claim nobody stands behind.
+
+Never promote a `[?]` to fact by rewriting it to sound more confident. That is not checking.
+
+Same rule for the anchors. A claim about behaviour is checked against a `file:line`, and that
+anchor lives in an HTML comment beside the claim or in a frontmatter `sources:` list, where
+`drift.py` reads it:
+
+```markdown
+The scan stops after 40 requests. <!-- src/lib/net.ts:9 -->
+```
+
+The reader sees the sentence. The anchor exists so the sentence can be re-checked a year later,
+which is a job for the tooling and not for them.
 
 ## 3. What a page may not claim
 
@@ -156,7 +174,7 @@ A page is not finished until all six pass. Report the ones that did not, with th
 
 | Gate | Passes when |
 | --- | --- |
-| Sourced | Every behavioural claim has a resolving anchor or a `[?]` tag |
+| Sourced | Every behavioural claim has a resolving anchor, in a comment or in frontmatter |
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
 | Readable | A reader matching §6 could follow it without stopping |

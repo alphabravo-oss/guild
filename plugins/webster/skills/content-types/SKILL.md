@@ -63,6 +63,10 @@ documentation, which is why type mixing is a defect rather than a note.
   a screen reader has nothing to say about that image. Harvester has 365 of these.
 - **A skipped heading level.** `h2` followed by `h4` reports a gap in the outline to a screen
   reader.
+- **Internals on a published page.** A `file:line` reference, a source path, a working-note tag
+  like `[?]`, or an internal instruction file such as `CLAUDE.md`. A reader came to use the
+  product and is being shown the machinery that produced the page instead. Anchors belong in an
+  HTML comment beside the claim, where `drift.py` reads them.
 
 ## Advisories, which are reported and never fail the gate
 

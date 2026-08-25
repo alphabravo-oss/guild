@@ -82,7 +82,7 @@ A page is not finished until all six pass, and a gate that could not be run repo
 
 | Gate | Passes when |
 | --- | --- |
-| Sourced | Every behavioural claim has a resolving anchor or a `[?]` tag |
+| Sourced | Every behavioural claim has a resolving anchor, held in a comment or in frontmatter rather than shown to the reader |
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | The tree passes `scaffold.py check` and no page is doing another type's job |
 | Readable | A reader with no development background could follow it |
