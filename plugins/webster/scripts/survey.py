@@ -199,6 +199,74 @@ for p in walk(exts={".json", ".yaml", ".yml"}):
     if base.startswith(("openapi", "swagger")):
         surface["specs"].append({"kind": "openapi", "anchor": f"{rel(p)}:1"})
 
+# ---------------------------------------------------------------- user surface
+#
+# Everything above this line is the surface a developer sees: routes, exports, variables,
+# handlers. Documentation written from it describes the machinery, because the machinery is
+# what was read. That is the single largest reason a set of documentation reads as though the
+# reader already knows the product.
+#
+# What follows is the surface a person sees: the screens, and the words actually printed on
+# them. It is deliberately vocabulary rather than structure, because the words a product puts
+# on its own buttons are the words its documentation has to use.
+
+user_surface = {"screens": [], "labels": [], "commands": [], "messages": []}
+
+# Text a component renders. Buttons and headings first, because those are what a reader looks
+# for when they are told to go somewhere.
+JSX_LABEL = re.compile(
+    r"""<(?:[Bb]utton|[Hh][1-4]|[Ll]abel|[Aa]|MenuItem|Tab|NavLink)\b[^>]*>\s*([A-Z][^<>{}\n]{2,48}?)\s*<""")
+ATTR_LABEL = re.compile(
+    r"""\b(?:label|title|placeholder|aria-label|heading|buttonText|cta)\s*[=:]\s*["']([A-Z][^"']{2,48})["']""")
+
+seen_labels = set()
+for p in walk(exts={".tsx", ".jsx", ".vue", ".svelte"}):
+    r = rel(p)
+    if re.search(r"(^|/)(test|tests|__tests__|stories)/|\.(test|spec|stories)\.", r):
+        continue
+    for i, line in enumerate(read(p).splitlines(), 1):
+        for pat in (JSX_LABEL, ATTR_LABEL):
+            for m in pat.finditer(line):
+                v = m.group(1).strip()
+                if not v or v.upper() == v and len(v) > 12:
+                    continue
+                if v.lower() in seen_labels:
+                    continue
+                seen_labels.add(v.lower())
+                user_surface["labels"].append({"text": v, "anchor": f"{r}:{i}"})
+
+# What the product says when something goes wrong. A reader meets these before they meet any
+# page of documentation, so troubleshooting is written against them rather than around them.
+seen_msgs = set()
+for p in walk(exts={".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"}):
+    r = rel(p)
+    if re.search(r"(^|/)(test|tests|__tests__)/|\.(test|spec)\.", r):
+        continue
+    for i, line in enumerate(read(p).splitlines(), 1):
+        for m in re.finditer(r"""(?:Error|error|throw|toast|notify|message)[^"'\n]{0,30}["']([A-Z][^"']{12,110})["']""", line):
+            v = m.group(1).strip()
+            if v.lower() in seen_msgs or "{" in v:
+                continue
+            seen_msgs.add(v.lower())
+            user_surface["messages"].append({"text": v, "anchor": f"{r}:{i}"})
+
+# Subcommands a person types, which is the user surface of anything without a screen.
+seen_cmds = set()
+for p in walk(exts={".ts", ".js", ".py", ".go"}):
+    r = rel(p)
+    for i, line in enumerate(read(p).splitlines(), 1):
+        for m in re.finditer(
+                r"""(?:\.command\(|add_parser\(|Use:\s*)["']([a-z][a-z0-9 :_-]{1,40})["']""", line):
+            v = m.group(1).split()[0]
+            if v in seen_cmds:
+                continue
+            seen_cmds.add(v)
+            user_surface["commands"].append({"name": v, "anchor": f"{r}:{i}"})
+
+user_surface["screens"] = surface.get("pages", [])
+for k in ("labels", "messages"):
+    user_surface[k] = user_surface[k][:120]
+
 # ---------------------------------------------------------------- tooling
 tooling = []
 if "typescript" in stack:
@@ -233,6 +301,7 @@ print(json.dumps({
     "stack": stack,
     "frameworks": frameworks,
     "surface": surface,
+    "user_surface": user_surface,
     "tooling": tooling,
     "tests": {"count": len(test_files), "files": sorted(test_files)[:40]},
     "existing_docs": sorted(rel(p) for p in walk(exts={".md"}) if "node_modules" not in rel(p))[:40],

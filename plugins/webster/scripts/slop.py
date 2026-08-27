@@ -22,7 +22,9 @@ RULES = [
  ("em-dash", "high", r"—",
   "The single most named tell in AI prose. Restructure the sentence."),
  ("aphoristic-cadence", "high",
-  r"\b(not just \w+[^.]{0,40}\bbut\b|it'?s not (about|just) [^.]{0,40}\bit'?s\b|more than (just )?(a|an) \w+)",
+  # "more than just a X" is the tell. "more than a clause" is ordinary English, and matching it
+  # cost a true sentence in this plugin's own prose before the pattern required "just".
+  r"\b(not just \w+[^.]{0,40}\bbut\b|it'?s not (about|just) [^.]{0,40}\bit'?s\b|more than just (a|an) \w+)",
   "The shape a model falls into when a sentence needs to sound important."),
  ("false-breadth", "high",
   r"\b(whether (you're|you are|your team is|it's) [^.]{3,60}\bor\b|for (teams|businesses|developers|users) of (all|any) (sizes?|kinds?)|from (startups|solo founders) to (enterprises|large organi[sz]ations))",

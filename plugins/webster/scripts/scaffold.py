@@ -43,13 +43,15 @@ def category(path, label, position):
         f.write("\n")
 
 
-def skeleton_for(doc_type):
+def skeleton_for(doc_type, audience=None):
     """The starting shape for a content type, from doctype.py, which carries the Good Docs
     sections. A skeleton is a starting point and never a validation rule."""
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from doctype import SKELETON
-        return SKELETON.get(doc_type, "")
+        # Some types need a different starting shape per reader. An explanation page for someone
+        # who uses the product is a decision, not a mechanism, so it starts from a decision.
+        return SKELETON.get(f"{doc_type}@{audience}") or SKELETON.get(doc_type, "")
     except Exception:
         return ""
 
@@ -71,7 +73,7 @@ def stub(path, title, position, label=None, slug=None, description="",
     if description:
         fm.append(f"description: {description}")
     fm += ["---", "", f"# {title}", "", "<!-- webster: not written yet -->", ""]
-    body = skeleton_for(doc_type) if doc_type else ""
+    body = skeleton_for(doc_type, audience) if doc_type else ""
     with open(path, "w") as f:
         f.write("\n".join(fm) + ("\n" + body if body else ""))
     return True

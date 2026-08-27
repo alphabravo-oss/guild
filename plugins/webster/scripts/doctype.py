@@ -5,9 +5,14 @@ Content types and their skeletons come from The Good Docs Project. The quality c
 come from ISO/IEC/IEEE 26514, and only the ones that can be measured mechanically are checked
 here; the rest are reported as what a human reviewer should judge.
 
-  types                 list the content types and what each is for
-  template <type>       print the starting skeleton for one type
+  types                 list the content types, the readers, and what each is for
+  template <type> [aud] print the starting skeleton, in the variant that reader needs
   check [docs]          check every page. exit 1 on a defect, 0 when only advisories remain
+
+Every page declares two things: what it is (`doc_type`) and who it is for (`audience`). The
+second one is a lens before it is a reading grade. A page can describe a status enum in short
+words and still be about the wrong thing, so `audience` decides subject matter as well as
+sentence length, and a page that declares no reader is a defect rather than a note.
 
 A template is a starting point for a blank page. It is not a validation rule: only 3 of
 Harvester's 128 pages carry a literal "Overview" heading, so requiring one would enforce a
@@ -119,6 +124,78 @@ AUDIENCES = {
 }
 DEFAULT_AUDIENCE = "user"
 
+# The audience is a lens before it is a reading grade. "How hard are the sentences" and "what is
+# this page allowed to be about" are different questions, and only the first one used to be
+# asked here. A page can describe a status enum in short words and read at grade 9.
+#
+# A `user` page is written from the screen: what a person can see, click, type, and get back.
+# The moment it names the machinery underneath, the reader is being shown the implementation
+# instead of the product. `operator` may name the things an operator actually handles, and
+# `developer` may name anything.
+LENS_MAY_NOT = {
+ "user": ("internal symbols, routes, environment variables and architecture",
+          "write it from the screen: what the reader sees, clicks, types and gets back"),
+ "operator": ("internal symbols and architecture",
+              "an operator handles config and commands, not the code underneath them"),
+ "developer": (None, None),
+}
+
+# Backticked identifiers that are a symbol in the source rather than something on screen.
+CODE_IDENT = re.compile(r"`([a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+)`")
+# Product and technology names are PascalCase too, and they are not internals.
+IDENT_ALLOW = {
+ "JavaScript", "TypeScript", "PostgreSQL", "MySQL", "SQLite", "GitHub", "GitLab", "BitBucket",
+ "MongoDB", "DynamoDB", "CloudFront", "CloudWatch", "OpenAPI", "OpenSSL", "OpenShift", "GraphQL",
+ "PowerShell", "WordPress", "SharePoint", "OneDrive", "DevOps", "MacOS", "IOS", "IPhone",
+ "NodeJS", "NextJS", "VMware", "OpenStack", "OpenTelemetry", "SendGrid", "PagerDuty",
+}
+ENV_VAR = re.compile(r"`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`")
+ROUTE_PATH = re.compile(r"`(/(?:api|v\d)[\w/{}:.-]*)`|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+
+# Architecture vocabulary. Each of these names a part of the system the reader cannot touch.
+# Kept deliberately tight: "repository" alone means a git repository to half of all readers and
+# "interface" alone means the web interface, so neither is here.
+ARCH_HARD = re.compile(
+ r"(?i)\b(handlers?|middlewares?|controllers?|goroutines?|mutexe?s?|subclass(?:es)?|singletons?"
+ r"|service layer|data layer|business logic|database schema|the codebase|code ?paths?"
+ r"|call ?sites?|dependency injection|de-?serializ\w+|serializ\w+|the payload"
+ r"|the enum|the struct|ORM)\b")
+# One product's internals are another product's domain vocabulary. A Kubernetes tool's operators
+# genuinely handle controllers, and calling that a leak would be wrong. WEBSTER_LENS_ALLOW takes
+# a comma-separated list of terms this product's readers actually use, and it is a deliberate
+# declaration rather than a default, because the easy way to defeat this rule is to widen it.
+LENS_ALLOW = {t.strip().lower() for t in os.environ.get("WEBSTER_LENS_ALLOW", "").split(",")
+              if t.strip()}
+ARCH_SOFT = re.compile(
+ r"(?i)\b(under the hood|behind the scenes|internally|the backend|the front ?end"
+ r"|the database|the runtime)\b")
+
+# An acronym a reader has not met is the most common way a page assumes knowledge of the product.
+ACRONYM = re.compile(r"\b([A-Z][A-Z0-9]{1,5})s?\b")
+# Acronyms nobody expands, because expanding them would read as condescension.
+UNIVERSAL_ACRONYMS = {
+ "US", "UK", "EU", "ID", "OK", "FAQ", "AM", "PM", "USB", "PDF", "CSV", "URL", "HTTP", "HTTPS",
+ "HTML", "CSS", "JSON", "YAML", "XML", "ZIP", "GPS", "SMS", "PC", "TV", "IT", "AI", "OS", "RAM",
+ "CPU", "GPU", "GB", "MB", "KB", "TB", "UTC", "ISO", "PIN", "QR", "SIM", "WIFI", "MD",
+ "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD",
+ "README", "TODO", "FAQ", "NOTE", "TIP", "WARNING", "YES", "NO", "AND", "OR", "NOT", "ALL",
+ "NEW", "OK", "END", "MAX", "MIN", "N", "A", "I",
+}
+
+# The plan this plugin writes for itself is a working document that happens to live in the docs
+# directory. Auditing it as a page reports its own working notes as defects on a published page.
+NOT_A_PAGE = {"docs-plan.md", "llms.txt", "README.md"}
+SECOND_PERSON = re.compile(r"(?i)\byou\b|\byour\b|\byours\b")
+# Products put their own labels in capitals, and quoting one is the opposite of jargon: it is
+# the page using the reader's own screen. "a group labeled HABITAT" is not an unexpanded acronym.
+# The cue has to be near the word it excuses. Applied to a whole line it suppressed every
+# acronym on any line containing a verb like "reads", which is most of them.
+ON_SCREEN_CUE = re.compile(
+ r"(?i)\b(labell?ed|headed|titled|button|tab|menu|section|column|field|heading|panel|option"
+ r"|marked|named|called|reads|says|shows)\b[^.]{0,30}$")
+CAPS_RUN = re.compile(r"\b[A-Z][A-Z0-9]{1,}\b(?:\s*(?:&|and|/)?\s*\b[A-Z][A-Z0-9]{1,}\b)+")
+
+
 # ISO/IEC/IEEE 26514 quality characteristics. The four marked measurable are checked below.
 ISO_26514 = {
  "usability": "a human judges whether a reader can find and apply the information",
@@ -126,6 +203,7 @@ ISO_26514 = {
  "accessibility": "measurable: alt text on images, heading levels not skipped",
  "correctness": "measurable elsewhere: drift.py resolves every cited anchor",
  "consistency": "measurable: one term for one thing",
+ "subject-fit": "measurable: whether the page is about something its reader can act on",
  "understandability": "measurable: reading grade against the stated reader",
  "conciseness": "measurable: sentence length",
  "minimalism": "a human judges whether anything here is unnecessary",
@@ -190,6 +268,24 @@ rather than teaching it here.}
 
 {Context first, then the idea, then why it was built this way and what was refused.
 If you start writing steps, that is a how-to and belongs on its own page.}
+
+## Where to next
+
+{Links.}
+""",
+ "explanation@user": """## The choice you are making
+
+{The decision this page settles, in the reader's words. An explanation written for someone who
+uses the product earns its place by helping them choose. If there is no choice here, the page
+is for a developer and belongs in developer/.}
+
+## {What is actually different between the options}
+
+{What the reader would see happen either way. Not the mechanism that produces it.}
+
+## How to decide
+
+{The question to ask themselves, and what each answer points at.}
 
 ## Where to next
 
@@ -365,6 +461,158 @@ def check_universal(rel, text, audience, override):
     return defects, advisories
 
 
+def assigned_env_vars(docs):
+    """Which SCREAMING_SNAKE names are actually environment variables.
+
+    `CREDENTIAL_ERROR` is a status the interface displays and `PIONEER_API_URL` is a variable
+    somebody exports, and the two are indistinguishable by shape. So a name counts as a variable
+    only where the documentation shows it being set somewhere."""
+    found = set()
+    for dirpath, dirnames, filenames in os.walk(docs):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            text = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read()
+            for m in re.finditer(r"(?:^|\s|`)(?:export\s+)?([A-Z][A-Z0-9]*_[A-Z0-9_]+)\s*=", text):
+                found.add(m.group(1))
+            for m in re.finditer(r"(?i)(?:variable|env(?:ironment)?)\b[^\n]{0,40}?`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`", text):
+                found.add(m.group(1))
+    return found
+
+
+def glossary_terms(docs):
+    """Every term the documentation set defines somewhere, so a page that uses one is not
+    accused of assuming it. A glossary page defines its headings; any page defines a term it
+    expands in parentheses."""
+    terms = set()
+    for dirpath, dirnames, filenames in os.walk(docs):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            text = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read()
+            is_glossary = frontmatter(text).get("doc_type") == "glossary"
+            for n, line in prose_lines(text):
+                if is_glossary:
+                    m = re.match(r"^#{2,6}\s+(.+?)\s*$", line)
+                    if m:
+                        terms.add(m.group(1).strip("`*").upper())
+                        for a in ACRONYM.findall(m.group(1)):
+                            terms.add(a)
+                for a in re.findall(r"\(([A-Z][A-Z0-9]{1,5})s?\)", line):
+                    terms.add(a)
+    return terms
+
+
+def expanded_on_page(acr, body):
+    """The page itself introduces the acronym, either as 'network security group (NSG)' or as
+    'NSG (network security group)'. Anything else is the reader being assumed to know it."""
+    if re.search(rf"(?:[A-Za-z][\w-]*\s+){{1,6}}\({acr}s?\)", body):
+        return True
+    if re.search(rf"\b{acr}s?\b\s*\([^)]{{4,90}}\)", body):
+        return True
+    return False
+
+
+def check_lens(rel, text, audience, dt, env_vars):
+    """What the page is allowed to be ABOUT. The reading grade asks how hard the sentences are;
+    this asks whether the subject matter belongs to this reader at all.
+
+    A `user` page that names a symbol, a route or an environment variable is describing the
+    machinery rather than the product. That is the failure the reading grade cannot see, because
+    a short sentence about a status enum still reads at grade 9."""
+    defects, advisories = [], []
+    forbids, remedy = LENS_MAY_NOT.get(audience, (None, None))
+    if forbids is None:
+        return defects, advisories
+
+    named = []
+    for n, line in prose_lines(text):
+        for m in CODE_IDENT.finditer(line):
+            if m.group(1) not in IDENT_ALLOW:
+                named.append((n, f"`{m.group(1)}`", "an internal symbol name"))
+        for m in ENV_VAR.finditer(line):
+            if audience == "user" and m.group(1) in env_vars:
+                named.append((n, f"`{m.group(1)}`", "an environment variable"))
+        for m in ROUTE_PATH.finditer(line):
+            named.append((n, m.group(1) or m.group(2), "a request route"))
+        for m in ARCH_HARD.finditer(line):
+            named.append((n, m.group(1), "part of the architecture"))
+
+    seen = set()
+    for n, what, kind in named:
+        if what.strip("`").lower() in LENS_ALLOW:
+            continue
+        if what.lower() in seen:
+            continue
+        seen.add(what.lower())
+        defects.append({"page": f"{rel}:{n}", "rule": "wrong-lens",
+                        "problem": f"a '{audience}' page names {kind}, {what}",
+                        "fix": remedy})
+
+    if audience == "user":
+        soft = set()
+        for n, line in prose_lines(text):
+            for m in ARCH_SOFT.finditer(line):
+                if m.group(1).lower() not in soft:
+                    soft.add(m.group(1).lower())
+                    advisories.append({"page": f"{rel}:{n}", "rule": "lens-drift",
+                                       "problem": f"'{m.group(1)}' points at the machinery",
+                                       "fix": "say what the reader sees happen instead"})
+
+    # An explanation page for someone who uses the product exists to help them make a decision
+    # they actually face. One that never addresses them is explaining a mechanism they cannot
+    # touch, which is a developer page wearing the wrong frontmatter.
+    if audience == "user" and dt == "explanation":
+        body = "\n".join(l for _, l in prose_lines(text, tables=False))
+        words = len(re.findall(r"[A-Za-z][A-Za-z']+", body))
+        hits = len(SECOND_PERSON.findall(body))
+        if words >= 200 and hits * 100.0 / words < 0.5:
+            defects.append({"page": rel, "rule": "explains-mechanism",
+                            "problem": f"a 'user' explanation page that addresses the reader "
+                                       f"{hits} times in {words} words",
+                            "fix": "an explanation for a user exists to settle a choice they "
+                                   "face. If it explains something they cannot act on, it is a "
+                                   "developer page"})
+    return defects, advisories
+
+
+def check_jargon(rel, text, audience, known):
+    """A term used before the reader has met it. This is the mechanical half of the Readable
+    gate, which otherwise depends on a reviewer being available."""
+    findings = []
+    body = "\n".join(l for _, l in prose_lines(text))
+    linked_glossary = "glossary" in text.lower()
+    seen = set()
+    for n, line in prose_lines(text):
+        if re.match(r"^\s*#{1,6}\s", line):
+            continue
+        line = re.sub(r"`[^`]*`|\*\*[^*]*\*\*|\[[^\]]*\]\([^)]*\)", "", line)
+        runs = [r.span() for r in CAPS_RUN.finditer(line)]
+        for m in ACRONYM.finditer(line):
+            a = m.group(1)
+            if a in UNIVERSAL_ACRONYMS or a in known or a in seen:
+                continue
+            if ON_SCREEN_CUE.search(line[:m.start()]):
+                continue
+            if any(x <= m.start() < y for x, y in runs):
+                continue
+            if expanded_on_page(a, body):
+                continue
+            seen.add(a)
+            findings.append({"page": f"{rel}:{n}", "rule": "undefined-jargon",
+                             "problem": f"'{a}' is used without ever being expanded",
+                             "fix": f"write it out the first time, '... ({a})', or add it to "
+                                    f"the glossary"})
+    if linked_glossary:
+        for f in findings:
+            f["fix"] += "; the page links the glossary but this term is not in it"
+    if audience == "user":
+        return findings, []
+    return [], findings
+
+
 def check_typed(rel, text, dt, spec):
     """Rules that depend on the page declaring what it is."""
     defects, advisories = [], []
@@ -403,7 +651,9 @@ def check_typed(rel, text, dt, spec):
 
 
 def run_check(docs, override):
-    defects, advisories, untyped, unaudienced, typed, stubs = [], [], [], [], 0, 0
+    defects, advisories, untyped, typed, stubs = [], [], [], 0, 0
+    known = glossary_terms(docs)
+    env_vars = assigned_env_vars(docs)
     for dirpath, dirnames, filenames in os.walk(docs):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for fn in sorted(filenames):
@@ -411,6 +661,8 @@ def run_check(docs, override):
                 continue
             path = os.path.join(dirpath, fn)
             rel = os.path.relpath(path, docs)
+            if rel in NOT_A_PAGE:
+                continue
             text = open(path, encoding="utf-8", errors="replace").read()
             if "webster: not written yet" in text:
                 stubs += 1
@@ -423,14 +675,28 @@ def run_check(docs, override):
                                 "problem": f"audience '{audience}' is not a known reader",
                                 "fix": "one of: " + ", ".join(AUDIENCES)})
                 audience = DEFAULT_AUDIENCE
+            # A page with no declared reader was, until this was a defect, read against the
+            # `user` default and reported as a note nobody acted on. Every page in the last
+            # real run of this plugin was in that state, so the lens never fired once.
             if "audience" not in fm:
-                unaudienced.append(rel)
+                defects.append({"page": rel, "rule": "no-audience",
+                                "problem": "the page does not say who it is for",
+                                "fix": "add 'audience: user', 'operator' or 'developer'. It "
+                                       "decides what the page may be about, not just how hard "
+                                       "the sentences may be"})
+
+            dt = fm.get("doc_type")
 
             d, a = check_universal(rel, text, audience, override)
             defects += d
             advisories += a
+            d, a = check_lens(rel, text, audience, dt, env_vars)
+            defects += d
+            advisories += a
+            d, a = check_jargon(rel, text, audience, known)
+            defects += d
+            advisories += a
 
-            dt = fm.get("doc_type")
             if not dt:
                 untyped.append(rel)
                 continue
@@ -443,7 +709,7 @@ def run_check(docs, override):
             d, a = check_typed(rel, text, dt, TYPES[dt])
             defects += d
             advisories += a
-    return defects, advisories, untyped, unaudienced, typed, stubs
+    return defects, advisories, untyped, typed, stubs
 
 
 def main():
@@ -458,10 +724,13 @@ def main():
                   (", ".join(SHAPES[f][1] for f in s["forbidden_shapes"]) or "no restriction"))
             print("  weighted toward:   " +
                   ", ".join(f"{k} {v}" for k, v in s["weights"].items()))
-        print("\nAudiences, and the reading grade each implies:")
+        print("\nAudiences. The audience is a lens first and a reading grade second:")
         for a, spec in AUDIENCES.items():
             print(f"  {a:10} grade {spec['grade']:<3} {spec['who']}")
             print(f"  {'':10} assumes {spec['assumes']}")
+            forbids = LENS_MAY_NOT[a][0]
+            print(f"  {'':10} " + (f"may not name {forbids}" if forbids
+                                   else "may name anything in the system"))
         print("\nISO/IEC/IEEE 26514 quality characteristics:")
         for k, v in ISO_26514.items():
             print(f"  {k:20} {v}")
@@ -469,8 +738,12 @@ def main():
 
     if mode == "template":
         t = args[1] if len(args) > 1 else ""
+        aud = args[2] if len(args) > 2 else ""
+        if f"{t}@{aud}" in SKELETON:
+            t = f"{t}@{aud}"
         if t not in SKELETON:
-            sys.exit("unknown type. one of: " + ", ".join(sorted(SKELETON)))
+            sys.exit("unknown type. one of: " +
+                     ", ".join(sorted(k for k in SKELETON if "@" not in k)))
         print(SKELETON[t], end="")
         return 0
 
@@ -480,26 +753,27 @@ def main():
     if not os.path.isdir(docs):
         print(f"no docs directory at {docs}")
         return 2
-    defects, advisories, untyped, unaudienced, typed, stubs = run_check(docs, override)
+    defects, advisories, untyped, typed, stubs = run_check(docs, override)
 
     checked = typed + len(untyped)
     print(f"{checked} pages checked, {typed} against a declared type, "
           f"{stubs} stubs skipped")
-    if defects:
-        print(f"\nDEFECTS ({len(defects)})")
-        for d in defects:
-            print(f"  {d['page']}  [{d['rule']}] {d['problem']}\n      {d['fix']}")
-    if advisories:
-        print(f"\nADVISORIES ({len(advisories)})")
-        for a in advisories:
-            print(f"  {a['page']}  [{a['rule']}] {a['problem']}\n      {a['fix']}")
-    if unaudienced:
-        print(f"\nNO audience ({len(unaudienced)}), so each was read against the "
-              f"'{DEFAULT_AUDIENCE}' default. Declare one when that is wrong.")
-        for u in unaudienced[:12]:
-            print(f"  {u}")
-        if len(unaudienced) > 12:
-            print(f"  ... and {len(unaudienced) - 12} more")
+    limit = int(os.environ.get("WEBSTER_SHOW_PER_RULE", "6"))
+    for label, items in (("DEFECTS", defects), ("ADVISORIES", advisories)):
+        if not items:
+            continue
+        by_rule = {}
+        for i in items:
+            by_rule.setdefault(i["rule"], []).append(i)
+        print(f"\n{label} ({len(items)})")
+        for rule in sorted(by_rule, key=lambda r: -len(by_rule[r])):
+            group = by_rule[rule]
+            print(f"\n  {rule}  ({len(group)})")
+            print(f"      {group[0]['fix']}")
+            for i in group[:limit]:
+                print(f"    {i['page']}  {i['problem']}")
+            if len(group) > limit:
+                print(f"    ... and {len(group) - limit} more")
     if untyped:
         print(f"\nNO doc_type ({len(untyped)}). Accessibility and readability were still checked; "
               "the type rules were not.")
@@ -507,7 +781,7 @@ def main():
             print(f"  {u}")
         if len(untyped) > 12:
             print(f"  ... and {len(untyped) - 12} more")
-    if not defects and not advisories and not untyped and not unaudienced:
+    if not defects and not advisories and not untyped:
         print("every page matches its declared type")
     return 1 if defects else 0
 

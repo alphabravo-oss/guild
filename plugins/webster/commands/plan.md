@@ -4,7 +4,7 @@ argument-hint: "[path to repo, defaults to cwd]"
 allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---
 
-Load the `house-rules` skill first. Write no page content in this command.
+Load the `house-rules` and `reader-lens` skills first. Write no page content in this command.
 
 ## Step 1, run the survey before reading anything by hand
 
@@ -27,11 +27,55 @@ Then check the current drift state, which also tells you whether documentation a
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py check
 ```
 
+## Step 1.5, the surface a person sees, before the one a developer sees
+
+**Do this before reading a single handler.** Documentation written after a morning in the source
+describes the source, because that is what was read. It is the largest single reason a set of
+documentation reads as though its reader already knows the product, and no amount of editing
+afterwards undoes it.
+
+The survey returns both surfaces. The one above is routes, exports and variables. This one is
+what a person can see and do:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . | python3 -c "
+import json,sys
+u = json.load(sys.stdin)['user_surface']
+for k in ('screens','commands','labels','messages'):
+    print(f'--- {k} ({len(u[k])})')
+    for i in u[k][:40]: print('   ', i)
+"
+```
+
+- `screens` are the pages somebody can be on
+- `labels` are the words printed on the buttons, headings, tabs and fields
+- `messages` are what the product says when something goes wrong
+- `commands` are the subcommands somebody types
+
+Then **run the product**. Open it, click through it, and write down what a person can actually
+accomplish, in the order they would meet it. Where there is no interface, run the CLI and read
+its help. Where neither is possible, say so in the plan and mark every user page as written
+without having seen the product, because that is a real limitation and it belongs on the record.
+
+Three things come out of this and go straight into the plan:
+
+1. **What the product lets a person do**, in their words. This is what the subject list is
+   derived from, not the route list.
+2. **The vocabulary.** The words on the buttons are the words the documentation uses. Where the
+   docs and the interface disagree about a name, find out which one is wrong before writing
+   forty pages on top of it.
+3. **The error strings**, verbatim, because a reader searching for one is searching for the exact
+   wording.
+
 ## Step 2, read what the survey pointed at
 
 Read each anchored handler, the config loader, and the tests. The test count matters: it decides
 which claims are allowed to be `[SPEC]` and which start as `[?]`. A surface item with no test
 behind it is not a verified capability.
+
+**This step is for evidence, not for subject matter.** The code settles whether a sentence is
+true. What the documentation is about was settled in step 1.5, and reading the source does not
+get to revise it. A route with no user-visible consequence is not a page.
 
 If `gsd:map-codebase` is installed and the repo is unfamiliar, run it rather than re-deriving
 the same map by hand.
@@ -42,6 +86,11 @@ the same map by hand.
 prevent.** Work out which of `user`, `operator` and `developer` this product actually has, per
 house-rules section 6. Most have at least two: the person who uses the thing and the person who
 runs it.
+
+The audience is a lens, not a reading grade, and it decides what each page is allowed to be
+about. Get it wrong here and every page inherits it. A product that is itself infrastructure has
+operators where another product has users, and `--subject-audience` exists for exactly that. A
+declaration that does not match the reader is worse than none, because it silences the check.
 
 For each, describe the actual person rather than the label. Not "developers" but "the person who
 built this with an AI coding tool, technical enough to deploy and not technical enough to read a
@@ -94,6 +143,9 @@ Write `docs/docs-plan.md`:
 - the stack and the extractors that will be used, with their commands
 - the subject list, with why each one is a subject
 - one row per page: path inside the tree, `doc_type`, `audience`, which agent writes it, what evidence it needs
+- the user surface from step 1.5: the screens, the vocabulary taken off the interface, and the
+  error strings verbatim
+- whether the product was actually run, and if not, why not
 - the surface table straight from the survey, anchors included
 - claims already known to be unverifiable, so they start life tagged
 - what is deliberately not being documented, and why

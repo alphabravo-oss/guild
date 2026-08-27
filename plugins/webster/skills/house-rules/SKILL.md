@@ -20,6 +20,11 @@ A source is one of:
 - a `file:line` anchor that resolves in the current tree
 - a command plus the output it actually produced
 - a named test that covers the behaviour
+- **the screen, for a claim about what a reader sees.** "The Deployments page has a New button"
+  is checked by looking at it, and the anchor is the component that renders it or a screenshot
+  in the page. This class exists because without it every sentence on a user page has to be
+  justified against source code, and a writer who spends the day in source writes about source.
+  `survey.py` returns the product's own on-screen wording under `user_surface`
 
 Write the anchor down as you go. Reconstructing sources afterwards does not work, because by
 then you no longer remember which sentences you checked and which ones you assumed.
@@ -90,36 +95,41 @@ Two pages are not optional, whatever the repo is.
 - Write as one specific person explaining a thing to one specific reader. Not marketing aimed at
   everyone, not a committee.
 
-## 6. Who the reader is
+## 6. Who the reader is, and what that lets the page be about
 
-**A set of documentation serves more than one reader, and a page serves exactly one.** Getting
-this wrong is the failure that produces an installation page pitched at somebody who has never
-opened a terminal, and a getting-started page that assumes they have.
+**A set of documentation serves more than one reader, and a page serves exactly one.**
 
-Every page declares its reader in frontmatter, the same way it declares its type:
+Every page declares its reader in frontmatter, the same way it declares its type. A page that
+declares no reader is a defect, not a note. That was the wrong way round until it was measured:
+in the last full run of this plugin, none of the 67 pages declared an audience, so every rule
+that depended on one was inert.
 
 ```yaml
 doc_type: how-to
 audience: operator
 ```
 
-### The three readers
+### The audience is a lens before it is a reading grade
 
-| Audience | Who they are | Assumes | Reading grade |
-| --- | --- | --- | --- |
-| `user` | Uses the product. No development, sysadmin or DevOps background | General computer literacy and a real reason to be here | 10 |
-| `operator` | Installs, configures and runs it | A terminal, a package manager, environment variables, a hosting dashboard | 13 |
-| `developer` | Builds against it or contributes to it | The language, the toolchain, and how to read source | 15 |
+This is the part that used to be missing, and it is the reason a page could pass every gate and
+still be written for the wrong person. `audience` used to buy one thing, a Flesch-Kincaid
+ceiling. Short sentences about the wrong subject still cleared it.
+
+**A page may name only the things its reader can touch.**
+
+| Audience | Who they are | May name | May not name | Grade |
+| --- | --- | --- | --- | --- |
+| `user` | Uses the product. No development, sysadmin or DevOps background | Screens, buttons, fields, menus, their own files, what the product gives back and what it says when something fails | Symbols, routes, environment variables, architecture | 10 |
+| `operator` | Installs, configures and runs it | The above, plus commands, flags, config files, variables, ports, logs | Symbols, architecture | 13 |
+| `developer` | Builds against it or contributes to it | Anything in the system | nothing | 15 |
+
+`doctype.py check` enforces both halves. The `reader-lens` skill carries the full rule, how to
+write from the product's own on-screen vocabulary, and where internals go instead.
 
 `user` is the default, and it is the right default: most people reading documentation are trying
-to use the thing rather than run or extend it. A page that does not declare an audience is read
-against `user`, which will report a page written for the other two as too dense. That is the
-correct failure, because it forces the declaration rather than silently lowering the bar.
+to use the thing rather than run or extend it.
 
 ### Which sections serve which reader
-
-The layout in `structure` already splits them, so the mapping is fixed rather than decided per
-page:
 
 | Section | Reader |
 | --- | --- |
@@ -129,56 +139,62 @@ page:
 | `install/`, `advanced/` | `operator` |
 | `api/`, `developer/` | `developer` |
 
-`scaffold.py check` reports a page whose declared audience disagrees with its section.
+`scaffold.py check` reports a page whose declared audience disagrees with its section. When a page
+turns out to be about something its reader cannot touch, **the fix is to move the page**. Editing
+the `audience:` field until the checker goes quiet is the way this rule is defeated, and it is
+worth naming because it is the cheapest thing to do and it is always wrong.
 
 ### Naming the reader concretely
 
-The three audiences set the reading grade. They do not excuse you from describing the actual
-person in the plan, and the plan is where that happens: not "developers" but "the person who
-built this with an AI coding tool, technical enough to deploy and not technical enough to read a
-bundle". Vagueness about the reader produces documentation that serves nobody.
+The three audiences set the lens and the grade. They do not excuse you from describing the actual
+person in the plan: not "developers" but "the person who built this with an AI coding tool,
+technical enough to deploy and not technical enough to read a bundle".
 
 ### The rule that governs all of it
 
 Domain vocabulary is not jargon; **undefined** domain vocabulary is. A page about HTTP has to say
 "header". Judge the introduction of a term, not its existence. What changes with the audience is
-how much gets introduced: a `user` page defines "environment variable", a `developer` page does
-not.
+how much gets introduced: a `user` page expands an acronym on first use, a `developer` page does
+not. `doctype.py` checks the acronyms.
 
 ## 7. Precedence over the vendored agents
 
-The five agents were vendored from `documentation-generation` and their pedagogy is worth
-keeping: progressive disclosure, prerequisites stated up front, concepts introduced before they
-are used, common errors anticipated. Follow all of that.
+The five agents were vendored from `documentation-generation`. Their pedagogy is the best writing
+instruction in this plugin and it now lives in the `pedagogy` skill, which **every page below
+`developer` audience loads**, not only tutorials. Confining it to `doc_type: tutorial` meant 3
+pages of 67 got it and the rest got nothing.
 
-Their instructions also predate these rules and contradict them in six specific places. **These
-rules win. Every time.** Precedence is not left to judgement, because a model reading two
-documents that disagree will follow whichever it read last.
+What survives from the agent files, and is now in `pedagogy`: stated outcome first, prerequisites
+before step one, a concept introduced before it is used, the error anticipated beside the step
+that fails.
+
+What does not, because it predates these rules:
 
 | The agent says | Do this instead |
 | --- | --- |
 | `architect`: comprehensive documents, 10 to 100+ pages | Write what is true and stop. Long documentation invents more than short documentation does |
-| `architect`: open with an executive summary | Open with what the thing is, in one sentence. A summary of a page nobody has read yet is padding |
-| `tutorial`: close with a Summary section | Cut it. It restates what the reader just read, and `slop.py` flags it |
-| `tutorial`: fail forward, include intentional errors | Allowed, but the broken example is labelled as deliberately broken. An unlabelled wrong example is a wrong example |
-| `tutorial`: show both correct and incorrect approaches | Same rule. Run the correct one, label the incorrect one |
-| `tutorial`: link to working code repositories | Only if the link resolves today. A dead pointer makes a page look explained when it is not |
-| all three: "Remember: your goal is to create documentation that serves as..." | Ignore the closing exhortation. It is press-release cadence and `slop.py` flags `copula-avoidance` on it |
+| `architect`: open with an executive summary | Open with what the thing is, in one sentence |
+| `tutorial`: close with a Summary section | Cut it. `slop.py` flags it |
+| `tutorial`: intentional errors, and both correct and incorrect approaches | Allowed, labelled as deliberately broken. An unlabelled wrong example is a wrong example |
+| `tutorial`: link to working code repositories | Only if the link resolves today |
+| `tutorial`: "how developers learn" | Most readers of a `user` page are not developers, and that framing is how a user page ends up written for one |
+| all three: "Remember: your goal is to create documentation that serves as..." | Ignore the closing exhortation. `slop.py` flags `copula-avoidance` on it |
 
-Their own prose is title case throughout, which these rules forbid. That is their prose, not
-yours. Write headings in sentence case regardless of what the agent file looks like.
+Their own prose is title case throughout, which these rules forbid. Write headings in sentence
+case regardless of what the agent file looks like.
 
 ## 8. The gates
 
-A page is not finished until all six pass. Report the ones that did not, with the reason.
+A page is not finished until all seven pass. Report the ones that did not, with the reason.
 
 | Gate | Passes when |
 | --- | --- |
 | Sourced | Every behavioural claim has a resolving anchor, in a comment or in frontmatter |
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
+| Lens | Every page declares a reader, and names nothing that reader cannot touch |
 | Builds | The site compiles and reports no broken links |
-| Readable | A reader matching §6 could follow it without stopping |
+| Readable | The mechanical half of `doctype.py check` is clean, and somebody who did not already know the answer got through it |
 | Honest | The two §4 pages exist and the page claims nothing from §3 |
 
 **Builds is the gate the other five cannot stand in for.** They all read markdown as text and
@@ -186,6 +202,13 @@ none of them compiles it, so a documentation set can pass every checker and stil
 reader nothing. Invalid YAML in a frontmatter `description`, a stray closing tag at the end of a
 page, and a link written as an absolute path have each taken a whole site down while the
 checkers stayed green. Where there is no site to build, report it `not_checked`.
+
+**Readable no longer has a single point of failure.** It used to be delegated whole to
+`courseware:learner`, which is not installed in most repos, so it reported `not_checked`
+permanently and the one gate that would catch hard-to-read prose never ran once. It is now two
+halves. The mechanical half always runs: unexpanded acronyms, a tutorial with no stated outcome,
+steps with no prerequisites, prose above the reader's own grade. The human half runs when a
+reviewer is available. Report `partial` when only the first half ran, and say which half.
 
 **A gate that could not be run reports `not_checked` with a reason. It never reports a pass.**
 A false pass is the worst outcome this plugin can produce, because the reader trusts the page

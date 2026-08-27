@@ -3,7 +3,7 @@ description: Run the five gates over existing documentation and return a priorit
 allowed-tools: Bash, Read, Glob, Grep, Task
 ---
 
-Load the `house-rules`, `structure`, `content-types` and `no-slop` skills. Works on documentation this plugin wrote and documentation it has
+Load the `house-rules`, `structure`, `content-types`, `reader-lens`, `pedagogy` and `no-slop` skills. Works on documentation this plugin wrote and documentation it has
 never seen. Read-only. Do not edit files unless the user asks.
 
 ## Step 1, drift, which is deterministic and comes first
@@ -31,9 +31,24 @@ measured until `/webster:write` records one.
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py .
 ```
 
-Compare the surface against what the docs cover. An endpoint, CLI command, package export or
-environment variable with no page is an undocumented surface item, and that is a P1. An endpoint
-the docs describe that the survey does not find is a P0, because it is fiction.
+The survey returns two surfaces and they answer different questions. **Read `user_surface`
+first.**
+
+**`user_surface` is the coverage question.** A screen, a subcommand or an error message a reader
+will meet with no page behind it is a real gap, and that is a P1. This is what "undocumented"
+means for a product with users.
+
+**`surface` is the truth question, not the coverage question.** Routes, exports and environment
+variables are how a claim gets checked. They are not a table of contents.
+
+- An endpoint the docs describe that the survey does not find is a **P0**, because it is fiction.
+- An endpoint with no page is only a finding **when a reader would ever meet it**. On a product
+  with a public API documented for developers, that is a P1. On a product whose users click
+  buttons, it is not a finding at all, and treating it as one is how a set of documentation ends
+  up describing the machinery. The old rule made it a P1 unconditionally, which pushed coverage
+  toward the code and away from the reader.
+- An environment variable with no page is a P1 **on a product an operator installs**, and
+  nothing on a hosted product nobody self-hosts.
 
 ## Step 3, layout
 
@@ -51,8 +66,20 @@ are P0 because navigation is broken without them. A page still carrying
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
 ```
 
-Every defect is a P1, except type mixing on a page a reader is likely to land on first, which is
-a P0 because it sends them to the wrong kind of page for their question.
+Every defect is a P1, with three exceptions that are P0:
+
+- **Type mixing on a page a reader lands on first**, because it sends them to the wrong kind of
+  page for their question.
+- **`no-audience`**, because every rule that depends on the declaration is inert without it, and
+  a docs set with none of them is one where the lens has never run. Fix these before judging any
+  `wrong-lens` count: a `developer/` page that declared nothing is read against `user` and
+  reports every symbol it names.
+- **`wrong-lens` on a page whose audience is correctly declared.** The page is written for
+  somebody other than the person it says it is for. The fix is usually to move it, not to edit
+  the frontmatter until the checker goes quiet.
+
+`undefined-jargon` and `explains-mechanism` are P1. Both are the page assuming knowledge of a
+product the reader came to learn.
 
 Accessibility and reading grade are checked on every page, including ones with no `doc_type`, so
 this works on documentation the plugin never wrote. A page with no `doc_type` cannot be checked
@@ -63,7 +90,7 @@ against a type, and that is worth reporting rather than passing over.
 Load the `readme-rubric` skill and walk its nine criteria, scoring each with cited line numbers.
 Establish the repo category first, because the rubric weighting depends on it.
 
-## Step 6, the six gates
+## Step 6, the seven gates
 
 Run house-rules section 8 over every page. For each failure record the exact line, what is wrong,
 and the replacement text spelled out. Not "this section is too technical". Instead: "line 41 uses
@@ -88,9 +115,18 @@ eyeballing a design and calling it a pass.
 ## Step 8, comprehension
 
 Reading your own documentation cannot find comprehension defects, because you already know the
-answer. If `courseware:learner` is installed, dispatch its redline pass over the pages. If it is
-not installed, say so and mark the Readable gate `not_checked`. Do not substitute your own read
-for it and call it a pass.
+answer. Readable is therefore two halves, and it used to be one.
+
+**The mechanical half always runs**, in step 4: unexpanded acronyms, a tutorial with no stated
+outcome, steps with no prerequisites, prose above the reader's own grade. Report what it found.
+
+**The human half needs somebody who does not already know.** If `courseware:learner` is
+installed, dispatch its redline pass over the pages.
+
+Report the gate as `pass` only when both halves ran clean, `partial` when only the mechanical
+half ran, and name which half. It was previously delegated whole to a plugin most repos do not
+have, so it reported `not_checked` every time and the only gate that catches hard-to-read prose
+never ran. `partial` is the honest verdict and it is not a pass.
 
 ## Step 7.5, build the site
 
@@ -108,8 +144,10 @@ If there is no site to build, report this gate `not_checked` with that reason ra
 ## Step 9, punch list
 
 - **P0**: broken anchors, documented surface that does not exist, unsourced claims, examples that
-  do not run, missing mandatory pages.
-- **P1**: undocumented surface, shape problems, an unfixed reader, comprehension stalls.
+  do not run, missing mandatory pages, a broken build, pages with no declared reader.
+- **P1**: a screen, command or error message with no page, shape problems, an unfixed reader,
+  a page written for somebody other than its declared reader, undefined jargon, comprehension
+  stalls.
 - **P2**: polish.
 
 Each item: one line on what is wrong with the line number, one line on why it matters for this

@@ -3,7 +3,7 @@ description: Write the planned pages, extracting reference material and anchorin
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Task
 ---
 
-Load `house-rules`, `structure`, `content-types`, `extraction` and `no-slop`. Read `docs/docs-plan.md`. If it does not exist, run
+Load `house-rules`, `structure`, `content-types`, `reader-lens`, `pedagogy`, `extraction` and `no-slop`. Read `docs/docs-plan.md`. If it does not exist, run
 `/webster:plan` first rather than guessing the shape.
 
 ## Step 1, extract before writing
@@ -16,6 +16,10 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . > /tmp/webster-survey.json
 
 Run every extractor the plan named. Reference pages are built from that output. Per the
 `extraction` skill, a reference page a model composed from memory is a page that drifts.
+
+Keep `user_surface` from that survey open while writing. It carries the words the product prints
+on its own buttons, headings and error messages, and those are the words a user page uses. A page
+that invents its own name for a screen sends the reader looking for something that is not there.
 
 ## Step 2, make sure the tree exists
 
@@ -49,6 +53,12 @@ One page at a time, to the agent the plan named:
 | Explanation, architecture, why | `webster-architect` |
 | Any diagram | `webster-diagram` |
 
+**Every page whose audience is `user` carries the `pedagogy` rules, whatever its `doc_type`.**
+Teaching is not a genre of page. Confining it to `webster-tutorial` meant 3 pages of 67 got a
+stated outcome, prerequisites and a concept introduced before it was used, and the other 64 got
+none of it. Pass the `pedagogy` and `reader-lens` rules into the dispatch for every page below
+`developer` audience, not only tutorials.
+
 Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts specifically.
 
 ## Non-negotiables
@@ -70,6 +80,10 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
 4. The vendored agents contradict these rules in six named places. `house-rules` section 7 lists
    each one and says which wins. Read it before dispatching, because the agent file is longer
    than the rule and a model tends to follow whichever it read last.
+5. **Write the page from what the reader can touch.** A `user` page names screens, buttons,
+   fields and what the product gives back. It does not name a symbol, a route, a variable or a
+   part of the architecture. Those pages exist, and they live in `developer/` and `advanced/`.
+   Moving a page is the fix; editing its `audience:` until the checker goes quiet is not.
 
 ## Step 4, check each page against its type
 
@@ -77,12 +91,19 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
 ```
 
-Defects fail: a page doing another type's job, an image with no alt text, a skipped heading
-level. Fix them. Advisories are reported and judged: a tutorial with no stated outcome, steps
-with no prerequisites, a reference page with no table, prose above the reading grade ceiling.
+Defects fail: a page with no declared reader, a page naming something that reader cannot touch,
+an unexpanded acronym on a user page, a `user` explanation page that never addresses the reader,
+a page doing another type's job, an image with no alt text, a skipped heading level.
 
-Set `WEBSTER_READING_GRADE=10` when the reader is the non-technical person `house-rules`
-section 6 describes.
+Findings are grouped by rule with a count, so the shape of the problem is visible before the
+list. `WEBSTER_SHOW_PER_RULE` changes how many examples of each are printed.
+
+**A large `wrong-lens` count usually means the audiences are wrong, not the prose.** Check the
+declarations first. A `developer/` page that never declared itself is read against `user` and
+reports every symbol it names, which is the correct failure and the wrong fix to make by hand.
+
+Advisories are reported and judged: steps with no prerequisites, a reference page with no table,
+prose above the reading grade ceiling, and vocabulary that points at the machinery.
 
 ## Step 5, check for slop before recording anything
 

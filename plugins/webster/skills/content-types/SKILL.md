@@ -13,8 +13,10 @@ audience: operator
 ```
 
 Those two declarations are what make a page checkable. `doc_type` decides which sections belong
-and what must never appear; `audience` decides the reading grade the page is held to, and is
-described in `house-rules` section 6. `scripts/doctype.py check` validates each page
+and what must never appear; `audience` decides **what the page may be about** and, second, the
+reading grade it is held to. The `reader-lens` skill carries that rule; `house-rules` section 6
+carries the table. A page that declares no audience is a defect, because a rule nothing declares
+is a rule that never fires. `scripts/doctype.py check` validates each page
 against its declared type, and reports two severities that must not be confused.
 
 ```bash
@@ -43,10 +45,25 @@ So the skeleton guides the writing, and the checker tests only what is actually 
 | `how-to` | One task, for someone who already knows the basics | Teaching the concept |
 | `reference` | Structured entries, looked up rather than read | Procedures |
 | `explanation` | Why it is built this way, what was refused | Procedures, endpoint schemas |
+| `explanation` + `audience: user` | The choice the reader is making, and how to decide | Any mechanism they cannot act on |
 | `quickstart` | The primary feature end to end, under two hours | Error cases, secondary features |
 | `api-reference` | Every endpoint, parameter and response | Tutorials, concepts |
 | `glossary` | Terms a reader will not know | Procedures |
 | `troubleshooting` | A symptom, its cause, its fix | Concepts |
+
+**`explanation` is the type that absorbs internals**, because "why it is built this way" reads
+as permission to describe how it is built. In the last full run of this plugin, 18 of 67 pages
+were explanation and the worst of them explained a state machine to a reader who cannot see one.
+
+An explanation page for a `user` earns its place by settling a choice they actually face: which
+option to pick, why their number came out different, whether an estimate is safe to act on. If it
+explains something the reader cannot act on, it is a `developer` page in the wrong directory, and
+the fix is to move it. `doctype.py` tests this by how often the page addresses the reader at all,
+which is crude and catches the real cases.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py template explanation user
+```
 
 **Tutorial and how-to are the pair people confuse.** A tutorial is learning oriented and a how-to
 is problem oriented. A tutorial teaches someone who does not know the product yet; a how-to
@@ -67,6 +84,16 @@ documentation, which is why type mixing is a defect rather than a note.
   like `[?]`, or an internal instruction file such as `CLAUDE.md`. A reader came to use the
   product and is being shown the machinery that produced the page instead. Anchors belong in an
   HTML comment beside the claim, where `drift.py` reads them.
+- **A page with no declared reader.** Until this was a defect it was a note nobody acted on, and
+  every page of the last full run was in that state.
+- **Subject matter the declared reader cannot touch.** A symbol name in backticks, a request
+  route, a part of the architecture, or on a `user` page an environment variable. This is the
+  rule that stops a page passing every other check while being written for the wrong person. See
+  `reader-lens`.
+- **An acronym the documentation never expands.** On a `user` page. Elsewhere it is an advisory.
+  Expanding it once, or adding it to the glossary, clears it.
+- **A `user` explanation page that never addresses the reader.** It is explaining a mechanism
+  rather than settling a choice.
 
 ## Advisories, which are reported and never fail the gate
 
@@ -111,9 +138,10 @@ characteristics. Four are measured here, one is measured elsewhere, three need a
 | Understandability | Measured: reading grade against the page's own declared audience |
 | Conciseness | Measured: sentence length drives the grade |
 | Consistency | Measured in part: one term for one thing |
+| Subject fit | Measured: whether the page is about something its declared reader can act on |
 | Correctness | Measured by `drift.py`, which resolves every cited anchor |
 | Usability | A person judges whether a reader can find and apply it |
-| Clarity | A person judges it. `courseware:learner` is the closest thing to a test |
+| Clarity | Measured in part: undefined acronyms, stated outcome, prerequisites. The rest a person judges, and `courseware:learner` is the closest thing to a test |
 | Minimalism | A person judges whether anything here is unnecessary |
 
 Do not claim conformance to 26514. It is a purchased standard aimed at organisations with a
