@@ -263,7 +263,52 @@ for p in walk(exts={".ts", ".js", ".py", ".go"}):
             seen_cmds.add(v)
             user_surface["commands"].append({"name": v, "anchor": f"{r}:{i}"})
 
-user_surface["screens"] = surface.get("pages", [])
+# Screens, from more than one convention. surface["pages"] only knows Next.js App Router, and
+# a real audit of a 46-screen React app came back with zero screens, which made the coverage
+# half of the audit unavailable without anyone being told it was missing.
+screens = list(surface.get("pages", []))
+seen_screens = {s["path"] for s in screens}
+
+
+def add_screen(path, anchor, name=None):
+    if path in seen_screens:
+        return
+    seen_screens.add(path)
+    entry = {"path": path, "anchor": anchor}
+    if name:
+        entry["name"] = name
+    screens.append(entry)
+
+
+# Router config: <Route path="/deployments" element={<DeploymentsPage />} />, and the file-based
+# equivalents. The declared path is what a person sees in the address bar.
+for p in walk(exts={".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte"}):
+    r = rel(p)
+    if re.search(r"(^|/)(test|tests|__tests__|stories)/|\.(test|spec|stories)\.", r):
+        continue
+    for i, line in enumerate(read(p).splitlines(), 1):
+        for m in re.finditer(r"""<Route\b[^>]*\bpath\s*=\s*["']([^"']+)["']""", line):
+            add_screen(m.group(1), f"{r}:{i}")
+        for m in re.finditer(r"""\bpath\s*:\s*["'](/[^"']*)["']""", line):
+            add_screen(m.group(1), f"{r}:{i}")
+
+# Component-per-screen, which is the convention when the router is generated or centralised.
+# A file named FooPage.tsx under a pages/ or views/ directory is a screen whatever routes it.
+for p in walk(exts={".tsx", ".jsx", ".vue", ".svelte"}):
+    r = rel(p)
+    if re.search(r"(^|/)(test|tests|__tests__|stories)/|\.(test|spec|stories)\.", r):
+        continue
+    base = os.path.splitext(os.path.basename(p))[0]
+    in_screen_dir = re.search(r"(^|/)(pages|views|screens|routes)/", r)
+    # Only the screen itself. A Dialog, Form, Modal or Card under pages/ is a part of a screen,
+    # and counting them made a 46-screen app report 113.
+    if not (in_screen_dir and base.endswith(("Page", "View", "Screen"))):
+        continue
+    name = re.sub(r"(Page|View|Screen)$", "", base)
+    label = re.sub(r"(?<!^)(?=[A-Z])", " ", name).strip()
+    add_screen("component:" + base, f"{r}:1", name=label)
+
+user_surface["screens"] = screens
 for k in ("labels", "messages"):
     user_surface[k] = user_surface[k][:120]
 

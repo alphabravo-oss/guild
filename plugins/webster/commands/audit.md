@@ -9,10 +9,18 @@ never seen. Read-only. Do not edit files unless the user asks.
 ## Step 1, drift, which is deterministic and comes first
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py check
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py check <docs-dir>
 ```
 
-Exit 0 means clean, 1 means drift, 2 means there is no manifest yet.
+**Pass the docs directory.** It defaults to `docs`, and a repo whose documentation lives
+somewhere else gets `no_manifest` for a tree that has one, which is a wrong answer that looks
+like a right one.
+
+Exit 0 means clean, 1 means drift, 2 means no manifest or nothing to measure.
+
+`no_anchors` is its own status and its own P0. A set where no page cites a source resolves every
+anchor it has, which is not the same as having been checked. **Sourced cannot report a pass on a
+`no_anchors` set.** The report also gives `pages_with_no_anchor`, which is the number to quote.
 
 - `broken_anchors` are claims citing a file or line that no longer exists. **Every one is a P0.**
   The page states something it cannot support.
@@ -128,10 +136,11 @@ half ran, and name which half. It was previously delegated whole to a plugin mos
 have, so it reported `not_checked` every time and the only gate that catches hard-to-read prose
 never ran. `partial` is the honest verdict and it is not a pass.
 
-## Step 7.5, build the site
+## Step 7.5, build the site, then read what it produced
 
 ```bash
 cd website && npm install && npm run build
+cd .. && python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rendered.py check website/build
 ```
 
 Every check above reads markdown as text. None compiles it, so a documentation set can pass all
@@ -139,7 +148,12 @@ of them and still fail to build. Invalid YAML in frontmatter, a stray tag, and a
 resolves to nothing have each done exactly that. A broken build is a P0: the reader gets nothing
 at all.
 
-If there is no site to build, report this gate `not_checked` with that reason rather than a pass.
+`rendered.py` then reads the pages a browser would. An anchor lives in an HTML comment precisely
+so the reader never sees it, and until this existed nothing checked whether that held. Anything
+it finds is a **P0**: it is on the page, in front of the reader, now. A build that succeeds with
+a visible `file:line` in it is exactly the case the markdown checks cannot see.
+
+If there is no site to build, report both gates `not_checked` with that reason rather than a pass.
 
 ## Step 9, punch list
 

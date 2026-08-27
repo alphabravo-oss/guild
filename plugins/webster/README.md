@@ -99,10 +99,11 @@ without an agent.
 | Script | What it does |
 | --- | --- |
 | `scripts/survey.py` | Two surfaces, both anchored to `file:line`. **`user_surface`**: the screens, the text on the buttons, headings and fields, the product's own error strings, the subcommands somebody types. **`surface`**: HTTP routes from Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask and Go mux, plus CLI binaries, package exports, env vars and OpenAPI specs. Names the extractors that fit the stack |
-| `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree and every anchor the pages cite. `check` reports anchors that no longer resolve and pages whose cited code changed. Exit 1 on drift |
+| `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree and every anchor the pages cite. `check` reports anchors that no longer resolve and pages whose cited code changed. A set that cites no sources returns `no_anchors` rather than `clean`, because resolving every anchor you have is not the same as having been checked. Exit 1 on drift, 2 on nothing to measure |
 | `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem. `check` validates an existing tree and exits 1 on any violation |
 | `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1; advisories (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) are reported. Findings are grouped by rule with a count |
 | `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
+| `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text. The only check that sees what a browser sees. Exit 1 on any leak |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk |
 
 ## The layout is fixed
@@ -135,7 +136,7 @@ A page is not finished until all seven pass, and a gate that could not be run re
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | The tree passes `scaffold.py check` and no page is doing another type's job |
 | Lens | Every page declares a reader, and names nothing that reader cannot touch |
-| Builds | The site compiles and reports no broken links |
+| Builds | The site compiles, reports no broken links, and nothing internal reached the rendered pages |
 | Readable | The mechanical checks are clean, and somebody who did not already know the answer got through it |
 | Honest | "What this is" and "what this deliberately does not do" both exist |
 | Unslopped | No high severity slop finding, and diagrams name real things rather than categories |

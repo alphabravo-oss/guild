@@ -193,15 +193,26 @@ A page is not finished until all seven pass. Report the ones that did not, with 
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
 | Lens | Every page declares a reader, and names nothing that reader cannot touch |
-| Builds | The site compiles and reports no broken links |
+| Builds | The site compiles, reports no broken links, and `rendered.py` finds nothing internal on the rendered pages |
 | Readable | The mechanical half of `doctype.py check` is clean, and somebody who did not already know the answer got through it |
 | Honest | The two §4 pages exist and the page claims nothing from §3 |
 
-**Builds is the gate the other five cannot stand in for.** They all read markdown as text and
+**Builds is the gate the other six cannot stand in for.** They all read markdown as text and
 none of them compiles it, so a documentation set can pass every checker and still deliver a
 reader nothing. Invalid YAML in a frontmatter `description`, a stray closing tag at the end of a
 page, and a link written as an absolute path have each taken a whole site down while the
 checkers stayed green. Where there is no site to build, report it `not_checked`.
+
+**Compiling is half of it. Reading the result is the other half.** `rendered.py` scans the built
+HTML for anything internal that reached the reader: a visible `file:line`, a source path, a
+working-note tag, a frontmatter key printed as text. This matters because the anchor rule in §1
+depends on a comment rendering to nothing, and that was assumed rather than checked. It holds on
+Docusaurus 3, verified on a real build. `rendered.py` is what keeps it true.
+
+**Sourced cannot pass on a set with no anchors.** `drift.py check` returns `no_anchors` and exits
+2 when a recorded set has pages but cites no sources. It used to return `clean`, because every
+anchor it had resolved, and a set with none has none to break. That was a false pass on the gate
+that matters most.
 
 **Readable no longer has a single point of failure.** It used to be delegated whole to
 `courseware:learner`, which is not installed in most repos, so it reported `not_checked`

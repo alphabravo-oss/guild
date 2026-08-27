@@ -23,6 +23,7 @@ python3 scripts/scaffold.py check  the layout gate. exit 1 on any violation
 python3 scripts/doctype.py types   the content types, the three readers, what each may name
 python3 scripts/doctype.py check   type, reader, lens and jargon. exit 1 on a defect
 python3 scripts/drift.py check     which pages a diff invalidated. exit 1 on drift
+python3 scripts/rendered.py check  what reached the reader in the built HTML. exit 1 on a leak
 python3 scripts/llmstxt.py         an llms.txt built from pages that exist on disk
 ```
 

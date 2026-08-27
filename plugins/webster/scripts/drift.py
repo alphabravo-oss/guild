@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Drift detection for documentation, on the openwiki model.
 
-  record   store HEAD, a hash of the docs tree, and every anchor the docs cite
-  check    report what changed since the last record, and which anchors no longer resolve
+  record [docs]   store HEAD, a hash of the docs tree, and every anchor the docs cite
+  check  [docs]   report what changed since the last record, and which anchors no longer resolve
 
-Exit codes for check: 0 nothing to do, 1 drift found, 2 no manifest yet.
+Exit codes for check: 0 nothing to do, 1 drift found, 2 no manifest or nothing to measure.
 An anchor that no longer resolves is drift, and drift is a P0.
+
+The docs directory is the second argument, or WEBSTER_DOCS, or "docs". It was env-var only
+until a real audit pointed the command at a repo whose docs live in `documentation/`, got
+"no_manifest" for a tree that had one, and reported a wrong answer that looked like a right one.
 """
 import hashlib, json, os, re, subprocess, sys
 
 ROOT = os.path.abspath(os.environ.get("WEBSTER_ROOT", "."))
-DOCS = os.path.join(ROOT, os.environ.get("WEBSTER_DOCS", "docs"))
+_DOCS_ARG = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("WEBSTER_DOCS", "docs")
+DOCS = _DOCS_ARG if os.path.isabs(_DOCS_ARG) else os.path.join(ROOT, _DOCS_ARG)
 MANIFEST = os.path.join(DOCS, ".webster.json")
 # Only real source/config extensions. Without this, "127.0.0.1:3000" reads as an anchor.
 SRC_EXT = ("ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cc|cpp|cs|php|sh|bash|zsh"
@@ -116,8 +121,8 @@ def main():
             broken.append({"anchor": a, "reason": why, "cited_by": cited_by})
 
     if not os.path.exists(MANIFEST):
-        print(json.dumps({"status": "no_manifest", "anchors": len(anchors),
-                          "broken": broken}, indent=2))
+        print(json.dumps({"status": "no_manifest", "docs_dir": DOCS,
+                          "anchors": len(anchors), "broken": broken}, indent=2))
         return 2
 
     old = json.load(open(MANIFEST))
@@ -137,14 +142,33 @@ def main():
                 suspect.setdefault(page.split(":")[0], []).append(a)
 
     clean = not broken and not suspect and tree_hash(paths) == old.get("docsHash") and not changed
+    unanchored = [os.path.relpath(p, ROOT) for p in paths
+                  if os.path.relpath(p, ROOT) not in {c.split(":")[0]
+                                                      for v in anchors.values() for c in v}]
+    # A set with no anchors resolves every anchor it has, which is not the same as being
+    # checked. Reporting that as clean is a false pass, and a false pass is worse than a
+    # finding because the reader trusts the page exactly as far as they trust the gate.
+    nothing_to_measure = not anchors and paths
+    status = ("no_anchors" if nothing_to_measure
+              else "clean" if clean else "drift")
     print(json.dumps({
-        "status": "clean" if clean else "drift",
+        "status": status,
         "gitHead": {"recorded": old.get("gitHead"), "current": head},
         "docs_edited_since_record": tree_hash(paths) != old.get("docsHash"),
         "code_files_changed": len(changed),
+        "anchors": len(anchors),
+        "pages": len(paths),
+        "pages_with_no_anchor": len(unanchored),
+        "unanchored_sample": sorted(unanchored)[:12],
         "broken_anchors": broken,
         "suspect_pages": suspect,
+        "note": ("no page in this set cites a source, so nothing here can be re-verified and "
+                 "the Sourced gate cannot report a pass" if nothing_to_measure else
+                 f"{len(unanchored)} of {len(paths)} pages cite no source"
+                 if unanchored else ""),
     }, indent=2))
+    if nothing_to_measure:
+        return 2
     return 0 if clean else 1
 
 

@@ -133,14 +133,16 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record
 `llmstxt.py` builds an llms.txt to the llmstxt.org format from pages that exist on disk. Set
 `WEBSTER_BASE_URL` when the docs are published at a URL rather than read in the repo.
 
-`drift.py record` stores the current HEAD, a hash of the docs tree, and every anchor the pages
-cite. That is what makes the next `/webster:audit` able to tell you which pages a diff
+`drift.py record <docs-dir>` stores the current HEAD, a hash of the docs tree, and every anchor
+the pages cite. It reports how many anchors it found: **if that number is 0, no claim in the set
+can ever be re-verified**, and the Sourced gate fails rather than passing quietly. That is what makes the next `/webster:audit` able to tell you which pages a diff
 invalidated instead of re-reading everything.
 
 ## Step 6.5, build the site, because the checkers cannot see this
 
 ```bash
 cd website && npm install && npm run build
+cd .. && python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rendered.py check website/build
 ```
 
 **A green run of every checker above does not mean the documentation works.** All of them read
@@ -154,8 +156,15 @@ set and were only caught by building:
   because `routeBasePath` strips it
 
 The build is the only check that reads the pages the way a reader's browser will. Run it, fix
-what it reports, and run it again until it prints `[SUCCESS]` with no broken links. Then re-run
-`llmstxt.py` and `drift.py record`, because a fix here changes the pages they describe.
+what it reports, and run it again until it prints `[SUCCESS]` with no broken links.
+
+Then run `rendered.py`, which reads the built HTML rather than the markdown. It is what verifies
+that the anchors stayed invisible. A page can build cleanly with a visible `file:line`, a source
+path or a `[?]` in it, and every markdown check will have passed. Anything it reports is on the
+page in front of a reader.
+
+Then re-run `llmstxt.py` and `drift.py record`, because a fix here changes the pages they
+describe.
 
 If the repo has no site, say the build gate is `not_checked` and why. Do not report it as a pass.
 
