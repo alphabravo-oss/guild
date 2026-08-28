@@ -1,0 +1,66 @@
+# evidence-cmd: python3 -c "import ast,pathlib; print(chr(10).join(ast.get_docstring(ast.parse(pathlib.Path('plugins/webster/tests/'+m).read_text())) for m in ('test_survey.py','test_llmstxt.py')))"
+# evidence-for: US-010, AC-039, FR-039
+
+Tests for plugins/webster/scripts/survey.py (spec US-006).
+
+One of the test modules US-010 asks for, one per script.
+
+Which spec fix each test pins, and whether it was RED against the pre-change
+script (FR-039, AC-039). "Red" means the test fails when run against the
+survey.py at the commit before this one; "guard" means it passed there too and
+exists to stop the fix from taking something else away with it.
+
+===========================================================  ==========  =======
+test                                                          fix         state
+===========================================================  ==========  =======
+test_os_getenv_read_lands_in_config_undeclared                FR-018/031  red
+test_env_regex_allows_whitespace_after_the_bracket            FR-018/031  red
+test_env_regex_still_matches_the_go_getenv                    FR-031      guard
+test_black_split_decorator_is_anchored_to_the_at_line         FR-019      red
+test_flask_route_reports_its_declared_methods                 FR-019      red
+test_flask_route_without_methods_reports_get                  FR-019      red
+test_pyproject_name_description_and_scripts                   FR-020/021  red
+test_poetry_legacy_tables_are_the_fallback                    FR-020/021  red
+test_package_json_still_wins_over_pyproject                   FR-020      guard
+test_unparseable_pyproject_leaves_the_survey_running          FR-020      guard
+test_httpexception_detail_and_positional_are_messages         FR-022/032  red
+test_httpexception_dict_detail_contributes_no_message         FR-022      guard
+test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     red
+===========================================================  ==========  =======
+
+Every test drives the script through the conftest ``run_script`` helper. Nothing
+here imports survey.py: it resolves ROOT from ``sys.argv`` at module import
+(survey.py:13), so an import would freeze the wrong root before a test could set
+one (GI-004).
+
+No test uses ``@pytest.mark.skip`` or ``xfail``.
+Tests for plugins/webster/scripts/llmstxt.py (spec US-007).
+
+One of the test modules US-010 asks for, one per script.
+
+Which spec fix each test pins, and whether it was RED against the pre-change
+script (FR-039, AC-039). "Red" means the test fails when run against the
+llmstxt.py at the commit before this one; "guard" means it passed there too and
+exists to stop the fix from taking something else away with it.
+
+=========================================================  =======  =======
+test                                                        fix      state
+=========================================================  =======  =======
+test_html_comment_never_reaches_a_summary                   FR-023   red
+test_stub_pages_are_absent_from_llms_txt                    FR-023   red
+test_first_prose_line_is_taken_without_an_h1                FR-023   red
+test_header_falls_back_to_the_pyproject_project_table       FR-023   red
+test_header_falls_back_to_the_poetry_table                  FR-023   red
+test_package_json_still_wins_for_the_header                 FR-023   guard
+test_frontmatter_description_still_wins                     FR-023   guard
+test_unparseable_pyproject_does_not_break_the_header        FR-023   guard
+test_tomllib_imported_at_module_level_with_the_floor_com…    NFR-002  red
+=========================================================  =======  =======
+
+Every test drives the script through the conftest ``run_script`` helper with
+WEBSTER_ROOT and WEBSTER_DOCS in ``env``. Nothing here imports llmstxt.py: it
+resolves ROOT, DOCS and BASE from ``os.environ`` at module import
+(llmstxt.py:12-14), so an import would freeze the wrong docs directory before a
+test could set one (GI-004).
+
+No test uses ``@pytest.mark.skip`` or ``xfail``.

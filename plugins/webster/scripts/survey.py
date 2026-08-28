@@ -5,6 +5,10 @@ Prints JSON. Every entry carries a file:line anchor, because a surface item
 without an anchor is a claim and this script is not allowed to make claims.
 """
 import json, os, re, subprocess, sys
+# tomllib is standard library from Python 3.11, which is this plugin's floor. Every interpreter
+# webster runs on is 3.11 or newer, so pyproject.toml is parsed directly and there is no
+# fallback path to keep working.
+import tomllib
 
 ROOT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
 SKIP = {".git", "node_modules", "dist", "build", ".next", "out", "vendor",
@@ -41,6 +45,27 @@ def load_json(p):
         return {}
 
 
+def load_toml(p):
+    """Parse a TOML file, or return {} the way load_json does for a broken package.json.
+
+    A pyproject.toml is a syntax error for as long as somebody is editing it, and a survey that
+    dies there hands the writer no surface at all rather than the rest of a working one."""
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+
+def toml_table(data, *keys):
+    """The nested table at `keys`, or {}. TOML permits a scalar where a table is expected."""
+    for key in keys:
+        if not isinstance(data, dict):
+            return {}
+        data = data.get(key)
+    return data if isinstance(data, dict) else {}
+
+
 def anchors(path, pattern, group=None):
     """Return [{value, anchor}] for each regex match, anchored to file:line."""
     out = []
@@ -56,6 +81,19 @@ def anchors(path, pattern, group=None):
 pkg = load_json(os.path.join(ROOT, "package.json"))
 deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
 stack, frameworks = [], []
+
+# A Python project's name and description live in pyproject.toml, and reading only package.json
+# meant every one of them was surveyed under the checkout's directory name. PEP 621's [project]
+# is read first and Poetry's legacy [tool.poetry] second, per field: Poetry 2.0 writes [project]
+# but older files still carry the description under [tool.poetry] alone. package.json still wins
+# when both files exist, because a repo with one is a Node project that happens to also declare
+# Python tooling.
+pyproject = load_toml(os.path.join(ROOT, "pyproject.toml"))
+py_meta = {}
+for _table in (toml_table(pyproject, "project"), toml_table(pyproject, "tool", "poetry")):
+    for _key in ("name", "description"):
+        if _key not in py_meta and isinstance(_table.get(_key), str):
+            py_meta[_key] = _table[_key]
 
 if pkg:
     stack.append("node")
@@ -139,13 +177,43 @@ for p in walk(exts={".ts", ".js", ".mjs"}):
                                     "anchor": hit["anchor"], "source": "node-router"})
 
 # FastAPI / Flask
+PY_DECORATOR = re.compile(r"@\w+\.(get|post|put|patch|delete|route)\s*\(\s*['\"]([^'\"]+)")
+# Black and ruff move the path onto its own line as soon as a decorator carries two keyword
+# arguments and passes 88 columns, which is the ordinary shape of a FastAPI route. Matching one
+# line at a time reported those apps as having no HTTP surface at all, and an empty surface
+# reads as "nothing to document" rather than as a miss.
+PY_DECORATOR_OPEN = re.compile(r"^\s*@\w+\.(?:get|post|put|patch|delete|route)\s*\(\s*$")
+# Flask states its verbs in a methods= list and defaults to GET without one. Reporting the
+# literal word ROUTE named a verb no client can send, so the docs written from it were wrong
+# in the one detail a reader copies.
+FLASK_METHODS = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
+
 if "python" in stack:
     for p in walk(exts={".py"}):
-        for hit in anchors(p, r"@\w+\.(get|post|put|patch|delete|route)\s*\(\s*['\"]([^'\"]+)"):
-            m = re.search(r"\.(get|post|put|patch|delete|route)\s*\(\s*['\"]([^'\"]+)", hit["value"])
-            if m:
-                surface["http"].append({"method": m.group(1).upper(), "path": m.group(2),
-                                        "anchor": hit["anchor"], "source": "python-decorator"})
+        lines = read(p).splitlines()
+        for i, line in enumerate(lines, 1):
+            joined = line
+            if PY_DECORATOR_OPEN.match(line):
+                # Six lines is past any real decorator: an unbalanced paren means the line was
+                # something else and the join must stop rather than swallow the function.
+                for cont in lines[i:i + 6]:
+                    joined += " " + cont.strip()
+                    if joined.count("(") <= joined.count(")"):
+                        break
+            m = PY_DECORATOR.search(joined)
+            if not m:
+                continue
+            verb, path = m.group(1), m.group(2)
+            methods = [verb.upper()]
+            if verb == "route":
+                listed = FLASK_METHODS.search(joined)
+                methods = ([v.upper() for v in re.findall(r"['\"]([A-Za-z]+)['\"]", listed.group(1))]
+                           if listed else []) or ["GET"]
+            for method in methods:
+                # The anchor is the @ line, not the line the path happened to land on: the
+                # decorator is what a reader is sent to read.
+                surface["http"].append({"method": method, "path": path,
+                                        "anchor": f"{rel(p)}:{i}", "source": "python-decorator"})
 
 # Go handlers
 if "go" in stack:
@@ -175,6 +243,21 @@ for key in ("main", "types", "module"):
     if pkg.get(key):
         surface["exports"].append({"name": key, "target": pkg[key], "anchor": "package.json:1"})
 
+# Python entry points, in the same {name, target, anchor} shape as the package.json bin entries
+# above: a reader asking which command to type should not have to know which packaging tool
+# wrote the file. PEP 621's tables come first and Poetry's legacy one is the fallback, so a
+# Poetry 2.0 file that declares both does not report every console script twice. The anchor is
+# pyproject.toml:1 because tomllib reports no line numbers.
+seen_cli = {c["name"] for c in surface["cli"]}
+for _table in (toml_table(pyproject, "project", "scripts"),
+               toml_table(pyproject, "project", "gui-scripts"),
+               toml_table(pyproject, "tool", "poetry", "scripts")):
+    for k, v in _table.items():
+        if k in seen_cli:
+            continue
+        seen_cli.add(k)
+        surface["cli"].append({"name": k, "target": v, "anchor": "pyproject.toml:1"})
+
 # Env vars and specs
 for envf in (".env.example", ".env.sample", ".env.template"):
     p = os.path.join(ROOT, envf)
@@ -184,11 +267,16 @@ for envf in (".env.example", ".env.sample", ".env.template"):
 # Env vars read from code. .env.example is what someone remembered to write down;
 # this is what the code actually reads, and the difference is usually the finding.
 declared = {c["name"] for c in surface["config"]}
+# One pattern, named once. It used to be pasted out in full twice — once to find the line and
+# once to pick the name back out of it — and two copies of a regex this size drift apart on the
+# first edit that only remembers one of them. os.getenv is the reading a Python codebase
+# actually uses and was the branch missing from both copies, so a variable read only that way
+# was surveyed as declared nowhere and reported as nothing at all. \s* after the bracket
+# because a formatter is free to put a space there.
+ENV_READ = r"""(?:process\.env\.([A-Z][A-Z0-9_]+)|process\.env\[\s*["']([A-Z][A-Z0-9_]+)|env\[\s*["']([A-Z][A-Z0-9_]+)|os\.environ(?:\.get)?[\[(]\s*["']([A-Z][A-Z0-9_]+)|os\.getenv\(\s*["']([A-Z][A-Z0-9_]+)|os\.Getenv\(\s*["']([A-Z][A-Z0-9_]+))"""
 for p in walk(exts={".ts", ".tsx", ".js", ".mjs", ".py", ".go"}):
-    for hit in anchors(p, r"""(?:process\.env\.([A-Z][A-Z0-9_]+)|process\.env\[["']([A-Z][A-Z0-9_]+)|env\[["']([A-Z][A-Z0-9_]+)|os\.environ(?:\.get)?[\[(]["']([A-Z][A-Z0-9_]+)|os\.Getenv\(["']([A-Z][A-Z0-9_]+))"""):
-        name = next((g for g in re.search(
-            r"""(?:process\.env\.([A-Z][A-Z0-9_]+)|process\.env\[["']([A-Z][A-Z0-9_]+)|env\[["']([A-Z][A-Z0-9_]+)|os\.environ(?:\.get)?[\[(]["']([A-Z][A-Z0-9_]+)|os\.Getenv\(["']([A-Z][A-Z0-9_]+))""",
-            hit["value"]).groups() if g), None)
+    for hit in anchors(p, ENV_READ):
+        name = next((g for g in re.search(ENV_READ, hit["value"]).groups() if g), None)
         if name and name not in declared:
             declared.add(name)
             surface["config"].append({"name": name, "anchor": hit["anchor"],
@@ -237,18 +325,30 @@ for p in walk(exts={".tsx", ".jsx", ".vue", ".svelte"}):
 
 # What the product says when something goes wrong. A reader meets these before they meet any
 # page of documentation, so troubleshooting is written against them rather than around them.
+MESSAGE_LITERAL = re.compile(
+    r"""(?:Error|error|throw|toast|notify|message)[^"'\n]{0,30}["']([A-Z][^"']{12,110})["']""")
+# FastAPI says none of those words. It raises HTTPException, so every 404 and 409 text in a
+# FastAPI app was missing from the surface the troubleshooting page is written against, and the
+# page ended up paraphrasing errors the reader can read for themselves. The gap before the
+# string admits neither a quote nor { nor [, which is what keeps a dict or list detail out: only
+# a string literal is text somebody reads. Four characters is the floor rather than the twelve
+# above, because "Not found" is the whole of a real 404.
+HTTP_EXCEPTION_MESSAGE = re.compile(
+    r"""HTTPException\([^"'\n{\[]{0,40}?(?:detail\s*=\s*)?["']([A-Z][^"']{3,110})["']""")
+
 seen_msgs = set()
 for p in walk(exts={".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"}):
     r = rel(p)
     if re.search(r"(^|/)(test|tests|__tests__)/|\.(test|spec)\.", r):
         continue
     for i, line in enumerate(read(p).splitlines(), 1):
-        for m in re.finditer(r"""(?:Error|error|throw|toast|notify|message)[^"'\n]{0,30}["']([A-Z][^"']{12,110})["']""", line):
-            v = m.group(1).strip()
-            if v.lower() in seen_msgs or "{" in v:
-                continue
-            seen_msgs.add(v.lower())
-            user_surface["messages"].append({"text": v, "anchor": f"{r}:{i}"})
+        for pat in (MESSAGE_LITERAL, HTTP_EXCEPTION_MESSAGE):
+            for m in pat.finditer(line):
+                v = m.group(1).strip()
+                if v.lower() in seen_msgs or "{" in v:
+                    continue
+                seen_msgs.add(v.lower())
+                user_surface["messages"].append({"text": v, "anchor": f"{r}:{i}"})
 
 # Subcommands a person types, which is the user surface of anything without a screen.
 seen_cmds = set()
@@ -341,8 +441,8 @@ test_files = [rel(p) for p in walk(exts={".ts", ".tsx", ".js", ".py", ".go"})
 
 print(json.dumps({
     "root": ROOT,
-    "name": pkg.get("name") or os.path.basename(ROOT),
-    "description": pkg.get("description", ""),
+    "name": pkg.get("name") or py_meta.get("name") or os.path.basename(ROOT),
+    "description": pkg.get("description") or py_meta.get("description") or "",
     "stack": stack,
     "frameworks": frameworks,
     "surface": surface,

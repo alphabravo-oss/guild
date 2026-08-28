@@ -1,0 +1,13 @@
+# evidence-cmd: WEBSTER_ROOT=plugins/webster/tests/fixtures/repo WEBSTER_DOCS=docs python3 plugins/webster/scripts/llmstxt.py
+# evidence-for: US-007, AC-028, AC-029, AC-031, FR-023
+
+# fixapp
+
+> A small item store served over HTTP.
+
+## Optional
+
+- [Create an item](docs/items/create-item.md): This page shows you how to add an item to your store.
+- [Delete an item](docs/items/delete-item.md): This page shows you how to remove an item you no longer need.
+- [Item limits](docs/items/no-audience.md): Each store can hold a fixed number of items. When the limit is reached, new items are refused.
+

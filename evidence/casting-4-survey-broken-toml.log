@@ -1,0 +1,7 @@
+# evidence-cmd: rm -rf /tmp/webster-c4-toml && mkdir -p /tmp/webster-c4-toml && printf '%s\n' '[project]' 'name = ' 'description = "never read"' > /tmp/webster-c4-toml/pyproject.toml && printf '%s\n' 'import os' '' 'X = os.getenv("STILL_FOUND")' > /tmp/webster-c4-toml/app.py && python3 plugins/webster/scripts/survey.py /tmp/webster-c4-toml > /tmp/webster-c4-toml.json; echo "exit: $?"; python3 -c "import json; d=json.load(open('/tmp/webster-c4-toml.json')); print('name:', d['name']); print('stack:', d['stack']); print('config:', json.dumps(d['surface']['config']))"
+# evidence-for: AC-027
+
+exit: 0
+name: webster-c4-toml
+stack: ['python']
+config: [{"name": "STILL_FOUND", "anchor": "app.py:3", "undeclared": true}]

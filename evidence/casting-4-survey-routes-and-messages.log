@@ -1,0 +1,33 @@
+# evidence-cmd: rm -rf /tmp/webster-c4-routes && mkdir -p /tmp/webster-c4-routes/src && printf '%s\n' '[project]' 'name = "c4routes"' > /tmp/webster-c4-routes/pyproject.toml && printf '%s\n' 'from fastapi import FastAPI, HTTPException' '' 'app = FastAPI()' '' '' '@app.post(' '    "/items/{item_id}",' '    response_model=Item,' ')' 'def create_item(item_id: int):' '    raise HTTPException(status_code=404, detail="Item not found")' '' '' '@app.route("/users", methods=["POST"])' 'def users():' '    raise HTTPException(404, "Not found")' '' '' '@app.route("/health")' 'def health():' '    raise HTTPException(status_code=422, detail={"loc": "Body of the request"})' > /tmp/webster-c4-routes/src/api.py && python3 plugins/webster/scripts/survey.py /tmp/webster-c4-routes | python3 -c "import json,sys; d=json.load(sys.stdin); print('http:', json.dumps(sorted(d['surface']['http'], key=lambda e: (e['path'], e['method'])), indent=1)); print('messages:', json.dumps(d['user_surface']['messages'], indent=1))"
+# evidence-for: AC-023, AC-024, AC-026, FR-019, FR-022, FR-032
+
+http: [
+ {
+  "method": "GET",
+  "path": "/health",
+  "anchor": "src/api.py:19",
+  "source": "python-decorator"
+ },
+ {
+  "method": "POST",
+  "path": "/items/{item_id}",
+  "anchor": "src/api.py:6",
+  "source": "python-decorator"
+ },
+ {
+  "method": "POST",
+  "path": "/users",
+  "anchor": "src/api.py:14",
+  "source": "python-decorator"
+ }
+]
+messages: [
+ {
+  "text": "Item not found",
+  "anchor": "src/api.py:11"
+ },
+ {
+  "text": "Not found",
+  "anchor": "src/api.py:16"
+ }
+]
