@@ -182,6 +182,13 @@ IDENT_ALLOW = {name.lower() for name in (
  # Names a page for someone who uses the product will write and mean the product, not a symbol.
  "iPad", "iCloud", "YouTube", "LinkedIn", "PayPal", "WhatsApp", "eBay", "OAuth", "OpenID",
  "WebSocket", "gRPC",
+ # A version digit makes a different string, and the compare is exact, so allowing `OAuth`
+ # did nothing for the `OAuth2` a page actually writes, and `IPv4` was never here at all.
+ # Both were reported as internal symbols on a user page naming a public standard.
+ # HTTP2 and HTTP3 are deliberately not here: they hold no lowercase letter, so CODE_IDENT
+ # cannot produce them and an entry would be the unreachable kind this file has been
+ # removing. An unexpanded HTTP2 is the acronym check's to judge, not this one's.
+ "IPv4", "IPv6", "OAuth1", "OAuth2",
 )}
 ENV_VAR = re.compile(r"`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`")
 # Any backticked path, not just the two prefixes an API happens to use: `/dashboard` and
@@ -237,23 +244,30 @@ def load_survey_allow(path):
         term = term.strip().lower()
         terms.add(term)
         # The screen survey.py calls "Data Sources" is the DataSourcesPage component, and a
-        # page writes it as `DataSources`. Every screen name survey.py derives from a filename
-        # is spaced like that (survey.py:407-409), so the spaced form on its own could never
-        # equal a backticked token and the whole screens leg allowed nothing.
+        # page writes it as `DataSources`. survey.py's component-per-screen leg splits the
+        # CamelCase base name on its capitals before recording it, so every name it emits is
+        # spaced and the spaced form on its own could never equal a backticked token: the whole
+        # screens leg allowed nothing.
         terms.add("".join(term.split()))
 
     try:
         with open(path, encoding="utf-8") as fh:
             user_surface = json.load(fh).get("user_surface") or {}
-        # A label carries `text` (survey.py:324); a command carries `name` (survey.py:364).
+        # The shape survey.py writes: user_surface.labels[] carry `text`, user_surface
+        # .commands[] carry `name`. Field paths rather than survey.py line numbers, because
+        # nothing re-reads survey.py to notice when a cited line has moved — the four line
+        # numbers that used to be in this function all pointed at the wrong statement, in a
+        # plugin whose whole subject is anchors that no longer resolve. A field path and a
+        # function name below are greppable, and stay true across an edit that moves them.
         for key, field in (("labels", "text"), ("commands", "name")):
             for item in user_surface.get(key) or []:
                 add(item.get(field) if isinstance(item, dict) else item)
-        # A screen carries `path` always and `name` only sometimes (survey.py:373-380): the
-        # router and App-Router legs record a path and no name at all, so reading `name` alone
-        # transported nothing for them. The last segment of the path without its extension is
-        # the word a page writes. The path itself is deliberately not added — a screen at
-        # /dashboard must not excuse the `/dashboard` route finding the lens exists to make.
+        # user_surface.screens[] always carry `path` and carry `name` only sometimes:
+        # survey.py's add_screen() takes the name as an optional argument, and both the router
+        # leg and the App-Router leg call it without one, so reading `name` alone transported
+        # nothing for them. The last segment of the path without its extension is the word a
+        # page writes. The path itself is deliberately not added — a screen at /dashboard must
+        # not excuse the `/dashboard` route finding the lens exists to make.
         for item in user_surface.get("screens") or []:
             if not isinstance(item, dict):
                 add(item)
@@ -277,9 +291,10 @@ ARCH_SOFT = re.compile(
 # An acronym a reader has not met is the most common way a page assumes knowledge of the product.
 ACRONYM = re.compile(r"\b([A-Z][A-Z0-9]{1,5})s?\b")
 # Acronyms nobody expands, because expanding them would read as condescension. Every entry has
-# to be reachable by the regex above — 2 to 6 characters — or it is a promise the check does not
-# keep. Four entries were not, and the last real run reported the words they were meant to
-# excuse.
+# to be reachable by the regex above — 2 to 6 characters — or it is dead weight: the regex never
+# produces the token, so the entry excuses nothing and the word is never reported either. Four
+# entries were unreachable in exactly that way. They are listed as removed at the end of the set
+# so that the next reader does not put them back.
 UNIVERSAL_ACRONYMS = {
  "US", "UK", "EU", "ID", "OK", "FAQ", "AM", "PM", "USB", "PDF", "CSV", "URL", "HTTP", "HTTPS",
  "HTML", "CSS", "JSON", "YAML", "XML", "ZIP", "GPS", "SMS", "PC", "TV", "IT", "AI", "OS", "RAM",
@@ -294,9 +309,11 @@ UNIVERSAL_ACRONYMS = {
  # letters and never by the words behind them.
  "UI", "UX", "SDK", "SSH", "SSL", "TLS", "VPN", "DNS", "IP",
  # Removed: "FAQ" and "OK" were each listed twice, so one copy of each is gone.
- # Removed: "N", "A", "I" — ACRONYM needs two characters, so none of them could ever match.
- # Removed: "WARNING" — seven characters against a six-character ceiling, so it was allowlisted
- # and reported at the same time. A-034 keeps the ceiling and drops the entry.
+ # Removed: "N", "A", "I" — ACRONYM needs two characters, so none of them could ever match and
+ # the three entries excused nothing.
+ # Removed: "WARNING" — seven characters against ACRONYM's six-character ceiling, so it could
+ # never match either. The entry read as a promise to excuse a word the check cannot raise.
+ # A-034 keeps the ceiling and drops the entry rather than widening the regex to reach it.
 }
 
 # The plan this plugin writes for itself is a working document that happens to live in the docs

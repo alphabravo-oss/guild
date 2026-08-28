@@ -1,7 +1,7 @@
 """Tests for plugins/webster/scripts/doctype.py — the lens, the allowlists, the stubs.
 
 One red-to-green test per fix (US-010, AC-039). Measured against commit 2abe081, the last one
-before this change: 18 of the 24 tests in the first index below fail there and all 24 pass
+before this change: 19 of the 25 tests in the first index below fail there and all 25 pass
 after. The other six are negative controls that must pass on both sides, and each is marked
 (control) below — a control that went red would mean the fix broke something it was supposed to
 leave alone. The red-first property is recorded here rather than enforced at runtime (FR-039):
@@ -24,6 +24,7 @@ Each test names the fix it pins:
     test_operator_page_is_still_reported_for_a_symbol
 - FR-015 IDENT_ALLOW compares lowercased and carries real product names (OT-016)
     test_product_names_are_not_internal_symbols
+    test_no_ident_allow_entry_is_all_caps
 - FR-013 / CT-003 WEBSTER_SURVEY extends the allowlist at runtime (OT-017)
     test_survey_labels_extend_the_allowlist
     test_without_the_survey_the_same_label_is_reported  (control)
@@ -45,27 +46,31 @@ Each test names the fix it pins:
 - FR-040 / CT-004 a defect on a stub beats not-checked (OT-042)
     test_all_stub_tree_with_a_defect_exits_one
 
-Three more tests are measured against commit 9859317 instead, because they pin defects the
+Four more tests are measured against commit 9859317 instead, because they pin defects the
 widening above introduced rather than the ones it fixed:
 
 - FR-010 / AC-011 the widened CODE_IDENT still excludes ALL-CAPS
     test_all_caps_with_a_digit_is_not_an_internal_symbol
+- FR-010 / FR-015 / AC-011 a versioned standard name is not an internal symbol
+    test_versioned_standard_names_are_not_internal_symbols
 - FR-013 / CT-003 / AC-016 the screens leg carries a term a page can actually write
     test_survey_screens_carry_a_term_a_page_can_write
 - FR-040 / CT-004 zero pages checked is never exit 0
     test_empty_docs_tree_is_not_checked
 
-The first of those three passes at 2abe081 as well — the narrow CODE_IDENT could not match
-`HTTP2` either — which is what makes it a regression guard rather than a fix guard. The other
-two are red on both sides.
+The first two of those four pass at 2abe081 as well — the narrow CODE_IDENT could match neither
+`HTTP2` nor `IPv4` — which is what makes them regression guards rather than fix guards. The
+other two are red on both sides.
 
 Every test drives the script through the conftest ``run_script`` helper (GI-004, CT-007) and
 every assertion quotes the captured exit code, stdout and stderr, because a bare
 ``assert result.returncode == 1`` tells a reader nothing about which of eight rules fired.
 
-Two tests read ``scripts/doctype.py`` as text rather than running it. FR-041 removes an entry
-that could never match, so it has no observable behaviour to assert against; the source is the
-only place the promise lives. Nothing here imports doctype (GI-004).
+Two tests read ``scripts/doctype.py`` as text rather than running it, because both pin an
+allowlist entry that could never match. An entry the matching regex cannot produce has no
+observable behaviour to assert against in either direction: it excuses nothing and nothing is
+reported, so the source is the only place the promise lives. Nothing here imports doctype
+(GI-004).
 
 No test uses ``@pytest.mark.skip`` or ``xfail``.
 """
@@ -134,9 +139,14 @@ def docs_dir(tmp_path: Path) -> Path:
 
 
 def survey_json(tmp_path: Path, *, labels=(), screens=(), commands=()) -> Path:
-    """A saved survey.py document, in the shape survey.py actually writes: a label carries
-    `text` (survey.py:324), a command carries `name` (survey.py:364), and a screen carries a
-    path and, on the component-per-screen leg only, a name (survey.py:373-380)."""
+    """A saved survey.py document, in the shape survey.py actually writes.
+
+    user_surface.labels[] carry `text`, user_surface.commands[] carry `name`, and
+    user_surface.screens[] carry `path` always and `name` only on the component-per-screen leg,
+    because survey.py's add_screen() takes the name as an optional argument. Field paths and a
+    function name rather than survey.py line numbers: this docstring is a claim about another
+    file that nothing re-reads, and the line numbers that used to be here all pointed at the
+    wrong statement."""
     path = tmp_path / "webster-survey.json"
     path.write_text(json.dumps({
         "user_surface": {
@@ -209,6 +219,34 @@ def test_all_caps_with_a_digit_is_not_an_internal_symbol(run_script, docs_dir):
     )
     assert result.returncode == 0, (
         f"Expected exit 0 on a page naming only all-caps tokens.\n{outcome(result)}"
+    )
+
+
+def test_versioned_standard_names_are_not_internal_symbols(run_script, docs_dir):
+    """FR-010 / FR-015 / AC-011: the version digit on a public standard is not a symbol.
+
+    IDENT_ALLOW is compared exactly, so `OAuth` in the set did nothing for the `OAuth2` a page
+    actually writes, and `IPv4` was in neither the set nor the narrow CODE_IDENT that preceded
+    the widening. Both arrived as findings only once CODE_IDENT learned to open on an acronym,
+    which is why this is measured against 9859317 rather than 2abe081."""
+    write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
+               "# Guide\n\nThe address is `IPv4` or `IPv6`, and you sign in with `OAuth2` "
+               "or `OAuth1`. None of that lets the page call `getUser`.\n")
+
+    result = check(run_script, docs_dir)
+
+    for name in ("`IPv4`", "`IPv6`", "`OAuth2`", "`OAuth1`"):
+        assert f"an internal symbol name, {name}" not in result.stdout, (
+            f"{name} names a public standard, which a user page is allowed to do. The exact "
+            f"compare punished the versioned spelling of a name the set already "
+            f"allowed.\n{outcome(result)}"
+        )
+    assert "an internal symbol name, `getUser`" in result.stdout, (
+        f"The control: the symbol half of the lens still fires, so the four assertions above "
+        f"mean something.\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"Expected exit 1 from `getUser` alone.\n{outcome(result)}"
     )
 
 
@@ -321,6 +359,41 @@ def test_product_names_are_not_internal_symbols(run_script, docs_dir):
         f"actually writes was reported as an internal.\n{outcome(result)}"
     )
     assert result.returncode == 0, f"Expected exit 0.\n{outcome(result)}"
+
+
+def test_no_ident_allow_entry_is_all_caps():
+    """FR-015 / AC-011: an entry CODE_IDENT cannot produce excuses nothing.
+
+    CODE_IDENT asserts one lowercase letter anywhere in the token (_HAS_LOWER) so that `SHA256`
+    and `EC2` stay the acronym check's business. An IDENT_ALLOW entry with no lowercase letter
+    in it can therefore never be produced, which is the same dead weight FR-041 removed from
+    UNIVERSAL_ACRONYMS. HTTP2 and HTTP3 are what this pins out: they read like the versioned
+    standards `IPv4` and `OAuth2` added beside them, and unlike those two they can never reach
+    this set. The set once held `IOS` for the same reason.
+
+    A necessary condition, not a sufficient one — that an entry contains a lowercase letter
+    does not prove CODE_IDENT matches it. The behavioural half is
+    test_all_caps_with_a_digit_is_not_an_internal_symbol, which proves the regex really does
+    ignore a token without one."""
+    source = DOCTYPE_PY.read_text(encoding="utf-8")
+    start = source.index("IDENT_ALLOW = {name.lower() for name in (")
+    body = source[start:source.index("\n)}", start)]
+
+    entries = set()
+    for line in body.splitlines():
+        entries.update(re.findall(r'"([^"]+)"', line.split("#", 1)[0]))
+
+    assert entries, f"Found no entries in the IDENT_ALLOW literal at {DOCTYPE_PY}"
+    assert {"IPv4", "OAuth2"} <= entries, (
+        f"`IPv4` and `OAuth2` were reported as internal symbols on a user page naming a public "
+        f"standard, because the compare is exact and only the unversioned `OAuth` was here. "
+        f"Found: {sorted(entries)}"
+    )
+    no_lowercase = sorted(e for e in entries if not any(c.islower() for c in e))
+    assert not no_lowercase, (
+        f"CODE_IDENT's _HAS_LOWER lookahead requires one lowercase letter in the token, so "
+        f"these entries can never be produced and allow nothing: {no_lowercase}"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -481,9 +554,11 @@ def test_api_and_cli_are_not_undefined_jargon(run_script, docs_dir):
 def test_every_universal_acronym_is_reachable_by_the_acronym_regex():
     """FR-041 removes an entry that could never match, which has no observable behaviour.
 
-    Reading the source is the only way to pin it: WARNING was allowlisted and reported at the
-    same time, and widening the regex to reach it would have made every seven-letter capitalised
-    word an acronym candidate. A-034 keeps the ceiling and drops the entry."""
+    Reading the source is the only way to pin it. WARNING is seven characters against ACRONYM's
+    six-character ceiling, so the regex could never produce it: the entry excused a word the
+    check cannot raise, and no run ever reported it. Widening the regex to reach it would have
+    made every seven-letter capitalised word an acronym candidate, so A-034 keeps the ceiling
+    and drops the entry instead."""
     source = DOCTYPE_PY.read_text(encoding="utf-8")
     start = source.index("UNIVERSAL_ACRONYMS = {")
     body = source[start:source.index("\n}", start)]
@@ -495,7 +570,7 @@ def test_every_universal_acronym_is_reachable_by_the_acronym_regex():
     assert entries, f"Found no entries in the UNIVERSAL_ACRONYMS literal at {DOCTYPE_PY}"
     assert "WARNING" not in entries, (
         "WARNING is seven characters against ACRONYM's six-character ceiling, so it could "
-        "never match and was reported despite being allowlisted (FR-041)."
+        "never match: the entry promised to excuse a word this check cannot raise (FR-041)."
     )
     unreachable = sorted(e for e in entries if not 2 <= len(e) <= 6)
     assert not unreachable, (

@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/webster && uvx pytest tests/test_doctype.py -q
+# evidence-for: FR-010, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-033, FR-035, FR-036, FR-039, FR-040, FR-041, AC-011, AC-012, AC-013, AC-014, AC-015, AC-016, AC-017, AC-018, AC-019, AC-020, AC-021, AC-039, AC-043, CT-003, CT-004, US-003, US-004, US-005
+# evidence-volatile: \d+\.\d+s
+
+.............................                                            [100%]
+29 passed in 0.73s
