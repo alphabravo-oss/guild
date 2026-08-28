@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Drift detection for documentation, on the openwiki model.
 
-  record [docs]   store HEAD, a hash of the docs tree, and every anchor the docs cite
+  record [docs]   store HEAD, a hash of the docs tree, every anchor the docs cite, and a hash
+                  of each cited line
   check  [docs]   report what changed since the last record, and which anchors no longer resolve
 
-Exit codes for check: 0 nothing to do, 1 drift found, 2 no manifest or nothing to measure.
-An anchor that no longer resolves is drift, and drift is a P0.
+Statuses and exit codes for check: clean and unrelated_changes exit 0, drift exits 1, and
+no_docs, no_manifest, no_anchors, no_git and head_missing exit 2. An anchor that no longer
+resolves is drift, and drift is a P0. `clean` is reserved for a set where nothing changed at
+all: code that changed but that no page cites is `unrelated_changes`, because a gate that fails
+on ordinary development teaches the reader to stop reading the gate.
 
 The docs directory is the second argument, or WEBSTER_DOCS, or "docs". It was env-var only
 until a real audit pointed the command at a repo whose docs live in `documentation/`, got
@@ -25,13 +29,86 @@ SRC_EXT = ("ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cc|cpp|cs|php|sh
 # instead, which admits a leading dot without matching mid-word.
 ANCHOR = re.compile(rf"(?<![\w./-])([\w./-]+\.(?:{SRC_EXT})):(\d+)\b")
 
+NO_HEAD_NOTE = ("git could not resolve HEAD here, so this manifest records no commit; the next "
+                "check reports no_git instead of comparing the pages against nothing")
+
+
+class GitUnavailable(Exception):
+    """git could not answer the question that was asked.
+
+    Every failure used to become an empty string, and an empty string reads exactly like
+    "nothing changed": a tree with no git, a repo with no commits, and a recorded HEAD that had
+    been rebased away all reported `clean`. A false pass is worse than a finding, because the
+    reader trusts the page exactly as far as they trust the gate.
+    """
+
 
 def git(*args):
+    """Raw stdout from one git command, or GitUnavailable.
+
+    The result is deliberately NOT stripped. `git status --porcelain` puts the two status
+    letters in columns 1-2 and the path from column 4, so a leading space is data: stripping it
+    shifted every ` M path` record left by one, the slice that followed cut the path down to
+    `rc/app/main.py`, no anchor ever matched it, and an uncommitted edit to a cited file
+    reported clean. Callers that want one value strip it themselves.
+    """
     try:
         return subprocess.run(["git", "--no-pager", *args], cwd=ROOT, check=True,
-                              capture_output=True, text=True).stdout.strip()
-    except Exception:
-        return ""
+                              capture_output=True, text=True).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        raise GitUnavailable(f"git {' '.join(args)}: {e}") from e
+
+
+def head_sha():
+    """The current HEAD, or None when git cannot say what it is.
+
+    None covers all three of git missing, this not being a repository, and a repository with no
+    commits yet, because from here they are the same fact: the code half cannot be measured.
+    """
+    try:
+        return git("rev-parse", "HEAD").strip()
+    except GitUnavailable:
+        return None
+
+
+def commit_exists(sha):
+    """Whether `sha` is a commit this repository still has.
+
+    `git diff --name-only OLD..HEAD` exits 128 when OLD is gone, which is why this runs before
+    the diff rather than after it; `rev-parse --verify --quiet` is the silent existence test.
+    It only runs once HEAD has already resolved, so a failure here means the recorded commit is
+    missing rather than git being broken.
+    """
+    try:
+        git("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+        return True
+    except GitUnavailable:
+        return False
+
+
+def porcelain_paths(out):
+    """Every path named by `git status --porcelain -z`, renames and copies included.
+
+    A -z record is `XY<space>path` terminated by NUL, and a rename or copy adds a second field
+    holding the path the entry came FROM, after the one it went TO. Both halves matter: a page
+    citing src/app/main.py must go suspect when that file is renamed away, and it is the old
+    path the anchor names. -z is also the only format with no quoting to unescape, so a path
+    with a space or a non-ASCII byte arrives whole instead of arriving as "\\303\\251".
+    """
+    fields = out.split("\0")
+    paths = []
+    i = 0
+    while i < len(fields):
+        record = fields[i]
+        i += 1
+        if len(record) < 4:
+            continue  # the empty field after the final NUL
+        paths.append(record[3:])
+        if "R" in record[:2] or "C" in record[:2]:
+            if i < len(fields) and fields[i]:
+                paths.append(fields[i])
+            i += 1
+    return paths
 
 
 def doc_files():
@@ -94,6 +171,35 @@ def resolves(anchor):
     return True, ""
 
 
+def cited_line(anchor):
+    """The text of the line an anchor points at, or None when it cannot be read."""
+    target, _, lineno = anchor.rpartition(":")
+    path = os.path.join(ROOT, target)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f, 1):
+                if i == int(lineno):
+                    return line
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def line_hash(anchor):
+    """16 hex characters of sha256 over the cited line, surrounding whitespace stripped.
+
+    Stripped, because reindenting a block moves no claim: the sentence the page makes about
+    that line is still true, and reporting drift for it would train the reader to re-record
+    without reading. Truncated to 16, because this is a change detector and not a signature,
+    and a manifest is a file people open. Returns None when the line is not there at all, which
+    is a broken anchor and is reported under that name with its own reason.
+    """
+    line = cited_line(anchor)
+    if line is None:
+        return None
+    return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()[:16]
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "check"
     if not os.path.isdir(DOCS):
@@ -101,16 +207,28 @@ def main():
 
     paths = doc_files()
     anchors = collect_anchors(paths)
-    head = git("rev-parse", "HEAD")
+    head = head_sha()
 
     if mode == "record":
         os.makedirs(DOCS, exist_ok=True)
+        # An anchor whose line number is past the end of its file gets no entry: it is already
+        # a broken anchor at check time, and inventing a hash for a line that does not exist
+        # would report the right failure under the wrong name.
+        line_hashes = {}
+        for a in sorted(anchors):
+            h = line_hash(a)
+            if h is not None:
+                line_hashes[a] = h
         with open(MANIFEST, "w") as f:
-            json.dump({"gitHead": head, "docsHash": tree_hash(paths),
+            json.dump({"gitHead": head or None, "docsHash": tree_hash(paths),
                        "pages": [os.path.relpath(p, ROOT) for p in paths],
-                       "anchors": anchors}, f, indent=2)
-        print(json.dumps({"status": "recorded", "gitHead": head,
-                          "pages": len(paths), "anchors": len(anchors)}))
+                       "anchors": anchors, "lineHashes": line_hashes}, f, indent=2)
+        # A recorded HEAD of "" was indistinguishable from a HEAD that still matched, so check
+        # skipped the diff and called it clean. null plus a note says which one it is.
+        print(json.dumps({"status": "recorded", "gitHead": head or None,
+                          "pages": len(paths), "anchors": len(anchors),
+                          "lineHashes": len(line_hashes),
+                          "note": "" if head else NO_HEAD_NOTE}))
         return 0
 
     # check
@@ -126,12 +244,48 @@ def main():
         return 2
 
     old = json.load(open(MANIFEST))
-    changed = []
-    if old.get("gitHead") and head and head != old["gitHead"]:
-        changed = [f for f in git("diff", "--name-only", f"{old['gitHead']}..HEAD").splitlines()
-                   if f and not f.startswith(os.path.relpath(DOCS, ROOT) + "/")]
-    dirty = [l[3:] for l in git("status", "--short", "--untracked-files=all").splitlines()
-             if l[3:] and not l[3:].startswith(os.path.relpath(DOCS, ROOT) + "/")]
+    recorded = old.get("gitHead")
+    inside_docs = os.path.relpath(DOCS, ROOT) + "/"
+
+    # The code half. A git question that cannot be asked becomes a status of its own rather
+    # than an empty answer; not_checked holds the one that stops the run at exit 2.
+    changed, dirty, not_checked, git_note = [], [], "", ""
+    if head is None:
+        not_checked = "no_git"
+        git_note = ("git could not resolve HEAD (not installed, not a repository, or no commits "
+                    "yet), so nothing here compared the pages against the code")
+    else:
+        try:
+            dirty = [p for p in porcelain_paths(git("status", "--porcelain", "-z",
+                                                    "--untracked-files=all"))
+                     if p and not p.startswith(inside_docs)]
+            if recorded and not commit_exists(recorded):
+                not_checked = "head_missing"
+                git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
+                            "more, so the diff since the record cannot be taken; re-record")
+            elif recorded and recorded != head:
+                changed = [f for f in git("diff", "--name-only", f"{recorded}..HEAD").splitlines()
+                           if f and not f.startswith(inside_docs)]
+        except GitUnavailable as e:
+            # git answered the first question and not the second. Reporting the half-answer as
+            # a result is the false pass this whole file exists to stop.
+            not_checked, changed, dirty = "no_git", [], []
+            git_note = f"git stopped answering part-way through the check ({e})"
+
+    # The line half. A cited file can be touched without the cited line moving, and a cited
+    # line can change under a file name that a diff since the record never names, so the two
+    # halves of this check catch different failures and neither one subsumes the other.
+    recorded_hashes = old.get("lineHashes")
+    hashes = "checked" if isinstance(recorded_hashes, dict) else "not_recorded"
+    mismatched = []
+    if hashes == "checked":
+        for a in sorted(anchors):
+            want = recorded_hashes.get(a)
+            # A line that is gone is already in broken_anchors with the reason it is gone.
+            # Counting it a second time here would report one failure as two.
+            now = line_hash(a) if want else None
+            if want and now is not None and now != want:
+                mismatched.append(a)
 
     # a page is suspect when code it cites appears in the changed set
     suspect = {}
@@ -141,35 +295,64 @@ def main():
             for page in cited_by:
                 suspect.setdefault(page.split(":")[0], []).append(a)
 
-    clean = not broken and not suspect and tree_hash(paths) == old.get("docsHash") and not changed
     unanchored = [os.path.relpath(p, ROOT) for p in paths
                   if os.path.relpath(p, ROOT) not in {c.split(":")[0]
                                                       for v in anchors.values() for c in v}]
+    docs_edited = tree_hash(paths) != old.get("docsHash")
+    # Committed since the record and uncommitted right now are both "the code moved". A file
+    # in both sets is one changed file rather than two.
+    code_files_changed = len(set(changed) | set(dirty))
     # A set with no anchors resolves every anchor it has, which is not the same as being
     # checked. Reporting that as clean is a false pass, and a false pass is worse than a
     # finding because the reader trusts the page exactly as far as they trust the gate.
     nothing_to_measure = not anchors and paths
-    status = ("no_anchors" if nothing_to_measure
-              else "clean" if clean else "drift")
+
+    # Precedence, least measurable first. A set that cannot be measured at all, then a git
+    # question that could not be asked, then the findings, then the changes that are nobody's
+    # problem. The two exit-2 statuses outrank drift because "I could not check" is a different
+    # claim from "I checked and it is wrong" — and the anchors half is printed under both.
+    if nothing_to_measure:
+        status = "no_anchors"
+    elif not_checked:
+        status = not_checked
+    elif broken or suspect or mismatched:
+        status = "drift"
+    elif code_files_changed or docs_edited:
+        status = "unrelated_changes"
+    else:
+        status = "clean"
+
+    notes = []
+    if nothing_to_measure:
+        notes.append("no page in this set cites a source, so nothing here can be re-verified "
+                     "and the Sourced gate cannot report a pass")
+    if git_note:
+        notes.append(git_note)
+    if status == "unrelated_changes":
+        notes.append(f"{code_files_changed} code file(s) changed since the record and no page "
+                     "cites any of them" if code_files_changed else
+                     "pages were edited since the record and no code a page cites changed")
+    if unanchored:
+        notes.append(f"{len(unanchored)} of {len(paths)} pages cite no source")
+
     print(json.dumps({
         "status": status,
-        "gitHead": {"recorded": old.get("gitHead"), "current": head},
-        "docs_edited_since_record": tree_hash(paths) != old.get("docsHash"),
-        "code_files_changed": len(changed),
+        "gitHead": {"recorded": recorded, "current": head},
+        "docs_edited_since_record": docs_edited,
+        "code_files_changed": code_files_changed,
         "anchors": len(anchors),
         "pages": len(paths),
         "pages_with_no_anchor": len(unanchored),
         "unanchored_sample": sorted(unanchored)[:12],
         "broken_anchors": broken,
         "suspect_pages": suspect,
-        "note": ("no page in this set cites a source, so nothing here can be re-verified and "
-                 "the Sourced gate cannot report a pass" if nothing_to_measure else
-                 f"{len(unanchored)} of {len(paths)} pages cite no source"
-                 if unanchored else ""),
+        "hashes": hashes,
+        "hash_mismatches": mismatched,
+        "note": "; ".join(notes),
     }, indent=2))
-    if nothing_to_measure:
+    if status in ("no_anchors", "no_git", "head_missing"):
         return 2
-    return 0 if clean else 1
+    return 1 if status == "drift" else 0
 
 
 if __name__ == "__main__":
