@@ -2,43 +2,46 @@
 
 Every test drives the script through the conftest ``run_script`` helper as a
 subprocess (GI-004, CT-007). Nothing here imports drift.py: it resolves ROOT,
-the docs directory and the manifest path at module import (``drift.py:20-23``),
-so an import would freeze the wrong repository before a test could choose one.
+DOCS and MANIFEST at module import, so an import would freeze the wrong tree.
 
-Which fix each test pins, and how it failed on the pre-change script — the RED
-baseline required by FR-039 / AC-039, verified against ``drift.py`` at commit
-2abe081; for rows 15-16 — the pair a GRIND cycle found still false-passing after
-that commit — against ``drift.py`` at commit 9859317; and for the last five, a
-second GRIND cycle's, against ``drift.py`` at commit 19c97f9:
+Which fix each test pins, and how it failed before it. No citation here names a
+line number: drift.py has been rewritten three times since these were written
+and every number had gone stale, so functions and fields name the code instead.
+Every row was measured RED by running this module against ``git show
+cfafe8e:plugins/webster/scripts/drift.py``, the pre-change baseline AC-039
+names; "was at" is the revision the row's last column describes.
 
-===================================================  ==============  ===========================
-test                                                 pins            was, before the fix
-===================================================  ==============  ===========================
-test_uncommitted_edit_to_cited_file_is_drift         FR-001 AC-001   status clean, exit 0
-test_staged_rename_marks_old_and_new_path_dirty      FR-001 AC-002   suspect_pages {}, count 0
-test_check_outside_a_git_repo_reports_no_git         FR-002 AC-003   status drift, exit 1
-test_rebased_away_head_reports_head_missing          FR-037 AC-004   status clean, exit 0
-test_record_writes_a_line_hash_per_anchor            FR-003 OT-005   no lineHashes key at all
-test_changed_cited_line_is_reported_as_a_mismatch    FR-003 AC-005   no hash_mismatches key
-test_hash_mismatch_alone_is_drift                    FR-007          status clean, exit 0
-test_manifest_without_line_hashes_is_not_recorded    FR-004 AC-006   no hashes key
-test_uncited_commit_is_unrelated_changes             FR-005 AC-007   status drift, exit 1
-test_docs_only_edit_is_unrelated_changes             FR-008 AC-008   status drift, exit 1
-test_broken_anchor_outranks_unrelated_churn          FR-007 AC-009   no hashes key
-test_nothing_changed_since_record_is_clean           FR-005 AC-010   no hashes key
-test_record_without_a_commit_writes_a_null_head      FR-009 OT-010   gitHead "", no note
-test_anchor_past_end_of_file_gets_no_line_hash       FR-034          no lineHashes key at all
-test_non_ascii_path_under_a_c_locale_still_answers   FR-002 FR-037   traceback, no JSON, exit 1
-test_null_head_in_the_manifest_reports_no_git        FR-005 FR-009   status clean, exit 0
-test_unparseable_manifest_reports_no_manifest        FR-006 CT-001   traceback, no JSON, exit 1
-test_latin1_cited_line_byte_change_is_a_mismatch     FR-003 US-001   status clean, exit 0
-test_docs_directory_with_no_pages_is_not_clean       FR-005 FR-006   status clean, exit 0
-test_md_page_citing_a_changed_file_is_drift          FR-005 ST-001   green: the .mdx control
-test_mdx_page_citing_a_changed_file_is_drift         FR-005 FR-006   unrelated_changes, exit 0
-===================================================  ==============  ===========================
+==================================================  =============  =======  =======================
+test                                                pins           was at   was, before the fix
+==================================================  =============  =======  =======================
+test_uncommitted_edit_to_cited_file_is_drift        FR-001 AC-001  cfafe8e  status clean, exit 0
+test_staged_rename_marks_old_and_new_path_dirty     FR-001 AC-002  cfafe8e  suspect_pages {}
+test_docs_below_the_git_root_still_match_anchors    FR-001 US-001  f31b144  unrelated_changes, 0
+test_check_outside_a_git_repo_reports_no_git        FR-002 AC-003  cfafe8e  status drift, exit 1
+test_rebased_away_head_reports_head_missing         FR-037 AC-004  cfafe8e  status clean, exit 0
+test_non_ascii_path_under_a_c_locale_still_answers  FR-002 FR-037  9859317  traceback, no JSON
+test_unparseable_manifest_reports_no_manifest       FR-006 CT-001  19c97f9  traceback, no JSON
+test_wrong_typed_manifest_field_is_no_manifest      FR-006 CT-001  f31b144  traceback, no JSON
+test_record_writes_a_line_hash_per_anchor           FR-003 OT-005  cfafe8e  no lineHashes key
+test_changed_cited_line_is_reported_as_a_mismatch   FR-003 AC-005  cfafe8e  no hash_mismatches key
+test_hash_mismatch_alone_is_drift                   FR-007         cfafe8e  status clean, exit 0
+test_manifest_without_line_hashes_is_not_recorded   FR-004 AC-006  cfafe8e  no hashes key
+test_partly_hashed_manifest_is_not_reported_clean   FR-003 FR-007  f31b144  status clean, exit 0
+test_anchor_past_end_of_file_gets_no_line_hash      FR-034         cfafe8e  no lineHashes key
+test_latin1_cited_line_byte_change_is_a_mismatch    FR-003 US-001  19c97f9  status clean, exit 0
+test_uncited_commit_is_unrelated_changes            FR-005 AC-007  cfafe8e  status drift, exit 1
+test_docs_only_edit_is_unrelated_changes            FR-008 AC-008  cfafe8e  status drift, exit 1
+test_broken_anchor_outranks_unrelated_churn         FR-007 AC-009  cfafe8e  no hashes key
+test_nothing_changed_since_record_is_clean          FR-005 AC-010  cfafe8e  no hashes key
+test_docs_directory_with_no_pages_is_not_clean      FR-005 FR-006  19c97f9  status clean, exit 0
+test_md_page_citing_a_changed_file_is_drift         FR-005 ST-001  19c97f9  green: the .mdx control
+test_mdx_page_citing_a_changed_file_is_drift        FR-005 FR-006  19c97f9  unrelated_changes, 0
+test_record_without_a_commit_writes_a_null_head     FR-009 OT-010  cfafe8e  gitHead "", no note
+test_null_head_in_the_manifest_reports_no_git       FR-005 FR-009  9859317  status clean, exit 0
+==================================================  =============  =======  =======================
 
-The exit map under test is FR-006: clean and unrelated_changes 0, drift 1,
-no_docs / no_manifest / no_anchors / no_git / head_missing 2.
+The exit map under test is FR-006: clean and unrelated_changes 0, drift 1, and
+no_docs / no_manifest / no_anchors / no_git / head_missing / hashes_partial 2.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``. A drift test that skips is the
 same false pass the script is being fixed to stop reporting.
@@ -203,7 +206,7 @@ def record_then_touch_uncited(run_script, repo: Path, ext: str) -> tuple:
 def test_uncommitted_edit_to_cited_file_is_drift(run_script, fixture_repo):
     """FR-001 / AC-001 / OT-001 — the false clean this casting exists to stop.
 
-    RED before the fix: ``git()`` stripped the output of ``git status --short``,
+    RED at cfafe8e: ``git()`` stripped the output of ``git status --short``,
     which removed the leading space from the first ` M src/app/main.py` record;
     the ``[3:]`` slice that followed cut the path down to ``rc/app/main.py``, no
     anchor matched it, and the check printed status clean at exit 0.
@@ -234,7 +237,7 @@ def test_uncommitted_edit_to_cited_file_is_drift(run_script, fixture_repo):
 def test_staged_rename_marks_old_and_new_path_dirty(run_script, fixture_repo):
     """FR-001 / AC-002 / OT-002 — a rename record carries two paths, and both count.
 
-    RED before the fix: ``R  src/app/main.py -> src/app/server.py`` was sliced to
+    RED at cfafe8e: ``R  src/app/main.py -> src/app/server.py`` was sliced to
     ``rc/app/main.py -> src/app/server.py``, so the page kept citing a file that
     had moved and suspect_pages stayed empty.
     """
@@ -264,13 +267,69 @@ def test_staged_rename_marks_old_and_new_path_dirty(run_script, fixture_repo):
     )
 
 
+def test_docs_below_the_git_root_still_match_anchors(run_script, fixture_repo, tmp_path):
+    """FR-001 / US-001 / AC-001 / ST-001 — git names paths from the repository root.
+
+    Every path in ``git status --porcelain`` and ``git diff --name-only`` is relative to the
+    repository root, never to the directory the command ran in. Anchors, pages and the docs
+    prefix are all relative to WEBSTER_ROOT. Those are one namespace only when WEBSTER_ROOT is
+    itself the repository root, which is the layout the rest of this module builds and is not
+    the layout of an ordinary monorepo.
+
+    RED at f31b144: with the project one directory down, git said ``site/src/app/main.py``
+    where the anchor said ``src/app/main.py``, so the two never intersected. suspect_pages came
+    back empty on every run and ``site/docs/.webster.json`` failed the inside-docs test and was
+    counted as a changed code file — so AC-001's own scenario, one directory lower, printed
+    unrelated_changes at exit 0 with a note reading "no page cites any of them" while the page
+    sat in the tree citing it. No configuration reaches this state; being in a subdirectory is
+    the whole trigger.
+    """
+    mono = tmp_path / "mono"
+    site = mono / "site"
+    mono.mkdir()
+    shutil.copytree(fixture_repo, site, ignore=shutil.ignore_patterns(".git"))
+    git_in(mono, "-c", "init.defaultBranch=main", "init", "-q", ".")
+    git_in(mono, "add", "-A")
+    git_in(mono, "commit", "-q", "-m", "the project one directory below the repository root")
+
+    prefix = git_in(site, "rev-parse", "--show-prefix").stdout.strip()
+    assert prefix == "site/", (
+        "this test needs the docs one directory below the git root; git reports the prefix "
+        f"as {prefix!r}"
+    )
+
+    record(run_script, site)
+    cited = site / CITED_FILE
+    cited.write_text(cited.read_text(encoding="utf-8") + "# edit\n", encoding="utf-8")
+
+    result = run_script("drift.py", "check", "docs", cwd=site)
+    data = parsed(result)
+
+    assert data["suspect_pages"] == {CITING_PAGE: [ANCHOR]}, (
+        f"expected {CITING_PAGE} suspect through {ANCHOR} with the repository root one "
+        f"directory up; got {data['suspect_pages']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected status drift for an uncommitted edit to {CITED_FILE}; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 alongside status drift; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 1, (
+        "expected only the edited source file to count: the manifest, which git names "
+        f"site/{MANIFEST}, is inside the docs tree and is not code; got "
+        f"{data['code_files_changed']}\n{outcome(result)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # FR-002 / FR-006 / FR-037: git failures are statuses, not empty strings
 # ---------------------------------------------------------------------------
 def test_check_outside_a_git_repo_reports_no_git(run_script, fixture_repo):
     """FR-002 / FR-006 / AC-003 / OT-003 — no repository is exit 2, anchors still reported.
 
-    RED before the fix: ``git()`` swallowed the failure into "", so the check
+    RED at cfafe8e: ``git()`` swallowed the failure into "", so the check
     compared nothing, found the broken anchor only, and exited 1 calling it
     drift — the right code for the wrong reason, and clean whenever no anchor
     happened to be broken.
@@ -308,15 +367,22 @@ def test_check_outside_a_git_repo_reports_no_git(run_script, fixture_repo):
 def test_rebased_away_head_reports_head_missing(run_script, fixture_repo):
     """FR-006 / FR-037 / AC-004 / OT-004 — a recorded commit the repo no longer has.
 
-    RED before the fix: ``git diff --name-only OLD..HEAD`` exits 128 when OLD is
+    RED at cfafe8e: ``git diff --name-only OLD..HEAD`` exits 128 when OLD is
     gone, ``git()`` turned that into "", changed came back empty and the check
     printed clean at exit 0.
 
-    ``reset --hard`` alone is not enough to reproduce it: the commit survives in
-    the reflog and ``rev-parse --verify`` still finds it. Expiring the reflog and
-    pruning is what actually rewrites history out of the object store, and the
-    assertion below refuses to run the check until that has demonstrably
-    happened.
+    ``reset --hard`` alone does not reproduce it, and that is a conflict inside
+    the spec rather than a quirk of this test. AC-004 and OT-004 name ``git
+    reset --hard HEAD~1`` as the trigger; Locked FR-006 defines head_missing by
+    ``git rev-parse --verify --quiet SHA^{commit}`` failing. After a reset the
+    commit is still in the object store with the reflog pointing at it, so
+    rev-parse finds it and the status stays clean until gc runs — under the
+    AC-004 wording alone the answer would depend on when the repository last
+    collected garbage. FR-006's definition governs, so the trigger is all three
+    of ``reset --hard``, ``reflog expire --expire=now --all`` and ``gc
+    --prune=now``, and the ``cat-file -e`` probe below refuses to run the check
+    until the commit is demonstrably gone. drift.py's ``commit_exists`` carries
+    the same note.
     """
     recorded = record(run_script, fixture_repo)["gitHead"]
     git_in(fixture_repo, "reset", "--hard", "-q", "HEAD~1")
@@ -347,7 +413,7 @@ def test_rebased_away_head_reports_head_missing(run_script, fixture_repo):
 def test_non_ascii_path_under_a_c_locale_still_answers(run_script, fixture_repo):
     """FR-002 / FR-037 / CT-001 — a byte git prints is not a reason to traceback.
 
-    RED before the fix: stderr carried a UnicodeDecodeError traceback and the
+    RED at 9859317: stderr carried a UnicodeDecodeError traceback and the
     script exited 1 having printed no JSON at all. ``git()`` ran with
     ``text=True``, which decodes with the locale's preferred encoding — US-ASCII
     under LC_ALL=C once PEP 538 locale coercion and PEP 540 UTF-8 mode are both
@@ -400,12 +466,13 @@ def test_non_ascii_path_under_a_c_locale_still_answers(run_script, fixture_repo)
 def test_unparseable_manifest_reports_no_manifest(run_script, fixture_repo):
     """FR-006 / CT-001 — a manifest that cannot be read is exit 2, not a traceback at exit 1.
 
-    RED before the fix: ``old = json.load(open(MANIFEST))`` (``drift.py:255``) had no try
-    around it and no ``encoding=``, so a torn write or a merge conflict left in the file raised
-    JSONDecodeError straight out of main(). The script printed nothing at all on stdout and
-    exited 1 — the code FR-006 reserves for drift — with a traceback on stderr. Nothing had
-    been measured and the caller was told the pages disagree with the code, which is the same
-    class as the swallowed git error one function earlier (``drift.py:57-59`` names it).
+    RED at 19c97f9: the manifest was read with a bare
+    ``old = json.load(open(MANIFEST))`` — no try around it and no ``encoding=`` — so a torn
+    write or a merge conflict left in the file raised JSONDecodeError straight out of main().
+    The script printed nothing at all on stdout and exited 1, the code FR-006 reserves for
+    drift, with a traceback on stderr. Nothing had been measured and the caller was told the
+    pages disagree with the code — the same class as the swallowed git error ``GitUnavailable``
+    was added to stop.
     """
     record(run_script, fixture_repo)
     # What `git merge` leaves behind when two branches both re-recorded.
@@ -437,9 +504,9 @@ def test_unparseable_manifest_reports_no_manifest(run_script, fixture_repo):
         f"{data['note']!r}\n{outcome(result)}"
     )
 
-    # Valid JSON that is not an object is the same failure one step later: every read below
-    # line 255 is `old.get(...)`, so a manifest holding a list raised AttributeError out of
-    # main() and exited 1 for the same wrong reason.
+    # Valid JSON that is not an object is the same failure one step later: every read of the
+    # manifest in check() is `old.get(...)`, so one holding a list raised AttributeError out
+    # of main() and exited 1 for the same wrong reason.
     (fixture_repo / MANIFEST).write_text("[]\n", encoding="utf-8")
 
     result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
@@ -457,13 +524,65 @@ def test_unparseable_manifest_reports_no_manifest(run_script, fixture_repo):
     )
 
 
+def test_wrong_typed_manifest_field_is_no_manifest(run_script, fixture_repo):
+    """FR-006 / CT-001 — a field of the wrong type is reported, not raised.
+
+    RED at f31b144: ``"gitHead": 17`` is truthy, so the check asked git whether ``17^{commit}``
+    existed, git said no, and the head_missing note sliced it — ``recorded[:12]`` on an int
+    raised TypeError out of main(). The script printed nothing on stdout and exited 1, the code
+    FR-006 reserves for drift, with a traceback on stderr: a run that measured nothing telling
+    its caller the pages disagree with the code. A lineHashes that is not an object took the
+    quiet half of the same failure, reported ``hashes: not_recorded`` and passed at exit 0.
+
+    ``read_manifest`` already promised "(None, reason) for every unusable state", and a
+    manifest is a file people edit, merge and generate, so a field holding the wrong type is an
+    ordinary state of it — the same class as the unparseable manifest above, one field deeper.
+    """
+    record(run_script, fixture_repo)
+    good = manifest_of(fixture_repo)
+
+    # int, bool, float and object all reach the same slice; the field is named in the note so
+    # the reader is told which one to fix rather than only that something is wrong.
+    for field, value in (
+        ("gitHead", 17),
+        ("gitHead", True),
+        ("gitHead", 1.5),
+        ("gitHead", {"sha": "0" * 40}),
+        ("lineHashes", [ANCHOR]),
+        ("lineHashes", {ANCHOR: 5}),
+        ("anchors", ANCHOR),
+    ):
+        wrong = dict(good)
+        wrong[field] = value
+        write_manifest(fixture_repo, wrong)
+
+        result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+
+        assert "Traceback" not in result.stderr, (
+            f"expected {field}={value!r} to be reported, not raised\n{outcome(result)}"
+        )
+        data = parsed(result)
+        assert data["status"] == "no_manifest", (
+            f"expected no_manifest for {field}={value!r}; got {data['status']!r}\n"
+            f"{outcome(result)}"
+        )
+        assert result.returncode == 2, (
+            f"expected exit 2 for {field}={value!r}, never the exit 1 that means drift; got "
+            f"{result.returncode}\n{outcome(result)}"
+        )
+        assert field in data["note"], (
+            f"expected the note to name {field} as the field that is wrong; got "
+            f"{data['note']!r}\n{outcome(result)}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # FR-003 / FR-004 / FR-034: the per-anchor line hash
 # ---------------------------------------------------------------------------
 def test_record_writes_a_line_hash_per_anchor(run_script, fixture_repo):
     """FR-003 / OT-005 / CT-002 — lineHashes is a top-level 16-hex map at record.
 
-    RED before the fix: the manifest had no lineHashes key, so a cited line could
+    RED at cfafe8e: the manifest had no lineHashes key, so a cited line could
     be rewritten in place and nothing in the manifest disagreed.
     """
     printed = record(run_script, fixture_repo)
@@ -487,7 +606,7 @@ def test_record_writes_a_line_hash_per_anchor(run_script, fixture_repo):
 def test_changed_cited_line_is_reported_as_a_mismatch(run_script, fixture_repo):
     """FR-003 / AC-005 / OT-006 — same line number, different content, committed.
 
-    RED before the fix: there was no hash_mismatches key to hold the answer, so
+    RED at cfafe8e: there was no hash_mismatches key to hold the answer, so
     the only signal was that some file in the diff happened to be cited.
     """
     record(run_script, fixture_repo)
@@ -520,7 +639,7 @@ def test_hash_mismatch_alone_is_drift(run_script, fixture_repo):
     the hash half decides anything by itself. Here the work tree is untouched and
     git has nothing to report, and the check must still refuse to say clean.
 
-    RED before the fix: status clean, exit 0.
+    RED at cfafe8e: status clean, exit 0.
     """
     record(run_script, fixture_repo)
     manifest = manifest_of(fixture_repo)
@@ -550,7 +669,7 @@ def test_hash_mismatch_alone_is_drift(run_script, fixture_repo):
 def test_manifest_without_line_hashes_is_not_recorded(run_script, fixture_repo):
     """FR-004 / AC-006 / OT-007 — a manifest written before this change is not drift.
 
-    RED before the fix: there was no hashes key to report not_recorded with.
+    RED at cfafe8e: there was no hashes key to report not_recorded with.
     """
     record(run_script, fixture_repo)
     manifest = manifest_of(fixture_repo)
@@ -577,10 +696,90 @@ def test_manifest_without_line_hashes_is_not_recorded(run_script, fixture_repo):
     )
 
 
+def test_partly_hashed_manifest_is_not_reported_clean(run_script, fixture_repo):
+    """FR-003 / FR-005 / FR-007 / AC-006 — `checked` has to mean every anchor.
+
+    RED at f31b144: ``hashes`` was set to "checked" whenever lineHashes was a dict, however few
+    of the anchors it held a digest for, and an anchor with no digest was skipped in silence. A
+    manifest carrying a digest for one of two anchors was therefore labelled checked and
+    reported clean at exit 0 with the second cited line never compared against anything.
+
+    An anchor that resolves but was never hashed is not-measured, so this is the exit-2
+    not-checked shape rather than a pass — the same refusal ``no_anchors`` already makes, and
+    the stricter of the two readings the status could have taken. It sits BELOW drift, which
+    the second half of this test pins: a finding the run did make is still reported as a
+    finding, so "I could not check this one" never hides "I checked that one and it is wrong"
+    (FR-007).
+
+    A manifest with no lineHashes key at all is a different state and keeps reporting
+    not_recorded with no drift (FR-004 / AC-006);
+    ``test_manifest_without_line_hashes_is_not_recorded`` is the control for it.
+    """
+    faq = fixture_repo / "docs/faq.md"
+    faq.write_text(
+        faq.read_text(encoding="utf-8")
+        + f"\nThe command line parses first. <!-- {MDX_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+    record(run_script, fixture_repo)
+    manifest = manifest_of(fixture_repo)
+    assert set(manifest["lineHashes"]) == {ANCHOR, MDX_ANCHOR}, (
+        f"this test needs two hashed anchors to remove one of; got {manifest['lineHashes']!r}"
+    )
+
+    del manifest["lineHashes"][ANCHOR]
+    write_manifest(fixture_repo, manifest)
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["hashes"] == "partial", (
+        "expected hashes partial when one of two resolvable anchors carries no digest; got "
+        f"{data['hashes']!r}\n{outcome(result)}"
+    )
+    assert data["unhashed_anchors"] == [ANCHOR], (
+        f"expected {ANCHOR} named as the anchor nothing compared; got "
+        f"{data['unhashed_anchors']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "hashes_partial", (
+        f"expected the not-checked status rather than a pass; got {data['status']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert result.returncode == 2, (
+        "expected exit 2, never the exit 0 of a run that compared every anchor it has; got "
+        f"{result.returncode}\n{outcome(result)}"
+    )
+    assert data["note"], (
+        f"expected a note saying which half was not measured\n{outcome(result)}"
+    )
+
+    # FR-007: now the anchor that WAS hashed stops matching. The finding has to win.
+    manifest["lineHashes"][MDX_ANCHOR] = "0" * 16
+    write_manifest(fixture_repo, manifest)
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["status"] == "drift", (
+        f"expected drift to outrank the partial run; got {data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["hash_mismatches"] == [MDX_ANCHOR], (
+        f"expected {MDX_ANCHOR} under hash_mismatches; got {data['hash_mismatches']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert data["hashes"] == "partial" and data["unhashed_anchors"] == [ANCHOR], (
+        "expected the partial coverage still reported alongside the finding; got "
+        f"{data['hashes']!r} / {data['unhashed_anchors']!r}\n{outcome(result)}"
+    )
+
+
 def test_anchor_past_end_of_file_gets_no_line_hash(run_script, fixture_repo):
     """FR-034 — a line number past the end of the file is a broken anchor, not a hash.
 
-    RED before the fix: no lineHashes key existed at all, so there was no rule
+    RED at cfafe8e: no lineHashes key existed at all, so there was no rule
     about what belongs in it.
     """
     faq = fixture_repo / "docs/faq.md"
@@ -620,9 +819,9 @@ def test_anchor_past_end_of_file_gets_no_line_hash(run_script, fixture_repo):
 def test_latin1_cited_line_byte_change_is_a_mismatch(run_script, fixture_repo):
     """US-001 / FR-003 / FR-005 / ST-006 — the digest is over the bytes, not a lossy decode.
 
-    RED before the fix: ``cited_line`` opened the cited file with ``errors="replace"``
-    (``drift.py:188``), so every byte the UTF-8 decoder could not read became the same U+FFFD
-    before ``line_hash`` encoded it back (``drift.py:209``). Two different latin-1 bytes
+    RED at 19c97f9: ``cited_line`` opened the cited file with
+    ``errors="replace"``, so every byte the UTF-8 decoder could not read became the same U+FFFD
+    before ``line_hash`` encoded it back with a plain ``.encode("utf-8")``. Two latin-1 bytes
     therefore produced one digest, the recorded hash still matched, and this check printed
     status clean at exit 0 — under a user story titled "A cited file edit is never reported
     clean".
@@ -685,7 +884,7 @@ def test_latin1_cited_line_byte_change_is_a_mismatch(run_script, fixture_repo):
 def test_uncited_commit_is_unrelated_changes(run_script, fixture_repo):
     """FR-005 / AC-007 / OT-008 — code no page cites changed; that is not drift.
 
-    RED before the fix: any non-empty changed set made clean False, so an
+    RED at cfafe8e: any non-empty changed set made clean False, so an
     ordinary commit to an uncited file failed the gate at exit 1.
     """
     record(run_script, fixture_repo)
@@ -716,7 +915,7 @@ def test_uncited_commit_is_unrelated_changes(run_script, fixture_repo):
 def test_docs_only_edit_is_unrelated_changes(run_script, fixture_repo):
     """FR-008 / AC-008 / OT-009 — editing a page is the author's job, not drift.
 
-    RED before the fix: a docs edit changed docsHash, clean went False and the
+    RED at cfafe8e: a docs edit changed docsHash, clean went False and the
     gate failed at exit 1 with no code change anywhere in sight.
     """
     record(run_script, fixture_repo)
@@ -745,7 +944,7 @@ def test_docs_only_edit_is_unrelated_changes(run_script, fixture_repo):
 def test_broken_anchor_outranks_unrelated_churn(run_script, fixture_repo):
     """FR-007 / AC-009 — a broken anchor wins over an exit-0 observation.
 
-    RED before the fix: the hashes key the last assertion reads did not exist.
+    RED at cfafe8e: the hashes key the last assertion reads did not exist.
     """
     faq = fixture_repo / "docs/faq.md"
     faq.write_text(
@@ -785,7 +984,7 @@ def test_nothing_changed_since_record_is_clean(run_script, fixture_repo):
     The status and exit assertions here read the same before and after,
     deliberately: this is the control that stops the unrelated_changes and drift
     tests above from passing by declaring everything a finding. What made it RED
-    is the hashes assertion — the pre-change envelope had no such key.
+    is the hashes assertion — the cfafe8e envelope had no such key.
     """
     record(run_script, fixture_repo)
 
@@ -811,7 +1010,7 @@ def test_nothing_changed_since_record_is_clean(run_script, fixture_repo):
 def test_docs_directory_with_no_pages_is_not_clean(run_script, fixture_repo):
     """FR-005 / FR-006 / CT-001 / ST-006 — zero pages scanned is not a pass.
 
-    RED before the fix: ``nothing_to_measure = not anchors and paths`` (``drift.py:326``)
+    RED at 19c97f9: ``nothing_to_measure = not anchors and paths``
     required the page list to be NON-empty, so a docs tree holding no page at all fell past
     the no_anchors sentinel to ``clean`` at exit 0. Nothing was scanned, nothing was resolved,
     and the gate reported a pass — the count of what was skipped standing in for the count of
@@ -847,7 +1046,7 @@ def test_docs_directory_with_no_pages_is_not_clean(run_script, fixture_repo):
 def test_md_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
     """FR-005 / ST-001 — the control for the .mdx twin below.
 
-    Green before and after the fix, deliberately: it is what makes the twin's failure a
+    Green at 19c97f9 and green now, deliberately: it is what makes the twin's failure a
     statement about the extension rather than about this scenario. The page, the citation and
     the edit are byte-identical in both tests.
     """
@@ -869,8 +1068,8 @@ def test_md_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
 def test_mdx_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
     """FR-005 / FR-006 / ST-006 — a .mdx page is a page.
 
-    RED before the fix: ``doc_files`` kept only names ending ``.md`` (``drift.py:127``) while
-    ``.mdx`` sits in SRC_EXT as a citable file (``drift.py:25-26``), so a Docusaurus set
+    RED at 19c97f9: ``doc_files`` kept only names ending ``.md`` while
+    ``.mdx`` sits in ``SRC_EXT`` as a citable file, so a Docusaurus set
     written in .mdx was never scanned. This check reported unrelated_changes at exit 0 with a
     note saying no page cites the file that had just changed — with the page sitting in the
     tree, citing it. The .md control above runs the identical scenario one character apart.
@@ -905,7 +1104,7 @@ def test_mdx_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
 def test_record_without_a_commit_writes_a_null_head(run_script, fixture_repo, tmp_path):
     """FR-009 / OT-010 — gitHead null plus a note, and the next check says no_git.
 
-    RED before the fix: record wrote ``"gitHead": ""`` with no note, and check
+    RED at cfafe8e: record wrote ``"gitHead": ""`` with no note, and check
     read that empty string as "nothing to compare against" and printed clean.
     """
     fresh = tmp_path / "fresh"
@@ -937,15 +1136,14 @@ def test_record_without_a_commit_writes_a_null_head(run_script, fixture_repo, tm
 def test_null_head_in_the_manifest_reports_no_git(run_script, fixture_repo, tmp_path):
     """FR-005 / FR-009 / OT-010 — a manifest that records no commit is not clean.
 
-    RED before the fix: status clean at exit 0, with an empty note. Both git
-    branches in the check were guarded by ``if recorded and ...``
-    (``drift.py:262,266``), so a manifest holding ``"gitHead": null`` fell past
-    both of them: nothing measured the code half, git_note stayed empty, and the
-    envelope came back saying nothing had changed — with git working and a
-    commit sitting right there that the pages were never compared against.
-    NO_HEAD_NOTE (``drift.py:32-33``) promises the reader of that record exactly
-    the opposite: "the next check reports no_git instead of comparing the pages
-    against nothing".
+    RED at 9859317: status clean at exit 0, with an empty note. Both git
+    branches in the check were guarded by ``if recorded and ...``, so a manifest
+    holding ``"gitHead": null`` fell past both of them: nothing measured the code
+    half, git_note stayed empty, and the envelope came back saying nothing had
+    changed — with git working and a commit sitting right there that the pages
+    were never compared against. ``NO_HEAD_NOTE`` promises the reader of that
+    record exactly the opposite: "the next check reports no_git instead of
+    comparing the pages against nothing".
 
     ``test_record_without_a_commit_writes_a_null_head`` cannot catch this. That
     repository still has no commits when its check runs, so ``head_sha()``

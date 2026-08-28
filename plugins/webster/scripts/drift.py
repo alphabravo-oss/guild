@@ -6,10 +6,12 @@
   check  [docs]   report what changed since the last record, and which anchors no longer resolve
 
 Statuses and exit codes for check: clean and unrelated_changes exit 0, drift exits 1, and
-no_docs, no_manifest, no_anchors, no_git and head_missing exit 2. An anchor that no longer
-resolves is drift, and drift is a P0. `clean` is reserved for a set where nothing changed at
-all: code that changed but that no page cites is `unrelated_changes`, because a gate that fails
-on ordinary development teaches the reader to stop reading the gate.
+no_docs, no_manifest, no_anchors, no_git, head_missing and hashes_partial exit 2. An anchor
+that no longer resolves is drift, and drift is a P0. `clean` is reserved for a set where
+nothing changed at all: code that changed but that no page cites is `unrelated_changes`,
+because a gate that fails on ordinary development teaches the reader to stop reading the gate.
+`hashes_partial` is the same refusal for the line half: an anchor that resolves but carries no
+recorded digest was never compared, and a run holding one has not earned exit 0.
 
 The docs directory is the second argument, or WEBSTER_DOCS, or "docs". It was env-var only
 until a real audit pointed the command at a repo whose docs live in `documentation/`, got
@@ -87,6 +89,15 @@ def commit_exists(sha):
     the diff rather than after it; `rev-parse --verify --quiet` is the silent existence test.
     It only runs once HEAD has already resolved, so a failure here means the recorded commit is
     missing rather than git being broken.
+
+    Reachability is deliberately NOT the question. `git reset --hard HEAD~1` — the trigger
+    AC-004 and OT-004 name — does not make the recorded commit missing: the object is still in
+    the store and the reflog still points at it, so rev-parse finds it and this returns True.
+    Only expiring the reflog and pruning removes it. FR-006 is Locked on the definition
+    ("recorded gitHead not found: `git rev-parse --verify --quiet SHA^{commit}` fails"), so
+    that is what head_missing means here; the AC-004 wording describes the everyday first step
+    towards that state rather than stating a second definition. A test for head_missing has to
+    expire and prune, and test_rebased_away_head_reports_head_missing does.
     """
     try:
         git("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
@@ -118,6 +129,46 @@ def porcelain_paths(out):
                 paths.append(fields[i])
             i += 1
     return paths
+
+
+def repo_prefix():
+    """Where ROOT sits inside its git repository, as a prefix ending in "/", or "".
+
+    git names every path in `status --porcelain` and in `diff --name-only` relative to the
+    repository root, never to the directory the command ran in: --porcelain is documented
+    immune to status.relativePaths and diff has no such setting at all. Anchors, pages and
+    the docs directory are all relative to WEBSTER_ROOT. Those are the same namespace only
+    when WEBSTER_ROOT is itself the repository root, which is the layout this file was written
+    in and is not the layout of an ordinary monorepo. With the project one directory down, git
+    said `site/src/app/main.py` where the anchor said `src/app/main.py`, the two never
+    intersected, suspect_pages came back empty on every run, and `site/docs/.webster.json`
+    failed the inside-docs test and was counted as a changed code file — so an uncommitted edit
+    to a cited file printed unrelated_changes at exit 0 with a note reading "no page cites any
+    of them", with the page sitting in the tree citing it. Resolve the prefix once and put
+    git's answers into the pages' namespace before anything is compared.
+    """
+    return git("rev-parse", "--show-prefix").strip()
+
+
+def under_root(paths, prefix):
+    """The paths git named, restated relative to ROOT, with everything outside ROOT dropped.
+
+    A path in the repository but outside ROOT can be neither drift nor docs: every anchor
+    resolves through os.path.join(ROOT, target), so no anchor can name it, and doc_files() only
+    walks DOCS, so no page can be it. Counting it as code churn would report a sibling
+    package's ordinary commit as a change in this docs set's scope; dropping it says the thing
+    that is true, which is that nothing this set describes moved.
+    """
+    out = []
+    for path in paths:
+        if not path:
+            continue
+        if prefix:
+            if not path.startswith(prefix):
+                continue
+            path = path[len(prefix):]
+        out.append(path)
+    return out
 
 
 def doc_files():
@@ -173,6 +224,42 @@ def collect_anchors(paths):
     return found
 
 
+def manifest_shape_error(data):
+    """The first manifest field whose type nothing below can survive, named, or "".
+
+    Every read of the manifest in check() is `old.get(...)`, and each result is then used as
+    the type record wrote: gitHead is sliced and interpolated into a rev-parse argument,
+    lineHashes is looked up by anchor and compared to a fresh digest, anchors is a mapping. A
+    manifest is a file people edit, merge and generate, so a field holding the wrong type is
+    an ordinary state of it — and `"gitHead": 17` reached `recorded[:12]` in the head_missing
+    note and raised TypeError out of main() at exit 1 having printed nothing at all. Exit 1 is
+    the code that means drift, so a run that measured nothing told its caller the pages
+    disagree with the code. That is the same failure as an unparseable manifest, one field
+    deeper, and it gets the same answer: exit 2 with the field named.
+
+    Absence is not an error for any of the three. AC-006 requires a manifest written before
+    lineHashes existed to still be checked, and record has not always written every key, so
+    only a value of the wrong type is reported.
+    """
+    head = data.get("gitHead")
+    if head is not None and not isinstance(head, str):
+        return f"records a gitHead of type {type(head).__name__} where a string or null belongs"
+    line_hashes = data.get("lineHashes")
+    if line_hashes is not None:
+        if not isinstance(line_hashes, dict):
+            return (f"records a lineHashes of type {type(line_hashes).__name__} where an "
+                    "object keyed by anchor belongs")
+        for anchor, digest in line_hashes.items():
+            if not isinstance(digest, str):
+                return (f"records a lineHashes entry for {anchor} of type "
+                        f"{type(digest).__name__} where a hex digest belongs")
+    recorded_anchors = data.get("anchors")
+    if recorded_anchors is not None and not isinstance(recorded_anchors, dict):
+        return (f"records an anchors of type {type(recorded_anchors).__name__} where an "
+                "object keyed by anchor belongs")
+    return ""
+
+
 def read_manifest():
     """The recorded manifest as a dict, or the reason there is nothing to compare against.
 
@@ -205,6 +292,12 @@ def read_manifest():
         return None, (f"the manifest at {MANIFEST} holds a JSON {type(data).__name__} where an "
                       "object was recorded, so there is nothing here to compare against; "
                       "re-record")
+    # The same class one field deeper: the object parses, and then a field of the wrong type
+    # raises at the point it is used rather than at the point it is read.
+    wrong_shape = manifest_shape_error(data)
+    if wrong_shape:
+        return None, (f"the manifest at {MANIFEST} {wrong_shape}, so nothing here has been "
+                      "compared against the code; re-record")
     return data, ""
 
 
@@ -312,6 +405,8 @@ def main():
         return 2
 
     recorded = old.get("gitHead")
+    # ROOT-relative, like every anchor, page and broken-anchor path in the envelope below.
+    # under_root() is what puts git's repository-relative answers into this namespace first.
     inside_docs = os.path.relpath(DOCS, ROOT) + "/"
 
     # The code half. A git question that cannot be asked becomes a status of its own rather
@@ -323,9 +418,10 @@ def main():
                     "yet), so nothing here compared the pages against the code")
     else:
         try:
-            dirty = [p for p in porcelain_paths(git("status", "--porcelain", "-z",
-                                                    "--untracked-files=all"))
-                     if p and not p.startswith(inside_docs)]
+            prefix = repo_prefix()
+            dirty = [p for p in under_root(porcelain_paths(
+                         git("status", "--porcelain", "-z", "--untracked-files=all")), prefix)
+                     if not p.startswith(inside_docs)]
             # A manifest with no recorded commit has no point for the diff to start from, and
             # falling past this to compare nothing is the false clean NO_HEAD_NOTE promises the
             # reader of that record will not happen. git answering now does not make a record
@@ -340,8 +436,10 @@ def main():
                 git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
                             "more, so the diff since the record cannot be taken; re-record")
             elif recorded != head:
-                changed = [f for f in git("diff", "--name-only", f"{recorded}..HEAD").splitlines()
-                           if f and not f.startswith(inside_docs)]
+                changed = [f for f in under_root(
+                               git("diff", "--name-only", f"{recorded}..HEAD").splitlines(),
+                               prefix)
+                           if not f.startswith(inside_docs)]
         except GitUnavailable as e:
             # git answered the first question and not the second. Reporting the half-answer as
             # a result is the false pass this whole file exists to stop.
@@ -352,16 +450,35 @@ def main():
     # line can change under a file name that a diff since the record never names, so the two
     # halves of this check catch different failures and neither one subsumes the other.
     recorded_hashes = old.get("lineHashes")
-    hashes = "checked" if isinstance(recorded_hashes, dict) else "not_recorded"
-    mismatched = []
-    if hashes == "checked":
-        for a in sorted(anchors):
+    # An anchor whose line is past the end of its file is already in broken_anchors with the
+    # reason it is gone, and FR-034 says record writes no digest for one. It is unresolvable
+    # rather than unhashed, and counting it here would report one failure as two.
+    broken_set = {b["anchor"] for b in broken}
+    resolvable = [a for a in sorted(anchors) if a not in broken_set]
+    mismatched, unhashed = [], []
+    if recorded_hashes is None:
+        # FR-004 / AC-006: a manifest written before lineHashes existed. No comparison is
+        # possible, none is invented, and the absence is never itself a reason to report drift.
+        hashes = "not_recorded"
+    else:
+        for a in resolvable:
             want = recorded_hashes.get(a)
-            # A line that is gone is already in broken_anchors with the reason it is gone.
-            # Counting it a second time here would report one failure as two.
-            now = line_hash(a) if want else None
-            if want and now is not None and now != want:
+            if not want:
+                unhashed.append(a)
+                continue
+            now = line_hash(a)
+            if now is not None and now != want:
                 mismatched.append(a)
+        # `checked` used to be printed whenever lineHashes was a dict, however few of the
+        # anchors it held a digest for, and an anchor with no digest was skipped in silence: a
+        # manifest that hashed one of two anchors was labelled checked and reported clean at
+        # exit 0 while the other cited line had been rewritten. An anchor that resolves but was
+        # never hashed is not-measured, and the two readings on offer were exit 0 with a note
+        # and the exit-2 not-checked shape the Technical Design makes the template for every
+        # new not-checked status. This takes the stricter one, for the reason no_anchors is
+        # already exit 2: a gate that cannot say whether a claim still holds must not answer
+        # with the code that means it does.
+        hashes = "partial" if unhashed else "checked"
 
     # a page is suspect when code it cites appears in the changed set
     suspect = {}
@@ -388,14 +505,20 @@ def main():
 
     # Precedence, least measurable first. A set that cannot be measured at all, then a git
     # question that could not be asked, then the findings, then the changes that are nobody's
-    # problem. The two exit-2 statuses outrank drift because "I could not check" is a different
-    # claim from "I checked and it is wrong" — and the anchors half is printed under both.
+    # problem. The first two exit-2 statuses outrank drift because "I could not check anything"
+    # is a different claim from "I checked and it is wrong" — and the anchors half is printed
+    # under both. hashes_partial sits BELOW drift on purpose, because it is the narrower claim:
+    # some anchors were measured and some were not, so a finding the run did make is still
+    # reported as a finding (FR-007) and "I could not check this one" never hides "I checked
+    # that one and it is wrong".
     if nothing_to_measure:
         status = "no_anchors"
     elif not_checked:
         status = not_checked
     elif broken or suspect or mismatched:
         status = "drift"
+    elif unhashed:
+        status = "hashes_partial"
     elif code_files_changed or docs_edited:
         status = "unrelated_changes"
     else:
@@ -409,6 +532,10 @@ def main():
                      "and the Sourced gate cannot report a pass")
     if git_note:
         notes.append(git_note)
+    if unhashed:
+        notes.append(f"no digest was recorded for {len(unhashed)} of {len(resolvable)} "
+                     "resolvable anchors, so the lines listed under unhashed_anchors were "
+                     "never compared against what they said at record; re-record")
     if status == "unrelated_changes":
         notes.append(f"{code_files_changed} code file(s) changed since the record and no page "
                      "cites any of them" if code_files_changed else
@@ -429,9 +556,10 @@ def main():
         "suspect_pages": suspect,
         "hashes": hashes,
         "hash_mismatches": mismatched,
+        "unhashed_anchors": unhashed,
         "note": "; ".join(notes),
     }, indent=2))
-    if status in ("no_anchors", "no_git", "head_missing"):
+    if status in ("no_anchors", "no_git", "head_missing", "hashes_partial"):
         return 2
     return 1 if status == "drift" else 0
 
