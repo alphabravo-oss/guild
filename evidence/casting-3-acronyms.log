@@ -11,6 +11,6 @@ DEFECTS (1)
     guide.md:11  'ZQX' is used without ever being expanded
 exit status: 1
 --- the ACRONYM bound is unchanged (2 to 6 characters) ---
-244:ACRONYM = re.compile(r"\b([A-Z][A-Z0-9]{1,5})s?\b")
+278:ACRONYM = re.compile(r"\b([A-Z][A-Z0-9]{1,5})s?\b")
 --- WARNING survives only as the comment saying why it was removed ---
-264: # Removed: "WARNING" — seven characters against a six-character ceiling, so it was allowlisted
+298: # Removed: "WARNING" — seven characters against a six-character ceiling, so it was allowlisted

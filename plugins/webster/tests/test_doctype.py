@@ -1,11 +1,11 @@
 """Tests for plugins/webster/scripts/doctype.py — the lens, the allowlists, the stubs.
 
 One red-to-green test per fix (US-010, AC-039). Measured against commit 2abe081, the last one
-before this change: 18 of these 24 tests fail there and all 24 pass after. The other six are
-negative controls that must pass on both sides, and each is marked (control) below — a control
-that went red would mean the fix broke something it was supposed to leave alone. The red-first
-property is recorded here rather than enforced at runtime (FR-039): a test that re-ran itself
-against an old checkout would need a git worktree per assertion.
+before this change: 18 of the 24 tests in the first index below fail there and all 24 pass
+after. The other six are negative controls that must pass on both sides, and each is marked
+(control) below — a control that went red would mean the fix broke something it was supposed to
+leave alone. The red-first property is recorded here rather than enforced at runtime (FR-039):
+a test that re-ran itself against an old checkout would need a git worktree per assertion.
 
 Each test names the fix it pins:
 
@@ -44,6 +44,20 @@ Each test names the fix it pins:
     test_one_written_page_among_stubs_exits_by_that_page  (control)
 - FR-040 / CT-004 a defect on a stub beats not-checked (OT-042)
     test_all_stub_tree_with_a_defect_exits_one
+
+Three more tests are measured against commit 9859317 instead, because they pin defects the
+widening above introduced rather than the ones it fixed:
+
+- FR-010 / AC-011 the widened CODE_IDENT still excludes ALL-CAPS
+    test_all_caps_with_a_digit_is_not_an_internal_symbol
+- FR-013 / CT-003 / AC-016 the screens leg carries a term a page can actually write
+    test_survey_screens_carry_a_term_a_page_can_write
+- FR-040 / CT-004 zero pages checked is never exit 0
+    test_empty_docs_tree_is_not_checked
+
+The first of those three passes at 2abe081 as well — the narrow CODE_IDENT could not match
+`HTTP2` either — which is what makes it a regression guard rather than a fix guard. The other
+two are red on both sides.
 
 Every test drives the script through the conftest ``run_script`` helper (GI-004, CT-007) and
 every assertion quotes the captured exit code, stdout and stderr, because a bare
@@ -120,7 +134,9 @@ def docs_dir(tmp_path: Path) -> Path:
 
 
 def survey_json(tmp_path: Path, *, labels=(), screens=(), commands=()) -> Path:
-    """A saved survey.py document, in the shape survey.py:236, 264 and 311 actually write."""
+    """A saved survey.py document, in the shape survey.py actually writes: a label carries
+    `text` (survey.py:324), a command carries `name` (survey.py:364), and a screen carries a
+    path and, on the component-per-screen leg only, a name (survey.py:373-380)."""
     path = tmp_path / "webster-survey.json"
     path.write_text(json.dumps({
         "user_surface": {
@@ -176,6 +192,23 @@ def test_path_and_env_var_are_not_symbols(run_script, docs_dir):
     )
     assert result.returncode == 0, (
         f"Expected exit 0 on a page naming only a filename and a variable.\n{outcome(result)}"
+    )
+
+
+def test_all_caps_with_a_digit_is_not_an_internal_symbol(run_script, docs_dir):
+    write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
+               "# Guide\n\nWe speak `HTTP2`, hash with `SHA256` or `MD5`, run on `EC2` "
+               "and store text as `UTF8`.\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "internal symbol name" not in result.stdout, (
+        f"FR-010 excludes ALL-CAPS because that is ENV_VAR\'s job. Widening the branches to "
+        f"reach `APIClient` let a digit stand in for the lowercase tail, so a token with no "
+        f"lowercase letter in it at all was reported as a symbol.\n{outcome(result)}"
+    )
+    assert result.returncode == 0, (
+        f"Expected exit 0 on a page naming only all-caps tokens.\n{outcome(result)}"
     )
 
 
@@ -332,6 +365,41 @@ def test_survey_screen_names_and_commands_extend_the_allowlist(run_script, docs_
         f"screens.name and commands feed the same allowlist as labels.\n{outcome(result)}"
     )
     assert result.returncode == 0, f"Expected exit 0.\n{outcome(result)}"
+
+
+def test_survey_screens_carry_a_term_a_page_can_write(run_script, docs_dir, tmp_path):
+    """The two screen shapes survey.py really writes, neither of which is the token a page
+    backticks. A component screen carries the spaced label survey.py derives from the filename
+    (`DataSourcesPage.tsx` -> "Data Sources"), and a router screen carries a path and no name at
+    all. Built here rather than through ``survey_json``, which always sets a name equal to the
+    term under test and so could never have caught this."""
+    write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
+               "# Guide\n\nOpen `DataSources`, which the app builds from `DataSourcesPage`.\n")
+    survey = tmp_path / "screens-only.json"
+    survey.write_text(json.dumps({"user_surface": {
+        "labels": [],
+        "screens": [
+            {"path": "component:DataSourcesPage", "name": "Data Sources",
+             "anchor": "src/pages/DataSourcesPage.tsx:1"},
+            {"path": "src/pages/DataSourcesPage.tsx", "anchor": "src/App.tsx:12"},
+        ],
+        "commands": [],
+        "messages": [],
+    }}), encoding="utf-8")
+
+    result = check(run_script, docs_dir, WEBSTER_SURVEY=str(survey))
+
+    assert "an internal symbol name, `DataSources`" not in result.stdout, (
+        f"The spaced screen name is the product naming its own screen; it can only reach the "
+        f"lens with its whitespace removed.\n{outcome(result)}"
+    )
+    assert "an internal symbol name, `DataSourcesPage`" not in result.stdout, (
+        f"A screen with no name at all still names a file, and its stem is the term a page "
+        f"writes.\n{outcome(result)}"
+    )
+    assert result.returncode == 0, (
+        f"Expected exit 0: both tokens are the product\'s own screen.\n{outcome(result)}"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -512,6 +580,24 @@ def test_tree_of_only_stubs_exits_two_with_nothing_to_check(run_script, docs_dir
     assert "every page matches its declared type" not in result.stdout, (
         f"Nothing was matched against a declared type, so the pass line must not print."
         f"\n{outcome(result)}"
+    )
+
+
+def test_empty_docs_tree_is_not_checked(run_script, docs_dir):
+    result = check(run_script, docs_dir)
+
+    assert result.returncode == 2, (
+        f"CT-004: exit 0 is never possible with zero pages checked. The gate asked for "
+        f"stubs > 0, so a tree holding no page at all — a fresh docs directory, or one whose "
+        f"only files are README.md and llms.txt — fell past it onto the pass line."
+        f"\n{outcome(result)}"
+    )
+    assert "0 stubs, nothing to check" in result.stdout, (
+        f"The FR-036 line with N=0. Zero stubs and zero pages is still nothing to check."
+        f"\n{outcome(result)}"
+    )
+    assert "every page matches its declared type" not in result.stdout, (
+        f"There was no page to match against a declared type.\n{outcome(result)}"
     )
 
 

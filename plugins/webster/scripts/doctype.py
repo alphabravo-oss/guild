@@ -149,8 +149,16 @@ LENS_MAY_NOT = {
 # `HTTPServer` passed the lens while `getUser` was reported, and 14 of the allowlist entries
 # below were unreachable for the same reason.
 _CAP_RUN = r"(?:[A-Z]+[a-z0-9]*)"
+# One lowercase letter somewhere in the token, asserted once for the whole alternation. Every
+# branch below lets a digit stand in for the lowercase tail — `HTTP2` is [A-Z]{2,} then
+# [a-z0-9]+, `H2O` is [A-Z] then [a-z0-9]+ then a capital run — so widening the branches to
+# reach `APIClient` also reported `SHA256`, `MD5`, `EC2` and `UTF8` as internal symbols on a
+# user page. Requiring the lowercase letter here rather than inside each branch keeps
+# `S3Bucket`, which a per-branch [a-z] would have dropped. The class cannot cross the closing
+# backtick, so the lookahead reads this token and nothing after it.
+_HAS_LOWER = r"(?=[A-Za-z0-9_]*[a-z])"
 CODE_IDENT = re.compile(
- r"`("
+ rf"`{_HAS_LOWER}("
  # snake_case. The dominant symbol shape in this repo's own scripts, and it used to pass.
  r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+"
  rf"|[a-z][a-z0-9]*{_CAP_RUN}+"        # camelCase: getUser, iPhone, gRPC, iOS
@@ -159,8 +167,9 @@ CODE_IDENT = re.compile(
  r")`")
 # Tokens holding a `.` or a `/` are excluded by the closing backtick rather than by a rule of
 # their own: no branch above can consume either character, so `my_config.yaml` and `/etc/hosts`
-# never reach it. ALL-CAPS is excluded the same way — every branch requires a lowercase letter,
-# which leaves `DATABASE_URL` to ENV_VAR, whose job it is.
+# never reach it. ALL-CAPS is excluded by the _HAS_LOWER lookahead above rather than by any
+# branch, which leaves `DATABASE_URL` to ENV_VAR and `SHA256` to the acronym check, whose jobs
+# they are.
 
 # Product and technology names are PascalCase too, and they are not internals. Compared against
 # `m.group(1).lower()`, so the capitalisation here is documentation rather than a matcher: the
@@ -219,16 +228,41 @@ def load_survey_allow(path):
     get the noise on its own JSON stdout."""
     if not path:
         return set(), False
+    terms = set()
+
+    def add(term):
+        """One term, plus the form a page would backtick it as."""
+        if not isinstance(term, str) or not term.strip():
+            return
+        term = term.strip().lower()
+        terms.add(term)
+        # The screen survey.py calls "Data Sources" is the DataSourcesPage component, and a
+        # page writes it as `DataSources`. Every screen name survey.py derives from a filename
+        # is spaced like that (survey.py:407-409), so the spaced form on its own could never
+        # equal a backticked token and the whole screens leg allowed nothing.
+        terms.add("".join(term.split()))
+
     try:
         with open(path, encoding="utf-8") as fh:
             user_surface = json.load(fh).get("user_surface") or {}
-        terms = set()
-        # labels carry `text`, screens and commands carry `name` (survey.py:236, 264, 311).
-        for key, field in (("labels", "text"), ("screens", "name"), ("commands", "name")):
+        # A label carries `text` (survey.py:324); a command carries `name` (survey.py:364).
+        for key, field in (("labels", "text"), ("commands", "name")):
             for item in user_surface.get(key) or []:
-                term = item.get(field) if isinstance(item, dict) else item
-                if isinstance(term, str) and term.strip():
-                    terms.add(term.strip().lower())
+                add(item.get(field) if isinstance(item, dict) else item)
+        # A screen carries `path` always and `name` only sometimes (survey.py:373-380): the
+        # router and App-Router legs record a path and no name at all, so reading `name` alone
+        # transported nothing for them. The last segment of the path without its extension is
+        # the word a page writes. The path itself is deliberately not added — a screen at
+        # /dashboard must not excuse the `/dashboard` route finding the lens exists to make.
+        for item in user_surface.get("screens") or []:
+            if not isinstance(item, dict):
+                add(item)
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name.strip():
+                add(name)
+            elif isinstance(item.get("path"), str):
+                add(os.path.splitext(os.path.basename(item["path"]))[0])
         return terms, True
     except Exception:
         return set(), False
@@ -912,11 +946,14 @@ def main():
             print(f"  {u}")
         if len(untyped) > 12:
             print(f"  ... and {len(untyped) - 12} more")
-    # A tree of nothing but stubs resolved every rule it had, which is not the same as being
-    # checked: it printed "every page matches its declared type" and exited 0 over pages that
-    # were skeletons. This mirrors drift.py's no_anchors. A frontmatter defect on a stub is a
-    # real finding, so it wins over not-checked the way a broken anchor does there.
-    if stubs and not pages and not defects:
+    # Zero pages read as writing is not the same as every page passing. A tree of skeletons
+    # resolved every rule it had and printed "every page matches its declared type", and so did
+    # a docs directory holding no page at all, because this gate asked for stubs > 0 rather
+    # than for pages == 0 — the stub count was never the question. `untyped` and `advisories`
+    # can only be filled on the same path that increments `pages`, so defects are the only
+    # other thing left to ask about: a frontmatter defect on a stub is a real finding and wins
+    # over not-checked, the way a broken anchor beats no_anchors in drift.py (FR-040, CT-004).
+    if not pages and not defects:
         print(f"{stubs} stubs, nothing to check")
         return 2
     if not defects and not advisories and not untyped:
