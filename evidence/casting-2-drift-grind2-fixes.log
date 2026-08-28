@@ -1,0 +1,27 @@
+# evidence-cmd: cd plugins/webster && uvx pytest tests/test_drift.py -p no:randomly --no-header -v -k "unparseable_manifest or latin1_cited_line or no_pages_is_not_clean or md_page_citing or mdx_page_citing"
+# evidence-for: US-001, FR-003, FR-005, FR-006, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+#
+# The five tests added by GRIND cycle 2, and what each one printed against drift.py at
+# 19c97f9 — the RED baseline FR-039 asks to be recorded in the test docstring:
+#
+#   test_unparseable_manifest_reports_no_manifest   D-011  traceback, no JSON, exit 1
+#   test_latin1_cited_line_byte_change_is_a_mismatch D-012 status clean, exit 0
+#   test_docs_directory_with_no_pages_is_not_clean  D-013a status clean, exit 0
+#   test_md_page_citing_a_changed_file_is_drift     D-013b green: the .mdx control
+#   test_mdx_page_citing_a_changed_file_is_drift    D-013b status unrelated_changes, exit 0
+#
+# The .md twin passes before and after on purpose. It runs the identical page, citation
+# and edit one character apart from the .mdx test, so the .mdx failure was a statement
+# about the extension rather than about the scenario.
+
+============================= test session starts ==============================
+collecting ... collected 21 items / 16 deselected / 5 selected
+
+tests/test_drift.py::test_unparseable_manifest_reports_no_manifest PASSED [ 20%]
+tests/test_drift.py::test_latin1_cited_line_byte_change_is_a_mismatch PASSED [ 40%]
+tests/test_drift.py::test_docs_directory_with_no_pages_is_not_clean PASSED [ 60%]
+tests/test_drift.py::test_md_page_citing_a_changed_file_is_drift PASSED  [ 80%]
+tests/test_drift.py::test_mdx_page_citing_a_changed_file_is_drift PASSED [100%]
+
+======================= 5 passed, 16 deselected in 1.08s =======================

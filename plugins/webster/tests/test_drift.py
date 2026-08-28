@@ -7,8 +7,9 @@ so an import would freeze the wrong repository before a test could choose one.
 
 Which fix each test pins, and how it failed on the pre-change script — the RED
 baseline required by FR-039 / AC-039, verified against ``drift.py`` at commit
-2abe081, and for the last two rows — the pair a GRIND cycle found still
-false-passing after that commit — against ``drift.py`` at commit 9859317:
+2abe081; for rows 15-16 — the pair a GRIND cycle found still false-passing after
+that commit — against ``drift.py`` at commit 9859317; and for the last five, a
+second GRIND cycle's, against ``drift.py`` at commit 19c97f9:
 
 ===================================================  ==============  ===========================
 test                                                 pins            was, before the fix
@@ -29,6 +30,11 @@ test_record_without_a_commit_writes_a_null_head      FR-009 OT-010   gitHead "",
 test_anchor_past_end_of_file_gets_no_line_hash       FR-034          no lineHashes key at all
 test_non_ascii_path_under_a_c_locale_still_answers   FR-002 FR-037   traceback, no JSON, exit 1
 test_null_head_in_the_manifest_reports_no_git        FR-005 FR-009   status clean, exit 0
+test_unparseable_manifest_reports_no_manifest        FR-006 CT-001   traceback, no JSON, exit 1
+test_latin1_cited_line_byte_change_is_a_mismatch     FR-003 US-001   status clean, exit 0
+test_docs_directory_with_no_pages_is_not_clean       FR-005 FR-006   status clean, exit 0
+test_md_page_citing_a_changed_file_is_drift          FR-005 ST-001   green: the .mdx control
+test_mdx_page_citing_a_changed_file_is_drift         FR-005 FR-006   unrelated_changes, exit 0
 ===================================================  ==============  ===========================
 
 The exit map under test is FR-006: clean and unrelated_changes 0, drift 1,
@@ -58,6 +64,16 @@ CITING_PAGE = "docs/items/create-item.md"
 CITED_FILE = "src/app/main.py"
 UNCITED_FILE = "src/cli/main.py"
 MANIFEST = "docs/.webster.json"
+
+# src/cli/main.py:1 is `import argparse`. The .md / .mdx pair below cites it, and the committed
+# fixture cites it from nowhere else, so a page reaching it is the page under test.
+MDX_ANCHOR = "src/cli/main.py:1"
+# Written by the latin-1 test and named in that repository's .gitignore, so git has nothing to
+# say about it and the per-anchor hash is the only thing left that can notice an edit.
+LATIN1_FILE = "src/app/legacy.py"
+LATIN1_ANCHOR = "src/app/legacy.py:1"
+LATIN1_BEFORE = b"# caf\xe9 loader, latin-1, older than the tree it lives in\n"
+LATIN1_AFTER = b"# caf\xe8 loader, latin-1, older than the tree it lives in\n"
 
 # Same isolation as conftest's own git calls: a developer's ~/.gitconfig reaches
 # these repositories through HOME, and commit.gpgsign or core.autocrlf there
@@ -137,6 +153,48 @@ def line_of(repo: Path, relpath: str, lineno: int) -> str:
 def hash_of(line: str) -> str:
     """FR-003: sha256 of the cited line, whitespace stripped, first 16 hex characters."""
     return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def hash_of_bytes(raw: bytes) -> str:
+    """The same digest taken over raw bytes, for a cited line that is not valid UTF-8.
+
+    ``hash_of`` above goes through ``str``, which is only equal to this for a line the
+    interpreter can decode. A file in latin-1 has no such text form, and the digest has to be
+    over what is on disk, so the expectation is stated here in bytes.
+    """
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def write_citing_page(repo: Path, ext: str) -> str:
+    """Write ``docs/notes<ext>`` citing ``src/cli/main.py:1`` and return its relative path.
+
+    The two pages this builds differ in one character — the extension — so the pair of tests
+    that use it can show that a page is a page under either name. Shared rather than
+    parametrized on purpose: ``test_readme.py`` counts one collected item per top-level test
+    function and refuses a parametrized module by name, so the twins are written out.
+    """
+    page = f"docs/notes{ext}"
+    (repo / page).write_text(
+        '---\nsidebar_position: 50\ntitle: "Notes"\ndoc_type: explanation\n'
+        "audience: user\n---\n\n# Notes\n\n"
+        f"The command line parses your arguments first. <!-- {MDX_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+    return page
+
+
+def record_then_touch_uncited(run_script, repo: Path, ext: str) -> tuple:
+    """Add the page, record, append a line to the file it cites, and check.
+
+    The cited file is ``src/cli/main.py``, which no page in the committed fixture cites, so the
+    only thing that can make it suspect is the page this helper just wrote.
+    """
+    page = write_citing_page(repo, ext)
+    record(run_script, repo)
+    target = repo / UNCITED_FILE
+    target.write_text(target.read_text(encoding="utf-8") + "# touched\n", encoding="utf-8")
+    result = run_script("drift.py", "check", "docs", cwd=repo)
+    return page, result, parsed(result)
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +397,66 @@ def test_non_ascii_path_under_a_c_locale_still_answers(run_script, fixture_repo)
     )
 
 
+def test_unparseable_manifest_reports_no_manifest(run_script, fixture_repo):
+    """FR-006 / CT-001 — a manifest that cannot be read is exit 2, not a traceback at exit 1.
+
+    RED before the fix: ``old = json.load(open(MANIFEST))`` (``drift.py:255``) had no try
+    around it and no ``encoding=``, so a torn write or a merge conflict left in the file raised
+    JSONDecodeError straight out of main(). The script printed nothing at all on stdout and
+    exited 1 — the code FR-006 reserves for drift — with a traceback on stderr. Nothing had
+    been measured and the caller was told the pages disagree with the code, which is the same
+    class as the swallowed git error one function earlier (``drift.py:57-59`` names it).
+    """
+    record(run_script, fixture_repo)
+    # What `git merge` leaves behind when two branches both re-recorded.
+    (fixture_repo / MANIFEST).write_text(
+        "<<<<<<< HEAD\n"
+        '{\n  "gitHead": "0000000000000000000000000000000000000000",\n'
+        "=======\n"
+        '{\n  "gitHead": "1111111111111111111111111111111111111111",\n'
+        ">>>>>>> other\n",
+        encoding="utf-8",
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+
+    assert "Traceback" not in result.stderr, (
+        f"expected the unreadable manifest to be reported, not raised\n{outcome(result)}"
+    )
+    data = parsed(result)
+    assert data["status"] == "no_manifest", (
+        f"expected status no_manifest for a manifest that will not parse; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 2, (
+        f"expected exit 2 for a check that could not run; got {result.returncode}\n"
+        f"{outcome(result)}"
+    )
+    assert "JSONDecodeError" in data["note"], (
+        f"expected the note to name the parse error so the reader knows what to fix; got "
+        f"{data['note']!r}\n{outcome(result)}"
+    )
+
+    # Valid JSON that is not an object is the same failure one step later: every read below
+    # line 255 is `old.get(...)`, so a manifest holding a list raised AttributeError out of
+    # main() and exited 1 for the same wrong reason.
+    (fixture_repo / MANIFEST).write_text("[]\n", encoding="utf-8")
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+
+    assert "Traceback" not in result.stderr, (
+        f"expected a JSON array to be reported, not raised\n{outcome(result)}"
+    )
+    data = parsed(result)
+    assert data["status"] == "no_manifest" and result.returncode == 2, (
+        f"expected no_manifest at exit 2 for a manifest that is not an object; got "
+        f"{data['status']!r} at exit {result.returncode}\n{outcome(result)}"
+    )
+    assert data["note"], (
+        f"expected a note saying what was found instead\n{outcome(result)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # FR-003 / FR-004 / FR-034: the per-anchor line hash
 # ---------------------------------------------------------------------------
@@ -499,6 +617,68 @@ def test_anchor_past_end_of_file_gets_no_line_hash(run_script, fixture_repo):
     )
 
 
+def test_latin1_cited_line_byte_change_is_a_mismatch(run_script, fixture_repo):
+    """US-001 / FR-003 / FR-005 / ST-006 — the digest is over the bytes, not a lossy decode.
+
+    RED before the fix: ``cited_line`` opened the cited file with ``errors="replace"``
+    (``drift.py:188``), so every byte the UTF-8 decoder could not read became the same U+FFFD
+    before ``line_hash`` encoded it back (``drift.py:209``). Two different latin-1 bytes
+    therefore produced one digest, the recorded hash still matched, and this check printed
+    status clean at exit 0 — under a user story titled "A cited file edit is never reported
+    clean".
+
+    The cited file is named in .gitignore so that git has nothing to report about it: with the
+    code half silent, the assertion below is about the hash half and nothing else.
+    """
+    legacy = fixture_repo / LATIN1_FILE
+    legacy.write_bytes(LATIN1_BEFORE)
+    (fixture_repo / ".gitignore").write_text(f"{LATIN1_FILE}\n", encoding="utf-8")
+    faq = fixture_repo / "docs/faq.md"
+    faq.write_text(
+        faq.read_text(encoding="utf-8")
+        + f"\nThe loader is older than the tree. <!-- {LATIN1_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+    # Committed before the record so the working tree is quiet when the check runs: an
+    # untracked .gitignore would itself show up as a changed code file.
+    git_in(fixture_repo, "add", "--", ".gitignore")
+    git_in(fixture_repo, "commit", "-q", "-m", "ignore the legacy loader")
+
+    record(run_script, fixture_repo)
+    manifest = manifest_of(fixture_repo)
+
+    assert manifest["lineHashes"].get(LATIN1_ANCHOR) == hash_of_bytes(LATIN1_BEFORE.strip()), (
+        f"expected the recorded digest to be taken over the line's bytes; got "
+        f"{manifest['lineHashes'].get(LATIN1_ANCHOR)!r}"
+    )
+
+    # One byte of the cited line changes: 0xe9 -> 0xe8. Nothing else in the tree moves.
+    legacy.write_bytes(LATIN1_AFTER)
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["code_files_changed"] == 0, (
+        "this test needs git to have nothing to say, so that only the hash half can notice "
+        f"the edit; got {data['code_files_changed']} changed file(s)\n{outcome(result)}"
+    )
+    assert data["suspect_pages"] == {}, (
+        f"expected no page suspect through the code half; got {data['suspect_pages']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert data["hash_mismatches"] == [LATIN1_ANCHOR], (
+        f"expected {LATIN1_ANCHOR} under hash_mismatches after one byte of the cited line "
+        f"changed; got {data['hash_mismatches']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected status drift for an edited cited line; got {data['status']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 alongside status drift; got {result.returncode}\n{outcome(result)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # FR-005 / FR-007 / FR-008: the status vocabulary and what outranks what
 # ---------------------------------------------------------------------------
@@ -625,6 +805,97 @@ def test_nothing_changed_since_record_is_clean(run_script, fixture_repo):
     )
     assert data["code_files_changed"] == 0 and data["docs_edited_since_record"] is False, (
         f"expected nothing changed; got {data!r}\n{outcome(result)}"
+    )
+
+
+def test_docs_directory_with_no_pages_is_not_clean(run_script, fixture_repo):
+    """FR-005 / FR-006 / CT-001 / ST-006 — zero pages scanned is not a pass.
+
+    RED before the fix: ``nothing_to_measure = not anchors and paths`` (``drift.py:326``)
+    required the page list to be NON-empty, so a docs tree holding no page at all fell past
+    the no_anchors sentinel to ``clean`` at exit 0. Nothing was scanned, nothing was resolved,
+    and the gate reported a pass — the count of what was skipped standing in for the count of
+    what was checked.
+    """
+    shutil.rmtree(fixture_repo / "docs")
+    (fixture_repo / "docs").mkdir()
+
+    printed = record(run_script, fixture_repo)
+    assert printed["pages"] == 0 and printed["anchors"] == 0, (
+        f"this test needs an empty docs tree; record saw {printed!r}"
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["status"] == "no_anchors", (
+        f"expected the not-checked sentinel for a docs tree with no pages; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 2, (
+        f"expected exit 2, never the exit 0 of a pass; got {result.returncode}\n"
+        f"{outcome(result)}"
+    )
+    assert data["pages"] == 0 and data["anchors"] == 0, (
+        f"expected the empty counts reported back; got {data!r}\n{outcome(result)}"
+    )
+    assert data["note"], (
+        f"expected a note saying why nothing could be measured\n{outcome(result)}"
+    )
+
+
+def test_md_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
+    """FR-005 / ST-001 — the control for the .mdx twin below.
+
+    Green before and after the fix, deliberately: it is what makes the twin's failure a
+    statement about the extension rather than about this scenario. The page, the citation and
+    the edit are byte-identical in both tests.
+    """
+    page, result, data = record_then_touch_uncited(run_script, fixture_repo, ".md")
+
+    assert data["status"] == "drift", (
+        f"expected status drift when a .md page cites the file that changed; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["suspect_pages"].get(page) == [MDX_ANCHOR], (
+        f"expected {page} suspect through {MDX_ANCHOR}; got {data['suspect_pages']!r}\n"
+        f"{outcome(result)}"
+    )
+
+
+def test_mdx_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
+    """FR-005 / FR-006 / ST-006 — a .mdx page is a page.
+
+    RED before the fix: ``doc_files`` kept only names ending ``.md`` (``drift.py:127``) while
+    ``.mdx`` sits in SRC_EXT as a citable file (``drift.py:25-26``), so a Docusaurus set
+    written in .mdx was never scanned. This check reported unrelated_changes at exit 0 with a
+    note saying no page cites the file that had just changed — with the page sitting in the
+    tree, citing it. The .md control above runs the identical scenario one character apart.
+    """
+    page, result, data = record_then_touch_uncited(run_script, fixture_repo, ".mdx")
+
+    assert page in data["suspect_pages"], (
+        f"expected the .mdx page to be scanned and reported suspect; got "
+        f"{data['suspect_pages']!r}\n{outcome(result)}"
+    )
+    assert data["suspect_pages"][page] == [MDX_ANCHOR], (
+        f"expected {page} suspect through {MDX_ANCHOR}; got {data['suspect_pages']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected the same answer the .md twin gets; got {data['status']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1, not the exit 0 an unscanned page produced; got "
+        f"{result.returncode}\n{outcome(result)}"
+    )
+    assert "no page cites" not in data["note"], (
+        f"expected no claim that nothing cites the changed file; got {data['note']!r}\n"
+        f"{outcome(result)}"
     )
 
 

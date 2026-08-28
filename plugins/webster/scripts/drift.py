@@ -121,10 +121,18 @@ def porcelain_paths(out):
 
 
 def doc_files():
+    """Every page in the docs tree, .md and .mdx alike.
+
+    .mdx is in SRC_EXT above, so a page may cite one, but the walk that decided what a page IS
+    kept only names ending .md. A Docusaurus set written in .mdx was therefore never scanned:
+    zero pages, zero anchors, and a check that reported unrelated_changes at exit 0 with a note
+    saying no page cited the file that had just changed — with the page sitting in the tree,
+    citing it. The same page under two extensions has to reach the same answer.
+    """
     out = []
     for dirpath, dirnames, filenames in os.walk(DOCS):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        out += [os.path.join(dirpath, f) for f in filenames if f.endswith(".md")]
+        out += [os.path.join(dirpath, f) for f in filenames if f.endswith((".md", ".mdx"))]
     return sorted(out)
 
 
@@ -165,6 +173,41 @@ def collect_anchors(paths):
     return found
 
 
+def read_manifest():
+    """The recorded manifest as a dict, or the reason there is nothing to compare against.
+
+    `json.load(open(MANIFEST))` had no try and no encoding=, so three ordinary states of a
+    file people edit and merge — a torn write, a conflict left in place, a path that cannot be
+    read — raised out of main() as a traceback at exit 1. Exit 1 is the code that means drift,
+    so a run that measured nothing at all told its caller the pages disagree with the code.
+    That is the same class as the git errors swallowed one function above, under the opposite
+    sign, and FR-006 reserves exit 1 for `drift` alone.
+
+    The decode is pinned to UTF-8 for the same reason git() pins its own: the locale's
+    preferred encoding is US-ASCII under LC_ALL=C, and a manifest is JSON, which is UTF-8.
+
+    Returns (None, reason) for every unusable state, so that the caller has one not-checked
+    exit and one envelope shape rather than one per failure.
+    """
+    try:
+        with open(MANIFEST, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return None, f"no manifest at {MANIFEST}: run `drift.py record` before `check`"
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        return None, (f"the manifest at {MANIFEST} could not be read "
+                      f"({type(e).__name__}: {e}), so nothing here has been compared against "
+                      "the code; re-record")
+    # Everything below reads `old.get(...)`. A manifest holding a list or a bare null parses
+    # and then raises AttributeError at the first read, which is the same traceback at exit 1
+    # one step later.
+    if not isinstance(data, dict):
+        return None, (f"the manifest at {MANIFEST} holds a JSON {type(data).__name__} where an "
+                      "object was recorded, so there is nothing here to compare against; "
+                      "re-record")
+    return data, ""
+
+
 def resolves(anchor):
     target, _, lineno = anchor.rpartition(":")
     path = os.path.join(ROOT, target)
@@ -181,11 +224,23 @@ def resolves(anchor):
 
 
 def cited_line(anchor):
-    """The text of the line an anchor points at, or None when it cannot be read."""
+    """The text of the line an anchor points at, or None when it cannot be read.
+
+    Decoded with surrogateescape rather than replace, because this line is about to be hashed.
+    `replace` maps every byte it cannot decode to the same U+FFFD, so two different bytes on a
+    cited line produced one digest: a latin-1 file whose cited line changed still matched its
+    recorded hash and the check reported clean — under a user story titled "A cited file edit
+    is never reported clean". surrogateescape gives each undecodable byte its own code point
+    and re-encodes to the byte it came from, so the digest is taken over what is in the file.
+
+    A file that is valid UTF-8 decodes identically either way and carries no surrogates to
+    encode, so every digest recorded before this change still matches. This is also the decode
+    git() uses, for the same reason: a byte is not a reason to stop answering.
+    """
     target, _, lineno = anchor.rpartition(":")
     path = os.path.join(ROOT, target)
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="surrogateescape") as f:
             for i, line in enumerate(f, 1):
                 if i == int(lineno):
                     return line
@@ -206,7 +261,7 @@ def line_hash(anchor):
     line = cited_line(anchor)
     if line is None:
         return None
-    return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(line.strip().encode("utf-8", "surrogateescape")).hexdigest()[:16]
 
 
 def main():
@@ -228,7 +283,9 @@ def main():
             h = line_hash(a)
             if h is not None:
                 line_hashes[a] = h
-        with open(MANIFEST, "w") as f:
+        # Pinned to match read_manifest(): the reader decodes UTF-8, so the writer must not
+        # be left to the locale's preferred encoding on the machine that happens to record.
+        with open(MANIFEST, "w", encoding="utf-8") as f:
             json.dump({"gitHead": head or None, "docsHash": tree_hash(paths),
                        "pages": [os.path.relpath(p, ROOT) for p in paths],
                        "anchors": anchors, "lineHashes": line_hashes}, f, indent=2)
@@ -247,12 +304,13 @@ def main():
         if not ok:
             broken.append({"anchor": a, "reason": why, "cited_by": cited_by})
 
-    if not os.path.exists(MANIFEST):
+    old, manifest_note = read_manifest()
+    if old is None:
         print(json.dumps({"status": "no_manifest", "docs_dir": DOCS,
-                          "anchors": len(anchors), "broken": broken}, indent=2))
+                          "anchors": len(anchors), "broken": broken,
+                          "note": manifest_note}, indent=2))
         return 2
 
-    old = json.load(open(MANIFEST))
     recorded = old.get("gitHead")
     inside_docs = os.path.relpath(DOCS, ROOT) + "/"
 
@@ -323,7 +381,10 @@ def main():
     # A set with no anchors resolves every anchor it has, which is not the same as being
     # checked. Reporting that as clean is a false pass, and a false pass is worse than a
     # finding because the reader trusts the page exactly as far as they trust the gate.
-    nothing_to_measure = not anchors and paths
+    # `and paths` required the page list to be NON-empty, so the one set that had been looked
+    # at least of all — a docs tree holding no page — was the one that fell through to clean at
+    # exit 0. Zero anchors is zero anchors however few pages produced them.
+    nothing_to_measure = not anchors
 
     # Precedence, least measurable first. A set that cannot be measured at all, then a git
     # question that could not be asked, then the findings, then the changes that are nobody's
@@ -342,7 +403,9 @@ def main():
 
     notes = []
     if nothing_to_measure:
-        notes.append("no page in this set cites a source, so nothing here can be re-verified "
+        notes.append("this docs directory holds no page at all, so nothing here was scanned "
+                     "and the Sourced gate cannot report a pass" if not paths else
+                     "no page in this set cites a source, so nothing here can be re-verified "
                      "and the Sourced gate cannot report a pass")
     if git_note:
         notes.append(git_note)

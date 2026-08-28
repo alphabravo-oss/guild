@@ -1,0 +1,18 @@
+# evidence-cmd: export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1; t=$(mktemp -d); D=$PWD/plugins/webster/scripts/drift.py; git show 19c97f9:plugins/webster/scripts/drift.py > $t/pre.py; cp -R plugins/webster/tests/fixtures/repo $t/r; cd $t/r; git init -q .; git -c user.name=t -c user.email=t@t add -A; git -c user.name=t -c user.email=t@t commit -qm i >/dev/null; python3 $t/pre.py record docs >/dev/null; cp docs/.webster.json $t/pre.json; python3 $D check docs > $t/out; echo "check at HEAD against a manifest recorded at 19c97f9: exit=$?"; grep "\"status\"" $t/out; grep "\"hashes\"" $t/out; grep "\"hash_mismatches\"" $t/out; python3 $D record docs >/dev/null; cmp -s $t/pre.json docs/.webster.json && echo "the manifest recorded at 19c97f9 and the one recorded at HEAD are byte-identical" || echo "MANIFESTS DIFFER"
+# evidence-for: FR-003, FR-004, AC-006
+#
+# D-012 changed what the per-anchor digest is taken over: the cited line is now decoded
+# with surrogateescape and re-encoded with it, instead of being decoded with
+# errors="replace", which collapsed every undecodable byte to one U+FFFD and let a
+# latin-1 cited line change under a matching hash. For a file that is valid UTF-8 the
+# two decodes are identical and there are no surrogates to re-encode, so every digest
+# recorded before the fix still matches and no committed manifest is re-reported as
+# drift. This records that end to end: the fixture tree is recorded by drift.py as it
+# stood at 19c97f9, checked by drift.py at HEAD, and then re-recorded at HEAD, and the
+# two manifests are compared byte for byte.
+
+check at HEAD against a manifest recorded at 19c97f9: exit=0
+  "status": "clean",
+  "hashes": "checked",
+  "hash_mismatches": [],
+the manifest recorded at 19c97f9 and the one recorded at HEAD are byte-identical
