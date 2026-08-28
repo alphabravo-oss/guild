@@ -1,9 +1,0 @@
-# evidence-cmd: d=$(mktemp -d) && cp -R plugins/webster/tests plugins/webster/scripts plugins/webster/pyproject.toml "$d"/ && git show f31b144:plugins/webster/scripts/drift.py > "$d/scripts/drift.py" && (cd "$d" && uvx pytest tests/test_drift.py -q --no-header -p no:randomly -p no:cacheprovider 2>&1) | grep -E "^(FAILED|[0-9]+ (failed|passed))" | sed -E "s/ - .*$//" | LC_ALL=C sort; rm -rf "$d"
-# evidence-for: AC-039, FR-039, AC-001, FR-001, FR-005, FR-006, US-010
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 180
-
-3 failed, 21 passed in 5.81s
-FAILED tests/test_drift.py::test_docs_below_the_git_root_still_match_anchors
-FAILED tests/test_drift.py::test_partly_hashed_manifest_is_not_reported_clean
-FAILED tests/test_drift.py::test_wrong_typed_manifest_field_is_no_manifest
