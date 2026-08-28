@@ -193,11 +193,20 @@ IDENT_ALLOW = {name.lower() for name in (
 ENV_VAR = re.compile(r"`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`")
 # Any backticked path, not just the two prefixes an API happens to use: `/dashboard` and
 # `/settings/profile` are as much a request route as `/api/health`, and both used to pass.
-# The lookahead drops a token whose last segment carries a file extension, because a page may
-# legitimately show a reader `/etc/hosts.conf`. Letters only, so `/api/v1.0/users` stays a
-# route. `/etc/hosts` has no extension and is the known gap; WEBSTER_LENS_ALLOW covers it.
+# The lookahead drops a token whose last segment carries an extension, because a page may
+# legitimately show a reader a file. It reads a dot followed by up to sixteen alphanumerics and
+# then the closing backtick, so the dot it finds is always in the last segment.
+# The bound used to be six letters, which covers `.conf` and `.yaml` and stops there: an
+# ordinary config path on a user page — `/etc/app.properties`, `/docs/readme.markdown`,
+# `/.gitignore`, `/x.template` — was over the length or held a digit, and every one of them was
+# reported to a reader as naming a request route. Sixteen is past every extension in ordinary
+# use, and the comment above this line claimed the exclusion without ever saying it was capped.
+# Admitting digits costs a version in the last segment: `/api/v1.0` now reads as a file and is
+# not reported, while `/api/v1.0/users` still is, because there the dot is not in the last
+# segment. `/etc/hosts` has no extension at all and is the gap A-008 accepts; WEBSTER_LENS_ALLOW
+# covers both.
 ROUTE_PATH = re.compile(
- r"`(?![^`\s]*\.[A-Za-z]{1,6}`)(/[^`\s]+)`"
+ r"`(?![^`\s]*\.[A-Za-z0-9]{1,16}`)(/[^`\s]+)`"
  r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
 # A flag is something typed at a terminal, and a page written from the screen has no terminal in
 # it. Suppressed by WEBSTER_LENS_ALLOW or by the product's own commands and labels, because a

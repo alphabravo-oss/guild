@@ -1,0 +1,36 @@
+# evidence-cmd: d=$(mktemp -d); mkdir -p "$d/docs"; printf -- '---\ntitle: Guide\ndoc_type: how-to\naudience: user\n---\n\n# Guide\n\nOpen `/settings/profile`, `/dashboard` and `/api/v2/items` to see your work.\nYour keys live in `/etc/app.properties`, your notes in `/docs/readme.markdown`,\nyour ignore list in `/.gitignore` and your letter in `/x.template`.\nYour host names live in `/etc/hosts.conf`.\nThe list at `/api/v1.0/users` is a route; `/api/v1.0` on its own now reads as a file.\n' > "$d/docs/guide.md"; git show 38fb601:plugins/webster/scripts/doctype.py > "$d/before.py"; echo "== the doctype.py at 38fb601, before this fix"; WEBSTER_SHOW_PER_RULE=50 python3 "$d/before.py" check "$d/docs"; echo "exit=$?"; echo; echo "== the doctype.py at this commit"; WEBSTER_SHOW_PER_RULE=50 python3 plugins/webster/scripts/doctype.py check "$d/docs"; echo "exit=$?"; rm -rf "$d"
+# evidence-for: FR-011, AC-012, US-003, AC-039, FR-039, US-010
+# evidence-timeout: 120
+
+== the doctype.py at 38fb601, before this fix
+1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (9)
+
+  wrong-lens  (9)
+      write it from the screen: what the reader sees, clicks, types and gets back
+    guide.md:9  a 'user' page names a request route, /settings/profile
+    guide.md:9  a 'user' page names a request route, /dashboard
+    guide.md:9  a 'user' page names a request route, /api/v2/items
+    guide.md:10  a 'user' page names a request route, /etc/app.properties
+    guide.md:10  a 'user' page names a request route, /docs/readme.markdown
+    guide.md:11  a 'user' page names a request route, /.gitignore
+    guide.md:11  a 'user' page names a request route, /x.template
+    guide.md:13  a 'user' page names a request route, /api/v1.0/users
+    guide.md:13  a 'user' page names a request route, /api/v1.0
+exit=1
+
+== the doctype.py at this commit
+1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (4)
+
+  wrong-lens  (4)
+      write it from the screen: what the reader sees, clicks, types and gets back
+    guide.md:9  a 'user' page names a request route, /settings/profile
+    guide.md:9  a 'user' page names a request route, /dashboard
+    guide.md:9  a 'user' page names a request route, /api/v2/items
+    guide.md:13  a 'user' page names a request route, /api/v1.0/users
+exit=1

@@ -58,6 +58,13 @@ widening above introduced rather than the ones it fixed:
 - FR-040 / CT-004 zero pages checked is never exit 0
     test_empty_docs_tree_is_not_checked
 
+One more is measured against commit 38fb601, for the same reason — the widening left the
+file-extension exclusion capped at the length of `.conf`, so the ordinary config paths a user
+page names were still reported as routes:
+
+- FR-011 / AC-012 the extension exclusion holds at the lengths files really have
+    test_long_and_dotfile_extensions_are_not_routes
+
 The first two of those four pass at 2abe081 as well — the narrow CODE_IDENT could match neither
 `HTTP2` nor `IPv4` — which is what makes them regression guards rather than fix guards. The
 other two are red on both sides.
@@ -278,6 +285,35 @@ def test_path_with_a_file_extension_is_not_a_route(run_script, docs_dir):
         f"have to open, not a route.\n{outcome(result)}"
     )
     assert result.returncode == 0, f"Expected exit 0.\n{outcome(result)}"
+
+
+def test_long_and_dotfile_extensions_are_not_routes(run_script, docs_dir):
+    """The same exclusion, at the lengths ordinary config paths actually have.
+
+    ``.conf`` is four letters and fitted the old six-letter cap. ``.properties`` is ten,
+    ``.markdown`` is eight, ``.template`` is eight, and ``/.gitignore`` is a dotfile with no
+    stem at all — every one of them was reported to a reader as naming a request route, on the
+    page that told them where their settings live. The route on the same page still fires, so
+    this pins the exclusion rather than the whole rule going quiet."""
+    write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
+               "# Guide\n\nOpen `/settings/profile` to change your name. The app keeps its "
+               "keys in\n`/etc/app.properties`, its notes in `/docs/readme.markdown`, its "
+               "ignore list in\n`/.gitignore` and its letter in `/x.template`.\n")
+
+    result = check(run_script, docs_dir)
+
+    for path in ("/etc/app.properties", "/docs/readme.markdown", "/.gitignore", "/x.template"):
+        assert f"a request route, {path}" not in result.stdout, (
+            f"{path} is a file a reader may really have to open. The extension exclusion used "
+            f"to be capped at six letters, so this one was over it.\n{outcome(result)}"
+        )
+    assert "a request route, /settings/profile" in result.stdout, (
+        f"The route on the same page must still be reported; widening the exclusion must not "
+        f"switch the rule off.\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"Expected exit 1 from the route alone.\n{outcome(result)}"
+    )
 
 
 # -----------------------------------------------------------------------------
