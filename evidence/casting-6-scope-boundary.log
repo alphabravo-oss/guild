@@ -1,0 +1,22 @@
+# evidence-cmd: echo "FR-043 paths in this commit outside the five writable locations under plugins/webster (evidence/ excluded): $(git show --name-only --pretty=format: HEAD | grep -v '^$' | grep -vcE '^(plugins/webster/(scripts/[^/]+\.py|\.claude-plugin/plugin\.json|README\.md|pyproject\.toml|tests/)|evidence/)')" && echo "FR-043 paths outside this casting key_files (plugin.json, README.md, tests/test_readme.py; evidence/ excluded): $(git show --name-only --pretty=format: HEAD | grep -v '^$' | grep -vcE '^(plugins/webster/(\.claude-plugin/plugin\.json|README\.md|tests/test_readme\.py)|evidence/)')" && echo "GI-006 forbidden paths touched (marketplace.json, root README, webster agents/commands/skills): $(git show --name-only --pretty=format: HEAD | grep -v '^$' | grep -cE '^(\.claude-plugin/|README\.md$|plugins/webster/(agents|commands|skills)/)')" && echo "files in this commit:" && git show --name-only --pretty=format: HEAD | grep -v '^$'
+# evidence-for: FR-043
+#
+# FR-043 and GI-007 are a claim about a diff, so they are answered by reading the
+# diff rather than by describing it. The first count is the whole writable set the
+# spec allows; the second is narrower, this casting's own key_files, because a
+# commit can stay inside GI-007 and still reach into another casting's module. The
+# third counts the two files GI-006 puts out of bounds together with the plugin's
+# read-only markdown layers. All three must read 0, and the file list under them is
+# what those counts were taken from. evidence/ is the run's own bookkeeping and is
+# excluded from the first two by the pattern, not by hand -- and it is the reason
+# casting-6-pytest-green.log records a red scope-guard test at this commit.
+
+FR-043 paths in this commit outside the five writable locations under plugins/webster (evidence/ excluded): 0
+FR-043 paths outside this casting key_files (plugin.json, README.md, tests/test_readme.py; evidence/ excluded): 0
+GI-006 forbidden paths touched (marketplace.json, root README, webster agents/commands/skills): 0
+files in this commit:
+evidence/casting-6-pytest-green.log
+evidence/casting-6-release-metadata.log
+evidence/casting-6-scope-boundary.log
+evidence/casting-6-status-claims.log
+plugins/webster/README.md

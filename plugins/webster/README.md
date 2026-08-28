@@ -172,10 +172,23 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-93 passing. The tests run the scripts the way a command does, by subprocess against the
-committed fixture repo in `tests/fixtures/repo/`, so nothing is imported and the file under test
-is the one a user actually invokes. pytest itself runs on uv's CPython 3.11 while the scripts
-run under whatever `python3` is on PATH, which is the interpreter skew a real invocation has.
+102 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
+and the file under test is the one a user actually invokes: each script binds its root, its docs
+directory and its allowlists at import time, and an in-process test would freeze all of them at
+the importing process's values. `drift.py`'s cases all run against the committed fixture repo in
+`tests/fixtures/repo/`, rebuilt into a real git repository with fixed commit dates for each test.
+The other modules build the one small tree a case needs under pytest's `tmp_path` and reach for
+that fixture only where the case wants a real repository or a real page beneath it.
+
+`run_script` calls the literal `python3` and passes PATH straight through, because that is what a
+reader gets: every script carries a `#!/usr/bin/env python3` shebang and Claude Code runs it as
+`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/X.py`. Which interpreter that resolves to depends on how
+the suite was launched, and the command above is not the interesting case: uv puts its own
+ephemeral CPython first on PATH, so the child is that one and it is the same interpreter
+collecting the tests. Launched as `python3 -m pytest` instead, the child is the shell's `python3`
+and a different interpreter from pytest's. The suite pins neither. Which one it is is a property
+of the machine, not of the suite, and the thing worth asserting is the floor both clear.
 
 That count is itself checked. `tests/test_readme.py` reads this section back, compares the number
 to the tests the suite defines, and compares the version above to `plugin.json`, so a test added
@@ -186,19 +199,20 @@ it never looked.
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD and a cited line that changed;
 `doctype.py` across the widened symbol, route and flag lenses, the acronym list, stubs and the
-`WEBSTER_SURVEY` allowlist; `survey.py` across decorators split over several lines, `argparse`,
-`pyproject.toml` and `os.getenv` reads; `llmstxt.py`, `slop.py` and `scaffold.py` across the
-fixes each of those carries. Every fix has at least one test that fails against the script as it
-stood before the fix; the rest are guards, there so a fix does not take something else away with
-it.
+`WEBSTER_SURVEY` allowlist; `survey.py` across decorators split over several lines, Flask's
+declared methods, `pyproject.toml`, `HTTPException` details and `os.getenv` reads; `llmstxt.py`,
+`slop.py` and `scaffold.py` across the fixes each of those carries. Every fix has at least one
+test that fails against the script as it stood before the fix; the rest are guards, there so a
+fix does not take something else away with it.
 
-The harness under those modules is exercised as well. `tests/test_harness.py` measures the four
-things `conftest.py` had only asserted in prose: which interpreter the child `python3` actually
-resolves to under this run, that two builds of the fixture repository land on the same commit,
-that the committed fixture carries no nested `.git`, no `website/` and no recorded manifest, and
-that this change stayed inside the files it was allowed to write. Two of those claims had already
-gone stale in the docstring that made them, which is why they are measured now rather than
-written down.
+The harness under those modules is exercised as well. `tests/test_harness.py` measures four
+things nothing else in the suite checks: that the child `python3` clears the plugin's 3.11 floor,
+that two builds of the fixture repository land on the same commit, that the committed fixture
+carries no nested `.git`, no `website/` and no recorded manifest, and that this change stayed
+inside the files it was allowed to write. The first of those measures the floor rather than
+naming an interpreter, and that is the correction: `conftest.py` used to say the child resolved
+through PATH to 3.14.6 and was not the one running pytest, and under the command printed above
+both halves are false.
 
 Not yet exercised: `rendered.py`, which has no test module, so every claim about what it catches
 in built HTML is still untested. Nor the three commands end to end, which means what
