@@ -52,10 +52,19 @@ def one_line(value):
     its middle line outside the `> ` blockquote entirely, which is why the fold matters as much
     as the strip: a summary that breaks across lines has stopped being the one line the format
     asks for. A non-string -- a JSON object under `description` -- yields nothing rather than a
-    Python repr, and the next source in the chain is used instead."""
+    Python repr, and the next source in the chain is used instead.
+
+    A value still carrying the stub marker, or a brace from one of scaffold.py's `{placeholder}`
+    headings, is dropped on the same grounds. The header line is a claim that this repo is a
+    thing and that this is what it does, and a skeleton nobody has filled in is the one text on
+    disk that states the opposite. Dropped rather than published empty, so the next source in
+    the chain gets its turn."""
     if not isinstance(value, str):
         return ""
-    return re.sub(r"\s+", " ", strip_comments(value)).strip()
+    line = re.sub(r"\s+", " ", strip_comments(value)).strip()
+    if STUB_MARKER in line or "{" in line or "}" in line:
+        return ""
+    return line
 
 # A stub is the skeleton scaffold.py writes before anyone has filled it in. Listing one states
 # that the page exists and says something, and that is the single claim this script is not
@@ -153,6 +162,25 @@ def title_and_summary(path):
     return title or os.path.basename(path), summary or ""
 
 
+def readme_summary(root):
+    """The README's summary line, or nothing when the README is itself unwritten.
+
+    main() keeps a stub out of the listing by reading each page and looking for the marker, but
+    the README behind the header's `> ` line is not in the docs tree that loop walks, so the
+    exclusion was applied on one of the two routes into this file. A repo whose README is still
+    the skeleton scaffold.py wrote published that skeleton's first placeholder as the product's
+    summary -- the line a machine reader takes for what the repo is, taken from the one page
+    whose entire content is that nobody has written it yet. The marker sits inside an HTML
+    comment, so strip_comments removes it before one_line could ever see it: the file is read
+    for it here, the same way the page loop reads for it."""
+    path = os.path.join(root, "README.md")
+    if not os.path.isfile(path):
+        return ""
+    if STUB_MARKER in open(path, encoding="utf-8", errors="replace").read():
+        return ""
+    return title_and_summary(path)[1]
+
+
 def index_order(docs_dir):
     """The order the index links its pages in. An author's ordering beats a heuristic."""
     for cand in ("index.md", "README.md"):
@@ -211,12 +239,14 @@ def main():
     # pyproject.toml is tooling configuration rather than the product's own name.
     # Cleaned one source at a time rather than once at the end, because a name that is nothing
     # but a comment has to fall through to the next source instead of publishing an empty `# `
-    # as the first line every machine reader takes for the product's name.
+    # as the first line every machine reader takes for the product's name. Every source runs
+    # through one_line for the same reason the page loop above tests every page for the marker:
+    # a header sourced from an unwritten stub publishes the skeleton, which is the one claim
+    # about a page this script is not allowed to make.
     py = pyproject_meta(ROOT)
-    readme = os.path.join(ROOT, "README.md")
     name = one_line(pkg.get("name")) or one_line(py.get("name")) or os.path.basename(ROOT)
     summary = (one_line(pkg.get("description")) or one_line(py.get("description"))
-               or one_line(title_and_summary(readme)[1] if os.path.exists(readme) else ""))
+               or one_line(readme_summary(ROOT)))
 
     out = [f"# {name}", ""]
     if summary:

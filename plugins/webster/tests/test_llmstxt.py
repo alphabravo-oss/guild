@@ -2,28 +2,52 @@
 
 One of the test modules US-010 asks for, one per script.
 
-Which spec fix each test pins, and whether it was RED against the pre-change
-script (FR-039, AC-039). "Red" means the test fails when run against the
-llmstxt.py at the commit before this one; "guard" means it passed there too and
-exists to stop the fix from taking something else away with it.
+Which spec fix each test pins, and the revision it is RED against (FR-039,
+AC-039). Measured, not reasoned about: every row below was produced by checking
+that revision's llmstxt.py into a scratch copy of this suite and running these
+tests against it. The command and its whole output are committed at
+``evidence/casting-4-red-first-measured.log``.
 
-=========================================================  =======  =======
-test                                                        fix      state
-=========================================================  =======  =======
-test_html_comment_never_reaches_a_summary                   FR-023   red
-test_html_comment_in_a_frontmatter_description_is_stripped  FR-023   red
-test_unterminated_html_comment_publishes_nothing_after_it   FR-023   red
-test_html_comment_never_reaches_the_header                  FR-023   red
-test_multi_line_header_description_folds_to_one_line        FR-023   red
-test_stub_pages_are_absent_from_llms_txt                    FR-023   red
-test_first_prose_line_is_taken_without_an_h1                FR-023   red
-test_header_falls_back_to_the_pyproject_project_table       FR-023   red
-test_header_falls_back_to_the_poetry_table                  FR-023   red
-test_package_json_still_wins_for_the_header                 FR-023   guard
-test_frontmatter_description_still_wins                     FR-023   guard
-test_unparseable_pyproject_does_not_break_the_header        FR-023   guard
-test_tomllib_imported_at_module_level_with_the_floor_com…    NFR-002  red
-=========================================================  =======  =======
+"red against REV" means this file fails when the suite runs against the
+llmstxt.py at REV. "guard" means it passed at every revision measured and exists
+to stop a fix from taking something else away with it. cfafe8e is the
+pre-change script AC-039 names; a test added by a later fix names the commit it
+was written against.
+
+====================================================================  =======  =======================
+test                                                                  fix      red against
+====================================================================  =======  =======================
+test_html_comment_never_reaches_a_summary                             FR-023   cfafe8e
+test_html_comment_in_a_frontmatter_description_is_stripped            FR-023   a802345 (added 4ae7334)
+test_unterminated_html_comment_publishes_nothing_after_it             FR-023   a802345 (added 4ae7334)
+test_html_comment_never_reaches_the_header                            FR-023   4ae7334 (added b520ca9)
+test_multi_line_header_description_folds_to_one_line                  FR-023   4ae7334 (added b520ca9)
+test_a_stub_readme_is_not_the_header_summary                          FR-023   f31b144 (added cycle 3)
+test_a_stub_marker_in_a_description_falls_through_to_the_next_source  FR-023   f31b144 (added cycle 3)
+test_stub_pages_are_absent_from_llms_txt                              FR-023   cfafe8e
+test_first_prose_line_is_taken_without_an_h1                          FR-023   cfafe8e
+test_header_falls_back_to_the_pyproject_project_table                 FR-023   cfafe8e
+test_header_falls_back_to_the_poetry_table                            FR-023   cfafe8e
+test_package_json_still_wins_for_the_header                           FR-023   guard
+test_frontmatter_description_still_wins                               FR-023   guard
+test_unparseable_pyproject_does_not_break_the_header                  FR-023   guard
+test_tomllib_imported_at_module_level_with_the_floor_comment          NFR-002  cfafe8e
+====================================================================  =======  =======================
+
+Every row naming a later commit is red at cfafe8e as well, except these two,
+which pass there. The distinction is the correction this table exists for: an
+earlier version of it was written by reading the diffs rather than by running
+anything, and recorded the first of them as red against the pre-change script.
+
+- ``test_unterminated_html_comment_publishes_nothing_after_it`` passes at
+  cfafe8e, and for the wrong reason: that summary scan waited for an ``# ``
+  heading before it would take a line, and this page has none, so the page was
+  published with a title and no summary at all. Every assertion held because
+  nothing was published, not because the unclosed comment was handled. a802345
+  dropped the H1 gate and opened the route; that is the commit it is red at.
+- ``test_a_stub_marker_in_a_description_falls_through_to_the_next_source``
+  passes at cfafe8e because cfafe8e read no pyproject.toml, so a marker sitting
+  in one could not reach the header. a802345 opened that route too.
 
 Every test drives the script through the conftest ``run_script`` helper with
 WEBSTER_ROOT and WEBSTER_DOCS in ``env``. Nothing here imports llmstxt.py: it
@@ -222,6 +246,79 @@ def test_multi_line_header_description_folds_to_one_line(run_script, tmp_path):
     )
     assert "\nServed over HTTP." not in out, (
         f"a line published outside the `> ` blockquote is not the summary:\n{out}"
+    )
+
+
+def test_a_stub_readme_is_not_the_header_summary(run_script, tmp_path):
+    """AC-029, OT-028: the second route into this file, which the page loop never walked.
+
+    The page loop reads every page for the marker, so a stub under docs/ is
+    dropped. The README behind the header's ``> `` line is not under docs/, so a
+    repo whose README is still the skeleton scaffold.py wrote published that
+    skeleton's first ``{placeholder}`` as the product's summary -- sourced from
+    the one page on disk whose whole content is that nobody has written it yet.
+    """
+    root = docs_tree(
+        tmp_path,
+        "stubreadme",
+        {"index.md": "# Guide\n\nHow to drive it.\n"},
+        pyproject='[project]\nname = "stubapp"\n',
+        readme=(
+            "---\n"
+            'title: "Stubapp"\n'
+            "doc_type: how-to\n"
+            "---\n"
+            "\n# Stubapp\n"
+            f"\n<!-- {STUB_MARKER} -->\n"
+            "\n## Overview\n"
+            "\n{The one problem this solves, in a sentence.}\n"
+        ),
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert STUB_MARKER not in out, f"the marker itself was published:\n{out}"
+    assert "The one problem this solves" not in out, (
+        f"a skeleton heading nobody filled in became the product's summary:\n{out}"
+    )
+    assert "{" not in out and "}" not in out, (
+        f"a placeholder brace is a form, not prose:\n{out}"
+    )
+    assert out.startswith("# stubapp\n"), f"the name is still the product's:\n{out}"
+    assert "\n> " not in out, (
+        "With no describable source left the header carries no summary line at "
+        f"all, which is the honest answer:\n{out}"
+    )
+    assert "- [Guide](docs/index.md): How to drive it." in out, (
+        f"the written pages are still listed:\n{out}"
+    )
+
+
+def test_a_stub_marker_in_a_description_falls_through_to_the_next_source(
+    run_script, tmp_path
+):
+    """OT-028: no published line carries the marker, whichever source held it.
+
+    The README is a page and is read for the marker as a page. A description in
+    pyproject.toml or package.json is a bare string with no page behind it, and
+    a repo that pasted the marker into one published it on the second line of
+    the file. The chain is a chain: an unusable source is dropped and the next
+    one is used.
+    """
+    root = docs_tree(
+        tmp_path,
+        "markerdesc",
+        {"index.md": "# Guide\n\nHow to drive it.\n"},
+        pyproject=f'[project]\nname = "markerapp"\ndescription = "{STUB_MARKER}"\n',
+        readme="# Markerapp\n\nA small item store served over HTTP.\n",
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert STUB_MARKER not in out, f"the marker reached a published line:\n{out}"
+    assert "> A small item store served over HTTP." in out, (
+        "The next source in the chain is the README, and dropping the unusable "
+        f"one is what lets it be reached:\n{out}"
     )
 
 

@@ -1,0 +1,22 @@
+# evidence-cmd: echo '--- every *.py:NNN token in the two test modules, classified ---'; grep -ho '[A-Za-z_/.]*\.py:[0-9][0-9-]*' plugins/webster/tests/test_survey.py plugins/webster/tests/test_llmstxt.py | sort -u | while read -r c; do f=${c%%:*}; r=${c#*:}; s=${r%%-*}; e=${r#*-}; if [ "$e" = "$r" ]; then e=$s; fi; if [ -f "plugins/webster/scripts/$f" ]; then echo "$c  CITATION -> plugins/webster/scripts/$f"; sed -n "${s},${e}p" "plugins/webster/scripts/$f" | sed 's/^/        /'; else echo "$c  not a citation: anchor text planted in a page, or a tree the test writes into tmp_path"; fi; done; echo '--- the one fixture anchor a test asserts as an expected value ---'; printf 'src/app/main.py:8  fixtures/repo -> '; sed -n '8p' plugins/webster/tests/fixtures/repo/src/app/main.py; echo '--- the guard the retired survey.py:167 citation claimed to name, found by its text ---'; grep -n 'if "python" in stack:' plugins/webster/scripts/survey.py; echo '--- what line 167 of survey.py actually is at this commit ---'; sed -n '167p' plugins/webster/scripts/survey.py
+# evidence-for: FR-039, AC-039, US-010
+
+--- every *.py:NNN token in the two test modules, classified ---
+llmstxt.py:12-14  CITATION -> plugins/webster/scripts/llmstxt.py
+        ROOT = os.path.abspath(os.environ.get("WEBSTER_ROOT", "."))
+        DOCS = os.path.join(ROOT, os.environ.get("WEBSTER_DOCS", "docs"))
+        BASE = os.environ.get("WEBSTER_BASE_URL", "").rstrip("/")
+src/api.py:4  not a citation: anchor text planted in a page, or a tree the test writes into tmp_path
+src/app/limits.py:4  not a citation: anchor text planted in a page, or a tree the test writes into tmp_path
+src/app/main.py:15  not a citation: anchor text planted in a page, or a tree the test writes into tmp_path
+src/app/main.py:8  not a citation: anchor text planted in a page, or a tree the test writes into tmp_path
+survey.py:13  CITATION -> plugins/webster/scripts/survey.py
+        ROOT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
+--- the one fixture anchor a test asserts as an expected value ---
+src/app/main.py:8  fixtures/repo -> DEBUG = os.getenv("APP_DEBUG", "0")
+--- the guard the retired survey.py:167 citation claimed to name, found by its text ---
+115:if "python" in stack:
+191:if "python" in stack:
+451:if "python" in stack:
+--- what line 167 of survey.py actually is at this commit ---
+        url = "/" + re.sub(r"^(src/)?pages/", "", r).rsplit(".", 1)[0]

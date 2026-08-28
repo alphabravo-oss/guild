@@ -342,8 +342,16 @@ MESSAGE_LITERAL = re.compile(
 # FastAPI app was missing from the surface the troubleshooting page is written against, and the
 # page ended up paraphrasing errors the reader can read for themselves. The gap before the
 # string admits neither a quote nor { nor [, which is what keeps a dict or list detail out: only
-# a string literal is text somebody reads. Four characters is the floor rather than the twelve
-# above, because "Not found" is the whole of a real 404.
+# a string literal is text somebody reads.
+#
+# The two branches have different floors and both are counted here the same way: the whole
+# captured string, leading capital included. MESSAGE_LITERAL takes thirteen characters and up
+# ([A-Z] plus {12,110}); this branch takes four and up ([A-Z] plus {3,110}). A-018 names the
+# {3,110} quantifier itself, and four is what it comes to once the capital in front of it is
+# counted -- enough for "Not found", which is nine and is the whole of a real 404. This comment
+# used to read "four characters ... rather than the twelve above", giving one floor in
+# characters and the other in quantifier digits, so the two numbers read as a comparison and
+# were not one. tests/test_survey.py measures both rather than restating them.
 HTTP_EXCEPTION_MESSAGE = re.compile(
     r"""HTTPException\([^"'\n{\[]{0,40}?(?:detail\s*=\s*)?["']([A-Z][^"']{3,110})["']""")
 

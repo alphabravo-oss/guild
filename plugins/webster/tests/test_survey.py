@@ -2,29 +2,51 @@
 
 One of the test modules US-010 asks for, one per script.
 
-Which spec fix each test pins, and whether it was RED against the pre-change
-script (FR-039, AC-039). "Red" means the test fails when run against the
-survey.py at the commit before this one; "guard" means it passed there too and
-exists to stop the fix from taking something else away with it.
+Which spec fix each test pins, and the revision it is RED against (FR-039,
+AC-039). Measured, not reasoned about: every row below was produced by checking
+that revision's survey.py into a scratch copy of this suite and running these
+tests against it. The command and its whole output are committed at
+``evidence/casting-4-red-first-measured.log``. An earlier version of this table
+was written by reading the diffs instead, and a row in the sibling module came
+out false -- see the correction note in ``test_llmstxt.py``. FR-039 makes this
+docstring the only evidence of the red-first property that anybody has, so a row
+nobody ran is a record that reports a pass without checking.
 
-===========================================================  ==========  =======
-test                                                          fix         state
-===========================================================  ==========  =======
-test_os_getenv_read_lands_in_config_undeclared                FR-018/031  red
-test_env_regex_allows_whitespace_after_the_bracket            FR-018/031  red
+"red against REV" means this file fails when the suite runs against the
+survey.py at REV. "guard" means it passed at every revision measured and exists
+to stop a fix from taking something else away with it. cfafe8e is the
+pre-change script AC-039 names; a test added by a later fix names the commit it
+was written against.
+
+============================================================  ==========  =======================
+test                                                          fix         red against
+============================================================  ==========  =======================
+test_os_getenv_read_lands_in_config_undeclared                FR-018/031  cfafe8e
+test_env_regex_allows_whitespace_after_the_bracket            FR-018/031  cfafe8e
 test_env_regex_still_matches_the_go_getenv                    FR-031      guard
-test_black_split_decorator_is_anchored_to_the_at_line         FR-019      red
-test_mock_patch_decorator_is_not_an_http_endpoint             FR-019      red
-test_flask_route_reports_its_declared_methods                 FR-019      red
-test_flask_route_without_methods_reports_get                  FR-019      red
-test_pyproject_name_description_and_scripts                   FR-020/021  red
-test_poetry_legacy_tables_are_the_fallback                    FR-020/021  red
+test_black_split_decorator_is_anchored_to_the_at_line         FR-019      cfafe8e
+test_mock_patch_decorator_is_not_an_http_endpoint             FR-019      a802345 (added 4ae7334)
+test_flask_route_reports_its_declared_methods                 FR-019      cfafe8e
+test_flask_route_without_methods_reports_get                  FR-019      cfafe8e
+test_pyproject_name_description_and_scripts                   FR-020/021  cfafe8e
+test_poetry_legacy_tables_are_the_fallback                    FR-020/021  cfafe8e
 test_package_json_still_wins_over_pyproject                   FR-020      guard
 test_unparseable_pyproject_leaves_the_survey_running          FR-020      guard
-test_httpexception_detail_and_positional_are_messages         FR-022/032  red
+test_httpexception_detail_and_positional_are_messages         FR-022/032  cfafe8e
 test_httpexception_dict_detail_contributes_no_message         FR-022      guard
-test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     red
-===========================================================  ==========  =======
+test_message_floors_are_measured_in_whole_strings             FR-022      cfafe8e (added cycle 3)
+test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
+============================================================  ==========  =======================
+
+Two rows carry a note the column has no room for:
+
+- ``test_mock_patch_decorator_is_not_an_http_endpoint`` is red at cfafe8e too.
+  It names a802345 because a802345 is the commit whose decorator joining it was
+  written against, and the nearer baseline is the informative one.
+- ``test_message_floors_are_measured_in_whole_strings`` was added this cycle to
+  measure the two message floors rather than restate them in a comment, and is
+  red at cfafe8e because the HTTPException branch it measures did not exist
+  there. Against a802345 and every commit since it is a guard.
 
 Every test drives the script through the conftest ``run_script`` helper. Nothing
 here imports survey.py: it resolves ROOT from ``sys.argv`` at module import
@@ -65,9 +87,16 @@ def survey(run_script, root):
 def python_project(tmp_path, name, source, pyproject=None, package_json=None):
     """A minimal repo root survey.py will treat as Python.
 
-    The decorator pass is gated on ``"python" in stack`` (survey.py:167), and the
-    stack marker is a pyproject.toml on disk, so a tree holding only a .py file
-    is surveyed as having no HTTP surface at all.
+    survey.py runs its FastAPI/Flask decorator pass under an ``if "python" in
+    stack:`` guard -- the one immediately below the ``PY_DECORATOR`` and
+    ``FLASK_METHODS`` patterns, not the two other guards spelled the same way --
+    and the stack marker is a pyproject.toml on disk, so a tree holding only a
+    .py file is surveyed as having no HTTP surface at all.
+
+    Named rather than numbered on purpose. This sentence carried a line number
+    until the line moved, and by then the number resolved to the Next.js
+    pages-api branch instead -- a citation that lands on the wrong code is worse
+    than no citation at all, because it reads as having been checked.
     """
     root = tmp_path / name
     (root / "src").mkdir(parents=True)
@@ -417,6 +446,47 @@ def test_httpexception_dict_detail_contributes_no_message(run_script, tmp_path):
         "A dict detail is a machine-readable payload, not a sentence; "
         f"got {message_texts(data)}"
     )
+
+
+def test_message_floors_are_measured_in_whole_strings(run_script, tmp_path):
+    """FR-022, AC-026: both branches' floors, counted the one way that is visible.
+
+    The comment above the two patterns gave one floor in characters and the
+    other in quantifier digits -- "four characters ... rather than the twelve
+    above" -- so the two numbers read as a comparison and were not one:
+    ``[A-Z][^"\']{12,110}`` takes thirteen characters, not twelve. Restating a
+    regex in prose is how that happens, so the numbers are measured here
+    instead. Thirteen and twelve for the messages branch, four and three for
+    the HTTPException branch, each side of its own floor.
+    """
+    root = python_project(
+        tmp_path,
+        "floors",
+        "from fastapi import HTTPException\n"
+        "\n\ndef long_enough():\n"
+        '    raise ValueError("Login failed.")\n'  # 13 characters
+        "\n\ndef one_short():\n"
+        '    raise ValueError("Login failed")\n'  # 12
+        "\n\ndef http_long_enough():\n"
+        '    raise HTTPException(410, "Gone")\n'  # 4
+        "\n\ndef http_one_short():\n"
+        '    raise HTTPException(400, "Bad")\n',  # 3
+    )
+
+    texts = message_texts(survey(run_script, root))
+
+    assert "Login failed." in texts, (
+        f"thirteen characters clears the messages floor; got {texts}"
+    )
+    assert "Login failed" not in texts, (
+        "twelve does not -- the same sentence without its full stop is the "
+        f"whole difference, and it is the floor the comment names; got {texts}"
+    )
+    assert "Gone" in texts, (
+        "four characters clears the HTTPException floor, which is what A-018's "
+        f"{{3,110}} comes to with the capital counted; got {texts}"
+    )
+    assert "Bad" not in texts, f"three does not; got {texts}"
 
 
 # -----------------------------------------------------------------------------
