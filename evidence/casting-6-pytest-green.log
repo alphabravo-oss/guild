@@ -1,0 +1,15 @@
+# evidence-cmd: bash -c 'set -u; out=$(mktemp); cd plugins/webster; COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header > "$out" 2>&1; code=$?; tail -1 "$out" | sed -E "s/ in [0-9.]+s$//"; echo "pytest exit=$code"; echo "README Status count line: $(grep -m1 -noE "^[0-9]+ passing" README.md)"; rm -f "$out"'
+# evidence-for: US-010, AC-042
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# OT-036 / NFR-001: the blessed invocation exits 0, and the number it reports is
+# the number the README Status section records. Both halves are printed by one
+# command so they cannot be taken from two different runs. GRIND cycle 2 added
+# thirteen tests across test_drift.py, test_doctype.py, test_llmstxt.py and the new
+# test_harness.py; the count moved 80 -> 93 and the README line moved with it,
+# which is the pin test_readme.py:212 exists to force.
+
+93 passed
+pytest exit=0
+README Status count line: 175:93 passing

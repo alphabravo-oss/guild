@@ -1,0 +1,25 @@
+# evidence-cmd: bash -c 'set -u; repo=$(pwd); tmp=$(mktemp -d); cp -R "$repo/plugins/webster" "$tmp/w"; cd "$tmp/w"; rm -rf .pytest_cache tests/__pycache__; run() { COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header tests/test_readme.py > "$tmp/out" 2>&1; code=$?; m=no; r=no; grep -q "Status section claims" "$tmp/out" && m=yes; grep -q "counter assumes one collected test" "$tmp/out" && r=yes; echo "$1 -> exit=$code, README-count-wrong=$m, counter-refused=$r"; }; cp README.md "$tmp/readme.keep"; cp tests/test_scaffold.py "$tmp/scaffold.keep"; run "A README and suite as committed"; git -C "$repo" show 61fb1df:plugins/webster/README.md > README.md; run "B README before the count was ever pinned"; git -C "$repo" show b520ca9:plugins/webster/README.md > README.md; run "C README as GRIND cycle 2 found it"; cp "$tmp/readme.keep" README.md; printf "%s\n" "" "" "def test_added_by_another_hand():" "    assert True" >> tests/test_scaffold.py; run "D one test added, README untouched"; cp "$tmp/scaffold.keep" tests/test_scaffold.py; printf "%s\n" "" "" "class TestGenerated:" "    def test_method(self):" "        assert True" >> tests/test_scaffold.py; run "E a collected test class added"; cp "$tmp/scaffold.keep" tests/test_scaffold.py; printf "%s\n" "" "" "@pytest.fixture(params=[1, 2])" "def two(request):" "    return request.param" >> tests/test_scaffold.py; run "F a fixture with params added"; cd "$repo"; rm -rf "$tmp"'
+# evidence-for: US-010, AC-042, FR-038, NFR-001
+# evidence-timeout: 600
+#
+# The count line is only worth writing if something reads it back, so this runs
+# tests/test_readme.py against six trees and prints what each one decides. A is the
+# commit as it stands. B and C are the two stale READMEs this pin has already
+# caught: 61fb1df said 69 passing when the suite defined 77, and b520ca9 said 80
+# when GRIND cycle 2 had taken it to 93 — the second is the defect this cycle
+# closes, and it fails here against the very suite that now passes. D is the shape
+# the drift takes in practice, a test added by a hand that did not think to look at
+# the README. E and F are the two ways the counter itself could go quietly low: a
+# collected class and a parametrizing fixture both put more items on the wire than
+# the source scan counts, so the scan refuses the run and names the file rather
+# than reporting a number it cannot stand behind.
+#
+# Run on a copy under mktemp, never on the working tree; the scenarios mutate
+# README.md and tests/test_scaffold.py and restore them between runs.
+
+A README and suite as committed -> exit=0, README-count-wrong=no, counter-refused=no
+B README before the count was ever pinned -> exit=1, README-count-wrong=yes, counter-refused=no
+C README as GRIND cycle 2 found it -> exit=1, README-count-wrong=yes, counter-refused=no
+D one test added, README untouched -> exit=1, README-count-wrong=yes, counter-refused=no
+E a collected test class added -> exit=1, README-count-wrong=no, counter-refused=yes
+F a fixture with params added -> exit=1, README-count-wrong=no, counter-refused=yes

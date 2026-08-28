@@ -172,7 +172,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-80 passing. The tests run the scripts the way a command does, by subprocess against the
+93 passing. The tests run the scripts the way a command does, by subprocess against the
 committed fixture repo in `tests/fixtures/repo/`, so nothing is imported and the file under test
 is the one a user actually invokes. pytest itself runs on uv's CPython 3.11 while the scripts
 run under whatever `python3` is on PATH, which is the interpreter skew a real invocation has.
@@ -191,6 +191,14 @@ staged rename, a missing repository, a rebased-away HEAD and a cited line that c
 fixes each of those carries. Every fix has at least one test that fails against the script as it
 stood before the fix; the rest are guards, there so a fix does not take something else away with
 it.
+
+The harness under those modules is exercised as well. `tests/test_harness.py` measures the four
+things `conftest.py` had only asserted in prose: which interpreter the child `python3` actually
+resolves to under this run, that two builds of the fixture repository land on the same commit,
+that the committed fixture carries no nested `.git`, no `website/` and no recorded manifest, and
+that this change stayed inside the files it was allowed to write. Two of those claims had already
+gone stale in the docstring that made them, which is why they are measured now rather than
+written down.
 
 Not yet exercised: `rendered.py`, which has no test module, so every claim about what it catches
 in built HTML is still untested. Nor the three commands end to end, which means what
