@@ -1,8 +1,0 @@
-# evidence-cmd: bash -c 'set -u; out=$(mktemp); cd plugins/webster; COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header > "$out" 2>&1; code=$?; tail -1 "$out" | sed -E "s/ in [0-9.]+s$//"; echo "pytest exit=$code"; echo "README Status count line: $(grep -m1 -noE "^[0-9]+ passing" README.md)"; rm -f "$out"'
-# evidence-for: US-010, AC-042
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-80 passed
-pytest exit=0
-README Status count line: 175:80 passing

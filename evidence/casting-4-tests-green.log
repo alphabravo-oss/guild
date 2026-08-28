@@ -1,6 +1,0 @@
-# evidence-cmd: cd plugins/webster && uvx pytest tests/test_survey.py tests/test_llmstxt.py -q -p no:cacheprovider
-# evidence-for: AC-039, FR-039, US-010
-# evidence-volatile: \d+\.\d+s
-
-.........................                                                [100%]
-25 passed in 1.37s

@@ -1,9 +1,0 @@
-# evidence-cmd: printf '%s\n' 'def test_run_script_drives_a_script(run_script, fixture_repo):' '    r = run_script("drift.py", "check", cwd=fixture_repo)' '    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)' '' 'def test_survey_runs_on_the_fixture(run_script, fixture_repo):' '    r = run_script("survey.py", fixture_repo, cwd=fixture_repo)' '    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)' '' 'def test_two_builds_agree(build_repo, tmp_path):' '    import subprocess' '    heads = [subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(build_repo(tmp_path / n)), capture_output=True, text=True).stdout.strip() for n in ("a", "b")]' '    assert heads[0] == heads[1] == "d30d7d33a0bd3b878985789bdfd132034cb5b4b9", heads' > plugins/webster/tests/test_casting1_gate.py && (cd plugins/webster && uvx pytest --collect-only -q 2>/dev/null | head -n 3 && uvx pytest -q 2>/dev/null | tail -n 1); rm -f plugins/webster/tests/test_casting1_gate.py
-# evidence-for: US-010, AC-038, NFR-001, NFR-004, FR-029, FR-030
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-tests/test_casting1_gate.py::test_run_script_drives_a_script
-tests/test_casting1_gate.py::test_survey_runs_on_the_fixture
-tests/test_casting1_gate.py::test_two_builds_agree
-3 passed in 0.69s

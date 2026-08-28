@@ -1,9 +1,0 @@
-# evidence-cmd: echo "paths in this commit outside plugins/webster/{pyproject.toml,tests/} and evidence/: $(git show --name-only --pretty=format: HEAD | grep -v '^$' | grep -vcE '^(plugins/webster/(pyproject\.toml|tests/)|evidence/)')" && echo "GI-006 forbidden paths touched (marketplace.json, root README, webster agents/commands/skills): $(git show --name-only --pretty=format: HEAD | grep -v '^$' | grep -cE '^(\.claude-plugin/|README\.md$|plugins/webster/(agents|commands|skills)/)')" && echo "webster scripts touched by this commit: $(git show --name-only --pretty=format: HEAD | grep -v '^$' | grep -cE '^plugins/webster/scripts/')" && echo "committed test modules under plugins/webster/tests (castings 2-5 own the six): $(ls plugins/webster/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ')" && echo "plugin.json version, casting 6 bumps it to 0.11.0: $(python3 -c 'import json; print(json.load(open("plugins/webster/.claude-plugin/plugin.json"))["version"])')" && echo "webster README Status version line, casting 6 rewrites it: $(grep -m1 -nE '^\*\*Version|Version [0-9]' plugins/webster/README.md)"
-# evidence-for: FR-043, FR-039, AC-039, AC-042
-
-paths in this commit outside plugins/webster/{pyproject.toml,tests/} and evidence/: 0
-GI-006 forbidden paths touched (marketplace.json, root README, webster agents/commands/skills): 0
-webster scripts touched by this commit: 0
-committed test modules under plugins/webster/tests (castings 2-5 own the six): 0
-plugin.json version, casting 6 bumps it to 0.11.0: 0.10.0
-webster README Status version line, casting 6 rewrites it: 163:Version 0.2.0.

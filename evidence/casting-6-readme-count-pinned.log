@@ -1,9 +1,0 @@
-# evidence-cmd: bash -c 'set -u; repo=$(pwd); tmp=$(mktemp -d); cp -R "$repo/plugins/webster" "$tmp/w"; cd "$tmp/w"; rm -rf .pytest_cache tests/__pycache__; run() { COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header tests/test_readme.py > "$tmp/out" 2>&1; code=$?; m=no; r=no; grep -q "Status section claims" "$tmp/out" && m=yes; grep -q "counter assumes one collected test" "$tmp/out" && r=yes; echo "$1 -> exit=$code, README-count-wrong=$m, counter-refused=$r"; }; cp README.md "$tmp/readme.keep"; cp tests/test_scaffold.py "$tmp/scaffold.keep"; run "A README and suite as committed"; git -C "$repo" show 61fb1df:plugins/webster/README.md > README.md; run "B README as it stood before this fix"; cp "$tmp/readme.keep" README.md; printf "%s\n" "" "" "def test_added_by_another_hand():" "    assert True" >> tests/test_scaffold.py; run "C one test added, README untouched"; cp "$tmp/scaffold.keep" tests/test_scaffold.py; printf "%s\n" "" "" "class TestGenerated:" "    def test_method(self):" "        assert True" >> tests/test_scaffold.py; run "D a collected test class added"; cp "$tmp/scaffold.keep" tests/test_scaffold.py; printf "%s\n" "" "" "@pytest.fixture(params=[1, 2])" "def two(request):" "    return request.param" >> tests/test_scaffold.py; run "E a fixture with params added"; cd "$repo"; rm -rf "$tmp"'
-# evidence-for: US-010, AC-042, FR-038, NFR-001
-# evidence-timeout: 300
-
-A README and suite as committed -> exit=0, README-count-wrong=no, counter-refused=no
-B README as it stood before this fix -> exit=1, README-count-wrong=yes, counter-refused=no
-C one test added, README untouched -> exit=1, README-count-wrong=yes, counter-refused=no
-D a collected test class added -> exit=1, README-count-wrong=no, counter-refused=yes
-E a fixture with params added -> exit=1, README-count-wrong=no, counter-refused=yes

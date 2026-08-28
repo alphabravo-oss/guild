@@ -1,7 +1,0 @@
-# evidence-cmd: python3 plugins/webster/scripts/survey.py plugins/webster/tests/fixtures/repo | python3 -c "import json,sys; d=json.load(sys.stdin); print('name:', d['name']); print('description:', d['description']); print('cli:', json.dumps(sorted(d['surface']['cli'], key=lambda e: e['name']))); print('config:', json.dumps(sorted(d['surface']['config'], key=lambda e: e['name'])))"
-# evidence-for: US-006, AC-022, AC-025, FR-018, FR-020, FR-021, FR-031
-
-name: fixapp
-description: A small item store served over HTTP.
-cli: [{"name": "fixapp", "target": "cli.main:main", "anchor": "pyproject.toml:1"}]
-config: [{"name": "APP_DEBUG", "anchor": "src/app/main.py:8", "undeclared": true}, {"name": "DATABASE_URL", "anchor": "src/app/main.py:6", "undeclared": true}, {"name": "REQUEST_TIMEOUT", "anchor": "src/app/main.py:7", "undeclared": true}]

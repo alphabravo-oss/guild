@@ -1,6 +1,0 @@
-# evidence-cmd: cd plugins/webster && uvx pytest tests/test_doctype.py -q --no-header -p no:cacheprovider
-# evidence-for: US-010, AC-039, FR-039
-# evidence-volatile: \d+\.\d+s
-
-...........................                                              [100%]
-27 passed in 0.57s
