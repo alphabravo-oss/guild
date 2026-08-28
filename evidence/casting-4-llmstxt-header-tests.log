@@ -1,0 +1,21 @@
+# evidence-cmd: bash -c 'cd plugins/webster && echo "== each llms.txt test, the fix it pins, and whether it was red on the pre-change script ==" && grep -E "^test_.* (FR|NFR)-[0-9]+ +(red|guard)$" tests/test_llmstxt.py && echo "== suite ==" && uvx pytest tests/test_llmstxt.py -p no:cacheprovider -q'
+# evidence-for: US-007, FR-023, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+
+== each llms.txt test, the fix it pins, and whether it was red on the pre-change script ==
+test_html_comment_never_reaches_a_summary                   FR-023   red
+test_html_comment_in_a_frontmatter_description_is_stripped  FR-023   red
+test_unterminated_html_comment_publishes_nothing_after_it   FR-023   red
+test_html_comment_never_reaches_the_header                  FR-023   red
+test_multi_line_header_description_folds_to_one_line        FR-023   red
+test_stub_pages_are_absent_from_llms_txt                    FR-023   red
+test_first_prose_line_is_taken_without_an_h1                FR-023   red
+test_header_falls_back_to_the_pyproject_project_table       FR-023   red
+test_header_falls_back_to_the_poetry_table                  FR-023   red
+test_package_json_still_wins_for_the_header                 FR-023   guard
+test_frontmatter_description_still_wins                     FR-023   guard
+test_unparseable_pyproject_does_not_break_the_header        FR-023   guard
+test_tomllib_imported_at_module_level_with_the_floor_com…    NFR-002  red
+== suite ==
+.............                                                            [100%]
+13 passed in 0.82s

@@ -13,6 +13,8 @@ test                                                        fix      state
 test_html_comment_never_reaches_a_summary                   FR-023   red
 test_html_comment_in_a_frontmatter_description_is_stripped  FR-023   red
 test_unterminated_html_comment_publishes_nothing_after_it   FR-023   red
+test_html_comment_never_reaches_the_header                  FR-023   red
+test_multi_line_header_description_folds_to_one_line        FR-023   red
 test_stub_pages_are_absent_from_llms_txt                    FR-023   red
 test_first_prose_line_is_taken_without_an_h1                FR-023   red
 test_header_falls_back_to_the_pyproject_project_table       FR-023   red
@@ -155,6 +157,71 @@ def test_unterminated_html_comment_publishes_nothing_after_it(run_script, tmp_pa
     )
     assert "- [Item limits](docs/limits.md)" in out, (
         f"the page is still listed, with a title and no summary:\n{out}"
+    )
+
+
+def test_html_comment_never_reaches_the_header(run_script, tmp_path):
+    """FR-023, OT-027: the header is the one string published with no page behind it.
+
+    The third route. The body was cleaned, then the frontmatter ``description``
+    that wins over the body -- and the pyproject/package.json description that
+    wins over both still went to the ``> `` line untouched, publishing OT-027's
+    exact forbidden string on the second line of the file.
+    """
+    root = docs_tree(
+        tmp_path,
+        "hdrcomment",
+        {"index.md": "# Guide\n\nHow to drive it.\n"},
+        pyproject=(
+            "[project]\n"
+            'name = "hdrapp"\n'
+            'description = "A small item store served over HTTP. '
+            '<!-- src/app/main.py:15 -->"\n'
+        ),
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert "<!--" not in out, f"a comment reached the published header:\n{out}"
+    assert "src/app/main.py:15" not in out, f"the anchor reached the reader:\n{out}"
+    assert out.startswith("# hdrapp\n"), f"the name is still the product's:\n{out}"
+    assert "> A small item store served over HTTP." in out, (
+        f"the prose either side of the comment is still the summary:\n{out}"
+    )
+
+
+def test_multi_line_header_description_folds_to_one_line(run_script, tmp_path):
+    """FR-023, OT-027: a summary that breaks across lines has stopped being one.
+
+    TOML lets a description span lines, so taking the comment out of one is not
+    enough by itself: the lines that remain were printed under a single ``> ``
+    and everything after the first left the blockquote, reaching the reader as
+    top-level llms.txt content instead of as the product's summary.
+    """
+    root = docs_tree(
+        tmp_path,
+        "hdrmultiline",
+        {"index.md": "# Guide\n\nHow to drive it.\n"},
+        pyproject=(
+            "[project]\n"
+            'name = "multiapp"\n'
+            'description = """\n'
+            "A small item store.\n"
+            "<!-- src/app/main.py:15 -->\n"
+            "Served over HTTP.\n"
+            '"""\n'
+        ),
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert "<!--" not in out, f"a comment reached the published header:\n{out}"
+    assert "src/app/main.py:15" not in out, f"the anchor reached the reader:\n{out}"
+    assert "> A small item store. Served over HTTP." in out, (
+        f"expected the whole description on the one blockquote line:\n{out}"
+    )
+    assert "\nServed over HTTP." not in out, (
+        f"a line published outside the `> ` blockquote is not the summary:\n{out}"
     )
 
 

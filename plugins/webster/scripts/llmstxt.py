@@ -33,10 +33,29 @@ HTML_COMMENT = re.compile(r"<!--.*?-->|<!--.*", re.S)
 def strip_comments(text):
     """Take the HTML comments out of anything on its way to the published file.
 
-    Both the body and the frontmatter go through here. Cleaning the body alone left the
-    shorter route open: a frontmatter `description` wins over the body and was reaching the
-    reader untouched, so a description ending in an anchor comment published that anchor."""
+    Three routes reach a reader and all three come through here: the page body, the page's
+    frontmatter, and -- via one_line -- the header's own name and description. Each was found
+    open in turn, every time because the fix before it closed only the route it was looking at.
+    Cleaning the body left the frontmatter `description` that wins over the body; cleaning both
+    left the pyproject.toml/package.json description that wins over both and is published with
+    no page in front of it at all. The first line above is the whole rule, not a description of
+    whichever routes happen to be closed today."""
     return HTML_COMMENT.sub("", text or "").strip()
+
+
+def one_line(value):
+    """One publishable line: comments out, line breaks folded, a non-string dropped.
+
+    The header is the only place this script publishes a string with no page behind it, so it
+    printed whatever pyproject.toml or package.json held. A description ending in an anchor
+    comment reached the reader verbatim. A TOML description written across three lines printed
+    its middle line outside the `> ` blockquote entirely, which is why the fold matters as much
+    as the strip: a summary that breaks across lines has stopped being the one line the format
+    asks for. A non-string -- a JSON object under `description` -- yields nothing rather than a
+    Python repr, and the next source in the chain is used instead."""
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", strip_comments(value)).strip()
 
 # A stub is the skeleton scaffold.py writes before anyone has filled it in. Listing one states
 # that the page exists and says something, and that is the single claim this script is not
@@ -190,11 +209,14 @@ def main():
     # package.json first, then pyproject.toml, then the README's opening line. package.json
     # keeps winning where both exist, because a repo carrying one is a Node project whose
     # pyproject.toml is tooling configuration rather than the product's own name.
+    # Cleaned one source at a time rather than once at the end, because a name that is nothing
+    # but a comment has to fall through to the next source instead of publishing an empty `# `
+    # as the first line every machine reader takes for the product's name.
     py = pyproject_meta(ROOT)
     readme = os.path.join(ROOT, "README.md")
-    name = pkg.get("name") or py.get("name") or os.path.basename(ROOT)
-    summary = (pkg.get("description") or py.get("description")
-               or (title_and_summary(readme)[1] if os.path.exists(readme) else ""))
+    name = one_line(pkg.get("name")) or one_line(py.get("name")) or os.path.basename(ROOT)
+    summary = (one_line(pkg.get("description")) or one_line(py.get("description"))
+               or one_line(title_and_summary(readme)[1] if os.path.exists(readme) else ""))
 
     out = [f"# {name}", ""]
     if summary:
