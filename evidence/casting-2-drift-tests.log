@@ -8,6 +8,7 @@ tests/test_drift.py::test_uncommitted_edit_to_cited_file_is_drift PASSED
 tests/test_drift.py::test_staged_rename_marks_old_and_new_path_dirty PASSED
 tests/test_drift.py::test_check_outside_a_git_repo_reports_no_git PASSED
 tests/test_drift.py::test_rebased_away_head_reports_head_missing PASSED
+tests/test_drift.py::test_non_ascii_path_under_a_c_locale_still_answers PASSED
 tests/test_drift.py::test_record_writes_a_line_hash_per_anchor PASSED
 tests/test_drift.py::test_changed_cited_line_is_reported_as_a_mismatch PASSED
 tests/test_drift.py::test_hash_mismatch_alone_is_drift PASSED
@@ -18,3 +19,4 @@ tests/test_drift.py::test_docs_only_edit_is_unrelated_changes PASSED
 tests/test_drift.py::test_broken_anchor_outranks_unrelated_churn PASSED
 tests/test_drift.py::test_nothing_changed_since_record_is_clean PASSED
 tests/test_drift.py::test_record_without_a_commit_writes_a_null_head PASSED
+tests/test_drift.py::test_null_head_in_the_manifest_reports_no_git PASSED

@@ -51,10 +51,19 @@ def git(*args):
     shifted every ` M path` record left by one, the slice that followed cut the path down to
     `rc/app/main.py`, no anchor ever matched it, and an uncommitted edit to a cited file
     reported clean. Callers that want one value strip it themselves.
+
+    The decoding is pinned here rather than left to `text=True`, which decodes with the locale's
+    preferred encoding: US-ASCII under LC_ALL=C, so the first non-ASCII byte of a path in the
+    porcelain output raised UnicodeDecodeError. That is a ValueError, not one of the errors
+    caught below, so it left main() as a traceback at exit 1 — the code that means drift, handed
+    to a caller when nothing had been measured at all. surrogateescape decodes any byte git can
+    print, and UTF-8 is what the pages themselves were read as, so a path git names still equals
+    the path an anchor cites.
     """
     try:
         return subprocess.run(["git", "--no-pager", *args], cwd=ROOT, check=True,
-                              capture_output=True, text=True).stdout
+                              capture_output=True, encoding="utf-8",
+                              errors="surrogateescape").stdout
     except (OSError, subprocess.SubprocessError) as e:
         raise GitUnavailable(f"git {' '.join(args)}: {e}") from e
 
@@ -259,11 +268,20 @@ def main():
             dirty = [p for p in porcelain_paths(git("status", "--porcelain", "-z",
                                                     "--untracked-files=all"))
                      if p and not p.startswith(inside_docs)]
-            if recorded and not commit_exists(recorded):
+            # A manifest with no recorded commit has no point for the diff to start from, and
+            # falling past this to compare nothing is the false clean NO_HEAD_NOTE promises the
+            # reader of that record will not happen. git answering now does not make a record
+            # taken when it could not answer into a measurement.
+            if not recorded:
+                not_checked = "no_git"
+                git_note = ("this manifest records no commit — record ran where git could not "
+                            "resolve HEAD — so there is nothing for the diff to start from and "
+                            "the pages have not been compared against the code; re-record")
+            elif not commit_exists(recorded):
                 not_checked = "head_missing"
                 git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
                             "more, so the diff since the record cannot be taken; re-record")
-            elif recorded and recorded != head:
+            elif recorded != head:
                 changed = [f for f in git("diff", "--name-only", f"{recorded}..HEAD").splitlines()
                            if f and not f.startswith(inside_docs)]
         except GitUnavailable as e:

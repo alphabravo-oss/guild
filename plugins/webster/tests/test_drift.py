@@ -7,7 +7,8 @@ so an import would freeze the wrong repository before a test could choose one.
 
 Which fix each test pins, and how it failed on the pre-change script — the RED
 baseline required by FR-039 / AC-039, verified against ``drift.py`` at commit
-2abe081:
+2abe081, and for the last two rows — the pair a GRIND cycle found still
+false-passing after that commit — against ``drift.py`` at commit 9859317:
 
 ===================================================  ==============  ===========================
 test                                                 pins            was, before the fix
@@ -26,6 +27,8 @@ test_broken_anchor_outranks_unrelated_churn          FR-007 AC-009   no hashes k
 test_nothing_changed_since_record_is_clean           FR-005 AC-010   no hashes key
 test_record_without_a_commit_writes_a_null_head      FR-009 OT-010   gitHead "", no note
 test_anchor_past_end_of_file_gets_no_line_hash       FR-034          no lineHashes key at all
+test_non_ascii_path_under_a_c_locale_still_answers   FR-002 FR-037   traceback, no JSON, exit 1
+test_null_head_in_the_manifest_reports_no_git        FR-005 FR-009   status clean, exit 0
 ===================================================  ==============  ===========================
 
 The exit map under test is FR-006: clean and unrelated_changes 0, drift 1,
@@ -280,6 +283,59 @@ def test_rebased_away_head_reports_head_missing(run_script, fixture_repo):
     )
     assert data["gitHead"]["recorded"] == recorded, (
         f"expected the missing sha reported back; got {data['gitHead']!r}\n{outcome(result)}"
+    )
+
+
+def test_non_ascii_path_under_a_c_locale_still_answers(run_script, fixture_repo):
+    """FR-002 / FR-037 / CT-001 — a byte git prints is not a reason to traceback.
+
+    RED before the fix: stderr carried a UnicodeDecodeError traceback and the
+    script exited 1 having printed no JSON at all. ``git()`` ran with
+    ``text=True``, which decodes with the locale's preferred encoding — US-ASCII
+    under LC_ALL=C once PEP 538 locale coercion and PEP 540 UTF-8 mode are both
+    switched off. The first non-ASCII byte of a path in
+    ``git status --porcelain -z`` raised UnicodeDecodeError, which is a
+    ValueError and therefore not one of the ``(OSError,
+    subprocess.SubprocessError)`` the except clause names, so it escaped main().
+
+    Exit 1 is the drift code. A caller handed exit 1 by a crash is being told
+    the pages disagree with the code when nothing was measured at all, which is
+    the same false answer under the opposite sign as the clean this file exists
+    to stop. FR-002 wants every git failure to arrive as GitUnavailable, and a
+    decode failure is a git failure.
+    """
+    record(run_script, fixture_repo)
+    # Untracked, uncited, and named in bytes US-ASCII cannot represent:
+    # --untracked-files=all puts it in the porcelain record, where the decode
+    # happens, and no anchor points at it so the answer is about the locale
+    # rather than about this file.
+    (fixture_repo / "src" / "app" / "caf\u00e9.py").write_text(
+        "# uncited helper\n", encoding="utf-8"
+    )
+
+    # PYTHONCOERCECLOCALE=0 blocks the PEP 538 coercion of C to C.UTF-8 and
+    # PYTHONUTF8=0 blocks PEP 540 UTF-8 mode; without both, CPython quietly
+    # hands the subprocess a UTF-8 locale and the decode never fails.
+    result = run_script(
+        "drift.py", "check", "docs",
+        cwd=fixture_repo,
+        env={"LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"},
+    )
+
+    assert "Traceback" not in result.stderr, (
+        f"expected git() to absorb the decode, not to raise through main()\n{outcome(result)}"
+    )
+    data = parsed(result)
+    assert data["status"] == "unrelated_changes", (
+        f"expected an uncited untracked file to read as unrelated_changes; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0 from the CT-001 contract; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 1, (
+        f"expected the non-ASCII path to be counted, not dropped; got "
+        f"{data['code_files_changed']}\n{outcome(result)}"
     )
 
 
@@ -604,4 +660,58 @@ def test_record_without_a_commit_writes_a_null_head(run_script, fixture_repo, tm
     )
     assert result.returncode == 2, (
         f"expected exit 2; got {result.returncode}\n{outcome(result)}"
+    )
+
+
+def test_null_head_in_the_manifest_reports_no_git(run_script, fixture_repo, tmp_path):
+    """FR-005 / FR-009 / OT-010 — a manifest that records no commit is not clean.
+
+    RED before the fix: status clean at exit 0, with an empty note. Both git
+    branches in the check were guarded by ``if recorded and ...``
+    (``drift.py:262,266``), so a manifest holding ``"gitHead": null`` fell past
+    both of them: nothing measured the code half, git_note stayed empty, and the
+    envelope came back saying nothing had changed — with git working and a
+    commit sitting right there that the pages were never compared against.
+    NO_HEAD_NOTE (``drift.py:32-33``) promises the reader of that record exactly
+    the opposite: "the next check reports no_git instead of comparing the pages
+    against nothing".
+
+    ``test_record_without_a_commit_writes_a_null_head`` cannot catch this. That
+    repository still has no commits when its check runs, so ``head_sha()``
+    returns None and the run reaches no_git down the other branch. The commit
+    made below is the whole difference: git can answer now, and the only thing
+    missing is the head the manifest never recorded.
+    """
+    fresh = tmp_path / "fresh"
+    shutil.copytree(fixture_repo, fresh, ignore=shutil.ignore_patterns(".git"))
+    git_in(fresh, "-c", "init.defaultBranch=main", "init", "-q", ".")
+
+    recorded_head = record(run_script, fresh)["gitHead"]
+    assert recorded_head is None, (
+        f"this test needs a manifest with no recorded commit; got {recorded_head!r}"
+    )
+
+    git_in(fresh, "add", "-A")
+    git_in(fresh, "commit", "-q", "-m", "first")
+
+    result = run_script("drift.py", "check", "docs", cwd=fresh)
+    data = parsed(result)
+
+    assert data["status"] == "no_git", (
+        f"expected no_git for a manifest recording no commit; got {data['status']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert result.returncode == 2, (
+        f"expected exit 2 for a check that had nothing to compare against; got "
+        f"{result.returncode}\n{outcome(result)}"
+    )
+    assert data["note"], (
+        f"expected a note saying why the code half was not measured\n{outcome(result)}"
+    )
+    assert data["gitHead"] == {"recorded": None, "current": data["gitHead"]["current"]}, (
+        f"expected the null recorded head reported back beside the resolvable current one; "
+        f"got {data['gitHead']!r}\n{outcome(result)}"
+    )
+    assert data["gitHead"]["current"], (
+        f"this test needs git answering by now; got {data['gitHead']!r}\n{outcome(result)}"
     )
