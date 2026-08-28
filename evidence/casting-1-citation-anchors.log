@@ -1,0 +1,37 @@
+# evidence-cmd: printf "== module-level symbols named by the GI-004 paragraph in conftest.py ==\n"; for p in "drift.py:ROOT" "drift.py:_DOCS_ARG" "llmstxt.py:ROOT" "llmstxt.py:DOCS" "llmstxt.py:BASE" "doctype.py:LENS_ALLOW" "doctype.py:SURVEY_PATH" "survey.py:ROOT" "slop.py:TARGETS"; do f=${p%:*}; n=${p#*:}; if grep -qE "^${n} *=" "plugins/webster/scripts/${f}"; then echo "scripts/${f} ${n}: module-level assignment FOUND"; else echo "scripts/${f} ${n}: MISSING"; fi; done; printf "\n== survey.py imports tomllib at module scope (match count) ==\n"; grep -c "^import tomllib" plugins/webster/scripts/survey.py; printf "\n== every file:line citation still present in the two harness files ==\n"; grep -oE "[A-Za-z_./-]+\.py:[0-9]+(-[0-9]+)?" plugins/webster/tests/conftest.py plugins/webster/tests/test_harness.py | sort | uniq -c; printf "\n== that anchor resolved: line 15 of the fixture main.py as commits 1-2 see it ==\n"; sed 1d plugins/webster/tests/fixtures/repo/src/app/main.py | sed -n 15p; printf "\n== the two prose citations into plugins/forge, a tree GI-007 freezes ==\n"; printf "forge/tests/conftest.py:545 ->"; sed -n 545p plugins/forge/tests/conftest.py; printf "forge/tests/test_validate_spec.py:43 ->"; sed -n 43p plugins/forge/tests/test_validate_spec.py; printf "\n== check=True is _git s stance, not run_script s ==\n"; printf "run_script check= kwargs: "; sed -n "/^def run_script(/,/^def _git(/p" plugins/webster/tests/conftest.py | grep -c "^ *check="; printf "_git check=True kwargs: "; sed -n "/^def _git(/,/^def build_fixture_repo(/p" plugins/webster/tests/conftest.py | grep -c "^ *check=True,"
+# evidence-for: FR-039, AC-039, GI-004
+#
+# D-032. Every citation the two harness files make is resolved here. The five
+# script anchors that had drifted (drift.py:16-17, llmstxt.py:8-10,
+# doctype.py:167, survey.py:9, slop.py:11) are gone; what replaced them are the
+# module-level symbol names below, which do not move when a sibling casting
+# edits the script around them. The only file:line strings left in either file
+# are the fixture drift anchor, resolved below.
+
+== module-level symbols named by the GI-004 paragraph in conftest.py ==
+scripts/drift.py ROOT: module-level assignment FOUND
+scripts/drift.py _DOCS_ARG: module-level assignment FOUND
+scripts/llmstxt.py ROOT: module-level assignment FOUND
+scripts/llmstxt.py DOCS: module-level assignment FOUND
+scripts/llmstxt.py BASE: module-level assignment FOUND
+scripts/doctype.py LENS_ALLOW: module-level assignment FOUND
+scripts/doctype.py SURVEY_PATH: module-level assignment FOUND
+scripts/survey.py ROOT: module-level assignment FOUND
+scripts/slop.py TARGETS: module-level assignment FOUND
+
+== survey.py imports tomllib at module scope (match count) ==
+1
+
+== every file:line citation still present in the two harness files ==
+      2 plugins/webster/tests/conftest.py:src/app/main.py:15
+
+== that anchor resolved: line 15 of the fixture main.py as commits 1-2 see it ==
+@app.post("/items/{item_id}")
+
+== the two prose citations into plugins/forge, a tree GI-007 freezes ==
+forge/tests/conftest.py:545 ->            timeout=30,
+forge/tests/test_validate_spec.py:43 ->    assert result.returncode == 0, (
+
+== check=True is _git s stance, not run_script s ==
+run_script check= kwargs: 0
+_git check=True kwargs: 1

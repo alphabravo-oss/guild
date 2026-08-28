@@ -5,16 +5,22 @@ GI-007; OT-038, OT-043; AC-039, AC-040).
 Every other module in this suite tests a webster script. This one tests the
 things those modules stand on, because a harness claim nobody measures is the
 same false pass ``drift.py`` and ``doctype.py`` are being fixed to stop
-reporting — and two such claims had already gone bad:
+reporting — and three such claims had already gone bad:
 
 - ``conftest.py``'s interpreter-skew docstring asserted the child ``python3``
   "resolves through PATH to 3.14.6" and is "not the one running pytest". Under
   the blessed ``uvx pytest`` both are false: uv prepends its ephemeral venv to
   PATH, so the child is uv's 3.11.14 and is the very interpreter running
   pytest. Prose cannot go stale silently once a test measures it.
-- ``build_repo`` (``conftest.py:242-250``) was written for OT-038's
+- ``conftest.py``'s ``build_repo`` fixture was written for OT-038's
   two-consecutive-builds check and then had no caller at all, so the
   deterministic-hash property it exists to prove was never once proved.
+- the ``file:line`` citations in this module and in ``conftest.py`` had gone
+  stale as the scripts around them were fixed, and one of them justified
+  ``check=True`` by pointing at ``run_script`` — the single helper in the
+  harness that deliberately has no ``check=``. Citations here now name symbols,
+  not line numbers, for every file this change is allowed to edit; a line
+  number appears only for a file GI-007 freezes.
 
 Which requirement each test pins, and whether it is a red-first fix test or a
 guard over a truth that was asserted but never measured (FR-039 asks for this
@@ -49,7 +55,8 @@ from pathlib import Path
 
 # ``tests/test_harness.py`` -> ``plugins/webster/`` -> the repository root: the
 # same walk ``conftest.py`` does for PLUGIN_ROOT, recomputed rather than
-# imported for the reason ``test_readme.py:57`` gives — a module that imports
+# imported for the reason ``test_readme.py`` gives above its own ``TESTS_DIR``
+# — a module that imports
 # its own conftest works until somebody runs pytest from a different rootdir,
 # and the scope assertions below have to keep working from the repository root
 # as well as from the plugin.
@@ -77,16 +84,21 @@ BASELINE_COMMIT = "cfafe8e"
 
 GIT_TIMEOUT = 30
 
-# Same reasoning as ``conftest.py:113-124`` and ``test_drift.py:76-91``: a
-# developer's ~/.gitconfig arrives through HOME, and ``status.relativePaths``
+# Same reasoning as ``conftest.py``'s ``_GIT_ENV`` and ``test_drift.py``'s
+# ``GIT_ENV``: a developer's ~/.gitconfig arrives through HOME, and ``status.relativePaths``
 # or a pathspec alias would change what these queries return on that machine
 # only. Read no configuration but the repository's own.
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 # GI-007's writable file set, as a predicate. ``scripts/*.py`` is deliberately
-# depth-1 and ``.py``-only: ``plugins/webster/scripts/forge-specs/`` exists
-# untracked in this working tree right now, and committing it would put a tree
-# of markdown under ``scripts/`` that a ``scripts/**`` glob would wave through.
+# depth-1 and ``.py``-only rather than ``scripts/**``: A-035 enumerates the
+# scripts themselves, not the directory holding them. Partway through this
+# change a tree of generated forge-spec markdown sat untracked under
+# ``scripts/``, and a recursive glob would have waved the whole tree through
+# the moment anyone committed it. The predicate is written against that shape
+# and asserts nothing about what the working tree happens to hold at any given
+# moment — a guard whose correctness depends on today's directory listing is a
+# guard that stops guarding the day the listing changes.
 _WRITABLE_FILES = frozenset(
     {"README.md", "pyproject.toml", ".claude-plugin/plugin.json"}
 )
@@ -98,13 +110,26 @@ _WRITABLE_FILES = frozenset(
 READ_ONLY_LAYERS = ("agents", "commands", "skills")
 
 # The Foundry run's own bookkeeping. Each casting commits its re-executable
-# evidence logs here and the lead strips the directory before the change lands
-# (commit 19c97f9, "chore(foundry): strip consumed run evidence"), so these
-# paths are in the history of the branch without being part of the change
-# FR-043 describes. Everything else outside the plugin — the marketplace
-# manifest and the root README badge that GI-006 forbids touching, another
-# plugin, a stray report directory — is a real violation and fails below.
-EVIDENCE_PREFIX = "evidence/"
+# evidence logs under this prefix and the lead strips the directory before the
+# change lands, so the paths pass through the branch's history without ever
+# being part of the change FR-043 describes.
+#
+# This is not a hole in ``changed_path_allowed``. That predicate answers GI-007
+# and nothing else, and it answers "no" for every path here — an earlier
+# version returned "yes" for anything under ``evidence/``, which widened the
+# only automated guard behind GI-007 past the five locations it exists to
+# enforce. The prefix is used exactly once below, to drop a path the diff still
+# reports and the working tree no longer has: a strip that has been made and
+# not yet committed. A path that survives to land is on disk and is judged like
+# any other, so this exception cannot admit anything. It is the only exception
+# in this file.
+#
+# Until that strip happens the changed half of the scope test reports every
+# committed evidence log as outside the surface, and it is meant to: a run that
+# ends with its evidence still committed has in fact changed paths GI-007 does
+# not allow. NFR-001 forbids skip and xfail, so the test fails and names them
+# rather than being taught not to look.
+RUN_EVIDENCE_PREFIX = "evidence/"
 
 
 def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -112,7 +137,9 @@ def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 
     ``check=True`` by default: a git failure here is a broken premise rather
     than a finding, and it should surface at the line that caused it — the
-    stance ``conftest.py:155-160`` takes for the fixture repo.
+    stance ``conftest.py``'s ``_git`` takes for the fixture repo. (Not
+    ``run_script``, which passes every exit code back to its caller on
+    purpose: there, a non-zero status is the finding.)
     """
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     env.update(GIT_ENV)
@@ -150,13 +177,27 @@ def in_writable_set(rel: str) -> bool:
 
 
 def changed_path_allowed(path: str) -> bool:
-    """True when a repository-relative changed path is inside this change's surface."""
-    if path.startswith(EVIDENCE_PREFIX):
-        return True
+    """True when a repository-relative changed path is one of GI-007's five locations.
+
+    Nothing outside ``plugins/webster`` is allowed, including the run's own
+    ``evidence/`` logs. See ``RUN_EVIDENCE_PREFIX`` for why that is not the
+    same as failing on them forever.
+    """
     prefix = PLUGIN_REL + "/"
     if path.startswith(prefix):
         return in_writable_set(path[len(prefix) :])
     return False
+
+
+def strip_already_made(path: str) -> bool:
+    """True when ``path`` is a run evidence log the working tree no longer holds.
+
+    The sole exception documented at ``RUN_EVIDENCE_PREFIX``: the diff still
+    reports the file because the deletion is not committed yet. Anything that
+    lands exists on disk, so it never reaches this branch and is judged by
+    ``changed_path_allowed`` like every other path.
+    """
+    return path.startswith(RUN_EVIDENCE_PREFIX) and not (REPO_ROOT / path).exists()
 
 
 def resolve_baseline() -> tuple[str | None, str]:
@@ -215,15 +256,15 @@ def test_run_script_child_python3_clears_the_plugin_floor(run_script, fixture_re
     Measured two ways, because the docstring this replaces was wrong about
     which interpreter that is.
 
-    First, directly: the literal ``"python3"`` and the PATH-passthrough
-    environment are the only two things that decide which interpreter
-    ``run_script`` launches (``conftest.py:155-165``), so running that exact
-    pair reports the exact child. ``run_script`` itself cannot be asked — its
+    First, directly: the literal ``"python3"`` in ``run_script``'s
+    ``subprocess.run`` and the PATH it inherits from ``base_env`` are the only
+    two things that decide which interpreter ``run_script`` launches, so
+    running that exact pair reports the exact child. ``run_script`` itself cannot be asked — its
     contract takes a script basename under ``scripts/``, not a ``-c`` argument,
     and widening it for one measurement would change a locked contract that
     every other module in this suite depends on.
 
-    Second, through ``run_script`` for real: ``survey.py:11`` imports
+    Second, through ``run_script`` for real: ``survey.py`` imports
     ``tomllib`` at module scope, and ``tomllib`` is stdlib only from 3.11. A
     child below the floor cannot reach ``survey.py``'s first line of work, so a
     clean run is itself proof the floor holds for the interpreter the harness
@@ -330,15 +371,28 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
 
     Two halves. The tracked half holds always: every file this repository
     tracks under ``plugins/webster`` is either in the writable five or in one
-    of the markdown layers GI-001 froze — so committing, say,
-    ``scripts/forge-specs/`` fails here even though it sits under ``scripts/``.
+    of the markdown layers GI-001 froze — so committing, say, a directory of
+    generated markdown under ``scripts/`` fails here even though it sits under
+    ``scripts/``.
 
     The changed half needs a baseline to diff against and is the one that
-    states FR-043 directly. Its allowance for ``evidence/`` is deliberate and
-    narrow: those are the run's own re-executable logs, stripped before the
-    change lands. Everything else outside the plugin still fails, which is what
-    catches a GI-006 violation — a bumped ``marketplace.json`` or an edited
-    root README badge.
+    states FR-043 directly. It allows exactly GI-007's five locations and
+    nothing else, so a bumped ``marketplace.json``, an edited root README badge
+    (both GI-006 violations), another plugin or a stray report directory all
+    fail here. It used to allow anything under ``evidence/`` outright, which
+    made the only automated guard behind GI-007 accept a sixth location the
+    invariant never named.
+
+    One tolerance survives, and it can admit nothing: a path the diff reports
+    that is under ``evidence/`` and is no longer in the working tree — a strip
+    made but not yet committed (``strip_already_made``). Anything that lands is
+    on disk and is judged normally.
+
+    Consequence, stated here rather than skipped: while this run's evidence
+    logs are still committed, this half fails and names them. It goes green on
+    the lead's strip commit, after which the baseline-to-HEAD diff no longer
+    mentions those paths at all. NFR-001 forbids skip and xfail, and a red test
+    that says why beats a green one that was taught not to look.
     """
     tracked = nul_separated(git("ls-files", "-z", "--", PLUGIN_REL))
     assert tracked, (
@@ -369,12 +423,19 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
         return
 
     changed = nul_separated(git("diff", "--name-only", "-z", f"{baseline}..HEAD"))
-    outside = sorted(path for path in changed if not changed_path_allowed(path))
+    outside = sorted(
+        path
+        for path in changed
+        if not changed_path_allowed(path) and not strip_already_made(path)
+    )
     assert not outside, (
         f"the change touches paths outside its declared surface. Baseline "
         f"resolved from {how} ({baseline[:7]}); {len(changed)} paths changed. "
         f"GI-007 allows only {PLUGIN_REL}/{{scripts/*.py, "
         f".claude-plugin/plugin.json, README.md, pyproject.toml, tests/**}} "
-        f"plus the run's own {EVIDENCE_PREFIX} logs. Outside:\n  "
+        f"and nothing else in the repository. Committed {RUN_EVIDENCE_PREFIX} "
+        f"logs from this Foundry run appear here until the lead strips them, "
+        f"which is the run's own bookkeeping showing through; every other "
+        f"entry is a violation to fix. Outside:\n  "
         + "\n  ".join(outside)
     )

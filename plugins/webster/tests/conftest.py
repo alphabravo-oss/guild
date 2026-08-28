@@ -26,7 +26,7 @@ This docstring previously asserted the second case unconditionally ("resolves
 through PATH to 3.14.6", "not the one running pytest"). Measured inside a real
 ``uvx pytest`` run, both halves were false. What the harness actually
 guarantees is weaker and checkable: the child clears the plugin's 3.11 floor
-(A-001), because ``survey.py:11`` imports ``tomllib`` at module scope and
+(A-001), because ``survey.py`` imports ``tomllib`` at module scope and
 nothing below 3.11 has it. ``tests/test_harness.py`` measures that rather than
 pinning a version number that is a property of the machine, not of the suite.
 
@@ -37,11 +37,26 @@ shebang and Claude Code invokes it as
 ``python3 ${CLAUDE_PLUGIN_ROOT}/scripts/X.py``.
 
 Nothing here imports a webster script, and no test module may either (GI-004).
-Every script parses argv and ``os.environ`` at module import — ``drift.py:16-17``,
-``llmstxt.py:8-10``, ``doctype.py:167``, ``survey.py:9``, ``slop.py:11`` — so an
-import would freeze the wrong root, the wrong docs directory and the wrong lens
-allowlist before a test could set any of them. Subprocess is the only honest way
-to drive these scripts, and it is also how a reader runs them.
+Every script binds its root, its docs directory and its allowlists at module
+import, from argv or ``os.environ``, before a test could set any of them:
+``drift.py``'s ``ROOT`` and ``_DOCS_ARG``; ``llmstxt.py``'s ``ROOT``, ``DOCS``
+and ``BASE``; ``doctype.py``'s ``LENS_ALLOW`` and ``SURVEY_PATH``;
+``survey.py``'s ``ROOT``; ``slop.py``'s ``TARGETS``. Every one is a
+module-level assignment, so an import would freeze all of them at the importing
+process's values. Subprocess is the only honest way to drive these scripts, and
+it is also how a reader runs them.
+
+Those are named by symbol and not by ``file:line`` deliberately. An earlier
+version of this paragraph cited five line numbers into the scripts, and all
+five had moved by the time anyone read them: the same run that fixed the
+scripts inserted the 3.11 floor comment above ``import tomllib`` in
+``llmstxt.py`` and ``survey.py``, grew ``drift.py``'s module docstring, and
+added branches above ``doctype.py``'s allowlists. The ``slop.py`` anchor, off
+by a single line, landed on a blank one. A citation that points at a blank line is prose
+asserting something untrue, which is the exact failure this suite exists to
+stop. A module-level name survives every edit short of deleting the
+thing it names, so line numbers appear below only for files outside this
+change's writable surface (GI-007), which nothing in this run may move.
 
 Fixtures exposed to test modules:
 
@@ -72,9 +87,12 @@ SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 FIXTURE_REPO_SRC = FIXTURES_DIR / "repo"
 
-# Matches plugins/forge/tests/conftest.py:545. Every subprocess in this suite
-# gets an explicit ceiling so a script that waits on stdin fails the test
-# instead of hanging the run (NFR-004).
+# Matches the explicit ``timeout=30`` on the validator-runner ``subprocess.run``
+# in plugins/forge/tests/conftest.py, line 545 — a file outside this change's
+# writable surface (GI-007), so unlike the webster scripts it cannot move under
+# this citation. Every subprocess in this suite gets an explicit ceiling so a
+# script that waits on stdin fails the test instead of hanging the run
+# (NFR-004).
 SCRIPT_TIMEOUT = 30
 
 # FR-029: the base environment is PATH and HOME, plus whatever a test passes
@@ -144,7 +162,9 @@ def run_script(
 
     Returns the ``subprocess.CompletedProcess`` unexamined: exit code, stdout
     and stderr all belong to the calling test's assertion, which must quote them
-    on failure (see plugins/forge/tests/test_validate_spec.py:43-46).
+    on failure — the shape of the returncode assertion in
+    ``plugins/forge/tests/test_validate_spec.py``, lines 43-46, which dumps both
+    streams into the message. That is another file this change may not touch.
     """
     script = SCRIPTS_DIR / name
     if not script.is_file():
