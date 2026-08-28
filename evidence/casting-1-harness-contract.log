@@ -1,0 +1,13 @@
+# evidence-cmd: uv run --with pytest --no-project python -c "import importlib.util, sys, os, json, tempfile, subprocess; spec = importlib.util.spec_from_file_location('c', 'plugins/webster/tests/conftest.py'); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); os.environ['WEBSTER_DOCS'] = 'definitely-not-docs'; os.environ['WEBSTER_LENS_ALLOW'] = 'leaked'; repo = m.build_fixture_repo(os.path.join(tempfile.mkdtemp(), 'repo')); r = m.run_script('drift.py', 'check', cwd=repo); r2 = m.run_script('drift.py', 'check', cwd=repo, env={'WEBSTER_DOCS': 'definitely-not-docs'}); print('ambient WEBSTER_* exported before the call:', sorted(k for k in os.environ if k.startswith('WEBSTER_'))); print('run_script returns:', type(r).__module__ + '.' + type(r).__name__); print('drift.py check exit code:', r.returncode); print('drift.py check status:', json.loads(r.stdout)['status']); print('cwd honoured, docs found relative to cwd:', json.loads(r.stdout)['status'] == 'no_manifest'); print('ambient WEBSTER_DOCS leaked into the script:', json.loads(r.stdout)['status'] == 'no_docs'); print('explicit env= override reached the script:', json.loads(r2.stdout)['status'] == 'no_docs'); print('base env keys:', sorted(m.base_env())); print('subprocess timeout seconds:', m.SCRIPT_TIMEOUT); print('script interpreter is PATH python3, not the pytest interpreter:', subprocess.run(['python3', '-c', 'import sys; print(sys.executable)'], capture_output=True, text=True).stdout.strip() != sys.executable)"
+# evidence-for: US-010, FR-029, NFR-004
+
+ambient WEBSTER_* exported before the call: ['WEBSTER_DOCS', 'WEBSTER_LENS_ALLOW']
+run_script returns: subprocess.CompletedProcess
+drift.py check exit code: 2
+drift.py check status: no_manifest
+cwd honoured, docs found relative to cwd: True
+ambient WEBSTER_DOCS leaked into the script: False
+explicit env= override reached the script: True
+base env keys: ['HOME', 'PATH']
+subprocess timeout seconds: 30
+script interpreter is PATH python3, not the pytest interpreter: True

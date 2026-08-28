@@ -1,0 +1,16 @@
+# evidence-cmd: uv run --with pytest --no-project python -c "import importlib.util, sys, os, tempfile, subprocess; spec = importlib.util.spec_from_file_location('c', 'plugins/webster/tests/conftest.py'); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); d = tempfile.mkdtemp(); a = m.build_fixture_repo(os.path.join(d, 'a')); b = m.build_fixture_repo(os.path.join(d, 'b')); g = lambda repo, *args: subprocess.run(['git', *args], cwd=str(repo), capture_output=True, text=True).stdout.strip(); print('build 1 HEAD:', g(a, 'rev-parse', 'HEAD')); print('build 2 HEAD:', g(b, 'rev-parse', 'HEAD')); print('two consecutive builds agree:', g(a, 'rev-parse', 'HEAD') == g(b, 'rev-parse', 'HEAD')); print('builds are independent trees:', str(a) != str(b)); print('branch:', g(a, 'rev-parse', '--abbrev-ref', 'HEAD')); print('commit subjects:', g(a, 'log', '--reverse', '--format=%s').split(chr(10))); print('identity and dates at HEAD:', g(a, 'log', '-1', '--date=iso-strict', '--format=%an <%ae> %ad | %cn <%ce> %cd')); print('worktree clean after build:', g(a, 'status', '--porcelain') == ''); print('tracked file count:', len(g(a, 'ls-files').split(chr(10)))); print('nested .git committed into the fixture:', 'fixtures/repo/.git' in g(a, 'ls-files')); print('src/app/main.py line 15 at HEAD~1:', repr(g(a, 'show', 'HEAD~1:src/app/main.py').split(chr(10))[14])); print('src/app/main.py line 15 at HEAD:', repr(g(a, 'show', 'HEAD:src/app/main.py').split(chr(10))[14])); print('docs/items/create-item.md line 12:', repr(g(a, 'show', 'HEAD:docs/items/create-item.md').split(chr(10))[11]))"
+# evidence-for: FR-030, NFR-005, AC-040
+
+build 1 HEAD: d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+build 2 HEAD: d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+two consecutive builds agree: True
+builds are independent trees: True
+branch: main
+commit subjects: ['init', 'docs', 'touch main']
+identity and dates at HEAD: t <t@t> 2026-08-27T16:51:11Z | t <t@t> 2026-08-27T16:51:11Z
+worktree clean after build: True
+tracked file count: 24
+nested .git committed into the fixture: False
+src/app/main.py line 15 at HEAD~1: '@app.post("/items/{item_id}")'
+src/app/main.py line 15 at HEAD: ''
+docs/items/create-item.md line 12: 'This page shows you how to add an item to your store. <!-- src/app/main.py:15 -->'
