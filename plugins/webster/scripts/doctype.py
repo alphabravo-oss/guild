@@ -19,7 +19,7 @@ Harvester's 128 pages carry a literal "Overview" heading, so requiring one would
 convention that real documentation does not follow. What is checked is what is actually a
 defect, and the two are kept apart on purpose.
 """
-import os, re, sys
+import json, os, re, sys
 
 # forbidden_shapes: content belonging to a different type. Mixing types is the failure Diataxis
 # and Good Docs both name first, and it is detectable by shape rather than by vocabulary.
@@ -141,16 +141,52 @@ LENS_MAY_NOT = {
 }
 
 # Backticked identifiers that are a symbol in the source rather than something on screen.
-CODE_IDENT = re.compile(r"`([a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+)`")
-# Product and technology names are PascalCase too, and they are not internals.
-IDENT_ALLOW = {
+#
+# One capital run and the lowercase tail that follows it. Written once because every branch
+# below needs it: it is what makes `APIClient` two words rather than one unreadable run, and
+# what lets `GraphQL` end on an acronym. The old pattern required every segment to be
+# [A-Z][a-z0-9]+, so a name that opened or closed on an acronym never matched: `APIClient` and
+# `HTTPServer` passed the lens while `getUser` was reported, and 14 of the allowlist entries
+# below were unreachable for the same reason.
+_CAP_RUN = r"(?:[A-Z]+[a-z0-9]*)"
+CODE_IDENT = re.compile(
+ r"`("
+ # snake_case. The dominant symbol shape in this repo's own scripts, and it used to pass.
+ r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+"
+ rf"|[a-z][a-z0-9]*{_CAP_RUN}+"        # camelCase: getUser, iPhone, gRPC, iOS
+ rf"|[A-Z][a-z0-9]+{_CAP_RUN}+"        # PascalCase: DataSources, GraphQL, PostgreSQL
+ rf"|[A-Z]{{2,}}[a-z0-9]+{_CAP_RUN}*"  # acronym first: APIClient, HTTPServer, OAuth
+ r")`")
+# Tokens holding a `.` or a `/` are excluded by the closing backtick rather than by a rule of
+# their own: no branch above can consume either character, so `my_config.yaml` and `/etc/hosts`
+# never reach it. ALL-CAPS is excluded the same way — every branch requires a lowercase letter,
+# which leaves `DATABASE_URL` to ENV_VAR, whose job it is.
+
+# Product and technology names are PascalCase too, and they are not internals. Compared against
+# `m.group(1).lower()`, so the capitalisation here is documentation rather than a matcher: the
+# set used to hold `IPhone` and flag the `iPhone` a page actually writes.
+IDENT_ALLOW = {name.lower() for name in (
  "JavaScript", "TypeScript", "PostgreSQL", "MySQL", "SQLite", "GitHub", "GitLab", "BitBucket",
  "MongoDB", "DynamoDB", "CloudFront", "CloudWatch", "OpenAPI", "OpenSSL", "OpenShift", "GraphQL",
- "PowerShell", "WordPress", "SharePoint", "OneDrive", "DevOps", "MacOS", "IOS", "IPhone",
+ "PowerShell", "WordPress", "SharePoint", "OneDrive", "DevOps", "macOS", "iOS", "iPhone",
  "NodeJS", "NextJS", "VMware", "OpenStack", "OpenTelemetry", "SendGrid", "PagerDuty",
-}
+ # Names a page for someone who uses the product will write and mean the product, not a symbol.
+ "iPad", "iCloud", "YouTube", "LinkedIn", "PayPal", "WhatsApp", "eBay", "OAuth", "OpenID",
+ "WebSocket", "gRPC",
+)}
 ENV_VAR = re.compile(r"`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`")
-ROUTE_PATH = re.compile(r"`(/(?:api|v\d)[\w/{}:.-]*)`|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+# Any backticked path, not just the two prefixes an API happens to use: `/dashboard` and
+# `/settings/profile` are as much a request route as `/api/health`, and both used to pass.
+# The lookahead drops a token whose last segment carries a file extension, because a page may
+# legitimately show a reader `/etc/hosts.conf`. Letters only, so `/api/v1.0/users` stays a
+# route. `/etc/hosts` has no extension and is the known gap; WEBSTER_LENS_ALLOW covers it.
+ROUTE_PATH = re.compile(
+ r"`(?![^`\s]*\.[A-Za-z]{1,6}`)(/[^`\s]+)`"
+ r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+# A flag is something typed at a terminal, and a page written from the screen has no terminal in
+# it. Suppressed by WEBSTER_LENS_ALLOW or by the product's own commands and labels, because a
+# command-line product's users really do type `--verbose`.
+FLAG = re.compile(r"`(--?[a-zA-Z][\w-]*)`")
 
 # Architecture vocabulary. Each of these names a part of the system the reader cannot touch.
 # Kept deliberately tight: "repository" alone means a git repository to half of all readers and
@@ -166,20 +202,67 @@ ARCH_HARD = re.compile(
 # declaration rather than a default, because the easy way to defeat this rule is to widen it.
 LENS_ALLOW = {t.strip().lower() for t in os.environ.get("WEBSTER_LENS_ALLOW", "").split(",")
               if t.strip()}
+
+
+def load_survey_allow(path):
+    """The product's own words, from a saved survey.py JSON. Returns (terms, loaded).
+
+    survey.py already enumerates what a person sees — the screens, the labels printed on them,
+    the commands they type — and none of it reached this lens, so a real product label like
+    `DataSources` was reported as an internal symbol on every page that used it. The transport
+    is a path in WEBSTER_SURVEY rather than an import or a subprocess, so the two scripts stay
+    independent and the caller decides how fresh the survey is.
+
+    Absent, missing or malformed is not an error: the survey is an optional courtesy and a check
+    that refused to run without one would be worse than a check with a smaller allowlist. It
+    also cannot print or raise, because scaffold.py imports this module for SKELETON and would
+    get the noise on its own JSON stdout."""
+    if not path:
+        return set(), False
+    try:
+        with open(path, encoding="utf-8") as fh:
+            user_surface = json.load(fh).get("user_surface") or {}
+        terms = set()
+        # labels carry `text`, screens and commands carry `name` (survey.py:236, 264, 311).
+        for key, field in (("labels", "text"), ("screens", "name"), ("commands", "name")):
+            for item in user_surface.get(key) or []:
+                term = item.get(field) if isinstance(item, dict) else item
+                if isinstance(term, str) and term.strip():
+                    terms.add(term.strip().lower())
+        return terms, True
+    except Exception:
+        return set(), False
+
+
+SURVEY_PATH = os.environ.get("WEBSTER_SURVEY", "")
+SURVEY_ALLOW, SURVEY_LOADED = load_survey_allow(SURVEY_PATH)
 ARCH_SOFT = re.compile(
  r"(?i)\b(under the hood|behind the scenes|internally|the backend|the front ?end"
  r"|the database|the runtime)\b")
 
 # An acronym a reader has not met is the most common way a page assumes knowledge of the product.
 ACRONYM = re.compile(r"\b([A-Z][A-Z0-9]{1,5})s?\b")
-# Acronyms nobody expands, because expanding them would read as condescension.
+# Acronyms nobody expands, because expanding them would read as condescension. Every entry has
+# to be reachable by the regex above — 2 to 6 characters — or it is a promise the check does not
+# keep. Four entries were not, and the last real run reported the words they were meant to
+# excuse.
 UNIVERSAL_ACRONYMS = {
  "US", "UK", "EU", "ID", "OK", "FAQ", "AM", "PM", "USB", "PDF", "CSV", "URL", "HTTP", "HTTPS",
  "HTML", "CSS", "JSON", "YAML", "XML", "ZIP", "GPS", "SMS", "PC", "TV", "IT", "AI", "OS", "RAM",
  "CPU", "GPU", "GB", "MB", "KB", "TB", "UTC", "ISO", "PIN", "QR", "SIM", "WIFI", "MD",
  "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD",
- "README", "TODO", "FAQ", "NOTE", "TIP", "WARNING", "YES", "NO", "AND", "OR", "NOT", "ALL",
- "NEW", "OK", "END", "MAX", "MIN", "N", "A", "I",
+ "README", "TODO", "NOTE", "TIP", "YES", "NO", "AND", "OR", "NOT", "ALL",
+ "NEW", "END", "MAX", "MIN",
+ # A page for someone who uses the product still says API and CLI, and expanding either one
+ # reads as condescension rather than help. They were the two the brief named.
+ "API", "CLI",
+ # The rest of the same class: an interface, a connection or an address a reader meets by these
+ # letters and never by the words behind them.
+ "UI", "UX", "SDK", "SSH", "SSL", "TLS", "VPN", "DNS", "IP",
+ # Removed: "FAQ" and "OK" were each listed twice, so one copy of each is gone.
+ # Removed: "N", "A", "I" — ACRONYM needs two characters, so none of them could ever match.
+ # Removed: "WARNING" — seven characters against a six-character ceiling, so it was allowlisted
+ # and reported at the same time. A-034 keeps the ceiling and drops the entry.
 }
 
 # The plan this plugin writes for itself is a working document that happens to live in the docs
@@ -530,19 +613,31 @@ def check_lens(rel, text, audience, dt, env_vars):
     named = []
     for n, line in prose_lines(text):
         for m in CODE_IDENT.finditer(line):
-            if m.group(1) not in IDENT_ALLOW:
+            if m.group(1).lower() not in IDENT_ALLOW:
                 named.append((n, f"`{m.group(1)}`", "an internal symbol name"))
         for m in ENV_VAR.finditer(line):
             if audience == "user" and m.group(1) in env_vars:
                 named.append((n, f"`{m.group(1)}`", "an environment variable"))
-        for m in ROUTE_PATH.finditer(line):
-            named.append((n, m.group(1) or m.group(2), "a request route"))
+        # Routes and flags belong to whoever is holding a terminal, and LENS_MAY_NOT says an
+        # operator is. Running these two on an operator page reported it for naming
+        # `/api/health` on a page that is allowed to be about exactly that, and widening
+        # ROUTE_PATH would have multiplied the false finding. Symbols and architecture below
+        # keep firing for an operator, which is what LENS_MAY_NOT['operator'] actually forbids.
+        if audience == "user":
+            for m in ROUTE_PATH.finditer(line):
+                named.append((n, m.group(1) or m.group(2), "a request route"))
+            for m in FLAG.finditer(line):
+                named.append((n, f"`{m.group(1)}`", "a command-line flag"))
         for m in ARCH_HARD.finditer(line):
             named.append((n, m.group(1), "part of the architecture"))
 
     seen = set()
     for n, what, kind in named:
-        if what.strip("`").lower() in LENS_ALLOW:
+        term = what.strip("`").lower()
+        # Two allowlists, kept apart on purpose. LENS_ALLOW is a person declaring that their
+        # readers use this word; SURVEY_ALLOW is the product's own screens, labels and commands,
+        # read from a survey rather than declared. Either one excuses the term.
+        if term in LENS_ALLOW or term in SURVEY_ALLOW:
             continue
         if what.lower() in seen:
             continue
@@ -650,8 +745,54 @@ def check_typed(rel, text, dt, spec):
     return defects, advisories
 
 
+def check_frontmatter(rel, fm):
+    """The three checks that need the frontmatter block and nothing else.
+
+    Separated out so a stub can have them run on it. A page nobody has written yet still has to
+    say who it is for and what it is: an all-stub tree used to pass the Shaped and Lens gates
+    without one page having declared a reader, because every check skipped the stub entirely.
+    The prose checks stay off — a skeleton's placeholder braces are not sentences, and grading
+    them teaches the reader to ignore the report."""
+    defects = []
+    audience = fm.get("audience", DEFAULT_AUDIENCE)
+    if audience not in AUDIENCES:
+        defects.append({"page": rel, "rule": "unknown-audience",
+                        "problem": f"audience '{audience}' is not a known reader",
+                        "fix": "one of: " + ", ".join(AUDIENCES)})
+        audience = DEFAULT_AUDIENCE
+    # A page with no declared reader was, until this was a defect, read against the
+    # `user` default and reported as a note nobody acted on. Every page in the last
+    # real run of this plugin was in that state, so the lens never fired once.
+    if "audience" not in fm:
+        defects.append({"page": rel, "rule": "no-audience",
+                        "problem": "the page does not say who it is for",
+                        "fix": "add 'audience: user', 'operator' or 'developer'. It "
+                               "decides what the page may be about, not just how hard "
+                               "the sentences may be"})
+    dt = fm.get("doc_type")
+    if dt and dt not in TYPES:
+        defects.append({"page": rel, "rule": "unknown-type",
+                        "problem": f"doc_type '{dt}' is not a known type",
+                        "fix": "one of: " + ", ".join(sorted(TYPES))})
+    return defects, audience
+
+
+def survey_line():
+    """What the lens allowed beyond its own static list, said out loud.
+
+    A silently smaller allowlist is the failure mode of an optional input: the run looks the
+    same whether the survey was read or the path was a typo, and the reader is left to guess
+    why their product's own labels are being reported as internals."""
+    if not SURVEY_PATH:
+        return "no survey allowlist"
+    if not SURVEY_LOADED:
+        return f"no survey allowlist: WEBSTER_SURVEY {SURVEY_PATH} could not be read"
+    return (f"lens allowlist: {len(SURVEY_ALLOW)} terms from WEBSTER_SURVEY "
+            f"({SURVEY_PATH})")
+
+
 def run_check(docs, override):
-    defects, advisories, untyped, typed, stubs = [], [], [], 0, 0
+    defects, advisories, untyped, typed, stubs, pages = [], [], [], 0, 0, 0
     known = glossary_terms(docs)
     env_vars = assigned_env_vars(docs)
     for dirpath, dirnames, filenames in os.walk(docs):
@@ -664,29 +805,18 @@ def run_check(docs, override):
             if rel in NOT_A_PAGE:
                 continue
             text = open(path, encoding="utf-8", errors="replace").read()
+            fm = frontmatter(text)
+            defects_fm, audience = check_frontmatter(rel, fm)
+            defects += defects_fm
+            dt = fm.get("doc_type")
+
+            # The frontmatter checks above have already run on this stub. Nothing below is
+            # about a page that has not been written yet.
             if "webster: not written yet" in text:
                 stubs += 1
                 continue
 
-            fm = frontmatter(text)
-            audience = fm.get("audience", DEFAULT_AUDIENCE)
-            if audience not in AUDIENCES:
-                defects.append({"page": rel, "rule": "unknown-audience",
-                                "problem": f"audience '{audience}' is not a known reader",
-                                "fix": "one of: " + ", ".join(AUDIENCES)})
-                audience = DEFAULT_AUDIENCE
-            # A page with no declared reader was, until this was a defect, read against the
-            # `user` default and reported as a note nobody acted on. Every page in the last
-            # real run of this plugin was in that state, so the lens never fired once.
-            if "audience" not in fm:
-                defects.append({"page": rel, "rule": "no-audience",
-                                "problem": "the page does not say who it is for",
-                                "fix": "add 'audience: user', 'operator' or 'developer'. It "
-                                       "decides what the page may be about, not just how hard "
-                                       "the sentences may be"})
-
-            dt = fm.get("doc_type")
-
+            pages += 1
             d, a = check_universal(rel, text, audience, override)
             defects += d
             advisories += a
@@ -701,15 +831,12 @@ def run_check(docs, override):
                 untyped.append(rel)
                 continue
             if dt not in TYPES:
-                defects.append({"page": rel, "rule": "unknown-type",
-                                "problem": f"doc_type '{dt}' is not a known type",
-                                "fix": "one of: " + ", ".join(sorted(TYPES))})
-                continue
+                continue  # check_frontmatter already reported it
             typed += 1
             d, a = check_typed(rel, text, dt, TYPES[dt])
             defects += d
             advisories += a
-    return defects, advisories, untyped, typed, stubs
+    return defects, advisories, untyped, typed, stubs, pages
 
 
 def main():
@@ -753,11 +880,15 @@ def main():
     if not os.path.isdir(docs):
         print(f"no docs directory at {docs}")
         return 2
-    defects, advisories, untyped, typed, stubs = run_check(docs, override)
+    defects, advisories, untyped, typed, stubs, pages = run_check(docs, override)
 
-    checked = typed + len(untyped)
-    print(f"{checked} pages checked, {typed} against a declared type, "
-          f"{stubs} stubs skipped")
+    # `pages` counts what was actually read as writing. The count used to be derived as
+    # typed + untyped, which silently dropped every unknown-type page, and it is now the same
+    # number the all-stub gate at the bottom asks about — a run cannot report "0 pages checked"
+    # and then decide there was something to check.
+    print(f"{pages} pages checked, {typed} against a declared type, "
+          f"{stubs} stubs (frontmatter only)")
+    print(survey_line())
     limit = int(os.environ.get("WEBSTER_SHOW_PER_RULE", "6"))
     for label, items in (("DEFECTS", defects), ("ADVISORIES", advisories)):
         if not items:
@@ -781,6 +912,13 @@ def main():
             print(f"  {u}")
         if len(untyped) > 12:
             print(f"  ... and {len(untyped) - 12} more")
+    # A tree of nothing but stubs resolved every rule it had, which is not the same as being
+    # checked: it printed "every page matches its declared type" and exited 0 over pages that
+    # were skeletons. This mirrors drift.py's no_anchors. A frontmatter defect on a stub is a
+    # real finding, so it wins over not-checked the way a broken anchor does there.
+    if stubs and not pages and not defects:
+        print(f"{stubs} stubs, nothing to check")
+        return 2
     if not defects and not advisories and not untyped:
         print("every page matches its declared type")
     return 1 if defects else 0

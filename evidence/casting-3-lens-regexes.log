@@ -1,0 +1,18 @@
+# evidence-cmd: rm -rf /tmp/webster-c3-lens && mkdir -p /tmp/webster-c3-lens/docs && printf '%b' '---\ntitle: Guide\ndoc_type: how-to\naudience: user\n---\n\n# Guide\n\nThe form calls `create_item` and builds an `APIClient`.\nEdit `my_config.yaml` and read `DATABASE_URL`.\nOpen `/dashboard` or `/settings/profile`, but not `/etc/hosts.conf`.\nPass `--verbose` or `-v` to see more.\nWorks on `iPhone`, stores in `PostgreSQL`, speaks `GraphQL`.\n' > /tmp/webster-c3-lens/docs/user.md && printf '%b' '---\ntitle: Run\ndoc_type: how-to\naudience: operator\n---\n\n# Run\n\nPoll `/api/health` and pass `--verbose`, but never call `getUser`.\n' > /tmp/webster-c3-lens/docs/operator.md && WEBSTER_SHOW_PER_RULE=50 python3 plugins/webster/scripts/doctype.py check /tmp/webster-c3-lens/docs; echo "exit status: $?"
+# evidence-for: US-003, US-004, AC-011, AC-012, AC-013, AC-014, AC-015, FR-010, FR-011, FR-012, FR-015, FR-017
+
+2 pages checked, 2 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (7)
+
+  wrong-lens  (7)
+      an operator handles config and commands, not the code underneath them
+    operator.md:9  a 'operator' page names an internal symbol name, `getUser`
+    user.md:9  a 'user' page names an internal symbol name, `create_item`
+    user.md:9  a 'user' page names an internal symbol name, `APIClient`
+    user.md:11  a 'user' page names a request route, /dashboard
+    user.md:11  a 'user' page names a request route, /settings/profile
+    user.md:12  a 'user' page names a command-line flag, `--verbose`
+    user.md:12  a 'user' page names a command-line flag, `-v`
+exit status: 1
