@@ -1,0 +1,19 @@
+# evidence-cmd: echo "test modules importing survey/drift/slop as modules (must be 0):" && grep -rn --include='*.py' -E '^\s*(import|from) (survey|drift|slop)\b' plugins/webster/tests/ | wc -l | tr -d ' ' && echo "subprocess calls in conftest without an explicit timeout (must be 0):" && python3 -c "import re,pathlib;s=pathlib.Path('plugins/webster/tests/conftest.py').read_text();print(len(re.findall(r'subprocess\.run\(',s))-len(re.findall(r'timeout=',s)))" && echo "fixture_repo scope (no scope= argument means one fresh repo per test):" && grep -B1 'def fixture_repo' plugins/webster/tests/conftest.py | head -1 && echo "real skip/xfail usage in the suite, decorators or calls (must be 0):" && grep -rn --include='*.py' -E '^[[:space:]]*(@pytest\.mark\.(skip|xfail)|pytest\.skip\()' plugins/webster/tests/ | wc -l | tr -d ' '
+# evidence-for: AC-041, NFR-004, NFR-005
+#
+# GI-004/CT-007 hold: nothing imports a script, every subprocess.run in
+# conftest carries an explicit timeout, fixture_repo is function-scoped so no
+# test inherits another's mutations, and NFR-001's no-skip/no-xfail rule is
+# unbroken. The skip check matches decorators and calls at the start of a
+# line, not the docstring sentences that name the rule; every grep is
+# --include='*.py' so __pycache__ (gitignored, named for whichever interpreter
+# last ran) cannot reach the output.
+
+test modules importing survey/drift/slop as modules (must be 0):
+0
+subprocess calls in conftest without an explicit timeout (must be 0):
+0
+fixture_repo scope (no scope= argument means one fresh repo per test):
+@pytest.fixture
+real skip/xfail usage in the suite, decorators or calls (must be 0):
+0
