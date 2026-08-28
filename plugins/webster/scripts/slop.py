@@ -10,12 +10,43 @@ import os, re, sys
 
 TARGETS = sys.argv[1:] or ["docs"]
 
+# The agent names the byline and the Co-Authored-By trailer both look for. One list because
+# the trailer should recognise exactly the authors the byline already does, and two
+# hand-copied alternations disagree the first time somebody adds a name to one of them.
+AI_NAMES = (r"AI|LLM|Claude|GPT|Copilot|Cursor|Gemini|ChatGPT|Codex|Devin"
+            r"|noreply@anthropic\.com")
+
+# The BMP code points carrying Emoji_Presentation=Yes in emoji-data.txt 16.0, as 33 class
+# entries. This replaced the block range U+2600-U+27BF, which swallowed ✓ (U+2713) and
+# ➜ (U+279C) — not emoji at all — and ✔ (U+2714), which is text-presentation. A heading
+# marked with a check mark was failing the gate as though it carried a rocket. The range
+# also missed ⭐ (U+2B50), which sits above it and is emoji presentation.
+# Written as escapes, not as the characters themselves, so each entry can be read straight
+# against emoji-data.txt rather than guessed from a glyph the terminal may not render.
+EMOJI_PRESENTATION_BMP = (
+    "\u231a-\u231b\u23e9-\u23ec\u23f0\u23f3\u25fd-\u25fe"
+    "\u2614-\u2615\u2648-\u2653\u267f\u2693\u26a1"
+    "\u26aa-\u26ab\u26bd-\u26be\u26c4-\u26c5\u26ce\u26d4"
+    "\u26ea\u26f2-\u26f3\u26f5\u26fa\u26fd"
+    "\u2705\u270a-\u270b\u2728\u274c\u274e"
+    "\u2753-\u2755\u2757\u2795-\u2797\u27b0\u27bf"
+    "\u2b1b-\u2b1c\u2b50\u2b55"
+)
+# Supplementary-plane emoji keep their block range: U+1F300-U+1FAFF is emoji throughout,
+# so there is nothing to carve out of it. Bare ⬆ (U+2B06) is in neither half, by design.
+EMOJI = "[\U0001F300-\U0001FAFF" + EMOJI_PRESENTATION_BMP + "]"
+
 # id, severity, pattern, why. Patterns run per line against markdown source.
 # CASE_SENSITIVE rules are matched without re.I, because their whole point is capitalisation.
 RULES = [
  ("marketing-buzzword", "high",
-  r"\b(supercharge|unleash|revolutioni[sz]e|seamlessly|seamless|effortlessly|effortless|game-chang\w+|cutting-edge|next-level|10x your|unlock the power|elevate|empower|leverage|robust)\b",
+  r"\b(supercharge|unleash|revolutioni[sz]e|seamlessly|seamless|effortlessly|effortless|game-chang\w+|cutting-edge|next-level|10x your|unlock the power)\b",
   "Superlatives that survive a find and replace of the product name say nothing about the product."),
+ # robust, leverage, elevate and empower were alternatives in the rule above until they cost
+ # this gate its credibility: at high severity they failed the build on ordinary release notes.
+ # They are still worth naming, so they moved here rather than being deleted.
+ ("weak-verb", "medium", r"\b(robust|leverage|elevate|empower)\b",
+  "Verbs that sound like a claim without making one. Name what the thing does instead."),
  ("buzz-phrase", "high",
   r"\b(the future of \w+ is here|blazing[- ]fast|lightning[- ]fast|built for (the way )?(modern|today's) \w+)\b",
   "Stock phrase. Say the specific thing instead."),
@@ -51,8 +82,13 @@ RULES = [
   r"\b((Jane|John) (Doe|Smith)|Acme Corp|Acme\b|Lorem ipsum|Widget Co)\b",
   "Placeholder names say the page was never reviewed."),
  # residue, retargeted to markdown
+ # The trailer branch used to be a bare `Co-Authored-By:`, which fired on a page whose only
+ # sin was crediting a human colleague. A trailer is a tell when it names the tool, so it now
+ # has to name one within the trailer's own line.
  ("agent-attribution", "high",
-  r"\b(Generated (by|with)|Written by|Authored by|Created by)\s+(an?\s+)?(AI|LLM|Claude|GPT|Copilot|Cursor|Gemini|ChatGPT)\b|Co-Authored-By:|\bAs an AI\b",
+  r"\b(Generated (by|with)|Written by|Authored by|Created by)\s+(an?\s+)?(" + AI_NAMES + r")\b"
+  r"|Co-Authored-By:[^\n]{0,60}\b(" + AI_NAMES + r")\b"
+  r"|\bAs an AI\b",
   "A byline naming the tool. Outlives its accuracy the first time somebody edits underneath it."),
  ("conversation-artifact", "high",
   r"^\s*(Certainly|Of course|Sure thing|Great question|Happy to help|Let me know if|Here'?s (the|a|an|your) (updated|revised|corrected|new|complete)|I'?ve (added|updated|changed|refactored|implemented))\b",
@@ -61,9 +97,9 @@ RULES = [
   r"\b(per|from|as required by) (the )?(phase|milestone|spec|plan|roadmap) (above|below|doc|\d)|\b(phase|milestone|casting|task|ticket|epic) #?\d+\b",
   "A note to the run that produced it. The next reader cannot look it up."),
  # markdown and docs specific
- ("emoji-heading", "high", r"^#{1,6}\s.*[\U0001F300-\U0001FAFF☀-➿]",
+ ("emoji-heading", "high", r"^#{1,6}\s.*" + EMOJI,
   "Emoji in a heading is the loudest single markdown tell."),
- ("emoji-bullet", "medium", r"^\s*[-*]\s*[\U0001F300-\U0001FAFF☀-➿]",
+ ("emoji-bullet", "medium", r"^\s*[-*]\s*" + EMOJI,
   "Emoji as a bullet icon. Use the words."),
  ("bold-label-bullets", "low", r"^\s*[-*]\s*\*\*[^*]{1,40}\*\*:",
   "Every bullet opening with a bold label is a template, not a list. Fine once, a tic by the fifth."),
@@ -103,6 +139,15 @@ def files():
 
 
 def main():
+    # A target that is not there walks to nothing, and "no slop found across 0 files" reads
+    # exactly like a pass. Every other script in this plugin returns 2 for a target it cannot
+    # read; this one returned 0, so a typo in the docs path silently cleared the gate.
+    missing = [t for t in TARGETS if not os.path.isfile(t) and not os.path.isdir(t)]
+    if missing:
+        for t in missing:
+            print(f"no such target: {t}")
+        return 2
+
     findings, tricolon_hits, bold_bullets = [], {}, {}
     for path in files():
         in_fence, is_diagram_fence = False, False

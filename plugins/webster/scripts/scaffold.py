@@ -79,6 +79,21 @@ def stub(path, title, position, label=None, slug=None, description="",
     return True
 
 
+class BadSubject(Exception):
+    """A subject key that cannot become a directory name.
+
+    Raised, not exited: the caller chooses the envelope and the exit code. This used to be a
+    `sys.exit(str)` here in parse_subjects, which sent the message to stderr and exited 1 —
+    the same code do_check returns for a real layout violation — leaving a caller that reads
+    JSON with an empty stdout and no way to tell a typo from a broken tree.
+    """
+
+    def __init__(self, key, error):
+        super().__init__(error)
+        self.key = key
+        self.error = error
+
+
 def parse_subjects(raw):
     """key:Label pairs. The key becomes the directory, the label the sidebar entry."""
     out = []
@@ -90,13 +105,22 @@ def parse_subjects(raw):
             key, _, label = part.partition(":")
             key = key.strip()
             if not SLUG.match(key):
-                sys.exit(f"subject key '{key}' must be lower-case-with-hyphens")
+                raise BadSubject(key, f"subject key '{key}' must be lower-case-with-hyphens")
             out.append((key, label.strip() or key.replace("-", " ").capitalize()))
     return out
 
 
 def do_init(a):
     docs = a.docs
+    # Parse every subject before the first write. This call used to sit below index.md, faq.md
+    # and the getting-started and install sections, so one mistyped key left a half-built tree
+    # on disk. Nothing is created until every key is known to be usable.
+    try:
+        subjects = parse_subjects(a.subject or [])
+    except BadSubject as bad:
+        print(json.dumps({"status": "bad_subject", "subject": bad.key, "error": bad.error}))
+        return 2
+
     os.makedirs(docs, exist_ok=True)
     made = []
 
@@ -122,7 +146,6 @@ def do_init(a):
                   audience=SECTION_AUDIENCE.get(name, "user")):
             made.append(f"{name}/{name}.md")
 
-    subjects = parse_subjects(a.subject or [])
     for i, (key, label) in enumerate(subjects, start=4):
         d = os.path.join(docs, key)
         os.makedirs(d, exist_ok=True)

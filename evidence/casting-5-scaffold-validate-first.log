@@ -1,0 +1,28 @@
+# evidence-cmd: bash -c 'set -u; repo=$(pwd); tmp=$(mktemp -d); cd "$tmp"; scaffold="$repo/plugins/webster/scripts/scaffold.py"; mkdir docs-bad; echo "=== scaffold.py init --docs docs-bad --subject Bad Key:Label ==="; python3 "$scaffold" init --docs docs-bad --subject "Bad Key:Label"; echo "exit=$?"; echo "files under docs-bad: $(find docs-bad -type f | wc -l | tr -d " ")"; echo "=== scaffold.py init --docs docs-good --subject clusters:Clusters ==="; python3 "$scaffold" init --docs docs-good --subject clusters:Clusters; echo "exit=$?"; echo "landing page on disk: $(ls docs-good/clusters/clusters.md)"; cd "$repo"; rm -rf "$tmp"'
+# evidence-for: US-009, FR-028, AC-036, AC-037
+
+=== scaffold.py init --docs docs-bad --subject Bad Key:Label ===
+{"status": "bad_subject", "subject": "Bad Key", "error": "subject key 'Bad Key' must be lower-case-with-hyphens"}
+exit=2
+files under docs-bad: 0
+=== scaffold.py init --docs docs-good --subject clusters:Clusters ===
+{
+  "created": [
+    "index.md",
+    "faq.md",
+    "getting-started/overview.md",
+    "getting-started/glossary.md",
+    "install/install.md",
+    "clusters/clusters.md",
+    "advanced/advanced.md",
+    "troubleshooting/troubleshooting.md",
+    "developer/developer.md"
+  ],
+  "subjects": [
+    "clusters"
+  ],
+  "docs": "docs-good",
+  "site": null
+}
+exit=0
+landing page on disk: docs-good/clusters/clusters.md
