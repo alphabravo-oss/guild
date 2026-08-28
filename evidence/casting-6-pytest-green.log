@@ -3,6 +3,6 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-69 passed
+80 passed
 pytest exit=0
-README Status count line: 175:69 passing
+README Status count line: 175:80 passing

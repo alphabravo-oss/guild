@@ -172,10 +172,16 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-69 passing. The tests run the scripts the way a command does, by subprocess against the
+80 passing. The tests run the scripts the way a command does, by subprocess against the
 committed fixture repo in `tests/fixtures/repo/`, so nothing is imported and the file under test
 is the one a user actually invokes. pytest itself runs on uv's CPython 3.11 while the scripts
 run under whatever `python3` is on PATH, which is the interpreter skew a real invocation has.
+
+That count is itself checked. `tests/test_readme.py` reads this section back, compares the number
+to the tests the suite defines, and compares the version above to `plugin.json`, so a test added
+without touching this line fails the run that added it. The number sat at a stale value through
+several additions before anything read it, which is the same shape as a gate that passes because
+it never looked.
 
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD and a cited line that changed;

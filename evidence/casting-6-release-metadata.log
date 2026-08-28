@@ -4,7 +4,7 @@
 NFR-003 plugin.json version: "version":"0.11.0",
 AC-042 README Status version line: 169:Version 0.11.0.
 FR-038 README test command line: 172:cd plugins/webster && uvx pytest
-FR-038 README passing count line: 175:69 passing
+FR-038 README passing count line: 175:80 passing
 FR-038 stale 'three scripts' hits: 0; 'seven scripts' hits: 2
 AC-042 WEBSTER_LENS_ALLOW at line 74, WEBSTER_SURVEY at line 75
 NFR-002 README Python floor: 101:the floor is Python 3.11
