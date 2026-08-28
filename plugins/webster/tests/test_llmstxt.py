@@ -11,6 +11,8 @@ exists to stop the fix from taking something else away with it.
 test                                                        fix      state
 =========================================================  =======  =======
 test_html_comment_never_reaches_a_summary                   FR-023   red
+test_html_comment_in_a_frontmatter_description_is_stripped  FR-023   red
+test_unterminated_html_comment_publishes_nothing_after_it   FR-023   red
 test_stub_pages_are_absent_from_llms_txt                    FR-023   red
 test_first_prose_line_is_taken_without_an_h1                FR-023   red
 test_header_falls_back_to_the_pyproject_project_table       FR-023   red
@@ -86,6 +88,73 @@ def test_html_comment_never_reaches_a_summary(run_script, fixture_repo):
     assert "src/app/main.py:15" not in out, f"the anchor reached the reader:\n{out}"
     assert "This page shows you how to add an item to your store." in out, (
         f"the prose either side of the comment is the summary:\n{out}"
+    )
+
+
+def test_html_comment_in_a_frontmatter_description_is_stripped(run_script, tmp_path):
+    """FR-023, OT-027: the description is published verbatim, so it is cleaned too.
+
+    Stripping comments out of the body alone leaves the shorter route open: a
+    frontmatter ``description`` wins over the body and reaches the reader
+    untouched, which publishes OT-027's exact forbidden string.
+    """
+    root = docs_tree(
+        tmp_path,
+        "fmcomment",
+        {
+            "items/create-item.md": (
+                "---\n"
+                'title: "Create an item"\n'
+                'description: "Add an item to your store. <!-- src/app/main.py:15 -->"\n'
+                "---\n"
+                "\n# Create an item\n"
+                "\nBody prose nobody should see in the summary.\n"
+            )
+        },
+        pyproject='[project]\nname = "fmapp"\n',
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert "<!--" not in out, f"a comment reached the published summary:\n{out}"
+    assert "src/app/main.py:15" not in out, f"the anchor reached the reader:\n{out}"
+    assert (
+        "- [Create an item](docs/items/create-item.md): "
+        "Add an item to your store." in out
+    ), f"the prose the author wrote is still the summary:\n{out}"
+
+
+def test_unterminated_html_comment_publishes_nothing_after_it(run_script, tmp_path):
+    """FR-023, OT-027: a comment nobody closed is still a comment.
+
+    ``<!--.*?-->`` needs the closing marker, so an unterminated anchor comment
+    survived the strip and was picked as the summary — publishing the working
+    note in full. It runs to the end of the text instead.
+    """
+    root = docs_tree(
+        tmp_path,
+        "unterminated",
+        {
+            "limits.md": (
+                "---\n"
+                'title: "Item limits"\n'
+                "---\n"
+                "\n<!-- src/app/main.py:15\n"
+                "\nA working note nobody closed.\n"
+            )
+        },
+        pyproject='[project]\nname = "untermapp"\n',
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert "<!--" not in out, f"an unclosed comment reached the reader:\n{out}"
+    assert "src/app/main.py:15" not in out, f"the anchor reached the reader:\n{out}"
+    assert "A working note nobody closed" not in out, (
+        f"everything after an unclosed comment is inside it:\n{out}"
+    )
+    assert "- [Item limits](docs/limits.md)" in out, (
+        f"the page is still listed, with a title and no summary:\n{out}"
     )
 
 

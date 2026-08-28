@@ -204,6 +204,17 @@ if "python" in stack:
             if not m:
                 continue
             verb, path = m.group(1), m.group(2)
+            # unittest.mock spells its decorator `patch`, exactly like the HTTP verb, and the
+            # object before the dot is unconstrained, so `@mock.patch("pkg.mod.func")` read as
+            # a PATCH endpoint served at `pkg.mod.func`. Joining continuation lines made that
+            # worse rather than better: a Black-split mock that used to escape the single-line
+            # scan entirely now gets accumulated too. Every path a client can send starts with
+            # a slash — Flask raises on a rule without one and FastAPI asserts it — so the
+            # leading slash is what separates a route from a decorator that only looks like
+            # one. A phantom endpoint is worse than a missing one, because a writer is sent to
+            # document it and finds nothing there.
+            if not path.startswith("/"):
+                continue
             methods = [verb.upper()]
             if verb == "route":
                 listed = FLASK_METHODS.search(joined)

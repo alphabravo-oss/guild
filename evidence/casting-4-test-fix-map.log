@@ -17,6 +17,7 @@ test_os_getenv_read_lands_in_config_undeclared                FR-018/031  red
 test_env_regex_allows_whitespace_after_the_bracket            FR-018/031  red
 test_env_regex_still_matches_the_go_getenv                    FR-031      guard
 test_black_split_decorator_is_anchored_to_the_at_line         FR-019      red
+test_mock_patch_decorator_is_not_an_http_endpoint             FR-019      red
 test_flask_route_reports_its_declared_methods                 FR-019      red
 test_flask_route_without_methods_reports_get                  FR-019      red
 test_pyproject_name_description_and_scripts                   FR-020/021  red
@@ -47,6 +48,8 @@ exists to stop the fix from taking something else away with it.
 test                                                        fix      state
 =========================================================  =======  =======
 test_html_comment_never_reaches_a_summary                   FR-023   red
+test_html_comment_in_a_frontmatter_description_is_stripped  FR-023   red
+test_unterminated_html_comment_publishes_nothing_after_it   FR-023   red
 test_stub_pages_are_absent_from_llms_txt                    FR-023   red
 test_first_prose_line_is_taken_without_an_h1                FR-023   red
 test_header_falls_back_to_the_pyproject_project_table       FR-023   red

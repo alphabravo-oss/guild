@@ -14,6 +14,7 @@ test_os_getenv_read_lands_in_config_undeclared                FR-018/031  red
 test_env_regex_allows_whitespace_after_the_bracket            FR-018/031  red
 test_env_regex_still_matches_the_go_getenv                    FR-031      guard
 test_black_split_decorator_is_anchored_to_the_at_line         FR-019      red
+test_mock_patch_decorator_is_not_an_http_endpoint             FR-019      red
 test_flask_route_reports_its_declared_methods                 FR-019      red
 test_flask_route_without_methods_reports_get                  FR-019      red
 test_pyproject_name_description_and_scripts                   FR-020/021  red
@@ -180,6 +181,62 @@ def test_black_split_decorator_is_anchored_to_the_at_line(run_script, tmp_path):
         "The anchor is the @ line, which is what a reader is sent to read; "
         f"got {posts[0]['anchor']}"
     )
+
+
+def test_mock_patch_decorator_is_not_an_http_endpoint(run_script, tmp_path):
+    """FR-019, AC-023: unittest.mock spells its decorator ``patch``, like the verb.
+
+    ``@\\w+\\.`` matches any object, so ``@mock.patch(`` reads as an HTTP PATCH on
+    a path of ``pkg.mod.func``. Joining continuation lines made it worse rather
+    than better: a Black-split mock that used to escape the single-line scan
+    entirely now gets accumulated and published. An endpoint no server serves is
+    worse than a missing one, because a writer is told to document it.
+
+    The Black-split ``@app.post(`` route in the same tree is the control: the
+    join has to keep finding AC-023's real route while it stops finding this.
+    """
+    root = python_project(
+        tmp_path,
+        "mocks",
+        "from fastapi import FastAPI\n"  # 1
+        "\n"  # 2
+        "app = FastAPI()\n"  # 3
+        "@app.post(\n"  # 4
+        '    "/items/{item_id}",\n'  # 5
+        "    response_model=Item,\n"  # 6
+        ")\n"  # 7
+        "def create_item(item_id: int):\n"  # 8
+        "    return {}\n",  # 9
+    )
+    (root / "tests").mkdir()
+    (root / "tests" / "test_api.py").write_text(
+        "from unittest import mock\n"
+        "\n\n@mock.patch(\n"
+        '    "pkg.mod.func",\n'
+        "    return_value=1,\n"
+        ")\n"
+        "def test_thing(patched):\n"
+        "    assert patched\n"
+        '\n\n@mock.patch("pkg.other.func")\n'
+        "def test_single_line(patched):\n"
+        "    assert patched\n",
+        encoding="utf-8",
+    )
+
+    data = survey(run_script, root)
+
+    hits = data["surface"]["http"]
+    assert [h for h in hits if h["anchor"].startswith("tests/")] == [], (
+        "A mocked import path is not a route, and the file it sits in makes no "
+        f"difference to that; surface.http held {hits}"
+    )
+    assert [h for h in hits if not h["path"].startswith("/")] == [], (
+        "Every HTTP path a client can send starts with a slash; anything else "
+        f"came from a decorator that only looks like a route; got {hits}"
+    )
+    assert [(h["method"], h["path"], h["anchor"]) for h in hits] == [
+        ("POST", "/items/{item_id}", "src/api.py:4")
+    ], f"the Black-split route AC-023 asks for is still the whole surface; got {hits}"
 
 
 def test_flask_route_reports_its_declared_methods(run_script, tmp_path):

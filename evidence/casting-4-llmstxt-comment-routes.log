@@ -1,0 +1,10 @@
+# evidence-cmd: rm -rf /tmp/webster-c4-comments && mkdir -p /tmp/webster-c4-comments/docs && printf '%s\n' '[project]' 'name = "c4comments"' > /tmp/webster-c4-comments/pyproject.toml && printf '%s\n' '---' 'title: "Create an item"' 'description: "Add an item to your store. <!-- src/app/main.py:15 -->"' '---' '' '# Create an item' '' 'Body prose nobody should see in the summary.' > /tmp/webster-c4-comments/docs/create-item.md && printf '%s\n' '---' 'title: "Item limits"' '---' '' '<!-- src/app/main.py:15' '' 'A working note nobody closed.' > /tmp/webster-c4-comments/docs/limits.md && WEBSTER_ROOT=/tmp/webster-c4-comments WEBSTER_DOCS=docs python3 plugins/webster/scripts/llmstxt.py
+# evidence-for: US-007, FR-023, AC-028
+
+# c4comments
+
+## Optional
+
+- [Create an item](docs/create-item.md): Add an item to your store.
+- [Item limits](docs/limits.md)
+

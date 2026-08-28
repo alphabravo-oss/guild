@@ -23,8 +23,20 @@ ORDER = ["index", "readme", "quickstart", "getting-started", "tutorial", "run",
 # An anchor comment is a note from one writer to the next. It was reaching the published
 # summary intact, so the line a machine reader got for docs/items/create-item.md ended
 # "...to your store. <!-- src/app/main.py:15 -->", which reads as the page's own prose. re.S
-# because a comment is free to span lines.
-HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# because a comment is free to span lines. The second alternative carries no closing marker:
+# `<!--.*?-->` needs one, so an anchor comment nobody closed survived the strip and was
+# published in full as the summary. An unclosed comment is read as running to the end of the
+# text, which is also what a reader's markdown renderer does with it.
+HTML_COMMENT = re.compile(r"<!--.*?-->|<!--.*", re.S)
+
+
+def strip_comments(text):
+    """Take the HTML comments out of anything on its way to the published file.
+
+    Both the body and the frontmatter go through here. Cleaning the body alone left the
+    shorter route open: a frontmatter `description` wins over the body and was reaching the
+    reader untouched, so a description ending in an anchor comment published that anchor."""
+    return HTML_COMMENT.sub("", text or "").strip()
 
 # A stub is the skeleton scaffold.py writes before anyone has filled it in. Listing one states
 # that the page exists and says something, and that is the single claim this script is not
@@ -93,14 +105,14 @@ def title_and_summary(path):
     short or runs past the cut, which is how entries like "They are two different things" and
     summaries ending mid-clause get published."""
     text = open(path, encoding="utf-8", errors="replace").read()
-    title = frontmatter_field(text, "title")
-    summary = frontmatter_field(text, "description")
+    title = strip_comments(frontmatter_field(text, "title")) or None
+    summary = strip_comments(frontmatter_field(text, "description")) or None
 
     if not title or not summary:
         # Comments come out of the whole body before a line is chosen, not out of the chosen
         # line afterwards: a comment on its own line would otherwise be picked as the summary
         # and published as an empty one.
-        body = HTML_COMMENT.sub("", body_after_frontmatter(text))
+        body = strip_comments(body_after_frontmatter(text))
         body_title, body_summary = None, None
         for line in body.splitlines():
             s = line.strip()
