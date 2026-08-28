@@ -1,0 +1,53 @@
+# evidence-cmd: sh -c 'set -u; repo=$(pwd); echo "=== the comment, plugins/webster/scripts/slop.py ==="; sed -n "/^# The supplementary half/,/^EMOJI =/p" plugins/webster/scripts/slop.py; echo "=== the three blocks it names: first cp, last cp, assigned count, name of first ==="; python3 -c "import unicodedata as u; [print(hex(lo), hex(hi), sum(1 for c in range(lo,hi+1) if u.name(chr(c),None)), u.name(chr(lo))) for lo,hi in ((0x1F650,0x1F67F),(0x1F700,0x1F77F),(0x1F800,0x1F8FF))]"; tmp=$(mktemp -d); cd "$tmp"; slop="$repo/plugins/webster/scripts/slop.py"; printf "%b\n" "## Done \342\234\223" "" "## Shipped \342\234\224" "" "## Next \342\236\234" "" "## Upgrade \342\254\206" > marks.md; printf "%b\n" "## Done \342\234\205" "" "## Star \342\255\220" "" "## Launch \360\237\232\200" > emoji.md; printf "%b\n" "## Quintessence \360\237\234\200" > alchemy.md; for f in marks.md emoji.md alchemy.md; do echo "=== slop.py $f ==="; python3 "$slop" "$f"; echo "exit=$?"; done; cd "$repo"; rm -rf "$tmp"'
+# evidence-for: US-008, FR-026, AC-034
+#
+# D-028. The comment above EMOJI claimed "U+1F300-U+1FAFF is emoji throughout, so there is
+# nothing to carve out of it", which is false against the emoji-data.txt 16.0 that the
+# block beside it cites. Three whole blocks inside that range carry no Emoji property at
+# all; the stdlib lookup below names each one and counts its assigned code points.
+#
+# The compiled class is unchanged -- FR-026 is Locked and says keep U+1F300-U+1FAFF -- so
+# the fix is to the reason, not to the range: it is kept whole because the spec said to
+# keep it, not because every code point in it is emoji. alchemy.md is that sentence made
+# checkable. U+1F700 ALCHEMICAL SYMBOL FOR QUINTESSENCE is Emoji=No and is reported
+# anyway, which is the over-match the comment now admits to and prices. marks.md and
+# emoji.md re-run AC-034 either side of it, unchanged.
+#
+
+=== the comment, plugins/webster/scripts/slop.py ===
+# The supplementary half stays a block range because A-022 said to keep U+1F300-U+1FAFF, not
+# because every code point in it is emoji. Whole blocks inside it carry no Emoji property at
+# all in emoji-data.txt 16.0: Ornamental Dingbats (U+1F650-U+1F67F), Alchemical Symbols
+# (U+1F700-U+1F77F) and Supplemental Arrows-C (U+1F800-U+1F8FF). Keeping them is an
+# over-match that costs nothing a reader would notice, because nobody heads a section with
+# an alchemical symbol. The BMP over-match above was not free in the same way: it caught
+# ✓, a mark writers really do use, and failed the build on it.
+# Bare ⬆ (U+2B06) is in neither half, by design.
+EMOJI = "[\U0001F300-\U0001FAFF" + EMOJI_PRESENTATION_BMP + "]"
+=== the three blocks it names: first cp, last cp, assigned count, name of first ===
+0x1f650 0x1f67f 48 NORTH WEST POINTING LEAF
+0x1f700 0x1f77f 124 ALCHEMICAL SYMBOL FOR QUINTESSENCE
+0x1f800 0x1f8ff 162 LEFTWARDS ARROW WITH SMALL TRIANGLE ARROWHEAD
+=== slop.py marks.md ===
+no slop found across 1 files
+exit=0
+=== slop.py emoji.md ===
+emoji.md:1  [high] emoji-heading
+    ## Done ✅
+    Emoji in a heading is the loudest single markdown tell.
+emoji.md:3  [high] emoji-heading
+    ## Star ⭐
+    Emoji in a heading is the loudest single markdown tell.
+emoji.md:5  [high] emoji-heading
+    ## Launch 🚀
+    Emoji in a heading is the loudest single markdown tell.
+
+3 findings, 3 high
+exit=1
+=== slop.py alchemy.md ===
+alchemy.md:1  [high] emoji-heading
+    ## Quintessence 🜀
+    Emoji in a heading is the loudest single markdown tell.
+
+1 findings, 1 high
+exit=1

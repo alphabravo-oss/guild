@@ -4,7 +4,8 @@
 Copy and residue rules retargeted from rendered HTML to markdown, plus tells specific to
 documentation and to generated diagrams.
 
-Prints findings as file:line. Exit 1 when anything at high severity fires.
+Prints findings as file:line. Exit 1 when anything at high severity fires, exit 2 when a
+target is not there or cannot be read.
 """
 import os, re, sys
 
@@ -32,8 +33,14 @@ EMOJI_PRESENTATION_BMP = (
     "\u2753-\u2755\u2757\u2795-\u2797\u27b0\u27bf"
     "\u2b1b-\u2b1c\u2b50\u2b55"
 )
-# Supplementary-plane emoji keep their block range: U+1F300-U+1FAFF is emoji throughout,
-# so there is nothing to carve out of it. Bare ⬆ (U+2B06) is in neither half, by design.
+# The supplementary half stays a block range because A-022 said to keep U+1F300-U+1FAFF, not
+# because every code point in it is emoji. Whole blocks inside it carry no Emoji property at
+# all in emoji-data.txt 16.0: Ornamental Dingbats (U+1F650-U+1F67F), Alchemical Symbols
+# (U+1F700-U+1F77F) and Supplemental Arrows-C (U+1F800-U+1F8FF). Keeping them is an
+# over-match that costs nothing a reader would notice, because nobody heads a section with
+# an alchemical symbol. The BMP over-match above was not free in the same way: it caught
+# ✓, a mark writers really do use, and failed the build on it.
+# Bare ⬆ (U+2B06) is in neither half, by design.
 EMOJI = "[\U0001F300-\U0001FAFF" + EMOJI_PRESENTATION_BMP + "]"
 
 # id, severity, pattern, why. Patterns run per line against markdown source.
@@ -126,13 +133,25 @@ CASE_SENSITIVE = {"emoji-heading", "emoji-bullet", "title-case-heading",
 SKIP_FENCE = re.compile(r"^\s*```")
 
 
+def unreadable(error):
+    """os.walk's onerror. Re-raises instead of walking on.
+
+    Left at its default, os.walk drops a directory it cannot list and keeps going, so an
+    unreadable docs tree yields no files at all and main() prints the "no slop found across
+    0 files" line a clean tree prints. Raising hands the error to main(), which has an exit
+    code for a target it could not read.
+    """
+    raise error
+
+
 def files():
+    """Every markdown file under TARGETS. Raises OSError for a target that cannot be listed."""
     out = []
     for t in TARGETS:
         if os.path.isfile(t):
             out.append(t)
         else:
-            for dp, dn, fn in os.walk(t):
+            for dp, dn, fn in os.walk(t, onerror=unreadable):
                 dn[:] = [d for d in dn if not d.startswith(".") and d != "node_modules"]
                 out += [os.path.join(dp, f) for f in fn if f.endswith((".md", ".mdx", ".mmd"))]
     return sorted(out)
@@ -140,38 +159,60 @@ def files():
 
 def main():
     # A target that is not there walks to nothing, and "no slop found across 0 files" reads
-    # exactly like a pass. Every other script in this plugin returns 2 for a target it cannot
-    # read; this one returned 0, so a typo in the docs path silently cleared the gate.
+    # exactly like a pass. drift.py:269, doctype.py:931 and scaffold.py:263 each return 2 for
+    # a docs directory that is not there; this one returned 0, so a typo in the docs path
+    # silently cleared the gate. (survey.py still returns 0 for a root that does not exist,
+    # which is why this comment names three scripts and not "every other script".)
     missing = [t for t in TARGETS if not os.path.isfile(t) and not os.path.isdir(t)]
     if missing:
         for t in missing:
             print(f"no such target: {t}")
         return 2
 
+    # Being there and being readable are two different questions, and the guard above only
+    # asks the first. A *.md that is a dangling symlink is walked like any other file and
+    # fails at open(); a directory nothing may list walks as if it were empty. Left alone the
+    # first is a traceback, and a traceback exits 1 -- the code this script reserves for high
+    # severity slop, now reported against a file nothing ever read -- while the second is a
+    # silent exit 0. Both are the false pass the guard above exists to close, one step later.
+    try:
+        paths = files()
+    except OSError as e:
+        print(f"cannot read target: {e.filename} ({e.strerror or type(e).__name__})")
+        return 2
+
     findings, tricolon_hits, bold_bullets = [], {}, {}
-    for path in files():
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                # Read the page out before scanning it, so a read that fails part way
+                # through is still a read failure and not a half-scanned file. `numbered`,
+                # not `lines`: the frequency loops below already use that name.
+                numbered = list(enumerate(f, 1))
+        except OSError as e:
+            print(f"cannot read target: {path} ({e.strerror or type(e).__name__})")
+            return 2
         in_fence, is_diagram_fence = False, False
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for n, line in enumerate(f, 1):
-                if SKIP_FENCE.match(line):
-                    in_fence = not in_fence
-                    is_diagram_fence = in_fence and bool(re.search(r"(mermaid|d2|dot)", line))
+        for n, line in numbered:
+            if SKIP_FENCE.match(line):
+                in_fence = not in_fence
+                is_diagram_fence = in_fence and bool(re.search(r"(mermaid|d2|dot)", line))
+                continue
+            for rid, sev, pat, why in RULES:
+                diagram_rule = rid.startswith("diagram-")
+                # prose rules skip code blocks; diagram rules only run inside diagram fences
+                if diagram_rule and not is_diagram_fence:
                     continue
-                for rid, sev, pat, why in RULES:
-                    diagram_rule = rid.startswith("diagram-")
-                    # prose rules skip code blocks; diagram rules only run inside diagram fences
-                    if diagram_rule and not is_diagram_fence:
+                if not diagram_rule and in_fence:
+                    continue
+                if re.search(pat, line, 0 if rid in CASE_SENSITIVE else re.I):
+                    if rid == "bold-label-bullets":
+                        bold_bullets.setdefault(path, []).append(n)
                         continue
-                    if not diagram_rule and in_fence:
-                        continue
-                    if re.search(pat, line, 0 if rid in CASE_SENSITIVE else re.I):
-                        if rid == "bold-label-bullets":
-                            bold_bullets.setdefault(path, []).append(n)
-                            continue
-                        findings.append((sev, path, n, rid, why, line.strip()[:90]))
-                # tricolon: three comma-joined adjectives ending a sentence
-                if not in_fence and re.search(r"\b\w+, \w+,? and \w+\.", line):
-                    tricolon_hits.setdefault(path, []).append(n)
+                    findings.append((sev, path, n, rid, why, line.strip()[:90]))
+            # tricolon: three comma-joined adjectives ending a sentence
+            if not in_fence and re.search(r"\b\w+, \w+,? and \w+\.", line):
+                tricolon_hits.setdefault(path, []).append(n)
 
     # frequency rules: one is a device, four is a tic
     for path, lines in tricolon_hits.items():
@@ -188,7 +229,7 @@ def main():
     order = {"high": 0, "medium": 1, "low": 2}
     findings.sort(key=lambda f: (order[f[0]], f[1], f[2]))
     if not findings:
-        print(f"no slop found across {len(files())} files")
+        print(f"no slop found across {len(paths)} files")
         return 0
     for sev, path, n, rid, why, ctx in findings:
         print(f"{path}:{n}  [{sev}] {rid}\n    {ctx}\n    {why}")

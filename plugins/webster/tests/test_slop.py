@@ -28,6 +28,27 @@ red-first property is recorded here rather than enforced at runtime):
 - ``test_missing_target_exits_two`` — FR-027 / OT-033 / CT-006. RED before:
   ``files()`` walked a nonexistent path, found nothing, and ``main()`` printed
   "no slop found across 0 files" and returned 0 (survey finding FI-1).
+- ``test_dangling_symlink_page_exits_two`` — FR-027 / CT-006. RED before: the
+  missing-target guard asked "is it there", never "can it be read", so a
+  ``*.md`` that is a dangling symlink cleared it, was walked like any other
+  page, and raised ``FileNotFoundError`` at ``open()``. That traceback exits 1
+  — the code this script reserves for high severity slop — against a file
+  nothing ever read.
+
+  A dangling symlink is the one unreadable target that reproduces for every
+  user. ``chmod 000`` does not: root reads it anyway, so a permission-based
+  test would pass silently for a root runner, which is the same shape of false
+  pass this suite exists to catch. The fix also turns an unlistable *directory*
+  (``chmod 000`` on the docs tree — previously "no slop found across 0 files"
+  at exit 0) into exit 2, and that half is deliberately left untested for the
+  same root reason rather than covered by a test that lies under root.
+- ``test_kept_supplementary_range_reports_a_non_emoji_block`` — FR-026. Green
+  before and after: it pins the half of FR-026 no other test reads, that
+  ``\U0001F300-\U0001FAFF`` is kept whole. Whole blocks inside that range
+  carry no Emoji property at all in emoji-data.txt 16.0 — Ornamental Dingbats,
+  Alchemical Symbols, Supplemental Arrows-C — so keeping the range is a
+  decision the spec made, not a property lookup, and a later "cleanup" that
+  carves those blocks back out fails here.
 
 No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 """
@@ -215,4 +236,55 @@ def test_missing_target_exits_two(run_script, tmp_path):
     assert "no slop found" not in result.stdout, (
         "Walking nothing must not be reported as having checked something"
         + outcome(result)
+    )
+
+
+def test_dangling_symlink_page_exits_two(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    # A readable page beside the broken one, so a pass here cannot come from
+    # having walked an empty tree.
+    write_page(docs, "real.md", "# Release notes\n\nThe queue drains in order.\n")
+    broken = docs / "broken.md"
+    broken.symlink_to("nowhere.md")
+
+    result = run_script("slop.py", docs)
+
+    assert result.returncode == 2, (
+        f"Expected exit 2 (could not check) for a page that is there to os.walk "
+        f"and gone to open(); got {result.returncode}" + outcome(result)
+    )
+    assert f"cannot read target: {broken}" in result.stdout, (
+        "Expected the unreadable page named on stdout, the way a missing target "
+        "is named" + outcome(result)
+    )
+    assert "Traceback" not in result.stderr, (
+        "An unreadable page must be reported, not raised: the traceback exits 1, "
+        "which this script reserves for high severity slop" + outcome(result)
+    )
+    assert "no slop found" not in result.stdout, (
+        "A page that was never read must not be counted as checked"
+        + outcome(result)
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-026: the supplementary half of the class is kept whole, over-match included.
+# -----------------------------------------------------------------------------
+def test_kept_supplementary_range_reports_a_non_emoji_block(run_script, tmp_path):
+    # U+1F700 ALCHEMICAL SYMBOL FOR QUINTESSENCE: inside \U0001F300-\U0001FAFF,
+    # and Emoji=No in emoji-data.txt 16.0. Reported anyway, because FR-026 says
+    # keep that range rather than test each code point's Emoji property.
+    page = write_page(tmp_path, "alchemy.md", "## Quintessence \U0001f700\n")
+
+    result = run_script("slop.py", page)
+
+    assert result.returncode == 1, (
+        f"Expected exit 1: FR-026 keeps \\U0001F300-\\U0001FAFF whole, so a code "
+        f"point inside it is reported whether or not it carries the Emoji "
+        f"property; got {result.returncode}" + outcome(result)
+    )
+    assert "emoji-heading" in result.stdout, (
+        "Carving the non-emoji blocks out of the supplementary range is a change "
+        "to FR-026, not a cleanup" + outcome(result)
     )
