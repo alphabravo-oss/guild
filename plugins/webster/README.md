@@ -72,7 +72,11 @@ handed to somebody who wanted to know whether their cluster was ready.
 Those pages all exist. `developer/` and `advanced/` are where the internals go, and they declare
 a different reader. Moving a page is the fix; editing `audience:` until the checker goes quiet is
 not. `WEBSTER_LENS_ALLOW` widens the vocabulary where a product's readers genuinely use it, and
-a Kubernetes tool's operators really do handle controllers.
+a Kubernetes tool's operators really do handle controllers. `WEBSTER_SURVEY` widens it without a
+list to maintain: point it at a saved `survey.py` JSON and every screen name, button label and
+subcommand the product already prints stops being read as an internal symbol. Absent or
+unreadable it allows nothing extra and the check says so in its header line, because an
+allowlist that quietly got smaller looks exactly like one that worked.
 
 A page that declares no reader is a defect rather than a note, which is a correction rather than
 a preference: in the last full run before the rule existed, none of 67 pages declared an
@@ -93,8 +97,10 @@ because that is what was read, and no amount of editing afterwards undoes it.
 
 ## The scripts
 
-The mechanical half is three scripts rather than prompts, so it is deterministic and runs in CI
-without an agent.
+The mechanical half is seven scripts rather than prompts, so it is deterministic and runs in CI
+without an agent. They are standard library only, and the floor is Python 3.11: `survey.py` and
+`llmstxt.py` parse `pyproject.toml` with `tomllib`, which is standard library from 3.11 and has
+no fallback path here.
 
 | Script | What it does |
 | --- | --- |
@@ -160,14 +166,29 @@ and where they are absent it marks the affected gate `not_checked` rather than p
 
 ## Status
 
-Version 0.2.0.
+Version 0.11.0.
 
-Exercised: all three scripts run. `survey.py` was run against a Next.js App Router repo and
-returned both route handlers with anchors that resolve to the correct lines. `drift.py` was
-tested on a git fixture across three cases, clean, a broken anchor, and code changed under a
-page, and returned the right verdict and exit code for each.
+```
+cd plugins/webster && uvx pytest
+```
 
-Not yet exercised: the three commands end to end, which means every claim about what
-`/webster:plan`, `/webster:write` and `/webster:audit` produce is still untested.
+69 passing. The tests run the scripts the way a command does, by subprocess against the
+committed fixture repo in `tests/fixtures/repo/`, so nothing is imported and the file under test
+is the one a user actually invokes. pytest itself runs on uv's CPython 3.11 while the scripts
+run under whatever `python3` is on PATH, which is the interpreter skew a real invocation has.
+
+Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
+staged rename, a missing repository, a rebased-away HEAD and a cited line that changed;
+`doctype.py` across the widened symbol, route and flag lenses, the acronym list, stubs and the
+`WEBSTER_SURVEY` allowlist; `survey.py` across decorators split over several lines, `argparse`,
+`pyproject.toml` and `os.getenv` reads; `llmstxt.py`, `slop.py` and `scaffold.py` across the
+fixes each of those carries. Every fix has at least one test that fails against the script as it
+stood before the fix; the rest are guards, there so a fix does not take something else away with
+it.
+
+Not yet exercised: `rendered.py`, which has no test module, so every claim about what it catches
+in built HTML is still untested. Nor the three commands end to end, which means what
+`/webster:plan`, `/webster:write` and `/webster:audit` produce rests on the scripts underneath
+them rather than on a run.
 
 The name has had no trademark or product search. Do that before anything goes on it.
