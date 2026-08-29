@@ -426,6 +426,19 @@ SUBCOMMAND = re.compile(
 # the product does not have. The scan therefore stops at the first keyword argument and at the
 # end of the call, and a keyword's value is never reached.
 #
+# A keyword is not the only place a description sits, and stopping at one was not enough.
+# commander and yargs spell the call `.option(flags, description)`, so the sentence is the
+# second *positional* argument: no `name=` ends the scan, the closing paren is the only stop,
+# and `.option("--keep", "-x is the short form of --purge")` published --keep, -x and --purge
+# together. The same false excuse reached doctype.py by the other door. What ends the positional
+# run is therefore the shape of the literal and not the syntax around it -- a flag spec is
+# option spellings and nothing else -- and the first literal that is not one is prose, so the
+# scan stops on it. One cost, taken deliberately: click accepts the destination name among the
+# spellings, and a `.option("upper", "-t", "--to-upper")` written name-first stops on its first
+# literal and declares nothing. That direction is the survivable one. A flag this list misses is
+# a flag doctype.py reports and an author answers with WEBSTER_LENS_ALLOW; a flag this list
+# invents is a finding nobody ever sees.
+#
 # One option string can still hold several flags, because commander writes "-o, --out <path>" as
 # a single literal. Go's flag package and pflag declare a bare name and leave the dashes to the
 # framework, so nothing here matches them: a spelling that appears in no file is a claim, and
@@ -434,22 +447,46 @@ CLI_FLAG_DECL = re.compile(r"(?:\badd_argument|\badd_option|\.option)\s*\(")
 CLI_ARG_END = re.compile(r",\s*\w+\s*=|[)#]")
 CLI_STRING = re.compile(r"""["']([^"'\n]*)["']""")
 CLI_FLAG_TOKEN = re.compile(r"^--?[A-Za-z][\w-]*$")
+# The value a flag takes, which commander writes into the option string beside the spellings:
+# `-o, --out <path>` is one literal holding two flags and one placeholder. Angle brackets are
+# the required form and square brackets the optional one. Both name an argument rather than a
+# flag, so neither is published -- and neither is prose either, which is why the presence of one
+# must not make the whole literal read as a description and end the scan.
+CLI_FLAG_ARG = re.compile(r"^[<\[][A-Za-z][\w.-]*[>\]]$")
 
 seen_cmds = set()
 for p in walk(exts={".ts", ".js", ".py", ".go"}):
     r = rel(p)
-    for i, line in enumerate(read(p).splitlines(), 1):
+    lines = read(p).splitlines()
+    for i, line in enumerate(lines, 1):
         names = [m.group(1).split()[0] for m in SUBCOMMAND.finditer(line)]
         for m in CLI_FLAG_DECL.finditer(line):
             # The leading comma is the one the call's own `(` does not write, so a declaration
             # that opens with a keyword -- `.option(name="--x")` -- is cut at its first argument
             # by the same expression rather than by a second one spelled slightly differently.
             args = "," + line[m.end():]
+            # Black puts every argument on its own line once the call passes 88 columns, which
+            # is the ordinary shape of an add_argument carrying an action and a help sentence.
+            # Reading one line at a time saw `parser.add_argument(` and no literal at all, so a
+            # formatted project declared no flags whatsoever and doctype.py had nothing to
+            # suppress a `--verbose` on a user page with: the WEBSTER_SURVEY path was inert for
+            # exactly the projects that run a formatter. Same join, same six-line cap and same
+            # reason as the decorator pass above -- a paren still unbalanced by then means the
+            # read has left the call -- and the anchor stays `i`, the line the call opens on,
+            # because that is the line a reader is sent to.
+            if args.count("(") + 1 > args.count(")"):
+                for cont in lines[i:i + 6]:
+                    args += " " + cont.strip()
+                    if args.count("(") + 1 <= args.count(")"):
+                        break
             stop = CLI_ARG_END.search(args)
             for lit in CLI_STRING.findall(args[:stop.start()] if stop else args):
-                if lit.startswith("-"):
-                    names += [t for t in re.split(r"[,\s]+", lit.strip())
-                              if CLI_FLAG_TOKEN.match(t)]
+                tokens = [t for t in re.split(r"[,\s]+", lit.strip()) if t]
+                flags = [t for t in tokens if CLI_FLAG_TOKEN.match(t)]
+                if not flags or not all(CLI_FLAG_TOKEN.match(t) or CLI_FLAG_ARG.match(t)
+                                        for t in tokens):
+                    break
+                names += flags
         for v in names:
             if v in seen_cmds:
                 continue

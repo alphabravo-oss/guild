@@ -1,0 +1,34 @@
+# evidence-cmd: python3 -c 'import json,os,shutil,subprocess,tempfile; d=tempfile.mkdtemp(); os.makedirs(d+"/src"); open(d+"/pyproject.toml","w").write("[project]\nname = \"demo\"\n"); open(d+"/src/cli.js","w").write("program.option(\"--keep\", \"-x is the short form of --purge\");\nprogram.option(\"-o, --out <path>\", \"where to write\");\n"); r=subprocess.run(["python3","plugins/webster/scripts/survey.py",d],capture_output=True,text=True); n=[c["name"] for c in json.loads(r.stdout)["user_surface"]["commands"]]; print("survey.py exit:", r.returncode); print("user_surface.commands:", json.dumps(json.loads(r.stdout)["user_surface"]["commands"], indent=2)); print("--keep declared:", "--keep" in n); print("-x published:", "-x" in n); print("--purge published:", "--purge" in n); print("-o/--out kept from the commander spec:", "-o" in n and "--out" in n); shutil.rmtree(d)'
+# evidence-for: FR-012, AC-013
+#
+# D-061. commander and yargs spell the call .option(flags, description), so the
+# description is the second POSITIONAL argument and no `name=` keyword ends the
+# scan. Both literals were mined for flags, so this tree published --keep, -x
+# and --purge -- and doctype.py folds user_surface.commands into the allowlist
+# its flag lens is suppressed by, so a user page backticking `--purge` passed,
+# excused by a flag the product does not have.
+#
+# Line 2 of the same file is the control: commander's "-o, --out <path>" is one
+# literal holding two spellings and a value placeholder, and it is a real
+# declaration. Ending the positional run at the first literal that is not a
+# pure flag spec must not end it there.
+
+survey.py exit: 0
+user_surface.commands: [
+  {
+    "name": "--keep",
+    "anchor": "src/cli.js:1"
+  },
+  {
+    "name": "-o",
+    "anchor": "src/cli.js:2"
+  },
+  {
+    "name": "--out",
+    "anchor": "src/cli.js:2"
+  }
+]
+--keep declared: True
+-x published: False
+--purge published: False
+-o/--out kept from the commander spec: True

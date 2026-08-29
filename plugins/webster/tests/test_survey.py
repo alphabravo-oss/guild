@@ -49,6 +49,9 @@ test_detail_after_a_collection_argument_is_still_a_message    FR-022/032  944c95
 test_option_flags_reach_the_user_surface_commands             FR-012      19941ad (added cycle 4)
 test_a_flag_named_only_in_prose_is_not_a_command              FR-012      19941ad (added cycle 4)
 test_a_flag_named_in_another_flags_help_is_not_a_command      FR-012      944c958 (added cycle 5)
+test_a_positional_description_is_not_a_flag_spec              FR-012      66dab76 (added cycle 6)
+test_a_commander_option_string_still_declares_its_spellings   FR-012      guard
+test_a_black_split_declaration_still_declares_its_flag        FR-012      66dab76 (added cycle 6)
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
 ============================================================  ==========  =======================
 
@@ -77,6 +80,14 @@ Rows carrying a note the column has no room for:
   ``test_detail_after_a_collection_argument_is_still_a_message`` it is the three
   detail= strings; the three exclusions in the same tree are green at 944c958
   and stay green, which is what makes them the control.
+- The two rows naming 66dab76 are the cycle-6 corrections to the same flag
+  scan, and each is red there for the whole of what it measures rather than for
+  one assertion: at 66dab76 the commander tree publishes ``-x`` and ``--purge``
+  along with ``--keep``, and the Black-split tree publishes nothing at all.
+  ``test_a_commander_option_string_still_declares_its_spellings`` between them
+  is the guard on the first fix -- an option string holding two spellings and a
+  ``<value>`` placeholder is a declaration, and stopping the scan at prose must
+  not stop it there.
 
 Every test drives the script through the conftest ``run_script`` helper. Nothing
 here imports survey.py: its module-level ``ROOT`` resolves from ``sys.argv`` at
@@ -736,6 +747,134 @@ def test_a_flag_named_in_another_flags_help_is_not_a_command(run_script, tmp_pat
     assert names == {"--out", "--keep", "-n", "--dry-run"}, (
         "-x and --purge are prose in a help sentence and store_true and - are "
         f"keyword values, so none of the four is declared here; got {sorted(names)}"
+    )
+
+
+def test_a_positional_description_is_not_a_flag_spec(run_script, tmp_path):
+    """FR-012, AC-013, GI-002: the description is a positional argument too.
+
+    The test above holds because argparse and click spell a flag's prose as
+    ``help=``, and the scan stops at the first keyword argument. commander and
+    yargs do not spell it that way: ``.option(flags, description)`` puts the
+    sentence in the second *positional* argument, so no ``name=`` ends the scan
+    and the closing paren is the only stop. Every literal in the call was read,
+    and ``.option("--keep", "-x is the short form of --purge")`` published
+    ``--keep``, ``-x`` and ``--purge`` alike.
+
+    That is the same false pass as the one beside it, arriving by the other
+    door. doctype.py folds ``user_surface.commands`` into the allowlist its flag
+    lens is suppressed by, so a user page backticking ``--purge`` passed --
+    excused by the survey's own claim that this product has a ``--purge``, and
+    it has no such flag.
+
+    What ends the positional run is therefore the shape of the literal rather
+    than the syntax around it: a flag spec is option spellings and nothing else,
+    and the first literal that is not one is prose.
+    """
+    root = python_project(tmp_path, "commanderprose", "# no CLI in this file\n")
+    root.joinpath("src", "cli.js").write_text(
+        'program.option("--keep", "-x is the short form of --purge");\n',
+        encoding="utf-8",
+    )
+
+    names = {c["name"] for c in survey(run_script, root)["user_surface"]["commands"]}
+
+    assert "--keep" in names, (
+        "the flag this call declares is still the flag it declares; got "
+        f"{sorted(names)}"
+    )
+    assert names == {"--keep"}, (
+        "-x and --purge are prose in the description argument, and every name "
+        "in this list is a term doctype.py stops reporting on a user page; got "
+        f"{sorted(names)}"
+    )
+
+
+def test_a_commander_option_string_still_declares_its_spellings(run_script, tmp_path):
+    """FR-012: one literal, both spellings, and the value the flag takes.
+
+    commander writes the spellings and the option's own argument into a single
+    string -- ``"-o, --out <path>"`` -- so the tokens inside one literal are
+    read individually, and ``<path>`` names a value rather than a flag. Ending
+    the positional run at the first literal that is not a pure flag spec must
+    not end it here: this literal *is* a declaration, and both flags in it are
+    flags the product has.
+
+    This is the boundary on the test above rather than the thing that goes red.
+    It is green at 66dab76 and stays green, which is what makes it the control:
+    the placeholder was already dropped by the token filter there, and the fix
+    beside it must not take the two spellings with it.
+    """
+    root = python_project(tmp_path, "commanderspec", "# no CLI in this file\n")
+    root.joinpath("src", "cli.js").write_text(
+        "program\n"
+        '  .option("-k, --keep <n>", "how many builds to keep")\n'
+        '  .option("-o, --out [dir]", "where to write")\n',
+        encoding="utf-8",
+    )
+
+    names = {c["name"] for c in survey(run_script, root)["user_surface"]["commands"]}
+
+    assert names == {"-k", "--keep", "-o", "--out"}, (
+        "Both spellings out of each option string, and neither placeholder: "
+        f"<n> and [dir] name a value the flag takes, not a flag; got {sorted(names)}"
+    )
+
+
+def test_a_black_split_declaration_still_declares_its_flag(run_script, tmp_path):
+    """FR-012, AC-013, CT-003: one line per declaration is a formatter's choice.
+
+    Black puts every argument on its own line as soon as the call passes 88
+    columns, which is the ordinary shape of an ``add_argument`` carrying an
+    action and a help sentence -- the same formatter behaviour the decorator
+    pass was already taught to read. A scan reading one line at a time saw
+    ``parser.add_argument(`` and no literal at all, so a formatted project
+    declared no flags whatsoever and doctype.py had nothing to suppress a
+    ``--verbose`` on a user page with: the WEBSTER_SURVEY path was inert for
+    exactly the projects that run a formatter.
+
+    The join is the one the decorator pass already uses, cap and all, and the
+    anchor stays the line the call opens on because that is the line a reader is
+    sent to read. Joining does not relax what is read from the call: ``-x`` in
+    the help sentence is still prose, and so is the description commander splits
+    across lines the same way.
+    """
+    root = python_project(
+        tmp_path,
+        "blacksplit",
+        "import argparse\n"
+        "\n\ndef build():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument(\n"
+        '        "--verbose",\n'
+        '        action="store_true",\n'
+        '        help="pass -x for the old behaviour",\n'
+        "    )\n"
+        "    return parser\n",
+    )
+    root.joinpath("src", "cli.js").write_text(
+        "program\n"
+        "  .option(\n"
+        '    "--keep-going",\n'
+        '    "-x is the short form of --purge",\n'
+        "  );\n",
+        encoding="utf-8",
+    )
+
+    commands = survey(run_script, root)["user_surface"]["commands"]
+    names = {c["name"] for c in commands}
+
+    assert names == {"--verbose", "--keep-going"}, (
+        "Both declarations are split across lines, and neither flag named "
+        f"inside a description is one this product has; got {commands}"
+    )
+    anchors = {c["name"]: c["anchor"] for c in commands}
+    assert anchors["--verbose"] == "src/api.py:6", (
+        "The anchor is the line the call opens on, not the line the spelling "
+        f"happened to land on: that is the line a reader is sent to; got {anchors}"
+    )
+    assert anchors["--keep-going"] == "src/cli.js:2", (
+        f"same for the .option( a formatter split across lines; got {anchors}"
     )
 
 
