@@ -1,6 +1,0 @@
-# evidence-cmd: cd plugins/webster && COLUMNS=110 uvx pytest tests/test_drift.py -p no:cacheprovider -q --no-header
-# evidence-for: US-001, US-002, US-010, FR-001, FR-002, FR-003, FR-004, FR-005, FR-006, FR-007, FR-008, FR-009, FR-034, FR-037, FR-039, AC-001, AC-002, AC-003, AC-004, AC-005, AC-006, AC-007, AC-008, AC-009, AC-010, AC-039
-# evidence-volatile: \d+\.\d+s
-
-...........................                                                                            [100%]
-27 passed in 6.74s
