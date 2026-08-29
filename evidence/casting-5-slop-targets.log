@@ -1,5 +1,0 @@
-# evidence-cmd: bash -c 'python3 plugins/webster/scripts/slop.py /no/such/dir; echo "exit=$?"'
-# evidence-for: US-008, FR-027, AC-035
-
-no such target: /no/such/dir
-exit=2

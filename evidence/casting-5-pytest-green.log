@@ -1,7 +1,0 @@
-# evidence-cmd: bash -c 'cd plugins/webster && uvx pytest tests/test_slop.py tests/test_scaffold.py -q'
-# evidence-for: US-008, US-009, US-010, FR-039, AC-039
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-......................                                                   [100%]
-22 passed in 0.83s
