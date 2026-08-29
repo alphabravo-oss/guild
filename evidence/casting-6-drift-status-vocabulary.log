@@ -1,0 +1,31 @@
+# evidence-cmd: cd plugins/webster && python3 -c 'import ast,re,pathlib;d=ast.get_docstring(ast.parse(pathlib.Path("scripts/drift.py").read_text()));s=" ".join(d.split());z=[p.strip() for p in re.split(r",|\band\b",re.search(r"([a-z_][a-z_,\s]*?)\s+exits? 0\b",s).group(1)) if p.strip()];t=[p.strip() for p in re.split(r",|\band\b",re.search(r"([a-z_][a-z_,\s]*?)\s+exits? 2\b",s).group(1)) if p.strip()];row=[l for l in pathlib.Path("README.md").read_text().splitlines() if l.startswith("| `scripts/drift.py` |")][0];print("drift.py docstring, exit 0:"," ".join(z));print("drift.py docstring, exit 2:"," ".join(t));print("README drift.py row, backticked literals:"," ".join(sorted(set(re.findall(r"`([a-z_]+)`",row)))));print("named by drift.py, missing from the README row:"," ".join([n for n in z+t if "`"+n+"`" not in row]) or "none")' && echo "the test that pins it:" && COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header tests/test_readme.py 2>&1 | tail -1 | sed -E 's/ in [0-9.]+s$//'
+# evidence-for: FR-038, AC-042
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# D-060. The README's `scripts/drift.py` row described the exit vocabulary the
+# script had before this spec: it named `no_anchors` and "Exit 1 on drift, 2 on
+# nothing to measure", and `unrelated_changes` -- the status US-002 exists to add,
+# and the one that tells a reader ordinary development is not a finding --
+# appeared nowhere in the file. Neither did `no_git`, `head_missing` or
+# `hashes_partial`.
+#
+# The two lists below are read out of drift.py's own module docstring, which is
+# also the usage text argparse publishes, so this log compares the README against
+# the script rather than against a list somebody typed twice. The fourth line is
+# the one that has to read "none". The row is matched on its first column, not on
+# a line number, and the whole comparison is the same one
+# tests/test_readme.py::test_the_script_table_names_drift_pys_own_status_vocabulary
+# makes at run time, which is why the last line here is that module's result: the
+# check lives in the suite, not only in this log.
+#
+# Replayed against the row as it stood at 98552ab, that test fails and names all
+# six: unrelated_changes, no_docs, no_manifest, no_git, head_missing,
+# hashes_partial.
+
+drift.py docstring, exit 0: clean unrelated_changes
+drift.py docstring, exit 2: no_docs no_manifest no_anchors no_git head_missing hashes_partial
+README drift.py row, backticked literals: check clean drift hashes_partial head_missing no_anchors no_docs no_git no_manifest record unrelated_changes
+named by drift.py, missing from the README row: none
+the test that pins it:
+4 passed

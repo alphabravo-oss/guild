@@ -105,7 +105,7 @@ no fallback path here.
 | Script | What it does |
 | --- | --- |
 | `scripts/survey.py` | Two surfaces, both anchored to `file:line`. **`user_surface`**: the screens, the text on the buttons, headings and fields, the product's own error strings, the subcommands somebody types. **`surface`**: HTTP routes from Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask and Go mux, plus CLI binaries, package exports, env vars and OpenAPI specs. Names the extractors that fit the stack |
-| `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree and every anchor the pages cite. `check` reports anchors that no longer resolve and pages whose cited code changed. A set that cites no sources returns `no_anchors` rather than `clean`, because resolving every anchor you have is not the same as having been checked. Exit 1 on drift, 2 on nothing to measure |
+| `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree, every anchor the pages cite and a digest of each cited line. `check` reports anchors that no longer resolve, cited lines whose digest moved, and pages whose cited code changed. `clean` and `unrelated_changes` exit 0; `drift` exits 1; `no_docs`, `no_manifest`, `no_anchors`, `no_git`, `head_missing` and `hashes_partial` exit 2. `clean` is reserved for a set where nothing changed at all, so code that changed under no citation is `unrelated_changes` rather than a finding; a set that cites no sources is `no_anchors` rather than `clean`, and an anchor the record held but never took a digest of leaves the run `hashes_partial`, because resolving every anchor you have is not the same as having been checked |
 | `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem. `check` validates an existing tree and exits 1 on any violation |
 | `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1; advisories (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) are reported. Findings are grouped by rule with a count |
 | `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
@@ -172,7 +172,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-110 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+117 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes: each script binds its root, its docs
 directory and its allowlists at import time, and an in-process test would freeze all of them at
@@ -196,16 +196,28 @@ without touching this line fails the run that added it. The number sat at a stal
 several additions before anything read it, which is the same shape as a gate that passes because
 it never looked.
 
+The same module reads the `drift.py` row of the script table above against that script's own
+docstring, and for the same reason. The row went on describing an exit vocabulary the script had
+stopped using: it named `no_anchors` and "exit 1 on drift" while the script had grown
+`unrelated_changes`, `no_git`, `head_missing` and `hashes_partial` underneath it, so the one
+status a reader most needed — the one that says ordinary development is not a finding — appeared
+nowhere in the README. The status names are taken out of `drift.py` at test time rather than
+listed in the test, because a list written in the test is a third place the vocabulary lives and
+three copies drift the way two did.
+
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD, a docs tree sitting at the repository
-root, an anchor citing line zero and a cited line that changed; `doctype.py` across the widened
+root, a developer's `diff.relative` setting that renamed the paths git printed, an anchor citing
+line zero and a cited line that changed; `doctype.py` across the widened
 symbol, route and flag lenses, the acronym list, stubs, the `WEBSTER_SURVEY` allowlist and the
 contract `types` prints to a writer before the lens reads them; `survey.py` across decorators
 split over several lines, Flask's declared methods, `pyproject.toml`, `HTTPException` details,
 the option flags a parser declares and `os.getenv` reads; `llmstxt.py` and `slop.py` across the
 fixes each of those carries, and `scaffold.py` across those plus the docs path it is handed and
-cannot write into. Every fix has at least one test that fails against the script as it stood
-before the fix; the rest are guards, there so a fix does not take something else away with it.
+cannot write into, a page it cannot read, a malformed `_category_.json` and the exit set its help
+text publishes for both modes. Every fix has at least one test that fails against the script as
+it stood before the fix; the rest are guards, there so a fix does not take something else away
+with it.
 
 The harness under those modules is exercised as well. `tests/test_harness.py` measures four
 things nothing else in the suite checks: that the child `python3` clears the plugin's 3.11 floor,

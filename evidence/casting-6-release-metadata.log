@@ -1,0 +1,27 @@
+# evidence-cmd: echo "NFR-003 plugin.json version: $(grep -m1 '"version"' plugins/webster/.claude-plugin/plugin.json | tr -d ' ')" && echo "AC-042 README Status version line: $(grep -n '^Version ' plugins/webster/README.md)" && echo "FR-038 README test command line: $(grep -n 'cd plugins/webster && uvx pytest' plugins/webster/README.md)" && echo "FR-038 README passing count line: $(grep -noE '^[0-9]+ passing' plugins/webster/README.md)" && echo "FR-038 Status section module-count wording: $(sed -n '/^## Status/,$p' plugins/webster/README.md | grep -m1 -oE '[a-z]+ modules')" && echo "FR-038 stale 'three scripts' hits: $(grep -c 'three scripts' plugins/webster/README.md); 'seven scripts' hits: $(grep -c 'seven scripts' plugins/webster/README.md)" && echo "AC-042 WEBSTER_LENS_ALLOW at line $(grep -n 'WEBSTER_LENS_ALLOW' plugins/webster/README.md | head -1 | cut -d: -f1), WEBSTER_SURVEY first at line $(grep -n 'WEBSTER_SURVEY' plugins/webster/README.md | head -1 | cut -d: -f1); paragraphs naming WEBSTER_LENS_ALLOW: $(grep -c 'WEBSTER_LENS_ALLOW' plugins/webster/README.md)" && echo "NFR-002 README Python floor: $(grep -no 'the floor is Python 3.11' plugins/webster/README.md)" && echo "FR-038 test modules on disk: $(ls plugins/webster/tests/test_*.py | wc -l | tr -d ' ') -- $(ls plugins/webster/tests/ | grep '^test_' | tr '\n' ' ')" && echo "FR-038 scripts with no test module: $(for s in plugins/webster/scripts/*.py; do b=$(basename "$s" .py); [ -f "plugins/webster/tests/test_$b.py" ] || printf '%s ' "$b"; done)" && echo "GI-006 marketplace.json hits for 0.11.0: $(grep -c '0\.11\.0' .claude-plugin/marketplace.json); root README webster badge: $(grep -o 'webster-[0-9.]*' README.md | head -1)"
+# evidence-for: NFR-003, AC-042, FR-038, NFR-002
+#
+# Every claim the Status section and the env-var paragraph make, read straight
+# back out of the files rather than out of the prose that announces them. The
+# module-count wording is printed beside the module list on disk, because "eight
+# modules" is the half of the Status sentence that no test reads -- test_readme.py
+# checks the number of tests, not the number of files they live in, so this log is
+# where that word is compared to the directory. The WEBSTER_LENS_ALLOW paragraph
+# count is printed because test_readme.py requires exactly one paragraph to
+# introduce it: a second mention added while rewriting the Status section would
+# break that test from a file this log otherwise reports as fine. GI-006's two
+# forbidden files are printed last, both still at 0.7.0 and untouched. No process
+# substitution anywhere in the command: the gate re-executes this through /bin/sh,
+# where <(...) is a syntax error rather than an empty answer.
+
+NFR-003 plugin.json version: "version":"0.11.0",
+AC-042 README Status version line: 169:Version 0.11.0.
+FR-038 README test command line: 172:cd plugins/webster && uvx pytest
+FR-038 README passing count line: 175:117 passing
+FR-038 Status section module-count wording: eight modules
+FR-038 stale 'three scripts' hits: 0; 'seven scripts' hits: 2
+AC-042 WEBSTER_LENS_ALLOW at line 74, WEBSTER_SURVEY first at line 75; paragraphs naming WEBSTER_LENS_ALLOW: 1
+NFR-002 README Python floor: 101:the floor is Python 3.11
+FR-038 test modules on disk: 8 -- test_doctype.py test_drift.py test_harness.py test_llmstxt.py test_readme.py test_scaffold.py test_slop.py test_survey.py 
+FR-038 scripts with no test module: rendered 
+GI-006 marketplace.json hits for 0.11.0: 0; root README webster badge: webster-0.7.0

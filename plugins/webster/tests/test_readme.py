@@ -26,6 +26,14 @@ at runtime, matching test_slop.py and test_scaffold.py):
 - ``test_readme_documents_webster_survey_and_the_python_floor`` — AC-042 /
   FR-038 / NFR-002, the other half of the same guard, for the two claims that
   live outside the Status section.
+- ``test_the_script_table_names_drift_pys_own_status_vocabulary`` — FR-038 /
+  AC-042. RED on the README as it stood: the ``scripts/drift.py`` row said
+  ``no_anchors`` and "Exit 1 on drift, 2 on nothing to measure", which was the
+  vocabulary before this spec changed it. ``unrelated_changes`` — the status
+  US-002 exists to add, and the one that tells a reader ordinary development is
+  not a finding — appeared nowhere in the file, and neither did ``no_git``,
+  ``head_missing`` or ``hashes_partial``. Same failure as the count above, one
+  table row over: prose describing a script that moved under it.
 
 The count is taken from the suite's own source rather than from
 ``len(request.session.items)``, and the reason is a false red rather than a
@@ -63,6 +71,16 @@ PLUGIN_ROOT = TESTS_DIR.parent
 README = PLUGIN_ROOT / "README.md"
 PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 CONFTEST = TESTS_DIR / "conftest.py"
+
+# Read as text and parsed with ``ast``, never imported: every script binds ROOT,
+# DOCS and its allowlists from ``sys.argv`` and the environment at module level
+# (GI-004), so an import here would run that binding against pytest's own argv.
+DRIFT = PLUGIN_ROOT / "scripts" / "drift.py"
+
+# The first column of the row this module checks in the README's script table.
+# Matched on the cell rather than on a line number so the check survives the
+# table being reordered.
+DRIFT_TABLE_CELL = "`scripts/drift.py`"
 
 # The command the Status section must print, verbatim. It is written from the
 # repository root, not from the plugin, because that is where a reader of this
@@ -130,6 +148,67 @@ def status_passing_count() -> int:
             f"suite size there and one number cannot be recorded twice."
         )
     return int(matches[0])
+
+
+def script_table_row(cell: str) -> str:
+    """The one row of the README's script table whose first column is ``cell``.
+
+    Scoped to the row for the reason ``status_section`` is scoped to its
+    section: ``clean`` is an ordinary English word this README uses about
+    prose and about gates, and a whole-file search for it would report the
+    ``drift.py`` row as naming a status it does not name.
+    """
+    rows = [line for line in _read(README).splitlines() if line.startswith(f"| {cell} |")]
+    if len(rows) != 1:
+        raise RuntimeError(
+            f"expected exactly one {README} table row whose first column is "
+            f"{cell}, found {len(rows)}. FR-038 puts the script's contract in "
+            f"that row and a contract stated twice can be stated two ways."
+        )
+    return rows[0]
+
+
+def drift_statuses(exit_code: str) -> list[str]:
+    """The statuses ``drift.py``'s own docstring puts at ``exit_code``.
+
+    Taken out of the script instead of listed here on purpose. A list written
+    in this file would be a third place the vocabulary lives, and three copies
+    go stale the way the two did: the README row named the pre-spec set for a
+    whole run while ``drift.py`` printed ``unrelated_changes``, ``no_git``,
+    ``head_missing`` and ``hashes_partial``. Read from the docstring rather
+    than from the string literals in the code because the docstring is what
+    ``argparse`` publishes as the usage text, so it is the copy a reader of
+    either file can reach.
+    """
+    doc = ast.get_docstring(ast.parse(_read(DRIFT), filename=str(DRIFT)))
+    if not doc:
+        raise RuntimeError(
+            f"{DRIFT} has no module docstring; it is the usage text this test "
+            f"reads the status vocabulary out of, and the README row above has "
+            f"nothing left to be checked against."
+        )
+    # One line, so the sentence can be matched across the wrap in the source.
+    # The character class admits letters, underscores, commas and spaces and
+    # nothing else, which is what keeps each clause from running through the
+    # "exit 0," and "exits 1," that separate them.
+    sentence = " ".join(doc.split())
+    match = re.search(rf"([a-z_][a-z_,\s]*?)\s+exits? {exit_code}\b", sentence)
+    if not match:
+        raise RuntimeError(
+            f"{DRIFT}'s docstring no longer says which statuses exit "
+            f"{exit_code}. That sentence is this test's source of truth for "
+            f"what the README must name; without it the check below would "
+            f"pass on an empty list, which is the shape of gate this suite "
+            f"exists to remove."
+        )
+    names = [part.strip() for part in re.split(r",|\band\b", match.group(1))]
+    found = [name for name in names if name]
+    if not found:
+        raise RuntimeError(
+            f"parsed no status names out of {DRIFT}'s 'exit {exit_code}' "
+            f"clause: {match.group(1)!r}"
+        )
+    return found
 
 
 def _scan_module(path: Path) -> tuple[list[str], list[str]]:
@@ -288,4 +367,37 @@ def test_readme_documents_webster_survey_and_the_python_floor():
         f"a comment or the README because survey.py and llmstxt.py import "
         f"tomllib with no fallback path, and on 3.10 that is an ImportError "
         f"rather than a message."
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-038 / AC-042: the script table's drift.py row states the vocabulary the
+# script actually prints, including the status US-002 added.
+# -----------------------------------------------------------------------------
+def test_the_script_table_names_drift_pys_own_status_vocabulary():
+    row = script_table_row(DRIFT_TABLE_CELL)
+    exit_zero = drift_statuses("0")
+    exit_two = drift_statuses("2")
+
+    # Asserted rather than assumed: the exit-0 clause is parsed out of prose,
+    # and a docstring edit that dropped US-002's status would quietly shrink
+    # what the row below is required to name.
+    assert "unrelated_changes" in exit_zero, (
+        f"{DRIFT}'s docstring no longer puts 'unrelated_changes' at exit 0. "
+        f"ST-002 and FR-008 are that status: code that changed under no "
+        f"citation exits 0, because a gate that fails on ordinary development "
+        f"teaches the reader to stop reading the gate."
+    )
+
+    # Backticked, not merely present. `clean` and `drift` are also ordinary
+    # words in this README's prose, and a row that happened to use one in a
+    # sentence would otherwise read as a row that publishes the status.
+    missing = [name for name in exit_zero + exit_two if f"`{name}`" not in row]
+    assert not missing, (
+        f"the {DRIFT_TABLE_CELL} row of {README} does not name "
+        f"{', '.join(missing)} as `literal(s)`, but {DRIFT}'s own usage text "
+        f"does: exit 0 is {exit_zero}, exit 2 is {exit_two}. FR-038 asks the "
+        f"README to describe the scripts as they now are; the row carried the "
+        f"pre-spec vocabulary through the whole change, so a reader looking up "
+        f"a status the tool had just printed at them found no entry for it."
     )
