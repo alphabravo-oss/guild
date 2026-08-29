@@ -5,8 +5,17 @@ subprocess (GI-004, CT-007). Nothing here imports drift.py: it resolves ROOT,
 DOCS and MANIFEST at module import, so an import would freeze the wrong tree.
 
 Which fix each test pins, and how it failed before it. No citation here names a
-line number: drift.py has been rewritten three times since these were written
-and every number had gone stale, so functions and fields name the code instead.
+line number: ten revisions of drift.py landed between ``caa2e5c``, the commit
+that wrote this module, and ``02f4e9e``, the one that ships it — read back from
+``git log --oneline --reverse caa2e5c..02f4e9e --
+plugins/webster/scripts/drift.py`` rather than remembered — and every line
+number this module once cited had gone stale by the time anyone read it, so
+functions and fields name the code instead. The version of this sentence that
+said "rewritten three times" was written in 3ab01dd, the third of those ten,
+and named no end, so it went stale the way the line numbers it explains had.
+Both ends are named for that reason, and the commit that names them touches no
+file under ``scripts/`` — which is what keeps the range closed rather than one
+short again the moment it lands.
 Every row was measured RED by running this module against ``git show
 cfafe8e:plugins/webster/scripts/drift.py``, the pre-change baseline AC-039
 names; "was at" is the revision the row's last column describes.

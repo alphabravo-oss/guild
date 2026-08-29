@@ -4,7 +4,7 @@
 
 --- the count, as this commit states it ---
 594:    # pages had been compared "against nothing", and that was false in all four branches: the
-1158:    RED at 66dab76: the four git branches built their note before ``hashes``
+1167:    RED at 66dab76: the four git branches built their note before ``hashes``
 
 --- the count, as cf5a391 wrote it and 66dab76 left it ---
 505:    # pages had been compared "against nothing", and that was false in all three branches: the
