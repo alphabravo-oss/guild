@@ -1,0 +1,15 @@
+# evidence-cmd: red=$(mktemp -d) && cp -R plugins/webster "$red/webster" && git show 77c54f1:plugins/webster/scripts/scaffold.py > "$red/webster/scripts/scaffold.py" && cd "$red/webster" && COLUMNS=80 uvx pytest tests/test_scaffold.py -q -p no:cacheprovider 2>&1 | tail -4
+# evidence-for: AC-039, FR-039
+# evidence-volatile: \d+\.\d+s
+#
+# Red-first (AC-039). 77c54f1 is the commit this cycle started from: the
+# scaffold.py it carries has the CAST fixes (bad_subject, cannot_write) and
+# neither D-058 nor D-059, so exactly the two tests this cycle adds for those
+# defects fail and the four that pin already-fixed behaviour pass --
+# test_malformed_category_json_stays_a_violation among them, which is what
+# makes it a control rather than a fourth new claim.
+
+=========================== short test summary info ============================
+FAILED tests/test_scaffold.py::test_help_names_an_exit_set_for_both_modes - A...
+FAILED tests/test_scaffold.py::test_unreadable_page_exits_two_without_a_traceback
+2 failed, 4 passed in 0.27s

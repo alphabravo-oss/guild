@@ -1,0 +1,25 @@
+# evidence-cmd: r="$PWD"; s="$r/plugins/webster/scripts/scaffold.py"; d=$(mktemp -d); cd "$d"; git -C "$r" show 77c54f1:plugins/webster/scripts/scaffold.py > old.py; python3 "$s" init --docs docs >/dev/null; echo "--- control: the scaffolded tree checks clean ---"; python3 "$s" check --docs docs | sed -n "1,2p"; python3 "$s" check --docs docs >/dev/null; echo "exit=$?"; ln -s nowhere.md docs/install/broken.md; echo "--- one dangling symlink under docs/, pre-fix ---"; python3 old.py check --docs docs 2>&1 | tail -1; python3 old.py check --docs docs >/dev/null 2>&1; echo "exit=$?"; echo "--- the same tree, after ---"; python3 "$s" check --docs docs; echo "exit=$?"; rm docs/install/broken.md; echo "--- a malformed _category_.json is still a violation, not a cannot_read ---"; for body in "not json at all" "[1, 2]" "{\"position\": [1]}"; do printf "%s\n" "$body" > docs/install/_category_.json; printf "%-20s " "$body"; python3 "$s" check --docs docs | grep -c "unreadable _category_.json" | tr "\n" " "; python3 "$s" check --docs docs >/dev/null; echo "violation line(s), exit=$?"; done
+# evidence-for: FR-028
+#
+# D-059. do_check read every page through a bare open(), so one *.md that
+# os.listdir names and open() refuses left main() as a traceback -- stderr, an
+# empty stdout, and exit 1, the code this script reserves for a real layout
+# violation. It now reports cannot_read at exit 2. The last block is the half
+# that must NOT move: narrowing the _category_.json handler from `except
+# Exception` to (ValueError, AttributeError, TypeError) lets an OSError reach
+# the new boundary while a malformed file stays the violation it always was.
+
+--- control: the scaffolded tree checks clean ---
+{
+  "status": "ok",
+exit=0
+--- one dangling symlink under docs/, pre-fix ---
+FileNotFoundError: [Errno 2] No such file or directory: 'docs/install/broken.md'
+exit=1
+--- the same tree, after ---
+{"status": "cannot_read", "path": "docs/install/broken.md", "error": "No such file or directory"}
+exit=2
+--- a malformed _category_.json is still a violation, not a cannot_read ---
+not json at all      1 violation line(s), exit=1
+[1, 2]               1 violation line(s), exit=1
+{"position": [1]}    1 violation line(s), exit=1

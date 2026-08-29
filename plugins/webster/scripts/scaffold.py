@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 """Create and validate the documentation tree, in the layout Harvester uses.
 
-  init   write the tree, the _category_.json files, and optionally the Docusaurus site
-  check  validate an existing tree against the layout, exit 1 on any violation
+  init   write the tree, the _category_.json files, and optionally the Docusaurus site.
+         exit 0 once the tree is written; exit 2 with a JSON status when it could not run --
+         bad_subject for a --subject key that cannot become a directory name, cannot_write
+         for a directory or a page the filesystem refused. init never exits 1.
+  check  validate an existing tree against the layout. exit 1 on any violation, exit 0 when
+         there are none, and exit 2 with a JSON status when there was nothing to check --
+         no_docs for no directory at --docs, cannot_read for a page under it that could not
+         be read.
+
+Every one of those is a JSON object on stdout whose first key is `status`. The 1 and the 2 are
+not interchangeable, which is why init states an exit set of its own even though it has no
+violations to report. Each of the three exit-2 statuses used to leave through exit 1 instead --
+a `sys.exit(str)` for the bad key, an uncaught OSError for the refused write and for the
+unreadable page -- so a caller reading JSON got an empty stdout and a code telling it to go fix
+a layout that had never been written or looked at.
 
 The layout is subject-first: a directory per thing in the product, each with an overview page
 named after the subject and task pages named as verbs. Diataxis lives inside a subject, not at
@@ -283,85 +296,113 @@ def do_check(a):
     if not os.path.isdir(docs):
         print(json.dumps({"status": "no_docs", "docs": docs})); return 2
 
-    for page in ROOT_PAGES:
-        if not os.path.isfile(os.path.join(docs, page)):
-            bad.append({"where": f"{docs}/{page}", "problem": "required root page is missing"})
+    # Every read below can be refused. A *.md that is a dangling symlink is listed like any
+    # other page and fails at open(); a directory nobody may list raises on os.listdir. Left
+    # alone each of those left do_check through a traceback, and a traceback exits 1 -- the
+    # code this script reserves for a real layout violation -- with nothing on stdout, so a
+    # caller reading JSON got no envelope at all and a code telling it to go fix a tree that
+    # had never been read. One boundary rather than a guard per read, for the reason do_init
+    # gives above; slop.py answers the same class with a cannot-read line at exit 2. It covers
+    # the reads only: os.walk is called without an onerror handler, so a subdirectory below a
+    # top-level one that cannot be listed is still walked as if it were empty.
+    try:
+        for page in ROOT_PAGES:
+            if not os.path.isfile(os.path.join(docs, page)):
+                bad.append({"where": f"{docs}/{page}", "problem": "required root page is missing"})
 
-    required = [n for n, _, _ in FRONT] + [n for n, _, _ in BACK]
-    known = required + [n for n, _, _ in OPTIONAL]
-    for name in required:
-        if not os.path.isdir(os.path.join(docs, name)):
-            bad.append({"where": f"{docs}/{name}/", "problem": "required section is missing"})
+        required = [n for n, _, _ in FRONT] + [n for n, _, _ in BACK]
+        known = required + [n for n, _, _ in OPTIONAL]
+        for name in required:
+            if not os.path.isdir(os.path.join(docs, name)):
+                bad.append({"where": f"{docs}/{name}/", "problem": "required section is missing"})
 
-    top = sorted(d for d in os.listdir(docs)
-                 if os.path.isdir(os.path.join(docs, d)) and not d.startswith("."))
-    subjects = [d for d in top if d not in known]
+        top = sorted(d for d in os.listdir(docs)
+                     if os.path.isdir(os.path.join(docs, d)) and not d.startswith("."))
+        subjects = [d for d in top if d not in known]
 
-    for d in top:
-        p = os.path.join(docs, d)
-        if not os.path.isfile(os.path.join(p, "_category_.json")):
-            bad.append({"where": f"{docs}/{d}/", "problem": "no _category_.json, so sidebar order is undefined"})
-        firsts = [f for f in sorted(os.listdir(p)) if f.endswith(".md")
-                  and re.search(r"^sidebar_position:\s*1\s*$",
-                                open(os.path.join(p, f), encoding="utf-8",
-                                     errors="replace").read(400), re.M)]
-        if not firsts:
-            bad.append({"where": f"{docs}/{d}/",
-                        "problem": "no landing page; one page in the directory needs sidebar_position: 1"})
-        elif len(firsts) > 1:
-            bad.append({"where": ", ".join(f"{d}/{f}" for f in firsts),
-                        "problem": "more than one page claims sidebar_position: 1"})
+        for d in top:
+            p = os.path.join(docs, d)
+            if not os.path.isfile(os.path.join(p, "_category_.json")):
+                bad.append({"where": f"{docs}/{d}/", "problem": "no _category_.json, so sidebar order is undefined"})
+            firsts = [f for f in sorted(os.listdir(p)) if f.endswith(".md")
+                      and re.search(r"^sidebar_position:\s*1\s*$",
+                                    open(os.path.join(p, f), encoding="utf-8",
+                                         errors="replace").read(400), re.M)]
+            if not firsts:
+                bad.append({"where": f"{docs}/{d}/",
+                            "problem": "no landing page; one page in the directory needs sidebar_position: 1"})
+            elif len(firsts) > 1:
+                bad.append({"where": ", ".join(f"{d}/{f}" for f in firsts),
+                            "problem": "more than one page claims sidebar_position: 1"})
 
-    positions = {}
-    for d in top:
-        f = os.path.join(docs, d, "_category_.json")
-        if os.path.isfile(f):
-            try:
-                pos = json.load(open(f)).get("position")
-                positions.setdefault(pos, []).append(d)
-            except Exception:
-                bad.append({"where": f, "problem": "unreadable _category_.json"})
-    for pos, dirs in positions.items():
-        if len(dirs) > 1:
-            bad.append({"where": ", ".join(dirs), "problem": f"share sidebar position {pos}"})
+        positions = {}
+        for d in top:
+            f = os.path.join(docs, d, "_category_.json")
+            if os.path.isfile(f):
+                try:
+                    pos = json.load(open(f)).get("position")
+                    positions.setdefault(pos, []).append(d)
+                # The three families a malformed file raises here, named rather than caught as
+                # `Exception`: ValueError for bytes that are not UTF-8 or not JSON,
+                # AttributeError for a top-level array, which has no .get, and TypeError for a
+                # position that is itself a list, which setdefault cannot key on. All three are
+                # a file Docusaurus will not order a sidebar from, which is a violation. What
+                # `Exception` also swallowed was OSError -- a file that could not be read at all
+                # -- and reporting that as a violation is the same wrong answer the boundary
+                # above exists to stop, one file further in.
+                except (ValueError, AttributeError, TypeError):
+                    bad.append({"where": f, "problem": "unreadable _category_.json"})
+        for pos, dirs in positions.items():
+            if len(dirs) > 1:
+                bad.append({"where": ", ".join(dirs), "problem": f"share sidebar position {pos}"})
 
-    # every page carries frontmatter, and its slug is lower-case-with-hyphens
-    for dirpath, dirnames, filenames in os.walk(docs):
-        dirnames[:] = [x for x in dirnames if not x.startswith(".")]
-        for fn in filenames:
-            if not fn.endswith(".md"):
+        # every page carries frontmatter, and its slug is lower-case-with-hyphens
+        for dirpath, dirnames, filenames in os.walk(docs):
+            dirnames[:] = [x for x in dirnames if not x.startswith(".")]
+            for fn in filenames:
+                if not fn.endswith(".md"):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, fn), docs)
+                if not SLUG.match(fn[:-3]):
+                    bad.append({"where": rel, "problem": "filename is not lower-case-with-hyphens"})
+                head = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read(400)
+                if not head.startswith("---"):
+                    bad.append({"where": rel, "problem": "no frontmatter"})
+                elif "title:" not in head.split("---")[1]:
+                    bad.append({"where": rel, "problem": "frontmatter has no title"})
+
+        # A page sitting in a section whose reader is known should not claim a different one.
+        for section, expected in SECTION_AUDIENCE.items():
+            d = os.path.join(docs, section)
+            if not os.path.isdir(d):
                 continue
-            rel = os.path.relpath(os.path.join(dirpath, fn), docs)
-            if not SLUG.match(fn[:-3]):
-                bad.append({"where": rel, "problem": "filename is not lower-case-with-hyphens"})
-            head = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read(400)
-            if not head.startswith("---"):
-                bad.append({"where": rel, "problem": "no frontmatter"})
-            elif "title:" not in head.split("---")[1]:
-                bad.append({"where": rel, "problem": "frontmatter has no title"})
+            for fn in sorted(os.listdir(d)):
+                if not fn.endswith(".md"):
+                    continue
+                head = open(os.path.join(d, fn), encoding="utf-8", errors="replace").read(500)
+                m = re.search(r"^audience:\s*(\S+)", head, re.M)
+                if m and m.group(1) != expected:
+                    bad.append({"where": f"{section}/{fn}",
+                                "problem": f"declares audience '{m.group(1)}' but sits in "
+                                           f"{section}/, which is written for '{expected}'"})
 
-    # A page sitting in a section whose reader is known should not claim a different one.
-    for section, expected in SECTION_AUDIENCE.items():
-        d = os.path.join(docs, section)
-        if not os.path.isdir(d):
-            continue
-        for fn in sorted(os.listdir(d)):
-            if not fn.endswith(".md"):
-                continue
-            head = open(os.path.join(d, fn), encoding="utf-8", errors="replace").read(500)
-            m = re.search(r"^audience:\s*(\S+)", head, re.M)
-            if m and m.group(1) != expected:
-                bad.append({"where": f"{section}/{fn}",
-                            "problem": f"declares audience '{m.group(1)}' but sits in "
-                                       f"{section}/, which is written for '{expected}'"})
+        # A root page is for a topic that genuinely crosses every subject. Harvester has two beyond
+        # index and faq. More than a handful means subjects were never named.
+        flat = sorted(f for f in os.listdir(docs)
+                      if f.endswith(".md") and f not in ROOT_PAGES)
+        if len(flat) > 4:
+            bad.append({"where": ", ".join(flat),
+                        "problem": f"{len(flat)} cross-cutting root pages; more than 4 means a subject was never named"})
 
-    # A root page is for a topic that genuinely crosses every subject. Harvester has two beyond
-    # index and faq. More than a handful means subjects were never named.
-    flat = sorted(f for f in os.listdir(docs)
-                  if f.endswith(".md") and f not in ROOT_PAGES)
-    if len(flat) > 4:
-        bad.append({"where": ", ".join(flat),
-                    "problem": f"{len(flat)} cross-cutting root pages; more than 4 means a subject was never named"})
+    except OSError as e:
+        # No violations here, deliberately, and this is where it differs from cannot_write's
+        # `created`: that list names files now sitting on disk that the caller has to deal
+        # with, while `bad` from an aborted scan is a floor on a question nobody finished
+        # asking. A caller that reads it as the findings is reading a partial answer as a
+        # whole one, which is the false pass this exit code exists to refuse.
+        print(json.dumps({"status": "cannot_read", "path": e.filename or docs,
+                          "error": e.strerror or type(e).__name__}))
+        return 2
 
     print(json.dumps({"status": "ok" if not bad else "violations",
                       "subjects": subjects, "sections": known,

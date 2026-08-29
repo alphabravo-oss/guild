@@ -1,0 +1,22 @@
+# evidence-cmd: cd plugins/webster && COLUMNS=80 uvx pytest tests/test_scaffold.py -v --no-header -p no:cacheprovider 2>&1
+# evidence-for: FR-028, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+#
+# The three tests this cycle adds are the last three collected:
+# test_help_names_an_exit_set_for_both_modes (D-058),
+# test_unreadable_page_exits_two_without_a_traceback (D-059), and
+# test_malformed_category_json_stays_a_violation (the control on the narrowed
+# _category_.json handler). casting-5-red-first.log runs the same module
+# against the pre-fix script.
+
+============================= test session starts ==============================
+collecting ... collected 6 items
+
+tests/test_scaffold.py::test_bad_subject_key_writes_nothing_and_exits_two PASSED [ 16%]
+tests/test_scaffold.py::test_valid_subject_key_creates_the_landing_page PASSED [ 33%]
+tests/test_scaffold.py::test_unwritable_docs_path_exits_two_without_a_traceback PASSED [ 50%]
+tests/test_scaffold.py::test_help_names_an_exit_set_for_both_modes PASSED [ 66%]
+tests/test_scaffold.py::test_unreadable_page_exits_two_without_a_traceback PASSED [ 83%]
+tests/test_scaffold.py::test_malformed_category_json_stays_a_violation PASSED [100%]
+
+============================== 6 passed in 0.22s ===============================

@@ -1,0 +1,46 @@
+# evidence-cmd: s="$PWD/plugins/webster/scripts/scaffold.py"; COLUMNS=80 python3 "$s" --help | sed -n "/^Create and validate/,/^The layout is subject-first/p"; d=$(mktemp -d); cd "$d"; echo "--- init, bad key ---"; python3 "$s" init --docs docs --subject "Bad Key:Label"; echo "exit=$?"; echo "--- init, a regular file where the tree goes ---"; : > afile; python3 "$s" init --docs afile; echo "exit=$?"; echo "--- init, written ---"; python3 "$s" init --docs docs >/dev/null; echo "exit=$?"; echo "--- check, no tree ---"; python3 "$s" check --docs missing; echo "exit=$?"; echo "--- check, tree passes ---"; python3 "$s" check --docs docs >/dev/null; echo "exit=$?"; echo "--- check, a page it cannot read ---"; ln -s nowhere.md docs/install/broken.md; python3 "$s" check --docs docs; echo "exit=$?"; echo "--- check, a real violation ---"; rm docs/install/broken.md docs/index.md; python3 "$s" check --docs docs >/dev/null; echo "exit=$?"
+# evidence-for: FR-028
+#
+# D-058. The module docstring is argparse's `description`, so it IS
+# `scaffold.py --help`. It named an exit contract for `check` alone ("exit 1 on
+# any violation") while `init` had grown two exit-2 envelopes whose entire
+# purpose is to be distinguishable from that 1. Every status the text now names
+# is produced below, in the order the text names them.
+
+Create and validate the documentation tree, in the layout Harvester uses.
+
+  init   write the tree, the _category_.json files, and optionally the Docusaurus site.
+         exit 0 once the tree is written; exit 2 with a JSON status when it could not run --
+         bad_subject for a --subject key that cannot become a directory name, cannot_write
+         for a directory or a page the filesystem refused. init never exits 1.
+  check  validate an existing tree against the layout. exit 1 on any violation, exit 0 when
+         there are none, and exit 2 with a JSON status when there was nothing to check --
+         no_docs for no directory at --docs, cannot_read for a page under it that could not
+         be read.
+
+Every one of those is a JSON object on stdout whose first key is `status`. The 1 and the 2 are
+not interchangeable, which is why init states an exit set of its own even though it has no
+violations to report. Each of the three exit-2 statuses used to leave through exit 1 instead --
+a `sys.exit(str)` for the bad key, an uncaught OSError for the refused write and for the
+unreadable page -- so a caller reading JSON got an empty stdout and a code telling it to go fix
+a layout that had never been written or looked at.
+
+The layout is subject-first: a directory per thing in the product, each with an overview page
+--- init, bad key ---
+{"status": "bad_subject", "subject": "Bad Key", "error": "subject key 'Bad Key' must be lower-case-with-hyphens"}
+exit=2
+--- init, a regular file where the tree goes ---
+{"status": "cannot_write", "path": "afile", "error": "File exists", "created": []}
+exit=2
+--- init, written ---
+exit=0
+--- check, no tree ---
+{"status": "no_docs", "docs": "missing"}
+exit=2
+--- check, tree passes ---
+exit=0
+--- check, a page it cannot read ---
+{"status": "cannot_read", "path": "docs/install/broken.md", "error": "No such file or directory"}
+exit=2
+--- check, a real violation ---
+exit=1

@@ -1,8 +1,8 @@
 """Tests for plugins/webster/scripts/scaffold.py (spec US-009).
 
-Both tests drive the script through the ``run_script`` conftest helper
+Every test drives the script through the ``run_script`` conftest helper
 (GI-004, CT-007) against a ``tmp_path`` docs directory, so ``init`` never
-writes into the repository.
+writes into the repository and ``check`` never reads it.
 
 Which fix each test pins, and what it did before the fix (FR-039, AC-039 — the
 red-first property is recorded here rather than enforced at runtime):
@@ -26,6 +26,25 @@ red-first property is recorded here rather than enforced at runtime):
   argv with only ``--docs`` changed and still reaches exit 0 and
   clusters/clusters.md; the pair isolates the docs target as the one variable,
   which is why no third copy of the happy path was added here.
+- ``test_help_names_an_exit_set_for_both_modes`` — FR-028 / CT-005. RED on the
+  pre-change script: the module docstring is argparse's ``description``, so it
+  *is* ``scaffold.py --help``, and it stated an exit contract for ``check``
+  alone ("exit 1 on any violation") while ``init`` had grown two exit-2
+  envelopes whose whole purpose is to be distinguishable from that 1. A caller
+  reading exit codes had no published place to learn them.
+- ``test_unreadable_page_exits_two_without_a_traceback`` — FR-028 / CT-005.
+  RED on the pre-change script: ``do_check`` read every page through a bare
+  ``open()``, so one dangling symlink under docs/ raised ``FileNotFoundError``
+  out of ``main()`` — a traceback on stderr, nothing on stdout, and exit 1,
+  which this script reserves for a real layout violation. It now reports
+  ``cannot_read``. The same test runs ``check`` on the same tree before
+  planting the symlink, so the exit 2 cannot come from a tree that was already
+  failing.
+- ``test_malformed_category_json_stays_a_violation`` — FR-028 / CT-005. Green
+  before and after by design: the ``_category_.json`` handler was narrowed from
+  ``except Exception`` to the three families a malformed file raises, so that
+  an OSError reaches the ``cannot_read`` boundary instead of being filed as a
+  violation. This pins the half that must not move.
 
 No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 """
@@ -146,3 +165,143 @@ def test_unwritable_docs_path_exits_two_without_a_traceback(run_script, tmp_path
     assert docs.read_text(encoding="utf-8") == "a file, not a directory\n", (
         "The refused target must be left exactly as it was found" + outcome(result)
     )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: the exit contract is published where a caller can read it.
+# -----------------------------------------------------------------------------
+def test_help_names_an_exit_set_for_both_modes(run_script):
+    result = run_script("scaffold.py", "--help")
+
+    assert result.returncode == 0, (
+        f"Expected --help to exit 0; got {result.returncode}" + outcome(result)
+    )
+    help_text = result.stdout
+    assert "  init " in help_text and "  check " in help_text, (
+        "Expected --help to describe both modes; the module docstring is "
+        "argparse's description, so this is where the contract is published"
+        + outcome(result)
+    )
+    init_block = help_text.split("  init ", 1)[1].split("  check ", 1)[0]
+    check_block = help_text.split("  check ", 1)[1]
+
+    # init is the mode that grew the exit-2 envelopes, and it was the one the
+    # docstring said nothing about. Naming exit 2 only under check would leave a
+    # caller reading `bad_subject` with no published reason it is not a 1.
+    assert "exit 2" in init_block, (
+        "Expected --help to name exit 2 for init: a bad key and a refused write "
+        "are could-not-run, and the whole point of the code is that it is not "
+        "check's violation 1" + outcome(result)
+    )
+    for status in ("bad_subject", "cannot_write"):
+        assert status in init_block, (
+            f"Expected --help to name init's {status} status; an exit code with "
+            f"no published status leaves a caller parsing prose" + outcome(result)
+        )
+    assert "exit 1" in check_block and "exit 2" in check_block, (
+        "Expected --help to keep check's exit 1 and name its exit 2"
+        + outcome(result)
+    )
+    for status in ("no_docs", "cannot_read"):
+        assert status in check_block, (
+            f"Expected --help to name check's {status} status" + outcome(result)
+        )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: a page that cannot be read is a could-not-check, not a
+# layout violation.
+# -----------------------------------------------------------------------------
+def test_unreadable_page_exits_two_without_a_traceback(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    assert run_script("scaffold.py", "init", "--docs", docs).returncode == 0, (
+        "The tree this test breaks has to be built first"
+    )
+
+    # The control runs first and on the same tree, so the exit 2 below can only
+    # come from the symlink. A separate happy-path test would not prove that:
+    # scaffold check reports on a whole tree, and one already-failing page in it
+    # would produce the same non-zero code for an unrelated reason.
+    clean = run_script("scaffold.py", "check", "--docs", docs)
+    assert clean.returncode == 0, (
+        f"Expected the freshly scaffolded tree to pass its own check before the "
+        f"symlink is planted; got {clean.returncode}" + outcome(clean)
+    )
+
+    # A dangling symlink, not `chmod 000`: root reads straight through a mode
+    # bit, so a permissions fixture passes by not running, which is the failure
+    # shape this suite exists to catch. A broken link is refused for everyone.
+    broken = docs / "install" / "broken.md"
+    broken.symlink_to("nowhere.md")
+
+    result = run_script("scaffold.py", "check", "--docs", docs)
+
+    assert result.returncode == 2, (
+        f"Expected exit 2 (nothing to check): a page os.listdir names and "
+        f"open() refuses is not a layout violation, and exit 1 is reserved for "
+        f"those; got {result.returncode}" + outcome(result)
+    )
+    assert "Traceback" not in result.stderr, (
+        "An unreadable page must be reported, not raised: the traceback exits 1 "
+        "with an empty stdout, so a caller reading JSON sees no envelope at all"
+        + outcome(result)
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "cannot_read", (
+        "Expected a cannot_read JSON envelope on stdout" + outcome(result)
+    )
+    assert payload["path"] == str(broken), (
+        f"Expected the unreadable page named in the envelope; got "
+        f"{payload.get('path')!r}" + outcome(result)
+    )
+    assert payload.get("error"), (
+        "Expected the envelope to carry what the filesystem said" + outcome(result)
+    )
+    assert "violations" not in payload, (
+        "A scan that stopped part way through has not earned a findings list: "
+        "reported as `violations` it is a partial answer read as a whole one"
+        + outcome(result)
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: narrowing the _category_.json handler must not reclassify
+# the malformed file it was written for.
+# -----------------------------------------------------------------------------
+def test_malformed_category_json_stays_a_violation(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    assert run_script("scaffold.py", "init", "--docs", docs).returncode == 0, (
+        "The tree this test breaks has to be built first"
+    )
+    category = docs / "install" / "_category_.json"
+
+    # One shape per family the narrowed handler still catches: bytes that are
+    # not JSON (ValueError), a top-level array, which has no .get
+    # (AttributeError), and a position that cannot be a dict key (TypeError).
+    # `except Exception` caught all three and OSError with them; only the OSError
+    # was meant to move.
+    for body in ('not json at all\n', '[1, 2]\n', '{"position": [1]}\n'):
+        category.write_text(body, encoding="utf-8")
+
+        result = run_script("scaffold.py", "check", "--docs", docs)
+
+        assert result.returncode == 1, (
+            f"Expected exit 1 for _category_.json holding {body!r}: Docusaurus "
+            f"cannot order a sidebar from it, which is a layout violation, not a "
+            f"file that could not be read; got {result.returncode}"
+            + outcome(result)
+        )
+        assert "Traceback" not in result.stderr, (
+            f"_category_.json holding {body!r} must be reported, not raised"
+            + outcome(result)
+        )
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "violations", (
+            f"Expected a violations envelope for {body!r}; got "
+            f"{payload.get('status')!r}" + outcome(result)
+        )
+        problems = [v["problem"] for v in payload["violations"]]
+        assert "unreadable _category_.json" in problems, (
+            f"Expected the malformed file named as the violation for {body!r}; "
+            f"got {problems}" + outcome(result)
+        )
