@@ -1,0 +1,56 @@
+# evidence-cmd: sed -n "/^def run_script(/,/^    )\$/p" plugins/webster/tests/conftest.py; echo "--- no test module imports a webster script (GI-004, AC-041, OT-039) ---"; if grep -rEn "^[[:space:]]*(import|from)[[:space:]]+(survey|drift|slop|doctype|llmstxt|scaffold|rendered)\b" plugins/webster/tests; then echo FOUND; else echo "no matches"; fi; echo "--- CT-007 through run_script, for real ---"; cd plugins/webster && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k child_python3 2>&1 | tail -2
+# evidence-for: US-010, FR-029, NFR-004, AC-041, CT-007, GI-004, OT-039
+# evidence-volatile: \d+\.\d+s
+#
+# CT-007 and FR-029, as the one helper the suite has. run_script shells out to the literal
+# "python3" so the child is the interpreter a reader's shebang resolves, starts from base_env
+# (PATH and HOME only, so an exported WEBSTER_* in a developer shell cannot reach the script
+# under test), carries an explicit SCRIPT_TIMEOUT so a script waiting on stdin fails the test
+# instead of hanging the run (NFR-004), and returns the CompletedProcess unexamined so the
+# calling assertion can quote both streams.
+#
+# GI-004 and AC-041 are the negative half: no module under tests/ imports a webster script, so
+# every invocation in the suite goes through this function. The last block runs one test that
+# drives survey.py through it end to end.
+
+def run_script(
+    name: str,
+    *args: str | Path,
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """Run ``plugins/webster/scripts/<name>`` the way a reader runs it (CT-007).
+
+    ``name`` is the script basename (``"drift.py"``), ``args`` become argv,
+    ``cwd`` is the directory the script runs in — which matters, because
+    drift.py, llmstxt.py and survey.py all default their root to ``"."`` — and
+    ``env`` adds to (or overrides) the minimal base environment.
+
+    Returns the ``subprocess.CompletedProcess`` unexamined: exit code, stdout
+    and stderr all belong to the calling test's assertion, which must quote them
+    on failure — the shape of the returncode assertion in
+    ``plugins/forge/tests/test_validate_spec.py``, lines 43-46, which dumps both
+    streams into the message. That is another file this change may not touch.
+    """
+    script = SCRIPTS_DIR / name
+    if not script.is_file():
+        available = ", ".join(sorted(p.name for p in SCRIPTS_DIR.glob("*.py")))
+        raise FileNotFoundError(
+            f"no such webster script: {script}. Available: {available}"
+        )
+    proc_env = base_env()
+    if env:
+        proc_env.update({key: str(value) for key, value in env.items()})
+    return subprocess.run(
+        ["python3", str(script), *(str(a) for a in args)],
+        capture_output=True,
+        text=True,
+        timeout=SCRIPT_TIMEOUT,
+        cwd=str(cwd) if cwd is not None else None,
+        env=proc_env,
+    )
+--- no test module imports a webster script (GI-004, AC-041, OT-039) ---
+no matches
+--- CT-007 through run_script, for real ---
+.                                                                        [100%]
+1 passed, 3 deselected in 0.16s

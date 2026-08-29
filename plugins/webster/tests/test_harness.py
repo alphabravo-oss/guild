@@ -5,7 +5,7 @@ GI-007; OT-038, OT-043; AC-039, AC-040).
 Every other module in this suite tests a webster script. This one tests the
 things those modules stand on, because a harness claim nobody measures is the
 same false pass ``drift.py`` and ``doctype.py`` are being fixed to stop
-reporting — and three such claims had already gone bad:
+reporting — and four such claims had already gone bad:
 
 - ``conftest.py``'s interpreter-skew docstring asserted the child ``python3``
   "resolves through PATH to 3.14.6" and is "not the one running pytest". Under
@@ -21,6 +21,17 @@ reporting — and three such claims had already gone bad:
   harness that deliberately has no ``check=``. Citations here now name symbols,
   not line numbers, for every file this change is allowed to edit; a line
   number appears only for a file GI-007 freezes.
+- ``strip_already_made``, the one exception in the GI-007 guard below, asked
+  whether the working tree still held a path — and the comment above it
+  claimed that made the exception unable to admit anything, because "a path
+  that survives to land is on disk". Both were wrong in the same direction.
+  The diff the guard reads is ``baseline..HEAD``, a comparison of two trees
+  that never looks at disk, so an evidence log committed into HEAD and then
+  removed without committing the removal is missing from the working tree and
+  present in the change — and was waived. The only automated guard behind
+  GI-007 reported a change as inside its surface at the moment it was not.
+  The question is now put to ``git ls-tree -r HEAD``, which is the tree the
+  diff is actually about.
 
 Which requirement each test pins, and whether it is a red-first fix test or a
 guard over a truth that was asserted but never measured (FR-039 asks for this
@@ -119,10 +130,11 @@ READ_ONLY_LAYERS = ("agents", "commands", "skills")
 # version returned "yes" for anything under ``evidence/``, which widened the
 # only automated guard behind GI-007 past the five locations it exists to
 # enforce. The prefix is used exactly once below, to drop a path the diff still
-# reports and the working tree no longer has: a strip that has been made and
-# not yet committed. A path that survives to land is on disk and is judged like
-# any other, so this exception cannot admit anything. It is the only exception
-# in this file.
+# reports and HEAD no longer holds: a strip whose deletion is committed. A path
+# that survives to land is in HEAD's tree and is judged like any other, so this
+# exception cannot admit anything. It is the only exception in this file, and
+# it is asked of HEAD rather than of the working tree for the reason
+# ``strip_already_made`` gives.
 #
 # Until that strip happens the changed half of the scope test reports every
 # committed evidence log as outside the surface, and it is meant to: a run that
@@ -166,6 +178,17 @@ def nul_separated(result: subprocess.CompletedProcess) -> list[str]:
     return [path for path in result.stdout.split("\0") if path]
 
 
+def head_tracked_paths() -> frozenset[str]:
+    """Every path the HEAD commit's tree carries, repository-relative.
+
+    ``ls-tree -r HEAD`` and not ``ls-files``: the index and the working tree
+    may each disagree with HEAD, and what a committed change carries is a
+    property of HEAD alone. Keeping those apart is the whole of
+    ``strip_already_made``.
+    """
+    return frozenset(nul_separated(git("ls-tree", "-r", "-z", "--name-only", "HEAD")))
+
+
 def in_writable_set(rel: str) -> bool:
     """True when ``rel``, relative to ``plugins/webster``, is one of GI-007's five."""
     if rel in _WRITABLE_FILES:
@@ -189,15 +212,25 @@ def changed_path_allowed(path: str) -> bool:
     return False
 
 
-def strip_already_made(path: str) -> bool:
-    """True when ``path`` is a run evidence log the working tree no longer holds.
+def strip_already_made(path: str, head_paths: frozenset[str]) -> bool:
+    """True when ``path`` is a run evidence log HEAD no longer carries.
 
-    The sole exception documented at ``RUN_EVIDENCE_PREFIX``: the diff still
-    reports the file because the deletion is not committed yet. Anything that
-    lands exists on disk, so it never reaches this branch and is judged by
-    ``changed_path_allowed`` like every other path.
+    The sole exception documented at ``RUN_EVIDENCE_PREFIX``: the diff names
+    the file because the baseline had it, HEAD does not, and the strip is
+    therefore committed. Anything that lands is in HEAD's tree, so it never
+    reaches this branch and is judged by ``changed_path_allowed`` like every
+    other path.
+
+    ``head_paths`` comes from ``head_tracked_paths`` and not from disk. An
+    earlier version asked ``(REPO_ROOT / path).exists()``, which answers a
+    question about the working tree that the ``baseline..HEAD`` diff never
+    asked: a log committed into HEAD and then removed without committing the
+    removal is absent from disk and present in the change, satisfied that
+    test, and was waived — so the guard passed on a change carrying a path
+    GI-007 does not allow. Under this predicate the two halves agree, and the
+    exception cannot admit anything that lands.
     """
-    return path.startswith(RUN_EVIDENCE_PREFIX) and not (REPO_ROOT / path).exists()
+    return path.startswith(RUN_EVIDENCE_PREFIX) and path not in head_paths
 
 
 def resolve_baseline() -> tuple[str | None, str]:
@@ -384,9 +417,15 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
     invariant never named.
 
     One tolerance survives, and it can admit nothing: a path the diff reports
-    that is under ``evidence/`` and is no longer in the working tree — a strip
-    made but not yet committed (``strip_already_made``). Anything that lands is
-    on disk and is judged normally.
+    that is under ``evidence/`` and that HEAD does not carry — a strip whose
+    deletion is committed (``strip_already_made``). It is asked of HEAD and not
+    of the working tree, because a log committed into HEAD and then removed
+    without committing the removal is missing from disk while the change still
+    carries it, and waiving that path let this guard pass on a change that had
+    in fact left its surface. Anything that lands is in HEAD's tree and is
+    judged normally; both branches of the exception are asserted below on
+    constructed inputs, since whether it can admit a landed path is a property
+    of the predicate and asking it of the tree at hand only restates the tree.
 
     Consequence, stated here rather than skipped: while this run's evidence
     logs are still committed, this half fails and names them. It goes green on
@@ -423,10 +462,35 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
         return
 
     changed = nul_separated(git("diff", "--name-only", "-z", f"{baseline}..HEAD"))
+    head_paths = head_tracked_paths()
+
+    # Both branches of the one exception, on inputs written here rather than
+    # read off the tree. The first is the branch that went wrong: the log is in
+    # HEAD, so the change carries it, and no state of the working tree may
+    # excuse that. The second is the branch the exception exists for.
+    sample = RUN_EVIDENCE_PREFIX + "casting-0-example.log"
+    assert not strip_already_made(sample, frozenset({sample})), (
+        f"strip_already_made waived {sample} while HEAD carries it. Removing a "
+        f"committed evidence log from the working tree without committing the "
+        f"removal would then pass this guard on a change that landed a path "
+        f"GI-007 does not allow, which is the one thing it exists to catch."
+    )
+    assert strip_already_made(sample, frozenset()), (
+        f"strip_already_made refused to waive {sample} when HEAD no longer "
+        f"carries it. The lead's strip commit is what the exception is for, "
+        f"and refusing it leaves this guard red forever once the run's own "
+        f"bookkeeping is gone."
+    )
+    assert not strip_already_made("plugins/other/thing.md", frozenset()), (
+        "strip_already_made waived a path outside evidence/. Without the "
+        "prefix test every deletion anywhere in the repository is excused, "
+        "and the guard stops reading the diff it was given."
+    )
+
     outside = sorted(
         path
         for path in changed
-        if not changed_path_allowed(path) and not strip_already_made(path)
+        if not changed_path_allowed(path) and not strip_already_made(path, head_paths)
     )
     assert not outside, (
         f"the change touches paths outside its declared surface. Baseline "

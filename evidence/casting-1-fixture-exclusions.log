@@ -1,0 +1,16 @@
+# evidence-cmd: echo "--- GI-005 exclusions found inside the committed fixture ---"; find plugins/webster/tests/fixtures/repo \( -name .git -o -name website -o -name .webster.json \) -print | sort; echo "matches: $(find plugins/webster/tests/fixtures/repo \( -name .git -o -name website -o -name .webster.json \) -print | wc -l | tr -d " ")"; echo "--- the guard over the same three ---"; cd plugins/webster && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k committed_fixture 2>&1 | tail -2
+# evidence-for: US-010, FR-042, AC-040, GI-005
+# evidence-volatile: \d+\.\d+s
+#
+# FR-042 and AC-040. A-032 excludes three things from the committed fixture: a nested .git, the
+# Docusaurus website/ scaffold, and a pre-recorded docs/.webster.json. The find below walks the
+# filesystem rather than the index, because two of the three can appear untracked — a .git left
+# behind by a test that built in place, and a manifest written by a drift.py record that ran
+# against the source tree instead of a copy. A pre-recorded manifest in particular would let a
+# drift test pass without record ever being exercised, which is this spec's own failure class.
+
+--- GI-005 exclusions found inside the committed fixture ---
+matches: 0
+--- the guard over the same three ---
+.                                                                        [100%]
+1 passed, 3 deselected in 0.00s

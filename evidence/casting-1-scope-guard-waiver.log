@@ -1,0 +1,33 @@
+# evidence-cmd: GIT_CONFIG_GLOBAL=/dev/null; GIT_CONFIG_NOSYSTEM=1; export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM; R=$(pwd); T=$(mktemp -d); setup() { mkdir -p "$1/plugins/webster/tests" "$1/evidence"; cp "$R/plugins/webster/pyproject.toml" "$1/plugins/webster/pyproject.toml"; cp "$R/plugins/webster/tests/__init__.py" "$R/plugins/webster/tests/conftest.py" "$1/plugins/webster/tests/"; cp "$2" "$1/plugins/webster/tests/test_harness.py"; printf 'a log the baseline already carried\n' > "$1/evidence/casting-1-prior.log"; ( cd "$1" && git -c init.defaultBranch=main init -q . && git config user.name t && git config user.email t@t && git add -A && git commit -q -m baseline && git checkout -q -b work ); }; guard() { out=$( cd "$1/plugins/webster" && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k only_the_writable 2>&1 ); code=$?; names=no; case "$out" in *casting-1-demo.log*) names=yes;; esac; printf '%-38s guard exit %s   names casting-1-demo.log: %s\n' "$2" "$code" "$names"; }; scenario() { printf -- '--- test_harness.py %s ---\n' "$2"; guard "$1" "0 nothing changed since baseline"; ( cd "$1" && printf 'demo log\n' > evidence/casting-1-demo.log && git add -A && git commit -q -m 'add evidence' ); guard "$1" "1 evidence log committed"; ( cd "$1" && rm evidence/casting-1-demo.log ); guard "$1" "2 rm, deletion NOT committed"; ( cd "$1" && git add -A && git commit -q -m 'strip demo' ); guard "$1" "3 deletion committed"; ( cd "$1" && git rm -q evidence/casting-1-prior.log && git commit -q -m 'strip prior' ); guard "$1" "4 baseline-carried log stripped"; }; git show 6e19064:plugins/webster/tests/test_harness.py > "$T/old_harness.py"; setup "$T/before" "$T/old_harness.py"; setup "$T/after" "$R/plugins/webster/tests/test_harness.py"; scenario "$T/before" "as it stood at 6e19064"; echo; scenario "$T/after" "at this commit"; rm -rf "$T"
+# evidence-for: US-010, FR-043, FR-039, AC-039, GI-007, OT-043
+#
+# D-046. GI-007's only automated guard, test_only_the_writable_file_set_is_tracked_and_changed,
+# reads a baseline..HEAD diff: a comparison of two trees that never looks at the working tree.
+# Its one exception, strip_already_made, asked whether the working tree still held the path, and
+# the comment above it claimed that made the exception unable to admit anything, because "a path
+# that survives to land is on disk". An evidence log committed into HEAD and then removed without
+# committing the removal is absent from disk and present in the change, so it met that test and
+# was waived: the guard reported the change as inside its surface while HEAD carried a path the
+# invariant does not allow. The question now goes to git ls-tree -r HEAD --name-only.
+#
+# Both versions of the module run the same five states of the same synthetic repository, built
+# from this plugin's own pyproject.toml, tests/__init__.py and tests/conftest.py plus one
+# test_harness.py: the pre-fix file as it stands at 6e19064, then the file at this commit. Row 2
+# is the defect and the red-first record FR-039 asks for — the old guard exits 0 there and does
+# not name the log; the new one exits 1 and names it. Rows 0, 1, 3 and 4 agree, so the fix takes
+# nothing away: row 3 (the deletion committed) and row 4 (a log the baseline carried, stripped in
+# HEAD) are the two states the exception exists for, and both stay green.
+
+--- test_harness.py as it stood at 6e19064 ---
+0 nothing changed since baseline       guard exit 0   names casting-1-demo.log: no
+1 evidence log committed               guard exit 1   names casting-1-demo.log: yes
+2 rm, deletion NOT committed           guard exit 0   names casting-1-demo.log: no
+3 deletion committed                   guard exit 0   names casting-1-demo.log: no
+4 baseline-carried log stripped        guard exit 0   names casting-1-demo.log: no
+
+--- test_harness.py at this commit ---
+0 nothing changed since baseline       guard exit 0   names casting-1-demo.log: no
+1 evidence log committed               guard exit 1   names casting-1-demo.log: yes
+2 rm, deletion NOT committed           guard exit 1   names casting-1-demo.log: yes
+3 deletion committed                   guard exit 0   names casting-1-demo.log: no
+4 baseline-carried log stripped        guard exit 0   names casting-1-demo.log: no
