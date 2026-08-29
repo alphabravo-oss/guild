@@ -1,0 +1,161 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); s="$d/plugins/webster/scripts/drift.py"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-27T16:49:56+00:00 GIT_COMMITTER_DATE=2026-08-27T16:49:56+00:00; for n in a b c e; do cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/$n"; (cd "$t/$n" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m init); done; echo '=== A1 WEBSTER_DOCS=. record then check: clean (D-038) ==='; (cd "$t/a" && WEBSTER_DOCS=. python3 "$s" record; WEBSTER_DOCS=. python3 "$s" check; echo "exit=$?"); echo '=== A2 same layout, uncommitted edit to the cited file: drift ==='; (cd "$t/a" && echo '# edit' >> src/app/main.py; WEBSTER_DOCS=. python3 "$s" check; echo "exit=$?"); echo '=== B docs edit adding a NEW citation: unrelated_changes (D-035) ==='; (cd "$t/b" && python3 "$s" record docs >/dev/null; printf '\nThe command line parses first. <!-- src/cli/main.py:1 -->\n' >> docs/faq.md; python3 "$s" check docs; echo "exit=$?"); echo '=== C a citation naming line 0: broken anchor, drift (D-037) ==='; (cd "$t/c" && printf '\nSee the top. <!-- src/cli/main.py:0 -->\n' >> docs/faq.md; python3 "$s" record docs; python3 "$s" check docs; echo "exit=$?"); echo '=== E a docsHash that is not a string: no_manifest (D-039) ==='; (cd "$t/e" && python3 "$s" record docs >/dev/null; python3 -c "import json;p='docs/.webster.json';m=json.load(open(p));m['docsHash']=5;json.dump(m,open(p,'w'),indent=2)"; python3 "$s" check docs; echo "exit=$?"); rm -rf "$t"
+# evidence-for: FR-005, FR-006, FR-007, FR-008, FR-034, FR-003, FR-001, AC-008, AC-010, AC-001, US-001, US-002
+# evidence-volatile: /[^ "]*tmp\.[A-Za-z0-9]{10}
+
+=== A1 WEBSTER_DOCS=. record then check: clean (D-038) ===
+{"status": "recorded", "gitHead": "17786c0ee901adda8efc83a271a6bff3eb3182de", "pages": 14, "anchors": 1, "lineHashes": 1, "note": ""}
+{
+  "status": "clean",
+  "gitHead": {
+    "recorded": "17786c0ee901adda8efc83a271a6bff3eb3182de",
+    "current": "17786c0ee901adda8efc83a271a6bff3eb3182de"
+  },
+  "docs_edited_since_record": false,
+  "code_files_changed": 0,
+  "anchors": 1,
+  "pages": 14,
+  "pages_with_no_anchor": 13,
+  "unanchored_sample": [
+    "README.md",
+    "docs/advanced/advanced.md",
+    "docs/developer/developer.md",
+    "docs/export/export.md",
+    "docs/faq.md",
+    "docs/getting-started/glossary.md",
+    "docs/getting-started/overview.md",
+    "docs/index.md",
+    "docs/install/install.md",
+    "docs/items/delete-item.md",
+    "docs/items/items.md",
+    "docs/items/no-audience.md"
+  ],
+  "broken_anchors": [],
+  "suspect_pages": {},
+  "hashes": "checked",
+  "hash_mismatches": [],
+  "unhashed_anchors": [],
+  "note": "13 of 14 pages cite no source"
+}
+exit=0
+=== A2 same layout, uncommitted edit to the cited file: drift ===
+{
+  "status": "drift",
+  "gitHead": {
+    "recorded": "17786c0ee901adda8efc83a271a6bff3eb3182de",
+    "current": "17786c0ee901adda8efc83a271a6bff3eb3182de"
+  },
+  "docs_edited_since_record": false,
+  "code_files_changed": 1,
+  "anchors": 1,
+  "pages": 14,
+  "pages_with_no_anchor": 13,
+  "unanchored_sample": [
+    "README.md",
+    "docs/advanced/advanced.md",
+    "docs/developer/developer.md",
+    "docs/export/export.md",
+    "docs/faq.md",
+    "docs/getting-started/glossary.md",
+    "docs/getting-started/overview.md",
+    "docs/index.md",
+    "docs/install/install.md",
+    "docs/items/delete-item.md",
+    "docs/items/items.md",
+    "docs/items/no-audience.md"
+  ],
+  "broken_anchors": [],
+  "suspect_pages": {
+    "docs/items/create-item.md": [
+      "src/app/main.py:15"
+    ]
+  },
+  "hashes": "checked",
+  "hash_mismatches": [],
+  "unhashed_anchors": [],
+  "note": "13 of 14 pages cite no source"
+}
+exit=1
+=== B docs edit adding a NEW citation: unrelated_changes (D-035) ===
+{
+  "status": "unrelated_changes",
+  "gitHead": {
+    "recorded": "17786c0ee901adda8efc83a271a6bff3eb3182de",
+    "current": "17786c0ee901adda8efc83a271a6bff3eb3182de"
+  },
+  "docs_edited_since_record": true,
+  "code_files_changed": 0,
+  "anchors": 2,
+  "pages": 13,
+  "pages_with_no_anchor": 11,
+  "unanchored_sample": [
+    "docs/advanced/advanced.md",
+    "docs/developer/developer.md",
+    "docs/export/export.md",
+    "docs/getting-started/glossary.md",
+    "docs/getting-started/overview.md",
+    "docs/index.md",
+    "docs/install/install.md",
+    "docs/items/delete-item.md",
+    "docs/items/items.md",
+    "docs/items/no-audience.md",
+    "docs/troubleshooting/troubleshooting.md"
+  ],
+  "broken_anchors": [],
+  "suspect_pages": {},
+  "hashes": "checked",
+  "hash_mismatches": [],
+  "unhashed_anchors": [],
+  "note": "pages were edited since the record and no code a page cites changed; 11 of 13 pages cite no source"
+}
+exit=0
+=== C a citation naming line 0: broken anchor, drift (D-037) ===
+{"status": "recorded", "gitHead": "17786c0ee901adda8efc83a271a6bff3eb3182de", "pages": 13, "anchors": 2, "lineHashes": 1, "note": ""}
+{
+  "status": "drift",
+  "gitHead": {
+    "recorded": "17786c0ee901adda8efc83a271a6bff3eb3182de",
+    "current": "17786c0ee901adda8efc83a271a6bff3eb3182de"
+  },
+  "docs_edited_since_record": false,
+  "code_files_changed": 0,
+  "anchors": 2,
+  "pages": 13,
+  "pages_with_no_anchor": 11,
+  "unanchored_sample": [
+    "docs/advanced/advanced.md",
+    "docs/developer/developer.md",
+    "docs/export/export.md",
+    "docs/getting-started/glossary.md",
+    "docs/getting-started/overview.md",
+    "docs/index.md",
+    "docs/install/install.md",
+    "docs/items/delete-item.md",
+    "docs/items/items.md",
+    "docs/items/no-audience.md",
+    "docs/troubleshooting/troubleshooting.md"
+  ],
+  "broken_anchors": [
+    {
+      "anchor": "src/cli/main.py:0",
+      "reason": "line numbers start at 1",
+      "cited_by": [
+        "docs/faq.md:30"
+      ]
+    }
+  ],
+  "suspect_pages": {},
+  "hashes": "checked",
+  "hash_mismatches": [],
+  "unhashed_anchors": [],
+  "note": "11 of 13 pages cite no source"
+}
+exit=1
+=== E a docsHash that is not a string: no_manifest (D-039) ===
+{
+  "status": "no_manifest",
+  "docs_dir": "/private/var/folders/kq/jm1bf9811z512rncmlpl7s200000gn/T/tmp.ERuA452xC2/e/docs",
+  "anchors": 1,
+  "broken": [],
+  "note": "the manifest at /private/var/folders/kq/jm1bf9811z512rncmlpl7s200000gn/T/tmp.ERuA452xC2/e/docs/.webster.json records a docsHash of type int where the tree digest's string belongs, so nothing here has been compared against the code; re-record"
+}
+exit=2

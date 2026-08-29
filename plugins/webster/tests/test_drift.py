@@ -17,6 +17,7 @@ test                                                pins           was at   was,
 test_uncommitted_edit_to_cited_file_is_drift        FR-001 AC-001  cfafe8e  status clean, exit 0
 test_staged_rename_marks_old_and_new_path_dirty     FR-001 AC-002  cfafe8e  suspect_pages {}
 test_docs_below_the_git_root_still_match_anchors    FR-001 US-001  f31b144  unrelated_changes, 0
+test_docs_tree_at_the_repo_root_reaches_clean       FR-001 FR-005  19941ad  unrelated_changes, 0
 test_check_outside_a_git_repo_reports_no_git        FR-002 AC-003  cfafe8e  status drift, exit 1
 test_rebased_away_head_reports_head_missing         FR-037 AC-004  cfafe8e  status clean, exit 0
 test_non_ascii_path_under_a_c_locale_still_answers  FR-002 FR-037  9859317  traceback, no JSON
@@ -28,9 +29,11 @@ test_hash_mismatch_alone_is_drift                   FR-007         cfafe8e  stat
 test_manifest_without_line_hashes_is_not_recorded   FR-004 AC-006  cfafe8e  no hashes key
 test_partly_hashed_manifest_is_not_reported_clean   FR-003 FR-007  f31b144  status clean, exit 0
 test_anchor_past_end_of_file_gets_no_line_hash      FR-034         cfafe8e  no lineHashes key
+test_anchor_citing_line_zero_is_a_broken_anchor     FR-034 FR-003  19941ad  hashes_partial, exit 2
 test_latin1_cited_line_byte_change_is_a_mismatch    FR-003 US-001  19c97f9  status clean, exit 0
 test_uncited_commit_is_unrelated_changes            FR-005 AC-007  cfafe8e  status drift, exit 1
 test_docs_only_edit_is_unrelated_changes            FR-008 AC-008  cfafe8e  status drift, exit 1
+test_docs_edit_adding_a_citation_is_unrelated       FR-008 ST-003  19941ad  hashes_partial, exit 2
 test_broken_anchor_outranks_unrelated_churn         FR-007 AC-009  cfafe8e  no hashes key
 test_nothing_changed_since_record_is_clean          FR-005 AC-010  cfafe8e  no hashes key
 test_docs_directory_with_no_pages_is_not_clean      FR-005 FR-006  19c97f9  status clean, exit 0
@@ -323,6 +326,67 @@ def test_docs_below_the_git_root_still_match_anchors(run_script, fixture_repo, t
     )
 
 
+def test_docs_tree_at_the_repo_root_reaches_clean(run_script, fixture_repo):
+    """FR-001 / FR-005 / US-001 / US-002 / ST-006 — WEBSTER_DOCS="." is a real layout.
+
+    RED at 19941ad: the docs prefix was ``os.path.relpath(DOCS, ROOT)`` with a "/" appended,
+    which is "./" when the docs directory IS the root — a repository whose pages sit at the
+    top, which is what WEBSTER_DOCS="." asks for. Nothing git prints is "./"-prefixed, so the
+    prefix test matched no path at all and ``.webster.json``, the file record had just written,
+    counted as a changed code file. ``clean`` was unreachable on any tree in this layout: a
+    fresh record followed immediately by a check printed unrelated_changes at exit 0 with
+    code_files_changed 1 and a note about code that no page cites, naming the manifest.
+
+    The second half is the guard against fixing that by declaring everything under the root
+    docs. Source files have to stay code, or no page could ever go suspect for one — which
+    would move US-001's own scenario into the same false clean under a different name.
+    """
+    at_root = {"WEBSTER_DOCS": "."}
+    printed = run_script("drift.py", "record", cwd=fixture_repo, env=at_root)
+    assert printed.returncode == 0, (
+        f"expected exit 0 from record at the repo root; got {printed.returncode}\n"
+        f"{outcome(printed)}"
+    )
+    assert (fixture_repo / ".webster.json").is_file(), (
+        f"this test needs the manifest written at the repository root\n{outcome(printed)}"
+    )
+
+    result = run_script("drift.py", "check", cwd=fixture_repo, env=at_root)
+    data = parsed(result)
+
+    assert data["status"] == "clean", (
+        "expected status clean straight after a record with the docs tree at the repo root; "
+        f"got {data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0 alongside status clean; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 0, (
+        "expected the manifest this run just wrote not to count as changed code; got "
+        f"{data['code_files_changed']}\n{outcome(result)}"
+    )
+
+    # A source file is still code in this layout, so the page citing it still goes suspect.
+    cited = fixture_repo / CITED_FILE
+    cited.write_text(cited.read_text(encoding="utf-8") + "# edit\n", encoding="utf-8")
+
+    result = run_script("drift.py", "check", cwd=fixture_repo, env=at_root)
+    data = parsed(result)
+
+    assert data["suspect_pages"] == {CITING_PAGE: [ANCHOR]}, (
+        f"expected {CITING_PAGE} suspect through {ANCHOR} with the docs tree at the repo "
+        f"root; got {data['suspect_pages']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift" and result.returncode == 1, (
+        f"expected drift at exit 1 for an uncommitted edit to {CITED_FILE}; got "
+        f"{data['status']!r} at exit {result.returncode}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 1, (
+        f"expected only {CITED_FILE} to count as code; got "
+        f"{data['code_files_changed']}\n{outcome(result)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # FR-002 / FR-006 / FR-037: git failures are statuses, not empty strings
 # ---------------------------------------------------------------------------
@@ -537,6 +601,14 @@ def test_wrong_typed_manifest_field_is_no_manifest(run_script, fixture_repo):
     ``read_manifest`` already promised "(None, reason) for every unusable state", and a
     manifest is a file people edit, merge and generate, so a field holding the wrong type is an
     ordinary state of it — the same class as the unparseable manifest above, one field deeper.
+
+    The list below is every field ``check`` reads back, and only those. ``docsHash`` was the
+    one it read and nothing validated: a non-string never equals a fresh tree digest, so
+    ``docs_edited_since_record`` came back true on a tree nobody had touched and the run
+    printed unrelated_changes at exit 0 — the quiet half of this failure, a wrong answer in
+    the shape of a right one rather than a traceback. ``pages`` is written by record and read
+    by nothing, so its type is not checked here; refusing a manifest over a field that changes
+    no answer is the refusal this test was reported for.
     """
     record(run_script, fixture_repo)
     good = manifest_of(fixture_repo)
@@ -548,6 +620,8 @@ def test_wrong_typed_manifest_field_is_no_manifest(run_script, fixture_repo):
         ("gitHead", True),
         ("gitHead", 1.5),
         ("gitHead", {"sha": "0" * 40}),
+        ("docsHash", 5),
+        ("docsHash", ["0" * 64]),
         ("lineHashes", [ANCHOR]),
         ("lineHashes", {ANCHOR: 5}),
         ("anchors", ANCHOR),
@@ -816,6 +890,61 @@ def test_anchor_past_end_of_file_gets_no_line_hash(run_script, fixture_repo):
     )
 
 
+def test_anchor_citing_line_zero_is_a_broken_anchor(run_script, fixture_repo):
+    """FR-034 / FR-003 / FR-005 — a line number below 1 is a broken citation, not a gap.
+
+    RED at 19941ad: ``resolves`` asked only whether the cited line was past the END of its
+    file, so ``src/cli/main.py:0`` came back resolvable — while ``cited_line`` enumerates from
+    1 and can never return a line 0. The anchor was resolvable and unhashable at once: record
+    wrote no digest for it, check counted it under unhashed_anchors, and the set reported
+    hashes_partial at exit 2 with a note saying re-record. Re-recording produced the same
+    manifest and the same exit 2, so the state was permanent and nothing the author could do
+    to the citation would clear it.
+
+    Line numbers are 1-based everywhere an anchor is written, so 0 names no line and the
+    citation is broken in the way ``src/app/missing.py:3`` is broken. Reported as drift it
+    names the page to fix, and the invariant the hash half relies on — a line that cannot be
+    hashed is a line that does not resolve — becomes true.
+    """
+    zero_anchor = "src/cli/main.py:0"
+    faq = fixture_repo / "docs/faq.md"
+    faq.write_text(
+        faq.read_text(encoding="utf-8") + f"\nSee the top. <!-- {zero_anchor} -->\n",
+        encoding="utf-8",
+    )
+    printed = record(run_script, fixture_repo)
+    manifest = manifest_of(fixture_repo)
+
+    assert zero_anchor in manifest["anchors"], (
+        f"expected the citation to still be recorded; got {manifest['anchors']!r}"
+    )
+    assert zero_anchor not in manifest["lineHashes"], (
+        f"expected no digest for a line that does not exist; got {manifest['lineHashes']!r}"
+    )
+    assert printed["anchors"] == 2 and printed["lineHashes"] == 1, (
+        f"expected 2 anchors and 1 hashed line; got {printed!r}"
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert [b["anchor"] for b in data["broken_anchors"]] == [zero_anchor], (
+        f"expected {zero_anchor} reported as a broken anchor with its own reason; got "
+        f"{data['broken_anchors']!r}\n{outcome(result)}"
+    )
+    assert data["unhashed_anchors"] == [], (
+        "expected one failure reported once: an anchor that does not resolve is not also an "
+        f"anchor nothing measured; got {data['unhashed_anchors']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected status drift rather than the permanent hashes_partial; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1; got {result.returncode}\n{outcome(result)}"
+    )
+
+
 def test_latin1_cited_line_byte_change_is_a_mismatch(run_script, fixture_repo):
     """US-001 / FR-003 / FR-005 / ST-006 — the digest is over the bytes, not a lossy decode.
 
@@ -935,6 +1064,52 @@ def test_docs_only_edit_is_unrelated_changes(run_script, fixture_repo):
     )
     assert result.returncode == 0, (
         f"expected exit 0; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 0, (
+        f"expected no code file changed; got {data['code_files_changed']}\n{outcome(result)}"
+    )
+
+
+def test_docs_edit_adding_a_citation_is_unrelated(run_script, fixture_repo):
+    """FR-008 / ST-003 / AC-008 / OT-009 / FR-006 — a new citation is a docs edit.
+
+    RED at 19941ad: every resolvable anchor the manifest carried no digest for went into
+    ``unhashed_anchors``, and an anchor the page grew AFTER the record is one of them — there
+    was nothing to take a digest of when record ran. Appending one sentence carrying a citation
+    therefore moved the run to hashes_partial at exit 2 with a note telling the author to
+    re-record, under a requirement reading "report docs_edited_since_record: true and status
+    unrelated_changes" at exit 0. ``test_docs_only_edit_is_unrelated_changes`` above is the
+    control: the same edit without a citation already passed, so the citation was the trigger.
+
+    An anchor the record DID hold and never hashed is a different fact and still refuses to
+    report a pass; ``test_partly_hashed_manifest_is_not_reported_clean`` pins that half.
+    """
+    record(run_script, fixture_repo)
+    faq = fixture_repo / "docs/faq.md"
+    faq.write_text(
+        faq.read_text(encoding="utf-8")
+        + f"\nThe command line parses first. <!-- {MDX_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["status"] == "unrelated_changes", (
+        "expected status unrelated_changes for a docs edit that adds a citation; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["docs_edited_since_record"] is True, (
+        f"expected docs_edited_since_record true; got {data['docs_edited_since_record']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert data["unhashed_anchors"] == [], (
+        "expected a citation added after the record to be reported as the docs edit it is, "
+        f"not as an anchor nothing measured; got {data['unhashed_anchors']!r}\n"
+        f"{outcome(result)}"
     )
     assert data["code_files_changed"] == 0, (
         f"expected no code file changed; got {data['code_files_changed']}\n{outcome(result)}"
