@@ -172,13 +172,21 @@ def files():
 
 def main():
     # A target that is not there walks to nothing, and "no slop found across 0 files" reads
-    # exactly like a pass. Three sibling scripts already answer a docs path that is not there
-    # with exit 2: drift.py's no_docs envelope in main(), doctype.py's "no docs directory at"
-    # line in main(), and scaffold.py's no_docs envelope in do_check. This one returned 0, so
-    # a typo in the docs path silently cleared the gate. (survey.py still returns 0 for a root
-    # that does not exist, which is why this names three scripts and not "every other
-    # script".) Named by symbol on purpose: the line numbers this comment used to carry had
-    # already slid onto unrelated code in two of the three files by the time anyone reread it.
+    # exactly like a pass. Of the six sibling scripts, four take a docs path, and all four
+    # already answer one that is not there with exit 2: drift.py's no_docs envelope in main(),
+    # doctype.py's and llmstxt.py's "no docs directory at" line in main(), and scaffold.py's
+    # no_docs envelope in do_check. This one returned 0, so a typo in the docs path silently
+    # cleared the gate. The other two take something that is not a docs path, and only one of
+    # them shares the hole: rendered.py takes a built site directory and answers a missing one
+    # with exit 2 as well, survey.py takes a repo root and still returns 0 for one that is not
+    # there. Counted by running all six on a path that is not there, at cfafe8e and here. The
+    # version of this comment that said three had left llmstxt.py out and then called what
+    # remained "every other script", so a reader was told llmstxt.py was one of the scripts
+    # that does not do this. Named by symbol on purpose: this comment used to cite three line
+    # numbers, and by the time anyone reread them two had slid onto unrelated code -- one onto
+    # a docstring line, one onto a shapes printer -- while only the third still pointed at the
+    # check it was taken from. The numbers themselves are not repeated here, because repeating
+    # them is the thing that went wrong; they are in the evidence log, read at a named commit.
     missing = [t for t in TARGETS if not os.path.isfile(t) and not os.path.isdir(t)]
     if missing:
         for t in missing:

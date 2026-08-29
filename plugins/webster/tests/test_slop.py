@@ -11,8 +11,49 @@ line that a later fix to slop.py turned into a blank one, and a docstring that
 points at whitespace is worse than one that points at nothing, because it reads
 as checked.
 
-Which fix each test pins, and what it did before the fix (FR-039, AC-039 — the
-red-first property is recorded here rather than enforced at runtime):
+Which fix each test pins, the revision it is RED against, and what it did
+before the fix (FR-039, AC-039 — the red-first property is recorded here rather
+than enforced at runtime). The revision column is measured, not reasoned about.
+Each cell is one run: copy the plugin to a scratch directory, put that
+revision's slop.py in it, and run this module against it --
+
+    cp -R plugins/webster "$scratch/webster"
+    git show REV:plugins/webster/scripts/slop.py \
+        > "$scratch/webster/scripts/slop.py"
+    cd "$scratch/webster" && uvx pytest tests/test_slop.py -v
+
+The revisions measured are every commit that has touched slop.py since the
+pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5,
+ad38ed9.
+
+"red against REV" means this file fails when the suite runs against the slop.py
+at REV and passes against the next revision in that list. "guard" means it
+passed at all five and exists to stop a fix from taking something else away
+with it. "added" is the commit the row's test first appeared in; no test in
+this module has been amended since.
+
+=======================================================  ============  =======
+test                                                     red against   added
+=======================================================  ============  =======
+test_weak_verb_page_reports_medium_and_exits_zero        cfafe8e       af10189
+test_supercharge_still_exits_one                         guard         af10189
+test_human_co_author_trailer_exits_zero                  cfafe8e       af10189
+test_ai_co_author_trailer_reports_agent_attribution      guard         af10189
+test_text_marks_in_headings_are_not_emoji                cfafe8e       af10189
+test_presentation_emoji_in_heading_is_reported           cfafe8e       af10189
+test_missing_target_exits_two                            cfafe8e       af10189
+test_dangling_symlink_page_exits_two                     af10189       ba33497
+test_kept_supplementary_range_reports_a_non_emoji_block  guard         ba33497
+test_pruned_directories_are_neither_checked_nor_counted  guard         ad38ed9
+=======================================================  ============  =======
+
+The one row naming a revision later than cfafe8e, ``test_dangling_symlink_page_exits_two``,
+is red at cfafe8e as well. The four rows filed "guard" are the four that pass
+at cfafe8e, and they pass at all five; no row in this module passes at cfafe8e
+and fails later. The measurement was run because the same table in
+``test_scaffold.py`` carried a row labelled "green before and after by design"
+that is red against five of the seven revisions measured there. Every row below
+survived it unchanged.
 
 - ``test_weak_verb_page_reports_medium_and_exits_zero`` — FR-024 / OT-030.
   RED on the pre-change script: robust, leverage, elevate and empower were

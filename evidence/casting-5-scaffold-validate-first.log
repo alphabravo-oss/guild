@@ -1,0 +1,23 @@
+# evidence-cmd: for rev in cfafe8e HEAD; do d=$(mktemp -d); git show "$rev:plugins/webster/scripts/scaffold.py" > "$d/scaffold.py"; mkdir "$d/bad" "$d/good"; out=$(env -i PATH="$PATH" HOME="$HOME" python3 "$d/scaffold.py" init --docs "$d/bad" --subject "Bad Key:Label" 2>&1); rc=$?; echo "### scaffold.py@$rev init --subject \"Bad Key:Label\" -> exit=$rc"; echo "$out" | sed "s|$d|TMP|g"; echo "files left under --docs: $(find "$d/bad" -mindepth 1 | wc -l | tr -d " ")"; out=$(env -i PATH="$PATH" HOME="$HOME" python3 "$d/scaffold.py" init --docs "$d/good" --subject clusters:Clusters 2>&1); rc=$?; echo "### scaffold.py@$rev init --subject clusters:Clusters -> exit=$rc"; echo "$out" | sed "s|$d|TMP|g" | head -4; echo "clusters/clusters.md present: $( [ -f "$d/good/clusters/clusters.md" ] && echo yes || echo no )"; echo; rm -rf "$d"; done
+# evidence-for: US-009, FR-028, AC-036, AC-037
+
+### scaffold.py@cfafe8e init --subject "Bad Key:Label" -> exit=1
+subject key 'Bad Key' must be lower-case-with-hyphens
+files left under --docs: 9
+### scaffold.py@cfafe8e init --subject clusters:Clusters -> exit=0
+{
+  "created": [
+    "index.md",
+    "faq.md",
+clusters/clusters.md present: yes
+
+### scaffold.py@HEAD init --subject "Bad Key:Label" -> exit=2
+{"status": "bad_subject", "subject": "Bad Key", "error": "subject key 'Bad Key' must be lower-case-with-hyphens"}
+files left under --docs: 0
+### scaffold.py@HEAD init --subject clusters:Clusters -> exit=0
+{
+  "status": "ok",
+  "created": [
+    "index.md",
+clusters/clusters.md present: yes
+

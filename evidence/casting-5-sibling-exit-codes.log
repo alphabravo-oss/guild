@@ -1,0 +1,28 @@
+# evidence-cmd: for rev in cfafe8e HEAD; do d=$(mktemp -d); echo "### every sibling script on a path that is not there, at $rev"; for spec in "doctype.py:docs path:check /no/such/docs" "drift.py:docs path:check /no/such/docs" "llmstxt.py:docs path:" "rendered.py:built site dir:check /no/such/build" "scaffold.py:docs path:check --docs /no/such/docs" "survey.py:repo root:/no/such/root"; do s=${spec%%:*}; t=${spec#*:}; kind=${t%%:*}; args=${t#*:}; git show "$rev:plugins/webster/scripts/$s" > "$d/$s"; env -i PATH="$PATH" HOME="$HOME" WEBSTER_DOCS=/no/such/docs python3 "$d/$s" $args > "$d/o" 2>&1; rc=$?; printf "%-12s takes a %-15s exit=%s  %s\n" "$s" "$kind" "$rc" "$(head -1 "$d/o")"; done; rm -rf "$d"; done; for rev in cfafe8e HEAD; do d=$(mktemp -d); git show "$rev:plugins/webster/scripts/slop.py" > "$d/slop.py"; env -i PATH="$PATH" HOME="$HOME" python3 "$d/slop.py" /no/such/dir > "$d/o" 2>&1; rc=$?; echo; echo "### slop.py itself on /no/such/dir, at $rev: exit=$rc"; cat "$d/o"; rm -rf "$d"; done; echo; echo "### the three line numbers the comment used to carry, read at ecc7dd5^"; for spec in drift.py:269 doctype.py:931 scaffold.py:263; do f=${spec%:*}; n=${spec#*:}; printf "%-16s %s\n" "$spec" "$(git show "$(git rev-parse ecc7dd5^)":plugins/webster/scripts/$f | sed -n "${n}p")"; done
+# evidence-for: FR-027, AC-035, US-008
+
+### every sibling script on a path that is not there, at cfafe8e
+doctype.py   takes a docs path       exit=2  no docs directory at /no/such/docs
+drift.py     takes a docs path       exit=2  {"status": "no_docs", "docs_dir": "/no/such/docs"}
+llmstxt.py   takes a docs path       exit=2  no docs directory at /no/such/docs
+rendered.py  takes a built site dir  exit=2  no built site at /no/such/build. Build it first, or report the gate not_checked
+scaffold.py  takes a docs path       exit=2  {"status": "no_docs", "docs": "/no/such/docs"}
+survey.py    takes a repo root       exit=0  {
+### every sibling script on a path that is not there, at HEAD
+doctype.py   takes a docs path       exit=2  no docs directory at /no/such/docs
+drift.py     takes a docs path       exit=2  {"status": "no_docs", "docs_dir": "/no/such/docs"}
+llmstxt.py   takes a docs path       exit=2  no docs directory at /no/such/docs
+rendered.py  takes a built site dir  exit=2  no built site at /no/such/build. Build it first, or report the gate not_checked
+scaffold.py  takes a docs path       exit=2  {"status": "no_docs", "docs": "/no/such/docs"}
+survey.py    takes a repo root       exit=0  {
+
+### slop.py itself on /no/such/dir, at cfafe8e: exit=0
+no slop found across 0 files
+
+### slop.py itself on /no/such/dir, at HEAD: exit=2
+no such target: /no/such/dir
+
+### the three line numbers the comment used to carry, read at ecc7dd5^
+drift.py:269         in the head_missing note and raised TypeError out of main() at exit 1 having printed
+doctype.py:931                     (", ".join(SHAPES[f][1] for f in s["forbidden_shapes"]) or "no restriction"))
+scaffold.py:263      if not os.path.isdir(docs):

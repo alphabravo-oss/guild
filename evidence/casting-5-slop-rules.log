@@ -1,0 +1,88 @@
+# evidence-cmd: R=$(pwd); d=$(mktemp -d); printf "# Rollout notes\n\nThe exporter is robust.\nTeams leverage the queue.\n" > "$d/weak.md"; printf "# Rollout notes\n\nThis will supercharge the queue.\n" > "$d/buzz.md"; printf "# Notes\n\nCo-Authored-By: Jane <jane@example.com>\n" > "$d/human.md"; printf "# Notes\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n" > "$d/ai.md"; printf "# Done \342\234\223\n\n## Next \342\236\234\n\n### Ok \342\234\224\n\n#### Up \342\254\206\n" > "$d/textmarks.md"; printf "# Done \342\234\205\n\n## Star \342\255\220\n\n### Ship \360\237\232\200\n" > "$d/emoji.md"; for rev in cfafe8e HEAD; do git show "$rev:plugins/webster/scripts/slop.py" > "$d/slop-$rev.py"; for p in weak.md buzz.md human.md ai.md textmarks.md emoji.md; do out=$( cd "$d" && env -i PATH="$PATH" HOME="$HOME" python3 "slop-$rev.py" "$p" 2>&1 ); rc=$?; echo "### slop.py@$rev $p -> exit=$rc"; echo "$out" | sed "s|^$d/||"; done; done; rm -rf "$d"
+# evidence-for: US-008, FR-024, FR-025, FR-026, AC-032, AC-033, AC-034
+
+### slop.py@cfafe8e weak.md -> exit=1
+weak.md:3  [high] marketing-buzzword
+    The exporter is robust.
+    Superlatives that survive a find and replace of the product name say nothing about the product.
+weak.md:4  [high] marketing-buzzword
+    Teams leverage the queue.
+    Superlatives that survive a find and replace of the product name say nothing about the product.
+
+2 findings, 2 high
+### slop.py@cfafe8e buzz.md -> exit=1
+buzz.md:3  [high] marketing-buzzword
+    This will supercharge the queue.
+    Superlatives that survive a find and replace of the product name say nothing about the product.
+
+1 findings, 1 high
+### slop.py@cfafe8e human.md -> exit=1
+human.md:3  [high] agent-attribution
+    Co-Authored-By: Jane <jane@example.com>
+    A byline naming the tool. Outlives its accuracy the first time somebody edits underneath it.
+
+1 findings, 1 high
+### slop.py@cfafe8e ai.md -> exit=1
+ai.md:3  [high] agent-attribution
+    Co-Authored-By: Claude <noreply@anthropic.com>
+    A byline naming the tool. Outlives its accuracy the first time somebody edits underneath it.
+
+1 findings, 1 high
+### slop.py@cfafe8e textmarks.md -> exit=1
+textmarks.md:1  [high] emoji-heading
+    # Done ✓
+    Emoji in a heading is the loudest single markdown tell.
+textmarks.md:3  [high] emoji-heading
+    ## Next ➜
+    Emoji in a heading is the loudest single markdown tell.
+textmarks.md:5  [high] emoji-heading
+    ### Ok ✔
+    Emoji in a heading is the loudest single markdown tell.
+
+3 findings, 3 high
+### slop.py@cfafe8e emoji.md -> exit=1
+emoji.md:1  [high] emoji-heading
+    # Done ✅
+    Emoji in a heading is the loudest single markdown tell.
+emoji.md:5  [high] emoji-heading
+    ### Ship 🚀
+    Emoji in a heading is the loudest single markdown tell.
+
+2 findings, 2 high
+### slop.py@HEAD weak.md -> exit=0
+weak.md:3  [medium] weak-verb
+    The exporter is robust.
+    Verbs that sound like a claim without making one. Name what the thing does instead.
+weak.md:4  [medium] weak-verb
+    Teams leverage the queue.
+    Verbs that sound like a claim without making one. Name what the thing does instead.
+
+2 findings, 0 high
+### slop.py@HEAD buzz.md -> exit=1
+buzz.md:3  [high] marketing-buzzword
+    This will supercharge the queue.
+    Superlatives that survive a find and replace of the product name say nothing about the product.
+
+1 findings, 1 high
+### slop.py@HEAD human.md -> exit=0
+no slop found across 1 files
+### slop.py@HEAD ai.md -> exit=1
+ai.md:3  [high] agent-attribution
+    Co-Authored-By: Claude <noreply@anthropic.com>
+    A byline naming the tool. Outlives its accuracy the first time somebody edits underneath it.
+
+1 findings, 1 high
+### slop.py@HEAD textmarks.md -> exit=0
+no slop found across 1 files
+### slop.py@HEAD emoji.md -> exit=1
+emoji.md:1  [high] emoji-heading
+    # Done ✅
+    Emoji in a heading is the loudest single markdown tell.
+emoji.md:3  [high] emoji-heading
+    ## Star ⭐
+    Emoji in a heading is the loudest single markdown tell.
+emoji.md:5  [high] emoji-heading
+    ### Ship 🚀
+    Emoji in a heading is the loudest single markdown tell.
+
+3 findings, 3 high

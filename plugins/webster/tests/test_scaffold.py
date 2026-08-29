@@ -1,11 +1,70 @@
 """Tests for plugins/webster/scripts/scaffold.py (spec US-009).
 
-Every test drives the script through the ``run_script`` conftest helper
-(GI-004, CT-007) against a ``tmp_path`` docs directory, so ``init`` never
-writes into the repository and ``check`` never reads it.
+Every one of the twelve tests drives the script through the ``run_script``
+conftest helper (GI-004, CT-007). Eleven of them build a ``tmp_path`` docs
+directory and point ``--docs`` at it, so ``init`` never writes into the
+repository and ``check`` never reads it. The twelfth,
+``test_help_names_an_exit_set_for_both_modes``, is the exception and names no
+docs directory of any kind: it runs ``scaffold.py --help``, which argparse
+answers out of the module docstring before either mode runs, so it has nothing
+to write into or read from. Both counts are taken from the argument lists by
+AST rather than from this paragraph, which is what an earlier version of it
+spoke for twelve tests on the strength of.
 
-Which fix each test pins, and what it did before the fix (FR-039, AC-039 — the
-red-first property is recorded here rather than enforced at runtime):
+Which fix each test pins, the revision it is RED against, and what it did
+before the fix (FR-039, AC-039 — the red-first property is recorded here rather
+than enforced at runtime). The revision column is measured, not reasoned about.
+Each cell is one run: copy the plugin to a scratch directory, put that
+revision's scaffold.py in it, and run this module against it --
+
+    cp -R plugins/webster "$scratch/webster"
+    git show REV:plugins/webster/scripts/scaffold.py \
+        > "$scratch/webster/scripts/scaffold.py"
+    cd "$scratch/webster" && uvx pytest tests/test_scaffold.py -v
+
+The revisions measured are every commit that has touched scaffold.py since the
+pre-change script AC-039 names, in order: cfafe8e, af10189, ecc7dd5, 3dadc71,
+8387b46, 5fc0761, ad38ed9.
+
+"red against REV" means this file fails when the suite runs against the
+scaffold.py at REV and passes against the next revision in that list. "guard"
+means it passed at all seven and exists to stop a fix from taking something
+else away with it. "added" is the commit the row's test first appeared in;
+where further commits are named, the test's body was amended there.
+
+==========================================================  ============  =========================
+test                                                        red against   added
+==========================================================  ============  =========================
+test_bad_subject_key_writes_nothing_and_exits_two           cfafe8e       af10189
+test_valid_subject_key_creates_the_landing_page             guard         af10189
+test_unwritable_docs_path_exits_two_without_a_traceback     af10189       ecc7dd5
+test_unreadable_page_exits_two_without_a_traceback          ecc7dd5       3dadc71, 8387b46, ad38ed9
+test_malformed_category_json_stays_a_violation              guard         3dadc71, 8387b46
+test_help_names_an_exit_set_for_both_modes                  5fc0761       3dadc71, ad38ed9
+test_every_documented_envelope_leads_with_status            3dadc71       8387b46
+test_unwritable_subject_label_writes_nothing_and_exits_two  8387b46       5fc0761
+test_unwritable_title_writes_nothing_and_exits_two          8387b46       5fc0761
+test_unlistable_directory_below_the_top_level_exits_two     8387b46       5fc0761, ad38ed9
+test_unstattable_docs_directory_is_a_could_not_read         5fc0761       ad38ed9
+test_a_refused_read_drops_the_violations_it_had_collected   8387b46       ad38ed9
+==========================================================  ============  =========================
+
+Every row naming a revision later than cfafe8e is red at cfafe8e as well, with
+no exception in this module: the only two rows that pass at cfafe8e are the two
+filed "guard", and those pass at all seven.
+
+Two rows are red against a revision later than the commit that added them, and
+they are not the same case. ``test_help_names_an_exit_set_for_both_modes`` was
+added at 3dadc71 and amended at ad38ed9, and it is the amended text that is red
+through 5fc0761 -- the second wording defect the row below describes.
+``test_a_refused_read_drops_the_violations_it_had_collected`` was never
+amended, and it is the correction this table exists for. It was recorded here
+as "green before and after by design". Run against the seven revisions above it
+is red against five of them, green only from 5fc0761 -- the commit that gave
+``os.walk`` its ``onerror``, and the scaffold.py revision immediately before
+ad38ed9, where the test was written. It was therefore already green on the day
+it was added, which is the observation the old label was made from; what the
+label went on to claim, that the test cannot go red, is answered by the five.
 
 - ``test_bad_subject_key_writes_nothing_and_exits_two`` — FR-028 / OT-034 /
   CT-005. RED on the pre-change script: ``do_init`` called ``parse_subjects``
@@ -96,8 +155,9 @@ red-first property is recorded here rather than enforced at runtime):
   test is a path whose parent is a regular file: ENOTDIR, where there really is
   no directory at ``--docs``, and it must keep reporting ``no_docs``.
 - ``test_a_refused_read_drops_the_violations_it_had_collected`` — FR-028 /
-  CT-005. Green before and after by design, and it is the measurement the
-  ``--help`` sentence above rests on rather than a fix of its own. ``--help``
+  CT-005. Red against 8387b46 and every scaffold.py revision before it, per the
+  table above; it pins no fix of its own, and is the measurement the ``--help``
+  sentence rests on. ``--help``
   used to file all of check's exit-2 statuses under "when there was nothing to
   check"; in the ``cannot_read`` case there was plenty to check and some of it
   had been checked — ``do_check`` accumulates violations through the root
