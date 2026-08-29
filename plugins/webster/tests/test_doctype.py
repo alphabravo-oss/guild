@@ -932,8 +932,11 @@ def test_the_pass_line_names_the_written_pages_it_matched(run_script, docs_dir):
     in `stubs` and `continue`s before check_typed. "every page matches its declared type"
     therefore spoke for a population the run had not typed, and the only guards this file had
     on that sentence were the two that assert it does not print at all — the all-stub tree and
-    the empty tree. The mixed tree, the ordinary shape of a docs directory part way through
-    being written, is the one shape where the sentence does print, and it went unread.
+    the empty tree. A tree with no stub in it prints the sentence as well, and there it was
+    exactly true: the branch is reached only with `untyped` empty, so every page such a run
+    counted did reach check_typed. The mixed tree, the ordinary shape of a docs directory part
+    way through being written, prints it over a page the run never typed, and no assertion in
+    this file had read it there.
 
     The second run is what makes the first one's silence visible: the same stub with its
     marker deleted and no other byte changed reports the three tokens its placeholder braces
@@ -1062,7 +1065,8 @@ def test_the_rule_count_in_this_docstring_is_the_scripts_own_census():
     The sentence above said "which of eight rules fired" from a5484ba, the commit that wrote
     it, through seven later revisions of this file, while doctype.py could exit 1 on ten —
     measured at cfafe8e, 19941ad, 9859317 and 63e5e58, ten at all four. Nothing read the
-    sentence, which is how a number written once stayed wrong across four grind cycles.
+    sentence, which is how a number written once stayed wrong through every later revision of
+    this file until the commit that added this test.
 
     Neither half is restated here. The number comes out of this module's docstring and the
     rules come out of doctype.py, so a rule added to the script without a hand on this

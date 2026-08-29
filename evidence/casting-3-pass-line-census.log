@@ -1,0 +1,47 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBjb25mdGVzdC5ydW5fc2NyaXB0IHJlYWNoZXMgc3VicHJvY2Vzcy5ydW4gYnkgYXR0cmlidXRlLCBzbyByZXBsYWNpbmcgdGhlIGF0dHJpYnV0ZSBzZWVzCiMgZXZlcnkgZG9jdHlwZS5weSBpbnZvY2F0aW9uIHRoZSBtb2R1bGUgbWFrZXMsIHdpdGggdGhlIHRyZWUgaXQgd2FzIHBvaW50ZWQgYXQgc3RpbGwgb24gZGlzay4KaW1wb3J0IGNvbGxlY3Rpb25zLCBwYXRobGliLCBzdWJwcm9jZXNzClNUVUIsIFBBU1MsIFJPV1MsIG9yaWcgPSAid2Vic3Rlcjogbm90IHdyaXR0ZW4geWV0IiwgIm1hdGNoZXMgaXRzIGRlY2xhcmVkIHR5cGUiLCBbXSwgc3VicHJvY2Vzcy5ydW4KZGVmIG1lYXN1cmVkKGNtZCwgKmEsICoqayk6CiAgICBkb2NzID0gTm9uZQogICAgaWYgaXNpbnN0YW5jZShjbWQsIChsaXN0LCB0dXBsZSkpOgogICAgICAgIHBhcnRzID0gW3N0cih4KSBmb3IgeCBpbiBjbWRdCiAgICAgICAgaWYgYW55KHguZW5kc3dpdGgoImRvY3R5cGUucHkiKSBmb3IgeCBpbiBwYXJ0cyk6CiAgICAgICAgICAgIGRvY3MgPSBuZXh0KChwYXRobGliLlBhdGgoeCkgZm9yIHggaW4gcGFydHNbMjpdIGlmIHBhdGhsaWIuUGF0aCh4KS5pc19kaXIoKSksIE5vbmUpCiAgICBpZiBkb2NzIGlzIE5vbmU6CiAgICAgICAgcmV0dXJuIG9yaWcoY21kLCAqYSwgKiprKQogICAgbWQgPSBzb3J0ZWQoZG9jcy5yZ2xvYigiKi5tZCIpKQogICAgc3R1YnMgPSBzdW0oMSBmb3IgbSBpbiBtZCBpZiBTVFVCIGluIG0ucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0icmVwbGFjZSIpKQogICAgciA9IG9yaWcoY21kLCAqYSwgKiprKQogICAgUk9XUy5hcHBlbmQoKHN0dWJzLCBsZW4obWQpIC0gc3R1YnMsIFBBU1MgaW4gKHIuc3Rkb3V0IG9yICIiKSkpCiAgICByZXR1cm4gcgpzdWJwcm9jZXNzLnJ1biA9IG1lYXN1cmVkCmRlZiBweXRlc3Rfc2Vzc2lvbmZpbmlzaChzZXNzaW9uLCBleGl0c3RhdHVzKToKICAgIHRhbGx5ID0gY29sbGVjdGlvbnMuQ291bnRlcigocyA+IDAsIHApIGZvciBzLCBfdywgcCBpbiBST1dTKQogICAgcHJpbnQoIlxuPT0gZG9jdHlwZS5weSBydW5zIG9uIGEgZG9jcyB0cmVlLCBieSBzdHVicyBpbiB0aGF0IHRyZWUgPT0iKQogICAgcHJpbnQoInRvdGFsIHJ1bnM6ICVkIiAlIGxlbihST1dTKSkKICAgIGZvciBoIGluIChGYWxzZSwgVHJ1ZSk6CiAgICAgICAgZm9yIHAgaW4gKFRydWUsIEZhbHNlKToKICAgICAgICAgICAgcHJpbnQoIiAgc3R1YnMgJS0zcyBwYXNzIGxpbmUgJS04cyAlZCIgJSAoIj4wIiBpZiBoIGVsc2UgIj09MCIsCiAgICAgICAgICAgICAgICAgICJwcmludGVkIiBpZiBwIGVsc2UgImFic2VudCIsIHRhbGx5WyhoLCBwKV0pKQogICAgcHJpbnQoIlxuPT0gdGhlIHJ1bnMgdGhhdCBwcmludGVkIGl0LCBhcyAoc3R1YnMsIHdyaXR0ZW4gcGFnZXMpID09IikKICAgIHByaW50KCIgICIgKyAiLCAiLmpvaW4oIiglZCwgJWQpIiAlIChzLCB3KSBmb3IgcywgdywgcCBpbiBST1dTIGlmIHApKQo= | base64 -d > "$d/passline.py"; echo "== the measuring plugin =="; cat "$d/passline.py"; echo; cd plugins/webster && PYTHONPATH="$d" uvx pytest tests/test_doctype.py -q -s -p passline; rm -rf "$d"'
+# evidence-for: AC-020, AC-021, FR-014, FR-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+== the measuring plugin ==
+# conftest.run_script reaches subprocess.run by attribute, so replacing the attribute sees
+# every doctype.py invocation the module makes, with the tree it was pointed at still on disk.
+import collections, pathlib, subprocess
+STUB, PASS, ROWS, orig = "webster: not written yet", "matches its declared type", [], subprocess.run
+def measured(cmd, *a, **k):
+    docs = None
+    if isinstance(cmd, (list, tuple)):
+        parts = [str(x) for x in cmd]
+        if any(x.endswith("doctype.py") for x in parts):
+            docs = next((pathlib.Path(x) for x in parts[2:] if pathlib.Path(x).is_dir()), None)
+    if docs is None:
+        return orig(cmd, *a, **k)
+    md = sorted(docs.rglob("*.md"))
+    stubs = sum(1 for m in md if STUB in m.read_text(encoding="utf-8", errors="replace"))
+    r = orig(cmd, *a, **k)
+    ROWS.append((stubs, len(md) - stubs, PASS in (r.stdout or "")))
+    return r
+subprocess.run = measured
+def pytest_sessionfinish(session, exitstatus):
+    tally = collections.Counter((s > 0, p) for s, _w, p in ROWS)
+    print("\n== doctype.py runs on a docs tree, by stubs in that tree ==")
+    print("total runs: %d" % len(ROWS))
+    for h in (False, True):
+        for p in (True, False):
+            print("  stubs %-3s pass line %-8s %d" % (">0" if h else "==0",
+                  "printed" if p else "absent", tally[(h, p)]))
+    print("\n== the runs that printed it, as (stubs, written pages) ==")
+    print("  " + ", ".join("(%d, %d)" % (s, w) for s, w, p in ROWS if p))
+
+..................................
+== doctype.py runs on a docs tree, by stubs in that tree ==
+total runs: 32
+  stubs ==0 pass line printed  11
+  stubs ==0 pass line absent   14
+  stubs >0  pass line printed  2
+  stubs >0  pass line absent   5
+
+== the runs that printed it, as (stubs, written pages) ==
+  (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (1, 1), (3, 1)
+
+34 passed in 0.66s
