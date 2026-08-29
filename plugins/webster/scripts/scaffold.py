@@ -9,9 +9,13 @@
          never exits 1.
   check  validate an existing tree against the layout. status violations at exit 1 on any
          violation, status ok at exit 0 when there are none, and exit 2 with a JSON status
-         when there was nothing to check -- no_docs for no directory at --docs, cannot_read
-         for anything under it the filesystem refused, a page that could not be opened or a
-         directory at any depth that could not be listed.
+         when the check could not run to completion -- no_docs when nothing is at --docs or
+         what is there is not a directory, cannot_read when the filesystem refused a read:
+         --docs itself, a page that could not be opened, or a directory at any depth that
+         could not be listed. cannot_read carries no violations list, and it can arrive with
+         part of the tree already read; the violations collected before the refusal are
+         dropped rather than reported, because a findings list from a scan that stopped
+         reads as the findings and is not them.
 
 Every one of those is a JSON object on stdout whose first key is `status`, init's exit-0
 envelope included. It carries one for the same reason the others do: a caller reading `status`
@@ -36,7 +40,7 @@ The layout is subject-first: a directory per thing in the product, each with an 
 named after the subject and task pages named as verbs. Diataxis lives inside a subject, not at
 the top level. Reference is extracted and kept apart.
 """
-import argparse, json, os, re, sys
+import argparse, json, os, re, stat, sys
 
 # Fixed sections and their sidebar positions. Subjects are numbered between install and advanced.
 FRONT = [("getting-started", "Getting Started", 2), ("install", "Installation", 3)]
@@ -377,10 +381,9 @@ def unreadable(error):
 
 def do_check(a):
     docs, bad = a.docs, []
-    if not os.path.isdir(docs):
-        print(json.dumps({"status": "no_docs", "docs": docs})); return 2
 
-    # Every read below can be refused. A *.md that is a dangling symlink is listed like any
+    # Every read below can be refused, the one that asks whether --docs is a directory
+    # included. A *.md that is a dangling symlink is listed like any
     # other page and fails at open(); a directory nobody may list raises on os.listdir. Left
     # alone each of those left do_check through a traceback, and a traceback exits 1 -- the
     # code this script reserves for a real layout violation -- with nothing on stdout, so a
@@ -391,6 +394,23 @@ def do_check(a):
     # here for docs/ and for each directory directly under it, but a subdirectory below one of
     # those is reached by os.walk alone, which drops what it cannot scan without saying so.
     try:
+        # os.path.isdir used to open this function, and it answers a wider question than the
+        # one it looks like. It calls os.stat and returns False for every error the call
+        # raises, so "nothing is at --docs", "what is there is not a directory" and "the
+        # filesystem refused to say" all left through the same no_docs envelope -- a
+        # directory that is there, holding pages, reported as absent, while init on the
+        # identical path in the identical state reported cannot_write. One script, two
+        # answers to one question, and the wrong one is the one that reads as a clean tree
+        # that simply has not been written yet. The two absences are answered here; every
+        # refusal falls through to the boundary below, which is where this file already
+        # publishes a read it was refused.
+        try:
+            present = stat.S_ISDIR(os.stat(docs).st_mode)
+        except (FileNotFoundError, NotADirectoryError):
+            present = False
+        if not present:
+            print(json.dumps({"status": "no_docs", "docs": docs})); return 2
+
         for page in ROOT_PAGES:
             if not os.path.isfile(os.path.join(docs, page)):
                 bad.append({"where": f"{docs}/{page}", "problem": "required root page is missing"})

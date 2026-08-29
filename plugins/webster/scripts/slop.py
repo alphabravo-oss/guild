@@ -145,7 +145,20 @@ def unreadable(error):
 
 
 def files():
-    """Every markdown file under TARGETS. Raises OSError for a target that cannot be listed."""
+    """The .md, .mdx and .mmd files under TARGETS, minus the two directory names pruned below.
+
+    It said "every markdown file under TARGETS" and it is not: the walk drops any directory
+    whose name starts with a dot, and node_modules, with everything beneath them. Both are
+    right to drop -- a dot-directory is a tool's own state (.vitepress, .docusaurus, .git)
+    and node_modules is somebody else's prose, so a finding in either is not a finding about
+    these docs -- and the absolute was the wrong part. It matters because main() prints
+    len() of this list as the number of files checked, so a reader comparing that count
+    against what they can see on disk needs to know which files were never candidates.
+
+    A target named on the command line is itself taken as given -- a file is read, a
+    directory is walked -- because naming it is the request; the pruning applies to what the
+    walk finds below it. Raises OSError for a target that cannot be listed.
+    """
     out = []
     for t in TARGETS:
         if os.path.isfile(t):

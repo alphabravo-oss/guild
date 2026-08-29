@@ -1,0 +1,29 @@
+# evidence-cmd: sh -c 'set -e; D=$(mktemp -d); cp -R plugins/webster "$D/webster"; git show 0ac652d:plugins/webster/scripts/scaffold.py > "$D/webster/scripts/scaffold.py"; git show 0ac652d:plugins/webster/scripts/slop.py > "$D/webster/scripts/slop.py"; cd "$D/webster"; COLUMNS=80 uvx pytest tests/test_scaffold.py tests/test_slop.py -q -k "unstattable or help_names_an_exit_set or refused_read_drops or pruned_directories" 2>&1 | tail -4'
+# evidence-for: US-010, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+#
+# US-010 / FR-039 / AC-039. This cycle's four tests, run against the scripts as
+# they stood at 0ac652d with everything else in the suite left at this commit.
+#
+# Two are RED there, which is the red-first property for this cycle's two
+# published-contract fixes:
+#   test_unstattable_docs_directory_is_a_could_not_read -- the refused stat
+#   reported no_docs, so the assertion for cannot_read fails.
+#   test_help_names_an_exit_set_for_both_modes -- --help still called check's
+#   exit 2 "when there was nothing to check" and said nothing about the dropped
+#   violations.
+#
+# Two pass there, and are recorded as green-before-and-after controls in their
+# module docstrings rather than as fixes:
+#   test_a_refused_read_drops_the_violations_it_had_collected -- the dropping is
+#   the behaviour the boundary was written for; this measures it so the --help
+#   sentence above has something to be true about.
+#   test_pruned_directories_are_neither_checked_nor_counted -- the prune is
+#   correct and unchanged; a docstring has no exit code to go red on, and what
+#   this closes is that no test read the prune or the count line.
+#
+# No test in either module is skipped or xfailed.
+=========================== short test summary info ============================
+FAILED tests/test_scaffold.py::test_unstattable_docs_directory_is_a_could_not_read
+FAILED tests/test_scaffold.py::test_help_names_an_exit_set_for_both_modes - A...
+2 failed, 2 passed, 18 deselected in 0.17s

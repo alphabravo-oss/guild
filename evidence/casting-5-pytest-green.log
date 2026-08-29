@@ -1,0 +1,18 @@
+# evidence-cmd: cd plugins/webster && grep -c "^def test_" tests/test_slop.py tests/test_scaffold.py; COLUMNS=80 uvx pytest tests/test_slop.py tests/test_scaffold.py -q
+# evidence-for: US-008, US-009, US-010, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+#
+# US-008 / US-009 / US-010. The two test modules this casting owns, green.
+#
+# Each module docstring carries the table of which spec fix every test pins and
+# what the pre-change script did, including the two green-before-and-after
+# controls this cycle added; the measurement behind the RED rows is in
+# casting-5-red-first.log.
+#
+# Three tests were added this cycle: the refused stat on --docs, the readable
+# tree against its unreadable twin, and the pruned directories that are neither
+# checked nor counted. No test is skipped or xfailed.
+tests/test_slop.py:10
+tests/test_scaffold.py:12
+......................                                                   [100%]
+22 passed in 0.79s

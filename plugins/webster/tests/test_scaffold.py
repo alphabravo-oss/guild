@@ -31,7 +31,12 @@ red-first property is recorded here rather than enforced at runtime):
   *is* ``scaffold.py --help``, and it stated an exit contract for ``check``
   alone ("exit 1 on any violation") while ``init`` had grown two exit-2
   envelopes whose whole purpose is to be distinguishable from that 1. A caller
-  reading exit codes had no published place to learn them.
+  reading exit codes had no published place to learn them. RED a second time,
+  on the wording: the text called check's whole exit-2 set "when there was
+  nothing to check", which is false of ``cannot_read`` twice over — something
+  was there, and part of it had been read before the refusal — and said nothing
+  about what becomes of the violations found by then. "nothing to check" is
+  doctype.py's phrase, for a population that was genuinely empty.
 - ``test_unreadable_page_exits_two_without_a_traceback`` — FR-028 / CT-005.
   RED on the pre-change script: ``do_check`` read every page through a bare
   ``open()``, so one dangling symlink under docs/ raised ``FileNotFoundError``
@@ -79,6 +84,32 @@ red-first property is recorded here rather than enforced at runtime):
   envelope once, so ``cannot_read`` is reached here through the unreadable page
   and its unlistable-directory half is left to the test above, which is about
   that half and nothing else.
+- ``test_unstattable_docs_directory_is_a_could_not_read`` — FR-028 / CT-005.
+  RED on the script as it stood, and in the direction that reads as a tree
+  nobody has written yet: ``do_check`` opened with ``os.path.isdir(docs)``,
+  which calls ``os.stat`` and answers False for every error that call raises,
+  so a docs directory that is there and holds a page but that the filesystem
+  refuses to stat was reported ``no_docs`` — absent. ``init`` on the identical
+  path in the identical state reported ``cannot_write``, so one script answered
+  one question two ways, and the wrong answer is the one a caller reads as
+  "nothing has been scaffolded here yet". The ``no_docs`` control in the same
+  test is a path whose parent is a regular file: ENOTDIR, where there really is
+  no directory at ``--docs``, and it must keep reporting ``no_docs``.
+- ``test_a_refused_read_drops_the_violations_it_had_collected`` — FR-028 /
+  CT-005. Green before and after by design, and it is the measurement the
+  ``--help`` sentence above rests on rather than a fix of its own. ``--help``
+  used to file all of check's exit-2 statuses under "when there was nothing to
+  check"; in the ``cannot_read`` case there was plenty to check and some of it
+  had been checked — ``do_check`` accumulates violations through the root
+  pages, the required sections, the landing pages and the ``_category_.json``
+  files before the walk raises — and those violations are then dropped. This
+  runs the identical tree twice, once readable and once with one unlistable
+  directory added, so the violation the first run publishes is provably one the
+  second run collected and did not; without the readable half, an absent
+  findings list is equally explained by there having been nothing to find, which
+  is the reading the old sentence invited. Dropping it is the behaviour the
+  boundary was written for and stays. The test that was RED for this fix is
+  ``test_help_names_an_exit_set_for_both_modes``, where the wording lives.
 
 No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 """
@@ -115,6 +146,12 @@ def unlistable_directory(under: Path) -> str:
     files it as a directory and then fails to scan it, which is the shape of an
     unlistable directory below the top level. A page is planted inside so that
     what the swallowed error hid is a real violation and not an empty room.
+
+    The same over-long path is refused by ``os.stat`` as well as by a scan,
+    which is the second vantage this helper is called from: handed to ``check``
+    as ``--docs`` itself, it is a directory that is there, that holds a page,
+    and that the filesystem will not answer for — the case ``os.path.isdir``
+    used to report as no directory at all.
     """
     limit = os.pathconf(str(under), "PC_PATH_MAX")
     name = "d" * os.pathconf(str(under), "PC_NAME_MAX")
@@ -369,9 +406,10 @@ def test_unlistable_directory_below_the_top_level_exits_two(run_script, tmp_path
     result = run_script("scaffold.py", "check", "--docs", docs)
 
     assert result.returncode == 2, (
-        f"Expected exit 2 (nothing to check): a directory os.walk names and "
-        f"cannot scan leaves every page inside it unread, and reporting that as "
-        f"a sound tree is the false pass this exit code exists to refuse; got "
+        f"Expected exit 2 (the check could not run to completion): a "
+        f"directory os.walk names and cannot scan leaves every page inside it "
+        f"unread, and reporting that as a sound tree is the false pass this "
+        f"exit code exists to refuse; got "
         f"{result.returncode}" + outcome(result)
     )
     assert "Traceback" not in result.stderr, (
@@ -393,6 +431,123 @@ def test_unlistable_directory_below_the_top_level_exits_two(run_script, tmp_path
         "A scan that stopped part way through has not earned a findings list: "
         "the page inside that directory was never read, and a list that omits "
         "it would be read as though it had been" + outcome(result)
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: a docs directory that is there and cannot be stat'd is a
+# could-not-read, and an argument with genuinely no directory at it is still a
+# no_docs. Both halves run here, because the fix is that the two came apart.
+# -----------------------------------------------------------------------------
+def test_unstattable_docs_directory_is_a_could_not_read(run_script, tmp_path):
+    docs = unlistable_directory(tmp_path)
+
+    result = run_script("scaffold.py", "check", "--docs", docs)
+
+    assert result.returncode == 2, (
+        f"Expected exit 2; got {result.returncode}" + outcome(result)
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "cannot_read", (
+        "The directory is there and holds a page; what failed is the stat. "
+        "Reporting that as no_docs tells a caller to go and scaffold a tree "
+        "that already exists, and it is the one refused-read case this script "
+        f"still answered by pretending the path was empty. Got "
+        f"{payload['status']!r}" + outcome(result)
+    )
+    assert payload["path"] == docs, (
+        f"Expected the refused path named, the way the other cannot_read "
+        f"envelopes name theirs. Got {payload.get('path')!r}" + outcome(result)
+    )
+    assert payload.get("error"), (
+        "Expected the envelope to carry what the filesystem said" + outcome(result)
+    )
+
+    # init is the control, on the same path in the same state: it reaches
+    # os.makedirs, which does not swallow, and has reported the refusal all
+    # along. It is what made the check answer above wrong rather than merely
+    # coarse — one script, one question, two answers.
+    written = run_script("scaffold.py", "init", "--docs", docs)
+    assert json.loads(written.stdout)["status"] == "cannot_write", (
+        "init on this path reports the refusal; check has to agree that there "
+        "is something there to be refused" + outcome(written)
+    )
+
+    # The no_docs half, which must not move: a path whose parent is a regular
+    # file. ENOTDIR, and there really is no directory at --docs.
+    not_a_directory = tmp_path / "regular-file"
+    not_a_directory.write_text("a file, not a directory\n", encoding="utf-8")
+
+    absent = run_script("scaffold.py", "check", "--docs", not_a_directory / "docs")
+
+    assert absent.returncode == 2, (
+        f"Expected exit 2; got {absent.returncode}" + outcome(absent)
+    )
+    assert json.loads(absent.stdout)["status"] == "no_docs", (
+        "Narrowing no_docs must not empty it: nothing is at this path, which is "
+        "what the status is for" + outcome(absent)
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: the same tree twice, once readable and once not. The exit-2
+# envelope is not a report on an empty tree — it is a report on a scan that
+# started, found things, and stopped — and the things it found go with it.
+# -----------------------------------------------------------------------------
+def test_a_refused_read_drops_the_violations_it_had_collected(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    built = run_script("scaffold.py", "init", "--docs", docs)
+    assert built.returncode == 0, (
+        f"The tree this test breaks has to be built first; init gave "
+        f"{built.returncode}" + outcome(built)
+    )
+    # A violation from the first loop in do_check, so it is collected before the
+    # walk that raises below and cannot be mistaken for one the refusal
+    # prevented from being found.
+    (docs / "index.md").unlink()
+
+    readable = run_script("scaffold.py", "check", "--docs", docs)
+
+    assert readable.returncode == 1, (
+        f"Expected exit 1: the tree is missing a required root page; got "
+        f"{readable.returncode}" + outcome(readable)
+    )
+    published = json.loads(readable.stdout)
+    assert published["status"] == "violations", (
+        f"Expected status violations; got {published['status']!r}"
+        + outcome(readable)
+    )
+    dropped = [v for v in published["violations"] if v["where"].endswith("index.md")]
+    assert dropped, (
+        "This test needs one named violation that the unreadable twin below "
+        "will collect and discard; the readable run is where it is shown to be "
+        "real" + outcome(readable)
+    )
+
+    unlistable_directory(docs / "install")
+
+    refused = run_script("scaffold.py", "check", "--docs", docs)
+
+    assert refused.returncode == 2, (
+        f"Expected exit 2 (the check could not run to completion); got "
+        f"{refused.returncode}" + outcome(refused)
+    )
+    envelope = json.loads(refused.stdout)
+    assert envelope["status"] == "cannot_read", (
+        f"Expected a cannot_read envelope; got {envelope['status']!r}"
+        + outcome(refused)
+    )
+    assert "violations" not in envelope, (
+        "The missing root page was collected on this run too — it is found "
+        "before the walk — and it is not published. That is the decision the "
+        "boundary makes and the one --help now states: a findings list from a "
+        "scan that stopped reads as the findings and is not them. Publishing "
+        "it here is a different contract, not a better message" + outcome(refused)
+    )
+    assert dropped[0]["where"] not in refused.stdout, (
+        "The dropped violation must not reappear under any other key: a caller "
+        "that greps stdout for a path would otherwise read a partial answer as "
+        "a whole one" + outcome(refused)
     )
 
 
@@ -436,6 +591,30 @@ def test_help_names_an_exit_set_for_both_modes(run_script):
             f"Expected --help to name check's {status} status" + outcome(result)
         )
 
+    # The two exit-2 reasons are not the same reason, and the text used to give
+    # them one name. cannot_read fires after do_check has collected violations
+    # through the root pages, the sections, the landing pages and the
+    # _category_.json files, and those are then dropped -- so "nothing to check"
+    # was false twice over: something was there, and part of it had been read.
+    assert "could not run to completion" in check_block, (
+        "Expected --help to say what check's exit 2 is: a check that started "
+        "and could not finish. 'nothing to check' is doctype.py's phrase for a "
+        "population that was genuinely empty" + outcome(result)
+    )
+    assert "nothing to check" not in check_block, (
+        "The old phrase must go rather than sit beside the new one; a caller "
+        "reading either sentence has to reach the same answer. That is also why "
+        "the text does not name doctype.py to contrast with it: --help is where "
+        "this script states its own contract, and a reader holding one sentence "
+        "that is true and one that is disowned has to work out which is which"
+        + outcome(result)
+    )
+    assert "dropped" in check_block, (
+        "Expected --help to state what happens to the violations collected "
+        "before the refusal. A caller who is not told they are dropped reads "
+        "the absent list as an absence of findings" + outcome(result)
+    )
+
 
 # -----------------------------------------------------------------------------
 # FR-028 / CT-005: a page that cannot be read is a could-not-check, not a
@@ -468,9 +647,9 @@ def test_unreadable_page_exits_two_without_a_traceback(run_script, tmp_path):
     result = run_script("scaffold.py", "check", "--docs", docs)
 
     assert result.returncode == 2, (
-        f"Expected exit 2 (nothing to check): a page os.listdir names and "
-        f"open() refuses is not a layout violation, and exit 1 is reserved for "
-        f"those; got {result.returncode}" + outcome(result)
+        f"Expected exit 2 (the check could not run to completion): a page "
+        f"os.listdir names and open() refuses is not a layout violation, and "
+        f"exit 1 is reserved for those; got {result.returncode}" + outcome(result)
     )
     assert "Traceback" not in result.stderr, (
         "An unreadable page must be reported, not raised: the traceback exits 1 "

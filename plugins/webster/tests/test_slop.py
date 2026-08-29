@@ -57,6 +57,16 @@ red-first property is recorded here rather than enforced at runtime):
   Alchemical Symbols, Supplemental Arrows-C — so keeping the range is a
   decision the spec made, not a property lookup, and a later "cleanup" that
   carves those blocks back out fails here.
+- ``test_pruned_directories_are_neither_checked_nor_counted`` — FR-027. Green
+  before and after by design: the pruning is the correct behaviour and this
+  pins it unchanged. What was wrong was the sentence over it — ``files()`` said
+  it returned "every markdown file under TARGETS" while the walk dropped
+  dot-directories and node_modules with everything beneath them — and a
+  docstring has no exit code to go red on. What this closes is the reason the
+  sentence could stay wrong: no test reached into a pruned directory, and no
+  test read the count in the "no slop found across N files" line, which is
+  ``len()`` of that same list. Both halves are asserted here, so the next
+  person to widen or narrow the prune has to come and say so.
 
 No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 """
@@ -295,4 +305,36 @@ def test_kept_supplementary_range_reports_a_non_emoji_block(run_script, tmp_path
     assert "emoji-heading" in result.stdout, (
         "Carving the non-emoji blocks out of the supplementary range is a change "
         "to FR-026, not a cleanup" + outcome(result)
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-027: what files() returns is what the count line reports. Both directories
+# pruned by the walk are planted with a page that would fail the gate, so a
+# prune that stopped working is an exit 1 here and not a silent recount.
+# -----------------------------------------------------------------------------
+def test_pruned_directories_are_neither_checked_nor_counted(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    write_page(docs, "ok.md", "# Release notes\n\nThe queue drains in order.\n")
+    for pruned in ("node_modules", ".vitepress"):
+        (docs / pruned).mkdir()
+        # A heading that the emoji-heading rule reports at high severity, which
+        # is exit 1. Reading either page changes the exit code, so this test
+        # cannot pass by having walked an empty pruned directory.
+        write_page(docs / pruned, "vendored.md", "# Shipped ✅\n")
+
+    result = run_script("slop.py", docs)
+
+    assert result.returncode == 0, (
+        f"Expected exit 0: the only page under TARGETS that the walk keeps is "
+        f"ok.md, and it is clean. A non-zero code here means a pruned directory "
+        f"was read; got {result.returncode}" + outcome(result)
+    )
+    assert "no slop found across 1 files" in result.stdout, (
+        "Expected the count to name the population files() actually returns. "
+        "Three .md files are on disk and one of them is a candidate; a count "
+        "that says 3 means the prune stopped, and a count that says 1 while the "
+        "docstring promises every markdown file means the sentence is wrong"
+        + outcome(result)
     )
