@@ -50,7 +50,7 @@ the axis loosely enough that the label read as a claim about both.
   NFR-001. RED against both. The cfafe8e Status section states no count at all,
   so the read raises before there is anything to compare; at 61fb1df it read
   ``69 passing``, written by hand when the suite had 69 and never moved again —
-  77 test functions by the time this row was first written, 142 now. That is
+  77 test functions by the time this row was first written, 146 now. That is
   exactly the drift this test makes impossible to commit.
 - ``test_status_section_names_the_run_command_and_the_version`` — AC-042 /
   OT-040 / NFR-003. RED against cfafe8e, green against 61fb1df. The cfafe8e
@@ -96,8 +96,9 @@ the axis loosely enough that the label read as a claim about both.
   was both sides going quiet at once: two empty sets are equal, so a row and a
   usage text that agree on saying nothing passed it. The silence is now read
   against the script's own ``sys.exit`` calls instead — ``survey.py`` has none
-  and is the honest case, and every other script here ends in
-  ``sys.exit(main())``.
+  and publishes, in its own usage text, that a run which reads the repo returns
+  0 whatever it found, which is what makes its silence an answer rather than an
+  absence; every other script here ends in ``sys.exit(main())``.
 - ``test_the_script_table_puts_each_status_under_its_scripts_exit_code`` —
   FR-038 / AC-042. RED against both, and at either revision the assertion that
   fires first is the unread one: ``doctype.py``'s usage text publishes exits 0
@@ -538,9 +539,14 @@ def better_pairing(doc: dict[str, str], row: dict[str, str]) -> tuple[int, int, 
     return own, score(best), dict(zip(codes, best))
 
 
-# The calls that can hand a caller an exit code. A script with none of them
-# cannot return anything but 0, so it has no contract to publish and both
-# sides being silent about it is the truth rather than an omission.
+# The calls that can hand a caller an exit code. Having none of them is not on
+# its own a contract: a script with no `sys.exit` can still end in a traceback
+# at exit 1, and `survey.py` did, on three package manifests it could read. What
+# makes a silent row honest is the script publishing that it exits 0 on every
+# input it can read and then keeping that -- which `survey.py`'s usage text
+# states and its guards hold, reading a malformed package.json, dependency
+# table or script target as absent instead of fatally. Both sides being silent
+# about a script like that is the truth rather than an omission.
 EXIT_CALLS = {"sys.exit", "os._exit", "exit", "SystemExit"}
 
 
@@ -776,8 +782,13 @@ def test_the_script_table_publishes_each_scripts_own_exit_set():
         # one global tally, satisfied by the rows that did publish something,
         # while a row nobody compared sat under it. So the silence is checked
         # against the script rather than taken for the answer. `survey.py` is
-        # the honest case: it has no sys.exit anywhere, cannot return anything
-        # but 0, and has no contract to publish. Any other script here ends in
+        # the honest case, and on a stated property rather than on an absence:
+        # it has no sys.exit anywhere, and its usage text publishes that a run
+        # which reads the repo returns 0 whatever it found. A package.json that
+        # is not an object, a dependency field that is not a table and a script
+        # target that is not a string are read as absent under that contract;
+        # each ended the run at exit 1 before its guard went in, and each has a
+        # test in test_survey.py. Any other script here ends in
         # `sys.exit(main())`, so the same silence from one of those is a
         # contract that went unwritten on both sides at once.
         sites = exit_sites(filename)

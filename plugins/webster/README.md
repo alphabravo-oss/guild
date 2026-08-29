@@ -172,7 +172,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-142 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+146 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes. Five of the seven scripts leave no
 other way in: `drift.py`, `llmstxt.py`, `doctype.py`, `survey.py` and `slop.py` bind their root,
@@ -235,14 +235,28 @@ The counter is per row now, and a row whose script publishes more than one code 
 something placed against it. Where there is no status, that something is the case under each
 code, compared word for word with the usage text: the row's own filing has to fit at least as
 well as any other pairing of the two. Inverting a row leaves the set of codes it publishes
-identical, because a permutation of a set is that set, which is why the check above cannot see
-it and this one drops the `doctype.py` row from 23 shared words to 11. `rendered.py` and
+identical, because a permutation of a set is that set, which is why the check above cannot see it
+and this one does. The `doctype.py` row's own filing scores 23 shared words against that script's
+usage text; swapping its exit-0 and exit-2 groups, which is the inversion this section has been
+describing throughout, drops it to 4, swapping exits 1 and 2 drops it to 11, and swapping exits 0
+and 1 drops it to 20. Every rearrangement scores below the row as it stands, which is the whole
+of what the check asks of it. The figure recorded here was 11 with no swap named beside it, and
+11 is the 1-and-2 number: the sentence had inherited an arithmetic result without the antecedent
+that produced it, which is a measurement no reader can re-run. `rendered.py` and
 `survey.py` are exempt rather than overlooked: one code and none, and a single code has no second
 place to be filed under. The `llmstxt.py` row is the one that published no exit code at all, and
 the missing half of that check was both sides going quiet together — two empty sets are equal, so
 a row and a usage text that agree on saying nothing passed. That silence is now read against the
-script's own `sys.exit` calls. `survey.py` has none, cannot return anything but 0, and is the one
-script here with no contract to publish.
+script's own `sys.exit` calls, and the exemption that follows rests on what the script publishes
+about itself rather than on the absence alone. `survey.py` calls none, and its usage text states
+the contract that turns that absence into an answer: a run which reads the repo prints the survey
+and returns 0, whatever it found. A manifest it can read but cannot use is answered with that
+file's contents missing, never with the survey missing — a `package.json` holding an array or
+`null`, a `dependencies` field that is not a table, a `[project.scripts]` target TOML wrote as a
+date. All three ended the run in a traceback at exit 1 until the guards that read them as absent
+went in, and all three have a test. That is why it is the one script here with no contract to
+publish: not that nobody wrote a `sys.exit`, but that it publishes an exit-0 answer for every
+input it can read and holds it at the three places it used to break.
 
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD, a docs tree sitting at the repository
@@ -263,9 +277,14 @@ declaration, a declaration a formatter split across lines, which is, a decorator
 parentheses never balance inside the lines the join reads, where no verb is published at all
 rather than the `GET` a Flask default would otherwise have invented, and a parenthesis inside a
 comment or a string, which is a character rather than syntax and used to end that join two lines
-early; `llmstxt.py` across the fixes it carries plus the scaffold brace that stops a README line
-from becoming a summary and the checkout's directory name, the one header source published
-exactly as the filesystem spells it because nothing follows it in the chain; `slop.py` across
+early, and the three manifest shapes that parse and are still not what the readers below expect:
+a `package.json` that is not an object, a `dependencies` field that is not a table, and a
+`[project.scripts]` target that is not a string, each of which took the whole survey down at
+exit 1 before it was read as absent; `llmstxt.py` across the fixes it carries plus the scaffold
+brace that stops a README line from becoming a summary and the checkout's directory name, the one
+header source published exactly as the filesystem spells it because nothing follows it in the
+chain, and the non-object `package.json` its own header chain opens on, which used to end it the
+same way; `slop.py` across
 its own plus the directories the walk prunes, which are neither read nor counted; and
 `scaffold.py` across those plus the docs path it is handed and cannot write into, a page it
 cannot read, a malformed `_category_.json`, a docs directory nothing can stat, a directory below

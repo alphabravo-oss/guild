@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/webster && python3 -c 'import sys, itertools; sys.path.insert(0, "tests"); import test_readme as t; doc = t.clauses_by_code(t.script_docstring("doctype.py")); row = t.clauses_by_code(t.script_table_row("`scripts/doctype.py`")); codes = sorted(set(doc) & set(row)); score = lambda o: sum(len(t.case_words(doc[c]) & t.case_words(row[u])) for c, u in zip(codes, o)); print("doctype.py row, own filing:", score(tuple(codes))); print("  exit-0 and exit-2 groups swapped:", score(("2", "1", "0"))); print("  exit-1 and exit-2 groups swapped:", score(("0", "2", "1"))); print("  exit-0 and exit-1 groups swapped:", score(("1", "0", "2"))); print("  every pairing, own first:", [("".join(p), score(p)) for p in itertools.permutations(codes)])'
+# evidence-for: FR-038, AC-042, US-010
+
+doctype.py row, own filing: 23
+  exit-0 and exit-2 groups swapped: 4
+  exit-1 and exit-2 groups swapped: 11
+  exit-0 and exit-1 groups swapped: 20
+  every pairing, own first: [('012', 23), ('021', 11), ('102', 20), ('120', 5), ('201', 7), ('210', 4)]

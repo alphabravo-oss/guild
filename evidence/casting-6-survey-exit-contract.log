@@ -1,0 +1,14 @@
+# evidence-cmd: d=$(mktemp -d); mkdir -p "$d/a" "$d/n" "$d/dep" "$d/cli"; for c in a n; do printf '[project]\nname = "pyapp"\ndescription = "From pyproject."\n' > "$d/$c/pyproject.toml"; done; printf '[1, 2]' > "$d/a/package.json"; printf 'null' > "$d/n/package.json"; printf '{"name": "nodeapp", "dependencies": ["react"], "devDependencies": "vitest"}' > "$d/dep/package.json"; printf '[project]\nname = "datedapp"\n\n[project.scripts]\nfoo = 1979-05-27\nbar = "pkg.mod:run"\n' > "$d/cli/pyproject.toml"; for c in a n dep cli; do python3 plugins/webster/scripts/survey.py "$d/$c" > "$d/$c.out" 2> "$d/$c.err"; s=$?; e=$(wc -c < "$d/$c.err" | tr -d " "); printf '%-4s exit %s, %s byte(s) on stderr\n' "$c" "$s" "$e"; done; python3 -c 'import json, sys; d = sys.argv[1]; g = lambda n: json.load(open(d + "/" + n + ".out")); print("a    array package.json  -> name", g("a")["name"], "description", repr(g("a")["description"])); print("n    null package.json   -> name", g("n")["name"], "description", repr(g("n")["description"])); print("dep  list dependencies   -> name", g("dep")["name"], "frameworks", g("dep")["frameworks"]); print("cli  dated script target -> cli", [c["name"] for c in g("cli")["surface"]["cli"]])' "$d"; rm -rf "$d"; cd plugins/webster && python3 -c 'import sys; sys.path.insert(0, "tests"); import test_readme as t; print("survey.py exit call sites:", sorted(t.exit_sites("survey.py")) or "none"); print("doctype.py exit call sites:", sorted(t.exit_sites("doctype.py")))'
+# evidence-for: FR-038, AC-042, US-010, NFR-002
+# evidence-timeout: 300
+
+a    exit 0, 0 byte(s) on stderr
+n    exit 0, 0 byte(s) on stderr
+dep  exit 0, 0 byte(s) on stderr
+cli  exit 0, 0 byte(s) on stderr
+a    array package.json  -> name pyapp description 'From pyproject.'
+n    null package.json   -> name pyapp description 'From pyproject.'
+dep  list dependencies   -> name nodeapp frameworks []
+cli  dated script target -> cli ['bar']
+survey.py exit call sites: none
+doctype.py exit call sites: ['sys.exit']
