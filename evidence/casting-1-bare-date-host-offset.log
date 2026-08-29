@@ -1,0 +1,70 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)"; d=$(mktemp -d); printf %s "IiIiTC0xNi0xIGl0ZW0gMS4gV2hhdCBvZmZzZXQgZ2l0IHdyaXRlcyBmb3IgYSBkYXRlIGNhcnJ5aW5nIG5vbmUsIGFuZCB3aG9zZSB6b25lCmRlY2lkZXMgaXQuIFJ1biBmcm9tIHRoZSByZXBvc2l0b3J5IHJvb3QuIiIiCmltcG9ydCBvcwppbXBvcnQgcmUKaW1wb3J0IHN1YnByb2Nlc3MKaW1wb3J0IHN5cwppbXBvcnQgdGVtcGZpbGUKaW1wb3J0IHRpbWUKaW1wb3J0IHR5cGVzCgpXID0gInBsdWdpbnMvd2Vic3RlciIKQ09ORiA9IG9zLnBhdGguYWJzcGF0aCgiJXMvdGVzdHMvY29uZnRlc3QucHkiICUgVykKSEFSTiA9ICIlcy90ZXN0cy90ZXN0X2hhcm5lc3MucHkiICUgVwpCQVJFID0gIjIwMjYtMDgtMjdUMTY6NDk6NTYiClBBUkVOVF9UWiA9ICJQYWNpZmljL0tpcml0aW1hdGkiCgoKZGVmIG9mZnNldF9vZihzdGFtcCk6CiAgICAiIiJUaGUgdHJhaWxpbmcgb2Zmc2V0IG9mIGFuIElTTyBkYXRlIGdpdCBwcmludGVkOyBnaXQgd3JpdGVzIFVUQyBhcyBaLiIiIgogICAgcmV0dXJuIHJlLnNlYXJjaChyIihbKy1dXGR7Mn06XGR7Mn18WikkIiwgc3RhbXApLmdyb3VwKDEpCgoKZGVmIHpvbmVfb2YocGF0aCk6CiAgICAiIiJUaGUgem9uZSBpZCAvZXRjL2xvY2FsdGltZSByZXNvbHZlcyB0bywgd2l0aG91dCB0aGUgdHpkYXRhIHJlbGVhc2UgaW4gdGhlIHBhdGguIiIiCiAgICByZWFsID0gb3MucGF0aC5yZWFscGF0aChwYXRoKQogICAgcmV0dXJuIHJlYWwuc3BsaXQoInpvbmVpbmZvLyIsIDEpWzFdIGlmICJ6b25laW5mby8iIGluIHJlYWwgZWxzZSByZWFsCgoKIyBUaGUgcGFyZW50IGhvbGRzIGEgem9uZSAyMCBob3VycyBmcm9tIHRoZSBob3N0J3MsIHNvICJ0aGUgY2hpbGQgdG9vayB0aGUgaG9zdCdzCiMgb2Zmc2V0IiBhbmQgInRoZSBjaGlsZCB0b29rIHRoZSBwYXJlbnQncyIgY2Fubm90IGJlIGNvbmZ1c2VkIGZvciBlYWNoIG90aGVyLgpvcy5lbnZpcm9uWyJUWiJdID0gUEFSRU5UX1RaCnRpbWUudHpzZXQoKQoKcHJpbnQoIlsxXSB0aGUgdHdvIHpvbmVzIGluIHBsYXkgYmVmb3JlIGEgc2luZ2xlIGNvbW1pdCBpcyBtYWRlIikKcHJpbnQoIiAgICBob3N0IC9ldGMvbG9jYWx0aW1lIHJlc29sdmVzIHRvOiAgICAgICVzIiAlIHpvbmVfb2YoIi9ldGMvbG9jYWx0aW1lIikpCnByaW50KCIgICAgcGFyZW50IHByb2Nlc3MgVFo6ICAgICAgICAgICAgICAgICAgICAlcyAgKGl0cyBvd24gc3RyZnRpbWUgJSV6OiAlcykiCiAgICAgICUgKG9zLmVudmlyb25bIlRaIl0sIHRpbWUuc3RyZnRpbWUoIiV6IikpKQpwcmludCgiICAgIGRhdGUgaGFuZGVkIHRvIGdpdCwgZXZlcnkgY29tbWl0OiAgICAgJXIgIChubyBvZmZzZXQgaW4gdGhlIHN0cmluZykiICUgQkFSRSkKcHJpbnQoIiAgICBnaXQ6ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICVzIgogICAgICAlIHN1YnByb2Nlc3MucnVuKFsiZ2l0IiwgIi0tdmVyc2lvbiJdLCBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUpLnN0ZG91dC5zdHJpcCgpKQoKIyBjb25mdGVzdC5weSBpbXBvcnRzIHB5dGVzdDsgZXhlYyBpdCB3aXRoIGEgc3R1YiBzbyB0aGlzIHJ1bnMgdW5kZXIgYSBwbGFpbgojIHB5dGhvbjMgcmF0aGVyIHRoYW4gbmVlZGluZyB0aGUgc3VpdGUncyBydW5uZXIuIEdJLTAwNCBiYXJzIGEgdGVzdCBmcm9tCiMgaW1wb3J0aW5nIGEgc2NyaXB0LCBub3QgdGhpcyBsb2cgZnJvbSBleGVjdXRpbmcgdGhlIGhhcm5lc3MgaXQgbWVhc3VyZXMuCnN0dWIgPSB0eXBlcy5Nb2R1bGVUeXBlKCJweXRlc3QiKQpzdHViLmZpeHR1cmUgPSBsYW1iZGEgKmEsICoqazogKGFbMF0gaWYgYSBhbmQgY2FsbGFibGUoYVswXSkgZWxzZSAobGFtYmRhIGY6IGYpKQpzeXMubW9kdWxlc1sicHl0ZXN0Il0gPSBzdHViCm0gPSB0eXBlcy5Nb2R1bGVUeXBlKCJjIikKbS5fX2ZpbGVfXyA9IENPTkYKZXhlYyhjb21waWxlKG9wZW4oQ09ORiwgZW5jb2Rpbmc9InV0Zi04IikucmVhZCgpLCBDT05GLCAiZXhlYyIpLCBtLl9fZGljdF9fKQoKR0UgPSB7azogb3MuZW52aXJvbltrXSBmb3IgayBpbiAoIlBBVEgiLCAiSE9NRSIpIGlmIGsgaW4gb3MuZW52aXJvbn0KR0UudXBkYXRlKHsiR0lUX0NPTkZJR19HTE9CQUwiOiBvcy5kZXZudWxsLCAiR0lUX0NPTkZJR19OT1NZU1RFTSI6ICIxIn0pClJPT1QgPSB0ZW1wZmlsZS5ta2R0ZW1wKCkKCgpkZWYgYnVpbGQobmFtZSwgdHopOgogICAgIiIiVGhlIHJlYWwgY29uZnRlc3QgYnVpbGRlciwgZXZlcnkgY29tbWl0IGRhdGUgb3ZlcnJpZGRlbiB0byB0aGUgYmFyZSBzdHJpbmcuCgogICAgYGB0emBgIE5vbmUgaXMgdGhlIGNhc2UgdGhlIGRvY3N0cmluZyBpcyBhYm91dDogdGhlIHBhcmVudCBleHBvcnRzIG9uZSBhbmQKICAgIGBgZW52PWBgIGRvZXMgbm90IGNhcnJ5IGl0LCBzbyBub3RoaW5nIGZvcndhcmRzIFRaIHRvIHRoZSBnaXQgY2hpbGQuCiAgICAiIiIKICAgIGVudiA9IHsiR0lUX0FVVEhPUl9EQVRFIjogQkFSRSwgIkdJVF9DT01NSVRURVJfREFURSI6IEJBUkV9CiAgICBpZiB0eiBpcyBub3QgTm9uZToKICAgICAgICBlbnZbIlRaIl0gPSB0egogICAgcmVwbyA9IG0uYnVpbGRfZml4dHVyZV9yZXBvKG9zLnBhdGguam9pbihST09ULCBuYW1lKSwgZW52PWVudikKICAgIGRlZiBsb2coZm10KToKICAgICAgICByZXR1cm4gc3VicHJvY2Vzcy5ydW4oWyJnaXQiLCAibG9nIiwgIi0xIiwgIi0tZm9ybWF0PSIgKyBmbXRdLCBjd2Q9cmVwbywKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgY2FwdHVyZV9vdXRwdXQ9VHJ1ZSwgdGV4dD1UcnVlLCBjaGVjaz1UcnVlLCBlbnY9R0UpLnN0ZG91dC5zdHJpcCgpCiAgICBoZWFkID0gc3VicHJvY2Vzcy5ydW4oWyJnaXQiLCAicmV2LXBhcnNlIiwgIkhFQUQiXSwgY3dkPXJlcG8sIGNhcHR1cmVfb3V0cHV0PVRydWUsCiAgICAgICAgICAgICAgICAgICAgICAgICAgdGV4dD1UcnVlLCBjaGVjaz1UcnVlLCBlbnY9R0UpLnN0ZG91dC5zdHJpcCgpCiAgICByZXR1cm4gbG9nKCIlYUkiKSwgbG9nKCIlY0kiKSwgaGVhZAoKCnByaW50KCkKcHJpbnQoIlsyXSBGUi0wMzAgLyBBQy0wNDA6IFRaIGV4cG9ydGVkIGluIHRoZSBwYXJlbnQsIGRyb3BwZWQgYnkgYnVpbGRfZml4dHVyZV9yZXBvJ3MgZW52PSIpCmF1dGhvciwgY29tbWl0dGVyLCBoZWFkID0gYnVpbGQoInVuZm9yd2FyZGVkIiwgTm9uZSkKb2Zmc2V0ID0gb2Zmc2V0X29mKGF1dGhvcikKcHJpbnQoIiAgICBhdXRob3IgZGF0ZSBnaXQgcmVjb3JkZWQ6ICAgICAgICAgICAgICVzIiAlIGF1dGhvcikKcHJpbnQoIiAgICBjb21taXR0ZXIgZGF0ZSBnaXQgcmVjb3JkZWQ6ICAgICAgICAgICVzIiAlIGNvbW1pdHRlcikKcHJpbnQoIiAgICBIRUFEOiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICVzIiAlIGhlYWQpCnByaW50KCIgICAgLT4gdGhlIG9mZnNldCBnaXQgd3JvdGUgaXMgICAgICAgICAgICAlcyIgJSBvZmZzZXQpCnByaW50KCIgICAgICAgdGhlIHBhcmVudCB3YXMgaG9sZGluZyAgICAgICAgICAgICAlcyIgJSB0aW1lLnN0cmZ0aW1lKCIleiIpKQpwcmludCgiICAgICAgIHNvIHRoZSBjaGlsZCByZWFkIG5laXRoZXIgdGhlIHBhcmVudCdzIFRaIG5vciBhIGNvbnN0YW50OiBpdCByZWFkIikKcHJpbnQoIiAgICAgICAlcywgdGhlIGhvc3QncyBvd24gem9uZS4gT24gYSBob3N0IGluIGFub3RoZXIgem9uZSB0aGUgc2FtZSIKICAgICAgJSB6b25lX29mKCIvZXRjL2xvY2FsdGltZSIpKQpwcmludCgiICAgICAgIGJhcmUgc3RyaW5nIHJlY29yZHMgdGhhdCBob3N0J3Mgb2Zmc2V0IGluc3RlYWQuIikKCnByaW50KCkKcHJpbnQoIlszXSB0aGUgc2FtZSBidWlsZGVyIHdpdGggVFogZm9yd2FyZGVkIHRocm91Z2ggZW52PSwgdG8gc2hvdyB3aG9zZSB6b25lIGRlY2lkZXMiKQpwcmludCgiICAgICUtMjZzICUtMjdzICVzIiAlICgiVFogcmVhY2hpbmcgdGhlIGdpdCBjaGlsZCIsICJhdXRob3IgZGF0ZSByZWNvcmRlZCIsICJIRUFEIikpCnJvd3MgPSBbKCIobm9uZSBmb3J3YXJkZWQpIiwgTm9uZSldICsgWyh6LCB6KSBmb3IgeiBpbgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAoIlBhY2lmaWMvS2lyaXRpbWF0aSIsICJBbWVyaWNhL0xvc19BbmdlbGVzIiwgIlVUQyIpXQpzZWVuID0ge30KZm9yIGxhYmVsLCB0eiBpbiByb3dzOgogICAgYSwgX2MsIGggPSBidWlsZCgiZndkLSIgKyByZS5zdWIociJbXkEtWmEtejAtOV0iLCAiLSIsIGxhYmVsKSwgdHopCiAgICBzZWVuW2xhYmVsXSA9IChvZmZzZXRfb2YoYSksIGgpCiAgICBwcmludCgiICAgICUtMjZzICUtMjdzICVzIiAlIChsYWJlbCwgYSwgaCkpCnByaW50KCIgICAgZGlzdGluY3Qgb2Zmc2V0czogJWQgICBkaXN0aW5jdCBIRUFEczogJWQiCiAgICAgICUgKGxlbih7dlswXSBmb3IgdiBpbiBzZWVuLnZhbHVlcygpfSksIGxlbih7dlsxXSBmb3IgdiBpbiBzZWVuLnZhbHVlcygpfSkpKQpwcmludCgiICAgIC0+IHRoZSBvZmZzZXQgaXMgYSBwcm9wZXJ0eSBvZiB0aGUgem9uZSB0aGUgZ2l0IHByb2Nlc3MgaXMgaW4sIG5vdCBvZiIpCnByaW50KCIgICAgICAgdGhpcyBtYWNoaW5lLiBVbmZvcndhcmRlZCBpdCBpcyB0aGUgaG9zdCdzLCBhbmQgdGhlIGhvc3QncyBoZXJlIGlzIikKcHJpbnQoIiAgICAgICAlcyBhdCAlcy4iICUgKHpvbmVfb2YoIi9ldGMvbG9jYWx0aW1lIiksIHNlZW5bIihub25lIGZvcndhcmRlZCkiXVswXSkpCgpwcmludCgpCnByaW50KCJbNF0gdGhlIHR3byBzZW50ZW5jZXMgdGhpcyBtZWFzdXJlbWVudCBiYWNrcywgYXMgY29tbWl0dGVkIikKZm9yIHBhdGgsIHBhdHRlcm4gaW4gKChvcy5wYXRoLnJlbHBhdGgoQ09ORiksIHIiTWVhc3VyZWQ6IHdpdGggYGBUWj0uKj9pbiBvbmUgem9uZVxuICAgIGFuZCByZXBvcnQgYSBwYXNzXC4iKSwKICAgICAgICAgICAgICAgICAgICAgIChIQVJOLCByIk1lYXN1cmVkOiBleGFjdGx5IHRoYXQsIHRoZSBjb21taXQgdGFraW5nLio/b24gYW55IG90aGVyXC4iKSk6CiAgICB0ZXh0ID0gb3BlbihwYXRoLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKICAgIGZvdW5kID0gcmUuc2VhcmNoKHBhdHRlcm4sIHRleHQsIHJlLlMpCiAgICBwcmludCgiICAgICVzOiIgJSBwYXRoKQogICAgZm9yIGxpbmUgaW4gKGZvdW5kLmdyb3VwKDApIGlmIGZvdW5kIGVsc2UgIjx0aGUgc2VudGVuY2UgaGFzIG1vdmVkPiIpLnNwbGl0bGluZXMoKToKICAgICAgICBwcmludCgiICAgICAgJXMiICUgbGluZS5zdHJpcCgpKQpwcmludCgpCnByaW50KCIgICAgTmVpdGhlciBzZW50ZW5jZSBub3cgc3RhdGVzIC0wNjAwIGFzIGEgcHJvcGVydHkgb2YgdGhlIGZpeHR1cmUgb3Igb2YiKQpwcmludCgiICAgIGdpdC4gQm90aCBzdGF0ZSB0aGUgcHJvcGVydHkgLS0gdGhlIGJhcmUgZGF0ZSB0YWtlcyB0aGUgem9uZSB0aGUgZ2l0IikKcHJpbnQoIiAgICBjaGlsZCBpcyBpbiAtLSBhbmQgZ2l2ZSAtMDYwMCBhcyB0aGUgdmFsdWUgYmxvY2sgWzJdIG1lYXN1cmVkIGhlcmUuIikK" | base64 -d > "$d/e.py"; python3 "$d/e.py"; s=$?; rm -rf "$d"; exit $s'
+# evidence-for: FR-030, AC-040, FR-039, US-010
+# evidence-timeout: 300
+#
+# GRIND cycle 16, lead item L-16-1 (1). Two docstrings -- conftest.build_fixture_repo's and
+# test_harness's test_fixture_head_survives_a_change_of_host_timezone -- said git dated a
+# bare-date commit "at the host's ``-0600``". The measurement behind that sentence was real
+# and the sentence was not: -0600 is what this host returns, not what a host returns. The
+# neighbouring interpreter claims in the same two files are hedged with "here"; these two were
+# written as though the offset were a property of git or of the fixture.
+#
+# Block [1] names the two zones before any commit is made: the host's, read from
+# /etc/localtime, and the Pacific/Kiritimati the parent process exports -- 20 hours apart, so
+# "the child took the host's offset" and "the child took the parent's" cannot be mistaken for
+# one another. Block [2] is the case the docstring is about: the real conftest builder, every
+# commit date overridden to a string carrying no offset, and env= carrying no TZ. Block [3]
+# runs the same builder with TZ forwarded, which is what makes the claim a property rather
+# than a reading: the recorded offset follows whatever zone the git child is in, and the
+# unforwarded row is simply the host's. Block [4] prints both corrected sentences from the
+# committed files, so the prose and the measurement are in one artifact.
+#
+# conftest.py is executed here with a stubbed pytest rather than imported through the suite,
+# so the log runs under a plain python3. GI-004 bars a test module from importing a webster
+# script; it says nothing about this log executing the harness whose docstring it measures.
+#
+[1] the two zones in play before a single commit is made
+    host /etc/localtime resolves to:      America/Denver
+    parent process TZ:                    Pacific/Kiritimati  (its own strftime %z: +1400)
+    date handed to git, every commit:     '2026-08-27T16:49:56'  (no offset in the string)
+    git:                                  git version 2.50.1 (Apple Git-155)
+
+[2] FR-030 / AC-040: TZ exported in the parent, dropped by build_fixture_repo's env=
+    author date git recorded:             2026-08-27T16:49:56-06:00
+    committer date git recorded:          2026-08-27T16:49:56-06:00
+    HEAD:                                 1c0be05e402f19d6d848a16312f9b4c22d671c28
+    -> the offset git wrote is            -06:00
+       the parent was holding             +1400
+       so the child read neither the parent's TZ nor a constant: it read
+       America/Denver, the host's own zone. On a host in another zone the same
+       bare string records that host's offset instead.
+
+[3] the same builder with TZ forwarded through env=, to show whose zone decides
+    TZ reaching the git child  author date recorded        HEAD
+    (none forwarded)           2026-08-27T16:49:56-06:00   1c0be05e402f19d6d848a16312f9b4c22d671c28
+    Pacific/Kiritimati         2026-08-27T16:49:56+14:00   7718e1755c2484b77a0470f62452d5c401aaf44e
+    America/Los_Angeles        2026-08-27T16:49:56-07:00   411d2bb1b53d3274312df1ce15d648918f549363
+    UTC                        2026-08-27T16:49:56Z        98fc1e61f90f0baa101f9c8bfcf3c17d77772af8
+    distinct offsets: 4   distinct HEADs: 4
+    -> the offset is a property of the zone the git process is in, not of
+       this machine. Unforwarded it is the host's, and the host's here is
+       America/Denver at -06:00.
+
+[4] the two sentences this measurement backs, as committed
+    plugins/webster/tests/conftest.py:
+      Measured: with ``TZ=Pacific/Kiritimati`` exported in the parent and dropped
+      by that ``env=``, git resolved a bare date in whatever zone the child was
+      in — with nothing forwarding ``TZ``, the host's own, read from
+      ``/etc/localtime``. That offset is ``-0600`` on the machine this was
+      measured on, against the ``+1400`` the parent was holding; on a
+      differently-zoned host it is that host's offset instead, which is the whole
+      of the hazard. A test written that way would compare two builds in one zone
+      and report a pass.
+    plugins/webster/tests/test_harness.py:
+      Measured: exactly that, the commit taking the host's own offset rather than
+      the ``+1400`` the parent was holding — ``-0600`` on the machine this was
+      measured on, and that host's own offset on any other.
+
+    Neither sentence now states -0600 as a property of the fixture or of
+    git. Both state the property -- the bare date takes the zone the git
+    child is in -- and give -0600 as the value block [2] measured here.

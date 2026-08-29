@@ -1,0 +1,86 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)"; d=$(mktemp -d); printf %s "IiIiTC0xNi0xIGl0ZW1zIDIgYW5kIDMuIFRoZSB0d28gY291bnRzIGNvbmZ0ZXN0LnB5J3MgZG9jc3RyaW5ncyBub3cgc3RhdGUsIGVhY2gKZGVyaXZlZCByYXRoZXIgdGhhbiByZWFkLiBSdW4gZnJvbSB0aGUgcmVwb3NpdG9yeSByb290LiIiIgppbXBvcnQgYXN0CmltcG9ydCBnbG9iCmltcG9ydCBvcwppbXBvcnQgcmUKClRFU1RTID0gInBsdWdpbnMvd2Vic3Rlci90ZXN0cyIKQ09ORiA9IFRFU1RTICsgIi9jb25mdGVzdC5weSIKCiMgQSBjaXRhdGlvbiBhcyBhIHJlYWRlciBncmVwcyBmb3Igb25lOiBhIGZpbGVuYW1lIHdpdGggYW4gZXh0ZW5zaW9uLCBhIGNvbG9uLAojIGEgbGluZSBudW1iZXIuIFRoZSBwcm9zZSBmb3JtIHRoZSBzYW1lIHBhcmFncmFwaCB1c2VzIGZvciB0aGUgdHdvIGZpbGVzIGl0CiMgY2l0ZXMgb3V0c2lkZSB0aGUgd3JpdGFibGUgc3VyZmFjZSAoIi4uLiwgbGluZSA1NDUiKSBpcyBkZWxpYmVyYXRlbHkgbm90IHRoaXMKIyBzaGFwZSwgYW5kIGJsb2NrIFsxYl0gbWVhc3VyZXMgdGhhdCBzZXBhcmF0ZWx5LgpUT0tFTiA9IHJlLmNvbXBpbGUociJbQS1aYS16MC05Xy4vLV0rXC4oPzpweXxtZHxqc29ufHRvbWx8dHh0fHlhbWx8eW1sKTpcZCsoPzotXGQrKT8iKQpQUk9TRSA9IHJlLmNvbXBpbGUociIoW0EtWmEtejAtOV8uLy1dK1wucHkpYHswLDJ9LCBsaW5lcz8gKFxkKyg/Oi1cZCspPykiKQpTVVJGQUNFID0gInBsdWdpbnMvd2Vic3Rlci8iCgpzcmMgPSBvcGVuKENPTkYsIGVuY29kaW5nPSJ1dGYtOCIpLnJlYWQoKQpsaW5lcyA9IHNyYy5zcGxpdGxpbmVzKCkKCnByaW50KCJbMWFdIEZSLTAzOTogZXZlcnkgZmlsZTpsaW5lLXNoYXBlZCBzdHJpbmcgaW4gY29uZnRlc3QucHksIGZvdW5kIGJ5IHJlZ2V4IikKcHJpbnQoIiAgICAgcGF0dGVybjogJXMiICUgVE9LRU4ucGF0dGVybikKaGl0cyA9IFsobiwgdCkgZm9yIG4sIGxpbmUgaW4gZW51bWVyYXRlKGxpbmVzLCAxKSBmb3IgdCBpbiBUT0tFTi5maW5kYWxsKGxpbmUpXQpmb3IgbiwgdG9rIGluIGhpdHM6CiAgICBwcmludCgiICAgICBsaW5lICUtNGQgJXMiICUgKG4sIHRvaykpCmRpc3RpbmN0ID0gc29ydGVkKHt0IGZvciBfbiwgdCBpbiBoaXRzfSkKcHJpbnQoIiAgICAgb2NjdXJyZW5jZXM6ICVkICAgIGRpc3RpbmN0IHN0cmluZ3M6ICVkIC0tICVzIgogICAgICAlIChsZW4oaGl0cyksIGxlbihkaXN0aW5jdCksICIsICIuam9pbihkaXN0aW5jdCkpKQpvdGhlcl9wbHVnaW4gPSBbdCBmb3IgdCBpbiBkaXN0aW5jdCBpZiB0LnN0YXJ0c3dpdGgoInBsdWdpbnMvIildCm93biA9IFt0IGZvciB0IGluIGRpc3RpbmN0IGlmIG5vdCB0LnN0YXJ0c3dpdGgoInBsdWdpbnMvIildCnByaW50KCIgICAgIG9mIHRob3NlLCBjaXRpbmcgYSBmaWxlIGluIGFub3RoZXIgcGx1Z2luIChhIGZyb3plbi1maWxlIGNpdGF0aW9uKTogJWQgJXMiCiAgICAgICUgKGxlbihvdGhlcl9wbHVnaW4pLCAiLCAiLmpvaW4ob3RoZXJfcGx1Z2luKSkpCnByaW50KCIgICAgIG9mIHRob3NlLCBuYW1pbmcgYSBwYXRoIHRoZSBmaXh0dXJlIGl0c2VsZiBwbGFudHM6ICAgICAgICAgICAgICAgICAgJWQgJXMiCiAgICAgICUgKGxlbihvd24pLCAiLCAiLmpvaW4ob3duKSkpCnByaW50KCIgICAgIC0+IG9uZSBkaXN0aW5jdCBzdHJpbmcsIHdyaXR0ZW4gJWQgdGltZXMuIFRoZSBkb2NzdHJpbmcgc2FpZCBcIm9uZSIgJSBsZW4oaGl0cykpCnByaW50KCIgICAgICAgIGBgZmlsZTpsaW5lYGAgc3RyaW5nIGJlbG93XCIsIHdoaWNoIGlzIHRoZSBkaXN0aW5jdCBjb3VudCBhbmQgbm90IikKcHJpbnQoIiAgICAgICAgdGhlIG9jY3VycmVuY2UgY291bnQgYSByZWFkZXIgZ3JlcHBpbmcgdGhlIGZpbGUgZ2V0cyBiYWNrLiIpCgpwcmludCgpCnByaW50KCJbMWJdIHRoZSBzYW1lIHBhcmFncmFwaCdzIG90aGVyIGNsYWltLCBvbiB0aGUgcHJvc2UgZm9ybSwgdW5jaGFuZ2VkIGJ5IHRoaXMgZml4IikKcHJpbnQoIiAgICAgcGF0dGVybjogJXMiICUgUFJPU0UucGF0dGVybikKcHJvc2UgPSBbKG4sIG0uZ3JvdXAoMSksIG0uZ3JvdXAoMikpCiAgICAgICAgIGZvciBuLCBsaW5lIGluIGVudW1lcmF0ZShsaW5lcywgMSkgZm9yIG0gaW4gW1BST1NFLnNlYXJjaChsaW5lKV0gaWYgbV0KZm9yIG4sIHBhdGgsIHdoZXJlIGluIHByb3NlOgogICAgcHJpbnQoIiAgICAgbGluZSAlLTRkICUtNDRzIGxpbmUocykgJS02cyBpbnNpZGUgdGhlIHN1cmZhY2U6ICVzIgogICAgICAgICAgJSAobiwgcGF0aCwgd2hlcmUsICJ5ZXMiIGlmIHBhdGguc3RhcnRzd2l0aChTVVJGQUNFKSBlbHNlICJubyIpKQpmaWxlcyA9IHNvcnRlZCh7cCBmb3IgX24sIHAsIF93IGluIHByb3NlfSkKcHJpbnQoIiAgICAgcHJvc2UtZm9ybSBjaXRhdGlvbnM6ICVkICAgIGRpc3RpbmN0IGZpbGVzOiAlZCIgJSAobGVuKHByb3NlKSwgbGVuKGZpbGVzKSkpCnByaW50KCIgICAgIGluc2lkZSB0aGUgc3VyZmFjZTogJWQgICAgb3V0c2lkZSBpdDogJWQiCiAgICAgICUgKGxlbihbcCBmb3IgcCBpbiBmaWxlcyBpZiBwLnN0YXJ0c3dpdGgoU1VSRkFDRSldKSwKICAgICAgICAgbGVuKFtwIGZvciBwIGluIGZpbGVzIGlmIG5vdCBwLnN0YXJ0c3dpdGgoU1VSRkFDRSldKSkpCnByaW50KCIgICAgIC0+IHRoZSBwYXJhZ3JhcGgncyBcInR3byBvZiB0aGVtIGFuZCBubyBvdGhlcnNcIiBob2xkcywgYW5kIHRoZSB0b2tlbiIpCnByaW50KCIgICAgICAgIGZvcm0gYWJvdmUgc2hhcmVzIG5vIGZpbGUgd2l0aCB0aGlzIG9uZS4iKQoKcHJpbnQoKQpwcmludCgiWzJdIEdJLTAwNDogZXZlcnkgc3VicHJvY2Vzcy5ydW4gdW5kZXIgdGVzdHMvLCBhbmQgdGhlIGZ1bmN0aW9uIGl0IHNpdHMgaW4iKQoKCmRlZiBlbmNsb3NpbmcodHJlZSk6CiAgICAiIiJNYXAgZXZlcnkgbm9kZSB0byBpdHMgbmVhcmVzdCBlbmNsb3NpbmcgRnVuY3Rpb25EZWYgbmFtZSwgb3IgTm9uZS4iIiIKICAgIG93bmVyID0ge30KCiAgICBkZWYgd2Fsayhub2RlLCBjdXJyZW50KToKICAgICAgICBmb3IgY2hpbGQgaW4gYXN0Lml0ZXJfY2hpbGRfbm9kZXMobm9kZSk6CiAgICAgICAgICAgIGhlcmUgPSBjaGlsZC5uYW1lIGlmIGlzaW5zdGFuY2UoY2hpbGQsIGFzdC5GdW5jdGlvbkRlZikgZWxzZSBjdXJyZW50CiAgICAgICAgICAgIG93bmVyW2NoaWxkXSA9IGhlcmUKICAgICAgICAgICAgd2FsayhjaGlsZCwgaGVyZSkKCiAgICB3YWxrKHRyZWUsIE5vbmUpCiAgICByZXR1cm4gb3duZXIKCgpkZWYgYXJndjAoY2FsbCk6CiAgICBmaXJzdCA9IGNhbGwuYXJnc1swXSBpZiBjYWxsLmFyZ3MgZWxzZSBOb25lCiAgICBpZiBpc2luc3RhbmNlKGZpcnN0LCBhc3QuTGlzdCkgYW5kIGZpcnN0LmVsdHMgYW5kIGlzaW5zdGFuY2UoZmlyc3QuZWx0c1swXSwgYXN0LkNvbnN0YW50KToKICAgICAgICByZXR1cm4gZmlyc3QuZWx0c1swXS52YWx1ZQogICAgcmV0dXJuICI8Y29tcHV0ZWQ+IgoKCnJvd3MgPSBbXQpmb3IgcGF0aCBpbiBzb3J0ZWQoZ2xvYi5nbG9iKFRFU1RTICsgIi8qLnB5IikpOgogICAgdHJlZSA9IGFzdC5wYXJzZShvcGVuKHBhdGgsIGVuY29kaW5nPSJ1dGYtOCIpLnJlYWQoKSwgcGF0aCkKICAgIG93bmVyID0gZW5jbG9zaW5nKHRyZWUpCiAgICBmb3Igbm9kZSBpbiBhc3Qud2Fsayh0cmVlKToKICAgICAgICBpZiAoaXNpbnN0YW5jZShub2RlLCBhc3QuQ2FsbCkgYW5kIGlzaW5zdGFuY2Uobm9kZS5mdW5jLCBhc3QuQXR0cmlidXRlKQogICAgICAgICAgICAgICAgYW5kIG5vZGUuZnVuYy5hdHRyID09ICJydW4iIGFuZCBpc2luc3RhbmNlKG5vZGUuZnVuYy52YWx1ZSwgYXN0Lk5hbWUpCiAgICAgICAgICAgICAgICBhbmQgbm9kZS5mdW5jLnZhbHVlLmlkID09ICJzdWJwcm9jZXNzIik6CiAgICAgICAgICAgIHJvd3MuYXBwZW5kKChvcy5wYXRoLmJhc2VuYW1lKHBhdGgpLCBvd25lci5nZXQobm9kZSksIG5vZGUubGluZW5vLCBhcmd2MChub2RlKSkpCnJvd3Muc29ydCgpCnByaW50KCIgICAgICUtMThzICUtNTNzICUtNnMgJXMiICUgKCJtb2R1bGUiLCAiZW5jbG9zaW5nIGZ1bmN0aW9uIiwgImxpbmUiLCAiYXJndlswXSIpKQpmb3IgbW9kLCBmbiwgbGluZW5vLCBhMCBpbiByb3dzOgogICAgcHJpbnQoIiAgICAgJS0xOHMgJS01M3MgJS02ZCAlcyIgJSAobW9kLCBmbiwgbGluZW5vLCBhMCkpCm5vdF9ycyA9IFtyIGZvciByIGluIHJvd3MgaWYgclsxXSAhPSAicnVuX3NjcmlwdCJdCmJhcmUgPSBbciBmb3IgciBpbiBub3RfcnMgaWYgclswXSA9PSAidGVzdF9oYXJuZXNzLnB5IiBhbmQgc3RyKHJbMV0pLnN0YXJ0c3dpdGgoInRlc3RfIildCnByaW50KCIgICAgIGNhbGwgc2l0ZXM6ICVkICAgIGluIHJ1bl9zY3JpcHQ6ICVkICAgIGFueXdoZXJlIGVsc2U6ICVkIgogICAgICAlIChsZW4ocm93cyksIGxlbihyb3dzKSAtIGxlbihub3RfcnMpLCBsZW4obm90X3JzKSkpCnByaW50KCIgICAgIHRoZSBvbmVzIHRoYXQgYXJlIG5vdCBydW5fc2NyaXB0OiIpCmZvciBtb2QsIGZuLCBsaW5lbm8sIF9hMCBpbiBub3RfcnM6CiAgICBwcmludCgiICAgICAgICVzICVzIiAlIChtb2QsIGZuKSkKcHJpbnQoIiAgICAgb2YgdGhvc2UsIGluIHRlc3RfaGFybmVzcy5weSBhbmQgaW4gbm8gaGVscGVyIC0tIHRoZSBcIm9uZSBiYXJlIikKcHJpbnQoIiAgICAgc3VicHJvY2Vzcy5ydW5cIiB0aGUgZG9jc3RyaW5nIG5hbWVzOiAlZCAtLSAlcyIKICAgICAgJSAobGVuKGJhcmUpLCAiLCAiLmpvaW4oclsxXSBmb3IgciBpbiBiYXJlKSkpCnByaW50KCIgICAgIC0+IHRoZSBkb2NzdHJpbmcgbmFtZWQgZm91ciBhbmQgdGVzdF9kcmlmdC5weSdzIGdpdF9pbiB3YXMgdGhlIGZpZnRoLiIpCnByaW50KCIgICAgICAgIGJ1aWxkX2ZpeHR1cmVfcmVwbyByZWFjaGVzIGdpdCB0aHJvdWdoIF9naXQgcmF0aGVyIHRoYW4gY2FsbGluZyIpCnByaW50KCIgICAgICAgIHN1YnByb2Nlc3MgaXRzZWxmLCBzbyBpdCBoYXMgbm8gcm93IG9mIGl0cyBvd24gaGVyZS4iKQoKcHJpbnQoKQpwcmludCgiWzNdIHRoZSB0d28gc2VudGVuY2VzIHRoZXNlIGNvdW50cyBiYWNrLCBhcyBjb21taXR0ZWQiKQpmb3IgcGF0dGVybiBpbiAociJPbmUgYGBmaWxlOmxpbmVgYCBzdHJpbmcgaW5cbnRoaXMgZmlsZS4qP2dyZXBwaW5nIGZvciBpdCBmaW5kc1wuIiwKICAgICAgICAgICAgICAgIHIiTm90IFwidGhlIG9uZSBzdWJwcm9jZXNzIGhlbHBlciBmb3IgdGhpcyBzdWl0ZVwiLio/c2NyaXB0IHVuZGVyIHRlc3RcLiIpOgogICAgZm91bmQgPSByZS5zZWFyY2gocGF0dGVybiwgc3JjLCByZS5TKQogICAgZm9yIGxpbmUgaW4gKGZvdW5kLmdyb3VwKDApIGlmIGZvdW5kIGVsc2UgIjx0aGUgc2VudGVuY2UgaGFzIG1vdmVkPiIpLnNwbGl0bGluZXMoKToKICAgICAgICBwcmludCgiICAgICAlcyIgJSBsaW5lLnN0cmlwKCkpCiAgICBwcmludCgpCg==" | base64 -d > "$d/e.py"; python3 "$d/e.py"; s=$?; rm -rf "$d"; exit $s'
+# evidence-for: FR-039, GI-004, CT-007, US-010
+# evidence-timeout: 120
+#
+# GRIND cycle 16, lead item L-16-1 (2) and (3). Two counts in conftest.py's docstrings, each
+# derived here rather than read off the file by eye.
+#
+# Block [1a] is item (2). The citation paragraph said "One ``file:line`` string below does
+# point inside the surface". Grepped, there is one distinct such string and it is written
+# three times, so the sentence was true of the distinct string and false of what a reader
+# looking for it gets back. The fix says both. Block [1b] measures the same paragraph's other
+# claim -- the two prose-form citations it says point outside the writable surface -- because
+# the fix rewords the sentence sitting next to it and the neighbour has to survive the edit.
+# The two forms share no file.
+#
+# Block [2] is item (3). run_script_fixture's docstring refutes "the one subprocess helper for
+# this suite" by naming the helpers that are not run_script, and it named four where five
+# exist. Every subprocess.run under tests/ is enumerated by AST here, each attributed to its
+# nearest enclosing function: six call sites, one of them run_script's, five not.
+# test_drift.py's own git_in was the missing fifth and is now named. build_fixture_repo has no
+# row because it reaches git through _git rather than calling subprocess itself, which is why
+# the docstring describes it in those terms. The lead's ruling was that this clause refutes an
+# exhaustiveness claim rather than asserting one, so it was not false; the fifth is added
+# without a count being stated. Block [3] prints both corrected sentences as committed.
+#
+[1a] FR-039: every file:line-shaped string in conftest.py, found by regex
+     pattern: [A-Za-z0-9_./-]+\.(?:py|md|json|toml|txt|yaml|yml):\d+(?:-\d+)?
+     line 100  src/app/main.py:15
+     line 185  src/app/main.py:15
+     line 343  src/app/main.py:15
+     occurrences: 3    distinct strings: 1 -- src/app/main.py:15
+     of those, citing a file in another plugin (a frozen-file citation): 0 
+     of those, naming a path the fixture itself plants:                  1 src/app/main.py:15
+     -> one distinct string, written 3 times. The docstring said "one
+        ``file:line`` string below", which is the distinct count and not
+        the occurrence count a reader grepping the file gets back.
+
+[1b] the same paragraph's other claim, on the prose form, unchanged by this fix
+     pattern: ([A-Za-z0-9_./-]+\.py)`{0,2}, lines? (\d+(?:-\d+)?)
+     line 139  plugins/forge/tests/conftest.py              line(s) 545    inside the surface: no
+     line 244  plugins/forge/tests/test_validate_spec.py    line(s) 43-46  inside the surface: no
+     prose-form citations: 2    distinct files: 2
+     inside the surface: 0    outside it: 2
+     -> the paragraph's "two of them and no others" holds, and the token
+        form above shares no file with this one.
+
+[2] GI-004: every subprocess.run under tests/, and the function it sits in
+     module             enclosing function                                    line   argv[0]
+     conftest.py        _git                                                  290    git
+     conftest.py        run_script                                            256    python3
+     test_drift.py      git_in                                                206    git
+     test_harness.py    git                                                   221    git
+     test_harness.py    git_in                                                325    git
+     test_harness.py    test_run_script_child_python3_clears_the_plugin_floor 404    python3
+     call sites: 6    in run_script: 1    anywhere else: 5
+     the ones that are not run_script:
+       conftest.py _git
+       test_drift.py git_in
+       test_harness.py git
+       test_harness.py git_in
+       test_harness.py test_run_script_child_python3_clears_the_plugin_floor
+     of those, in test_harness.py and in no helper -- the "one bare
+     subprocess.run" the docstring names: 1 -- test_run_script_child_python3_clears_the_plugin_floor
+     -> the docstring named four and test_drift.py's git_in was the fifth.
+        build_fixture_repo reaches git through _git rather than calling
+        subprocess itself, so it has no row of its own here.
+
+[3] the two sentences these counts back, as committed
+     One ``file:line`` string in
+     this file does point inside the surface, and it is not a citation:
+     ``src/app/main.py:15`` is the anchor the fixture plants and ``drift.py``
+     parses back out of ``docs/items/create-item.md``. Its line moving is the
+     scenario, not a reference gone stale. One string, written three times — here,
+     above ``TOUCH_MAIN_MARKER``, and in ``build_fixture_repo``'s guard message —
+     each one naming that same planted anchor again rather than a further place to
+     look. This sentence used to say "one ``file:line`` string below", which is
+     true of the distinct string and false of what a reader grepping for it finds.
+
+     Not "the one subprocess helper for this suite", which is what this line
+     used to say and what nothing in the suite supports: ``_git`` above shells
+     out, ``build_fixture_repo`` reaches git through it for every commit,
+     ``test_harness.py`` has ``git``, ``git_in`` and one bare ``subprocess.run``
+     that measures the child interpreter, and ``test_drift.py`` has a ``git_in``
+     of its own. Those all drive git or python directly; none of them drives a
+     script under test.
+
