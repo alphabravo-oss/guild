@@ -1007,9 +1007,10 @@ def main():
     if not pages and not defects:
         print(f"{stubs} stubs, nothing to check")
         return 2
-    # "every page" spoke for a population that included the stubs. A stub is counted as a page
-    # in the header line above, declares a doc_type of its own, and is never matched against it,
-    # because check_typed lives past the `continue` in run_check. A tree of one clean how-to and
+    # "every page" spoke for a population that included the stubs. A stub declares a doc_type of
+    # its own and is never matched against it: `stubs += 1` and its `continue` sit above
+    # `pages += 1` in run_check, so check_typed never sees one, and the header line above counts
+    # it in a field of its own rather than among the pages. A tree of one clean how-to and
     # one stub whose placeholder braces name `create_item`, `/dashboard` and `--verbose` printed
     # the sentence and exited 0, while that same stub with nothing changed but the marker taken
     # out reported those three as wrong-lens defects. This branch is only reached when `untyped`

@@ -104,7 +104,7 @@ a bare ``assert result.returncode == 1`` tells a reader nothing about which of t
 fired. The three source-reading tests named in the next paragraph are the exception to both
 halves of that sentence, and the only exception to either: they start no process, so there is
 no exit code to quote, and their assertions quote the source they read instead. The sentence
-used to open "Every test", flatly, three lines above the paragraph that disclosed the
+used to open "Every test", flatly, in the paragraph directly above the one that disclosed the
 exceptions it was not true of.
 
 That "ten" is the script's own census, and it is read rather than restated:
@@ -928,11 +928,12 @@ def test_all_stub_tree_with_a_defect_exits_one(run_script, docs_dir):
 def test_the_pass_line_names_the_written_pages_it_matched(run_script, docs_dir):
     """AC-020 / AC-021 / FR-014: the sentence a passing run ends on, over the pages it read.
 
-    A stub is counted among the pages in the header line, declares a doc_type of its own, and
-    is never matched against it. "every page matches its declared type" therefore spoke for a
-    population the run had not measured, and the two guards this file already had covered only
-    the all-stub tree and the empty tree — the mixed tree, the ordinary shape of a docs
-    directory part way through being written, went unread.
+    A stub declares a doc_type of its own and is never matched against it: run_check counts it
+    in `stubs` and `continue`s before check_typed. "every page matches its declared type"
+    therefore spoke for a population the run had not typed, and the only guards this file had
+    on that sentence were the two that assert it does not print at all — the all-stub tree and
+    the empty tree. The mixed tree, the ordinary shape of a docs directory part way through
+    being written, is the one shape where the sentence does print, and it went unread.
 
     The second run is what makes the first one's silence visible: the same stub with its
     marker deleted and no other byte changed reports the three tokens its placeholder braces
@@ -989,9 +990,25 @@ def test_one_written_page_among_stubs_exits_by_that_page(run_script, docs_dir):
     assert "nothing to check" not in result.stdout, (
         f"There was something to check.\n{outcome(result)}"
     )
-    assert "1 pages checked" in result.stdout, (
-        f"Expected the header to count the one page that was read as writing."
-        f"\n{outcome(result)}"
+    # The header's two populations, read off the tree on disk rather than off a literal chosen
+    # to match them. `stubs += 1` and its `continue` sit above `pages += 1` in run_check, so a
+    # stub reaches neither check_typed nor the page count and the header prints it in a field
+    # of its own: a sentence claiming a stub is counted among the pages turns this red. Read up
+    # to the bare word `stubs`, because what follows it is not the same string at cfafe8e —
+    # "stubs skipped" there, "stubs (frontmatter only)" here — and this test is a control that
+    # has to pass on both sides.
+    header = re.search(r"^(\d+) pages checked, \d+ against a declared type, (\d+) stubs",
+                       result.stdout, re.M)
+    assert header, (
+        f"doctype.py opens on the counts line, and this test reads it.\n{outcome(result)}"
+    )
+    md = sorted(docs_dir.rglob("*.md"))
+    skeletons = [p for p in md if STUB_MARKER in p.read_text(encoding="utf-8")]
+    assert (int(header.group(1)), int(header.group(2))) == (len(md) - len(skeletons),
+                                                            len(skeletons)), (
+        f"The header counts the pages read as writing and the stubs separately. This tree "
+        f"holds {len(md) - len(skeletons)} written page and {len(skeletons)} stubs; the "
+        f"header said {header.group(1)} and {header.group(2)}.\n{outcome(result)}"
     )
 
 

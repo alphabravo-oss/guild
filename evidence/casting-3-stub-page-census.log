@@ -1,0 +1,34 @@
+# evidence-cmd: cd plugins/webster && rm -rf /tmp/webster-c3-census && mkdir -p /tmp/webster-c3-census/docs && printf '%s\n' '---' 'title: Guide' 'doc_type: how-to' 'audience: user' '---' '' '# Guide' '' 'Open the app and choose a store from the list.' > /tmp/webster-c3-census/docs/guide.md && for n in audit export items; do printf '%s\n' '---' "title: $n" 'doc_type: explanation' 'audience: user' '---' '' "# $n" '' '<!-- webster: not written yet -->' '' '## Overview' '' '{What `create_item` does at `/dashboard` when you pass `--verbose`.}' > /tmp/webster-c3-census/docs/$n.md; done; echo '--- FR-014 / AC-021: the counts line over a tree of one written page and three stubs ---'; WEBSTER_SHOW_PER_RULE=50 WEBSTER_SURVEY= WEBSTER_LENS_ALLOW= python3 scripts/doctype.py check /tmp/webster-c3-census/docs; echo "exit=$?"; echo '--- the two populations, counted off the tree the run just read ---'; echo "md files:                 $(ls /tmp/webster-c3-census/docs/*.md | wc -l | tr -d ' ')"; echo "carrying the stub marker: $(grep -lF 'webster: not written yet' /tmp/webster-c3-census/docs/*.md | wc -l | tr -d ' ')"; echo '--- AC-021: the guard that holds the counts line to those two numbers ---'; COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header tests/test_doctype.py::test_one_written_page_among_stubs_exits_by_that_page tests/test_doctype.py::test_the_pass_line_names_the_written_pages_it_matched 2>&1 | tail -1 | sed -E 's/ in [0-9.]+s$//'
+# evidence-for: FR-014, AC-021
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# FR-014 / AC-021. One tree, four .md files: one written how-to and three
+# skeletons. The counts line is the whole point of the run. `pages` and `stubs`
+# are separate fields in it, because `stubs += 1` and its `continue` sit above
+# `pages += 1` in run_check -- a stub is counted as a stub and never as one of
+# the pages, and it never reaches check_typed either, which is why the pass
+# line names the written pages and prints the stub count beside them rather
+# than speaking for the whole tree.
+#
+# The two numbers under the run are that same tree counted from the outside:
+# four .md files, three carrying the stub marker, so one page was read as
+# writing. They agree with the header's 1 and 3, and the pytest line under them
+# is the guard that keeps them agreeing --
+# test_one_written_page_among_stubs_exits_by_that_page now parses the counts
+# line and compares both fields against a census of the tree on disk instead of
+# matching the literal "1 pages checked", so prose claiming a stub is counted
+# among the pages turns it red. It stays a negative control: at cfafe8e the
+# same header reads "1 pages checked, 1 against a declared type, 3 stubs
+# skipped", the census is still (1, 3), and the test passes there as it must.
+#
+--- FR-014 / AC-021: the counts line over a tree of one written page and three stubs ---
+1 pages checked, 1 against a declared type, 3 stubs (frontmatter only)
+no survey allowlist
+every written page matches its declared type; 3 stubs were not matched against theirs
+exit=0
+--- the two populations, counted off the tree the run just read ---
+md files:                 4
+carrying the stub marker: 3
+--- AC-021: the guard that holds the counts line to those two numbers ---
+2 passed
