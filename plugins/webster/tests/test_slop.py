@@ -24,9 +24,9 @@ revision's slop.py in it, and run this module against it --
 
 The revisions measured are every commit that has touched slop.py since the
 pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5,
-ad38ed9, f33f7c2, f3e30a5, 368b269, 2830b9c — read back from ``git log
---oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py`` rather
-than remembered.
+ad38ed9, f33f7c2, f3e30a5, 368b269, 2830b9c, 8fe80e2 — read back from ``git
+log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py``
+rather than remembered.
 
 This list keeps landing one short, for two different reasons. Only the closing
 move is shared.
@@ -63,9 +63,19 @@ nobody editing it. 4f61d2d added 2830b9c; it touches no file under
 reason to touch slop.py as well, which is why the closing move is written down
 rather than left to be noticed again.
 
+The fifth time was the first case again. 8fe80e2 rewrote the missing-target
+comment in slop.py's ``main()`` -- 2830b9c had put four where there are three
+versions, reading the number off the revisions and printing it under the word
+versions -- and amended the paragraph above in the same commit, so its list
+stopped at 2830b9c. The commit that added 8fe80e2 to the list above touches no
+file under ``scripts/``; it is named here by what it did rather than by its
+hash, because a paragraph cannot carry the hash of the commit it lands in,
+which is what "This commit added 2830b9c" in the paragraph above turned into
+the moment that paragraph was edited by a later one.
+
 "red against REV" means this file fails when the suite runs against the slop.py
 at REV and passes against the next revision in that list. "guard" means it
-passed at all nine and exists to stop a fix from taking something else away
+passed at all ten and exists to stop a fix from taking something else away
 with it. "added" is the commit the row's test first appeared in; where a second
 commit is named, the test's body was amended there.
 
@@ -92,10 +102,11 @@ Neither row moved when the run below was repeated against f3e30a5.
 
 The one row naming a revision later than cfafe8e, ``test_dangling_symlink_page_exits_two``,
 is red at cfafe8e as well. The four rows filed "guard" are the four that pass
-at cfafe8e, and they pass at all nine; no row in this module passes at cfafe8e
-and fails later. Run across the nine the module goes 6 red at cfafe8e, 1 red at
+at cfafe8e, and they pass at all ten; no row in this module passes at cfafe8e
+and fails later. Run across the ten the module goes 6 red at cfafe8e, 1 red at
 af10189, and 10 green at each of ba33497, ecc7dd5, ad38ed9, f33f7c2, f3e30a5,
-368b269 and 2830b9c. The last four are green for a reason worth writing down
+368b269, 2830b9c and 8fe80e2. The last five are green for a reason worth
+writing down
 rather than inferring: each changed comment text in slop.py and no code, so
 there was no behaviour there for a row to move on, and re-running them is how
 that is known instead of assumed. The measurement was first run because the
