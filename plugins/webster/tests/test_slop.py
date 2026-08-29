@@ -55,9 +55,10 @@ missing-target comment in slop.py's ``main()``, so its list stopped at f3e30a5.
 
 The fourth time was the second case again. 56738b1's list ran through 368b269
 and named every revision there was. 2830b9c then rewrote the missing-target
-comment once more -- it had counted its own earlier versions as two where there
-are four -- without touching this file, so the list aged out of date with
-nobody editing it. This commit added 2830b9c; it touches no file under
+comment once more -- it had counted the versions that described the sibling
+population wrongly as two, where there are three distinct texts carried across
+four revisions -- without touching this file, so the list aged out of date with
+nobody editing it. 4f61d2d added 2830b9c; it touches no file under
 ``scripts/``. The commit correcting this docstring has more than once had a
 reason to touch slop.py as well, which is why the closing move is written down
 rather than left to be noticed again.
