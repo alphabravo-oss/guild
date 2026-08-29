@@ -22,7 +22,8 @@
 # conftest.py is executed here with a stubbed pytest rather than imported through the suite,
 # so the log runs under a plain python3. GI-004 bars a test module from importing a webster
 # script; it says nothing about this log executing the harness whose docstring it measures.
-#
+
+
 [1] the two zones in play before a single commit is made
     host /etc/localtime resolves to:      America/Denver
     parent process TZ:                    Pacific/Kiritimati  (its own strftime %z: +1400)

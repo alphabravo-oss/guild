@@ -22,7 +22,8 @@
 # the docstring describes it in those terms. The lead's ruling was that this clause refutes an
 # exhaustiveness claim rather than asserting one, so it was not false; the fifth is added
 # without a count being stated. Block [3] prints both corrected sentences as committed.
-#
+
+
 [1a] FR-039: every file:line-shaped string in conftest.py, found by regex
      pattern: [A-Za-z0-9_./-]+\.(?:py|md|json|toml|txt|yaml|yml):\d+(?:-\d+)?
      line 100  src/app/main.py:15
