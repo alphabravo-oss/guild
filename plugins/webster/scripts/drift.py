@@ -193,10 +193,15 @@ def repo_prefix():
     command ran in, so with the docs one level down the diff handed under_root()
     `src/app/main.py` where this prefix is `site/`; every path was dropped as living outside
     ROOT, `changed` came back empty, and a COMMITTED edit to a cited file printed clean at
-    exit 0 — US-001 negated outright by a line of configuration no repository under test
-    carries, because the suite pins GIT_CONFIG_GLOBAL at os.devnull. That false comment is why
-    no guard existed. The diff call pins --no-relative; the flag and the config arrived in the
-    same git release, so a git too old for the flag has no config to override.
+    exit 0 — US-001 negated outright by a line of configuration no machine the suite has run on
+    sets. The suite does not fence it off either, which an earlier version of this sentence
+    claimed it did: conftest's run_script hands this script PATH and HOME and nothing else, so
+    a developer's ~/.gitconfig reaches the git calls made here. GIT_CONFIG_GLOBAL=os.devnull is
+    pinned for the tests' own git commands, never for the script's. Measured at 457658b: this
+    same committed edit prints clean under a HOME carrying diff.relative and drift under one
+    without. That false comment is why no guard existed. The diff call pins --no-relative; the
+    flag and the config arrived in the same git release, so a git too old for the flag has no
+    config to override.
     """
     return git("rev-parse", "--show-prefix").strip()
 
@@ -586,7 +591,7 @@ def main():
     # than an empty answer; not_checked holds the one that stops the run at exit 2.
     #
     # Every note below names what WAS measured as well as what was not. They used to say the
-    # pages had been compared "against nothing", and that was false in all three branches: the
+    # pages had been compared "against nothing", and that was false in all four branches: the
     # anchors half has already run by the time this line is reached (ST-004) and is printed
     # under every status but no_docs — which returns above doc_files(), having found no
     # directory to walk, and carries no anchor field of any kind — and in the
@@ -762,9 +767,12 @@ def main():
 
     # Precedence, least measurable first. A set that cannot be measured at all, then a git
     # question that could not be asked, then the findings, then the changes that are nobody's
-    # problem. The first two exit-2 statuses outrank drift because "I could not check anything"
-    # is a different claim from "I checked and it is wrong" — and the anchors half is printed
-    # under both. hashes_partial sits BELOW drift on purpose, because it is the narrower claim:
+    # problem. Two branches sit above drift and carry three exit-2 statuses between them —
+    # no_anchors, and the no_git or head_missing that not_checked holds — and all three outrank
+    # it because "I could not check anything" is a different claim from "I checked and it is
+    # wrong"; the anchors half is printed under all three. The other two of the five the module
+    # docstring counts, no_docs and no_manifest, returned before this chain was reached.
+    # hashes_partial sits BELOW drift on purpose, because it is the narrower claim:
     # some anchors were measured and some were not, so a finding the run did make is still
     # reported as a finding (FR-007) and "I could not check this one" never hides "I checked
     # that one and it is wrong".

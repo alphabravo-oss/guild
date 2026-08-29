@@ -1,0 +1,30 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)" && S=plugins/webster/scripts/drift.py && T=plugins/webster/tests/test_drift.py && echo "--- the count, as this commit states it ---" && grep -n "false in all four branches" $S && grep -n "the four git branches built their note" $T && echo && echo "--- the count, as cf5a391 wrote it and 66dab76 left it ---" && git show cf5a391:$S | grep -n "false in all three branches" && echo && echo "--- every branch that sets git_note, now ---" && grep -n "git_note = (" $S && printf "count: %s\n" "$(grep -c "git_note = (" $S)" && echo && echo "--- every branch that sets git_note at 66dab76, the revision test_drift.py names ---" && git show 66dab76:$S | grep -n "git_note = (" && printf "count: %s\n" "$(git show 66dab76:$S | grep -c "git_note = (")" && echo && echo "--- what each of those four claimed about the line half at 66dab76 ---" && git show 66dab76:$S | grep -n "digests compared\|digests were still compared"'
+# evidence-for: FR-002, FR-037
+# evidence-timeout: 60
+
+--- the count, as this commit states it ---
+594:    # pages had been compared "against nothing", and that was false in all four branches: the
+1158:    RED at 66dab76: the four git branches built their note before ``hashes``
+
+--- the count, as cf5a391 wrote it and 66dab76 left it ---
+505:    # pages had been compared "against nothing", and that was false in all three branches: the
+
+--- every branch that sets git_note, now ---
+626:        git_note = ("git could not resolve HEAD (not installed, not a repository, or no commits "
+644:                git_note = ("this manifest records no commit — record ran where git could not "
+650:                git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
+666:            git_note = (f"git stopped answering part-way through the check ({e}), so the "
+count: 4
+
+--- every branch that sets git_note at 66dab76, the revision test_drift.py names ---
+514:        git_note = ("git could not resolve HEAD (not installed, not a repository, or no commits "
+532:                git_note = ("this manifest records no commit — record ran where git could not "
+538:                git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
+555:            git_note = (f"git stopped answering part-way through the check ({e}), so the "
+count: 4
+
+--- what each of those four claimed about the line half at 66dab76 ---
+515:                    "yet), so the anchors were resolved and the recorded line digests compared "
+534:                            "their recorded line digests compared, and only the diff since the "
+540:                            "recorded line digests compared, and only the diff since the record "
+557:                        "and their recorded line digests were still compared")

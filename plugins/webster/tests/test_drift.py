@@ -349,8 +349,11 @@ def test_staged_rename_marks_old_and_new_path_dirty(run_script, fixture_repo):
 def test_docs_below_the_git_root_still_match_anchors(run_script, fixture_repo, tmp_path):
     """FR-001 / US-001 / AC-001 / ST-001 — git names paths from the repository root.
 
-    Every path in ``git status --porcelain`` and ``git diff --name-only`` is relative to the
-    repository root, never to the directory the command ran in. Anchors, pages and the docs
+    Every path in ``git status --porcelain`` is relative to the repository root, never to the
+    directory the command ran in. ``git diff --name-only`` is too, but only because the script
+    pins ``--no-relative``: ``diff.relative`` in a developer's config makes that diff name its
+    paths from the directory the command ran in, which
+    ``test_diff_relative_config_still_reports_drift`` below pins. Anchors, pages and the docs
     prefix are all relative to WEBSTER_ROOT. Those are one namespace only when WEBSTER_ROOT is
     itself the repository root, which is the layout the rest of this module builds and is not
     the layout of an ordinary monorepo.
@@ -418,9 +421,18 @@ def test_diff_relative_config_still_reports_drift(run_script, fixture_repo, tmp_
     past the cited line on purpose: line 15 is unchanged, so its recorded digest still matches
     and the hash half cannot cover for the diff half.
 
-    The suite could not see this because every other test here pins ``GIT_CONFIG_GLOBAL`` at
-    ``os.devnull`` — correctly, so that a developer's settings cannot change an assertion. This
-    test pins it at a file it writes itself, which is the same isolation with one setting in it.
+    The suite could not see this because no machine it has run on sets ``diff.relative``, and
+    not because the setting is fenced off from the script — which is what an earlier version of
+    this paragraph claimed. ``conftest.base_env`` hands ``drift.py`` PATH and HOME and nothing
+    else, so a developer's ``~/.gitconfig`` reaches every git call the script makes, in every
+    test in this module. What pins ``GIT_CONFIG_GLOBAL`` at ``os.devnull`` is ``git_in`` above
+    and conftest's fixture builder: this module's OWN git commands, correctly isolated so that a
+    developer's settings cannot change a premise. Measured at 457658b, before ``--no-relative``
+    was pinned: the committed edit below prints clean under a HOME carrying ``diff.relative``
+    and drift under one without, both times through the ordinary PATH-and-HOME environment.
+    This is the one test that pins the configuration the SCRIPT sees, passing
+    ``GIT_CONFIG_GLOBAL`` through ``run_script`` at a file it writes itself — the same isolation
+    with one setting in it.
     """
     relative_config = tmp_path / "gitconfig-diff-relative"
     relative_config.write_text("[diff]\n\trelative = true\n", encoding="utf-8")
@@ -1143,7 +1155,7 @@ def test_manifest_without_line_hashes_is_not_recorded(run_script, fixture_repo):
 def test_no_git_note_does_not_claim_digests_compared(run_script, fixture_repo):
     """FR-004 / AC-006 / FR-009 / ST-004 — a not-checked note may not overstate the line half.
 
-    RED at 66dab76: the three git branches built their note before ``hashes``
+    RED at 66dab76: the four git branches built their note before ``hashes``
     existed, so each of them asserted that "the recorded line digests were
     still compared" whatever the manifest held. Against a manifest written
     before ``lineHashes`` (AC-006) nothing had been compared at all, and the

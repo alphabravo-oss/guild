@@ -1,0 +1,12 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)" && echo "--- the module, green against the drift.py this commit ships ---" && (cd plugins/webster && uvx pytest tests/test_drift.py -p no:cacheprovider -q 2>&1 | tail -2) && echo && echo "--- and every row of its table RED against the cfafe8e baseline AC-039 names ---" && D=$(mktemp -d) && cp -R plugins/webster "$D/w" && git show cfafe8e:plugins/webster/scripts/drift.py > "$D/w/scripts/drift.py" && (cd "$D/w" && uvx pytest tests/test_drift.py -p no:cacheprovider -q 2>&1 | tail -2); rm -rf "$D"'
+# evidence-for: FR-002, FR-037
+# evidence-volatile: [0-9]+\.[0-9]+s
+# evidence-timeout: 300
+
+--- the module, green against the drift.py this commit ships ---
+................................                                         [100%]
+32 passed in 7.40s
+
+--- and every row of its table RED against the cfafe8e baseline AC-039 names ---
+FAILED tests/test_drift.py::test_null_head_in_the_manifest_reports_no_git - A...
+32 failed in 6.83s
