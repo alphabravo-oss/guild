@@ -34,9 +34,17 @@ EMOJI_PRESENTATION_BMP = (
     "\u2b1b-\u2b1c\u2b50\u2b55"
 )
 # The supplementary half stays a block range because A-022 said to keep U+1F300-U+1FAFF, not
-# because every code point in it is emoji. Whole blocks inside it carry no Emoji property at
-# all in emoji-data.txt 16.0: Ornamental Dingbats (U+1F650-U+1F67F), Alchemical Symbols
-# (U+1F700-U+1F77F) and Supplemental Arrows-C (U+1F800-U+1F8FF). Keeping them is an
+# because every code point in it is emoji. That range is exactly ten Unicode blocks end to
+# end, with no gap and no partial block at either edge, and four of the ten carry no Emoji
+# property at all in emoji-data.txt 16.0: Ornamental Dingbats (U+1F650-U+1F67F),
+# Alchemical Symbols (U+1F700-U+1F77F), Supplemental Arrows-C (U+1F800-U+1F8FF) and
+# Chess Symbols (U+1FA00-U+1FA6F). Chess Symbols is the one this list left out, and it was
+# left out because the other three fall in one stretch of the range while it sits alone
+# past Supplemental Symbols and Pictographs -- the blocks were recalled, not walked. Each
+# name is kept whole on its line here, because the check that reads this list back is a
+# search for the name and a name broken over two comment lines is a name it cannot find.
+# Geometric Shapes Extended (U+1F780-U+1F7FF) reads like a fifth and is not one: it holds
+# U+1F7E0-U+1F7EB and U+1F7F0, which are emoji presentation. Keeping the four is an
 # over-match that costs nothing a reader would notice, because nobody heads a section with
 # an alchemical symbol. The BMP over-match above was not free in the same way: it caught
 # ✓, a mark writers really do use, and failed the build on it.
@@ -145,7 +153,7 @@ def unreadable(error):
 
 
 def files():
-    """The .md, .mdx and .mmd files under TARGETS, minus the two directory names pruned below.
+    """The .md, .mdx and .mmd files under TARGETS, minus the two kinds of directory pruned below.
 
     It said "every markdown file under TARGETS" and it is not: the walk drops any directory
     whose name starts with a dot, and node_modules, with everything beneath them. Both are
@@ -238,7 +246,8 @@ def main():
             if not in_fence and re.search(r"\b\w+, \w+,? and \w+\.", line):
                 tricolon_hits.setdefault(path, []).append(n)
 
-    # frequency rules: one is a device, four is a tic
+    # frequency rules: one is a device. The two thresholds are not the same number -- a
+    # fourth tricolon is a tic, and it takes a fifth bold label to be one.
     for path, lines in tricolon_hits.items():
         if len(lines) >= 4:
             findings.append(("medium", path, lines[0], "tricolon-cadence",

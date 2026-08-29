@@ -81,9 +81,12 @@ survived it unchanged.
   the other half. Guards against fixing the false positive by deleting the rule.
 - ``test_text_marks_in_headings_are_not_emoji`` — FR-026 / OT-032. RED before:
   the ``emoji-heading`` and ``emoji-bullet`` entries of ``RULES`` each spelled
-  the class ``☀-➿`` (U+2600-U+27BF) inline, and it swallowed ✓ U+2713,
-  ✔ U+2714 and ➜ U+279C, none of which is an emoji. Both now share the
-  ``EMOJI`` constant.
+  the class ``☀-➿`` (U+2600-U+27BF) inline, and it swallowed ✓ U+2713 and
+  ➜ U+279C, which emoji-data.txt 16.0 does not list at all, and ✔ U+2714,
+  which it does list, as text-presentation. None of the three renders as a
+  colour emoji, which is the tell the rule is for; only two of the three are
+  outside the emoji data entirely, and the sentence that said none of them
+  was an emoji was wrong about ✔. Both rules now share the ``EMOJI`` constant.
 - ``test_presentation_emoji_in_heading_is_reported`` — FR-026 / OT-032, the
   other half. ⭐ U+2B50 was outside the old class entirely and went unreported.
 - ``test_missing_target_exits_two`` — FR-027 / OT-033 / CT-006. RED before:
@@ -105,11 +108,15 @@ survived it unchanged.
   same root reason rather than covered by a test that lies under root.
 - ``test_kept_supplementary_range_reports_a_non_emoji_block`` — FR-026. Green
   before and after: it pins the half of FR-026 no other test reads, that
-  ``\U0001F300-\U0001FAFF`` is kept whole. Whole blocks inside that range
-  carry no Emoji property at all in emoji-data.txt 16.0 — Ornamental Dingbats,
-  Alchemical Symbols, Supplemental Arrows-C — so keeping the range is a
-  decision the spec made, not a property lookup, and a later "cleanup" that
-  carves those blocks back out fails here.
+  ``\U0001F300-\U0001FAFF`` is kept whole. That range is exactly ten Unicode
+  blocks end to end, and four of the ten carry no Emoji property at all in
+  emoji-data.txt 16.0 — Ornamental Dingbats, Alchemical Symbols, Supplemental
+  Arrows-C and Chess Symbols — so keeping the range is a decision the spec
+  made, not a property lookup, and a later "cleanup" that carves those blocks
+  back out fails here. Chess Symbols is the one this sentence left out while
+  it named three; it is the only one of the four that does not sit in the same
+  stretch as the others, which is what made it easy to leave out of a list
+  written from memory.
 - ``test_pruned_directories_are_neither_checked_nor_counted`` — FR-027. Green
   before and after by design: the pruning is the correct behaviour and this
   pins it unchanged. What was wrong was the sentence over it — ``files()`` said
@@ -245,8 +252,10 @@ def test_ai_co_author_trailer_reports_agent_attribution(run_script, tmp_path):
 # FR-026 / OT-032 / AC-034: only Emoji_Presentation=Yes code points count.
 # -----------------------------------------------------------------------------
 def test_text_marks_in_headings_are_not_emoji(run_script, tmp_path):
-    # U+2713, U+2714, U+279C, U+2B06. The first two are not emoji at all; the
-    # last two are text-presentation (emoji-data.txt 16.0).
+    # ✓ U+2713 and ➜ U+279C are not in emoji-data.txt 16.0 at all; ✔ U+2714 and
+    # ⬆ U+2B06 are in it, as text-presentation. The two pairs interleave in code
+    # point order, so they are named rather than counted off the front and back
+    # of the list: "the first two" and "the last two" split them the wrong way.
     page = write_page(
         tmp_path,
         "marks.md",
@@ -284,8 +293,12 @@ def test_presentation_emoji_in_heading_is_reported(run_script, tmp_path):
         "Expected emoji-heading on each of the three headings" + outcome(result)
     )
     assert result.stdout.count("emoji-heading") == 3, (
-        "Expected all three headings reported, not just the two in the "
-        "supplementary plane" + outcome(result)
+        "Expected all three headings reported. The old class already reached "
+        "two of the three — ✅ U+2705 inside U+2600-U+27BF and \U0001f680 "
+        "U+1F680 inside the kept supplementary range — and missed ⭐ U+2B50, "
+        "which sits above both. A count of two here is that old behaviour. "
+        "Only one of the three is in the supplementary plane, so the two are "
+        "not the supplementary pair" + outcome(result)
     )
 
 

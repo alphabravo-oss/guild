@@ -22,19 +22,25 @@ envelope included. It carries one for the same reason the others do: a caller re
 to tell bad_subject from cannot_write would otherwise get a KeyError on the single path where
 nothing went wrong, and a field you have to guard on the good run is a field nobody trusts on
 the bad ones. The 1 and the 2 are not interchangeable, which is why init states an exit set of
-its own even though it has no violations to report. Each of the three exit-2 statuses used to
+its own even though it has no violations to report. Three of the four exit-2 statuses used to
 leave through exit 1 instead -- a `sys.exit(str)` for the bad key, an uncaught OSError for the
 refused write and for the refused read -- so a caller reading JSON got an empty stdout and a
-code telling it to go fix a layout that had never been written or looked at.
+code telling it to go fix a layout that had never been written or looked at. `no_docs` is the
+fourth, and it is the one that has answered the way it does now from the start.
 
 Two later ones are closed here the same way. A --title, a --description or a --subject label
 carrying a byte that is not valid UTF-8 reaches this script as a lone surrogate, which no
 encoder will take back out, so the page write raised where it was asked to: exit 1 again, and
-over a part-written tree -- index.md alone for a --title, index.md and faq.md and two whole
-sections for a --subject label, measured. A directory below the top level that nothing can
-list failed in the opposite direction -- os.walk drops what it cannot scan and carries on --
-so the pages inside it were checked as though they were not there and the run ended at exit 0,
-the code that says a tree was read and found sound.
+over a part-written tree -- index.md alone for a --title, and five entries at the top level
+for a --subject label: index.md, faq.md, the getting-started and install sections whole, and
+the subject's own directory, which is not whole, its category file written and its landing
+page truncated open and never filled. Both measured on that script. The five were counted as
+four until the subject directory was read back off the disk rather than reasoned about: a
+subject looks like one of the fixed sections named above and is not one of them, it is
+written by a loop of its own that runs after theirs. A directory below the top level that
+nothing can list failed in the opposite direction -- os.walk drops what it cannot scan and
+carries on -- so the pages inside it were checked as though they were not there and the run
+ended at exit 0, the code that says a tree was read and found sound.
 
 The layout is subject-first: a directory per thing in the product, each with an overview page
 named after the subject and task pages named as verbs. Diataxis lives inside a subject, not at
