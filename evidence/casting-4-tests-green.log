@@ -1,6 +1,0 @@
-# evidence-cmd: cd plugins/webster && uvx pytest tests/test_survey.py tests/test_llmstxt.py -q
-# evidence-for: US-006, US-007, AC-039, FR-039
-# evidence-volatile: \d+\.\d+s
-
-................................................                         [100%]
-48 passed in 2.17s
