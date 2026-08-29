@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/webster; echo '--- 1. the population: every line in the two modules carrying a positional or relative-location word ---'; grep -n -i -E '\b(below|above|beside|next to|beneath|underneath|immediately|adjacent|preceding|following|one line|two lines|three lines|six lines|[0-9]+ lines)\b' tests/test_survey.py tests/test_llmstxt.py | sed 's/^/    /'; echo '--- 2. every clause that names another passage of the same module, measured: which way the named passage actually lies ---'; python3 -c 'import os; ln=lambda f: open(f,encoding="utf-8").read().splitlines(); find=lambda f,s: [n for n,x in enumerate(ln(f),1) if s in x]; near=lambda tl,c0: min(tl,key=lambda n:abs(n-c0)); row=lambda f,c,w,cl,tl: ("    UNMATCHED %-16s %-42s clause=%s target=%s" % (os.path.basename(f),c[:42],cl,tl)) if not cl or not tl else (lambda c0,nr: (lambda got: "    %-16s L%-5d %-42s -> %-5s L%-5d  %s" % (os.path.basename(f),c0,c[:42],got,nr,"holds" if got==w else "STALE, says "+w))("below" if nr>c0 else "above"))(cl[0],near(tl,cl[0])); [print(row(f,c,w,find(f,c),find(f,t))) for f,c,t,w in (r.split("@@") for r in "tests/test_survey.py@@above is here instead@@cp -R plugins/webster@@above##tests/test_survey.py@@the red-first table above is read@@====================@@above##tests/test_survey.py@@The note above read@@The four rows naming 19941ad@@above##tests/test_survey.py@@below ask it of the files@@def test_a_package_json_that_is_not_an_object_is_read_as_absent@@below##tests/test_survey.py@@``/exports`` below carries@@flaskcap@@below##tests/test_survey.py@@below is the case that names why@@def test_a_flag_named_in_another_flags_help_is_not_a_command@@below##tests/test_survey.py@@The test beside this one holds@@def test_a_flag_named_only_in_prose_is_not_a_command@@above##tests/test_survey.py@@The test above holds because argparse@@def test_a_flag_named_in_another_flags_help_is_not_a_command@@above##tests/test_survey.py@@This is the boundary on the test above@@def test_a_positional_description_is_not_a_flag_spec@@above##tests/test_survey.py@@below rather than taken from the fixture@@CENSUS_TOKEN@@below##tests/test_survey.py@@satisfies the rule below vacuously@@assert missing == []@@below##tests/test_survey.py@@so the equality below@@assert records_without | strings == stated@@below##tests/test_survey.py@@The decoy above names it@@See the pytest 3.11 changelog@@above##tests/test_llmstxt.py@@below are corrections of@@and for the wrong reason@@below##tests/test_llmstxt.py@@brace rule the fixture above used to cover@@is named for@@above##tests/test_llmstxt.py@@sitting in the table above it@@====================@@above##tests/test_llmstxt.py@@The fixture below carries the marker@@stubreadme@@below##tests/test_llmstxt.py@@The brace rule keeps its own test below.@@def test_a_placeholder_brace_in_a_readme_line_is_not_the_summary@@below##tests/test_llmstxt.py@@inside the stub-README test above@@def test_a_stub_readme_is_not_the_header_summary@@above".split("##"))]'; echo '--- 3. every clause that names a position in the scripts, measured against the scripts ---'; echo '  a. "the @ line and six lines after it" / "the same six-line cap" -- both joins:'; grep -n 'lines\[i:i + 6\]' scripts/survey.py | sed 's/^/       /'; echo '  b. "this pass counts parens in the raw text where the decorator pass counts through call_depth_delta":'; grep -n 'depth = call_depth_delta\|depth += call_depth_delta\|args.count("(")' scripts/survey.py | sed 's/^/       /'; echo '  c. "the run of # lines directly above import tomllib", both scripts:'; grep -n -B3 '^import tomllib' scripts/survey.py scripts/llmstxt.py | sed 's/^/       /'; echo '  d. "the first read of it below is pkg.get":'; grep -n 'pkg = load_json\|pkg\.get\|pkg\[' scripts/survey.py | head -3 | sed 's/^/       /'; echo '  e. "the comment above the header chain" / "the comment above the chain", and the five authored sources against the sixth:'; grep -n 'package.json first, then pyproject.toml\|The sixth source is not authored\|^    py = pyproject_meta(ROOT)\|^    name = one_line\|^    summary = (one_line\|^               or one_line' scripts/llmstxt.py | sed 's/^/       /'; printf '       one_line() calls in the chain: '; sed -n '272,274p' scripts/llmstxt.py | grep -o 'one_line(' | wc -l | tr -d ' '; echo '  f. "its methods=[\"POST\"] sits one line past where the read stops" -- the flaskcap fixture, with its own line numbers:'; sed -n '/"flaskcap",$/,/^    )$/p' tests/test_survey.py | grep -E '@app\.route\(|methods=|"/exports"' | sed 's/^/       /'
+# evidence-cmd: cd plugins/webster; echo '--- 1. the population: every line in the two modules carrying a positional or relative-location word ---'; { grep -n -i -E '\b(below|above|beside|next to|beneath|underneath|immediately|adjacent|preceding|following|one line|two lines|three lines|six lines|[0-9]+ lines)\b' tests/test_survey.py | sed 's|^|    tests/test_survey.py:|'; grep -n -i -E '\b(below|above|beside|next to|beneath|underneath|immediately|adjacent|preceding|following|one line|two lines|three lines|six lines|[0-9]+ lines)\b' tests/test_llmstxt.py | sed 's|^|    tests/test_llmstxt.py:|'; }; echo '--- 2. every clause that names another passage of the same module, measured: which way the named passage actually lies ---'; python3 -c 'import os; ln=lambda f: open(f,encoding="utf-8").read().splitlines(); find=lambda f,s: [n for n,x in enumerate(ln(f),1) if s in x]; near=lambda tl,c0: min(tl,key=lambda n:abs(n-c0)); row=lambda f,c,w,cl,tl: ("    UNMATCHED %-16s %-42s clause=%s target=%s" % (os.path.basename(f),c[:42],cl,tl)) if not cl or not tl else (lambda c0,nr: (lambda got: "    %-16s L%-5d %-42s -> %-5s L%-5d  %s" % (os.path.basename(f),c0,c[:42],got,nr,"holds" if got==w else "STALE, says "+w))("below" if nr>c0 else "above"))(cl[0],near(tl,cl[0])); [print(row(f,c,w,find(f,c),find(f,t))) for f,c,t,w in (r.split("@@") for r in "tests/test_survey.py@@above is here instead@@cp -R plugins/webster@@above##tests/test_survey.py@@the red-first table above is read@@====================@@above##tests/test_survey.py@@The note above read@@The four rows naming 19941ad@@above##tests/test_survey.py@@below ask it of the files@@def test_a_package_json_that_is_not_an_object_is_read_as_absent@@below##tests/test_survey.py@@``/exports`` below carries@@flaskcap@@below##tests/test_survey.py@@below is the case that names why@@def test_a_flag_named_in_another_flags_help_is_not_a_command@@below##tests/test_survey.py@@The test beside this one holds@@def test_a_flag_named_only_in_prose_is_not_a_command@@above##tests/test_survey.py@@The test above holds because argparse@@def test_a_flag_named_in_another_flags_help_is_not_a_command@@above##tests/test_survey.py@@This is the boundary on the test above@@def test_a_positional_description_is_not_a_flag_spec@@above##tests/test_survey.py@@below rather than taken from the fixture@@CENSUS_TOKEN@@below##tests/test_survey.py@@satisfies the rule below vacuously@@assert missing == []@@below##tests/test_survey.py@@so the equality below@@assert records_without | strings == stated@@below##tests/test_survey.py@@The decoy above names it@@See the pytest 3.11 changelog@@above##tests/test_llmstxt.py@@below are corrections of@@and for the wrong reason@@below##tests/test_llmstxt.py@@brace rule the fixture above used to cover@@is named for@@above##tests/test_llmstxt.py@@sitting in the table above it@@====================@@above##tests/test_llmstxt.py@@The fixture below carries the marker@@stubreadme@@below##tests/test_llmstxt.py@@The brace rule keeps its own test below.@@def test_a_placeholder_brace_in_a_readme_line_is_not_the_summary@@below##tests/test_llmstxt.py@@inside the stub-README test above@@def test_a_stub_readme_is_not_the_header_summary@@above".split("##"))]'; echo '--- 3. every clause that names a position in the scripts, measured against the scripts ---'; echo '  a. "the @ line and six lines after it" / "the same six-line cap" -- both joins:'; grep -n 'lines\[i:i + 6\]' scripts/survey.py | sed 's/^/       /'; echo '  b. "this pass counts parens in the raw text where the decorator pass counts through call_depth_delta":'; grep -n 'depth = call_depth_delta\|depth += call_depth_delta\|args.count("(")' scripts/survey.py | sed 's/^/       /'; echo '  c. "the run of # lines directly above import tomllib", both scripts:'; { grep -n -B3 '^import tomllib' scripts/survey.py | sed 's|^|       scripts/survey.py-|'; grep -n -B3 '^import tomllib' scripts/llmstxt.py | sed 's|^|       scripts/llmstxt.py-|'; }; echo '  d. "the first read of it below is pkg.get":'; grep -n 'pkg = load_json\|pkg\.get\|pkg\[' scripts/survey.py | head -3 | sed 's/^/       /'; echo '  e. "the comment above the header chain" / "the comment above the chain", and the five authored sources against the sixth:'; grep -n 'package.json first, then pyproject.toml\|The sixth source is not authored\|^    py = pyproject_meta(ROOT)\|^    name = one_line\|^    summary = (one_line\|^               or one_line' scripts/llmstxt.py | sed 's/^/       /'; printf '       one_line() calls in the chain: '; sed -n '272,274p' scripts/llmstxt.py | grep -o 'one_line(' | wc -l | tr -d ' '; echo '  f. "its methods=[\"POST\"] sits one line past where the read stops" -- the flaskcap fixture, with its own line numbers:'; sed -n '/"flaskcap",$/,/^    )$/p' tests/test_survey.py | grep -E '@app\.route\(|methods=|"/exports"' | sed 's/^/       /'
 # evidence-for: US-006, US-007, FR-019, FR-023, FR-039, AC-039
 #
 # The sweep D-149 asks for: every positional or relative-location clause in
@@ -52,25 +52,13 @@
 # No script is touched by this commit; the diff is one docstring in
 # tests/test_survey.py. See evidence/casting-4-tests-green.log.
 #
+# Every grep in this log takes one file, with the name prefixed by sed rather
+# than by grep. `grep` on the machine this was written on is a shell function
+# wrapping ugrep, which searches multiple file arguments in parallel and emits
+# them in whichever order they finish, so a two-file grep made the log stop
+# reproducing itself between runs.
+#
 --- 1. the population: every line in the two modules carrying a positional or relative-location word ---
-    tests/test_llmstxt.py:19:above is here instead, because a record whose backing nobody can re-run is a
-    tests/test_llmstxt.py:21:below are corrections of.
-    tests/test_llmstxt.py:80:  brace rule the fixture above used to cover by accident, given its own README
-    tests/test_llmstxt.py:85:  339a80d and passed at all three. It exists because the comment above the
-    tests/test_llmstxt.py:96:sitting in the table above it.
-    tests/test_llmstxt.py:132:    """The run of ``#`` lines directly above ``import tomllib`` names the floor.
-    tests/test_llmstxt.py:154:    block, above = [], at - 1
-    tests/test_llmstxt.py:155:    while above >= 0 and lines[above].lstrip().startswith("#"):
-    tests/test_llmstxt.py:156:        block.insert(0, lines[above])
-    tests/test_llmstxt.py:157:        above -= 1
-    tests/test_llmstxt.py:161:        "The import carries no comment above it. A version floor nobody wrote "
-    tests/test_llmstxt.py:353:    The fixture below carries the marker and no brace, and that is the whole
-    tests/test_llmstxt.py:361:    product's summary. The brace rule keeps its own test below.
-    tests/test_llmstxt.py:403:    inside the stub-README test above, whose fixture carried both a marker and
-    tests/test_llmstxt.py:585:    the pyproject beside it supplies the header, which is the chain a repo with
-    tests/test_llmstxt.py:664:    brace and all. The comment above the chain claimed every source was cleaned
-    tests/test_llmstxt.py:693:    What this replaces was ``"3.11" in head`` over every line above ``ROOT =``,
-    tests/test_llmstxt.py:702:    is, so that is the text read here: the run of ``#`` lines directly above
     tests/test_survey.py:19:above is here instead, because a record whose backing nobody can re-run is a
     tests/test_survey.py:77:  row, which 20b15d1 relabelled from ``guard``, and the count above it was not
     tests/test_survey.py:84:  was. It is a boundary on the fix beside it -- every name in that list is a
@@ -124,6 +112,24 @@
     tests/test_survey.py:1486:    The note above read "The three rows naming 19941ad" while four rows named
     tests/test_survey.py:1488:    ``guard``, and the count above it was not touched; the substantive claim
     tests/test_survey.py:1496:    is folded first, so a sentence rewrapped across two lines is still read.
+    tests/test_llmstxt.py:19:above is here instead, because a record whose backing nobody can re-run is a
+    tests/test_llmstxt.py:21:below are corrections of.
+    tests/test_llmstxt.py:80:  brace rule the fixture above used to cover by accident, given its own README
+    tests/test_llmstxt.py:85:  339a80d and passed at all three. It exists because the comment above the
+    tests/test_llmstxt.py:96:sitting in the table above it.
+    tests/test_llmstxt.py:132:    """The run of ``#`` lines directly above ``import tomllib`` names the floor.
+    tests/test_llmstxt.py:154:    block, above = [], at - 1
+    tests/test_llmstxt.py:155:    while above >= 0 and lines[above].lstrip().startswith("#"):
+    tests/test_llmstxt.py:156:        block.insert(0, lines[above])
+    tests/test_llmstxt.py:157:        above -= 1
+    tests/test_llmstxt.py:161:        "The import carries no comment above it. A version floor nobody wrote "
+    tests/test_llmstxt.py:353:    The fixture below carries the marker and no brace, and that is the whole
+    tests/test_llmstxt.py:361:    product's summary. The brace rule keeps its own test below.
+    tests/test_llmstxt.py:403:    inside the stub-README test above, whose fixture carried both a marker and
+    tests/test_llmstxt.py:585:    the pyproject beside it supplies the header, which is the chain a repo with
+    tests/test_llmstxt.py:664:    brace and all. The comment above the chain claimed every source was cleaned
+    tests/test_llmstxt.py:693:    What this replaces was ``"3.11" in head`` over every line above ``ROOT =``,
+    tests/test_llmstxt.py:702:    is, so that is the text read here: the run of ``#`` lines directly above
 --- 2. every clause that names another passage of the same module, measured: which way the named passage actually lies ---
     test_survey.py   L19    above is here instead                      -> above L10     holds
     test_survey.py   L1481  the red-first table above is read          -> above L63     holds
@@ -154,14 +160,14 @@
        612:            if args.count("(") + 1 > args.count(")"):
        615:                    if args.count("(") + 1 <= args.count(")"):
   c. "the run of # lines directly above import tomllib", both scripts:
-       scripts/llmstxt.py-18-# invoke this file as a bare `python3 scripts/llmstxt.py`, so which one runs is whatever PATH
-       scripts/llmstxt.py-19-# resolves, and /usr/bin/python3 on the machine this was written on is 3.9.6. The floor is
-       scripts/llmstxt.py-20-# stated because it is a requirement on the caller; the import is what enforces it.
-       scripts/llmstxt.py:21:import tomllib
        scripts/survey.py-38-# the commands invoke this file as a bare `python3 scripts/survey.py`, so which one runs is
        scripts/survey.py-39-# whatever PATH resolves, and /usr/bin/python3 on the machine this was written on is 3.9.6.
        scripts/survey.py-40-# The floor is stated because it is a requirement on the caller; the import is what enforces it.
-       scripts/survey.py:41:import tomllib
+       scripts/survey.py-41:import tomllib
+       scripts/llmstxt.py-18-# invoke this file as a bare `python3 scripts/llmstxt.py`, so which one runs is whatever PATH
+       scripts/llmstxt.py-19-# resolves, and /usr/bin/python3 on the machine this was written on is 3.9.6. The floor is
+       scripts/llmstxt.py-20-# stated because it is a requirement on the caller; the import is what enforces it.
+       scripts/llmstxt.py-21:import tomllib
   d. "the first read of it below is pkg.get":
        120:pkg = load_json(os.path.join(ROOT, "package.json"))
        128:    _declared = pkg.get(_field)
