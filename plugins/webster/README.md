@@ -21,7 +21,7 @@ webster merges them into one surface and adds the missing half.
 | `repo-doctor` | The nine-criterion README rubric, scored with cited evidence |
 | A UI slop-rule corpus | Copy and residue rules, retargeted from rendered HTML to markdown and diagrams |
 | The Good Docs Project | The content types, their sections, and what each type may not contain |
-| ISO/IEC/IEEE 26514 | The quality characteristics. Four are measured, one is measured by `drift.py`, three need a person |
+| ISO/IEC/IEEE 26514 | The nine quality characteristics. Four are measured here, one by `drift.py`, two in part, and two a person judges |
 
 Dropped on purpose: the generic `/doc-generate` command, which is a large stack-agnostic template
 dump written around Python, FastAPI and Sphinx, and produces noise in a repo that is none of those.
@@ -145,7 +145,11 @@ A page is not finished until all seven pass, and a gate that could not be run re
 | Builds | The site compiles, reports no broken links, and nothing internal reached the rendered pages |
 | Readable | The mechanical checks are clean, and somebody who did not already know the answer got through it |
 | Honest | "What this is" and "what this deliberately does not do" both exist |
-| Unslopped | No high severity slop finding, and diagrams name real things rather than categories |
+
+The table carried an eighth row, `Unslopped`, under a heading that says seven and a sentence
+that says seven, and `skills/house-rules` — the list `/webster:audit` actually runs — has never
+held it. A high severity slop finding is a P1 on the punch list rather than a gate, and the
+`slop.py` row above is where this README describes it.
 
 **Readable used to be one gate and is now two halves.** It was delegated whole to
 `courseware:learner`, which most repos do not have, so it reported `not_checked` every time and
@@ -172,7 +176,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-146 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+147 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes. Five of the seven scripts leave no
 other way in: `drift.py`, `llmstxt.py`, `doctype.py`, `survey.py` and `slop.py` bind their root,

@@ -1,0 +1,12 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)/plugins/webster/tests" && echo "--- every row: the codes it shares with its script, then every pairing by score, best first ---" && echo "--- the row own filing is the identity pairing; README :243-246 and test_readme.py better_pairing record doctype.py and slop.py ---" && python3 -c "import itertools, test_readme as t; S=lambda d,r,C,p: sum(len(t.case_words(d[c])&t.case_words(r[u])) for c,u in zip(C,p)); [print(n, C, sorted([(S(d,r,C,p), dict(zip(C,p))) for p in itertools.permutations(C)], key=lambda x: -x[0])) for n in t.script_table_scripts() for d in [t.clauses_by_code(t.script_docstring(n))] for r in [t.clauses_by_code(t.script_table_row(t.DRIFT_TABLE_CELL.replace(t.DRIFT.name,n)))] for C in [sorted(set(d)&set(r))]]"'
+# evidence-for: FR-038, AC-042
+
+--- every row: the codes it shares with its script, then every pairing by score, best first ---
+--- the row own filing is the identity pairing; README :243-246 and test_readme.py better_pairing record doctype.py and slop.py ---
+survey.py [] [(0, {})]
+drift.py ['0', '1', '2'] [(11, {'0': '0', '1': '1', '2': '2'}), (7, {'0': '1', '1': '0', '2': '2'}), (3, {'0': '0', '1': '2', '2': '1'}), (3, {'0': '2', '1': '1', '2': '0'}), (1, {'0': '1', '1': '2', '2': '0'}), (1, {'0': '2', '1': '0', '2': '1'})]
+scaffold.py ['0', '1', '2'] [(23, {'0': '0', '1': '1', '2': '2'}), (21, {'0': '1', '1': '0', '2': '2'}), (5, {'0': '2', '1': '1', '2': '0'}), (4, {'0': '1', '1': '2', '2': '0'}), (3, {'0': '0', '1': '2', '2': '1'}), (2, {'0': '2', '1': '0', '2': '1'})]
+doctype.py ['0', '1', '2'] [(23, {'0': '0', '1': '1', '2': '2'}), (20, {'0': '1', '1': '0', '2': '2'}), (11, {'0': '0', '1': '2', '2': '1'}), (7, {'0': '2', '1': '0', '2': '1'}), (5, {'0': '1', '1': '2', '2': '0'}), (4, {'0': '2', '1': '1', '2': '0'})]
+slop.py ['1', '2'] [(11, {'1': '1', '2': '2'}), (0, {'1': '2', '2': '1'})]
+rendered.py ['1'] [(2, {'1': '1'})]
+llmstxt.py ['0', '2'] [(17, {'0': '0', '2': '2'}), (3, {'0': '2', '2': '0'})]

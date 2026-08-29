@@ -1,0 +1,23 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)/plugins/webster" && T=$(mktemp -d) && printf "README :100 \"seven scripts\"            -> %s\n" "$(ls scripts/*.py | wc -l | tr -d '"'"' '"'"')" && printf "README :179 \"eight modules\"            -> %s\n" "$(ls tests/test_*.py | wc -l | tr -d '"'"' '"'"')" && printf "README :18  \"All five agents\"          -> %s\n" "$(ls agents/*.md | wc -l | tr -d '"'"' '"'"')" && printf "README :21  \"nine-criterion rubric\"    -> %s\n" "$(grep -cE '"'"'^### 2\.[0-9]+ '"'"' skills/readme-rubric/SKILL.md)" && printf "README :303 \"harness measures five\"    -> %s\n" "$(grep -c '"'"'^def test'"'"' tests/test_harness.py)" && printf "README :265 \"six of the seven scripts\" -> %s script-subject modules, rendered.py has none\n" "$(ls tests/test_*.py | grep -vE '"'"'test_(readme|harness)\.py'"'"' | wc -l | tr -d '"'"' '"'"')" && echo && echo "--- README :24 \"The nine quality characteristics. Four here, one by drift.py, two in part, two a person\" ---" && sed -n "/^## ISO.IEC.IEEE 26514/,/^Do not claim/p" skills/content-types/SKILL.md | grep -E "^\| " | grep -v "^| Characteristic" | grep -v "^| --- " > $T/iso && printf "rows=%s  measured-here=%s  by-drift.py=%s  in-part=%s  a-person=%s\n" "$(wc -l < $T/iso | tr -d '"'"' '"'"')" "$(grep -c '"'"'Measured: '"'"' $T/iso)" "$(grep -c '"'"'Measured by'"'"' $T/iso)" "$(grep -c '"'"'Measured in part'"'"' $T/iso)" "$(grep -c '"'"'| A person judges'"'"' $T/iso)" && echo "(skills/content-types/SKILL.md:132 says \"eight\" over those nine rows; skills/ is read-only under GI-001/GI-006 -> concerns.md)" && echo && echo "--- README :134 heading \"The seven gates\" and :136 \"all seven pass\" ---" && sed -n "/^## The seven gates/,/^The table carried/p" README.md | grep -E "^\| [A-Z]" | grep -v "^| Gate |" | cut -d"|" -f2 > $T/r && sed -n "/^## 8. The gates/,/^\*\*Builds is/p" skills/house-rules/SKILL.md | grep -E "^\| [A-Z]" | grep -v "^| Gate |" | cut -d"|" -f2 > $T/h && printf "README gate rows=%s   house-rules gate rows=%s\n" "$(wc -l < $T/r | tr -d '"'"' '"'"')" "$(wc -l < $T/h | tr -d '"'"' '"'"')" && diff $T/r $T/h && echo "the two lists are identical" && echo && echo "the read-only files that publish that count:" && grep -rn "seven gates\|all seven pass\|other six" skills commands; rm -rf $T'
+# evidence-for: FR-038, AC-042, US-010, GI-001, GI-006
+
+README :100 "seven scripts"            -> 7
+README :179 "eight modules"            -> 8
+README :18  "All five agents"          -> 5
+README :21  "nine-criterion rubric"    -> 9
+README :303 "harness measures five"    -> 5
+README :265 "six of the seven scripts" -> 6 script-subject modules, rendered.py has none
+
+--- README :24 "The nine quality characteristics. Four here, one by drift.py, two in part, two a person" ---
+rows=9  measured-here=4  by-drift.py=1  in-part=2  a-person=2
+(skills/content-types/SKILL.md:132 says "eight" over those nine rows; skills/ is read-only under GI-001/GI-006 -> concerns.md)
+
+--- README :134 heading "The seven gates" and :136 "all seven pass" ---
+README gate rows=7   house-rules gate rows=7
+the two lists are identical
+
+the read-only files that publish that count:
+skills/house-rules/SKILL.md:188:A page is not finished until all seven pass. Report the ones that did not, with the reason.
+skills/house-rules/SKILL.md:200:**Builds is the gate the other six cannot stand in for.** They all read markdown as text and
+commands/help.md:11:/webster:audit    drift, layout, seven gates, prioritised punch list. read-only
+commands/audit.md:101:## Step 6, the seven gates

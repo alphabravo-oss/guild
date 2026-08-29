@@ -50,7 +50,7 @@ the axis loosely enough that the label read as a claim about both.
   NFR-001. RED against both. The cfafe8e Status section states no count at all,
   so the read raises before there is anything to compare; at 61fb1df it read
   ``69 passing``, written by hand when the suite had 69 and never moved again —
-  77 test functions by the time this row was first written, 146 now. That is
+  77 test functions by the time this row was first written, 147 now. That is
   exactly the drift this test makes impossible to commit.
 - ``test_status_section_names_the_run_command_and_the_version`` — AC-042 /
   OT-040 / NFR-003. RED against cfafe8e, green against 61fb1df. The cfafe8e
@@ -516,9 +516,17 @@ def better_pairing(doc: dict[str, str], row: dict[str, str]) -> tuple[int, int, 
     ``doctype.py`` row's exit 1 and exit 2 leaves the exit *set* identical --
     every permutation does -- so a check on the set cannot see it, while the
     words follow the cases and go with them. Measured on the table as it
-    stands: the row's own filing scores 23 of 23 for ``doctype.py`` and 11 of
-    11 for ``slop.py``, and inverting either drops it to 11 and to 0 against
-    an unchanged best.
+    stands: each row's own filing is its own best, 23 for ``doctype.py`` and
+    11 for ``slop.py``. ``slop.py`` publishes two codes, so it has exactly one
+    rearrangement and that one scores 0. ``doctype.py`` publishes three, so
+    "inverting" names no single rearrangement of it: swapping its exits 1 and
+    2 drops it to 11, its exits 0 and 2 to 4, its exits 0 and 1 to 20, and the
+    two three-cycles to 5 and to 7. Every one of the five is below 23, which
+    is the whole of what this asks. The figure recorded here was 11 with no
+    swap named beside it -- the 1-and-2 number, inherited without the
+    antecedent that produces it, which is a measurement no reader can re-run.
+    The README carried the same sentence and was corrected one cycle before
+    this copy of it was.
 
     Ties pass. The claim being made is that the row is filed at least as well
     as any other way, not that it is the uniquely best English, so rewording

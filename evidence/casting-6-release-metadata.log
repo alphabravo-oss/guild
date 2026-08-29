@@ -1,0 +1,34 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)" && echo "--- plugin.json version: 0.11.0 (NFR-003, OT-040) ---" && grep -n '"'"'"version"'"'"' plugins/webster/.claude-plugin/plugin.json && echo && echo "--- README Status: the version, the run command, the pinned count (AC-042, FR-038) ---" && grep -nE "^Version 0|^cd plugins/webster && uvx pytest$|^[0-9]+ passing" plugins/webster/README.md && echo && echo "--- WEBSTER_SURVEY documented beside WEBSTER_LENS_ALLOW, same paragraph (AC-042) ---" && grep -n "WEBSTER_LENS_ALLOW\|WEBSTER_SURVEY" plugins/webster/README.md && echo && echo "--- the Python 3.11 floor tomllib requires (NFR-002) ---" && grep -n "Python 3.11" plugins/webster/README.md && echo && echo "--- GI-006: root marketplace.json and root README badge untouched since the baseline ---" && git diff --name-only cfafe8e..HEAD -- .claude-plugin/marketplace.json README.md | sed "s/^/CHANGED: /" && echo "(no CHANGED line above = neither moved)" && grep -n '"'"'"version"'"'"' .claude-plugin/marketplace.json'
+# evidence-for: AC-042, NFR-002, NFR-003, FR-038, OT-040, GI-006
+
+--- plugin.json version: 0.11.0 (NFR-003, OT-040) ---
+3:  "version": "0.11.0",
+
+--- README Status: the version, the run command, the pinned count (AC-042, FR-038) ---
+173:Version 0.11.0.
+176:cd plugins/webster && uvx pytest
+179:147 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+
+--- WEBSTER_SURVEY documented beside WEBSTER_LENS_ALLOW, same paragraph (AC-042) ---
+74:not. `WEBSTER_LENS_ALLOW` widens the vocabulary where a product's readers genuinely use it, and
+75:a Kubernetes tool's operators really do handle controllers. `WEBSTER_SURVEY` widens it without a
+273:`WEBSTER_SURVEY` allowlist, the architecture rule that keeps firing for an operator after routes
+
+--- the Python 3.11 floor tomllib requires (NFR-002) ---
+101:without an agent. They are standard library only, and the floor is Python 3.11: `survey.py` and
+
+--- GI-006: root marketplace.json and root README badge untouched since the baseline ---
+(no CHANGED line above = neither moved)
+13:      "version": "4.4.1",
+23:      "version": "4.7.3",
+33:      "version": "0.3.0",
+43:      "version": "0.1.0",
+53:      "version": "0.2.0",
+63:      "version": "0.1.0",
+73:      "version": "0.1.0",
+83:      "version": "0.1.0",
+93:      "version": "0.1.0",
+103:      "version": "0.1.0",
+113:      "version": "0.2.0",
+123:      "version": "0.1.0",
+133:      "version": "0.7.0",
