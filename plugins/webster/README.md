@@ -110,7 +110,7 @@ no fallback path here.
 | `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1, advisories alone (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) exit 0, and a tree with nothing to check — no docs directory, or no page that is not a stub and no frontmatter defect on the stubs either — exits 2. Findings are grouped by rule with a count |
 | `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding, exit 2 on a target that is not there or cannot be read |
 | `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text. The only check that sees what a browser sees. Exit 1 on any leak |
-| `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk |
+| `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk. The written file is exit 0; no docs directory at the resolved path, or a tree holding no page to publish — a tree of nothing but stubs included, because an unwritten page is dropped before the count is taken — exits 2 |
 
 ## The layout is fixed
 
@@ -172,7 +172,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-125 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+129 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes: each script binds its root, its docs
 directory and its allowlists at import time, and an in-process test would freeze all of them at
@@ -217,6 +217,23 @@ a subject key that could not become a directory, a tree with nothing in it to ch
 that was not there — found no entry for it. One parser reads both sides, so whatever it reads
 loosely it reads loosely for the script and for the row alike, and the two still have to agree.
 
+Placing a status only reaches the rows whose script prints one, and only `drift.py` and
+`scaffold.py` do. The other five compared nothing at all, and the tally meant to notice was one
+counter across the whole table that those two kept above zero, so the `doctype.py` and `slop.py`
+rows could have their exit groups inverted and the module stayed green — measured, not supposed.
+The counter is per row now, and a row whose script publishes more than one code has to have had
+something placed against it. Where there is no status, that something is the case under each
+code, compared word for word with the usage text: the row's own filing has to fit at least as
+well as any other pairing of the two. Inverting a row leaves the set of codes it publishes
+identical, because a permutation of a set is that set, which is why the check above cannot see
+it and this one drops the `doctype.py` row from 23 shared words to 11. `rendered.py` and
+`survey.py` are exempt rather than overlooked: one code and none, and a single code has no second
+place to be filed under. The `llmstxt.py` row is the one that published no exit code at all, and
+the missing half of that check was both sides going quiet together — two empty sets are equal, so
+a row and a usage text that agree on saying nothing passed. That silence is now read against the
+script's own `sys.exit` calls. `survey.py` has none, cannot return anything but 0, and is the one
+script here with no contract to publish.
+
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD, a docs tree sitting at the repository
 root, a developer's `diff.relative` setting that renamed the paths git printed, an anchor citing
@@ -226,12 +243,17 @@ acronym list, stubs, the `WEBSTER_SURVEY` allowlist and the contract `types` pri
 before the lens reads them; `survey.py` across decorators split over several lines, Flask's
 declared methods, `pyproject.toml`, `HTTPException` details, `os.getenv` reads, and the option
 flags a parser declares — including a description that merely names another flag, which is not a
-declaration, and a declaration a formatter split across lines, which is; `llmstxt.py` and
+declaration, a declaration a formatter split across lines, which is, and a decorator whose
+parentheses never balance inside the lines the join reads, where no verb is published at all
+rather than the `GET` a Flask default would otherwise have invented; `llmstxt.py` and
 `slop.py` across the fixes each of those carries, and `scaffold.py` across those plus the docs
 path it is handed and cannot write into, a page it cannot read, a malformed `_category_.json`,
-the exit set its help text publishes for both modes and the `status` key every one of those
-envelopes leads with. Every fix has at least one test that fails against the script as it stood
-before the fix; the rest are guards, there so a fix does not take something else away with it.
+a directory below the top level that nothing can list, which is `cannot_read` rather than a tree
+read and found sound, a `--title` or a `--subject` label carrying a byte no page can hold, which
+leaves nothing written behind it, and the exit set its help text publishes for both modes with
+the `status` key every one of those envelopes leads with. Every fix has at least one test that
+fails against the script as it stood before the fix; the rest are guards, there so a fix does not
+take something else away with it.
 
 The harness under those modules is exercised as well. `tests/test_harness.py` measures five
 things nothing else in the suite checks: that the child `python3` clears the plugin's 3.11 floor,

@@ -45,7 +45,14 @@ at runtime, matching test_slop.py and test_scaffold.py):
   ``slop.py`` row named its exit 1 alone, and not the exit 2 a missing or
   unreadable target had just been given. A caller handed a code the README has
   no entry for is in the same position as one handed a status it has no entry
-  for, and three of the seven rows had put it there.
+  for, and three of the seven rows had put it there. RED a second time on the
+  ``llmstxt.py`` row, which published no exit contract at all while that
+  script's usage text had grown one. What the check could not see either time
+  was both sides going quiet at once: two empty sets are equal, so a row and a
+  usage text that agree on saying nothing passed it. The silence is now read
+  against the script's own ``sys.exit`` calls instead — ``survey.py`` has none
+  and is the honest case, and every other script here ends in
+  ``sys.exit(main())``.
 - ``test_the_script_table_puts_each_status_under_its_scripts_exit_code`` —
   FR-038 / AC-042. RED on the README as it stood, through the ``scaffold.py``
   row, which backticked ``check`` inside its exit-1 clause where that script's
@@ -53,7 +60,19 @@ at runtime, matching test_slop.py and test_scaffold.py):
   status was *named* in the row and never where, so swapping the ``drift.py``
   row's exit-0 and exit-2 groups outright — telling a reader that a missing
   repository is a clean run and that ordinary development is a not-checked one
-  — passed every assertion in this module.
+  — passed every assertion in this module. RED a second time on the rows with
+  no status to be placed by. Only ``drift.py`` and ``scaffold.py`` print a
+  JSON status, so five of the seven rows compared nothing at all here, and one
+  counter across the whole table stayed positive on the strength of those two:
+  the ``doctype.py`` and ``slop.py`` rows could have their exit groups
+  inverted and this module stayed green, which was measured rather than
+  supposed. The counter is now per row, and a row whose script publishes more
+  than one code has to have had something placed against it. For the three
+  such rows with no status — ``doctype.py``, ``slop.py``, ``llmstxt.py`` — that
+  something is the case under each code, compared word for word. The two left
+  over, ``rendered.py`` and ``survey.py``, publish one code and none: a single
+  code has no second place to be filed under, and that is why they are exempt
+  rather than overlooked.
 
 The count is taken from the suite's own source rather than from
 ``len(request.session.items)``, and the reason is a false red rather than a
@@ -77,6 +96,7 @@ No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 from __future__ import annotations
 
 import ast
+import itertools
 import json
 import re
 from pathlib import Path
@@ -294,14 +314,26 @@ def exit_clauses(text: str) -> list[list[tuple[str, str]]]:
     the two still have to agree, which is the property a second parser written
     for the README alone would not have.
 
-    Segmentation is paragraph, then sentence, then exit-code claim: a claim
-    closes the clause before it, and whatever follows the last claim in a
-    sentence belongs to that claim. The last of those three is what reaches
-    ``scaffold.py``'s exit-2 statuses, which its usage text names *after* the
-    code ("exit 2 ... -- bad_subject for ..., cannot_write for ...") where
-    ``drift.py`` names them before it. Splitting paragraphs first is what
-    keeps ``doctype.py``'s usage block from running on into the prose beneath
-    it, where ``doc_type`` would otherwise be read as a status at exit 2.
+    Segmentation is paragraph, then sentence, then exit-code claim. Splitting
+    paragraphs first is what keeps ``doctype.py``'s usage block from running on
+    into the prose beneath it, where ``doc_type`` would otherwise be read as a
+    status at exit 2.
+
+    Which side of its code a clause lies on is read off the sentence rather
+    than assumed, because both orders are written in these files. A sentence
+    that names the case first -- ``drift.py``'s "clean and unrelated_changes
+    exit 0, drift exits 1" -- closes each clause AT its code, so the clause is
+    the text before it, and whatever follows the last claim belongs to that
+    claim; the last part is what reaches ``scaffold.py``'s exit-2 statuses,
+    named after the code where ``drift.py`` names them before it. A sentence
+    that opens with the code instead -- ``doctype.py``'s "exit 1 on a defect,
+    0 when only advisories remain, 2 when there was nothing to check" -- has
+    nothing in front of its first code to be that code's clause, and reading
+    it the first way filed every case one code late: "on a defect" under exit
+    0, "when only advisories remain" under exit 2. That is not a cosmetic
+    misread. It is the whole mapping this module checks, shifted, on the two
+    rows whose scripts print human lines rather than a JSON status and so have
+    no status name to be placed by instead.
     """
     sentences: list[list[tuple[str, str]]] = []
     for paragraph in text.split("\n\n"):
@@ -316,13 +348,21 @@ def exit_clauses(text: str) -> list[list[tuple[str, str]]]:
                 if claims and found.start() < claims[-1][1]:
                     continue
                 claims.append((found.start(), found.end(), found.group(1)))
+            if not claims:
+                continue
+            # Punctuation and whitespace only: a lead of "and" or "status ok
+            # at" is a case, and the sentence is read the other way round.
+            code_first = not sentence[: claims[0][0]].strip(" \t-—–:;,")
             found_here: list[tuple[str, str]] = []
             for index, (_, end, code) in enumerate(claims):
-                start = claims[index - 1][1] if index else 0
-                stop = end if index + 1 < len(claims) else len(sentence)
+                if code_first:
+                    start = end
+                    stop = claims[index + 1][0] if index + 1 < len(claims) else len(sentence)
+                else:
+                    start = claims[index - 1][1] if index else 0
+                    stop = end if index + 1 < len(claims) else len(sentence)
                 found_here.append((code, sentence[start:stop]))
-            if found_here:
-                sentences.append(found_here)
+            sentences.append(found_here)
     return sentences
 
 
@@ -374,6 +414,94 @@ def exit_codes_naming(text: str, name: str) -> set[str]:
     """
     word = re.compile(rf"\b{re.escape(name)}\b")
     return {code for code, clause in contract_clauses(text) if word.search(clause)}
+
+
+def clauses_by_code(text: str) -> dict[str, str]:
+    """Each exit code ``text`` claims, mapped to all the clause text filed under it.
+
+    Joined rather than kept apart because a script can publish one code from
+    two sentences: ``scaffold.py``'s usage text states an exit 2 for ``init``
+    and another for ``check``, and both describe what a 2 from that script
+    means.
+    """
+    filed: dict[str, list[str]] = {}
+    for code, clause in contract_clauses(text):
+        filed.setdefault(code, []).append(clause)
+    return {code: " ".join(parts) for code, parts in filed.items()}
+
+
+# The words of a clause that say which case is being filed. ``exit`` and
+# ``exits`` are dropped because every clause has one and a word both sides
+# always share distinguishes nothing; the digits go with the pattern that
+# found them. Underscores are kept inside a word so ``no_docs`` stays one
+# token rather than two.
+CASE_WORD = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def case_words(clause: str) -> set[str]:
+    """The words of one clause, as the pairing below compares them."""
+    return set(CASE_WORD.findall(clause.lower())) - {"exit", "exits"}
+
+
+def better_pairing(doc: dict[str, str], row: dict[str, str]) -> tuple[int, int, dict[str, str]] | None:
+    """A code-to-code pairing that fits the row to the usage text better than the row's own does.
+
+    ``None`` when nothing beats filing each of the row's clauses under the
+    code the row filed it under -- which is the pass.
+
+    This is what places the rows for ``doctype.py`` and ``slop.py``. Those two
+    print human lines rather than a JSON status, so they have no status name
+    for the check above to place, and the only thing their row and their usage
+    text both publish is which case sits under which code. Comparing the two
+    by shared words, and asking only that the row's own filing be as good as
+    every other, is what makes an inverted row visible: swapping the
+    ``doctype.py`` row's exit 1 and exit 2 leaves the exit *set* identical --
+    every permutation does -- so a check on the set cannot see it, while the
+    words follow the cases and go with them. Measured on the table as it
+    stands: the row's own filing scores 23 of 23 for ``doctype.py`` and 11 of
+    11 for ``slop.py``, and inverting either drops it to 11 and to 0 against
+    an unchanged best.
+
+    Ties pass. The claim being made is that the row is filed at least as well
+    as any other way, not that it is the uniquely best English, so rewording
+    one side cannot turn this red on its own.
+    """
+    codes = sorted(set(doc) & set(row))
+    if len(codes) < 2:
+        return None
+
+    def score(order: tuple[str, ...]) -> int:
+        return sum(len(case_words(doc[code]) & case_words(row[under]))
+                   for code, under in zip(codes, order))
+
+    own = score(tuple(codes))
+    best = max(itertools.permutations(codes), key=score)
+    if score(best) <= own:
+        return None
+    return own, score(best), dict(zip(codes, best))
+
+
+# The calls that can hand a caller an exit code. A script with none of them
+# cannot return anything but 0, so it has no contract to publish and both
+# sides being silent about it is the truth rather than an omission.
+EXIT_CALLS = {"sys.exit", "os._exit", "exit", "SystemExit"}
+
+
+def exit_sites(filename: str) -> set[str]:
+    """The calls in one script's source that can end the process with a code."""
+    path = SCRIPTS / filename
+    tree = ast.parse(_read(path), filename=str(path))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            called = ast.unparse(node.func)
+        elif isinstance(node, ast.Raise) and node.exc is not None:
+            called = ast.unparse(node.exc).split("(")[0]
+        else:
+            continue
+        if called in EXIT_CALLS:
+            found.add(called)
+    return found
 
 
 def _scan_module(path: Path) -> tuple[list[str], list[str]]:
@@ -574,22 +702,41 @@ def test_the_script_table_names_drift_pys_own_status_vocabulary():
 # -----------------------------------------------------------------------------
 def test_the_script_table_publishes_each_scripts_own_exit_set():
     narrower = []
-    compared = 0
+    silent = []
     for filename in script_table_scripts():
         published = exit_codes(script_docstring(filename))
         stated = exit_codes(script_table_row(f"`scripts/{filename}`"))
-        compared += len(published)
-        if published != stated:
-            narrower.append(
-                f"{filename}: its usage text exits {sorted(published) or ['nothing']}, "
-                f"the README row exits {sorted(stated) or ['nothing']}"
+        if published or stated:
+            if published != stated:
+                narrower.append(
+                    f"{filename}: its usage text exits {sorted(published) or ['nothing']}, "
+                    f"the README row exits {sorted(stated) or ['nothing']}"
+                )
+            continue
+        # Neither side names a code, so there is no comparison to make and the
+        # row would otherwise pass on two empty sets -- the shape of gate this
+        # suite exists to remove, and the shape the counter this replaced had:
+        # one global tally, satisfied by the rows that did publish something,
+        # while a row nobody compared sat under it. So the silence is checked
+        # against the script rather than taken for the answer. `survey.py` is
+        # the honest case: it has no sys.exit anywhere, cannot return anything
+        # but 0, and has no contract to publish. Any other script here ends in
+        # `sys.exit(main())`, so the same silence from one of those is a
+        # contract that went unwritten on both sides at once.
+        sites = exit_sites(filename)
+        if sites:
+            silent.append(
+                f"{filename}: neither its usage text nor the README row names an "
+                f"exit code, and its source calls {', '.join(sorted(sites))}"
             )
 
-    assert compared, (
-        f"no row of the {README} script table was compared against an exit "
-        f"code, so every assertion below this one held over an empty set. "
-        f"Finding none means the parser stopped reading the usage texts, not "
-        f"that the scripts stopped publishing contracts."
+    assert not silent, (
+        f"these scripts can hand a caller an exit code that neither their "
+        f"usage text nor their {README} row publishes:\n  " + "\n  ".join(silent)
+        + f"\nThe comparison above has nothing to make of a row like that, so "
+        f"it passed on two empty sets. A code with no entry anywhere is worse "
+        f"than one entry disagreeing with another: the reader has nowhere left "
+        f"to look."
     )
     assert not narrower, (
         f"these {README} rows publish a different exit set from the script "
@@ -608,11 +755,14 @@ def test_the_script_table_publishes_each_scripts_own_exit_set():
 def test_the_script_table_puts_each_status_under_its_scripts_exit_code():
     misplaced = []
     unpublished = []
-    compared = 0
+    inverted = []
+    unread = []
+    contracts = []
     for filename in script_table_scripts():
         doc = script_docstring(filename)
         row = script_table_row(f"`scripts/{filename}`")
         in_row = statuses_claimed(row, TICKED_STATUS)
+        compared = 0
 
         for name, codes in sorted(in_row.items()):
             compared += 1
@@ -638,11 +788,57 @@ def test_the_script_table_puts_each_status_under_its_scripts_exit_code():
                     f"{sorted(in_row.get(name, set())) or ['none']}"
                 )
 
-    assert compared, (
-        f"no status in the {README} script table was placed against its "
-        f"script's usage text, so both assertions below held over nothing. "
-        f"The rows carry statuses; finding none means the parser stopped "
-        f"reading them."
+        # Both loops above are driven by status names, so a script that prints
+        # no status leaves them empty and the row goes unplaced. That is not a
+        # small corner: only `drift.py` and `scaffold.py` print a JSON status,
+        # so five of the seven rows reached this point with nothing compared,
+        # and the tally that guarded it was one counter across the whole table
+        # which those two kept above zero. What a row and its usage text both
+        # publish even with no status between them is which case sits under
+        # which code, so that is what is placed.
+        filed = clauses_by_code(doc)
+        published = clauses_by_code(row)
+        pairing = better_pairing(filed, published)
+        if len(set(filed) & set(published)) > 1:
+            compared += 1
+        if pairing is not None:
+            own, best, better = pairing
+            inverted.append(
+                f"{filename}: the row's clauses fit its usage text's better "
+                f"read as {better} ({best} words shared) than as each code's "
+                f"own ({own})"
+            )
+
+        if len(exit_codes(doc)) > 1:
+            contracts.append(filename)
+            if not compared:
+                unread.append(
+                    f"{filename}: its usage text publishes exits "
+                    f"{sorted(exit_codes(doc))} and nothing in its row was "
+                    f"placed against any of them"
+                )
+
+    assert contracts, (
+        f"no script in the {README} table publishes more than one exit code, "
+        f"so there was no placement anywhere for the assertions below to be "
+        f"about. Finding none means the parser stopped reading the usage "
+        f"texts, not that the scripts stopped assigning cases to codes."
+    )
+    assert not unread, (
+        f"these {README} rows had nothing at all placed against the script "
+        f"they describe, so every assertion below held over them "
+        f"vacuously:\n  " + "\n  ".join(unread) + f"\nA row nobody compared is "
+        f"a row that can say anything. The two rows whose scripts publish one "
+        f"code or none — `rendered.py` and `survey.py` — are not here and "
+        f"cannot be: a single code has no second place to be filed under."
+    )
+    assert not inverted, (
+        f"these {README} rows describe their script's cases under the wrong "
+        f"exit codes:\n  " + "\n  ".join(inverted) + f"\nThe row's own filing "
+        f"has to fit the usage text at least as well as any other pairing of "
+        f"the two. Swapping a row's exit groups leaves the exit set it "
+        f"publishes identical, so the check above cannot see it, and the "
+        f"reader it misleads is the one who came to the table holding a code."
     )
     assert not misplaced, (
         f"these {README} rows file a status under an exit code its script "
