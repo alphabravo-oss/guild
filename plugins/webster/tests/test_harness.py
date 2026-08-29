@@ -8,8 +8,10 @@ Six of this suite's eight modules take a webster script as their subject:
 ``test_readme.py`` are the other two, and neither has a script for a subject:
 they test the plugin's own records — the harness those six stand on, and the
 README that counts them. One ``run_script`` call does appear below, handing
-``survey.py`` to the child interpreter so its version can be read back, but
-what that test measures is the harness. The sentence this replaces read "Every
+``survey.py`` to the child interpreter — not to read a version back, which is
+the separate ``python3 -c`` probe's job, but because a child under 3.11 cannot
+get past that script's ``import tomllib`` and so cannot come back clean. What
+that test measures is the harness. The sentence this replaces read "Every
 other module in this suite tests a webster script", which counted
 ``test_readme.py`` — whose own docstring says nothing there runs a script —
 among the modules that do. A harness claim nobody measures is the same false
@@ -27,9 +29,13 @@ five such claims had already gone bad:
 - the ``file:line`` citations in this module and in ``conftest.py`` had gone
   stale as the scripts around them were fixed, and one of them justified
   ``check=True`` by pointing at ``run_script`` — the single helper in the
-  harness that deliberately has no ``check=``. Citations here now name symbols,
-  not line numbers, for every file this change is allowed to edit; a line
-  number appears only for a file GI-007 freezes.
+  harness that deliberately has no ``check=``. Citations in both files now name
+  symbols, not line numbers, for every file this change is allowed to edit.
+  This module cites no line number of its own, and the two ``conftest.py``
+  still carries both point into ``plugins/forge/tests/``, which GI-007 freezes.
+  ``src/app/main.py:15`` appears in both files and points inside the surface,
+  but it is the fixture's planted anchor — the string under discussion, not
+  somewhere a reader is being sent to look.
 - ``strip_already_made``, the one exception in the GI-007 guard below, asked
   whether the working tree still held a path — and the comment above it
   claimed that made the exception unable to admit anything, because "a path
@@ -66,8 +72,14 @@ test_only_the_writable_file_set_is_tracked_and_changed  FR-043 OT-043   guard (G
 
 None of the five is red-first in the ``AC-039`` sense: they pin no script fix,
 so there is no pre-change script they fail against. They are the tests that
-would have caught the claims above, and FR-042 / FR-043 were the only two FR
-ids in this casting named by no test at all.
+would have caught the claims above. Measured over the seven test modules the
+repository held at the commit before this file first appeared in it: FR-039
+was named by all seven, and the casting's other four FR ids — FR-029, FR-030,
+FR-042 and FR-043 — were named by no test at all. FR-029 and FR-030 appeared
+only in ``conftest.py``, which asserts nothing. An earlier version of this
+sentence called FR-042 and FR-043 "the only two", counting a mention in an
+unexecuted docstring as coverage; the rows above are what actually put a test
+behind all four.
 
 No test here uses ``@pytest.mark.skip`` or ``xfail`` (NFR-001). The one path
 that cannot assert everything — a checkout too shallow to reach the change's
@@ -160,9 +172,13 @@ READ_ONLY_LAYERS = ("agents", "commands", "skills")
 # and nothing else, and it answers "no" for every path here — an earlier
 # version returned "yes" for anything under ``evidence/``, which widened the
 # only automated guard behind GI-007 past the five locations it exists to
-# enforce. The prefix is used exactly once below, to drop a path the diff still
-# reports and HEAD no longer holds: a strip whose deletion is committed. A path
-# that survives to land is in HEAD's tree and is judged like any other, so this
+# enforce. There is exactly one place below where this prefix waives anything,
+# ``strip_already_made``, and exactly one thing it waives there: a path the
+# diff still reports and HEAD no longer holds — a strip whose deletion is
+# committed. The name appears elsewhere in this file as a cross-reference, as
+# a constructed input to that predicate's own assertions, and inside a failure
+# message; none of those grants a path anything. A path that survives to land
+# is in HEAD's tree and is judged like any other, so this
 # exception cannot admit anything. It is the only exception in this file, and
 # it is asked of HEAD rather than of the working tree for the reason
 # ``strip_already_made`` gives.

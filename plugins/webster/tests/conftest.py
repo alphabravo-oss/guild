@@ -5,8 +5,11 @@ Run the suite with:
     cd plugins/webster && uvx pytest
 
 (The machine is PEP 668-managed; do NOT pip-install pytest globally. ``uvx``
-runs pytest in an isolated, ephemeral virtualenv — the same invocation
-``plugins/forge/tests/conftest.py`` documents.)
+runs pytest in an isolated, ephemeral virtualenv. ``plugins/forge/tests/conftest.py``
+opens with the same runner and the same PEP 668 warning, but not the same
+command line: the one it prints is ``uvx pytest tests/``, while this suite is
+run from the plugin root and finds its tests through ``testpaths`` in
+``pyproject.toml``. Shared tool and shared reason, not a shared string.)
 
 Interpreter skew is deliberate, not an oversight, but it is not the skew an
 earlier version of this docstring claimed. ``run_script`` shells out to the
@@ -65,7 +68,13 @@ by a single line, landed on a blank one. A citation that points at a blank line 
 asserting something untrue, which is the exact failure this suite exists to
 stop. A module-level name survives every edit short of deleting the
 thing it names, so line numbers appear below only for files outside this
-change's writable surface (GI-007), which nothing in this run may move.
+change's writable surface (GI-007), which nothing in this run may move. There
+are two of them and no others: ``plugins/forge/tests/conftest.py`` and
+``plugins/forge/tests/test_validate_spec.py``. One ``file:line`` string below
+does point inside the surface, and it is not a citation:
+``src/app/main.py:15`` is the anchor the fixture plants and ``drift.py``
+parses back out of ``docs/items/create-item.md``. Its line moving is the
+scenario, not a reference gone stale.
 
 Fixtures exposed to test modules:
 
@@ -145,7 +154,7 @@ FIXTURE_COMMITS = (
 
 # The third commit prepends this line to src/app/main.py. That one line is what
 # pushes the cited line `src/app/main.py:15` off the ``@app.post(...)`` decorator
-# that ``docs/items/create-item.md:12`` anchors to — the drift scenario the whole
+# that ``docs/items/create-item.md`` anchors to — the drift scenario the whole
 # suite is built around. The committed fixture holds the post-touch file, so the
 # first commit stages it with this line removed and the third puts it back.
 TOUCH_MAIN_MARKER = "# new comment line\n"
@@ -307,7 +316,20 @@ def build_fixture_repo(
 
 @pytest.fixture(name="run_script")
 def run_script_fixture() -> Callable[..., subprocess.CompletedProcess]:
-    """The one subprocess helper for this suite (GI-004, CT-007).
+    """The one way a test invokes a webster script (GI-004, CT-007).
+
+    Not "the one subprocess helper for this suite", which is what this line
+    used to say and what nothing in the suite supports: ``_git`` above shells
+    out, ``build_fixture_repo`` reaches git through it for every commit, and
+    ``test_harness.py`` has ``git``, ``git_in`` and one bare ``subprocess.run``
+    that measures the child interpreter. Those all drive git or python
+    directly; none of them drives a script under test.
+
+    What GI-004 and CT-007 actually constrain is the narrower thing: every
+    invocation of a script *under test* goes through this helper, so exactly
+    one place decides the interpreter, the environment and the timeout. The
+    fixture builders shell out to git because building the repository is the
+    ground a test stands on, not the subject it measures.
 
     There is deliberately no per-script fixture. Seven near-identical wrappers
     would drift apart, and the first one to forget ``env=`` would start reading
