@@ -125,10 +125,12 @@ Rows carrying a note the column has no room for:
   measurement rather than on a fix, and its anchor half is one: run against
   cfafe8e, 19941ad and 339a80d, that half passed at all three. The census half
   added in cycle 10 is red at 15f7264 and at each of those three, measured, and
-  red at all four for the same reason -- the sentence it reads out of
-  survey.py's docstring is not there to be read, because at every one of them
-  the docstring stated the census in a shape that named ``tooling`` and nothing
-  else. Two controls separate that from a test which merely wants a phrase.
+  red at all four on the same assertion -- the sentence it reads out of
+  survey.py's docstring is not there to be read -- but not for the same reason.
+  At cfafe8e, 19941ad and 339a80d that docstring carried the flat "Every entry
+  carries a file:line anchor" and named no array at all; the shape naming
+  ``tooling`` and nothing else is the one 15f7264 carried, and only that one.
+  Two controls separate that from a test which merely wants a phrase.
   Rewriting the sentence in the current docstring to say ``tooling`` alone
   fails it on the comparison instead, naming the four arrays the run printed
   and the docstring did not; pasting the deleted second copy back into a ``#``
@@ -613,9 +615,10 @@ def test_a_paren_in_a_comment_or_a_string_does_not_end_the_join(run_script, tmp_
     published entry was ``GET /exports``, a verb that endpoint answers 405 to.
 
     ``/imports`` is the same failure through the other door, a ``)`` inside a
-    string literal. Both routes are three continuation lines long, so the
-    six-line cap is not what is measured here -- this is the completion
-    detector inside it. ``/health`` is the control that carries neither.
+    string literal. Each of the two decorators hands the join four continuation
+    lines, two short of the six-line cap, so the cap is not what is measured
+    here -- this is the completion detector inside it. ``/health`` is the
+    control that carries neither.
     """
     root = python_project(
         tmp_path,
@@ -1314,8 +1317,10 @@ def test_every_surface_entry_carries_an_anchor(run_script, fixture_repo, tmp_pat
 
     Two guards on the drift itself, both on the shape it actually took: the
     census sentence must appear in survey.py exactly once, and no ``#`` comment
-    in that file may name ``tooling`` in backticks, which is what both stale
-    copies were. A paraphrase somewhere else would still get past this. What
+    in that file may name ``tooling`` in backticks, which is what the later of
+    the two stale copies was. The earlier one was flat -- "every entry ...
+    carries an anchor", naming no array -- and neither guard has its shape, so
+    a paraphrase, in a comment or anywhere else, still gets past both. What
     makes that unlikely to matter is the sentence being read rather than
     restated, so there is no second copy left to fall behind.
     """
@@ -1417,10 +1422,13 @@ def test_every_surface_entry_carries_an_anchor(run_script, fixture_repo, tmp_pat
     restated = [line for line in source.splitlines()
                 if line.lstrip().startswith("#") and "`tooling`" in line]
     assert restated == [], (
-        "Both stale copies of this census were `#` comments naming `tooling` "
-        "in backticks, and each was corrected a cycle apart from the docstring "
-        "that said the same thing. The census lives in the docstring, which is "
-        "the copy this test reads:\n" + "\n".join(restated)
+        "The later of this census's two stale copies was a `#` comment naming "
+        "`tooling` in backticks, and it went out in the same commit as the "
+        "docstring that said the same thing, by being deleted. The earlier one "
+        "was flat and named no array, and it was this comment that got narrowed "
+        "first -- a cycle before the docstring saying the same thing did. The "
+        "census lives in the docstring, which is the copy this test "
+        "reads:\n" + "\n".join(restated)
     )
 
 

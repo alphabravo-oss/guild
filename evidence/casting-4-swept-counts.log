@@ -1,0 +1,48 @@
+# evidence-cmd: grep -n 'lines\[i:i + 6\]' plugins/webster/scripts/survey.py; echo; sed -n '/        "parenjoin",/,/^    )$/p' plugins/webster/tests/test_survey.py; echo; grep -n 'STUB_MARKER' plugins/webster/scripts/llmstxt.py; echo; grep -n 'one_line(' plugins/webster/scripts/llmstxt.py; echo; grep -c 'if "python" in stack:' plugins/webster/scripts/survey.py
+# evidence-for: US-006, US-007, FR-023, OT-037
+
+284:                for cont in lines[i:i + 6]:
+605:                for cont in lines[i:i + 6]:
+
+        "parenjoin",
+        "from flask import Flask\n"  # 1
+        "\n"  # 2
+        "app = Flask(__name__)\n"  # 3
+        "\n"  # 4
+        "\n"  # 5
+        "@app.route(\n"  # 6
+        '    "/exports",\n'  # 7
+        "    strict_slashes=False,  # 2) legacy behaviour, see PROJ-14\n"  # 8
+        '    methods=["POST"],\n'  # 9
+        ")\n"  # 10
+        "def exports():\n"  # 11
+        "    return {}\n"  # 12
+        "\n"  # 13
+        "\n"  # 14
+        "@app.route(\n"  # 15
+        '    "/imports",\n'  # 16
+        '    defaults={"note": "csv) upload"},\n'  # 17
+        '    methods=["PUT"],\n'  # 18
+        ")\n"  # 19
+        "def imports():\n"  # 20
+        "    return {}\n"  # 21
+        "\n"  # 22
+        "\n"  # 23
+        "@app.route(\n"  # 24
+        '    "/health",\n'  # 25
+        ")\n"  # 26
+        "def health():\n"  # 27
+        "    return {}\n",  # 28
+    )
+
+76:    if STUB_MARKER in line or "{" in line or "}" in line:
+84:STUB_MARKER = "webster: not written yet"
+192:    if STUB_MARKER in open(path, encoding="utf-8", errors="replace").read():
+234:                if STUB_MARKER in open(path, encoding="utf-8", errors="replace").read():
+
+57:def one_line(value):
+272:    name = one_line(pkg.get("name")) or one_line(py.get("name")) or os.path.basename(ROOT)
+273:    summary = (one_line(pkg.get("description")) or one_line(py.get("description"))
+274:               or one_line(readme_summary(ROOT)))
+
+3

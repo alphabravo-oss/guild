@@ -17,10 +17,12 @@ everything below it. The narrowing that replaced it said `tooling` was the
 single array whose entries carry none, which was false of `stack`, `frameworks`,
 `tests.files` and `existing_docs` as well -- and the last two are paths walk()
 found inside this repo, so the reason that sentence gave, that a recommendation
-has no line to send anybody to, did not even separate them from `tooling`. Both
-times a second copy of the claim sat in the comment above CLI_FLAG_DECL and was
-corrected a cycle apart from this one. So the census is stated here and nowhere
-else, and it is not stated by hand:
+has no line to send anybody to, did not even separate them from `tooling`. A
+second copy of the claim sat in the comment above CLI_FLAG_DECL both times, and
+nothing measured either copy. That is how the flat one came to be narrowed
+there a cycle before it was narrowed here; the narrowing itself was corrected in
+both places at once, by deleting that copy. So the census is stated here and
+nowhere else, and it is not stated by hand:
 test_survey.py::test_every_surface_entry_carries_an_anchor reads the names out
 of the sentence above and measures them against the arrays a real run prints.
 
@@ -560,8 +562,10 @@ SUBCOMMAND = re.compile(
 # every entry under `surface` and `user_surface` carries an anchor exactly so that a reader can
 # go and read it. Which of the document's other arrays carry an anchor and which do not is stated
 # in the module docstring and measured against a real run from there. It used to be restated here
-# as well, and the two copies were wrong in two different ways at the same time, each corrected a
-# cycle apart from the other. One sentence a test reads is worth more than two kept level by hand.
+# as well, and for a cycle the two copies were wrong in two different ways at once: this one had
+# been narrowed to name a single anchorless array while the docstring still opened "Every entry",
+# because narrowing one copy is not narrowing the other. This copy was deleted rather than
+# narrowed a second time. One sentence a test reads is worth more than two kept level by hand.
 CLI_FLAG_DECL = re.compile(r"(?:\badd_argument|\badd_option|\.option)\s*\(")
 CLI_ARG_END = re.compile(r",\s*\w+\s*=|[)#]")
 CLI_STRING = re.compile(r"""["']([^"'\n]*)["']""")

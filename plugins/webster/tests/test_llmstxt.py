@@ -340,7 +340,7 @@ def test_multi_line_header_description_folds_to_one_line(run_script, tmp_path):
 
 
 def test_a_stub_readme_is_not_the_header_summary(run_script, tmp_path):
-    """AC-029, OT-028: the second route into this file, which the page loop never walked.
+    """AC-029, OT-028: the second of the two page routes, which the page loop never walked.
 
     The page loop reads every page for the marker, so a stub under docs/ is
     dropped. The README behind the header's ``> `` line is not under docs/, so a

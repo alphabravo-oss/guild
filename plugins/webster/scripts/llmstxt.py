@@ -178,12 +178,14 @@ def readme_summary(root):
 
     main() keeps a stub out of the listing by reading each page and looking for the marker, but
     the README behind the header's `> ` line is not in the docs tree that loop walks, so the
-    exclusion was applied on one of the two routes into this file. A repo whose README is still
-    the skeleton scaffold.py wrote published that skeleton's first placeholder as the product's
-    summary -- the line a machine reader takes for what the repo is, taken from the one page
-    whose entire content is that nobody has written it yet. The marker sits inside an HTML
-    comment, so strip_comments removes it before one_line could ever see it: the file is read
-    for it here, the same way the page loop reads for it."""
+    exclusion was applied on one of the two routes a page takes into this file. A description in
+    pyproject.toml or package.json is the third way the marker gets in and is not a page; one_line
+    is where that one is dropped. A repo whose README is still the skeleton scaffold.py wrote
+    published that skeleton's first placeholder as the product's summary -- the line a machine
+    reader takes for what the repo is, taken from the one page whose entire content is that
+    nobody has written it yet. The marker sits inside an HTML comment, so strip_comments removes
+    it before one_line could ever see it: the file is read for it here, the same way the page
+    loop reads for it."""
     path = os.path.join(root, "README.md")
     if not os.path.isfile(path):
         return ""
