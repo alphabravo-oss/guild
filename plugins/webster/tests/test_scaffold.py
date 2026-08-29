@@ -59,18 +59,22 @@ Every row naming a revision later than cfafe8e is red at cfafe8e as well, with
 no exception in this module: the only two rows that pass at cfafe8e are the two
 filed "guard", and those pass at all eight.
 
-Two rows are red against a revision later than the commit that added them, and
-they are not the same case. ``test_help_names_an_exit_set_for_both_modes`` was
-added at 3dadc71 and amended at ad38ed9, and it is the amended text that is red
-through 5fc0761 -- the second wording defect the row below describes.
-``test_a_refused_read_drops_the_violations_it_had_collected`` was never
-amended, and it is the correction this table exists for. It was recorded here
-as "green before and after by design". Run against the eight revisions above it
-is red against five of them, green only from 5fc0761 -- the commit that gave
-``os.walk`` its ``onerror``, and the scaffold.py revision immediately before
-ad38ed9, where the test was written. It was therefore already green on the day
-it was added, which is the observation the old label was made from; what the
-label went on to claim, that the test cannot go red, is answered by the five.
+A row's "red against" revision is normally the one immediately before the commit
+in its "added" column, because a test lands in the commit that fixes what it
+pins. ``test_help_names_an_exit_set_for_both_modes`` and
+``test_a_refused_read_drops_the_violations_it_had_collected`` depart from that,
+in opposite directions. The first is red against a revision later than the
+commit that added it: it was added at 3dadc71 and amended at ad38ed9, and it is
+the amended text that is red through 5fc0761 -- the second wording defect the
+row below describes. The second was already green before the commit that added
+it. It was never amended, and it is the correction this table exists for. It was
+recorded here as "green before and after by design". Run against the eight
+revisions above it is red against five of them, green only from 5fc0761 -- the
+commit that gave ``os.walk`` its ``onerror``, and the scaffold.py revision
+immediately before ad38ed9, where the test was written. It was therefore already
+green on the day it was added, which is the observation the old label was made
+from; what the label went on to claim, that the test cannot go red, is answered
+by the five.
 
 - ``test_bad_subject_key_writes_nothing_and_exits_two`` — FR-028 / OT-034 /
   CT-005. RED on the pre-change script: ``do_init`` called ``parse_subjects``

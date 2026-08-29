@@ -1,0 +1,43 @@
+# evidence-cmd: bash -c 'r=$PWD; d=$(mktemp -d); revs="cfafe8e af10189 ecc7dd5 3dadc71 8387b46 5fc0761 ad38ed9 f3e30a5"; for REV in $revs; do mkdir -p "$d/$REV"; cp -R "$r/plugins/webster" "$d/$REV/webster"; git show "$REV:plugins/webster/scripts/scaffold.py" > "$d/$REV/webster/scripts/scaffold.py"; (cd "$d/$REV/webster" && uvx pytest tests/test_scaffold.py -q -rf 2>&1 | grep "^FAILED" | sed "s|^FAILED tests/test_scaffold.py::||; s| .*||") > "$d/$REV.fail"; done; names=$(grep -oE "^def test_[a-z_]+" plugins/webster/tests/test_scaffold.py | sed "s/^def //" | sort); printf "%-58s" "test"; for REV in $revs; do printf "%-9s" "$REV"; done; echo; for t in $names; do printf "%-58s" "$t"; for REV in $revs; do if grep -qx "$t" "$d/$REV.fail"; then printf "%-9s" "RED"; else printf "%-9s" "green"; fi; done; echo; done; echo; echo "== last red revision vs the revision immediately before the commit that added the row =="; for t in $names; do last=guard; prev=""; before=n/a; added=$(git log --format=%h --reverse cfafe8e..HEAD -S"def $t" -- plugins/webster/tests/test_scaffold.py | head -1); for REV in $revs; do if grep -qx "$t" "$d/$REV.fail"; then last=$REV; fi; if [ "$REV" = "$added" ]; then before=$prev; fi; prev=$REV; done; if [ "$last" = guard ]; then v=guard; elif [ "$last" = "$before" ]; then v=conforms; else v=DEPARTS; fi; printf "  %-58s added %s  before-added %-9s last-red %-9s %s\n" "$t" "$added" "$before" "$last" "$v"; done; rm -rf "$d"'
+# evidence-for: US-009, FR-028, FR-039, AC-036, AC-037, AC-039
+# evidence-timeout: 600
+#
+# D-143, the lead sentence of test_scaffold.py revision-table paragraph. Each
+# column is one run of this module against that revision of scaffold.py. The
+# second block compares every row last red revision with the revision
+# immediately before the commit that added it. Nine rows conform or are guards.
+# Exactly two DEPART, and in opposite directions: help_names is last red at
+# 5fc0761, later than ecc7dd5 (the revision before 3dadc71 where it was added);
+# a_refused_read is last red at 8387b46, earlier than 5fc0761 (the revision
+# before ad38ed9 where it was added), so it was already green when it was added.
+# The old sentence said both were red against a later revision, which holds of
+# one. a_refused_read is red against five of the eight, the count the paragraph
+# keeps.
+
+test                                                      cfafe8e  af10189  ecc7dd5  3dadc71  8387b46  5fc0761  ad38ed9  f3e30a5  
+test_a_refused_read_drops_the_violations_it_had_collected RED      RED      RED      RED      RED      green    green    green    
+test_bad_subject_key_writes_nothing_and_exits_two         RED      green    green    green    green    green    green    green    
+test_every_documented_envelope_leads_with_status          RED      RED      RED      RED      green    green    green    green    
+test_help_names_an_exit_set_for_both_modes                RED      RED      RED      RED      RED      RED      green    green    
+test_malformed_category_json_stays_a_violation            green    green    green    green    green    green    green    green    
+test_unlistable_directory_below_the_top_level_exits_two   RED      RED      RED      RED      RED      green    green    green    
+test_unreadable_page_exits_two_without_a_traceback        RED      RED      RED      green    green    green    green    green    
+test_unstattable_docs_directory_is_a_could_not_read       RED      RED      RED      RED      RED      RED      green    green    
+test_unwritable_docs_path_exits_two_without_a_traceback   RED      RED      green    green    green    green    green    green    
+test_unwritable_subject_label_writes_nothing_and_exits_twoRED      RED      RED      RED      RED      green    green    green    
+test_unwritable_title_writes_nothing_and_exits_two        RED      RED      RED      RED      RED      green    green    green    
+test_valid_subject_key_creates_the_landing_page           green    green    green    green    green    green    green    green    
+
+== last red revision vs the revision immediately before the commit that added the row ==
+  test_a_refused_read_drops_the_violations_it_had_collected  added ad38ed9  before-added 5fc0761   last-red 8387b46   DEPARTS
+  test_bad_subject_key_writes_nothing_and_exits_two          added af10189  before-added cfafe8e   last-red cfafe8e   conforms
+  test_every_documented_envelope_leads_with_status           added 8387b46  before-added 3dadc71   last-red 3dadc71   conforms
+  test_help_names_an_exit_set_for_both_modes                 added 3dadc71  before-added ecc7dd5   last-red 5fc0761   DEPARTS
+  test_malformed_category_json_stays_a_violation             added 3dadc71  before-added ecc7dd5   last-red guard     guard
+  test_unlistable_directory_below_the_top_level_exits_two    added 5fc0761  before-added 8387b46   last-red 8387b46   conforms
+  test_unreadable_page_exits_two_without_a_traceback         added 3dadc71  before-added ecc7dd5   last-red ecc7dd5   conforms
+  test_unstattable_docs_directory_is_a_could_not_read        added ad38ed9  before-added 5fc0761   last-red 5fc0761   conforms
+  test_unwritable_docs_path_exits_two_without_a_traceback    added ecc7dd5  before-added af10189   last-red af10189   conforms
+  test_unwritable_subject_label_writes_nothing_and_exits_two added 5fc0761  before-added 8387b46   last-red 8387b46   conforms
+  test_unwritable_title_writes_nothing_and_exits_two         added 5fc0761  before-added 8387b46   last-red 8387b46   conforms
+  test_valid_subject_key_creates_the_landing_page            added af10189  before-added cfafe8e   last-red guard     guard

@@ -1,0 +1,19 @@
+# evidence-cmd: bash -c 'cd plugins/webster && echo "== the two modules this casting owns ==" && uvx pytest tests/test_slop.py tests/test_scaffold.py -q 2>&1 | tail -2 && echo && echo "== whole plugin suite ==" && uvx pytest -q 2>&1 | tail -3'
+# evidence-for: US-008, US-009, FR-024, FR-025, FR-026, FR-028, AC-032, AC-033, AC-034, AC-036, AC-037
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+#
+# Both changes this cycle are comment and docstring text. The collected count is
+# 148 and unchanged. test_harness.py GI-007 scope test is red because this run
+# evidence logs are committed, which its own docstring states is the expected
+# reading until the lead strip commit; it was already red on the tip this work
+# started from, for casting-3 logs alone.
+
+== the two modules this casting owns ==
+......................                                                   [100%]
+22 passed in 0.75s
+
+== whole plugin suite ==
+=========================== short test summary info ============================
+FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+1 failed, 147 passed in 12.75s

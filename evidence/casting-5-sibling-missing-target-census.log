@@ -1,0 +1,17 @@
+# evidence-cmd: bash -c 'cd plugins/webster/scripts; for spec in "drift.py check /no/such/dir" "doctype.py check /no/such/dir" "scaffold.py check --docs /no/such/dir" "rendered.py check /no/such/dir" "survey.py /no/such/dir" "slop.py /no/such/dir"; do out=$(python3 $spec 2>&1); code=$?; printf "%-42s exit %s | %s\n" "$spec" "$code" "$(printf "%s" "$out" | head -1)"; done; out=$(WEBSTER_ROOT=/no/such WEBSTER_DOCS=dir python3 llmstxt.py 2>&1); code=$?; printf "%-42s exit %s | %s\n" "llmstxt.py WEBSTER_DOCS -> /no/such/dir" "$code" "$(printf "%s" "$out" | head -1)"'
+# evidence-for: US-008, FR-027, AC-035
+#
+# The population the D-140 paragraph rests on, re-run rather than recalled.
+# Six sibling scripts. Four take a docs path and all four answer one that is not
+# there with exit 2 (drift.py, doctype.py, llmstxt.py, scaffold.py). Of the other
+# two, rendered.py exits 2 and survey.py still returns 0, which is what made
+# af10189 "every other script in this plugin" false, and llmstxt.py is what the
+# three that followed left out. Last line is FR-027 / AC-035 itself.
+
+drift.py check /no/such/dir                exit 2 | {"status": "no_docs", "docs_dir": "/no/such/dir"}
+doctype.py check /no/such/dir              exit 2 | no docs directory at /no/such/dir
+scaffold.py check --docs /no/such/dir      exit 2 | {"status": "no_docs", "docs": "/no/such/dir"}
+rendered.py check /no/such/dir             exit 2 | no built site at /no/such/dir. Build it first, or report the gate not_checked
+survey.py /no/such/dir                     exit 0 | {
+slop.py /no/such/dir                       exit 2 | no such target: /no/such/dir
+llmstxt.py WEBSTER_DOCS -> /no/such/dir    exit 2 | no docs directory at /no/such/dir
