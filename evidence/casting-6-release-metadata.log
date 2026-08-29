@@ -1,0 +1,11 @@
+# evidence-cmd: cd plugins/webster && python3 -c 'import json,sys;sys.path.insert(0,"tests");import test_readme as t;r=t._read(t.README);s=t.status_section();print("plugin.json version:",json.load(open(".claude-plugin/plugin.json"))["version"]);print("README Status version line:",[l for l in s.splitlines() if l.startswith("Version ")][0]);print("README Status names the run command:",t.RUN_COMMAND in s);print("README Status passing count:",t.status_passing_count());print("tests the suite defines:",len(t.suite_tests()));print("test modules:",len(sorted(t.TESTS_DIR.glob(t.TEST_MODULE_GLOB))));print("WEBSTER_SURVEY documented beside WEBSTER_LENS_ALLOW:","WEBSTER_SURVEY" in [p for p in r.split(chr(10)+chr(10)) if "WEBSTER_LENS_ALLOW" in p][0]);print("README names the Python 3.11 floor:","Python 3.11" in r)'
+# evidence-for: AC-042, NFR-002, NFR-003, US-010
+
+plugin.json version: 0.11.0
+README Status version line: Version 0.11.0.
+README Status names the run command: True
+README Status passing count: 125
+tests the suite defines: 125
+test modules: 8
+WEBSTER_SURVEY documented beside WEBSTER_LENS_ALLOW: True
+README names the Python 3.11 floor: True

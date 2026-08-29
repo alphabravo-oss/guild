@@ -106,9 +106,9 @@ no fallback path here.
 | --- | --- |
 | `scripts/survey.py` | Two surfaces, both anchored to `file:line`. **`user_surface`**: the screens, the text on the buttons, headings and fields, the product's own error strings, the subcommands somebody types. **`surface`**: HTTP routes from Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask and Go mux, plus CLI binaries, package exports, env vars and OpenAPI specs. Names the extractors that fit the stack |
 | `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree, every anchor the pages cite and a digest of each cited line. `check` reports anchors that no longer resolve, cited lines whose digest moved, and pages whose cited code changed. `clean` and `unrelated_changes` exit 0; `drift` exits 1; `no_docs`, `no_manifest`, `no_anchors`, `no_git`, `head_missing` and `hashes_partial` exit 2. `clean` is reserved for a set where nothing changed at all, so code that changed under no citation is `unrelated_changes` rather than a finding; a set that cites no sources is `no_anchors` rather than `clean`, and an anchor the record held but never took a digest of leaves the run `hashes_partial`, because resolving every anchor you have is not the same as having been checked |
-| `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem. `check` validates an existing tree and exits 1 on any violation |
-| `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1; advisories (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) are reported. Findings are grouped by rule with a count |
-| `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding |
+| `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem, and validates an existing one. Every run prints a JSON object whose first key is the status, the run that went right included, so a caller reading that key never has to guard the one path where nothing went wrong. Writing a tree reports `ok` at exit 0, and `bad_subject` for a subject key that cannot become a directory name or `cannot_write` for a path the filesystem refused exit 2; init never exits 1. Validating one reports `violations` at exit 1, `ok` at exit 0, and `no_docs` for a missing directory or `cannot_read` for a page or a directory the filesystem refused exit 2 |
+| `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1, advisories alone (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) exit 0, and a tree with nothing to check — no docs directory, or no page that is not a stub and no frontmatter defect on the stubs either — exits 2. Findings are grouped by rule with a count |
+| `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding, exit 2 on a target that is not there or cannot be read |
 | `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text. The only check that sees what a browser sees. Exit 1 on any leak |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk |
 
@@ -172,7 +172,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-117 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+125 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes: each script binds its root, its docs
 directory and its allowlists at import time, and an in-process test would freeze all of them at
@@ -205,28 +205,46 @@ nowhere in the README. The status names are taken out of `drift.py` at test time
 listed in the test, because a list written in the test is a third place the vocabulary lives and
 three copies drift the way two did.
 
+Naming a status is not the same as placing it. That check was satisfied by the row mentioning
+each name somewhere in it, so a row that swapped its exit-0 and exit-2 groups outright — telling
+a reader that a missing repository was a clean run and that ordinary development was a
+not-checked one — passed every assertion in the module. Every row of the table above is now read
+the way `drift.py`'s is: the exit codes it publishes have to be the set the script's own usage
+text publishes, and each status it backticks has to sit under the code that usage text returns
+it at. Three rows were narrower than the script they describe. `scaffold.py`, `doctype.py` and
+`slop.py` each published their exit 1 and nothing else, so a reader handed a 2 by any of them —
+a subject key that could not become a directory, a tree with nothing in it to check, a target
+that was not there — found no entry for it. One parser reads both sides, so whatever it reads
+loosely it reads loosely for the script and for the row alike, and the two still have to agree.
+
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD, a docs tree sitting at the repository
 root, a developer's `diff.relative` setting that renamed the paths git printed, an anchor citing
-line zero and a cited line that changed; `doctype.py` across the widened
-symbol, route and flag lenses, the acronym list, stubs, the `WEBSTER_SURVEY` allowlist and the
-contract `types` prints to a writer before the lens reads them; `survey.py` across decorators
-split over several lines, Flask's declared methods, `pyproject.toml`, `HTTPException` details,
-the option flags a parser declares and `os.getenv` reads; `llmstxt.py` and `slop.py` across the
-fixes each of those carries, and `scaffold.py` across those plus the docs path it is handed and
-cannot write into, a page it cannot read, a malformed `_category_.json` and the exit set its help
-text publishes for both modes. Every fix has at least one test that fails against the script as
-it stood before the fix; the rest are guards, there so a fix does not take something else away
-with it.
+line zero, a cited line that changed and the note a run with no commit prints about the digests
+it therefore did not compare; `doctype.py` across the widened symbol, route and flag lenses, the
+acronym list, stubs, the `WEBSTER_SURVEY` allowlist and the contract `types` prints to a writer
+before the lens reads them; `survey.py` across decorators split over several lines, Flask's
+declared methods, `pyproject.toml`, `HTTPException` details, `os.getenv` reads, and the option
+flags a parser declares — including a description that merely names another flag, which is not a
+declaration, and a declaration a formatter split across lines, which is; `llmstxt.py` and
+`slop.py` across the fixes each of those carries, and `scaffold.py` across those plus the docs
+path it is handed and cannot write into, a page it cannot read, a malformed `_category_.json`,
+the exit set its help text publishes for both modes and the `status` key every one of those
+envelopes leads with. Every fix has at least one test that fails against the script as it stood
+before the fix; the rest are guards, there so a fix does not take something else away with it.
 
-The harness under those modules is exercised as well. `tests/test_harness.py` measures four
+The harness under those modules is exercised as well. `tests/test_harness.py` measures five
 things nothing else in the suite checks: that the child `python3` clears the plugin's 3.11 floor,
-that two builds of the fixture repository land on the same commit, that the committed fixture
-carries no nested `.git`, no `website/` and no recorded manifest, and that this change stayed
-inside the files it was allowed to write. The first of those measures the floor rather than
-naming an interpreter, and that is the correction: `conftest.py` used to say the child resolved
-through PATH to 3.14.6 and was not the one running pytest, and under the command printed above
-both halves are false.
+that two builds of the fixture repository land on the same commit, that a further build lands on
+that same commit under a host time zone fourteen hours and a date line away, that the committed
+fixture carries no nested `.git`, no `website/` and no recorded manifest, and that this change
+stayed inside the files it was allowed to write. The first of those measures the floor rather
+than naming an interpreter, and that is the correction: `conftest.py` used to say the child
+resolved through PATH to 3.14.6 and was not the one running pytest, and under the command printed
+above both halves are false. The third is the one the second could not supply: two builds in one
+process agree with or without the explicit `+00:00` on the fixture's commit dates, and the
+divergence that offset averts is between machines in different zones, which nothing here had
+varied.
 
 Not yet exercised: `rendered.py`, which has no test module, so every claim about what it catches
 in built HTML is still untested. Nor the three commands end to end, which means what

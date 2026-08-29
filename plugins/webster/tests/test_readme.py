@@ -34,6 +34,26 @@ at runtime, matching test_slop.py and test_scaffold.py):
   not a finding — appeared nowhere in the file, and neither did ``no_git``,
   ``head_missing`` or ``hashes_partial``. Same failure as the count above, one
   table row over: prose describing a script that moved under it.
+- ``test_the_script_table_publishes_each_scripts_own_exit_set`` — FR-038 /
+  AC-042 / OT-040. RED on the README as it stood: three rows published an exit
+  contract narrower than the script's own usage text. The ``scaffold.py`` row
+  named its exit 1 alone, and neither the ``ok`` envelope init returns at exit
+  0 nor the ``bad_subject``, ``cannot_write``, ``no_docs`` and ``cannot_read``
+  it returns at exit 2; the ``doctype.py`` row named its exit 1 alone, and
+  neither the exit 0 it returns when advisories are all that is left nor the
+  exit 2 it returns on a stub-only tree or a missing docs directory; the
+  ``slop.py`` row named its exit 1 alone, and not the exit 2 a missing or
+  unreadable target had just been given. A caller handed a code the README has
+  no entry for is in the same position as one handed a status it has no entry
+  for, and three of the seven rows had put it there.
+- ``test_the_script_table_puts_each_status_under_its_scripts_exit_code`` —
+  FR-038 / AC-042. RED on the README as it stood, through the ``scaffold.py``
+  row, which backticked ``check`` inside its exit-1 clause where that script's
+  usage text names the word only at exit 2. The check above asked whether each
+  status was *named* in the row and never where, so swapping the ``drift.py``
+  row's exit-0 and exit-2 groups outright — telling a reader that a missing
+  repository is a clean run and that ordinary development is a not-checked one
+  — passed every assertion in this module.
 
 The count is taken from the suite's own source rather than from
 ``len(request.session.items)``, and the reason is a false red rather than a
@@ -75,7 +95,8 @@ CONFTEST = TESTS_DIR / "conftest.py"
 # Read as text and parsed with ``ast``, never imported: every script binds ROOT,
 # DOCS and its allowlists from ``sys.argv`` and the environment at module level
 # (GI-004), so an import here would run that binding against pytest's own argv.
-DRIFT = PLUGIN_ROOT / "scripts" / "drift.py"
+SCRIPTS = PLUGIN_ROOT / "scripts"
+DRIFT = SCRIPTS / "drift.py"
 
 # The first column of the row this module checks in the README's script table.
 # Matched on the cell rather than on a line number so the check survives the
@@ -99,6 +120,31 @@ RELEASE_VERSION = "0.11.0"
 # out of the config, so that a change to the glob shows up here as a failing
 # count instead of quietly redefining what "the suite" means.
 TEST_MODULE_GLOB = "test_*.py"
+
+# The script each row of the README's script table is about. Discovered from
+# the table rather than listed here, for the reason ``drift_statuses`` reads a
+# docstring rather than a literal: a list in this file is a second place the
+# table's membership lives, and the row nobody remembered to add to it is
+# exactly the unread prose this module exists to stop.
+SCRIPT_CELL = re.compile(r"^\| `scripts/([a-z_]+\.py)` \|")
+
+# An exit-code claim, in both of the forms these files write it. The second is
+# the elision ``doctype.py``'s usage text falls into once it has said "exit"
+# for the first code in a list -- "exit 1 on a defect, 0 when only advisories
+# remain, 2 when there was nothing to check". Read with the first pattern
+# alone that contract is exit 1 and nothing else, which is precisely the
+# narrower contract the README row had copied out of it.
+EXIT_SPELLED = re.compile(r"\bexits?\s+(\d)\b", re.IGNORECASE)
+EXIT_ELIDED = re.compile(r",\s+(\d)(?=\s+(?:when|on|if|once|unless)\b)")
+
+# A status as a usage text writes it, and as the README writes it. The prose
+# form requires an underscore because English prose has none, so no ordinary
+# sentence in a docstring can donate a status that does not exist. The
+# single-word statuses -- ``clean``, ``drift``, ``ok``, ``violations`` -- are
+# reached from the README side instead, where a backtick is what marks them,
+# and checked back against the docstring by name.
+PROSE_STATUS = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+TICKED_STATUS = re.compile(r"`([a-z][a-z0-9_]*)`")
 
 
 def _read(path: Path) -> str:
@@ -209,6 +255,125 @@ def drift_statuses(exit_code: str) -> list[str]:
             f"clause: {match.group(1)!r}"
         )
     return found
+
+
+def script_table_scripts() -> list[str]:
+    """The script named in the first column of every row of the script table."""
+    names = [
+        found.group(1)
+        for found in (SCRIPT_CELL.match(line) for line in _read(README).splitlines())
+        if found
+    ]
+    if not names:
+        raise RuntimeError(
+            f"no `scripts/<name>.py` rows found in {README}. FR-038 puts each "
+            f"script's contract in that table, and a check that finds no rows "
+            f"to read passes without having read one."
+        )
+    return names
+
+
+def script_docstring(filename: str) -> str:
+    """One script's module docstring: the usage text ``argparse`` publishes."""
+    path = SCRIPTS / filename
+    doc = ast.get_docstring(ast.parse(_read(path), filename=str(path)))
+    if not doc:
+        raise RuntimeError(
+            f"{path} has no module docstring. It is the usage text a reader of "
+            f"either file can reach, and the README row describing the script "
+            f"has nothing left to be checked against."
+        )
+    return doc
+
+
+def exit_clauses(text: str) -> list[list[tuple[str, str]]]:
+    """Per sentence, every (exit code, the clause of that sentence claiming it).
+
+    One parser, run over a script's usage text and over the README row that
+    publishes it. Whatever it reads loosely it reads loosely on both sides and
+    the two still have to agree, which is the property a second parser written
+    for the README alone would not have.
+
+    Segmentation is paragraph, then sentence, then exit-code claim: a claim
+    closes the clause before it, and whatever follows the last claim in a
+    sentence belongs to that claim. The last of those three is what reaches
+    ``scaffold.py``'s exit-2 statuses, which its usage text names *after* the
+    code ("exit 2 ... -- bad_subject for ..., cannot_write for ...") where
+    ``drift.py`` names them before it. Splitting paragraphs first is what
+    keeps ``doctype.py``'s usage block from running on into the prose beneath
+    it, where ``doc_type`` would otherwise be read as a status at exit 2.
+    """
+    sentences: list[list[tuple[str, str]]] = []
+    for paragraph in text.split("\n\n"):
+        for sentence in re.split(r"(?<=\.)\s+", " ".join(paragraph.split())):
+            claims: list[tuple[int, int, str]] = []
+            for found in sorted(
+                [*EXIT_SPELLED.finditer(sentence), *EXIT_ELIDED.finditer(sentence)],
+                key=lambda match: match.start(),
+            ):
+                # The two patterns can cover the same digit; the first wins,
+                # so a code is never counted as two claims in a row.
+                if claims and found.start() < claims[-1][1]:
+                    continue
+                claims.append((found.start(), found.end(), found.group(1)))
+            found_here: list[tuple[str, str]] = []
+            for index, (_, end, code) in enumerate(claims):
+                start = claims[index - 1][1] if index else 0
+                stop = end if index + 1 < len(claims) else len(sentence)
+                found_here.append((code, sentence[start:stop]))
+            if found_here:
+                sentences.append(found_here)
+    return sentences
+
+
+def contract_clauses(text: str) -> list[tuple[str, str]]:
+    """The (exit code, clause) pairs of the sentences that publish the contract.
+
+    A sentence that assigns more than one exit code is the contract; one that
+    names a single code is commentary about it, and reading the second as the
+    first is what left ``hashes_partial`` accepted at exit 0 as well as at
+    exit 2 -- ``drift.py``'s usage text ends a later sentence "has not earned
+    exit 0", and a status accepted at two codes is a status whose placement
+    nothing checked. The exit *set* is still read from every sentence, because
+    a code named only in passing ("init never exits 1") is still a code the
+    script returns.
+
+    A script whose whole contract is one code has no such sentence --
+    ``rendered.py``'s is "exit 1 on a leak" -- so for those every clause is
+    contract. Falling back per script rather than globally is what keeps one
+    single-code script from dropping silently out of a check the others pass.
+    """
+    sentences = exit_clauses(text)
+    contract = [found for found in sentences if len({code for code, _ in found}) > 1]
+    return [pair for found in (contract or sentences) for pair in found]
+
+
+def exit_codes(text: str) -> set[str]:
+    """Every exit code ``text`` claims, in a docstring or in a table row."""
+    return {code for found in exit_clauses(text) for code, _ in found}
+
+
+def statuses_claimed(text: str, marker: re.Pattern) -> dict[str, set[str]]:
+    """Each status ``marker`` finds, mapped to the exit codes whose clauses hold it."""
+    claimed: dict[str, set[str]] = {}
+    for code, clause in contract_clauses(text):
+        for name in marker.findall(clause):
+            claimed.setdefault(name, set()).add(code)
+    return claimed
+
+
+def exit_codes_naming(text: str, name: str) -> set[str]:
+    """The exit codes whose clauses in ``text`` name ``name`` as a whole word.
+
+    A set rather than one code: nothing stops a usage text from naming one
+    status in two clauses of the same contract sentence, and a check that
+    demanded a single answer would raise on prose that is not wrong. It is
+    read from ``contract_clauses`` and not from every sentence, so commentary
+    about a status cannot widen the set of codes the README is allowed to file
+    it under -- which it did, for ``hashes_partial``, until it was not.
+    """
+    word = re.compile(rf"\b{re.escape(name)}\b")
+    return {code for code, clause in contract_clauses(text) if word.search(clause)}
 
 
 def _scan_module(path: Path) -> tuple[list[str], list[str]]:
@@ -400,4 +565,96 @@ def test_the_script_table_names_drift_pys_own_status_vocabulary():
         f"README to describe the scripts as they now are; the row carried the "
         f"pre-spec vocabulary through the whole change, so a reader looking up "
         f"a status the tool had just printed at them found no entry for it."
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-038 / AC-042 / OT-040: every row publishes the exit set its own script
+# publishes, and not the part of it somebody happened to write down.
+# -----------------------------------------------------------------------------
+def test_the_script_table_publishes_each_scripts_own_exit_set():
+    narrower = []
+    compared = 0
+    for filename in script_table_scripts():
+        published = exit_codes(script_docstring(filename))
+        stated = exit_codes(script_table_row(f"`scripts/{filename}`"))
+        compared += len(published)
+        if published != stated:
+            narrower.append(
+                f"{filename}: its usage text exits {sorted(published) or ['nothing']}, "
+                f"the README row exits {sorted(stated) or ['nothing']}"
+            )
+
+    assert compared, (
+        f"no row of the {README} script table was compared against an exit "
+        f"code, so every assertion below this one held over an empty set. "
+        f"Finding none means the parser stopped reading the usage texts, not "
+        f"that the scripts stopped publishing contracts."
+    )
+    assert not narrower, (
+        f"these {README} rows publish a different exit set from the script "
+        f"they describe:\n  " + "\n  ".join(narrower) + f"\nFR-038 asks the "
+        f"table to describe the scripts as they now are. A caller handed a "
+        f"code the README has no entry for is in exactly the position of one "
+        f"handed a status it has no entry for, and the row is where both are "
+        f"looked up."
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-038 / AC-042: each status is published under the exit code its own script
+# returns it at. Naming it somewhere in the row is what the check above does.
+# -----------------------------------------------------------------------------
+def test_the_script_table_puts_each_status_under_its_scripts_exit_code():
+    misplaced = []
+    unpublished = []
+    compared = 0
+    for filename in script_table_scripts():
+        doc = script_docstring(filename)
+        row = script_table_row(f"`scripts/{filename}`")
+        in_row = statuses_claimed(row, TICKED_STATUS)
+
+        for name, codes in sorted(in_row.items()):
+            compared += 1
+            allowed = exit_codes_naming(doc, name)
+            if not allowed:
+                misplaced.append(
+                    f"{filename}: the row publishes `{name}` at exit "
+                    f"{sorted(codes)}, and the script's usage text names it at "
+                    f"no exit code at all"
+                )
+            elif not codes <= allowed:
+                misplaced.append(
+                    f"{filename}: the row puts `{name}` at exit {sorted(codes)}, "
+                    f"its usage text at exit {sorted(allowed)}"
+                )
+
+        for name, codes in sorted(statuses_claimed(doc, PROSE_STATUS).items()):
+            compared += 1
+            if not in_row.get(name, set()) & codes:
+                unpublished.append(
+                    f"{filename}: its usage text puts {name} at exit "
+                    f"{sorted(codes)}, the row at exit "
+                    f"{sorted(in_row.get(name, set())) or ['none']}"
+                )
+
+    assert compared, (
+        f"no status in the {README} script table was placed against its "
+        f"script's usage text, so both assertions below held over nothing. "
+        f"The rows carry statuses; finding none means the parser stopped "
+        f"reading them."
+    )
+    assert not misplaced, (
+        f"these {README} rows file a status under an exit code its script "
+        f"does not return it at:\n  " + "\n  ".join(misplaced) + f"\nNaming "
+        f"every status somewhere in the row was already checked above and is "
+        f"not the claim a reader makes of the table: they read the row to "
+        f"learn which code they were handed, and a row whose groups are "
+        f"inverted answers that question wrongly while naming everything."
+    )
+    assert not unpublished, (
+        f"these statuses appear in a script's usage text at an exit code the "
+        f"{README} row does not put them at:\n  " + "\n  ".join(unpublished) + f"\n"
+        f"FR-038 asks the table to describe the scripts as they now are, and "
+        f"the row is the only place a reader can look one of these up."
     )

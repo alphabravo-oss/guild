@@ -1,0 +1,36 @@
+# evidence-cmd: cd plugins/webster && python3 -c 'import sys;sys.path.insert(0,"tests");import test_readme as t;S=t.script_table_scripts();D={n:t.script_docstring(n) for n in S};R={n:t.script_table_row("`scripts/"+n+"`") for n in S};L=[n+": usage text exits "+str(sorted(t.exit_codes(D[n])) or ["nothing"])+", README row exits "+str(sorted(t.exit_codes(R[n])) or ["nothing"]) for n in S];P=["  "+n+" `"+k+"`: row exit "+str(sorted(c))+", usage text exit "+str(sorted(t.exit_codes_naming(D[n],k))) for n in S for k,c in sorted(t.statuses_claimed(R[n],t.TICKED_STATUS).items())];I=t.script_table_row(t.DRIFT_TABLE_CELL).replace("exit 0;","exit 2;",1).replace("exit 2.","exit 0.",1);V=["  `"+k+"`: inverted row exit "+str(sorted(c))+", usage text exit "+str(sorted(t.exit_codes_naming(D["drift.py"],k))) for k,c in sorted(t.statuses_claimed(I,t.TICKED_STATUS).items()) if not c<=t.exit_codes_naming(D["drift.py"],k)];print("exit set published by each README row, against the script it describes:");print(chr(10).join(L));print("status placement in each README row, against the script it describes:");print(chr(10).join(P));print("statuses the placement check rejects when the drift.py row swaps exit 0 and exit 2:");print(chr(10).join(V))'
+# evidence-for: FR-038, AC-042
+
+exit set published by each README row, against the script it describes:
+survey.py: usage text exits ['nothing'], README row exits ['nothing']
+drift.py: usage text exits ['0', '1', '2'], README row exits ['0', '1', '2']
+scaffold.py: usage text exits ['0', '1', '2'], README row exits ['0', '1', '2']
+doctype.py: usage text exits ['0', '1', '2'], README row exits ['0', '1', '2']
+slop.py: usage text exits ['1', '2'], README row exits ['1', '2']
+rendered.py: usage text exits ['1'], README row exits ['1']
+llmstxt.py: usage text exits ['nothing'], README row exits ['nothing']
+status placement in each README row, against the script it describes:
+  drift.py `clean`: row exit ['0'], usage text exit ['0']
+  drift.py `drift`: row exit ['1'], usage text exit ['1']
+  drift.py `hashes_partial`: row exit ['2'], usage text exit ['2']
+  drift.py `head_missing`: row exit ['2'], usage text exit ['2']
+  drift.py `no_anchors`: row exit ['2'], usage text exit ['2']
+  drift.py `no_docs`: row exit ['2'], usage text exit ['2']
+  drift.py `no_git`: row exit ['2'], usage text exit ['2']
+  drift.py `no_manifest`: row exit ['2'], usage text exit ['2']
+  drift.py `unrelated_changes`: row exit ['0'], usage text exit ['0']
+  scaffold.py `bad_subject`: row exit ['2'], usage text exit ['2']
+  scaffold.py `cannot_read`: row exit ['2'], usage text exit ['2']
+  scaffold.py `cannot_write`: row exit ['2'], usage text exit ['2']
+  scaffold.py `no_docs`: row exit ['2'], usage text exit ['2']
+  scaffold.py `ok`: row exit ['0'], usage text exit ['0']
+  scaffold.py `violations`: row exit ['1'], usage text exit ['1']
+statuses the placement check rejects when the drift.py row swaps exit 0 and exit 2:
+  `clean`: inverted row exit ['2'], usage text exit ['0']
+  `hashes_partial`: inverted row exit ['0'], usage text exit ['2']
+  `head_missing`: inverted row exit ['0'], usage text exit ['2']
+  `no_anchors`: inverted row exit ['0'], usage text exit ['2']
+  `no_docs`: inverted row exit ['0'], usage text exit ['2']
+  `no_git`: inverted row exit ['0'], usage text exit ['2']
+  `no_manifest`: inverted row exit ['0'], usage text exit ['2']
+  `unrelated_changes`: inverted row exit ['2'], usage text exit ['0']
