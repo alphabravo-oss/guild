@@ -1,0 +1,59 @@
+# evidence-cmd: T=$(mktemp -d); printf "%s\n" "import os, subprocess, sys, tempfile, types" "SRC = 'plugins/webster/tests/conftest.py'" "st = types.ModuleType('pytest')" "st.fixture = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))" "sys.modules['pytest'] = st" "GE = {k: os.environ[k] for k in ('PATH', 'HOME') if k in os.environ}" "GE.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'})" "STRIP = ('GIT_AUTHOR_', 'GIT_COMMITTER_', 'user.name', 'user.email')" "def load(kind):" "    t = open(SRC, encoding='utf-8').read()" "    if kind == 'offset':" "        t = t.replace('+00:00', '')" "    if kind == 'identity':" "        keep = [l for l in t.splitlines(True) if not (any(s in l for s in STRIP) and 'DATE' not in l)]" "        print('    (identity mutation removed %d lines from conftest.py)' % (len(t.splitlines()) - len(keep)))" "        t = ''.join(keep)" "    m = types.ModuleType('c')" "    m.__file__ = os.path.abspath(SRC)" "    exec(compile(t, os.path.abspath(SRC), 'exec'), m.__dict__)" "    return m" "def head(kind, tz, label):" "    m = load(kind)" "    r = m.build_fixture_repo(os.path.join(tempfile.mkdtemp(), 'r'), env={'TZ': tz} if tz else None)" "    g = lambda *a: subprocess.run(['git'] + list(a), cwd=r, capture_output=True, text=True, env=GE).stdout" "    h = g('rev-parse', 'HEAD').strip()" "    print(label + ': HEAD ' + h)" "    print(' ' * len(label) + '  first commit ' + g('log', '--reverse', '--format=%ai').splitlines()[0] + ' by ' + g('log', '-1', '--format=%an <%ae>').strip())" "    return h" "base = head(None, None, 'conftest.py as shipped                  ')" "print()" "print('mutation A -- every +00:00 offset stripped, the identity pins left alone')" "a1 = head('offset', 'Pacific/Kiritimati', '  TZ=Pacific/Kiritimati                 ')" "a2 = head('offset', 'America/Los_Angeles', '  TZ=America/Los_Angeles                ')" "print('  one HEAD across the two zones: %s' % (a1 == a2))" "print()" "print('mutation B -- both identity pins stripped, every +00:00 offset left alone')" "b1 = head('identity', 'Pacific/Kiritimati', '  TZ=Pacific/Kiritimati                 ')" "b2 = head('identity', 'America/Los_Angeles', '  TZ=America/Los_Angeles                ')" "print('  one HEAD across the two zones: %s' % (b1 == b2))" "print('  the same HEAD as shipped:      %s' % (b1 == base))" > "$T/m.py"; echo "--- one mutation at a time, applied to conftest.py in memory and run through build_fixture_repo ---"; python3 "$T/m.py"; rm -rf "$T"; echo; echo "--- the six lines mutation B removes ---"; grep -n "GIT_AUTHOR_NAME\|GIT_AUTHOR_EMAIL\|GIT_COMMITTER_NAME\|GIT_COMMITTER_EMAIL\|user.name\|user.email" plugins/webster/tests/conftest.py; echo; echo "--- the two tests that assert on this fixture (OT-038 same host, AC-040 two zones) ---"; ( cd plugins/webster && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k "two_fixture_repo or host_timezone" 2>&1 | tail -2 )
+# evidence-for: US-010, FR-030, AC-040, OT-038, NFR-005, FR-039
+# evidence-volatile: \d+\.\d+s
+#
+# GRIND cycle 15, D-155 (PROVE cycle 14 F-07). test_harness.py's
+# test_fixture_head_survives_a_change_of_host_timezone said the explicit +00:00 offsets on
+# conftest.FIXTURE_COMMITS were "the only thing delivering" AC-040's deterministic commit hashes
+# across machines. They are not. The pinned author and committer identity delivers it too, and
+# nothing had measured either claim.
+#
+# Each mutation below is applied to conftest.py's own source in memory and then run through the
+# real build_fixture_repo, so what is measured is this builder and not a re-implementation of it.
+#
+#   mutation A, offsets stripped, identity left pinned:
+#       the two zones reach two different HEADs. The offset is load-bearing, and this is the one
+#       thing the test above varies and isolates.
+#   mutation B, both identity pins stripped (the four _GIT_ENV variables and the two
+#   git config user.* calls, six lines listed below), offsets left in place:
+#       the build still succeeds and still reaches one HEAD under either zone, but a DIFFERENT
+#       HEAD from the shipped build, because git falls back to an identity assembled from this
+#       machine's OS account name and hostname. That identity is per-machine, so the pin is
+#       load-bearing for AC-040 in exactly the way the offset is.
+#
+# The docstring now says the offset is the one thing this test isolates rather than the only
+# thing delivering the property, and conftest's _GIT_ENV comment now names the identity's role.
+# Neither file claims a test measures the identity, because none does: this log does.
+
+--- one mutation at a time, applied to conftest.py in memory and run through build_fixture_repo ---
+conftest.py as shipped                  : HEAD d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+                                          first commit 2026-08-27 16:49:56 +0000 by t <t@t>
+
+mutation A -- every +00:00 offset stripped, the identity pins left alone
+  TZ=Pacific/Kiritimati                 : HEAD 36737888c75fb6e10d092b7421f82c3194f817f4
+                                          first commit 2026-08-27 16:49:56 +1400 by t <t@t>
+  TZ=America/Los_Angeles                : HEAD 043b58a628b36aa1df0e390759a459bdb77edbdc
+                                          first commit 2026-08-27 16:49:56 -0700 by t <t@t>
+  one HEAD across the two zones: False
+
+mutation B -- both identity pins stripped, every +00:00 offset left alone
+    (identity mutation removed 6 lines from conftest.py)
+  TZ=Pacific/Kiritimati                 : HEAD 30cc308d6c6fee1e8bffe5534600617d33b37eae
+                                          first commit 2026-08-27 16:49:56 +0000 by Ray Janoka <rayjanoka@Rays-MBP.home.local>
+    (identity mutation removed 6 lines from conftest.py)
+  TZ=America/Los_Angeles                : HEAD 30cc308d6c6fee1e8bffe5534600617d33b37eae
+                                          first commit 2026-08-27 16:49:56 +0000 by Ray Janoka <rayjanoka@Rays-MBP.home.local>
+  one HEAD across the two zones: True
+  the same HEAD as shipped:      False
+
+--- the six lines mutation B removes ---
+201:    "GIT_AUTHOR_NAME": FIXTURE_AUTHOR_NAME,
+202:    "GIT_AUTHOR_EMAIL": FIXTURE_AUTHOR_EMAIL,
+203:    "GIT_COMMITTER_NAME": FIXTURE_AUTHOR_NAME,
+204:    "GIT_COMMITTER_EMAIL": FIXTURE_AUTHOR_EMAIL,
+336:    _git(["config", "user.name", FIXTURE_AUTHOR_NAME], cwd=dest, extra_env=env)
+337:    _git(["config", "user.email", FIXTURE_AUTHOR_EMAIL], cwd=dest, extra_env=env)
+
+--- the two tests that assert on this fixture (OT-038 same host, AC-040 two zones) ---
+..                                                                       [100%]
+2 passed, 3 deselected in 0.93s

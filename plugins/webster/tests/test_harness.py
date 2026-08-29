@@ -139,9 +139,17 @@ TZ_WEST = "America/Los_Angeles"  # -07/-08
 BARE_DATE = "2026-08-27T16:49:56"
 
 # Same reasoning as ``conftest.py``'s ``_GIT_ENV`` and ``test_drift.py``'s
-# ``GIT_ENV``: a developer's ~/.gitconfig arrives through HOME, and ``status.relativePaths``
-# or a pathspec alias would change what these queries return on that machine
-# only. Read no configuration but the repository's own.
+# ``GIT_ENV``: a developer's ~/.gitconfig arrives through HOME and the suite
+# cannot enumerate what it holds. That is not the reasoning this comment used
+# to give, which was that ``status.relativePaths`` "or a pathspec alias would
+# change what these queries return on that machine only". Measured against
+# every query this module runs — ``ls-files``, ``ls-tree`` and ``diff
+# --name-only`` — a global ``status.relativePaths = true`` leaves all three
+# byte-identical, because it reaches ``git status`` and nothing here runs it;
+# so does an ``[alias] ls-files`` shadowing the built-in, because git does not
+# let an alias shadow a built-in command. The guard stays because it costs
+# nothing, not because either example was real. Read no configuration but the
+# repository's own.
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 # GI-007's writable file set, as a predicate. ``scripts/*.py`` is deliberately
@@ -459,8 +467,17 @@ def test_fixture_head_survives_a_change_of_host_timezone(build_repo, tmp_path):
 
     AC-040 asks for "deterministic commit hashes across machines", and the
     explicit ``+00:00`` on every date in ``conftest.FIXTURE_COMMITS`` is the
-    only thing delivering it. Nothing measured that. The two-build check above
-    cannot: it varies nothing a bare date would be read against.
+    one thing this test varies and isolates. It is not the only thing
+    delivering that determinism, which is what this docstring used to say. The
+    author and committer identity pinned in ``conftest._GIT_ENV`` delivers it
+    too, and the comment there now says so. Measured one mutation at a time:
+    strip the offsets and the two zones below reach two HEADs, which is what
+    this test asserts; strip both identity pins with the offsets left in place
+    and the fixture reaches one HEAD under either zone, but a different one
+    from the pinned build, because git falls back to an identity assembled
+    from the machine's OS account and hostname. Nothing had measured either.
+    The two-build check above cannot reach the offset: it varies nothing a
+    bare date would be read against.
 
     A machine's timezone is what a bare date is resolved in, so varying ``TZ``
     is what varying the machine amounts to here. It is handed to git through

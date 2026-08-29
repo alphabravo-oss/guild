@@ -11,27 +11,34 @@ command line: the one it prints is ``uvx pytest tests/``, while this suite is
 run from the plugin root and finds its tests through ``testpaths`` in
 ``pyproject.toml``. Shared tool and shared reason, not a shared string.)
 
-Interpreter skew is deliberate, not an oversight, but it is not the skew an
-earlier version of this docstring claimed. ``run_script`` shells out to the
-literal string ``"python3"`` and passes PATH straight through from the
-environment pytest inherited, so the child is whichever ``python3`` *that* PATH
-resolves — never ``sys.executable`` (A-024). Which interpreter that turns out
-to be depends on how the suite was launched, and both answers are correct:
+The literal ``"python3"`` is deliberate, not an oversight (A-024).
+``run_script`` shells out to that string — not to ``sys.executable`` — and
+passes PATH straight through from the environment pytest inherited, so the
+child is whichever ``python3`` *that* PATH resolves. The first version of this
+docstring called the consequence a skew: the child "resolves through PATH to
+3.14.6" and "must be the one on PATH, not the one running pytest". Measured
+inside a real ``uvx pytest`` run, both halves were false; the version that
+fixed the first half kept the second for the other launch, where it is false
+as well. Both launches have now been measured, the collector's
+``sys.executable`` realpath and version against the child's:
 
-- under the blessed ``cd plugins/webster && uvx pytest``, uv prepends its
-  ephemeral virtualenv's ``bin`` to PATH, so the child is uv's own CPython and
-  is therefore the *same* interpreter running pytest — measured at 3.11.14 here;
-- under a plain ``python3 -m pytest``, PATH is the shell's, so the child is the
-  shell's ``python3`` — Homebrew's 3.14.6 on this machine, and a different
-  interpreter from the one collecting the tests.
+- ``cd plugins/webster && uvx pytest`` — uv puts its ephemeral environment's
+  ``bin`` at the front of PATH, so the ``python3`` ``run_script`` resolves is
+  uv's own CPython and is the interpreter collecting the tests: one realpath,
+  both 3.11.14 here;
+- ``python3 -m pytest`` — PATH is the shell's, and the ``python3`` the shell
+  resolved in order to start pytest is the one ``run_script`` resolves for the
+  child: one realpath, both 3.14.6 here. (Measured through a virtualenv built
+  on that interpreter, because the PEP 668 constraint above leaves PATH's own
+  ``python3`` with no pytest for ``-m`` to find.)
 
-This docstring previously asserted the second case unconditionally ("resolves
-through PATH to 3.14.6", "not the one running pytest"). Measured inside a real
-``uvx pytest`` run, both halves were false. What the harness actually
-guarantees is weaker and checkable: the child clears the plugin's 3.11 floor
-(A-001), because ``survey.py`` imports ``tomllib`` at module scope and
-nothing below 3.11 has it. ``tests/test_harness.py`` measures that rather than
-pinning a version number that is a property of the machine, not of the suite.
+Collector and child agree under both. What differs between the two launches is
+which interpreter both of them are, and that is a property of the machine and
+of the launch rather than of this suite. So what the harness guarantees is
+weaker and checkable: the child clears the plugin's 3.11 floor (A-001),
+because ``survey.py`` imports ``tomllib`` at module scope and nothing below
+3.11 has it. ``tests/test_harness.py`` measures that rather than pinning a
+version number the suite does not control.
 
 Do not strip the venv from PATH to force the second case. Passing PATH through
 is CT-007's contract, and the point of the literal ``"python3"`` is to exercise
@@ -45,12 +52,21 @@ their allowlists at module import, from argv or ``os.environ``, before a test
 could set any of them: ``drift.py``'s ``ROOT`` and ``_DOCS_ARG``;
 ``llmstxt.py``'s ``ROOT``, ``DOCS`` and ``BASE``; ``doctype.py``'s
 ``LENS_ALLOW`` and ``SURVEY_PATH``; ``survey.py``'s ``ROOT``; ``slop.py``'s
-``TARGETS``. Each of those is a module-level assignment, so importing the
-script would freeze all of them at the importing process's values: for those
-five, subprocess is the only honest way to drive the script at all. The other
-two read their arguments inside ``main`` instead — ``scaffold.py`` through
-``argparse``, ``rendered.py`` through ``sys.argv`` — so an in-process test of
-either would be possible, merely awkward. ``run_script`` drives those two the
+``TARGETS``. Each of those is a module-level assignment, so an ``import``
+freezes all of them at the importing process's values — measured: after this
+process chdir'd away, an imported ``drift.py``'s ``ROOT`` still named the
+directory the import had run in. What this paragraph used to conclude from
+that, "subprocess is the only honest way to drive the script at all", the
+measurement does not support: executing the module a second time re-binds
+them, and ``runpy.run_path`` drove ``drift.py check`` to a real JSON line and
+exit 2 inside this process. What an in-process run of those five costs is a
+fresh execution per scenario, and what it skips is the process boundary where
+the environment ``run_script`` builds and the interpreter A-024 picked apply
+at all. The other two read their arguments inside ``main`` instead —
+``scaffold.py`` through ``argparse``, ``rendered.py`` through ``sys.argv`` —
+so a test of either can import once and call ``main`` with ``sys.argv`` set:
+measured, that returns scaffold.py's ``bad_subject`` JSON and exit 2 with no
+subprocess at all. ``run_script`` drives those two the
 same way anyway, because one invocation shape across the suite beats two kinds
 of test plus a rule about which script gets which, and the subprocess shape is
 the one a reader runs. The count is stated because this paragraph once opened
@@ -159,10 +175,28 @@ FIXTURE_COMMITS = (
 # first commit stages it with this line removed and the third puts it back.
 TOUCH_MAIN_MARKER = "# new comment line\n"
 
-# A developer's ~/.gitconfig reaches the fixture repo through HOME.
-# ``commit.gpgsign`` would block the commit, ``core.autocrlf`` would rewrite the
-# blobs, and ``init.templateDir`` would add files to the tree — each one changes
-# HEAD on that machine only. Read no configuration but the repo's own.
+# A developer's ~/.gitconfig reaches the fixture repo through HOME, and the
+# suite cannot enumerate what it holds. This comment used to name three
+# settings and say of them "each one changes HEAD on that machine only". All
+# three were wrong. Measured through GIT_CONFIG_GLOBAL against this builder,
+# five configurations one at a time: ``core.autocrlf`` at ``true``,
+# ``core.autocrlf`` at ``input`` and ``init.templateDir`` each leave HEAD
+# byte-identical — this fixture holds no CRLF for autocrlf to rewrite, and a
+# template's files are copied into ``.git`` rather than into the work tree;
+# ``commit.gpgsign = true`` fails the very first commit ("gpg failed to sign
+# the data"), so there is no HEAD to move; and a ``core.excludesFile`` naming
+# one fixture page drops it from the ``docs`` commit and does move HEAD. One
+# hit in five, and not one of the three that were named, is the argument for
+# reading no configuration but the repo's own rather than for listing the
+# settings that bite.
+#
+# The identity is pinned for the same reason the dates carry an offset.
+# Measured with both pins stripped — these four variables and the
+# ``git config user.*`` calls in ``build_fixture_repo`` — the build still
+# succeeds and still reaches one HEAD under either timezone, but a different
+# HEAD from the pinned build: git falls back to an identity assembled from the
+# machine's OS account and hostname, which is per-machine. AC-040's
+# deterministic hashes across machines need this pin as much as the offset.
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": FIXTURE_AUTHOR_NAME,
     "GIT_AUTHOR_EMAIL": FIXTURE_AUTHOR_EMAIL,
