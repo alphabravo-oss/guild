@@ -1,0 +1,93 @@
+# evidence-cmd: echo '--- 1. the three guards spelled `if "python" in stack:` at this commit, the lines each covers, and which one the decorator pass sits in ---'; python3 -c 'L=open("plugins/webster/scripts/survey.py",encoding="utf-8").read().splitlines(); G=[n for n,t in enumerate(L,1) if t=="if \"python\" in stack:"]; end=lambda s:next((n-1 for n in range(s+1,len(L)+1) if L[n-1].strip() and not L[n-1][0].isspace()), len(L)); [print("    guard at %d covers lines %d-%d" % (g,g,end(g))) for g in G]; [print("    %-23s at %-4d inside the guard at %s" % (p,n,[g for g in G if g<n<=end(g)])) for p in ("PY_DECORATOR_OPEN.match","PY_DECORATOR.search","FLASK_METHODS.search") for n,t in enumerate(L,1) if p in t]'; echo '--- 2. the patterns the sentence locates the guard by, and what stands between them and it ---'; grep -n '^PY_DECORATOR = \|^PY_DECORATOR_OPEN = \|^FLASK_METHODS = \|^def call_depth_delta\|^if "python" in stack:' plugins/webster/scripts/survey.py | sed 's/^/    /'; echo '--- 3. FLASK_METHODS, the first guard below it, and the gap: at the commit that wrote `immediately below`, at the commit that broke it, and here ---'; for r in 1ea2cab 20b15d1 e4e0775; do printf '    %-12s ' "$r"; git show "$r:plugins/webster/scripts/survey.py" | python3 -c 'import sys; L=sys.stdin.read().splitlines(); f=next(n for n,t in enumerate(L,1) if t.startswith("FLASK_METHODS = ")); g=next(n for n,t in enumerate(L,1) if t=="if \"python\" in stack:" and n>f); d=[n for n,t in enumerate(L,1) if t.startswith("def call_depth_delta")]; print("FLASK_METHODS=%-4d first guard below=%-4d gap=%-3d call_depth_delta %s" % (f,g,g-f,("defined at %d, between them" % d[0]) if d and f<d[0]<g else "not defined between them"))'; done; printf '    %-12s ' 'this commit'; python3 -c 'L=open("plugins/webster/scripts/survey.py",encoding="utf-8").read().splitlines(); f=next(n for n,t in enumerate(L,1) if t.startswith("FLASK_METHODS = ")); g=next(n for n,t in enumerate(L,1) if t=="if \"python\" in stack:" and n>f); d=[n for n,t in enumerate(L,1) if t.startswith("def call_depth_delta")]; print("FLASK_METHODS=%-4d first guard below=%-4d gap=%-3d call_depth_delta %s" % (f,g,g-f,("defined at %d, between them" % d[0]) if d and f<d[0]<g else "not defined between them"))'; echo '--- 4. which commit wrote the clause, and which one defined the function that moved the guard away from it ---'; printf '    wrote the `immediately below` clause : '; git log --format='%h %s' --reverse -S'immediately below the ``PY_DECORATOR``' -- plugins/webster/tests/test_survey.py; printf '    defined call_depth_delta            : '; git log --format='%h %s' --reverse -S'def call_depth_delta' -- plugins/webster/scripts/survey.py; echo '--- 5. the docstring as it stands at this commit ---'; sed -n '/^def python_project/,/^    """$/p' plugins/webster/tests/test_survey.py | sed 's/^/    /'; echo '--- 6. every `immediately` left in the two modules: the quote of the retired clause, and one about regex adjacency rather than file position ---'; grep -n 'immediately' plugins/webster/tests/test_survey.py plugins/webster/tests/test_llmstxt.py | sed 's/^/    /'
+# evidence-for: US-006, AC-023, AC-024, FR-019, FR-039, AC-039
+#
+# D-149. `python_project`'s docstring in tests/test_survey.py located the guard
+# the FastAPI/Flask decorator pass runs under as "the one immediately below the
+# `PY_DECORATOR` and `FLASK_METHODS` patterns". Section 3 measures that clause
+# at three revisions: it was true at 1ea2cab, the commit section 4 shows wrote
+# it -- FLASK_METHODS at 189 and the guard at 191, two lines apart with nothing
+# between -- and stopped being true at e4e0775, the commit that defined
+# `call_depth_delta` between them. At this commit the gap is 35 lines and the
+# function fills it, so "immediately" named a distance the file no longer has.
+#
+# Every clause of the rewritten sentence, and where this log measures it:
+#   "the first one below the `PY_DECORATOR`     section 2: the patterns are at
+#    and `FLASK_METHODS` patterns"              228/233/237 and the guards at
+#                                               163, 272 and 697, so the first
+#                                               guard below them is 272
+#   "which is the guard that pass sits under"   section 1: the guard at 272
+#                                               covers 272-334, and all three
+#                                               of the decorator pass's use
+#                                               sites -- PY_DECORATOR_OPEN.match
+#                                               at 278, PY_DECORATOR.search at
+#                                               294, FLASK_METHODS.search at
+#                                               315 -- fall inside it
+#   "not either of the two other guards         section 1: there are exactly
+#    spelled the same way"                      three such guards, so two others
+#   "was true of the file it was written        section 3, rows 1ea2cab and
+#    against"                                   20b15d1: gap 2, nothing between
+#   "stopped being true when                    section 3, row e4e0775, and
+#    `call_depth_delta` was defined between     section 4: e4e0775 is the commit
+#    the patterns and the guard"                that defined it
+#
+# The sentence now carries two handles on the same guard, one positional and
+# one semantic, which is why the second paragraph says so: an insertion between
+# the patterns and the guard costs the first handle and leaves the second
+# standing, and this defect is what that costs when there is only one handle.
+# Section 6 is the residual check -- the only two `immediately` left in the two
+# modules are this docstring quoting the retired clause and one at :921 about
+# what a regex requires after `detail=`, which is adjacency in a pattern rather
+# than a position in a file.
+#
+# scripts/survey.py is not touched by this commit; the diff is docstrings in
+# tests/test_survey.py. See evidence/casting-4-tests-green.log.
+#
+--- 1. the three guards spelled `if "python" in stack:` at this commit, the lines each covers, and which one the decorator pass sits in ---
+    guard at 163 covers lines 163-168
+    guard at 272 covers lines 272-334
+    guard at 697 covers lines 697-699
+    PY_DECORATOR_OPEN.match at 278  inside the guard at [272]
+    PY_DECORATOR.search     at 294  inside the guard at [272]
+    FLASK_METHODS.search    at 315  inside the guard at [272]
+--- 2. the patterns the sentence locates the guard by, and what stands between them and it ---
+    163:if "python" in stack:
+    228:PY_DECORATOR = re.compile(r"@\w+\.(get|post|put|patch|delete|route)\s*\(\s*['\"]([^'\"]+)")
+    233:PY_DECORATOR_OPEN = re.compile(r"^\s*@\w+\.(?:get|post|put|patch|delete|route)\s*\(\s*$")
+    237:FLASK_METHODS = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
+    240:def call_depth_delta(line):
+    272:if "python" in stack:
+    697:if "python" in stack:
+--- 3. FLASK_METHODS, the first guard below it, and the gap: at the commit that wrote `immediately below`, at the commit that broke it, and here ---
+    1ea2cab      FLASK_METHODS=189  first guard below=191  gap=2   call_depth_delta not defined between them
+    20b15d1      FLASK_METHODS=189  first guard below=191  gap=2   call_depth_delta not defined between them
+    e4e0775      FLASK_METHODS=192  first guard below=227  gap=35  call_depth_delta defined at 195, between them
+    this commit  FLASK_METHODS=237  first guard below=272  gap=35  call_depth_delta defined at 240, between them
+--- 4. which commit wrote the clause, and which one defined the function that moved the guard away from it ---
+    wrote the `immediately below` clause : 1ea2cab fix(webster): the stub llms.txt still published in its header, and the red-first table nobody ran
+    defined call_depth_delta            : e4e0775 fix(webster): the paren in a comment that published a verb the endpoint answers 405 to
+--- 5. the docstring as it stands at this commit ---
+    def python_project(tmp_path, name, source, pyproject=None, package_json=None):
+        """A minimal repo root survey.py will treat as Python.
+    
+        survey.py runs its FastAPI/Flask decorator pass under an ``if "python" in
+        stack:`` guard -- the first one below the ``PY_DECORATOR`` and
+        ``FLASK_METHODS`` patterns, which is the guard that pass sits under and not
+        either of the two other guards spelled the same way -- and the stack marker
+        is a pyproject.toml on disk, so a tree holding only a .py file is surveyed
+        as having no HTTP surface at all.
+    
+        Named rather than numbered on purpose. This sentence carried a line number
+        until the line moved, and by then the number resolved to the Next.js
+        pages-api branch instead -- a citation that lands on the wrong code is worse
+        than no citation at all, because it reads as having been checked. It then
+        said ``immediately below``, which was true of the file it was written
+        against and stopped being true when ``call_depth_delta`` was defined
+        between the patterns and the guard: a relative position is a line number
+        with the arithmetic left to the reader, and it goes stale the same way.
+        Which of the three guards it is is said twice here, once by where it sits
+        and once by what it gates, so an insertion that costs the first leaves the
+        second standing.
+        """
+--- 6. every `immediately` left in the two modules: the quote of the retired clause, and one about regex adjacency rather than file position ---
+    plugins/webster/tests/test_survey.py:228:    said ``immediately below``, which was true of the file it was written
+    plugins/webster/tests/test_survey.py:921:    payload. It is the quote required immediately after ``detail=`` that does

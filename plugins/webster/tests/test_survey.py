@@ -215,15 +215,23 @@ def python_project(tmp_path, name, source, pyproject=None, package_json=None):
     """A minimal repo root survey.py will treat as Python.
 
     survey.py runs its FastAPI/Flask decorator pass under an ``if "python" in
-    stack:`` guard -- the one immediately below the ``PY_DECORATOR`` and
-    ``FLASK_METHODS`` patterns, not the two other guards spelled the same way --
-    and the stack marker is a pyproject.toml on disk, so a tree holding only a
-    .py file is surveyed as having no HTTP surface at all.
+    stack:`` guard -- the first one below the ``PY_DECORATOR`` and
+    ``FLASK_METHODS`` patterns, which is the guard that pass sits under and not
+    either of the two other guards spelled the same way -- and the stack marker
+    is a pyproject.toml on disk, so a tree holding only a .py file is surveyed
+    as having no HTTP surface at all.
 
     Named rather than numbered on purpose. This sentence carried a line number
     until the line moved, and by then the number resolved to the Next.js
     pages-api branch instead -- a citation that lands on the wrong code is worse
-    than no citation at all, because it reads as having been checked.
+    than no citation at all, because it reads as having been checked. It then
+    said ``immediately below``, which was true of the file it was written
+    against and stopped being true when ``call_depth_delta`` was defined
+    between the patterns and the guard: a relative position is a line number
+    with the arithmetic left to the reader, and it goes stale the same way.
+    Which of the three guards it is is said twice here, once by where it sits
+    and once by what it gates, so an insertion that costs the first leaves the
+    second standing.
     """
     root = tmp_path / name
     (root / "src").mkdir(parents=True)
