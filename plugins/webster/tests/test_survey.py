@@ -131,13 +131,16 @@ Rows carrying a note the column has no room for:
   test -- does not apply to it.
 - The three rows naming 39e6247 are red at cfafe8e as well, measured, and the
   nearer baseline is the one that shows what each was written against. Two of
-  them fail the same way at both revisions, in the ``survey`` helper's exit-0
-  assertion with an AttributeError attached. The third,
-  ``test_a_script_target_that_is_not_a_string_is_not_a_command``, fails
-  differently at each: at 39e6247 the dated entry crashes ``json.dumps`` after
-  every extractor has finished, and at cfafe8e ``surface.cli`` is empty because
-  there is no pyproject scripts pass there at all, so it is the ``bar`` control
-  beside the dated entry that goes red.
+  them go red in the same place at both revisions -- the ``survey`` helper's
+  exit-0 assertion, with the script's traceback attached -- but not on the same
+  exception, which is why they are two rows and not one: the document-shape row
+  carries an AttributeError raised by reading ``.get`` off a list, and the
+  dependencies row a TypeError raised by unpacking one. The third,
+  ``test_a_script_target_that_is_not_a_string_is_not_a_command``, goes red
+  differently at each revision: at 39e6247 the dated entry breaks ``json.dumps``
+  after every extractor has finished, and at cfafe8e ``surface.cli`` is empty
+  because there is no pyproject scripts pass there at all, so what goes red is
+  the ``bar`` control beside the dated entry rather than the dated entry itself.
 
 Every test that runs the script drives it through the conftest ``run_script``
 helper. Two do not run it, and they are the only two.
@@ -692,11 +695,10 @@ def test_unparseable_pyproject_leaves_the_survey_running(run_script, fixture_rep
 def test_a_package_json_that_is_not_an_object_is_read_as_absent(run_script, tmp_path):
     """US-006: `[1, 2]` is valid JSON, and every read of it below is `pkg.get`.
 
-    Two documents rather than one, because the two failed differently and only
-    one of them looks like a mistake anybody would make: an array is what a
-    generator writing a list of workspaces produces, and `null` is what a tool
-    that stopped halfway leaves behind. Both parse, so neither reaches the
-    except branch that a syntax error reaches.
+    Two documents rather than one, because neither is exotic and they arrive by
+    different routes: an array is what a generator writing a list of workspaces
+    produces, and `null` is what a tool that stopped halfway leaves behind. Both
+    parse, so neither reaches the except branch that a syntax error reaches.
 
     What is asserted is that the file was read as absent rather than merely
     survived: the pyproject beside it supplies the name, which is the same
