@@ -10,9 +10,9 @@ no_docs, no_manifest, no_anchors, no_git, head_missing and hashes_partial exit 2
 that no longer resolves is drift, and drift is a P0, on any run that had a set to check.
 Where the set could not be checked the status says that first. Five statuses take the exit
 code ahead of drift, not the three this paragraph used to name: no_docs, no_manifest,
-no_anchors, no_git and head_missing. Both of the two it left out are reachable with a broken
-anchor in hand — a tree whose manifest is missing or unreadable resolves every anchor it has,
-lists the broken ones, and still reports no_manifest rather than drift — so the run this
+no_anchors, no_git and head_missing. Of the two it left out only no_manifest is reachable with a
+broken anchor in hand — a tree whose manifest is missing or unreadable resolves every anchor it
+has, lists the broken ones, and still reports no_manifest rather than drift — so the run this
 paragraph described least well was the run that had a finding in it. The reason is one reason
 for all five: "nothing here could be checked" is a different claim from "this was checked and
 it is wrong". hashes_partial is the one exit-2 status that sits below drift instead, for the

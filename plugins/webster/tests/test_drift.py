@@ -124,7 +124,7 @@ MISSING_ANCHOR_PAGE = "docs/gone.md"
 
 
 # Where ``write_page`` puts the claim, and so the line every anchor in one of its pages is
-# cited from: five frontmatter lines between two ``---`` fences, a blank, the H1, a blank.
+# cited from: four frontmatter lines between two ``---`` fences, a blank, the H1, a blank.
 # Named rather than written into an assertion, so that a change to the page shape below moves
 # the expectation with it instead of turning a citation assertion red for its own reason.
 WRITE_PAGE_CLAIM_LINE = 10

@@ -1,0 +1,23 @@
+# evidence-cmd: cd plugins/webster && echo "== the comment that names the page shape and the constant it derives" && sed -n '/^# Where/,/^WRITE_PAGE_CLAIM_LINE/p' tests/test_drift.py && echo "== the page write_page actually emits, numbered" && python3 -c "import importlib.util,tempfile,pathlib;s=importlib.util.spec_from_file_location('td','tests/test_drift.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);d=pathlib.Path(tempfile.mkdtemp());c='CLAIM cites src/app/main.py:15';m.write_page(d,'docs/p.md','T','developer',c);L=(d/'docs/p.md').read_text().splitlines();print(chr(10).join('%2d |%s'%(i,l) for i,l in enumerate(L,1)));f=[i for i,l in enumerate(L,1) if l=='---'];print('frontmatter lines between the two --- fences:',f[1]-f[0]-1);print('the claim is on line:',L.index(c)+1);print('WRITE_PAGE_CLAIM_LINE =',m.WRITE_PAGE_CLAIM_LINE)"
+# evidence-for: FR-039, AC-039
+
+== the comment that names the page shape and the constant it derives
+# Where ``write_page`` puts the claim, and so the line every anchor in one of its pages is
+# cited from: four frontmatter lines between two ``---`` fences, a blank, the H1, a blank.
+# Named rather than written into an assertion, so that a change to the page shape below moves
+# the expectation with it instead of turning a citation assertion red for its own reason.
+WRITE_PAGE_CLAIM_LINE = 10
+== the page write_page actually emits, numbered
+ 1 |---
+ 2 |sidebar_position: 60
+ 3 |title: "T"
+ 4 |doc_type: explanation
+ 5 |audience: developer
+ 6 |---
+ 7 |
+ 8 |# T
+ 9 |
+10 |CLAIM cites src/app/main.py:15
+frontmatter lines between the two --- fences: 4
+the claim is on line: 10
+WRITE_PAGE_CLAIM_LINE = 10
