@@ -57,7 +57,7 @@ test_a_flag_named_in_another_flags_help_is_not_a_command      FR-012      944c95
 test_a_positional_description_is_not_a_flag_spec              FR-012      66dab76 (added cycle 6)
 test_a_commander_option_string_still_declares_its_spellings   FR-012      19941ad (added cycle 6)
 test_a_black_split_declaration_still_declares_its_flag        FR-012      66dab76 (added cycle 6)
-test_every_surface_entry_carries_an_anchor                    FR-012      guard
+test_every_surface_entry_carries_an_anchor                    FR-012/021  15f7264 (cycle 10)
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
 test_the_red_first_table_counts_its_own_rows                  FR-039      n/a (reads this table)
 ============================================================  ==========  =======================
@@ -121,10 +121,19 @@ Rows carrying a note the column has no room for:
   comment balanced the call before ``methods=`` was read. At cfafe8e there is
   no decorator joining at all, so nothing is published for any of the three
   routes and the whole assertion goes red rather than one verb of it.
-- ``test_every_surface_entry_carries_an_anchor`` is a guard on a measurement
-  rather than on a fix: run against cfafe8e, 19941ad and 339a80d, it passed at
-  all three. It exists because the comment beside CLI_FLAG_DECL claimed the
-  anchor rule for every entry in the document, and ``tooling`` carries none.
+- ``test_every_surface_entry_carries_an_anchor`` was filed as a guard on a
+  measurement rather than on a fix, and its anchor half is one: run against
+  cfafe8e, 19941ad and 339a80d, that half passed at all three. The census half
+  added in cycle 10 is red at 15f7264 and at each of those three, measured, and
+  red at all four for the same reason -- the sentence it reads out of
+  survey.py's docstring is not there to be read, because at every one of them
+  the docstring stated the census in a shape that named ``tooling`` and nothing
+  else. Two controls separate that from a test which merely wants a phrase.
+  Rewriting the sentence in the current docstring to say ``tooling`` alone
+  fails it on the comparison instead, naming the four arrays the run printed
+  and the docstring did not; pasting the deleted second copy back into a ``#``
+  comment fails it on the restatement guard. The column carries 15f7264, the
+  nearest baseline, for the reason the rows above it do.
 - ``test_the_red_first_table_counts_its_own_rows`` has no revision in its
   column because it reads no revision of survey.py. It reads this docstring,
   which is why "red against" -- defined above as a property of the script under
@@ -152,6 +161,10 @@ whose subject is this file rather than the script. Neither starts a process, so
 neither has an exit code to quote. That sentence used to open "Every test",
 flatly, standing under a note that had already said of the second of them that
 it reads no revision of survey.py.
+``test_every_surface_entry_carries_an_anchor`` does both and so is neither of
+the two: it reads ``scripts/survey.py`` as text for the one sentence stating
+which arrays carry no anchor, and runs the script to measure that sentence
+against the arrays a run prints.
 
 Nothing here imports survey.py: its module-level ``ROOT`` resolves from
 ``sys.argv`` at import time, so an import would freeze the wrong root before a
@@ -257,6 +270,65 @@ def assert_floor_comment_sits_on_the_import(source, path):
         "which is also what a mention of some unrelated 3.11 looks like:\n"
         + comment
     )
+
+
+def anchor_census(data):
+    """Every array one survey run printed, split by how its entries anchor.
+
+    Four sets of dotted names: arrays whose entries are all records carrying an
+    ``anchor``, arrays of records where at least one does not, arrays holding
+    something other than records -- a language name, a path -- and empty
+    arrays, which carry no anchor and carry every anchor and so answer nothing.
+    An array mixing records with bare values fits no half of the sentence
+    survey.py states, so it raises rather than being filed under one.
+
+    A plain function, not a fixture: it starts no process and touches no tree,
+    and ``run_script`` is the one fixture-shaped helper this suite is allowed
+    (GI-004).
+    """
+    anchored, records_without, strings, empty = set(), set(), set(), set()
+
+    def visit(node, path):
+        if isinstance(node, dict):
+            for key, value in sorted(node.items()):
+                visit(value, f"{path}.{key}" if path else key)
+        elif isinstance(node, list):
+            if not node:
+                empty.add(path)
+            elif all(isinstance(entry, dict) for entry in node):
+                if all("anchor" in entry for entry in node):
+                    anchored.add(path)
+                else:
+                    records_without.add(path)
+            elif any(isinstance(entry, dict) for entry in node):
+                raise AssertionError(
+                    f"{path} holds records and bare values at once, so neither "
+                    f"half of the anchor census describes it: {node!r}"
+                )
+            else:
+                strings.add(path)
+
+    visit(data, "")
+    return anchored, records_without, strings, empty
+
+
+def documented_anchorless_arrays(source):
+    """The array names survey.py's own docstring says carry no anchor.
+
+    Whitespace is folded first, so the sentence is read whether or not a rewrap
+    has moved it across lines. It ends at the first period followed by a space
+    rather than at the first period, because ``tests.files`` puts one inside a
+    name.
+    """
+    flat = re.sub(r"\s+", " ", source)
+    stated = re.findall(r"arrays whose entries carry no anchor are (.*?)\.\s", flat)
+    assert len(stated) == 1, (
+        "The census sentence has to appear in survey.py exactly once. Twice is "
+        "how it came to say two different wrong things in two places at once, "
+        "and none leaves this test reading a claim that is no longer made; "
+        f"found {len(stated)}: {stated}"
+    )
+    return set(re.findall(r"`([\w.]+)`", stated[0]))
 
 
 def config_named(data, name):
@@ -1215,18 +1287,37 @@ def test_a_black_split_declaration_still_declares_its_flag(run_script, tmp_path)
 
 
 
-def test_every_surface_entry_carries_an_anchor(run_script, fixture_repo):
-    """FR-012: the anchor rule the flag scan states, over the arrays it holds for.
+def test_every_surface_entry_carries_an_anchor(run_script, fixture_repo, tmp_path):
+    """FR-012, FR-021, CT-008: the anchor census survey.py states, measured.
 
-    The comment beside ``CLI_FLAG_DECL`` refuses to publish a flag spelling
-    that appears in no file, on the ground that a reader can go and read every
-    entry this script publishes. That was written as a claim about the whole
-    document. The ``tooling`` array carries no anchor on any entry and none of
-    its append sites sets the key: a tooling entry recommends something for
-    this repo rather than reporting something found in it, so there is no line
-    to send anybody to. The claim is true of ``surface`` and ``user_surface``,
-    which is where the flag scan needs it, and the comment now says so. This is
-    the measurement of both halves.
+    Two halves. The first is the rule the flag scan leans on: it refuses to
+    publish a flag spelling that appears in no file, on the ground that a
+    reader can go and read every entry under ``surface`` and ``user_surface``,
+    so every one of those entries has to carry an anchor.
+
+    The second is the sentence saying which arrays do not, which has been wrong
+    twice. It opened "Every entry", flatly. The narrowing that replaced it
+    named ``tooling`` as the single anchorless array, and a run prints
+    ``stack``, ``frameworks``, ``tooling``, ``tests.files`` and
+    ``existing_docs`` -- the last two paths ``walk()`` found inside the repo,
+    so the reason that sentence gave, that a recommendation has no line to send
+    anybody to, did not separate them from ``tooling`` either. Nothing measured
+    the claim, which is how one copy of it could be corrected in one cycle
+    while another copy went on saying the old thing in the next.
+
+    So the list is read out of survey.py's docstring rather than restated here,
+    and compared against a census of a run. The tree that run surveys is built
+    below rather than taken from the fixture repo, where ``tests.files`` is
+    empty -- an empty array carries no anchor and carries every anchor, so a
+    census that cannot see one of the five arrays it is checking is the vacuous
+    pass this test exists to remove.
+
+    Two guards on the drift itself, both on the shape it actually took: the
+    census sentence must appear in survey.py exactly once, and no ``#`` comment
+    in that file may name ``tooling`` in backticks, which is what both stale
+    copies were. A paraphrase somewhere else would still get past this. What
+    makes that unlikely to matter is the sentence being read rather than
+    restated, so there is no second copy left to fall behind.
     """
     data = survey(run_script, fixture_repo)
 
@@ -1253,11 +1344,83 @@ def test_every_surface_entry_carries_an_anchor(run_script, fixture_repo):
         "A surface entry without an anchor is exactly the claim this script "
         "says it is not allowed to make:\n" + "\n".join(missing)
     )
-    assert [e for e in data["tooling"] if "anchor" in e] == [], (
-        "The comment beside CLI_FLAG_DECL names tooling as the one array whose "
-        "entries carry no anchor. An anchor here means that sentence is now "
-        f"the stale half and has to be rewritten, not that this is a bug: "
-        f"{data['tooling']}"
+    # The census half. A tree built here so that none of the five arrays the
+    # docstring names comes back empty, which is the one way this measurement
+    # can pass without having measured anything.
+    root = python_project(
+        tmp_path,
+        "census",
+        "import argparse\n"
+        "import os\n"
+        "\n"
+        "from fastapi import FastAPI, HTTPException\n"
+        "\n"
+        "app = FastAPI()\n"
+        "\n"
+        "\n"
+        '@app.get("/items")\n'
+        "def items():\n"
+        '    os.getenv("CENSUS_TOKEN")\n'
+        '    raise HTTPException(404, "Not found")\n'
+        "\n"
+        "\n"
+        "def cli():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        '    parser.add_argument("--census")\n'
+        "    return parser\n",
+        pyproject=(
+            "[project]\n"
+            'name = "census"\n'
+            'description = "a tree that leaves none of the arrays empty"\n'
+            "\n"
+            "[project.scripts]\n"
+            'census = "census.api:cli"\n'
+        ),
+    )
+    root.joinpath("tests").mkdir()
+    root.joinpath("tests", "test_census.py").write_text(
+        "def test_nothing():\n    pass\n", encoding="utf-8"
+    )
+    root.joinpath("docs").mkdir()
+    root.joinpath("docs", "page.md").write_text("# Page\n\nProse.\n", encoding="utf-8")
+
+    source = SURVEY_SOURCE.read_text(encoding="utf-8")
+    stated = documented_anchorless_arrays(source)
+    anchored, records_without, strings, empty = anchor_census(survey(run_script, root))
+
+    assert stated & empty == set(), (
+        "An array with nothing in it carries no anchor and carries every "
+        "anchor, so a census taken over one measures nothing. This tree is "
+        f"built to fill each of the arrays the docstring names, and "
+        f"{sorted(stated & empty)} still came back empty, for {root}"
+    )
+    assert anchored >= {"surface.http", "surface.cli", "user_surface.commands"}, (
+        "The anchored side of the census went missing, so the equality below "
+        "could be satisfied by a run that published nothing to anchor; got "
+        f"{sorted(anchored)} for {root}"
+    )
+    assert records_without | strings == stated, (
+        "survey.py's docstring states which arrays carry no anchor and this "
+        f"reads that sentence. A run prints {sorted(records_without | strings)}; "
+        f"the docstring says {sorted(stated)}. Whichever of the two is wrong, "
+        "they have to be made to agree -- the sentence has been the wrong one "
+        "twice, both times by naming fewer arrays than the run printed"
+    )
+    assert records_without == {"tooling"}, (
+        "The docstring gives two different reasons for the two kinds of "
+        "anchorless array: the string arrays have nowhere to hang an anchor "
+        "on, and `tooling` alone holds records and carries none anyway. A "
+        f"second record array without anchors makes that half stale: "
+        f"{sorted(records_without)}"
+    )
+
+    restated = [line for line in source.splitlines()
+                if line.lstrip().startswith("#") and "`tooling`" in line]
+    assert restated == [], (
+        "Both stale copies of this census were `#` comments naming `tooling` "
+        "in backticks, and each was corrected a cycle apart from the docstring "
+        "that said the same thing. The census lives in the docstring, which is "
+        "the copy this test reads:\n" + "\n".join(restated)
     )
 
 

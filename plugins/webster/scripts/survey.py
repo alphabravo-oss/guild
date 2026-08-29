@@ -3,13 +3,26 @@
 
 Prints JSON. Every entry under `surface` and `user_surface` carries a file:line
 anchor, because a surface item without an anchor is a claim and this script is
-not allowed to make claims. `tooling` is the one array in this document whose
-entries carry none, and it is not an exception to that rule: its entries are
-recommendations about this repo rather than things found inside it, so there is
-no line to send anybody to. That sentence used to open "Every entry", flatly,
-which read as covering the whole document and was false of exactly that array --
-the same over-wide claim the comment above CLI_FLAG_DECL had made and had
-already been narrowed to say what this one now says.
+not allowed to make claims. The arrays whose entries carry no anchor are
+`stack`, `frameworks`, `tooling`, `tests.files` and `existing_docs`. All of them
+but `tooling` hold bare strings -- a language, a framework name, a path -- and a
+string has nowhere to hang an anchor on. `tooling` holds records shaped like the
+ones under `surface` and carries none anyway, because a tooling entry recommends
+something for this repo rather than reporting something found in it, so there is
+no line to send anybody to.
+
+That census has been wrong twice, each time by naming fewer arrays than the
+document prints. It opened "Every entry", flatly, which read as covering
+everything below it. The narrowing that replaced it said `tooling` was the
+single array whose entries carry none, which was false of `stack`, `frameworks`,
+`tests.files` and `existing_docs` as well -- and the last two are paths walk()
+found inside this repo, so the reason that sentence gave, that a recommendation
+has no line to send anybody to, did not even separate them from `tooling`. Both
+times a second copy of the claim sat in the comment above CLI_FLAG_DECL and was
+corrected a cycle apart from this one. So the census is stated here and nowhere
+else, and it is not stated by hand:
+test_survey.py::test_every_surface_entry_carries_an_anchor reads the names out
+of the sentence above and measures them against the arrays a real run prints.
 
 There is no `sys.exit` in this file and no gate to fail: a run that reads the
 repo prints the survey and returns 0, whatever it found. What that costs is
@@ -545,9 +558,10 @@ SUBCOMMAND = re.compile(
 # a single literal. Go's flag package and pflag declare a bare name and leave the dashes to the
 # framework, so nothing here matches them: a spelling that appears in no file is a claim, and
 # every entry under `surface` and `user_surface` carries an anchor exactly so that a reader can
-# go and read it. `tooling` is the one array in this JSON holding entries without one, and it is
-# not an exception to that rule: its entries are recommendations about this repo rather than
-# things found inside it, so there is no line to send anybody to.
+# go and read it. Which of the document's other arrays carry an anchor and which do not is stated
+# in the module docstring and measured against a real run from there. It used to be restated here
+# as well, and the two copies were wrong in two different ways at the same time, each corrected a
+# cycle apart from the other. One sentence a test reads is worth more than two kept level by hand.
 CLI_FLAG_DECL = re.compile(r"(?:\badd_argument|\badd_option|\.option)\s*\(")
 CLI_ARG_END = re.compile(r",\s*\w+\s*=|[)#]")
 CLI_STRING = re.compile(r"""["']([^"'\n]*)["']""")
