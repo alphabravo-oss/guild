@@ -339,9 +339,16 @@ def test_uncommitted_edit_to_cited_file_is_drift(run_script, fixture_repo):
 def test_staged_rename_marks_old_and_new_path_dirty(run_script, fixture_repo):
     """FR-001 / AC-002 / OT-002 — a rename record carries two paths, and both count.
 
-    RED at cfafe8e: ``R  src/app/main.py -> src/app/server.py`` was sliced to
-    ``rc/app/main.py -> src/app/server.py``, so the page kept citing a file that
-    had moved and suspect_pages stayed empty.
+    RED at cfafe8e: the record survived whole, and that was the defect.
+    ``git status --short`` printed ``R  src/app/main.py -> src/app/server.py``
+    as its first record, and an ``R`` in column 1 is not the leading space
+    ``.stdout.strip()`` shifts, so the ``[3:]`` slice left the record intact —
+    one string, ``src/app/main.py -> src/app/server.py``. Nothing split it on
+    the ``->``, so ``dirty`` held that single string and held neither path
+    inside it, no anchor target matched, and suspect_pages stayed ``{}``. Exit
+    was already 1 there, off the broken anchor the moved file left behind, and
+    ``broken_anchors`` already named the anchor: what the rename half adds is
+    the two paths counted and the page they make suspect.
     """
     record(run_script, fixture_repo)
     git_in(fixture_repo, "mv", CITED_FILE, "src/app/server.py")
@@ -695,7 +702,8 @@ def test_docs_tree_at_the_repo_root_reaches_clean(run_script, fixture_repo):
     prefix test matched no path at all and ``.webster.json``, the file record had just written,
     counted as a changed code file. ``clean`` was unreachable on any tree in this layout: a
     fresh record followed immediately by a check printed unrelated_changes at exit 0 with
-    code_files_changed 1 and a note about code that no page cites, naming the manifest.
+    code_files_changed 1 and a note counting one changed code file that no page cites — the
+    manifest record had just written, which nothing in the envelope names.
 
     The second half is the guard against fixing that by declaring everything under the root
     docs. Source files have to stay code, or no page could ever go suspect for one — which
@@ -1256,13 +1264,17 @@ def test_no_git_note_does_not_claim_digests_compared(run_script, fixture_repo):
     """FR-004 / AC-006 / FR-009 / ST-004 — a not-checked note may not overstate the line half.
 
     RED at 66dab76: the four git branches built their note before ``hashes``
-    existed, so each of them asserted that "the recorded line digests were
-    still compared" whatever the manifest held. Against a manifest written
-    before ``lineHashes`` (AC-006) nothing had been compared at all, and the
-    sentence sat beside an empty ``suspect_pages`` telling the reader the line
-    half had covered what the code half could not. The only clause that ever
-    corrected it fired for ``partial``, so ``not_recorded`` — the one state
-    where the claim is flatly false — was the state that never reached it.
+    existed, so each of them asserted the recorded line digests had been
+    compared whatever the manifest held — in its own wording, not one shared
+    string. The branch this test drives said "the anchors were resolved and
+    the recorded line digests compared"; two others said "their recorded line
+    digests compared" and the fourth "their recorded line digests were still
+    compared". Against a manifest written before ``lineHashes`` (AC-006)
+    nothing had been compared at all, and the sentence sat beside an empty
+    ``suspect_pages`` telling the reader the line half had covered what the
+    code half could not. The only clause that ever corrected it fired for
+    ``partial``, so ``not_recorded`` — the one state where the claim is flatly
+    false — was the state that never reached it.
 
     Two runs of one scenario, differing in nothing but the manifest's
     ``lineHashes`` key, so what is pinned is that the sentence is conditional
@@ -1947,8 +1959,17 @@ def test_mdx_page_citing_a_changed_file_is_drift(run_script, fixture_repo):
 def test_record_without_a_commit_writes_a_null_head(run_script, fixture_repo, tmp_path):
     """FR-009 / OT-010 — gitHead null plus a note, and the next check says no_git.
 
-    RED at cfafe8e: record wrote ``"gitHead": ""`` with no note, and check
-    read that empty string as "nothing to compare against" and printed clean.
+    RED at cfafe8e: record printed ``{"status": "recorded", "gitHead": "",
+    "pages": 13, "anchors": 1}`` — an empty string where the head goes, and no
+    note. The check that followed did read that empty string as nothing to
+    compare against, so the diff never ran and code_files_changed came back 0;
+    what it printed was ``drift`` at exit 1. Before the first commit
+    ``git status --short --untracked-files=all`` lists every file as ``??``, so
+    the cited file read dirty and its page went suspect —
+    ``{"docs/items/create-item.md": ["src/app/main.py:15"]}``. drift.py's
+    ``GitUnavailable`` docstring describes that same run and gives the reason it
+    ends at exit 2 now instead: a finding nobody can act on is no more an answer
+    than a false pass.
     """
     fresh = tmp_path / "fresh"
     shutil.copytree(fixture_repo, fresh, ignore=shutil.ignore_patterns(".git"))
@@ -1979,7 +2000,8 @@ def test_record_without_a_commit_writes_a_null_head(run_script, fixture_repo, tm
 def test_null_head_in_the_manifest_reports_no_git(run_script, fixture_repo, tmp_path):
     """FR-005 / FR-009 / OT-010 — a manifest that records no commit is not clean.
 
-    RED at 9859317: status clean at exit 0, with an empty note. Both git
+    RED at 9859317: status clean at exit 0, the printed note reading "12 of 13
+    pages cite no source" and carrying no clause about the code half. Both git
     branches in the check were guarded by ``if recorded and ...``, so a manifest
     holding ``"gitHead": null`` fell past both of them: nothing measured the code
     half, git_note stayed empty, and the envelope came back saying nothing had

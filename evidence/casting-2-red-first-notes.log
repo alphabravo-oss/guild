@@ -1,0 +1,149 @@
+# evidence-cmd: cd "$(git rev-parse --show-toplevel)"; d=$PWD; t=$(mktemp -d); git -C "$d" show cfafe8e:plugins/webster/scripts/drift.py > "$t/drift-cfafe8e.py"; git -C "$d" show 9859317:plugins/webster/scripts/drift.py > "$t/drift-9859317.py"; git -C "$d" show 19941ad:plugins/webster/scripts/drift.py > "$t/drift-19941ad.py"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-27T16:49:56+00:00 GIT_COMMITTER_DATE=2026-08-27T16:49:56+00:00; show='import json,sys;e=json.load(sys.stdin);print("  status            :",e["status"]);print("  code_files_changed:",e["code_files_changed"]);print("  suspect_pages     :",e["suspect_pages"]);print("  note              :",repr(e["note"]))'; echo '=== the cfafe8e code both cfafe8e notes describe: the strip, and the two call sites ==='; git -C "$d" show cfafe8e:plugins/webster/scripts/drift.py | sed -n '/^def git(/,/^        return ""/p'; git -C "$d" show cfafe8e:plugins/webster/scripts/drift.py | sed -n '/^    changed = \[\]/,/^$/p'; echo; echo '=== D-145  AC-002 FR-001 OT-002: the staged rename at cfafe8e, and what the parse made of it ==='; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/rename"; cd "$t/rename" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m init && python3 "$t/drift-cfafe8e.py" record docs > /dev/null && git mv src/app/main.py src/app/server.py; python3 -c "import subprocess; out=subprocess.run(['git','--no-pager','status','--short','--untracked-files=all'],capture_output=True,text=True,check=True).stdout; print('  raw stdout        :', repr(out)); s=out.strip(); print('  after .stdout.strip():', repr(s)); r=s.splitlines()[0]; print('  first record      :', repr(r)); print('  its column 1      :', repr(r[0])); print('  its [3:] slice    :', repr(r[3:])); dirty=[l[3:] for l in s.splitlines() if l[3:] and not l[3:].startswith('docs/')]; print('  dirty             :', dirty); print('  len(dirty)        :', len(dirty)); print('  dirty holds src/app/main.py         :', 'src/app/main.py' in dirty); print('  dirty holds src/app/server.py       :', 'src/app/server.py' in dirty); print('  dirty holds the rc/app/main.py slice:', 'rc/app/main.py -> src/app/server.py' in dirty)"; python3 "$t/drift-cfafe8e.py" check docs | python3 -c "$show"; python3 "$t/drift-cfafe8e.py" check docs > /dev/null 2>&1; echo "  exit              : $?"; python3 "$t/drift-cfafe8e.py" check docs | python3 -c 'import json,sys;e=json.load(sys.stdin);print("  broken_anchors    :",[(b["anchor"],b["reason"]) for b in e["broken_anchors"]])'; echo; echo '=== control: the first record .stdout.strip() DOES shift, same script, an edit instead of a rename ==='; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/edit"; cd "$t/edit" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m init && python3 "$t/drift-cfafe8e.py" record docs > /dev/null; printf '\n# edit\n' >> src/app/main.py; python3 -c "import subprocess; s=subprocess.run(['git','--no-pager','status','--short','--untracked-files=all'],capture_output=True,text=True,check=True).stdout.strip(); [print('  record', i, repr(l).ljust(24), '-> [3:]', repr(l[3:])) for i,l in enumerate(s.splitlines()[:2])]"; echo; echo '=== D-146  OT-010 FR-009: record then check at cfafe8e in a repository with no commits ==='; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/nocommit"; cd "$t/nocommit" && git -c init.defaultBranch=main init -q .; printf '  record stdout     : '; python3 "$t/drift-cfafe8e.py" record docs; python3 -c "import subprocess; ls=subprocess.run(['git','--no-pager','status','--short','--untracked-files=all'],capture_output=True,text=True,check=True).stdout.splitlines(); print('  every record is ??:', all(l.startswith('?? ') for l in ls)); print('  cited file listed :', '?? src/app/main.py' in ls)"; python3 "$t/drift-cfafe8e.py" check docs | python3 -c "$show"; python3 "$t/drift-cfafe8e.py" check docs > /dev/null 2>&1; echo "  exit              : $?"; echo '  --- the run drift.py GitUnavailable describes, and its reason for exit 2 ---'; sed -n '/repository with no commits reported/,/says so instead/p' "$d/plugins/webster/scripts/drift.py"; echo; echo '=== D-147  OT-010 FR-005 FR-009: check at 9859317 with a null head in the manifest ==='; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/nullhead"; cd "$t/nullhead" && git -c init.defaultBranch=main init -q .; printf '  record stdout     : '; python3 "$t/drift-9859317.py" record docs; git add -A && git commit -q -m first; python3 "$t/drift-9859317.py" check docs | python3 -c "$show"; python3 "$t/drift-9859317.py" check docs > /dev/null 2>&1; echo "  exit              : $?"; python3 "$t/drift-9859317.py" check docs | python3 -c 'import json,sys;e=json.load(sys.stdin);print("  note is empty     :",e["note"]=="");print("  note says anything about git:","git" in e["note"] or "no_git" in e["note"])'; echo; echo '=== D-148  ST-006 FR-001 FR-005: record then check at 19941ad with WEBSTER_DOCS=. ==='; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/atroot"; cd "$t/atroot" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m init; WEBSTER_DOCS=. python3 "$t/drift-19941ad.py" record > /dev/null; printf '  git status after record: '; python3 -c "import subprocess;print(subprocess.run(['git','--no-pager','status','--short','--untracked-files=all'],capture_output=True,text=True,check=True).stdout,end='')"; WEBSTER_DOCS=. python3 "$t/drift-19941ad.py" check | python3 -c "$show"; WEBSTER_DOCS=. python3 "$t/drift-19941ad.py" check > /dev/null 2>&1; echo "  exit              : $?"; WEBSTER_DOCS=. python3 "$t/drift-19941ad.py" check | python3 -c 'import json,sys;o=sys.stdin.read();e=json.loads(o);print("  the string webster appears in the envelope:","webster" in o);print("  the note names a path                    :",any(w.strip(chr(39)+chr(44)+chr(59)).endswith((".json",".py",".md")) for w in e["note"].split()))'; cd "$d"; rm -rf "$t"; echo; echo '=== the fifth note, caught by the pre-commit sweep: four git branches, four wordings, at 66dab76 ==='; git -C "$d" show 66dab76:plugins/webster/scripts/drift.py | sed -n '512,558p' | grep -nE 'if head is None:|if not recorded:|elif not commit_exists|except GitUnavailable|recorded line digests'; printf '  branches assigning git_note: '; git -C "$d" show 66dab76:plugins/webster/scripts/drift.py | grep -c 'git_note = ('; for p in 'the recorded line digests compared' 'their recorded line digests compared' 'their recorded line digests were still compared' 'the recorded line digests were still compared'; do printf '  clauses reading "%s": %s\n' "$p" "$(git -C "$d" show 66dab76:plugins/webster/scripts/drift.py | sed -n '512,558p' | tr '\n' ' ' | sed 's/" *"//g' | tr -s ' ' | grep -o "$p" | wc -l | tr -d ' ')"; done; printf '  the digest half is only read after all four: '; git -C "$d" show 66dab76:plugins/webster/scripts/drift.py | grep -n 'old.get("lineHashes")'; printf '  the one corrective clause and its guard: '; git -C "$d" show 66dab76:plugins/webster/scripts/drift.py | sed -n '606p;660,661p' | tr -s ' '; echo; echo '=== and the five notes this commit rewrote, as they now stand ==='; sed -n '/RED at cfafe8e: the record survived whole/,/page they make suspect/p' plugins/webster/tests/test_drift.py | head -20; echo; sed -n '/RED at 19941ad: the docs prefix/,/nothing in the envelope names/p' plugins/webster/tests/test_drift.py | head -20; echo; sed -n '/RED at cfafe8e: record printed/,/than a false pass/p' plugins/webster/tests/test_drift.py | head -20; echo; sed -n '/RED at 9859317: status clean at exit 0, the printed note/,/no clause about the code half/p' plugins/webster/tests/test_drift.py | head -20; echo; sed -n '/RED at 66dab76: the four git branches/,/was the state that never reached it\./p' plugins/webster/tests/test_drift.py | head -20
+# evidence-for: FR-001, FR-004, FR-005, FR-009, FR-039
+# evidence-for: AC-002, AC-006, OT-002, OT-010, ST-004, ST-006
+# evidence-timeout: 300
+
+=== the cfafe8e code both cfafe8e notes describe: the strip, and the two call sites ===
+def git(*args):
+    try:
+        return subprocess.run(["git", "--no-pager", *args], cwd=ROOT, check=True,
+                              capture_output=True, text=True).stdout.strip()
+    except Exception:
+        return ""
+    changed = []
+    if old.get("gitHead") and head and head != old["gitHead"]:
+        changed = [f for f in git("diff", "--name-only", f"{old['gitHead']}..HEAD").splitlines()
+                   if f and not f.startswith(os.path.relpath(DOCS, ROOT) + "/")]
+    dirty = [l[3:] for l in git("status", "--short", "--untracked-files=all").splitlines()
+             if l[3:] and not l[3:].startswith(os.path.relpath(DOCS, ROOT) + "/")]
+
+
+=== D-145  AC-002 FR-001 OT-002: the staged rename at cfafe8e, and what the parse made of it ===
+  raw stdout        : 'R  src/app/main.py -> src/app/server.py\n?? docs/.webster.json\n'
+  after .stdout.strip(): 'R  src/app/main.py -> src/app/server.py\n?? docs/.webster.json'
+  first record      : 'R  src/app/main.py -> src/app/server.py'
+  its column 1      : 'R'
+  its [3:] slice    : 'src/app/main.py -> src/app/server.py'
+  dirty             : ['src/app/main.py -> src/app/server.py']
+  len(dirty)        : 1
+  dirty holds src/app/main.py         : False
+  dirty holds src/app/server.py       : False
+  dirty holds the rc/app/main.py slice: False
+  status            : drift
+  code_files_changed: 0
+  suspect_pages     : {}
+  note              : '12 of 13 pages cite no source'
+  exit              : 1
+  broken_anchors    : [('src/app/main.py:15', 'file does not exist')]
+
+=== control: the first record .stdout.strip() DOES shift, same script, an edit instead of a rename ===
+  record 0 'M src/app/main.py'      -> [3:] 'rc/app/main.py'
+  record 1 '?? docs/.webster.json'  -> [3:] 'docs/.webster.json'
+
+=== D-146  OT-010 FR-009: record then check at cfafe8e in a repository with no commits ===
+  record stdout     : {"status": "recorded", "gitHead": "", "pages": 13, "anchors": 1}
+  every record is ??: True
+  cited file listed : True
+  status            : drift
+  code_files_changed: 0
+  suspect_pages     : {'docs/items/create-item.md': ['src/app/main.py:15']}
+  note              : '12 of 13 pages cite no source'
+  exit              : 1
+  --- the run drift.py GitUnavailable describes, and its reason for exit 2 ---
+    repository with no commits reported `drift` at exit 1 instead — `status --short` lists every
+    file as `??` where nothing has been committed yet, so the cited file was read as dirty and
+    its page went suspect.
+
+    That third one is not the counter-example it looks like. It is the same defect under the
+    opposite sign: an exit code describing git's state rather than the pages', which would
+    report drift on a set whose every page was correct. A false pass and a finding nobody can
+    act on both end with the reader trusting the gate less than the page, and neither is an
+    answer, so a git that cannot answer now says so instead.
+
+=== D-147  OT-010 FR-005 FR-009: check at 9859317 with a null head in the manifest ===
+  record stdout     : {"status": "recorded", "gitHead": null, "pages": 13, "anchors": 1, "lineHashes": 1, "note": "git could not resolve HEAD here, so this manifest records no commit; the next check reports no_git instead of comparing the pages against nothing"}
+  status            : clean
+  code_files_changed: 0
+  suspect_pages     : {}
+  note              : '12 of 13 pages cite no source'
+  exit              : 0
+  note is empty     : False
+  note says anything about git: False
+
+=== D-148  ST-006 FR-001 FR-005: record then check at 19941ad with WEBSTER_DOCS=. ===
+  git status after record: ?? .webster.json
+  status            : unrelated_changes
+  code_files_changed: 1
+  suspect_pages     : {}
+  note              : '1 code file(s) changed since the record and no page cites any of them; 13 of 14 pages cite no source'
+  exit              : 0
+  the string webster appears in the envelope: False
+  the note names a path                    : False
+
+=== the fifth note, caught by the pre-commit sweep: four git branches, four wordings, at 66dab76 ===
+1:    if head is None:
+4:                    "yet), so the anchors were resolved and the recorded line digests compared "
+19:            if not recorded:
+23:                            "their recorded line digests compared, and only the diff since the "
+25:            elif not commit_exists(recorded):
+29:                            "recorded line digests compared, and only the diff since the record "
+40:        except GitUnavailable as e:
+46:                        "and their recorded line digests were still compared")
+  branches assigning git_note: 4
+  clauses reading "the recorded line digests compared": 1
+  clauses reading "their recorded line digests compared": 2
+  clauses reading "their recorded line digests were still compared": 1
+  clauses reading "the recorded line digests were still compared": 0
+  the digest half is only read after all four: 562:    recorded_hashes = old.get("lineHashes")
+  the one corrective clause and its guard:  hashes = "partial" if unhashed else "checked"
+ if unhashed:
+ notes.append(f"no digest was recorded for {len(unhashed)} of {len(resolvable)} "
+
+=== and the five notes this commit rewrote, as they now stand ===
+    RED at cfafe8e: the record survived whole, and that was the defect.
+    ``git status --short`` printed ``R  src/app/main.py -> src/app/server.py``
+    as its first record, and an ``R`` in column 1 is not the leading space
+    ``.stdout.strip()`` shifts, so the ``[3:]`` slice left the record intact —
+    one string, ``src/app/main.py -> src/app/server.py``. Nothing split it on
+    the ``->``, so ``dirty`` held that single string and held neither path
+    inside it, no anchor target matched, and suspect_pages stayed ``{}``. Exit
+    was already 1 there, off the broken anchor the moved file left behind, and
+    ``broken_anchors`` already named the anchor: what the rename half adds is
+    the two paths counted and the page they make suspect.
+
+    RED at 19941ad: the docs prefix was ``os.path.relpath(DOCS, ROOT)`` with a "/" appended,
+    which is "./" when the docs directory IS the root — a repository whose pages sit at the
+    top, which is what WEBSTER_DOCS="." asks for. Nothing git prints is "./"-prefixed, so the
+    prefix test matched no path at all and ``.webster.json``, the file record had just written,
+    counted as a changed code file. ``clean`` was unreachable on any tree in this layout: a
+    fresh record followed immediately by a check printed unrelated_changes at exit 0 with
+    code_files_changed 1 and a note counting one changed code file that no page cites — the
+    manifest record had just written, which nothing in the envelope names.
+
+    RED at cfafe8e: record printed ``{"status": "recorded", "gitHead": "",
+    "pages": 13, "anchors": 1}`` — an empty string where the head goes, and no
+    note. The check that followed did read that empty string as nothing to
+    compare against, so the diff never ran and code_files_changed came back 0;
+    what it printed was ``drift`` at exit 1. Before the first commit
+    ``git status --short --untracked-files=all`` lists every file as ``??``, so
+    the cited file read dirty and its page went suspect —
+    ``{"docs/items/create-item.md": ["src/app/main.py:15"]}``. drift.py's
+    ``GitUnavailable`` docstring describes that same run and gives the reason it
+    ends at exit 2 now instead: a finding nobody can act on is no more an answer
+    than a false pass.
+
+    RED at 9859317: status clean at exit 0, the printed note reading "12 of 13
+    pages cite no source" and carrying no clause about the code half. Both git
+
+    RED at 66dab76: the four git branches built their note before ``hashes``
+    existed, so each of them asserted the recorded line digests had been
+    compared whatever the manifest held — in its own wording, not one shared
+    string. The branch this test drives said "the anchors were resolved and
+    the recorded line digests compared"; two others said "their recorded line
+    digests compared" and the fourth "their recorded line digests were still
+    compared". Against a manifest written before ``lineHashes`` (AC-006)
+    nothing had been compared at all, and the sentence sat beside an empty
+    ``suspect_pages`` telling the reader the line half had covered what the
+    code half could not. The only clause that ever corrected it fired for
+    ``partial``, so ``not_recorded`` — the one state where the claim is flatly
+    false — was the state that never reached it.
