@@ -1,0 +1,56 @@
+# evidence-cmd: cd plugins/webster && t=$(mktemp) && COLUMNS=200 uvx pytest tests/test_survey.py tests/test_llmstxt.py -v --no-header --tb=short -p no:cacheprovider > "$t" 2>&1; echo "pytest exit=$?"; echo "PASSED: $(grep -c ' PASSED' "$t")  FAILED: $(grep -c ' FAILED' "$t")"; sed -e 's/[[:space:]]*\[[[:space:]]*[0-9]*%\][[:space:]]*$//' -e 's,^tests/,,' "$t" | grep -E ' (PASSED|FAILED)$' | sort; rm -f "$t"
+# evidence-for: US-006, US-007, AC-022, AC-023, AC-024, AC-025, AC-026, AC-027
+# evidence-for: AC-028, AC-029, AC-030, AC-031, AC-039, FR-018, FR-019, FR-020
+# evidence-for: FR-021, FR-022, FR-023, FR-031, FR-032, FR-039, NFR-002
+# evidence-timeout: 300
+
+pytest exit=0
+PASSED: 48  FAILED: 0
+test_llmstxt.py::test_a_package_json_that_is_not_an_object_is_read_as_absent PASSED
+test_llmstxt.py::test_a_placeholder_brace_in_a_readme_line_is_not_the_summary PASSED
+test_llmstxt.py::test_a_stub_marker_in_a_description_falls_through_to_the_next_source PASSED
+test_llmstxt.py::test_a_stub_readme_is_not_the_header_summary PASSED
+test_llmstxt.py::test_first_prose_line_is_taken_without_an_h1 PASSED
+test_llmstxt.py::test_frontmatter_description_still_wins PASSED
+test_llmstxt.py::test_header_falls_back_to_the_poetry_table PASSED
+test_llmstxt.py::test_header_falls_back_to_the_pyproject_project_table PASSED
+test_llmstxt.py::test_html_comment_in_a_frontmatter_description_is_stripped PASSED
+test_llmstxt.py::test_html_comment_never_reaches_a_summary PASSED
+test_llmstxt.py::test_html_comment_never_reaches_the_header PASSED
+test_llmstxt.py::test_multi_line_header_description_folds_to_one_line PASSED
+test_llmstxt.py::test_package_json_still_wins_for_the_header PASSED
+test_llmstxt.py::test_stub_pages_are_absent_from_llms_txt PASSED
+test_llmstxt.py::test_the_directory_name_fallback_is_published_as_it_stands PASSED
+test_llmstxt.py::test_tomllib_imported_at_module_level_with_the_floor_comment PASSED
+test_llmstxt.py::test_unparseable_pyproject_does_not_break_the_header PASSED
+test_llmstxt.py::test_unterminated_html_comment_publishes_nothing_after_it PASSED
+test_survey.py::test_a_black_split_declaration_still_declares_its_flag PASSED
+test_survey.py::test_a_commander_option_string_still_declares_its_spellings PASSED
+test_survey.py::test_a_dependencies_field_that_is_not_a_table_is_absent PASSED
+test_survey.py::test_a_flag_named_in_another_flags_help_is_not_a_command PASSED
+test_survey.py::test_a_flag_named_only_in_prose_is_not_a_command PASSED
+test_survey.py::test_a_package_json_that_is_not_an_object_is_read_as_absent PASSED
+test_survey.py::test_a_paren_in_a_comment_or_a_string_does_not_end_the_join PASSED
+test_survey.py::test_a_positional_description_is_not_a_flag_spec PASSED
+test_survey.py::test_a_route_whose_methods_the_join_never_read_is_not_a_get PASSED
+test_survey.py::test_a_script_target_that_is_not_a_string_is_not_a_command PASSED
+test_survey.py::test_black_split_decorator_is_anchored_to_the_at_line PASSED
+test_survey.py::test_detail_after_a_collection_argument_is_still_a_message PASSED
+test_survey.py::test_env_regex_allows_whitespace_after_the_bracket PASSED
+test_survey.py::test_env_regex_still_matches_the_go_getenv PASSED
+test_survey.py::test_every_surface_entry_carries_an_anchor PASSED
+test_survey.py::test_flask_route_reports_its_declared_methods PASSED
+test_survey.py::test_flask_route_without_methods_reports_get PASSED
+test_survey.py::test_httpexception_detail_and_positional_are_messages PASSED
+test_survey.py::test_httpexception_dict_detail_contributes_no_message PASSED
+test_survey.py::test_httpexception_publishes_only_its_own_arguments PASSED
+test_survey.py::test_message_floors_are_measured_in_whole_strings PASSED
+test_survey.py::test_mock_patch_decorator_is_not_an_http_endpoint PASSED
+test_survey.py::test_option_flags_reach_the_user_surface_commands PASSED
+test_survey.py::test_os_getenv_read_lands_in_config_undeclared PASSED
+test_survey.py::test_package_json_still_wins_over_pyproject PASSED
+test_survey.py::test_poetry_legacy_tables_are_the_fallback PASSED
+test_survey.py::test_pyproject_name_description_and_scripts PASSED
+test_survey.py::test_the_red_first_table_counts_its_own_rows PASSED
+test_survey.py::test_tomllib_imported_at_module_level_with_the_floor_comment PASSED
+test_survey.py::test_unparseable_pyproject_leaves_the_survey_running PASSED

@@ -1,0 +1,13 @@
+# evidence-cmd: r=$(git rev-parse --show-toplevel) && s=$(mktemp -d) && cp -R "$r/plugins/webster" "$s/webster" && rm -rf "$s/webster/tests/__pycache__" "$s/webster/.pytest_cache" && cd "$s/webster" && K='not_an_object or not_a_table or script_target' && for f in survey llmstxt; do git -C "$r" show "39e6247:plugins/webster/scripts/$f.py" > "scripts/$f.py"; done && echo '--- selected tests against the scripts at 39e6247 ---' && uvx pytest tests/test_survey.py tests/test_llmstxt.py -q --no-header --tb=no -p no:cacheprovider -k "$K" > "$s/red.txt" 2>&1; echo "pytest exit=$?"; grep '^FAILED' "$s/red.txt" | sort; for f in survey llmstxt; do cp "$r/plugins/webster/scripts/$f.py" "scripts/$f.py"; done; echo '--- the same tests against the scripts this casting commits ---'; uvx pytest tests/test_survey.py tests/test_llmstxt.py -q --no-header --tb=no -p no:cacheprovider -k "$K" > "$s/green.txt" 2>&1; echo "pytest exit=$?"; echo "FAILED lines: $(grep -c '^FAILED' "$s/green.txt")"; cd "$r"; rm -rf "$s"
+# evidence-for: FR-039, AC-039
+# evidence-timeout: 300
+
+--- selected tests against the scripts at 39e6247 ---
+pytest exit=1
+FAILED tests/test_llmstxt.py::test_a_package_json_that_is_not_an_object_is_read_as_absent
+FAILED tests/test_survey.py::test_a_dependencies_field_that_is_not_a_table_is_absent
+FAILED tests/test_survey.py::test_a_package_json_that_is_not_an_object_is_read_as_absent
+FAILED tests/test_survey.py::test_a_script_target_that_is_not_a_string_is_not_a_command
+--- the same tests against the scripts this casting commits ---
+pytest exit=0
+FAILED lines: 0

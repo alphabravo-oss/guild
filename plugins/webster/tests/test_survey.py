@@ -43,6 +43,9 @@ test_pyproject_name_description_and_scripts                   FR-020/021  cfafe8
 test_poetry_legacy_tables_are_the_fallback                    FR-020/021  cfafe8e
 test_package_json_still_wins_over_pyproject                   FR-020      guard
 test_unparseable_pyproject_leaves_the_survey_running          FR-020      guard
+test_a_package_json_that_is_not_an_object_is_read_as_absent   US-006      39e6247 (added cycle 9)
+test_a_dependencies_field_that_is_not_a_table_is_absent       US-006      39e6247 (added cycle 9)
+test_a_script_target_that_is_not_a_string_is_not_a_command    US-006      39e6247 (added cycle 9)
 test_httpexception_detail_and_positional_are_messages         FR-022/032  cfafe8e
 test_httpexception_dict_detail_contributes_no_message         FR-022      guard
 test_httpexception_publishes_only_its_own_arguments           FR-022/032  19941ad (added cycle 4)
@@ -126,13 +129,33 @@ Rows carrying a note the column has no room for:
   column because it reads no revision of survey.py. It reads this docstring,
   which is why "red against" -- defined above as a property of the script under
   test -- does not apply to it.
+- The three rows naming 39e6247 are red at cfafe8e as well, measured, and the
+  nearer baseline is the one that shows what each was written against. Two of
+  them fail the same way at both revisions, in the ``survey`` helper's exit-0
+  assertion with an AttributeError attached. The third,
+  ``test_a_script_target_that_is_not_a_string_is_not_a_command``, fails
+  differently at each: at 39e6247 the dated entry crashes ``json.dumps`` after
+  every extractor has finished, and at cfafe8e ``surface.cli`` is empty because
+  there is no pyproject scripts pass there at all, so it is the ``bar`` control
+  beside the dated entry that goes red.
 
-Every test drives the script through the conftest ``run_script`` helper. Nothing
-here imports survey.py: its module-level ``ROOT`` resolves from ``sys.argv`` at
-import time, so an import would freeze the wrong root before a test could set
-one (GI-004). Named rather than numbered, for the reason conftest.py's docstring
-sets out at greater length: the line numbers this suite's first draft cited into
-the scripts had every one of them moved by the time anybody read them.
+Every test that runs the script drives it through the conftest ``run_script``
+helper. Two do not run it, and they are the only two.
+``test_tomllib_imported_at_module_level_with_the_floor_comment`` reads
+``scripts/survey.py`` as text, because a comment has no observable behaviour to
+assert against in either direction and the source is the only place that promise
+lives; ``test_the_red_first_table_counts_its_own_rows`` reads this docstring,
+whose subject is this file rather than the script. Neither starts a process, so
+neither has an exit code to quote. That sentence used to open "Every test",
+flatly, standing under a note that had already said of the second of them that
+it reads no revision of survey.py.
+
+Nothing here imports survey.py: its module-level ``ROOT`` resolves from
+``sys.argv`` at import time, so an import would freeze the wrong root before a
+test could set one (GI-004). Named rather than numbered, for the reason
+conftest.py's docstring sets out at greater length: the line numbers this
+suite's first draft cited into the scripts had every one of them moved by the
+time anybody read them.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``.
 """
@@ -655,6 +678,103 @@ def test_unparseable_pyproject_leaves_the_survey_running(run_script, fixture_rep
     )
     assert data["surface"]["http"], (
         "The rest of the survey still ran; surface.http was empty"
+    )
+
+
+# -----------------------------------------------------------------------------
+# US-006: a file this script can read never costs the reader the whole survey
+#
+# AC-027 asks this of a pyproject.toml that will not parse, and the three tests
+# below ask it of the files that parse and then hold something else. There is no
+# FR naming that case: it is AC-027's rule read one step further out, from a file
+# whose bytes are not the format to a file whose contents are not the shape.
+# -----------------------------------------------------------------------------
+def test_a_package_json_that_is_not_an_object_is_read_as_absent(run_script, tmp_path):
+    """US-006: `[1, 2]` is valid JSON, and every read of it below is `pkg.get`.
+
+    Two documents rather than one, because the two failed differently and only
+    one of them looks like a mistake anybody would make: an array is what a
+    generator writing a list of workspaces produces, and `null` is what a tool
+    that stopped halfway leaves behind. Both parse, so neither reaches the
+    except branch that a syntax error reaches.
+
+    What is asserted is that the file was read as absent rather than merely
+    survived: the pyproject beside it supplies the name, which is the same
+    chain a repo with no package.json at all goes down.
+    """
+    for label, document in (("array", "[1, 2]"), ("null", "null")):
+        root = python_project(
+            tmp_path,
+            f"notanobject_{label}",
+            "x = 1\n",
+            pyproject='[project]\nname = "pyapp"\ndescription = "From pyproject."\n',
+            package_json=document,
+        )
+
+        data = survey(run_script, root)
+
+        assert (data["name"], data["description"]) == ("pyapp", "From pyproject."), (
+            f"package.json holding {document} must be read as absent, so the "
+            f"pyproject supplies both fields; got {data['name']!r}, "
+            f"{data['description']!r}"
+        )
+
+
+def test_a_dependencies_field_that_is_not_a_table_is_absent(run_script, tmp_path):
+    """US-006: `"dependencies": []` parses, and `{**[]}` is a TypeError.
+
+    One level below the document shape, and reached only once that shape is
+    guaranteed: the framework detection merges both dependency tables before it
+    asks anything about them. A field of another type declares no dependencies,
+    so the run continues with the frameworks that field would have named
+    missing -- and nothing else missing, which is what the name assertion here
+    is for.
+    """
+    root = python_project(
+        tmp_path,
+        "deps",
+        "x = 1\n",
+        package_json='{"name": "nodeapp", "dependencies": ["react"], '
+        '"devDependencies": "vitest"}',
+    )
+
+    data = survey(run_script, root)
+
+    assert data["name"] == "nodeapp", (
+        f"The rest of package.json is still read; got {data['name']!r}"
+    )
+    assert "react" not in data["frameworks"], (
+        "A dependency named in a list rather than a table declares nothing; got "
+        f"{data['frameworks']}"
+    )
+
+
+def test_a_script_target_that_is_not_a_string_is_not_a_command(run_script, tmp_path):
+    """US-006: TOML has date syntax, and json.dumps cannot write a date.
+
+    The one shape in this file that killed the run after every extractor had
+    finished, at the print itself, so the cost was the whole surface rather than
+    one entry of it. `bar` beside it is the control: a table holding one target
+    this script cannot publish still publishes the other.
+    """
+    root = python_project(
+        tmp_path,
+        "scripts",
+        "x = 1\n",
+        pyproject=(
+            "[project]\n"
+            'name = "datedapp"\n'
+            "\n[project.scripts]\n"
+            "foo = 1979-05-27\n"
+            'bar = "pkg.mod:run"\n'
+        ),
+    )
+
+    data = survey(run_script, root)
+
+    assert [c["name"] for c in data["surface"]["cli"]] == ["bar"], (
+        "A dated entry names no command to type and must not take the entry "
+        f"beside it down with it; got {data['surface']['cli']}"
     )
 
 

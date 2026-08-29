@@ -237,11 +237,19 @@ def main():
     linked = index_order(DOCS)
     pages.sort(key=lambda p: (rank(os.path.relpath(p, ROOT), DOCS, linked), p))
 
+    # A syntax error here was already answered with an empty table. A document that parses and
+    # is not an object was not: `[1, 2]` is valid JSON with no `.get` on it, so a package.json
+    # holding an array -- or `null`, or a bare string -- ended the run in an AttributeError
+    # traceback at exit 1, the code the module docstring above says this script signals nothing
+    # with. pyproject_meta already reads its tables this way; both files are now read for the
+    # shape they have to be rather than the shape they usually are.
     pkg = {}
     pkg_path = os.path.join(ROOT, "package.json")
     if os.path.exists(pkg_path):
         try:
-            pkg = json.load(open(pkg_path))
+            with open(pkg_path) as f:
+                loaded = json.load(f)
+            pkg = loaded if isinstance(loaded, dict) else {}
         except Exception:
             pkg = {}
 

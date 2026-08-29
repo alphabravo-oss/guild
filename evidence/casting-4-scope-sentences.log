@@ -1,0 +1,17 @@
+# evidence-cmd: cd plugins/webster && python3 -c 'import json,re,subprocess; d=json.loads(subprocess.run(["python3","scripts/survey.py","tests/fixtures/repo"],capture_output=True,text=True).stdout); print("survey.py on tests/fixtures/repo -- entries, and how many carry an anchor"); [print("  %s.%s: %d entries, %d anchored"%(g,k,len(d[g][k]),sum(1 for r in d[g][k] if r.get("anchor")))) for g in ("surface","user_surface") for k in sorted(d[g]) if d[g][k]]; print("  tooling: %d entries, %d anchored"%(len(d["tooling"]),sum(1 for r in d["tooling"] if r.get("anchor")))); print(""); print("test modules -- how many tests reach the script, and which do not"); mods=[(n,dr,re.split(r"\ndef (test_\w+)\(",open("tests/"+n).read())) for n,dr in (("test_survey.py",("run_script(","survey(")),("test_llmstxt.py",("run_script(","llmstxt(")))]; rows=[(n,p[1::2],[x for x,b in zip(p[1::2],p[2::2]) if not any(k in b for k in dr)]) for n,dr,p in mods]; [print("  %s: %d tests, %d do not drive the script"%(n,len(a),len(q))) or [print("    %s"%x) for x in q] for n,a,q in rows]'
+# evidence-for: FR-012, FR-039
+
+survey.py on tests/fixtures/repo -- entries, and how many carry an anchor
+  surface.cli: 1 entries, 1 anchored
+  surface.config: 3 entries, 3 anchored
+  surface.http: 2 entries, 2 anchored
+  user_surface.commands: 4 entries, 4 anchored
+  user_surface.messages: 1 entries, 1 anchored
+  tooling: 2 entries, 0 anchored
+
+test modules -- how many tests reach the script, and which do not
+  test_survey.py: 30 tests, 2 do not drive the script
+    test_tomllib_imported_at_module_level_with_the_floor_comment
+    test_the_red_first_table_counts_its_own_rows
+  test_llmstxt.py: 18 tests, 1 do not drive the script
+    test_tomllib_imported_at_module_level_with_the_floor_comment

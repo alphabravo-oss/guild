@@ -1,0 +1,10 @@
+# evidence-cmd: cd plugins/webster && d=$(mktemp -d) && n=0 && for j in '[1, 2]' 'null' '"a string"' '42' '{"dependencies": ["react"]}' '{"devDependencies": 3}' '{"name": "nodeapp"}'; do n=$((n+1)); mkdir -p "$d/r$n/docs"; printf '%s' "$j" > "$d/r$n/package.json"; printf '[project]\nname = "pyapp"\ndescription = "From pyproject."\n' > "$d/r$n/pyproject.toml"; printf -- '---\ntitle: T\n---\n\nHello there.\n' > "$d/r$n/docs/a.md"; python3 scripts/survey.py "$d/r$n" >/dev/null 2>&1; s=$?; o=$(WEBSTER_ROOT="$d/r$n" WEBSTER_DOCS=docs python3 scripts/llmstxt.py 2>/dev/null); l=$?; h=$(printf '%s\n' "$o" | head -1); printf 'package.json=%-28s survey.py=%s llmstxt.py=%s header=%s\n' "$j" "$s" "$l" "$h"; done; rm -rf "$d"
+# evidence-for: US-006, US-007
+
+package.json=[1, 2]                       survey.py=0 llmstxt.py=0 header=# pyapp
+package.json=null                         survey.py=0 llmstxt.py=0 header=# pyapp
+package.json="a string"                   survey.py=0 llmstxt.py=0 header=# pyapp
+package.json=42                           survey.py=0 llmstxt.py=0 header=# pyapp
+package.json={"dependencies": ["react"]}  survey.py=0 llmstxt.py=0 header=# pyapp
+package.json={"devDependencies": 3}       survey.py=0 llmstxt.py=0 header=# pyapp
+package.json={"name": "nodeapp"}          survey.py=0 llmstxt.py=0 header=# nodeapp

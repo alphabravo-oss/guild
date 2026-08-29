@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 """Detect the stack and enumerate the real public surface of a repo.
 
-Prints JSON. Every entry carries a file:line anchor, because a surface item
-without an anchor is a claim and this script is not allowed to make claims.
+Prints JSON. Every entry under `surface` and `user_surface` carries a file:line
+anchor, because a surface item without an anchor is a claim and this script is
+not allowed to make claims. `tooling` is the one array in this document whose
+entries carry none, and it is not an exception to that rule: its entries are
+recommendations about this repo rather than things found inside it, so there is
+no line to send anybody to. That sentence used to open "Every entry", flatly,
+which read as covering the whole document and was false of exactly that array --
+the same over-wide claim the comment above CLI_FLAG_DECL had made and had
+already been narrowed to say what this one now says.
+
+There is no `sys.exit` in this file and no gate to fail: a run that reads the
+repo prints the survey and returns 0, whatever it found. What that costs is
+paid by the readers below -- a file this script can read but cannot use is
+answered with that file's contents missing, never with the survey missing.
 """
 import json, os, re, subprocess, sys
 # tomllib is standard library from Python 3.11, which is this plugin's floor: webster requires
@@ -42,10 +54,19 @@ def read(p):
 
 
 def load_json(p):
+    """Parse a JSON file into an object, or return {} the way load_toml does for broken TOML.
+
+    A syntax error was already answered this way. A file that parses cleanly and is not an
+    object was not: `[1, 2]` is a valid JSON document with no `.get` on it, so a package.json
+    holding an array -- or `null`, or a bare string -- killed the whole survey with an
+    AttributeError traceback and exit 1, on a file the script could read. The shape is checked
+    at the read rather than at every place `pkg` is later reached into, so that a reader added
+    after this one cannot forget it."""
     try:
-        return json.loads(read(p))
+        data = json.loads(read(p))
     except Exception:
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def load_toml(p):
@@ -82,7 +103,16 @@ def anchors(path, pattern, group=None):
 
 # ---------------------------------------------------------------- stack
 pkg = load_json(os.path.join(ROOT, "package.json"))
-deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+# Each dependency table is checked for being a table on the same grounds load_json checks the
+# document for being an object: `"dependencies": []` is well-formed JSON that npm would reject
+# and `{**[]}` is a TypeError, so the survey died one level below the shape load_json had just
+# guaranteed. A field of the wrong type declares no dependencies, which is what an absent field
+# declares too, so both are read the same way.
+deps = {}
+for _field in ("dependencies", "devDependencies"):
+    _declared = pkg.get(_field)
+    if isinstance(_declared, dict):
+        deps.update(_declared)
 stack, frameworks = [], []
 
 # A Python project's name and description live in pyproject.toml, and reading only package.json
@@ -320,12 +350,20 @@ for key in ("main", "types", "module"):
 # wrote the file. PEP 621's tables come first and Poetry's legacy one is the fallback, so a
 # Poetry 2.0 file that declares both does not report every console script twice. The anchor is
 # pyproject.toml:1 because tomllib reports no line numbers.
+#
+# A target that is not a string names no command to type, and TOML can hold one where the bin
+# entries above cannot: json.loads only ever produces values json.dumps can write back, while
+# tomllib hands back a datetime.date for TOML's own date syntax, which json.dumps refuses. A
+# `[project.scripts]` entry written as a date therefore took the entire survey down at the
+# print -- past every extractor, with the whole surface already gathered. Such an entry does
+# not claim the name either: a table that declares nothing usable under `foo` must not stop the
+# next table in the chain from declaring a real one.
 seen_cli = {c["name"] for c in surface["cli"]}
 for _table in (toml_table(pyproject, "project", "scripts"),
                toml_table(pyproject, "project", "gui-scripts"),
                toml_table(pyproject, "tool", "poetry", "scripts")):
     for k, v in _table.items():
-        if k in seen_cli:
+        if k in seen_cli or not isinstance(v, str):
             continue
         seen_cli.add(k)
         surface["cli"].append({"name": k, "target": v, "anchor": "pyproject.toml:1"})

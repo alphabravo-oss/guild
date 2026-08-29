@@ -42,6 +42,7 @@ test_first_prose_line_is_taken_without_an_h1                          FR-023   c
 test_header_falls_back_to_the_pyproject_project_table                 FR-023   cfafe8e
 test_header_falls_back_to_the_poetry_table                            FR-023   cfafe8e
 test_package_json_still_wins_for_the_header                           FR-023   guard
+test_a_package_json_that_is_not_an_object_is_read_as_absent           US-007   39e6247 (added cycle 9)
 test_frontmatter_description_still_wins                               FR-023   guard
 test_unparseable_pyproject_does_not_break_the_header                  FR-023   guard
 test_the_directory_name_fallback_is_published_as_it_stands            FR-023   guard
@@ -85,14 +86,21 @@ about its revision and wrong about what it measured:
   header chain claimed every source is cleaned, and the directory name is the
   one that is not.
 
-Every test drives the script through the conftest ``run_script`` helper with
-WEBSTER_ROOT and WEBSTER_DOCS in ``env``. Nothing here imports llmstxt.py: its
-module-level ``ROOT``, ``DOCS`` and ``BASE`` resolve from ``os.environ`` at
-import time, so an import would freeze the wrong docs directory before a test
-could set one (GI-004). Named rather than numbered, for the reason conftest.py's
-docstring sets out at greater length: the line numbers this suite's first draft
-cited into the scripts had every one of them moved by the time anybody read
-them.
+Every test that runs the script drives it through the conftest ``run_script``
+helper with WEBSTER_ROOT and WEBSTER_DOCS in ``env``. One does not run it, and
+it is the only one: ``test_tomllib_imported_at_module_level_with_the_floor_comment``
+reads ``scripts/llmstxt.py`` as text, because a comment has no observable
+behaviour to assert against in either direction and the source is the only place
+that promise lives. It starts no process, so it has no exit code to quote. That
+sentence used to open "Every test", flatly, with the row it was untrue of
+sitting in the table above it.
+
+Nothing here imports llmstxt.py: its module-level ``ROOT``, ``DOCS`` and
+``BASE`` resolve from ``os.environ`` at import time, so an import would freeze
+the wrong docs directory before a test could set one (GI-004). Named rather than
+numbered, for the reason conftest.py's docstring sets out at greater length: the
+line numbers this suite's first draft cited into the scripts had every one of
+them moved by the time anybody read them.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``.
 """
@@ -558,6 +566,42 @@ def test_package_json_still_wins_for_the_header(run_script, tmp_path):
     assert out.startswith("# nodeapp\n"), f"got:\n{out}"
     assert "> From package.json." in out, f"got:\n{out}"
     assert "From pyproject." not in out, f"got:\n{out}"
+
+
+def test_a_package_json_that_is_not_an_object_is_read_as_absent(run_script, tmp_path):
+    """US-007: `[1, 2]` is valid JSON, and the header chain opens with `pkg.get`.
+
+    The sibling of the same test in ``test_survey.py``: one package.json, two
+    scripts reading it, and both read it the same way. A syntax error was
+    already answered with an empty table here; a document that parses and is not
+    an object was not, and it ended the run in a traceback at exit 1 -- the code
+    the script's own module docstring says it signals nothing with.
+
+    Two documents rather than one, for the reason the sibling gives: an array is
+    what a generator writing a list of workspaces produces, `null` is what a
+    tool that stopped halfway leaves behind, and neither reaches the except
+    branch a syntax error reaches. Read as absent rather than merely survived:
+    the pyproject beside it supplies the header, which is the chain a repo with
+    no package.json goes down.
+    """
+    for label, document in (("array", "[1, 2]"), ("null", "null")):
+        root = docs_tree(
+            tmp_path,
+            f"notanobject_{label}",
+            {"index.md": "# Guide\n\nHow to drive it.\n"},
+            pyproject='[project]\nname = "pyapp"\ndescription = "From pyproject."\n',
+            package_json=document,
+        )
+
+        out = llmstxt(run_script, root)
+
+        assert out.startswith("# pyapp\n"), (
+            f"package.json holding {document} must be read as absent, so the "
+            f"pyproject supplies the name:\n{out}"
+        )
+        assert "> From pyproject." in out, (
+            f"and the description with it:\n{out}"
+        )
 
 
 def test_frontmatter_description_still_wins(run_script, tmp_path):
