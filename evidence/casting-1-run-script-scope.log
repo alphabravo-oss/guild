@@ -1,0 +1,61 @@
+# evidence-cmd: echo "--- every subprocess.run in the suite: run_script is not the only one ---"; grep -rn "subprocess.run(" plugins/webster/tests/*.py; echo; echo "--- the check= discipline: run_script is the one helper without it ---"; grep -rnE "^[[:space:]]+check=(True|False|check)" plugins/webster/tests/conftest.py plugins/webster/tests/test_harness.py; echo; echo "--- what GI-004 and CT-007 constrain: the one way a test invokes a script ---"; sed -n '/^def run_script_fixture/,/^    return run_script$/p' plugins/webster/tests/conftest.py; echo "--- no test module imports a webster script (GI-004, AC-041, OT-039) ---"; if grep -rEn "^[[:space:]]*(import|from)[[:space:]]+(survey|drift|slop|doctype|llmstxt|scaffold|rendered)\b" plugins/webster/tests; then echo FOUND; else echo "no matches"; fi; echo "--- CT-007 through run_script, for real (FR-029 env, NFR-004 timeout) ---"; ( cd plugins/webster && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k child_python3 2>&1 | tail -2 )
+# evidence-for: US-010, GI-004, CT-007, FR-029, NFR-004, AC-041, OT-039
+# evidence-volatile: \d+\.\d+s
+#
+# GRIND cycle 12, lead item L-12-1. conftest's run_script fixture opened "The one subprocess
+# helper for this suite (GI-004, CT-007)". The first block below is why that was false: six
+# subprocess.run call sites, only one of which runs a script. _git drives git for the fixture
+# builder, test_harness's git and git_in drive git against this repository, and the floor test
+# runs python3 -c directly to read the child interpreter's version. test_drift.py's own runner
+# belongs to casting 2.
+#
+# The second block is the tell that they are different kinds of call: every git wrapper carries
+# check=, because a git failure there is a broken premise; run_script carries none, because a
+# non-zero exit from a script under test IS the finding CT-007 asks to be surfaced.
+#
+# What GI-004 and CT-007 constrain is the narrower claim the docstring now makes: one helper is
+# the only way a test invokes a webster script, so exactly one place decides the interpreter
+# (literal python3), the environment (base_env: PATH and HOME, FR-029) and the timeout
+# (SCRIPT_TIMEOUT, NFR-004). The import grep is the other half of GI-004 (AC-041, OT-039): no
+# test module reaches a script any other way either.
+
+--- every subprocess.run in the suite: run_script is not the only one ---
+plugins/webster/tests/conftest.py:209:    return subprocess.run(
+plugins/webster/tests/conftest.py:243:    return subprocess.run(
+plugins/webster/tests/test_drift.py:207:    return subprocess.run(
+plugins/webster/tests/test_harness.py:205:    return subprocess.run(
+plugins/webster/tests/test_harness.py:309:    return subprocess.run(
+plugins/webster/tests/test_harness.py:384:    probe = subprocess.run(
+
+--- the check= discipline: run_script is the one helper without it ---
+plugins/webster/tests/conftest.py:250:        check=True,
+plugins/webster/tests/test_harness.py:210:        check=check,
+plugins/webster/tests/test_harness.py:314:        check=True,
+
+--- what GI-004 and CT-007 constrain: the one way a test invokes a script ---
+def run_script_fixture() -> Callable[..., subprocess.CompletedProcess]:
+    """The one way a test invokes a webster script (GI-004, CT-007).
+
+    Not "the one subprocess helper for this suite", which is what this line
+    used to say and what nothing in the suite supports: ``_git`` above shells
+    out, ``build_fixture_repo`` reaches git through it for every commit, and
+    ``test_harness.py`` has ``git``, ``git_in`` and one bare ``subprocess.run``
+    that measures the child interpreter. Those all drive git or python
+    directly; none of them drives a script under test.
+
+    What GI-004 and CT-007 actually constrain is the narrower thing: every
+    invocation of a script *under test* goes through this helper, so exactly
+    one place decides the interpreter, the environment and the timeout. The
+    fixture builders shell out to git because building the repository is the
+    ground a test stands on, not the subject it measures.
+
+    There is deliberately no per-script fixture. Seven near-identical wrappers
+    would drift apart, and the first one to forget ``env=`` would start reading
+    the developer's shell.
+    """
+    return run_script
+--- no test module imports a webster script (GI-004, AC-041, OT-039) ---
+no matches
+--- CT-007 through run_script, for real (FR-029 env, NFR-004 timeout) ---
+.                                                                        [100%]
+1 passed, 4 deselected in 0.45s

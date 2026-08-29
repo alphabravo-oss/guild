@@ -1,0 +1,46 @@
+# evidence-cmd: ( cd plugins/webster && uvx pytest -q --tb=no -p no:cacheprovider >/dev/null 2>&1; echo "whole suite exit: $?" ); echo; echo "--- collected ---"; ( cd plugins/webster && uvx pytest --collect-only -q -p no:cacheprovider 2>&1 | grep 'tests collected' ); echo "--- test functions defined, per module ---"; grep -c '^def test_' plugins/webster/tests/test_*.py | sed 's|plugins/webster/tests/||'; echo; echo "--- not green at this commit ---"; ( cd plugins/webster && uvx pytest -q --tb=no -p no:cacheprovider 2>&1 | grep -E '^FAILED' | cut -d' ' -f2 ); ( cd plugins/webster && uvx pytest -q --tb=no -p no:cacheprovider 2>&1 | tail -1 ); echo; echo "--- the count README pins at this commit (that line belongs to casting 6) ---"; grep -n 'passing across' plugins/webster/README.md; echo "--- AC-042 release version (plugin.json belongs to casting 6; read only) ---"; grep '"version"' plugins/webster/.claude-plugin/plugin.json
+# evidence-for: US-010, NFR-001, AC-038, AC-042, OT-036, FR-039
+# evidence-volatile: \d+\.\d+s
+#
+# NFR-001, AC-038 and OT-036 ask that `cd plugins/webster && uvx pytest` exit 0 with the count
+# recorded in README. At this commit it exits 1, and the one red is stated here rather than
+# dressed up: test_only_the_writable_file_set_is_tracked_and_changed. GI-007's guard reads a
+# baseline..HEAD diff; this Foundry run commits its re-executable evidence under evidence/,
+# which GI-007 does not name among its five locations, so the diff correctly reports those logs
+# as outside the surface. It goes green on the lead's strip commit. NFR-001 forbids skip and
+# xfail, so the guard fails and names the paths instead of being taught not to look.
+#
+# The README pin is green here. Casting 2 added a test this cycle, taking the suite from 147 to
+# 148, and casting 6 re-pinned the README line; both files belong to casting 6 and this casting
+# touched neither. The line is printed below because AC-042 and OT-036 are claims about it.
+#
+# The collected count and the per-module function counts are printed because this cycle's
+# instruction to casting 1 was that the collected count must not move. Its two files changed by
+# docstring and comment only: 148 collected before, 148 after.
+#
+# FR-039: which requirement each of this module's five tests pins, and whether it is a red-first
+# fix test or a guard over a claim that was asserted but never measured, is recorded in the
+# test_harness.py docstring table rather than enforced at runtime.
+
+whole suite exit: 1
+
+--- collected ---
+148 tests collected in 0.02s
+--- test functions defined, per module ---
+test_doctype.py:34
+test_drift.py:33
+test_harness.py:5
+test_llmstxt.py:18
+test_readme.py:6
+test_scaffold.py:12
+test_slop.py:10
+test_survey.py:30
+
+--- not green at this commit ---
+tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+1 failed, 147 passed in 12.91s
+
+--- the count README pins at this commit (that line belongs to casting 6) ---
+179:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+--- AC-042 release version (plugin.json belongs to casting 6; read only) ---
+  "version": "0.11.0",

@@ -1,0 +1,58 @@
+# evidence-cmd: echo "--- GI-005's three exclusions, searched for on the filesystem inside the committed fixture ---"; find plugins/webster/tests/fixtures/repo \( -name .git -o -name website -o -name .webster.json \) -print | sort; echo "matches: $(find plugins/webster/tests/fixtures/repo \( -name .git -o -name website -o -name .webster.json \) -print | wc -l | tr -d ' ')"; echo; echo "--- what the fixture does carry ---"; find plugins/webster/tests/fixtures/repo -type f | sed 's|plugins/webster/tests/fixtures/repo/||' | sort; echo; echo "--- the planted anchor, and the line the touch-main commit pushed it off ---"; sed -n '12p' plugins/webster/tests/fixtures/repo/docs/items/create-item.md; echo "src/app/main.py lines 14-16 as committed (post-touch):"; sed -n '14,16p' plugins/webster/tests/fixtures/repo/src/app/main.py | cat -n; echo; echo "--- the guard over the same three ---"; ( cd plugins/webster && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k committed_fixture 2>&1 | tail -2 )
+# evidence-for: US-010, FR-042, AC-040, GI-005
+# evidence-volatile: \d+\.\d+s
+#
+# FR-042 and AC-040. A-032 excludes three things from the committed fixture: a nested .git, the
+# Docusaurus website/ scaffold, and a pre-recorded docs/.webster.json. The find walks the
+# filesystem rather than the index because two of the three can appear untracked — a .git left
+# behind by a test that built in place, a manifest written by a drift.py record that ran against
+# the source tree instead of a copy — and either would make one run's results depend on the last
+# run's mess.
+#
+# The last block is the sweep's check on conftest's TOUCH_MAIN_MARKER comment, which says the
+# marker line "pushes the cited line src/app/main.py:15 off the @app.post(...) decorator that
+# docs/items/create-item.md anchors to". In the committed post-touch tree line 15 is blank and
+# the decorator sits on 16; strip the marker and the decorator is back on 15, which is what the
+# anchor cites. That comment used to write the page as create-item.md:12 — a line number into a
+# file this change may edit, which the docstring above it forbids. The page still carries the
+# anchor on line 12, printed here; the citation is gone.
+
+--- GI-005's three exclusions, searched for on the filesystem inside the committed fixture ---
+matches: 0
+
+--- what the fixture does carry ---
+docs/advanced/_category_.json
+docs/advanced/advanced.md
+docs/developer/_category_.json
+docs/developer/developer.md
+docs/export/_category_.json
+docs/export/export.md
+docs/faq.md
+docs/getting-started/_category_.json
+docs/getting-started/glossary.md
+docs/getting-started/overview.md
+docs/index.md
+docs/install/_category_.json
+docs/install/install.md
+docs/items/_category_.json
+docs/items/create-item.md
+docs/items/delete-item.md
+docs/items/items.md
+docs/items/no-audience.md
+docs/troubleshooting/_category_.json
+docs/troubleshooting/troubleshooting.md
+pyproject.toml
+README.md
+src/app/main.py
+src/cli/main.py
+
+--- the planted anchor, and the line the touch-main commit pushed it off ---
+This page shows you how to add an item to your store. <!-- src/app/main.py:15 -->
+src/app/main.py lines 14-16 as committed (post-touch):
+     1	
+     2	
+     3	@app.post("/items/{item_id}")
+
+--- the guard over the same three ---
+.                                                                        [100%]
+1 passed, 4 deselected in 0.00s

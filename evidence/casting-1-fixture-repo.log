@@ -1,0 +1,48 @@
+# evidence-cmd: echo "--- the three commits the fixture replays, and the offsets that make them portable ---"; sed -n '/^FIXTURE_AUTHOR_NAME/,/^)$/p' plugins/webster/tests/conftest.py; echo; echo "--- what a bare date does to HEAD under two zones, and what the offset does (git 2.50.1) ---"; T=$(mktemp -d); mk() { rm -rf "$1"; mkdir -p "$1"; ( cd "$1" && git -c init.defaultBranch=main init -q . && echo hi > f.txt && git add f.txt && env TZ="$2" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE="$3" GIT_COMMITTER_DATE="$3" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git commit -q -m init && printf '%s  %s' "$(git rev-parse HEAD)" "$(git log -1 --format=%aI)" ); }; printf 'bare   Kiritimati  %s\n' "$(mk $T/a Pacific/Kiritimati 2026-08-27T16:49:56)"; printf 'bare   LosAngeles  %s\n' "$(mk $T/b America/Los_Angeles 2026-08-27T16:49:56)"; printf 'offset Kiritimati  %s\n' "$(mk $T/c Pacific/Kiritimati 2026-08-27T16:49:56+00:00)"; printf 'offset LosAngeles  %s\n' "$(mk $T/d America/Los_Angeles 2026-08-27T16:49:56+00:00)"; rm -rf "$T"; echo; echo "--- OT-038 two consecutive builds, AC-040 two host timezones ---"; ( cd plugins/webster && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k "two_fixture_repo or host_timezone" 2>&1 | tail -2 )
+# evidence-for: US-010, FR-030, NFR-005, AC-040, OT-038
+# evidence-volatile: \d+\.\d+s
+#
+# FR-030 and OT-038, and the sweep's check on the comment above FIXTURE_COMMITS. That comment
+# makes three claims.
+#
+# 1. "Times are the source repo's own clock times restated at +00:00." Measured this cycle
+#    against the source fixture named in the casting's fixture_source field, with
+#    `git log --reverse --format='%s %aI'`: its three commits read
+#        init 2026-08-27T16:49:56-06:00 / docs ...16:50:40-06:00 / touch main ...16:51:11-06:00
+#    and the constant below restates those same wall-clock readings at +00:00. That command is
+#    not re-executed here because it reads a path outside the repository, which a checkout of
+#    this commit cannot be assumed to have.
+# 2. "the bare form of the first date below commits at +1400 under TZ=Pacific/Kiritimati and at
+#    -0700 under TZ=America/Los_Angeles, two distinct HEADs; with the offset written in, both
+#    zones give one." Re-measured below under git 2.50.1: two hashes bare, one hash with the
+#    offset.
+# 3. The comment names test_fixture_head_survives_a_change_of_host_timezone as what proves the
+#    cross-machine half, and test_two_fixture_repo_builds_produce_the_same_head as proving only
+#    the same-host half. Both run below.
+#
+# NFR-005: fixture_repo is per-test rather than session-scoped, so a test that edits main.py,
+# renames a file or rebases HEAD away cannot become another test's premise.
+
+--- the three commits the fixture replays, and the offsets that make them portable ---
+FIXTURE_AUTHOR_NAME = "t"
+FIXTURE_AUTHOR_EMAIL = "t@t"
+TOUCH_MAIN_SUBJECT = "touch main"
+FIXTURE_COMMITS = (
+    (
+        "init",
+        "2026-08-27T16:49:56+00:00",
+        ("README.md", "pyproject.toml", "src/app/main.py", "src/cli/main.py"),
+    ),
+    ("docs", "2026-08-27T16:50:40+00:00", ("docs",)),
+    (TOUCH_MAIN_SUBJECT, "2026-08-27T16:51:11+00:00", ("src/app/main.py",)),
+)
+
+--- what a bare date does to HEAD under two zones, and what the offset does (git 2.50.1) ---
+bare   Kiritimati  86188ab0258519010c43b00e936d8bd4e3f1ccbc  2026-08-27T16:49:56+14:00
+bare   LosAngeles  9a9e6a20540de674637584d7c6f043a428d3dc55  2026-08-27T16:49:56-07:00
+offset Kiritimati  330516672f2b2cdc3e0e18cab6ef7631b36bca0e  2026-08-27T16:49:56Z
+offset LosAngeles  330516672f2b2cdc3e0e18cab6ef7631b36bca0e  2026-08-27T16:49:56Z
+
+--- OT-038 two consecutive builds, AC-040 two host timezones ---
+..                                                                       [100%]
+2 passed, 3 deselected in 1.13s

@@ -1,0 +1,80 @@
+# evidence-cmd: echo "--- every file:line citation left in the two files this casting owns ---"; grep -nE '\.(py|md|json|toml|txt):[0-9]+|line[s]? [0-9]+' plugins/webster/tests/conftest.py plugins/webster/tests/test_harness.py; echo; echo "--- the two frozen targets they point at (GI-007 forbids moving plugins/forge) ---"; echo "plugins/forge/tests/conftest.py:545:"; sed -n '545p' plugins/forge/tests/conftest.py; echo "plugins/forge/tests/test_validate_spec.py:43-46:"; sed -n '43,46p' plugins/forge/tests/test_validate_spec.py; echo; echo "--- the seven scripts, and the five that bind at module import ---"; ls plugins/webster/scripts/*.py | sed 's|.*/||' | tr '\n' ' '; echo; grep -nE '^(ROOT|_DOCS_ARG|DOCS|BASE|LENS_ALLOW|SURVEY_PATH|TARGETS) =' plugins/webster/scripts/*.py; echo "the other two read argv inside main:"; grep -n 'argparse.ArgumentParser\|sys.argv' plugins/webster/scripts/scaffold.py plugins/webster/scripts/rendered.py; echo; echo "--- FR ids named by a TEST module at c3efe37, the commit before test_harness.py existed ---"; for id in FR-029 FR-030 FR-039 FR-042 FR-043; do printf '%s: ' "$id"; git grep -l "$id" c3efe37 -- 'plugins/webster/tests/test_*.py' | sed 's|.*/||' | tr '\n' ' '; echo; done; echo "and where FR-029 / FR-030 did appear:"; git grep -c 'FR-029\|FR-030' c3efe37 -- plugins/webster/tests/conftest.py; echo; echo "--- every mention of RUN_EVIDENCE_PREFIX, and the one line that waives with it ---"; grep -n 'RUN_EVIDENCE_PREFIX' plugins/webster/tests/test_harness.py; echo; echo "--- the guard over FR-043 / GI-007, red at this commit by design ---"; ( cd plugins/webster && uvx pytest tests/test_harness.py -q --tb=no -p no:cacheprovider -k only_the_writable 2>&1 | grep -E '^FAILED' | cut -d' ' -f2 ); ( cd plugins/webster && uvx pytest tests/test_harness.py -q --tb=no -p no:cacheprovider -k only_the_writable 2>&1 | tail -1 )
+# evidence-for: US-010, FR-039, FR-043, AC-039, GI-007, OT-043
+# evidence-volatile: \d+\.\d+s
+#
+# GRIND cycle 12's sweep of every attribution, equivalence and coverage clause in this casting's
+# files. Four clauses did not survive measurement and were corrected; this log is what measured
+# them.
+#
+# 1. conftest said "line numbers appear below only for files outside this change's writable
+#    surface". The first block is the audit: what remains points at plugins/forge, which GI-007
+#    freezes, plus src/app/main.py:15, which is the anchor string the fixture plants rather than
+#    a citation. The page citation create-item.md:12 pointed inside the surface and is gone.
+# 2. conftest's five-of-seven scripts paragraph. The seven scripts are listed and the five
+#    module-level bindings printed with their real line numbers; scaffold.py reaches argparse and
+#    rendered.py reaches sys.argv inside a function, which is why they are the two exceptions.
+# 3. test_harness said FR-042 and FR-043 "were the only two FR ids in this casting named by no
+#    test at all". At c3efe37 — the commit before test_harness.py first appeared — FR-039 was
+#    named by all seven test modules and FR-029, FR-030, FR-042 and FR-043 by none. FR-029 and
+#    FR-030 appeared only in conftest.py, which asserts nothing. Four, not two.
+# 4. test_harness said the evidence prefix "is used exactly once below". It is named five times
+#    in the file; exactly one of them, in strip_already_made, waives anything.
+#
+# FR-043 / OT-043 / GI-007: the scope guard is red at this commit and says so rather than being
+# taught not to look. This run commits its re-executable evidence under evidence/, GI-007 names
+# five locations and that is not one of them, so a baseline..HEAD diff correctly reports the
+# logs as outside the surface until the lead's strip commit removes them.
+
+--- every file:line citation left in the two files this casting owns ---
+plugins/webster/tests/conftest.py:75:``src/app/main.py:15`` is the anchor the fixture plants and ``drift.py``
+plugins/webster/tests/conftest.py:110:# in plugins/forge/tests/conftest.py, line 545 — a file outside this change's
+plugins/webster/tests/conftest.py:156:# pushes the cited line `src/app/main.py:15` off the ``@app.post(...)`` decorator
+plugins/webster/tests/conftest.py:197:    ``plugins/forge/tests/test_validate_spec.py``, lines 43-46, which dumps both
+plugins/webster/tests/conftest.py:292:            f"commit is empty and the anchor src/app/main.py:15 stops drifting, "
+plugins/webster/tests/test_harness.py:36:  ``src/app/main.py:15`` appears in both files and points inside the surface,
+
+--- the two frozen targets they point at (GI-007 forbids moving plugins/forge) ---
+plugins/forge/tests/conftest.py:545:
+            timeout=30,
+plugins/forge/tests/test_validate_spec.py:43-46:
+    assert result.returncode == 0, (
+        f"Expected exit 0 on well-formed transcript; got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+--- the seven scripts, and the five that bind at module import ---
+doctype.py drift.py llmstxt.py rendered.py scaffold.py slop.py survey.py 
+plugins/webster/scripts/doctype.py:251:LENS_ALLOW = {t.strip().lower() for t in os.environ.get("WEBSTER_LENS_ALLOW", "").split(",")
+plugins/webster/scripts/doctype.py:307:SURVEY_PATH = os.environ.get("WEBSTER_SURVEY", "")
+plugins/webster/scripts/drift.py:39:ROOT = os.path.abspath(os.environ.get("WEBSTER_ROOT", "."))
+plugins/webster/scripts/drift.py:40:_DOCS_ARG = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("WEBSTER_DOCS", "docs")
+plugins/webster/scripts/drift.py:41:DOCS = _DOCS_ARG if os.path.isabs(_DOCS_ARG) else os.path.join(ROOT, _DOCS_ARG)
+plugins/webster/scripts/llmstxt.py:23:ROOT = os.path.abspath(os.environ.get("WEBSTER_ROOT", "."))
+plugins/webster/scripts/llmstxt.py:24:DOCS = os.path.join(ROOT, os.environ.get("WEBSTER_DOCS", "docs"))
+plugins/webster/scripts/llmstxt.py:25:BASE = os.environ.get("WEBSTER_BASE_URL", "").rstrip("/")
+plugins/webster/scripts/slop.py:12:TARGETS = sys.argv[1:] or ["docs"]
+plugins/webster/scripts/survey.py:43:ROOT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
+the other two read argv inside main:
+plugins/webster/scripts/scaffold.py:525:    ap = argparse.ArgumentParser(description=__doc__,
+plugins/webster/scripts/rendered.py:50:    build = sys.argv[2] if len(sys.argv) > 2 else "website/build"
+
+--- FR ids named by a TEST module at c3efe37, the commit before test_harness.py existed ---
+FR-029: 
+FR-030: 
+FR-039: test_doctype.py test_drift.py test_llmstxt.py test_readme.py test_scaffold.py test_slop.py test_survey.py 
+FR-042: 
+FR-043: 
+and where FR-029 / FR-030 did appear:
+c3efe37:plugins/webster/tests/conftest.py:3
+
+--- every mention of RUN_EVIDENCE_PREFIX, and the one line that waives with it ---
+191:RUN_EVIDENCE_PREFIX = "evidence/"
+253:    ``evidence/`` logs. See ``RUN_EVIDENCE_PREFIX`` for why that is not the
+265:    The sole exception documented at ``RUN_EVIDENCE_PREFIX``: the diff names
+280:    return path.startswith(RUN_EVIDENCE_PREFIX) and path not in head_paths
+616:    sample = RUN_EVIDENCE_PREFIX + "casting-0-example.log"
+645:        f"and nothing else in the repository. Committed {RUN_EVIDENCE_PREFIX} "
+
+--- the guard over FR-043 / GI-007, red at this commit by design ---
+tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+1 failed, 4 deselected in 0.05s
