@@ -2,10 +2,19 @@
 the change surface (US-010; FR-029, FR-030, FR-042, FR-043; CT-007, GI-005,
 GI-007; OT-038, OT-043; AC-039, AC-040).
 
-Every other module in this suite tests a webster script. This one tests the
-things those modules stand on, because a harness claim nobody measures is the
-same false pass ``drift.py`` and ``doctype.py`` are being fixed to stop
-reporting — and five such claims had already gone bad:
+Six of this suite's eight modules take a webster script as their subject:
+``test_doctype.py``, ``test_drift.py``, ``test_llmstxt.py``,
+``test_scaffold.py``, ``test_slop.py`` and ``test_survey.py``. This module and
+``test_readme.py`` are the other two, and neither has a script for a subject:
+they test the plugin's own records — the harness those six stand on, and the
+README that counts them. One ``run_script`` call does appear below, handing
+``survey.py`` to the child interpreter so its version can be read back, but
+what that test measures is the harness. The sentence this replaces read "Every
+other module in this suite tests a webster script", which counted
+``test_readme.py`` — whose own docstring says nothing there runs a script —
+among the modules that do. A harness claim nobody measures is the same false
+pass ``drift.py`` and ``doctype.py`` are being fixed to stop reporting — and
+five such claims had already gone bad:
 
 - ``conftest.py``'s interpreter-skew docstring asserted the child ``python3``
   "resolves through PATH to 3.14.6" and is "not the one running pytest". Under

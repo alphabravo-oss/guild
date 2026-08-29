@@ -1,0 +1,30 @@
+# evidence-cmd: for f in plugins/webster/scripts/*.py; do names=$(grep -E '^[A-Za-z_][A-Za-z0-9_]* = .*(os\.environ|os\.getenv|sys\.argv)' "$f" | sed 's/ =.*//' | tr '\n' ' ' | sed 's/ $//'); printf '%s: %s\n' "${f##*/}" "${names:-(none at import; binds inside main)}"; done; echo '--- conftest.py GI-004 paragraph ---'; sed -n '/^Nothing here imports a webster script/,/^$/p' plugins/webster/tests/conftest.py
+# evidence-for: FR-029, GI-004, FR-038
+
+doctype.py: LENS_ALLOW SURVEY_PATH
+drift.py: ROOT _DOCS_ARG
+llmstxt.py: ROOT DOCS BASE
+rendered.py: (none at import; binds inside main)
+scaffold.py: (none at import; binds inside main)
+slop.py: TARGETS
+survey.py: ROOT
+--- conftest.py GI-004 paragraph ---
+Nothing here imports a webster script, and no test module may either (GI-004).
+Five of the plugin's seven scripts bind their root, their docs directory or
+their allowlists at module import, from argv or ``os.environ``, before a test
+could set any of them: ``drift.py``'s ``ROOT`` and ``_DOCS_ARG``;
+``llmstxt.py``'s ``ROOT``, ``DOCS`` and ``BASE``; ``doctype.py``'s
+``LENS_ALLOW`` and ``SURVEY_PATH``; ``survey.py``'s ``ROOT``; ``slop.py``'s
+``TARGETS``. Each of those is a module-level assignment, so importing the
+script would freeze all of them at the importing process's values: for those
+five, subprocess is the only honest way to drive the script at all. The other
+two read their arguments inside ``main`` instead — ``scaffold.py`` through
+``argparse``, ``rendered.py`` through ``sys.argv`` — so an in-process test of
+either would be possible, merely awkward. ``run_script`` drives those two the
+same way anyway, because one invocation shape across the suite beats two kinds
+of test plus a rule about which script gets which, and the subprocess shape is
+the one a reader runs. The count is stated because this paragraph once opened
+"Every script binds ...", listed five names, and was read as covering all
+seven: it was false for exactly the two scripts it did not name, and one of
+them, ``scaffold.py``, has a test module sitting beside this file.
+

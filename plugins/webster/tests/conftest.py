@@ -37,14 +37,23 @@ shebang and Claude Code invokes it as
 ``python3 ${CLAUDE_PLUGIN_ROOT}/scripts/X.py``.
 
 Nothing here imports a webster script, and no test module may either (GI-004).
-Every script binds its root, its docs directory and its allowlists at module
-import, from argv or ``os.environ``, before a test could set any of them:
-``drift.py``'s ``ROOT`` and ``_DOCS_ARG``; ``llmstxt.py``'s ``ROOT``, ``DOCS``
-and ``BASE``; ``doctype.py``'s ``LENS_ALLOW`` and ``SURVEY_PATH``;
-``survey.py``'s ``ROOT``; ``slop.py``'s ``TARGETS``. Every one is a
-module-level assignment, so an import would freeze all of them at the importing
-process's values. Subprocess is the only honest way to drive these scripts, and
-it is also how a reader runs them.
+Five of the plugin's seven scripts bind their root, their docs directory or
+their allowlists at module import, from argv or ``os.environ``, before a test
+could set any of them: ``drift.py``'s ``ROOT`` and ``_DOCS_ARG``;
+``llmstxt.py``'s ``ROOT``, ``DOCS`` and ``BASE``; ``doctype.py``'s
+``LENS_ALLOW`` and ``SURVEY_PATH``; ``survey.py``'s ``ROOT``; ``slop.py``'s
+``TARGETS``. Each of those is a module-level assignment, so importing the
+script would freeze all of them at the importing process's values: for those
+five, subprocess is the only honest way to drive the script at all. The other
+two read their arguments inside ``main`` instead — ``scaffold.py`` through
+``argparse``, ``rendered.py`` through ``sys.argv`` — so an in-process test of
+either would be possible, merely awkward. ``run_script`` drives those two the
+same way anyway, because one invocation shape across the suite beats two kinds
+of test plus a rule about which script gets which, and the subprocess shape is
+the one a reader runs. The count is stated because this paragraph once opened
+"Every script binds ...", listed five names, and was read as covering all
+seven: it was false for exactly the two scripts it did not name, and one of
+them, ``scaffold.py``, has a test module sitting beside this file.
 
 Those are named by symbol and not by ``file:line`` deliberately. An earlier
 version of this paragraph cited five line numbers into the scripts, and all

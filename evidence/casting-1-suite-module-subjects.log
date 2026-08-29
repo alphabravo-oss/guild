@@ -1,0 +1,26 @@
+# evidence-cmd: for f in plugins/webster/tests/test_*.py; do t=$(tr '\n' ' ' < "$f" | grep -oE 'run_script\( *"[a-z_]+\.py"' | sed 's/.*"\(.*\)"/\1/' | sort -u | tr '\n' ' ' | sed 's/ $//'); printf '%s: %s\n' "${f##*/}" "${t:-(drives no script)}"; done; echo '--- test_harness.py scope paragraph ---'; sed -n '/^Six of this suite/,/^$/p' plugins/webster/tests/test_harness.py
+# evidence-for: FR-039, US-010
+
+test_doctype.py: doctype.py
+test_drift.py: drift.py
+test_harness.py: survey.py
+test_llmstxt.py: llmstxt.py
+test_readme.py: (drives no script)
+test_scaffold.py: scaffold.py
+test_slop.py: slop.py
+test_survey.py: survey.py
+--- test_harness.py scope paragraph ---
+Six of this suite's eight modules take a webster script as their subject:
+``test_doctype.py``, ``test_drift.py``, ``test_llmstxt.py``,
+``test_scaffold.py``, ``test_slop.py`` and ``test_survey.py``. This module and
+``test_readme.py`` are the other two, and neither has a script for a subject:
+they test the plugin's own records — the harness those six stand on, and the
+README that counts them. One ``run_script`` call does appear below, handing
+``survey.py`` to the child interpreter so its version can be read back, but
+what that test measures is the harness. The sentence this replaces read "Every
+other module in this suite tests a webster script", which counted
+``test_readme.py`` — whose own docstring says nothing there runs a script —
+among the modules that do. A harness claim nobody measures is the same false
+pass ``drift.py`` and ``doctype.py`` are being fixed to stop reporting — and
+five such claims had already gone bad:
+
