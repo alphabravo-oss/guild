@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/webster && uvx pytest -q -p no:cacheprovider 2>&1 | tail -n 3
+# evidence-for: US-010, AC-042, FR-038, NFR-001, AC-038, OT-036
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+=========================== short test summary info ============================
+FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+1 failed, 141 passed in 12.29s

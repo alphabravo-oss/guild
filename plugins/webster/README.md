@@ -106,7 +106,7 @@ no fallback path here.
 | --- | --- |
 | `scripts/survey.py` | Two surfaces, both anchored to `file:line`. **`user_surface`**: the screens, the text on the buttons, headings and fields, the product's own error strings, the subcommands somebody types. **`surface`**: HTTP routes from Next.js App Router and Pages API, Express, Fastify, Hono, FastAPI, Flask and Go mux, plus CLI binaries, package exports, env vars and OpenAPI specs. Names the extractors that fit the stack |
 | `scripts/drift.py` | `record` stores HEAD, a hash of the docs tree, every anchor the pages cite and a digest of each cited line. `check` reports anchors that no longer resolve, cited lines whose digest moved, and pages whose cited code changed. `clean` and `unrelated_changes` exit 0; `drift` exits 1; `no_docs`, `no_manifest`, `no_anchors`, `no_git`, `head_missing` and `hashes_partial` exit 2. `clean` is reserved for a set where nothing changed at all, so code that changed under no citation is `unrelated_changes` rather than a finding; a set that cites no sources is `no_anchors` rather than `clean`, and an anchor the record held but never took a digest of leaves the run `hashes_partial`, because resolving every anchor you have is not the same as having been checked |
-| `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem, and validates an existing one. Every run prints a JSON object whose first key is the status, the run that went right included, so a caller reading that key never has to guard the one path where nothing went wrong. Writing a tree reports `ok` at exit 0, and `bad_subject` for a subject key that cannot become a directory name or `cannot_write` for a path the filesystem refused exit 2; init never exits 1. Validating one reports `violations` at exit 1, `ok` at exit 0, and `no_docs` for a missing directory or `cannot_read` for a page or a directory the filesystem refused exit 2 |
+| `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem, and validates an existing one. A run that reaches a mode prints a JSON object whose first key is the status, the run that went right included, so a caller reading that key never has to guard the one path where nothing went wrong; an argv that reaches neither — no mode at all, or a word that is not init or check — stops in argparse, which writes usage to stderr and leaves stdout empty, so on that one path there is no key to read. Writing a tree reports `ok` at exit 0, and `bad_subject` for a subject key that cannot become a directory name or `cannot_write` for a path the filesystem refused exit 2; init never exits 1. Validating one reports `violations` at exit 1, `ok` at exit 0, and `no_docs` for a missing directory or `cannot_read` for a page or a directory the filesystem refused exit 2 |
 | `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1, advisories alone (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) exit 0, and a tree with nothing to check — no docs directory, or no page that is not a stub and no frontmatter defect on the stubs either — exits 2. Findings are grouped by rule with a count |
 | `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding, exit 2 on a target that is not there or cannot be read |
 | `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text. The only check that sees what a browser sees. Exit 1 on any leak |
@@ -172,12 +172,22 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-129 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+142 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
-and the file under test is the one a user actually invokes: each script binds its root, its docs
-directory and its allowlists at import time, and an in-process test would freeze all of them at
-the importing process's values. `drift.py`'s cases all run against the committed fixture repo in
-`tests/fixtures/repo/`, rebuilt into a real git repository with fixed commit dates for each test.
+and the file under test is the one a user actually invokes. Five of the seven scripts leave no
+other way in: `drift.py`, `llmstxt.py`, `doctype.py`, `survey.py` and `slop.py` bind their root,
+their docs directory or their allowlists at module import, out of argv or the environment, so an
+in-process test would freeze all of them at the importing process's values. The other two read
+their arguments inside `main` — `scaffold.py` through `argparse`, `rendered.py` through
+`sys.argv` — and an in-process test of either would be possible, merely awkward. `run_script`
+drives those two the same way regardless, because one invocation shape across the suite beats
+two kinds of test plus a rule about which script gets which, and the subprocess shape is the one
+a reader runs. The split is written down because the sentence this replaces said "each script
+binds", named no script and no number, and was therefore read as covering all seven. It was
+false for `scaffold.py` and for `rendered.py`, and `scaffold.py` has a test module sitting one
+directory away from the file that said it. `drift.py`'s cases all run against the committed
+fixture repo in `tests/fixtures/repo/`, rebuilt into a real git repository with fixed commit
+dates for each test.
 The other modules build the one small tree a case needs under pytest's `tmp_path` and reach for
 that fixture only where the case wants a real repository or a real page beneath it.
 
@@ -237,21 +247,33 @@ script here with no contract to publish.
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
 staged rename, a missing repository, a rebased-away HEAD, a docs tree sitting at the repository
 root, a developer's `diff.relative` setting that renamed the paths git printed, an anchor citing
-line zero, a cited line that changed and the note a run with no commit prints about the digests
-it therefore did not compare; `doctype.py` across the widened symbol, route and flag lenses, the
-acronym list, stubs, the `WEBSTER_SURVEY` allowlist and the contract `types` prints to a writer
-before the lens reads them; `survey.py` across decorators split over several lines, Flask's
-declared methods, `pyproject.toml`, `HTTPException` details, `os.getenv` reads, and the option
+line zero, a cited line that changed, a cited file sitting under the docs tree and another
+sitting outside the docs root, both of which the change counts drop on purpose and the suspect
+oracle must not, the `broken_anchors` key a `no_manifest` run has to publish its list under, and
+the note a run with no commit prints about the digests it therefore did not compare;
+`doctype.py` across the widened symbol, route and flag lenses, the acronym list, stubs, the
+`WEBSTER_SURVEY` allowlist, the architecture rule that keeps firing for an operator after routes
+and flags stopped, the pages a passing run's own closing line claims to have matched, and the
+contract `types` prints to a writer before the lens reads them; `survey.py` across decorators
+split over several lines, Flask's declared methods, `pyproject.toml`, `HTTPException` details,
+`os.getenv` reads, the anchor every `surface` and `user_surface` entry carries where a `tooling`
+entry has none to carry, the count its own red-first table states about itself, and the option
 flags a parser declares — including a description that merely names another flag, which is not a
-declaration, a declaration a formatter split across lines, which is, and a decorator whose
+declaration, a declaration a formatter split across lines, which is, a decorator whose
 parentheses never balance inside the lines the join reads, where no verb is published at all
-rather than the `GET` a Flask default would otherwise have invented; `llmstxt.py` and
-`slop.py` across the fixes each of those carries, and `scaffold.py` across those plus the docs
-path it is handed and cannot write into, a page it cannot read, a malformed `_category_.json`,
-a directory below the top level that nothing can list, which is `cannot_read` rather than a tree
-read and found sound, a `--title` or a `--subject` label carrying a byte no page can hold, which
-leaves nothing written behind it, and the exit set its help text publishes for both modes with
-the `status` key every one of those envelopes leads with. Every fix has at least one test that
+rather than the `GET` a Flask default would otherwise have invented, and a parenthesis inside a
+comment or a string, which is a character rather than syntax and used to end that join two lines
+early; `llmstxt.py` across the fixes it carries plus the scaffold brace that stops a README line
+from becoming a summary and the checkout's directory name, the one header source published
+exactly as the filesystem spells it because nothing follows it in the chain; `slop.py` across
+its own plus the directories the walk prunes, which are neither read nor counted; and
+`scaffold.py` across those plus the docs path it is handed and cannot write into, a page it
+cannot read, a malformed `_category_.json`, a docs directory nothing can stat, a directory below
+the top level that nothing can list, which is `cannot_read` rather than a tree read and found
+sound, the violations collected before a refused read, which are dropped rather than reported
+out of a scan that stopped, a `--title` or a `--subject` label carrying a byte no page can hold,
+which leaves nothing written behind it, and the exit set its help text publishes for both modes
+with the `status` key every one of those envelopes leads with. Every fix has at least one test that
 fails against the script as it stood before the fix; the rest are guards, there so a fix does not
 take something else away with it.
 

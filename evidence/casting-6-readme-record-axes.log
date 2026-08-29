@@ -1,0 +1,19 @@
+# evidence-cmd: d=$(mktemp -d) && for REV in cfafe8e 61fb1df; do rm -rf "$d/w"; mkdir -p "$d/w"; cp -R plugins/webster/. "$d/w/"; rm -rf "$d/w/scripts"; git archive $REV plugins/webster/scripts | tar -x --strip-components=2 -C "$d/w"; git show $REV:plugins/webster/README.md > "$d/w/README.md"; git show $REV:plugins/webster/.claude-plugin/plugin.json > "$d/w/.claude-plugin/plugin.json"; echo "--- $REV ---"; ( cd "$d/w" && uvx pytest -q -p no:cacheprovider tests/test_readme.py 2>&1 | grep -E "^(FAILED|[0-9]+ (failed|passed))" ); done; rm -rf "$d"
+# evidence-for: FR-039, AC-039, FR-038, AC-042, OT-037
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+--- cfafe8e ---
+FAILED tests/test_readme.py::test_status_passing_count_matches_the_collected_suite
+FAILED tests/test_readme.py::test_status_section_names_the_run_command_and_the_version
+FAILED tests/test_readme.py::test_readme_documents_webster_survey_and_the_python_floor
+FAILED tests/test_readme.py::test_the_script_table_names_drift_pys_own_status_vocabulary
+FAILED tests/test_readme.py::test_the_script_table_publishes_each_scripts_own_exit_set
+FAILED tests/test_readme.py::test_the_script_table_puts_each_status_under_its_scripts_exit_code
+6 failed in 0.08s
+--- 61fb1df ---
+FAILED tests/test_readme.py::test_status_passing_count_matches_the_collected_suite
+FAILED tests/test_readme.py::test_the_script_table_names_drift_pys_own_status_vocabulary
+FAILED tests/test_readme.py::test_the_script_table_publishes_each_scripts_own_exit_set
+FAILED tests/test_readme.py::test_the_script_table_puts_each_status_under_its_scripts_exit_code
+4 failed, 2 passed in 0.08s

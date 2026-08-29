@@ -1,0 +1,18 @@
+# evidence-cmd: cd plugins/webster && out=$(python3 scripts/scaffold.py 2>/dev/null); code=$?; echo "scaffold.py, no mode:    exit=$code stdout_bytes=$(printf %s "$out" | wc -c | tr -d ' ')"; out=$(python3 scripts/scaffold.py wrongmode 2>/dev/null); code=$?; echo "scaffold.py, wrong mode: exit=$code stdout_bytes=$(printf %s "$out" | wc -c | tr -d ' ')"; echo "--- scripts that bind root/docs/allowlists at module import ---"; grep -lE '^_?[A-Z][A-Z_]* *=.*(sys\.argv|os\.environ|os\.getenv)' scripts/*.py | sort; echo "--- scripts that do not ---"; grep -LE '^_?[A-Z][A-Z_]* *=.*(sys\.argv|os\.environ|os\.getenv)' scripts/*.py | sort; echo "--- unscoped claims still asserted in the three files ---"; grep -c 'Every run prints a JSON object' README.md; grep -hc 'every script binds ROOT' tests/test_readme.py; grep -hc 'Every script binds ROOT' tests/conftest.py; true
+# evidence-for: FR-038, AC-042, CT-005, FR-029, GI-004
+
+scaffold.py, no mode:    exit=2 stdout_bytes=0
+scaffold.py, wrong mode: exit=2 stdout_bytes=0
+--- scripts that bind root/docs/allowlists at module import ---
+scripts/doctype.py
+scripts/drift.py
+scripts/llmstxt.py
+scripts/slop.py
+scripts/survey.py
+--- scripts that do not ---
+scripts/rendered.py
+scripts/scaffold.py
+--- unscoped claims still asserted in the three files ---
+0
+0
+0

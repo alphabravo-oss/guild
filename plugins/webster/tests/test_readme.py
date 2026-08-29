@@ -1,8 +1,18 @@
 """Tests for the claims plugins/webster/README.md makes about this suite (spec US-010).
 
-Every other module in this directory tests a script. This one tests the README,
-because the README is the only place in the plugin that states a number nothing
-verified. FR-038 asks the Status section to carry the run command and the
+Six of this suite's eight modules take a webster script as their subject:
+``test_doctype.py``, ``test_drift.py``, ``test_llmstxt.py``,
+``test_scaffold.py``, ``test_slop.py`` and ``test_survey.py``. This module and
+``test_harness.py`` are the other two, and neither has a script for a subject:
+they test the plugin's own records — the README that counts the suite, and the
+harness those six stand on. The sentence this replaces read "Every other module
+in this directory tests a script", which counted ``test_harness.py`` — whose own
+docstring opens "Tests for the harness itself" — among the modules that do, and
+``test_harness.py`` carried the mirror image of the same miscount about this
+file.
+
+This one tests the README, because the README is the only place in the plugin
+that states a number nothing verified. FR-038 asks the Status section to carry the run command and the
 passing count; AC-042 asks it to carry the version and ``WEBSTER_SURVEY``;
 NFR-001 asks that ``cd plugins/webster && uvx pytest`` exit 0 *with the count
 recorded in README*. A hard-coded count with no test behind it is a claim that
@@ -11,31 +21,65 @@ this whole spec exists to remove — and it fails silently, in the direction tha
 looks fine: the first test anybody adds makes the sentence false while every
 gate stays green.
 
-Which claim each test pins, and what it did before this module existed
-(FR-039, AC-039 — the red-first property is recorded here rather than enforced
-at runtime, matching test_slop.py and test_scaffold.py):
+Which claim each test pins, and the revision it is RED against (FR-039,
+AC-039 — the red-first property is recorded here rather than enforced at
+runtime). Measured, not reasoned about, and measured on a different axis from
+the sibling modules'. What this file reads is the README, ``plugin.json`` and
+the seven scripts' usage texts, so putting one old script back proves nothing
+about it and all three surfaces move together per row. Each row is one run --
+
+    cp -R plugins/webster "$scratch/webster"
+    rm -rf "$scratch/webster/scripts"
+    git archive REV plugins/webster/scripts \
+        | tar -x --strip-components=2 -C "$scratch/webster"
+    git show REV:plugins/webster/README.md > "$scratch/webster/README.md"
+    git show REV:plugins/webster/.claude-plugin/plugin.json \
+        > "$scratch/webster/.claude-plugin/plugin.json"
+    cd "$scratch/webster" && uvx pytest tests/test_readme.py -v
+
+Two revisions are recorded because the two answers differ and an earlier
+version of this record named neither. cfafe8e is the pre-change state AC-039
+names, the one every sibling module measures against; 61fb1df is the commit
+before this module existed, which is what the header over these rows used to
+say. Against cfafe8e all six of these are red. Against 61fb1df four are, and
+the two that are not are the two that used to be labelled "green before and
+after by design" — true of that axis, false of the other, and the header named
+the axis loosely enough that the label read as a claim about both.
 
 - ``test_status_passing_count_matches_the_collected_suite`` — FR-038 / AC-042 /
-  NFR-001. RED on the README as it stood: the Status section read ``69
-  passing`` while ``tests/test_*.py`` defined 77 test functions. The count was
-  written by hand when the suite had 69 and never moved again, which is exactly
-  the drift this test makes impossible to commit.
+  NFR-001. RED against both. The cfafe8e Status section states no count at all,
+  so the read raises before there is anything to compare; at 61fb1df it read
+  ``69 passing``, written by hand when the suite had 69 and never moved again —
+  77 test functions by the time this row was first written, 142 now. That is
+  exactly the drift this test makes impossible to commit.
 - ``test_status_section_names_the_run_command_and_the_version`` — AC-042 /
-  OT-040 / NFR-003. Green before and after by design: it guards the run command
-  and the 0.11.0 bump against being lost while the count line is edited.
+  OT-040 / NFR-003. RED against cfafe8e, green against 61fb1df. The cfafe8e
+  Status section carries neither half: no ``cd plugins/webster && uvx pytest``,
+  because there was no suite to run, and "Version 0.2.0." against a manifest
+  already shipping 0.10.0. Both had been written by 61fb1df, which is the whole
+  of what the old "green before and after by design" was about.
 - ``test_readme_documents_webster_survey_and_the_python_floor`` — AC-042 /
-  FR-038 / NFR-002, the other half of the same guard, for the two claims that
-  live outside the Status section.
+  FR-038 / NFR-002. RED against cfafe8e, green against 61fb1df, on the same
+  axis and for the matching reason: the cfafe8e paragraph that introduces
+  ``WEBSTER_LENS_ALLOW`` names no second variable, so ``WEBSTER_SURVEY`` — the
+  transport GI-002 and CT-003 put in ``doctype.py`` — is absent from the file a
+  reader would look it up in. What made it "the other half" of the row above is
+  only that the two claims it pins live outside the Status section.
 - ``test_the_script_table_names_drift_pys_own_status_vocabulary`` — FR-038 /
-  AC-042. RED on the README as it stood: the ``scripts/drift.py`` row said
-  ``no_anchors`` and "Exit 1 on drift, 2 on nothing to measure", which was the
-  vocabulary before this spec changed it. ``unrelated_changes`` — the status
-  US-002 exists to add, and the one that tells a reader ordinary development is
-  not a finding — appeared nowhere in the file, and neither did ``no_git``,
-  ``head_missing`` or ``hashes_partial``. Same failure as the count above, one
+  AC-042. RED against both, and by a different route at each. At cfafe8e the
+  read raises before any comparison: that ``drift.py``'s usage text has no
+  sentence putting any status at exit 0, because the exit-0 vocabulary US-002
+  adds did not exist to be put there. At 61fb1df the script had grown it and
+  the row had not — the ``scripts/drift.py`` row named none of
+  ``unrelated_changes``, ``no_docs``, ``no_manifest``, ``no_git`` or
+  ``head_missing``, and ``unrelated_changes`` is the one that tells a reader
+  ordinary development is not a finding. Same failure as the count above, one
   table row over: prose describing a script that moved under it.
 - ``test_the_script_table_publishes_each_scripts_own_exit_set`` — FR-038 /
-  AC-042 / OT-040. RED on the README as it stood: three rows published an exit
+  AC-042 / OT-040. RED against both, and the assertion that fires first at
+  either is the silence one: ``llmstxt.py`` names an exit code in neither its
+  usage text nor its row, while its source calls ``sys.exit``. Behind that, and
+  what this test was first written for, three rows published an exit
   contract narrower than the script's own usage text. The ``scaffold.py`` row
   named its exit 1 alone, and neither the ``ok`` envelope init returns at exit
   0 nor the ``bad_subject``, ``cannot_write``, ``no_docs`` and ``cannot_read``
@@ -45,23 +89,28 @@ at runtime, matching test_slop.py and test_scaffold.py):
   ``slop.py`` row named its exit 1 alone, and not the exit 2 a missing or
   unreadable target had just been given. A caller handed a code the README has
   no entry for is in the same position as one handed a status it has no entry
-  for, and three of the seven rows had put it there. RED a second time on the
-  ``llmstxt.py`` row, which published no exit contract at all while that
-  script's usage text had grown one. What the check could not see either time
+  for, and three of the seven rows had put it there. The ``llmstxt.py`` silence
+  is the second thing this test went red on, later and separately, when that
+  script's usage text had grown a contract its row still published nothing of.
+  What the check could not see either time
   was both sides going quiet at once: two empty sets are equal, so a row and a
   usage text that agree on saying nothing passed it. The silence is now read
   against the script's own ``sys.exit`` calls instead — ``survey.py`` has none
   and is the honest case, and every other script here ends in
   ``sys.exit(main())``.
 - ``test_the_script_table_puts_each_status_under_its_scripts_exit_code`` —
-  FR-038 / AC-042. RED on the README as it stood, through the ``scaffold.py``
-  row, which backticked ``check`` inside its exit-1 clause where that script's
+  FR-038 / AC-042. RED against both, and at either revision the assertion that
+  fires first is the unread one: ``doctype.py``'s usage text publishes exits 0
+  and 1, and nothing in its row was placed against either of them. Behind that,
+  and what this test was first written for, the ``scaffold.py``
+  row backticked ``check`` inside its exit-1 clause where that script's
   usage text names the word only at exit 2. The check above asked whether each
   status was *named* in the row and never where, so swapping the ``drift.py``
   row's exit-0 and exit-2 groups outright — telling a reader that a missing
   repository is a clean run and that ordinary development is a not-checked one
-  — passed every assertion in this module. RED a second time on the rows with
-  no status to be placed by. Only ``drift.py`` and ``scaffold.py`` print a
+  — passed every assertion in this module. The rows with no status to be placed
+  by are what it went red on the second time, later and separately.
+  Only ``drift.py`` and ``scaffold.py`` print a
   JSON status, so five of the seven rows compared nothing at all here, and one
   counter across the whole table stayed positive on the strength of those two:
   the ``doctype.py`` and ``slop.py`` rows could have their exit groups
@@ -112,9 +161,17 @@ README = PLUGIN_ROOT / "README.md"
 PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 CONFTEST = TESTS_DIR / "conftest.py"
 
-# Read as text and parsed with ``ast``, never imported: every script binds ROOT,
-# DOCS and its allowlists from ``sys.argv`` and the environment at module level
-# (GI-004), so an import here would run that binding against pytest's own argv.
+# Read as text and parsed with ``ast``, never imported. GI-004 bars the import
+# outright, and for five of the seven scripts there would be no other way in
+# anyway: drift.py, llmstxt.py, doctype.py, survey.py and slop.py bind their
+# root, their docs directory or their allowlists out of ``sys.argv`` and the
+# environment at module level, so an import here would run that binding against
+# pytest's own argv. scaffold.py and rendered.py read theirs inside ``main`` and
+# would survive it. All seven are parsed the same way regardless, because a rule
+# about which script may be imported is a rule somebody has to keep, and
+# ``ast.parse`` keeps none. The count is stated because this comment once opened
+# "every script binds", which was false for exactly the two it did not name and
+# is the same sentence conftest.py and the README each carried a copy of.
 SCRIPTS = PLUGIN_ROOT / "scripts"
 DRIFT = SCRIPTS / "drift.py"
 
