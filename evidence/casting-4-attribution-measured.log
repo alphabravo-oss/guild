@@ -1,0 +1,74 @@
+# evidence-cmd: echo '--- 1. every commit touching test_survey.py from the add of the commander row through its relabel ---'; git log --format='  %h %s' 3aa48f7^..20b15d1 -- plugins/webster/tests/test_survey.py; echo '--- 2. what each of those two did to that row ---'; for r in 3aa48f7 20b15d1; do echo "  $r:"; git show $r -- plugins/webster/tests/test_survey.py | grep -E '^[-+]test_a_commander_option_string' | sed 's/^/    /'; done; echo '--- 3. the note word vs the rows actually naming 19941ad, at each revision and at this commit ---'; for r in 3aa48f7 20b15d1 e4e0775; do printf '  %s  ' "$r"; git show "$r:plugins/webster/tests/test_survey.py" | python3 -c 'import re,sys; t=sys.stdin.read(); m=re.search(r"(\S+) rows? naming 19941ad", re.sub(r"\s+"," ",t)); print("note=%-6s rows=%d" % (m.group(1) if m else "-", len(re.findall(r"(?m)^test_\S+[ \t]+\S.*19941ad", t))))'; done; printf '  %s  ' 'this commit'; python3 -c 'import re,sys; t=open("plugins/webster/tests/test_survey.py",encoding="utf-8").read(); m=re.search(r"(\S+) rows? naming 19941ad", re.sub(r"\s+"," ",t)); print("note=%-6s rows=%d" % (m.group(1) if m else "-", len(re.findall(r"(?m)^test_\S+[ \t]+\S.*19941ad", t))))'; echo '--- 4. the rows naming 19941ad at this commit, in table order; the fourth is the commander row ---'; grep -nE '^test_\S+[ \t]+\S.*19941ad' plugins/webster/tests/test_survey.py | sed 's/^/  /'; echo '--- 5. e4e0775 is the commit that corrected three to four, and the same commit wrote the attribution ---'; git show e4e0775 -- plugins/webster/tests/test_survey.py | grep -E '^[-+].*(rows naming 19941ad|fix relabelled)' | sed 's/^/  /'; echo '--- 6. both rewritten sentences at this commit ---'; grep -n -B3 -A2 '20b15d1 relabelled from' plugins/webster/tests/test_survey.py | sed 's/^/  /'; echo '--- 7. no cycle attribution and no unmeasured cycle count survives ---'; printf '  matches: '; grep -c 'cycle-6 fix relabelled\|for two cycles\|two cycles out of' plugins/webster/tests/test_survey.py || true; echo '--- 8. why the sentence names a commit and not a cycle: the run archive that records cycle numbers is not in git ---'; grep -n 'foundry-archive' .gitignore | sed 's/^/  /'
+# evidence-for: FR-039, AC-039
+#
+# D-144. Two copies of one sentence in tests/test_survey.py credited the
+# relabelling of the commander row to "a cycle-6 fix". Section 2 shows the
+# relabel is 20b15d1; section 1 shows the only other commit that touched that
+# row in the range is 3aa48f7, which ADDED it carrying `guard`. Both sentences
+# now name 20b15d1 rather than a cycle, because section 8 shows the run archive
+# that records cycle numbers is gitignored: a cycle attribution cannot be
+# re-derived from this commit, and a commit sha can.
+#
+# Every clause of both rewritten sentences, and where this log measures it:
+#   "said \"three\" while four rows named it"     section 3, row 20b15d1
+#   "the count above it was not touched"          section 3 (3aa48f7 and
+#                                                 20b15d1 both read three) and
+#                                                 section 5 (the note line's
+#                                                 only edit is at e4e0775)
+#   "the fourth is the commander row"             section 4, fourth row, line 58
+#   "20b15d1 relabelled from `guard`"             section 2
+#   "survived from 20b15d1 until e4e0775          sections 3 and 5
+#    corrected it"
+#
+# Section 5 also shows e4e0775 is where the false attribution entered: the same
+# commit that corrected three to four wrote "a cycle-6 fix relabelled" twice.
+# Section 7 is the residual check that neither the attribution nor either
+# unmeasured cycle count survives this commit.
+#
+# The diff is docstrings only. No branch, regex, return value or assertion in
+# scripts/survey.py or scripts/llmstxt.py moves; see
+# evidence/casting-4-tests-green.log.
+#
+--- 1. every commit touching test_survey.py from the add of the commander row through its relabel ---
+  20b15d1 fix(webster): the digest notes that counted a set wider than the loop read
+  3aa48f7 fix(webster): the flag scan that read a description as a declaration, and the one a formatter could hide a declaration from
+--- 2. what each of those two did to that row ---
+  3aa48f7:
+    +test_a_commander_option_string_still_declares_its_spellings   FR-012      guard
+  20b15d1:
+    -test_a_commander_option_string_still_declares_its_spellings   FR-012      guard
+    +test_a_commander_option_string_still_declares_its_spellings   FR-012      19941ad (added cycle 6)
+--- 3. the note word vs the rows actually naming 19941ad, at each revision and at this commit ---
+  3aa48f7  note=three  rows=3
+  20b15d1  note=three  rows=4
+  e4e0775  note=four   rows=4
+  this commit  note=four   rows=4
+--- 4. the rows naming 19941ad at this commit, in table order; the fourth is the commander row ---
+  51:test_httpexception_publishes_only_its_own_arguments           FR-022/032  19941ad (added cycle 4)
+  54:test_option_flags_reach_the_user_surface_commands             FR-012      19941ad (added cycle 4)
+  55:test_a_flag_named_only_in_prose_is_not_a_command              FR-012      19941ad (added cycle 4)
+  58:test_a_commander_option_string_still_declares_its_spellings   FR-012      19941ad (added cycle 6)
+--- 5. e4e0775 is the commit that corrected three to four, and the same commit wrote the attribution ---
+  -- The three rows naming 19941ad are red at cfafe8e and at every revision
+  +- The four rows naming 19941ad are red at cfafe8e and at every revision
+  +  cycle-6 fix relabelled, and the count above it was not touched. Nothing read
+  +    The note above read "The three rows naming 19941ad" while four rows named
+  +    it. The fourth was the commander row a cycle-6 fix relabelled, and the
+--- 6. both rewritten sentences at this commit ---
+  74-- The four rows naming 19941ad are red at cfafe8e and at every revision
+  75-  between, measured. Each names the nearest baseline for the same reason. This
+  76-  sentence said "three" while four rows named it: the fourth is the commander
+  77:  row, which 20b15d1 relabelled from ``guard``, and the count above it was not
+  78-  touched. Nothing read this table until
+  79-  ``test_the_red_first_table_counts_its_own_rows``, which now reads every
+  --
+  1476-    """FR-039, AC-039: a count in a note about the table is read off the table.
+  1477-
+  1478-    The note above read "The three rows naming 19941ad" while four rows named
+  1479:    it. The fourth was the commander row, which 20b15d1 relabelled from
+  1480-    ``guard``, and the count above it was not touched; the substantive claim
+  1481-    held for all four, so only the number was wrong. Nothing in the suite read
+--- 7. no cycle attribution and no unmeasured cycle count survives ---
+  matches: 0
+--- 8. why the sentence names a commit and not a cycle: the run archive that records cycle numbers is not in git ---
+  16:/foundry-archive/

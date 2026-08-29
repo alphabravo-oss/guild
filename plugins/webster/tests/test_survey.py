@@ -73,10 +73,11 @@ Rows carrying a note the column has no room for:
   there. Against a802345 and every commit since it is a guard.
 - The four rows naming 19941ad are red at cfafe8e and at every revision
   between, measured. Each names the nearest baseline for the same reason. This
-  sentence said "three" for two cycles: the fourth row is the commander one a
-  cycle-6 fix relabelled, and the count above it was not touched. Nothing read
-  this table until ``test_the_red_first_table_counts_its_own_rows``, which now
-  reads every sentence of this shape against the rows it counts.
+  sentence said "three" while four rows named it: the fourth is the commander
+  row, which 20b15d1 relabelled from ``guard``, and the count above it was not
+  touched. Nothing read this table until
+  ``test_the_red_first_table_counts_its_own_rows``, which now reads every
+  sentence of this shape against the rows it counts.
 - ``test_a_flag_named_only_in_prose_is_not_a_command`` is red at 19941ad for a
   reason the column cannot show: there the commands list for its tree was empty
   altogether, so it fails because nothing was emitted rather than because noise
@@ -1475,12 +1476,12 @@ def test_the_red_first_table_counts_its_own_rows():
     """FR-039, AC-039: a count in a note about the table is read off the table.
 
     The note above read "The three rows naming 19941ad" while four rows named
-    it. The fourth was the commander row a cycle-6 fix relabelled, and the
-    count above it was not touched; the substantive claim held for all four, so
-    only the number was wrong. Nothing in the suite read this table at all --
-    the module docstring opens by calling it "the record, and it is the only
-    one", and a record nothing checks is how the number got two cycles out of
-    date.
+    it. The fourth was the commander row, which 20b15d1 relabelled from
+    ``guard``, and the count above it was not touched; the substantive claim
+    held for all four, so only the number was wrong. Nothing in the suite read
+    this table at all -- the module docstring opens by calling it "the record,
+    and it is the only one", and a record nothing checks is how the wrong
+    number survived from 20b15d1 until e4e0775 corrected it.
 
     Every sentence of the form "<number> rows naming <sha>" anywhere in this
     docstring is checked against the table rows carrying that sha. Whitespace
