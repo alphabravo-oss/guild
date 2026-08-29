@@ -1,8 +1,0 @@
-# evidence-cmd: red=$(mktemp -d) && cp -R plugins/webster "$red/webster" && git show 944c958:plugins/webster/scripts/survey.py > "$red/webster/scripts/survey.py" && cd "$red/webster" && COLUMNS=80 uvx pytest tests/test_survey.py -q -p no:cacheprovider 2>&1 | tail -4
-# evidence-for: AC-039, FR-039
-# evidence-volatile: \d+\.\d+s
-
-=========================== short test summary info ============================
-FAILED tests/test_survey.py::test_detail_after_a_collection_argument_is_still_a_message
-FAILED tests/test_survey.py::test_a_flag_named_in_another_flags_help_is_not_a_command
-2 failed, 18 passed in 1.07s

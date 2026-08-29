@@ -1,4 +1,0 @@
-# evidence-cmd: d=$(mktemp -d) && printf '[project]\nname = "probe"\n' > "$d/pyproject.toml" && printf 'from fastapi import HTTPException\n\ndef after_dict():\n    raise HTTPException(status_code=422, headers={"X": "1"}, detail="Bad input")\n\ndef after_list():\n    raise HTTPException(status_code=422, allow=[1, 2], detail="Too many")\n\ndef dict_detail():\n    raise HTTPException(status_code=422, detail={"loc": "Body of the request"})\n\ndef list_detail():\n    raise HTTPException(status_code=422, detail=[{"msg": "Field is required"}])\n\ndef commented():\n    raise HTTPException(status_code=410)  # "Gone for good now"\n' > "$d/api.py" && python3 plugins/webster/scripts/survey.py "$d" | python3 -c 'import json,sys; print(json.dumps([m["text"] for m in json.load(sys.stdin)["user_surface"]["messages"]]))'
-# evidence-for: US-006, AC-026, FR-022, FR-032
-
-["Bad input", "Too many"]

@@ -1,4 +1,0 @@
-# evidence-cmd: d=$(mktemp -d) && printf '[project]\nname = "probe"\n' > "$d/pyproject.toml" && printf 'import argparse\n\ndef build():\n    parser = argparse.ArgumentParser()\n    parser.add_argument("--out", help="unlike --force, writes to a path")\n    parser.add_argument("--keep", help="-x is the short form of --purge")\n    parser.add_argument("-n", "--dry-run", action="store_true", default="-")\n    return parser\n' > "$d/cli.py" && python3 plugins/webster/scripts/survey.py "$d" | python3 -c 'import json,sys; print(json.dumps([c["name"] for c in json.load(sys.stdin)["user_surface"]["commands"]]))'
-# evidence-for: FR-012, AC-013
-
-["--out", "--keep", "-n", "--dry-run"]
