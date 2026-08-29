@@ -1,0 +1,28 @@
+# evidence-cmd: row=$(grep -m1 '^| `user` |' plugins/webster/README.md | awk -F'|' '{ print $4 }' | sed 's/^ *//; s/ *$//'); printed=$(cd plugins/webster && python3 scripts/doctype.py types | sed -n 's/^ *may not name //p' | sed -n 1p); oprow=$(grep -m1 '^| `operator` |' plugins/webster/README.md | awk -F'|' '{ print $4 }' | sed 's/^ *//; s/ *$//'); opprinted=$(cd plugins/webster && python3 scripts/doctype.py types | sed -n 's/^ *may not name //p' | sed -n 2p); echo "FR-012 README reader table, user may-not-name: $row"; echo "FR-017 doctype.py types, user contract:       $printed"; echo "FR-012 the two agree once case is dropped: $(if [ "$(printf '%s' "$row" | tr 'A-Z' 'a-z')" = "$printed" ]; then echo yes; else echo no; fi)"; echo "FR-012 user may-not-name names command-line flags: $(printf '%s' "$row" | grep -ci 'command-line flags')"; echo "GI-003 README reader table, operator may-not-name: $oprow"; echo "GI-003 doctype.py types, operator contract:       $opprinted"; echo "GI-003 operator may-not-name names a route or a flag: $(printf '%s' "$oprow" | grep -ciE 'route|flag')"
+# evidence-for: FR-012, FR-017
+#
+# A-014 chose the operator gate on the grounds that it "matches LENS_MAY_NOT and
+# README's reader table", which makes the table a second copy of a contract the
+# tool also prints -- and the two had come apart. doctype.py grew the flag rule and
+# widened routes past the /api and /v<n> prefixes; the README row still read
+# "Symbols, routes, environment variables, architecture", so a writer who read the
+# table wrote `--verbose` on a user page and got a defect for a class the table had
+# just told them was fine. The row is now the printed string, and this log compares
+# them rather than asserting they were made to match: the README cell and
+# `doctype.py types` are read separately and the answer is computed, so the day one
+# of them moves this line reads "no".
+#
+# The operator half is asserted from the other side. GI-003 is what makes an
+# operator page allowed to name a route and a flag, so the operator row must go on
+# NOT naming them: the last count must read 0, and the row is deliberately left as
+# it stood. Case is dropped for the comparison because the table column opens on a
+# capital and the printed line does not; nothing else about the two strings is
+# allowed to differ.
+
+FR-012 README reader table, user may-not-name: Internal symbols, any route path, command-line flags, environment variables and architecture
+FR-017 doctype.py types, user contract:       internal symbols, any route path, command-line flags, environment variables and architecture
+FR-012 the two agree once case is dropped: yes
+FR-012 user may-not-name names command-line flags: 1
+GI-003 README reader table, operator may-not-name: Symbols, architecture
+GI-003 doctype.py types, operator contract:       internal symbols and architecture
+GI-003 operator may-not-name names a route or a flag: 0

@@ -65,7 +65,7 @@ handed to somebody who wanted to know whether their cluster was ready.
 
 | Audience | May name | May not name |
 | --- | --- | --- |
-| `user` | Screens, buttons, fields, menus, their own files, what the product gives back, what it says when something fails | Symbols, routes, environment variables, architecture |
+| `user` | Screens, buttons, fields, menus, their own files, what the product gives back, what it says when something fails | Internal symbols, any route path, command-line flags, environment variables and architecture |
 | `operator` | The above, plus commands, flags, config files, variables, ports, logs | Symbols, architecture |
 | `developer` | Anything in the system | nothing |
 
@@ -172,7 +172,7 @@ Version 0.11.0.
 cd plugins/webster && uvx pytest
 ```
 
-102 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+110 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes: each script binds its root, its docs
 directory and its allowlists at import time, and an in-process test would freeze all of them at
@@ -197,13 +197,15 @@ several additions before anything read it, which is the same shape as a gate tha
 it never looked.
 
 Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
-staged rename, a missing repository, a rebased-away HEAD and a cited line that changed;
-`doctype.py` across the widened symbol, route and flag lenses, the acronym list, stubs and the
-`WEBSTER_SURVEY` allowlist; `survey.py` across decorators split over several lines, Flask's
-declared methods, `pyproject.toml`, `HTTPException` details and `os.getenv` reads; `llmstxt.py`,
-`slop.py` and `scaffold.py` across the fixes each of those carries. Every fix has at least one
-test that fails against the script as it stood before the fix; the rest are guards, there so a
-fix does not take something else away with it.
+staged rename, a missing repository, a rebased-away HEAD, a docs tree sitting at the repository
+root, an anchor citing line zero and a cited line that changed; `doctype.py` across the widened
+symbol, route and flag lenses, the acronym list, stubs, the `WEBSTER_SURVEY` allowlist and the
+contract `types` prints to a writer before the lens reads them; `survey.py` across decorators
+split over several lines, Flask's declared methods, `pyproject.toml`, `HTTPException` details,
+the option flags a parser declares and `os.getenv` reads; `llmstxt.py` and `slop.py` across the
+fixes each of those carries, and `scaffold.py` across those plus the docs path it is handed and
+cannot write into. Every fix has at least one test that fails against the script as it stood
+before the fix; the rest are guards, there so a fix does not take something else away with it.
 
 The harness under those modules is exercised as well. `tests/test_harness.py` measures four
 things nothing else in the suite checks: that the child `python3` clears the plugin's 3.11 floor,
