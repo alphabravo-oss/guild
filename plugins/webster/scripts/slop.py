@@ -187,10 +187,15 @@ def main():
     # cleared the gate. The other two take something that is not a docs path, and only one of
     # them shares the hole: rendered.py takes a built site directory and answers a missing one
     # with exit 2 as well, survey.py takes a repo root and still returns 0 for one that is not
-    # there. Counted by running all six on a path that is not there, at cfafe8e and here. The
-    # version of this comment that said three had left llmstxt.py out and then called what
-    # remained "every other script", so a reader was told llmstxt.py was one of the scripts
-    # that does not do this. Named by symbol on purpose: this comment used to cite three line
+    # there. Counted by running all six on a path that is not there, at cfafe8e and here. Two
+    # earlier versions of this comment described that population wrongly, and not in the same
+    # way. The first named no script and called the rest "every other script in this plugin",
+    # which survey.py already made false. The three that followed named three -- drift.py,
+    # doctype.py and scaffold.py -- and each refused the phrase "every other script" on
+    # purpose, in a parenthesis giving survey.py as the reason it could not be said; what they
+    # got wrong is which scripts, leaving llmstxt.py out of a set it belongs to. No version
+    # both said three and called the remainder "every other script", and llmstxt.py is named
+    # in none of them. Named by symbol on purpose: this comment used to cite three line
     # numbers, and by the time anyone reread them two had slid onto unrelated code -- one onto
     # a docstring line, one onto a shapes printer -- while only the third still pointed at the
     # check it was taken from. The numbers themselves are not repeated here, because repeating

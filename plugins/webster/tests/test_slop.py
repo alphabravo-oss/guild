@@ -27,15 +27,28 @@ pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5,
 ad38ed9, f33f7c2, f3e30a5 — read back from ``git log --oneline --reverse
 cfafe8e..HEAD -- plugins/webster/scripts/slop.py`` rather than remembered.
 
-This list has been one short twice, both times for the same structural reason:
-a list written inside a commit cannot name that commit. The version that
-stopped at ad38ed9 left out f33f7c2, which rewrote the missing-target comment
-in ``main()`` in the same commit that first wrote this table. The version that
-stopped at f33f7c2 left out f3e30a5, which rewrote the comment on the kept
-supplementary range in the same commit that closed the first omission. Both
-were closed the same way, and it is the only way that works: a second commit
-that touches no file under ``scripts/``, so the list it writes is complete when
-it lands and stays complete. This paragraph was written by such a commit.
+This list has been one short twice, for two different reasons. Only the closing
+move is shared.
+
+The first time it was born short. f33f7c2 wrote this table and rewrote the
+missing-target comment in slop.py's ``main()`` in the same commit, and a list
+cannot name the commit writing it, so it stopped at ad38ed9. 359504f added
+f33f7c2; it touches no file under ``scripts/``.
+
+The second time it was complete when it landed and went stale afterwards.
+359504f's list ran through f33f7c2 and named every revision there was. f3e30a5
+then changed slop.py — the comment on the kept supplementary range — and
+amended two rows of this table, without extending the list. 4431242 added
+f3e30a5; it touches no file under ``scripts/``.
+
+The two are not the same case, and the second is why the first one's reason
+cannot stand for both: a list that is complete on the day it lands has already
+named the commit that wrote it, so what left it one short later was age, not
+self-reference. What closes both is the same move — a later commit touching no
+file under ``scripts/``, whose list is therefore complete when it lands.
+
+The commit that wrote this paragraph also changed slop.py's ``main()`` comment,
+so it is the first case again: the list above is one short of it.
 
 "red against REV" means this file fails when the suite runs against the slop.py
 at REV and passes against the next revision in that list. "guard" means it

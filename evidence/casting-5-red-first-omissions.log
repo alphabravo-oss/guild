@@ -1,0 +1,22 @@
+# evidence-cmd: bash -c 'echo "== every commit touching slop.py, cfafe8e..f3e30a5 =="; git log --oneline --reverse cfafe8e..f3e30a5 -- plugins/webster/scripts/slop.py; echo; echo "== the revision list each version of the docstring carried =="; for s in f33f7c2 359504f f3e30a5 4431242; do printf "%-8s " "$s"; git show $s:plugins/webster/tests/test_slop.py | sed -n "/^The revisions measured are/,/^$/p" | tr "\n" " " | sed "s/  */ /g"; echo; done; echo; echo "== does the commit touch anything under plugins/webster/scripts/ ? =="; for s in f33f7c2 359504f f3e30a5 4431242; do printf "%-8s scripts/ files: %s\n" "$s" "$(git show --name-only --format= $s | grep -c "^plugins/webster/scripts/")"; done'
+# evidence-for: US-010, FR-039, AC-039
+
+== every commit touching slop.py, cfafe8e..f3e30a5 ==
+af10189 fix(webster): slop.py fails on real tells only, and scaffold.py checks before it writes
+ba33497 fix(webster): the unreadable target slop.py reported as slop, and the range comment that spoke for Unicode
+ecc7dd5 fix(webster): the write scaffold.py could not make, and the lines its comments pointed at
+ad38ed9 fix(webster): the read that answered a refusal as an absence, and two sentences about the wrong population
+f33f7c2 fix(webster): the row recorded as unfailable, and the sibling count that left one out
+f3e30a5 fix(webster): the fourth block the emoji comment never counted, and the fifth entry scaffold.py left off its own tree
+
+== the revision list each version of the docstring carried ==
+f33f7c2  The revisions measured are every commit that has touched slop.py since the pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5, ad38ed9. 
+359504f  The revisions measured are every commit that has touched slop.py since the pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5, ad38ed9, f33f7c2 — read back from ``git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py`` rather than remembered. The version of this sentence that stopped at ad38ed9 named five and so left out the revision of slop.py that actually ships: f33f7c2 rewrote the missing-target comment in ``main()`` in the same commit that first wrote this table, and a list written inside a commit cannot name that commit. Adding it is therefore a separate commit, and that commit touches no file under ``scripts/`` — which is what keeps this list closed rather than one short again. 
+f3e30a5  The revisions measured are every commit that has touched slop.py since the pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5, ad38ed9, f33f7c2 — read back from ``git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py`` rather than remembered. The version of this sentence that stopped at ad38ed9 named five and so left out the revision of slop.py that actually ships: f33f7c2 rewrote the missing-target comment in ``main()`` in the same commit that first wrote this table, and a list written inside a commit cannot name that commit. Adding it is therefore a separate commit, and that commit touches no file under ``scripts/`` — which is what keeps this list closed rather than one short again. 
+4431242  The revisions measured are every commit that has touched slop.py since the pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5, ad38ed9, f33f7c2, f3e30a5 — read back from ``git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py`` rather than remembered. 
+
+== does the commit touch anything under plugins/webster/scripts/ ? ==
+f33f7c2  scripts/ files: 1
+359504f  scripts/ files: 0
+f3e30a5  scripts/ files: 2
+4431242  scripts/ files: 0
