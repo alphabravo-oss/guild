@@ -1,28 +1,36 @@
 """Tests for plugins/webster/scripts/slop.py (spec US-008).
 
 Every test drives the script through the ``run_script`` conftest helper
-(GI-004, CT-007). Nothing here imports slop.py: ``slop.py:11`` binds
-``TARGETS`` from ``sys.argv`` at module import, so an import would freeze the
-wrong targets before a test could choose any.
+(GI-004, CT-007). Nothing here imports slop.py: its module-level ``TARGETS``
+binds ``sys.argv`` at import time, so an import would freeze the wrong targets
+before a test could choose any.
+
+Everything below cites slop.py by symbol. Line numbers were tried here first and
+did not survive one edit: the citation on the ``TARGETS`` sentence above named a
+line that a later fix to slop.py turned into a blank one, and a docstring that
+points at whitespace is worse than one that points at nothing, because it reads
+as checked.
 
 Which fix each test pins, and what it did before the fix (FR-039, AC-039 — the
 red-first property is recorded here rather than enforced at runtime):
 
 - ``test_weak_verb_page_reports_medium_and_exits_zero`` — FR-024 / OT-030.
   RED on the pre-change script: robust, leverage, elevate and empower were
-  alternatives inside the ``marketing-buzzword`` high rule (``slop.py:17``), so
-  the page exited 1.
+  alternatives inside the ``marketing-buzzword`` entry of ``RULES``, whose
+  ``high`` severity failed the gate on them, so the page exited 1.
 - ``test_supercharge_still_exits_one`` — FR-024 / OT-030, the other half. Green
   before and after by design: it guards the rest of the high list against being
   demoted along with the four verbs.
 - ``test_human_co_author_trailer_exits_zero`` — FR-025 / OT-031. RED before:
-  ``agent-attribution`` carried a bare ``Co-Authored-By:`` alternative
-  (``slop.py:55``) that fired on any trailer, human or not.
+  the ``agent-attribution`` entry of ``RULES`` carried a bare
+  ``Co-Authored-By:`` alternative that fired on any trailer, human or not.
 - ``test_ai_co_author_trailer_reports_agent_attribution`` — FR-025 / OT-031,
   the other half. Guards against fixing the false positive by deleting the rule.
 - ``test_text_marks_in_headings_are_not_emoji`` — FR-026 / OT-032. RED before:
-  the class ``☀-➿`` (U+2600-U+27BF, ``slop.py:64,66``) swallowed ✓ U+2713,
-  ✔ U+2714 and ➜ U+279C, none of which is an emoji.
+  the ``emoji-heading`` and ``emoji-bullet`` entries of ``RULES`` each spelled
+  the class ``☀-➿`` (U+2600-U+27BF) inline, and it swallowed ✓ U+2713,
+  ✔ U+2714 and ➜ U+279C, none of which is an emoji. Both now share the
+  ``EMOJI`` constant.
 - ``test_presentation_emoji_in_heading_is_reported`` — FR-026 / OT-032, the
   other half. ⭐ U+2B50 was outside the old class entirely and went unreported.
 - ``test_missing_target_exits_two`` — FR-027 / OT-033 / CT-006. RED before:

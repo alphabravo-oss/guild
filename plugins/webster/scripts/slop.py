@@ -159,10 +159,13 @@ def files():
 
 def main():
     # A target that is not there walks to nothing, and "no slop found across 0 files" reads
-    # exactly like a pass. drift.py:269, doctype.py:931 and scaffold.py:263 each return 2 for
-    # a docs directory that is not there; this one returned 0, so a typo in the docs path
-    # silently cleared the gate. (survey.py still returns 0 for a root that does not exist,
-    # which is why this comment names three scripts and not "every other script".)
+    # exactly like a pass. Three sibling scripts already answer a docs path that is not there
+    # with exit 2: drift.py's no_docs envelope in main(), doctype.py's "no docs directory at"
+    # line in main(), and scaffold.py's no_docs envelope in do_check. This one returned 0, so
+    # a typo in the docs path silently cleared the gate. (survey.py still returns 0 for a root
+    # that does not exist, which is why this names three scripts and not "every other
+    # script".) Named by symbol on purpose: the line numbers this comment used to carry had
+    # already slid onto unrelated code in two of the three files by the time anyone reread it.
     missing = [t for t in TARGETS if not os.path.isfile(t) and not os.path.isdir(t)]
     if missing:
         for t in missing:

@@ -1,0 +1,12 @@
+# evidence-cmd: rm -rf .ev-c5r && mkdir -p .ev-c5r && git show af10189:plugins/webster/scripts/scaffold.py > .ev-c5r/scaffold-before.py && printf "a file, not a directory\n" > .ev-c5r/docs; echo "--- af10189 (pre-change) scaffold.py ---"; python3 .ev-c5r/scaffold-before.py init --docs .ev-c5r/docs --subject clusters:Clusters > .ev-c5r/out 2> .ev-c5r/err; echo "exit=$?"; echo "stdout bytes: $(wc -c < .ev-c5r/out | tr -d " ")"; echo "stderr first line: $(head -1 .ev-c5r/err)"; echo "stderr last line: $(tail -1 .ev-c5r/err)"; echo "--- this commit scaffold.py, same argv ---"; python3 plugins/webster/scripts/scaffold.py init --docs .ev-c5r/docs --subject clusters:Clusters 2> .ev-c5r/err2; echo "exit=$?"; echo "stderr bytes: $(wc -c < .ev-c5r/err2 | tr -d " ")"; rm -rf .ev-c5r
+# evidence-for: FR-028, FR-039, AC-039, CT-005
+
+--- af10189 (pre-change) scaffold.py ---
+exit=1
+stdout bytes: 0
+stderr first line: Traceback (most recent call last):
+stderr last line: FileExistsError: [Errno 17] File exists: '.ev-c5r/docs'
+--- this commit scaffold.py, same argv ---
+{"status": "cannot_write", "path": ".ev-c5r/docs", "error": "File exists", "created": []}
+exit=2
+stderr bytes: 0

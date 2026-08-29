@@ -121,52 +121,72 @@ def do_init(a):
         print(json.dumps({"status": "bad_subject", "subject": bad.key, "error": bad.error}))
         return 2
 
-    os.makedirs(docs, exist_ok=True)
+    # Everything from here writes, and every write can be refused. os.makedirs raises
+    # FileExistsError when --docs names a regular file, NotADirectoryError for a path under
+    # one, PermissionError for a parent nobody may write; category(), stub() and write_site()
+    # raise the same family further in. Unguarded, each of them left main() through a
+    # traceback, and a traceback exits 1 -- the code CT-005 reserves for a layout violation --
+    # with nothing on stdout, so a caller reading JSON got an empty string where an envelope
+    # belongs and a code claiming the tree is wrong when the truth is that nothing was written
+    # at all. One boundary rather than a guard per write: four handlers of the same shape
+    # disagree the first time one of them is edited. slop.py's main() answers the read side of
+    # this class the same way, with a cannot-read line at exit 2.
     made = []
+    try:
+        os.makedirs(docs, exist_ok=True)
 
-    if stub(os.path.join(docs, "index.md"), a.title, 1,
-            label=f"{a.title} Overview", slug="/", description=a.description,
-            doc_type="explanation", audience="user"):
-        made.append("index.md")
-    if stub(os.path.join(docs, "faq.md"), "FAQ", 99, doc_type="explanation",
-            audience="user"):
-        made.append("faq.md")
+        if stub(os.path.join(docs, "index.md"), a.title, 1,
+                label=f"{a.title} Overview", slug="/", description=a.description,
+                doc_type="explanation", audience="user"):
+            made.append("index.md")
+        if stub(os.path.join(docs, "faq.md"), "FAQ", 99, doc_type="explanation",
+                audience="user"):
+            made.append("faq.md")
 
-    for name, label, pos in FRONT:
-        d = os.path.join(docs, name)
-        os.makedirs(d, exist_ok=True)
-        category(d, label, pos)
-        if name == "getting-started":
-            for i, (page, dtype) in enumerate(GETTING_STARTED, 1):
-                t = page[:-3].replace("-", " ").capitalize()
-                if stub(os.path.join(d, page), t, i, doc_type=dtype, audience="user"):
-                    made.append(f"{name}/{page}")
-        elif stub(os.path.join(d, f"{name}.md"), label, 1,
-                  doc_type=SECTION_TYPE.get(name, "how-to"),
-                  audience=SECTION_AUDIENCE.get(name, "user")):
-            made.append(f"{name}/{name}.md")
+        for name, label, pos in FRONT:
+            d = os.path.join(docs, name)
+            os.makedirs(d, exist_ok=True)
+            category(d, label, pos)
+            if name == "getting-started":
+                for i, (page, dtype) in enumerate(GETTING_STARTED, 1):
+                    t = page[:-3].replace("-", " ").capitalize()
+                    if stub(os.path.join(d, page), t, i, doc_type=dtype, audience="user"):
+                        made.append(f"{name}/{page}")
+            elif stub(os.path.join(d, f"{name}.md"), label, 1,
+                      doc_type=SECTION_TYPE.get(name, "how-to"),
+                      audience=SECTION_AUDIENCE.get(name, "user")):
+                made.append(f"{name}/{name}.md")
 
-    for i, (key, label) in enumerate(subjects, start=4):
-        d = os.path.join(docs, key)
-        os.makedirs(d, exist_ok=True)
-        category(d, label, i)
-        # the landing page. Its name is free; sidebar_position 1 is what makes it the landing page.
-        if stub(os.path.join(d, f"{key}.md"), label, 1, doc_type="explanation",
-                audience=a.subject_audience):
-            made.append(f"{key}/{key}.md")
+        for i, (key, label) in enumerate(subjects, start=4):
+            d = os.path.join(docs, key)
+            os.makedirs(d, exist_ok=True)
+            category(d, label, i)
+            # the landing page. Its name is free; sidebar_position 1 is what makes it the landing page.
+            if stub(os.path.join(d, f"{key}.md"), label, 1, doc_type="explanation",
+                    audience=a.subject_audience):
+                made.append(f"{key}/{key}.md")
 
-    sections = list(BACK) + (list(OPTIONAL) if a.api else [])
-    for name, label, pos in sections:
-        d = os.path.join(docs, name)
-        os.makedirs(d, exist_ok=True)
-        category(d, label, pos)
-        if stub(os.path.join(d, f"{name}.md"), label, 1,
-                doc_type=SECTION_TYPE.get(name, "explanation"),
-                audience=SECTION_AUDIENCE.get(name, "user")):
-            made.append(f"{name}/{name}.md")
+        sections = list(BACK) + (list(OPTIONAL) if a.api else [])
+        for name, label, pos in sections:
+            d = os.path.join(docs, name)
+            os.makedirs(d, exist_ok=True)
+            category(d, label, pos)
+            if stub(os.path.join(d, f"{name}.md"), label, 1,
+                    doc_type=SECTION_TYPE.get(name, "explanation"),
+                    audience=SECTION_AUDIENCE.get(name, "user")):
+                made.append(f"{name}/{name}.md")
 
-    if a.site:
-        made += write_site(a)
+        if a.site:
+            made += write_site(a)
+    except OSError as e:
+        # `created` is a floor, not a census: the first makedirs failing does leave the tree
+        # untouched, but a refusal further in does not, and an envelope implying an empty disk
+        # while half a tree sits on it is the same false report as the exit code above. It
+        # lists what do_init had recorded when the write was refused. e.filename is the path
+        # the OS actually refused, which is not always `docs`.
+        print(json.dumps({"status": "cannot_write", "path": e.filename or docs,
+                          "error": e.strerror or type(e).__name__, "created": made}))
+        return 2
 
     print(json.dumps({"created": made, "subjects": [k for k, _ in subjects],
                       "docs": docs, "site": a.site_dir if a.site else None}, indent=2))

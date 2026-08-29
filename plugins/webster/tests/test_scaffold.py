@@ -9,13 +9,23 @@ red-first property is recorded here rather than enforced at runtime):
 
 - ``test_bad_subject_key_writes_nothing_and_exits_two`` — FR-028 / OT-034 /
   CT-005. RED on the pre-change script: ``do_init`` called ``parse_subjects``
-  at ``scaffold.py:125``, after index.md, faq.md and the getting-started and
-  install sections were already on disk (``:103-123``), and the bad key ended
-  in ``sys.exit(f"subject key ...")`` at ``:93`` — stderr text, empty stdout,
-  and exit 1, the same code ``check`` uses for a real layout violation.
+  only after ``stub`` had already put index.md, faq.md and the ``FRONT``
+  sections on disk, and a bad key left ``parse_subjects`` through
+  ``sys.exit("subject key ...")`` — stderr text, empty stdout, and exit 1, the
+  same code ``check`` uses for a real layout violation. ``parse_subjects`` now
+  raises ``BadSubject`` and ``do_init`` calls it above the first write.
 - ``test_valid_subject_key_creates_the_landing_page`` — FR-028 / OT-035.
   Green before and after by design: hoisting the validation must not change
   what a good key produces.
+- ``test_unwritable_docs_path_exits_two_without_a_traceback`` — FR-028 /
+  CT-005. RED on the pre-change script: ``do_init`` called ``os.makedirs``
+  unguarded, so a ``--docs`` naming a regular file raised ``FileExistsError``
+  out of ``main()`` — a traceback on stderr, an empty stdout where the envelope
+  belongs, and exit 1, which CT-005 reserves for a layout violation. It now
+  reports ``cannot_write``. Its control is the test above, which runs the same
+  argv with only ``--docs`` changed and still reaches exit 0 and
+  clusters/clusters.md; the pair isolates the docs target as the one variable,
+  which is why no third copy of the happy path was added here.
 
 No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 """
@@ -90,4 +100,49 @@ def test_valid_subject_key_creates_the_landing_page(run_script, tmp_path):
     )
     assert "clusters/clusters.md" in payload["created"], (
         "Expected the landing page listed as created" + outcome(result)
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: a write the filesystem refuses is a could-not-run, not a
+# layout violation.
+# -----------------------------------------------------------------------------
+def test_unwritable_docs_path_exits_two_without_a_traceback(run_script, tmp_path):
+    # A regular file where the docs directory should be. Chosen over `chmod 000`
+    # because root writes through a mode bit and would turn this into a test that
+    # passes by not running, which is the failure shape this suite exists to catch.
+    docs = tmp_path / "docs"
+    docs.write_text("a file, not a directory\n", encoding="utf-8")
+
+    result = run_script(
+        "scaffold.py", "init", "--docs", docs, "--subject", "clusters:Clusters"
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2 (could not run): the filesystem refused the write, "
+        f"which is not the layout violation exit 1 means; got "
+        f"{result.returncode}" + outcome(result)
+    )
+    assert "Traceback" not in result.stderr, (
+        "A refused write must be reported, not raised: the traceback exits 1 "
+        "with an empty stdout, so a caller reading JSON sees no envelope at all"
+        + outcome(result)
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "cannot_write", (
+        "Expected a cannot_write JSON envelope on stdout" + outcome(result)
+    )
+    assert payload["path"] == str(docs), (
+        f"Expected the refused path named in the envelope; got "
+        f"{payload.get('path')!r}" + outcome(result)
+    )
+    assert payload.get("error"), (
+        "Expected the envelope to carry what the filesystem said" + outcome(result)
+    )
+    assert payload["created"] == [], (
+        f"Expected nothing created: the first makedirs failed, so no page was "
+        f"written. Envelope claims {payload['created']}" + outcome(result)
+    )
+    assert docs.read_text(encoding="utf-8") == "a file, not a directory\n", (
+        "The refused target must be left exactly as it was found" + outcome(result)
     )
