@@ -130,12 +130,18 @@ the axis loosely enough that the label read as a claim about both.
 
 The count is taken from the suite's own source rather than from
 ``len(request.session.items)``, and the reason is a false red rather than a
-false pass: ``session.items`` holds what *this* invocation collected, so
-``uvx pytest tests/test_readme.py`` would collect one item and this module
-would report the README wrong when it is right. A-029 forbids ``skip`` and
-``xfail``, so there is no honest way to sit that case out. ``session.items`` is
-still used, in the direction that holds under any invocation — every node id
-pytest collected must be one the counter already knew about.
+false pass: ``session.items`` holds what *this* invocation collected, and an
+invocation naming one module collects that module's tests and nothing else, a
+strict subset of what the README counts — so reading it as the size of the
+suite would report the README wrong on a run that was right. Measured with
+``uvx pytest tests/test_readme.py --collect-only -q``. No number is written
+here: the sentence this replaces put one in, said that invocation "would
+collect one item", and one item was never what that command prints; a count in
+a docstring nothing re-runs is the stale prose this module exists to stop.
+A-029 forbids ``skip`` and ``xfail``, so there is no honest way to sit that
+case out. ``session.items`` is still used, in the direction that holds under
+any invocation — every node id pytest collected must be one the counter
+already knew about.
 
 Nothing here runs a script, so neither ``run_script`` nor ``fixture_repo`` is
 needed, and nothing is imported from ``scripts/`` (GI-004). Spawning a second

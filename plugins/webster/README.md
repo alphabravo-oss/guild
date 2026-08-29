@@ -178,16 +178,22 @@ cd plugins/webster && uvx pytest
 
 148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
-and the file under test is the one a user actually invokes. Five of the seven scripts leave no
-other way in: `drift.py`, `llmstxt.py`, `doctype.py`, `survey.py` and `slop.py` bind their root,
-their docs directory or their allowlists at module import, out of argv or the environment, so an
-in-process test would freeze all of them at the importing process's values. The other two read
-their arguments inside `main` — `scaffold.py` through `argparse`, `rendered.py` through
-`sys.argv` — and an in-process test of either would be possible, merely awkward. `run_script`
-drives those two the same way regardless, because one invocation shape across the suite beats
-two kinds of test plus a rule about which script gets which, and the subprocess shape is the one
-a reader runs. The split is written down because the sentence this replaces said "each script
-binds", named no script and no number, and was therefore read as covering all seven. It was
+and the file under test is the one a user actually invokes. Five of the seven scripts make an
+import the wrong way in: `drift.py`, `llmstxt.py`, `doctype.py`, `survey.py` and `slop.py` bind
+their root, their docs directory or their allowlists at module import, out of argv or the
+environment, so an imported copy stays frozen at the importing process's values — measured, an
+imported `drift.py` went on naming the directory the import had run in after the process had
+moved off it. Frozen is not sealed, and this paragraph used to overstate it as "no other way
+in": `runpy.run_path` re-executes a module and re-binds all five, and drove `drift.py check` to a
+real JSON line and exit 2 inside this process. The other two read their arguments inside `main`
+— `scaffold.py` through `argparse`, `rendered.py` through `sys.argv` — and an import with
+`sys.argv` set is enough for either; measured on `scaffold.py`, that returns its `bad_subject`
+envelope and exit 2 with no subprocess at all. What every in-process shape skips is the process
+boundary where the environment `run_script` builds and the interpreter it resolves apply at all,
+which is why one invocation shape drives every script the suite drives, `scaffold.py` included.
+`rendered.py` it drives nowhere, as the paragraph below on what is not yet exercised says. The
+split is written down because an earlier sentence here said "each script binds", named no script
+and no number, and was therefore read as covering all seven. It was
 false for `scaffold.py` and for `rendered.py`, and `scaffold.py` has a test module sitting one
 directory away from the file that said it. `drift.py`'s cases all run against the committed
 fixture repo in `tests/fixtures/repo/`, rebuilt into a real git repository with fixed commit
@@ -198,11 +204,18 @@ that fixture only where the case wants a real repository or a real page beneath 
 `run_script` calls the literal `python3` and passes PATH straight through, because that is what a
 reader gets: every script carries a `#!/usr/bin/env python3` shebang and Claude Code runs it as
 `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/X.py`. Which interpreter that resolves to depends on how
-the suite was launched, and the command above is not the interesting case: uv puts its own
-ephemeral CPython first on PATH, so the child is that one and it is the same interpreter
-collecting the tests. Launched as `python3 -m pytest` instead, the child is the shell's `python3`
-and a different interpreter from pytest's. The suite pins neither. Which one it is is a property
-of the machine, not of the suite, and the thing worth asserting is the floor both clear.
+the suite was launched, and both launches have been measured, the collector's `sys.executable`
+realpath and version against the child's. Under the command above, uv puts its ephemeral
+environment's `bin` first on PATH, so the `python3` the child resolves is uv's own CPython and is
+the interpreter collecting the tests: one realpath, 3.11.14 on both sides here. Launched as
+`python3 -m pytest` instead, PATH is the shell's, and the `python3` the shell resolved in order
+to start pytest is the one the child resolves as well: one realpath again, 3.14.6 on both sides
+here — measured through a virtualenv built on that interpreter, because this machine is PEP
+668-managed and PATH's own `python3` has no pytest for `-m` to find. Collector and child agree
+under both, and the clause this replaces, that under the second launch the child was "a different
+interpreter from pytest's", is what the measurement refutes. What varies between the launches is
+which interpreter both of them are, which is a property of the machine and of the launch rather
+than of the suite: it pins neither, and the thing worth asserting is the floor they clear.
 
 That count is itself checked. `tests/test_readme.py` reads this section back, compares the number
 to the tests the suite defines, and compares the version above to `plugin.json`, so a test added

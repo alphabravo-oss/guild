@@ -1,0 +1,29 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)"; echo "--- plugin.json version (NFR-003, OT-040) ---"; grep -n version plugins/webster/.claude-plugin/plugin.json; echo "--- README Status head: version, run command, count (AC-042, FR-038) ---"; sed -n "/^## Status$/,/^148 passing/p" plugins/webster/README.md; echo "--- WEBSTER_SURVEY beside WEBSTER_LENS_ALLOW (AC-042, GI-002) ---"; grep -n "WEBSTER_SURVEY\|WEBSTER_LENS_ALLOW" plugins/webster/README.md; echo "--- Python 3.11 floor (NFR-002) ---"; grep -n "Python 3.11" plugins/webster/README.md; echo "--- GI-006: marketplace.json and the root README badge, against the baseline ---"; git diff --stat cfafe8e -- .claude-plugin/marketplace.json README.md; echo "(nothing listed above means neither was touched)"'
+# evidence-for: NFR-002, NFR-003, AC-042, OT-040, GI-006
+# evidence-timeout: 120
+#
+# The release facts this casting owns: plugin.json at 0.11.0, the Status section carrying
+# that version, the run command and the count, WEBSTER_SURVEY beside WEBSTER_LENS_ALLOW in
+# one paragraph, the Python 3.11 floor, and marketplace.json plus the root README badge
+# left alone (GI-006).
+
+--- plugin.json version (NFR-003, OT-040) ---
+3:  "version": "0.11.0",
+--- README Status head: version, run command, count (AC-042, FR-038) ---
+## Status
+
+Version 0.11.0.
+
+```
+cd plugins/webster && uvx pytest
+```
+
+148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+--- WEBSTER_SURVEY beside WEBSTER_LENS_ALLOW (AC-042, GI-002) ---
+74:not. `WEBSTER_LENS_ALLOW` widens the vocabulary where a product's readers genuinely use it, and
+75:a Kubernetes tool's operators really do handle controllers. `WEBSTER_SURVEY` widens it without a
+286:`WEBSTER_SURVEY` allowlist, the architecture rule that keeps firing for an operator after routes
+--- Python 3.11 floor (NFR-002) ---
+101:without an agent. They are standard library only, and the floor is Python 3.11: `survey.py` and
+--- GI-006: marketplace.json and the root README badge, against the baseline ---
+(nothing listed above means neither was touched)
