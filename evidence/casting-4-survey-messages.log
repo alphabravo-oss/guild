@@ -1,0 +1,11 @@
+# evidence-cmd: cd plugins/webster && rm -rf /tmp/webster-c4-msgs && mkdir -p /tmp/webster-c4-msgs/src && printf '%s\n' '[project]' 'name = "msgs"' > /tmp/webster-c4-msgs/pyproject.toml && printf '%s\n' 'from fastapi import FastAPI, HTTPException' '' 'app = FastAPI()' '' '' '@app.get("/items/{item_id}")' 'def read_item(item_id: int):' '    if item_id < 0:' '        raise HTTPException(status_code=404, detail="Item not found")' '    if item_id > 99:' '        raise HTTPException(404, "Not found")' '    if item_id == 7:' '        raise HTTPException(status_code=422, detail={"code": "seven"})' '    return {}' > /tmp/webster-c4-msgs/src/api.py; python3 scripts/survey.py /tmp/webster-c4-msgs | python3 -c 'import json,sys; d = json.load(sys.stdin); [print("message:", m["text"], "|", m["anchor"]) for m in d["user_surface"]["messages"]]; print("count:", len(d["user_surface"]["messages"]))'
+# evidence-for: US-006, AC-026, FR-022, FR-032
+#
+# AC-026 / FR-022 / FR-032. The detail= keyword form and the positional form
+# each contribute one entry; the dict detail on the third raise contributes
+# none, because only a string literal is a message a reader can be shown. "Not
+# found" is nine characters, which is why this branch's floor is three rather
+# than the twelve the other branches use.
+message: Item not found | src/api.py:9
+message: Not found | src/api.py:11
+count: 2

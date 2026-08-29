@@ -1,0 +1,23 @@
+# evidence-cmd: cd plugins/webster && python3 scripts/survey.py tests/fixtures/repo | python3 -c 'import json,sys; d = json.load(sys.stdin); print("name:", d["name"]); print("description:", d["description"]); print("stack:", d["stack"]); print("cli:", [(c["name"], c["target"], c["anchor"]) for c in d["surface"]["cli"]]); print("config:", [(c["name"], c.get("undeclared"), c["anchor"]) for c in d["surface"]["config"]]); print("http:", [(h["method"], h["path"], h["anchor"]) for h in d["surface"]["http"]]); print("tooling entries without an anchor:", len([t for t in d["tooling"] if "anchor" not in t])); print("surface + user_surface entries without an anchor:", [(t, k, e) for t in ("surface", "user_surface") for k, v in d[t].items() for e in v if "anchor" not in e])'
+# evidence-for: US-006, AC-022, AC-025, FR-018, FR-020, FR-021, FR-031, FR-012
+#
+# AC-022 / FR-018 / FR-031. APP_DEBUG is read only through os.getenv in the
+# fixture's src/app/main.py and is reported in surface.config with undeclared
+# true, beside the two os.environ reads.
+#
+# AC-025 / FR-020 / FR-021. The fixture carries a pyproject.toml and no
+# package.json, so name and description come from [project] and the one
+# [project.scripts] entry lands in surface.cli anchored to pyproject.toml:1.
+#
+# FR-012. The last two lines are the anchor rule the comment beside
+# CLI_FLAG_DECL states: every entry under surface and user_surface carries one,
+# and the tooling array is the one that carries none. The sentence used to claim
+# the whole document.
+name: fixapp
+description: A small item store served over HTTP.
+stack: ['python']
+cli: [('fixapp', 'cli.main:main', 'pyproject.toml:1')]
+config: [('DATABASE_URL', True, 'src/app/main.py:6'), ('REQUEST_TIMEOUT', True, 'src/app/main.py:7'), ('APP_DEBUG', True, 'src/app/main.py:8')]
+http: [('GET', '/items', 'src/app/main.py:11'), ('POST', '/items/{item_id}', 'src/app/main.py:16')]
+tooling entries without an anchor: 2
+surface + user_surface entries without an anchor: []

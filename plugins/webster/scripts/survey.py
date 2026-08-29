@@ -5,9 +5,12 @@ Prints JSON. Every entry carries a file:line anchor, because a surface item
 without an anchor is a claim and this script is not allowed to make claims.
 """
 import json, os, re, subprocess, sys
-# tomllib is standard library from Python 3.11, which is this plugin's floor. Every interpreter
-# webster runs on is 3.11 or newer, so pyproject.toml is parsed directly and there is no
-# fallback path to keep working.
+# tomllib is standard library from Python 3.11, which is this plugin's floor: webster requires
+# 3.11 or newer. A-001 chose no fallback, so an older interpreter fails on the next line with
+# ModuleNotFoundError rather than half-running. Nothing here chooses which interpreter runs:
+# the commands invoke this file as a bare `python3 scripts/survey.py`, so which one runs is
+# whatever PATH resolves, and /usr/bin/python3 on the machine this was written on is 3.9.6.
+# The floor is stated because it is a requirement on the caller; the import is what enforces it.
 import tomllib
 
 ROOT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
@@ -188,11 +191,45 @@ PY_DECORATOR_OPEN = re.compile(r"^\s*@\w+\.(?:get|post|put|patch|delete|route)\s
 # in the one detail a reader copies.
 FLASK_METHODS = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
 
+
+def call_depth_delta(line):
+    """How far one line opens or closes a call, over the parentheses that are code.
+
+    Counting them in raw text counts the ones inside string literals and `#` comments too. A
+    decorator carrying `strict_slashes=False,  # 2) legacy behaviour, see PROJ-14` balanced its
+    call one line early: the join stopped before `methods=["POST"]`, the text handed to the
+    verb decision below had no methods= in it -- which is also what a route declaring none
+    looks like -- and GET was published for an endpoint that answers 405 to it. A quote and a
+    `#` are the two places a paren is not syntax, so both spans are skipped before anything is
+    counted.
+
+    One line at a time, because that is where those two spans end: a `#` comment ends at the
+    newline the join replaces with a space, and a quoted string cannot cross one at all."""
+    delta, i, n = 0, 0, len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "#":
+            break
+        if ch in "\"'":
+            i += 1
+            while i < n and line[i] != ch:
+                i += 2 if line[i] == "\\" else 1
+            i += 1
+            continue
+        if ch == "(":
+            delta += 1
+        elif ch == ")":
+            delta -= 1
+        i += 1
+    return delta
+
+
 if "python" in stack:
     for p in walk(exts={".py"}):
         lines = read(p).splitlines()
         for i, line in enumerate(lines, 1):
             joined = line
+            depth = call_depth_delta(line)
             if PY_DECORATOR_OPEN.match(line):
                 # The cap is a bound on how far the read goes, not a statement about how long
                 # a decorator gets. A route carrying six keyword arguments one to a line is
@@ -201,11 +238,14 @@ if "python" in stack:
                 # something else must not let the join swallow the function beneath it.
                 for cont in lines[i:i + 6]:
                     joined += " " + cont.strip()
-                    if joined.count("(") <= joined.count(")"):
+                    depth += call_depth_delta(cont)
+                    if depth <= 0:
                         break
-            # Whether the call was read to its end. Anything below that reasons from something
-            # being *absent* has to ask first, because unread and absent are the same text.
-            whole_call = joined.count("(") <= joined.count(")")
+            # Whether the call was read to its end, measured over the parentheses that are
+            # code and not over the ones inside a string or a comment -- see call_depth_delta
+            # for what that distinction cost. Anything below that reasons from something being
+            # *absent* has to ask first, because unread and absent are the same text.
+            whole_call = depth <= 0
             m = PY_DECORATOR.search(joined)
             if not m:
                 continue
@@ -214,11 +254,15 @@ if "python" in stack:
             # object before the dot is unconstrained, so `@mock.patch("pkg.mod.func")` read as
             # a PATCH endpoint served at `pkg.mod.func`. Joining continuation lines made that
             # worse rather than better: a Black-split mock that used to escape the single-line
-            # scan entirely now gets accumulated too. Every path a client can send starts with
-            # a slash — Flask raises on a rule without one and FastAPI asserts it — so the
-            # leading slash is what separates a route from a decorator that only looks like
-            # one. A phantom endpoint is worse than a missing one, because a writer is sent to
-            # document it and finds nothing there.
+            # scan entirely now gets accumulated too. The leading slash is what separates a
+            # route from a decorator that only looks like one, and only one of the two
+            # frameworks this pass reads enforces it: Flask 3.1.3 raises
+            # ValueError("URL rule 'items' must start with a slash."), while FastAPI 0.141.1
+            # accepts `@app.get("items")` silently and registers the path exactly as written,
+            # asserting nothing. So the slash is this scan's own discriminator rather than a
+            # rule both libraries keep, and its price is a slashless FastAPI route going
+            # unpublished. That is the direction to fail in: a phantom endpoint is worse than a
+            # missing one, because a writer is sent to document it and finds nothing there.
             if not path.startswith("/"):
                 continue
             methods = [verb.upper()]
@@ -462,7 +506,10 @@ SUBCOMMAND = re.compile(
 # One option string can still hold several flags, because commander writes "-o, --out <path>" as
 # a single literal. Go's flag package and pflag declare a bare name and leave the dashes to the
 # framework, so nothing here matches them: a spelling that appears in no file is a claim, and
-# every entry in this JSON carries an anchor exactly so that a reader can go and read it.
+# every entry under `surface` and `user_surface` carries an anchor exactly so that a reader can
+# go and read it. `tooling` is the one array in this JSON holding entries without one, and it is
+# not an exception to that rule: its entries are recommendations about this repo rather than
+# things found inside it, so there is no line to send anybody to.
 CLI_FLAG_DECL = re.compile(r"(?:\badd_argument|\badd_option|\.option)\s*\(")
 CLI_ARG_END = re.compile(r",\s*\w+\s*=|[)#]")
 CLI_STRING = re.compile(r"""["']([^"'\n]*)["']""")
@@ -485,8 +532,10 @@ for p in walk(exts={".ts", ".js", ".py", ".go"}):
             # that opens with a keyword -- `.option(name="--x")` -- is cut at its first argument
             # by the same expression rather than by a second one spelled slightly differently.
             args = "," + line[m.end():]
-            # Black puts every argument on its own line once the call passes 88 columns, which
-            # is the ordinary shape of an add_argument carrying an action and a help sentence.
+            # Black moves the arguments off the call line once the call passes 88 columns:
+            # first onto one indented line together, and one to a line only where they do not
+            # fit that way either. Both shapes are ordinary for an add_argument carrying an
+            # action and a help sentence, and both leave the call line holding no literal.
             # Reading one line at a time saw `parser.add_argument(` and no literal at all, so a
             # formatted project declared no flags whatsoever and doctype.py had nothing to
             # suppress a `--verbose` on a user page with: the WEBSTER_SURVEY path was inert for

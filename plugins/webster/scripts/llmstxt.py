@@ -11,9 +11,13 @@ unwritten page is dropped before the count is taken, and a header with no pages 
 file claiming a product has no documentation.
 """
 import json, os, re, subprocess, sys
-# tomllib is standard library from Python 3.11, which is this plugin's floor. Every interpreter
-# webster runs on is 3.11 or newer, so pyproject.toml is parsed directly and there is no
-# fallback path to keep working.
+# tomllib is standard library from Python 3.11, which is this plugin's floor: webster requires
+# 3.11 or newer. A-001 chose no fallback, so an older interpreter fails on the next line with
+# ModuleNotFoundError rather than half-running -- exit 1, which the docstring above says this
+# script signals nothing with. Nothing here chooses which interpreter runs: the commands
+# invoke this file as a bare `python3 scripts/llmstxt.py`, so which one runs is whatever PATH
+# resolves, and /usr/bin/python3 on the machine this was written on is 3.9.6. The floor is
+# stated because it is a requirement on the caller; the import is what enforces it.
 import tomllib
 
 ROOT = os.path.abspath(os.environ.get("WEBSTER_ROOT", "."))
@@ -246,10 +250,14 @@ def main():
     # pyproject.toml is tooling configuration rather than the product's own name.
     # Cleaned one source at a time rather than once at the end, because a name that is nothing
     # but a comment has to fall through to the next source instead of publishing an empty `# `
-    # as the first line every machine reader takes for the product's name. Every source runs
-    # through one_line for the same reason the page loop above tests every page for the marker:
-    # a header sourced from an unwritten stub publishes the skeleton, which is the one claim
-    # about a page this script is not allowed to make.
+    # as the first line every machine reader takes for the product's name. Every authored
+    # source -- both names, both descriptions, the README's line -- runs through one_line for
+    # the same reason the page loop above tests every page for the marker: a header sourced
+    # from an unwritten stub publishes the skeleton, which is the one claim about a page this
+    # script is not allowed to make. The sixth source is not authored and does not: the
+    # checkout's directory name is the last resort with nothing behind it, so dropping it would
+    # leave the file with no `# ` line at all, and a directory called `{app}` is published as
+    # `# {app}` rather than as nothing.
     py = pyproject_meta(ROOT)
     name = one_line(pkg.get("name")) or one_line(py.get("name")) or os.path.basename(ROOT)
     summary = (one_line(pkg.get("description")) or one_line(py.get("description"))

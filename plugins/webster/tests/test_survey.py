@@ -38,6 +38,7 @@ test_mock_patch_decorator_is_not_an_http_endpoint             FR-019      a80234
 test_flask_route_reports_its_declared_methods                 FR-019      cfafe8e
 test_flask_route_without_methods_reports_get                  FR-019      cfafe8e
 test_a_route_whose_methods_the_join_never_read_is_not_a_get   FR-019      3aa48f7 (added cycle 7)
+test_a_paren_in_a_comment_or_a_string_does_not_end_the_join   FR-019      339a80d (added cycle 8)
 test_pyproject_name_description_and_scripts                   FR-020/021  cfafe8e
 test_poetry_legacy_tables_are_the_fallback                    FR-020/021  cfafe8e
 test_package_json_still_wins_over_pyproject                   FR-020      guard
@@ -53,7 +54,9 @@ test_a_flag_named_in_another_flags_help_is_not_a_command      FR-012      944c95
 test_a_positional_description_is_not_a_flag_spec              FR-012      66dab76 (added cycle 6)
 test_a_commander_option_string_still_declares_its_spellings   FR-012      19941ad (added cycle 6)
 test_a_black_split_declaration_still_declares_its_flag        FR-012      66dab76 (added cycle 6)
+test_every_surface_entry_carries_an_anchor                    FR-012      guard
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
+test_the_red_first_table_counts_its_own_rows                  FR-039      n/a (reads this table)
 ============================================================  ==========  =======================
 
 Rows carrying a note the column has no room for:
@@ -65,8 +68,12 @@ Rows carrying a note the column has no room for:
   measure the two message floors rather than restate them in a comment, and is
   red at cfafe8e because the HTTPException branch it measures did not exist
   there. Against a802345 and every commit since it is a guard.
-- The three rows naming 19941ad are red at cfafe8e and at every revision
-  between, measured. Each names the nearest baseline for the same reason.
+- The four rows naming 19941ad are red at cfafe8e and at every revision
+  between, measured. Each names the nearest baseline for the same reason. This
+  sentence said "three" for two cycles: the fourth row is the commander one a
+  cycle-6 fix relabelled, and the count above it was not touched. Nothing read
+  this table until ``test_the_red_first_table_counts_its_own_rows``, which now
+  reads every sentence of this shape against the rows it counts.
 - ``test_a_flag_named_only_in_prose_is_not_a_command`` is red at 19941ad for a
   reason the column cannot show: there the commands list for its tree was empty
   altogether, so it fails because nothing was emitted rather than because noise
@@ -104,6 +111,22 @@ Rows carrying a note the column has no room for:
   The nearer baseline is the one that shows the phantom, which is why the
   column carries it.
 
+- ``test_a_paren_in_a_comment_or_a_string_does_not_end_the_join`` names
+  339a80d, and it is red at cfafe8e and at 3aa48f7 as well -- measured at all
+  three. 339a80d is the revision that publishes the phantom the row exists for:
+  ``GET /exports`` on a route serving POST alone, because a ``)`` inside a
+  comment balanced the call before ``methods=`` was read. At cfafe8e there is
+  no decorator joining at all, so nothing is published for any of the three
+  routes and the whole assertion goes red rather than one verb of it.
+- ``test_every_surface_entry_carries_an_anchor`` is a guard on a measurement
+  rather than on a fix: run against cfafe8e, 19941ad and 339a80d, it passed at
+  all three. It exists because the comment beside CLI_FLAG_DECL claimed the
+  anchor rule for every entry in the document, and ``tooling`` carries none.
+- ``test_the_red_first_table_counts_its_own_rows`` has no revision in its
+  column because it reads no revision of survey.py. It reads this docstring,
+  which is why "red against" -- defined above as a property of the script under
+  test -- does not apply to it.
+
 Every test drives the script through the conftest ``run_script`` helper. Nothing
 here imports survey.py: its module-level ``ROOT`` resolves from ``sys.argv`` at
 import time, so an import would freeze the wrong root before a test could set
@@ -117,6 +140,7 @@ No test uses ``@pytest.mark.skip`` or ``xfail``.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 # Read as text, never imported — see the module docstring. survey.py lives beside
@@ -166,6 +190,47 @@ def python_project(tmp_path, name, source, pyproject=None, package_json=None):
     if package_json is not None:
         root.joinpath("package.json").write_text(package_json, encoding="utf-8")
     return root
+
+
+def assert_floor_comment_sits_on_the_import(source, path):
+    """The run of ``#`` lines directly above ``import tomllib`` names the floor.
+
+    Read here rather than in each caller because both script modules take the
+    same dependency for the same reason and a reader of either needs the same
+    sentence. It is a plain function, not a fixture: it touches no process and
+    no temporary tree, and ``run_script`` is the one fixture-shaped helper this
+    suite is allowed (GI-004).
+    """
+    lines = source.splitlines()
+    found = [n for n, text in enumerate(lines) if text.strip() == "import tomllib"]
+    assert len(found) == 1, (
+        f"expected exactly one `import tomllib` line in {path}; found "
+        f"{len(found)} at lines {[n + 1 for n in found]}"
+    )
+    at = found[0]
+    assert lines[at] == "import tomllib", (
+        "tomllib is imported at module level, not indented inside the function "
+        f"that needs it; {path} line {at + 1} reads {lines[at]!r}"
+    )
+
+    block, above = [], at - 1
+    while above >= 0 and lines[above].lstrip().startswith("#"):
+        block.insert(0, lines[above])
+        above -= 1
+    comment = "\n".join(block)
+
+    assert block, (
+        "The import carries no comment above it. A version floor nobody wrote "
+        f"down is a floor nobody knows about; {path} line {at + 1}"
+    )
+    assert "3.11" in comment, (
+        f"The comment on the import does not name the floor:\n{comment}"
+    )
+    assert re.search(r"floor|requires", comment), (
+        "The comment names 3.11 without saying that 3.11 is the requirement, "
+        "which is also what a mention of some unrelated 3.11 looks like:\n"
+        + comment
+    )
 
 
 def config_named(data, name):
@@ -434,6 +499,75 @@ def test_a_route_whose_methods_the_join_never_read_is_not_a_get(run_script, tmp_
         "absent methods= there really is Flask's GET default and has to stay "
         f"published; got {hits}"
     )
+
+
+
+def test_a_paren_in_a_comment_or_a_string_does_not_end_the_join(run_script, tmp_path):
+    """FR-019, AC-024, OT-023: a paren that is not syntax closes nothing.
+
+    The join stopped when the parentheses balanced, counted over the raw text of
+    the lines read so far -- which counts the ones inside ``#`` comments and
+    string literals, where a paren is a character rather than syntax.
+    ``strict_slashes=False,  # 2) legacy behaviour, see PROJ-14`` balanced the
+    call two lines early. The join stopped before ``methods=["POST"]``, so what
+    reached the verb decision was a text with no ``methods=`` in it, which is
+    also what a route declaring none looks like, and the GET default fired: the
+    published entry was ``GET /exports``, a verb that endpoint answers 405 to.
+
+    ``/imports`` is the same failure through the other door, a ``)`` inside a
+    string literal. Both routes are three continuation lines long, so the
+    six-line cap is not what is measured here -- this is the completion
+    detector inside it. ``/health`` is the control that carries neither.
+    """
+    root = python_project(
+        tmp_path,
+        "parenjoin",
+        "from flask import Flask\n"  # 1
+        "\n"  # 2
+        "app = Flask(__name__)\n"  # 3
+        "\n"  # 4
+        "\n"  # 5
+        "@app.route(\n"  # 6
+        '    "/exports",\n'  # 7
+        "    strict_slashes=False,  # 2) legacy behaviour, see PROJ-14\n"  # 8
+        '    methods=["POST"],\n'  # 9
+        ")\n"  # 10
+        "def exports():\n"  # 11
+        "    return {}\n"  # 12
+        "\n"  # 13
+        "\n"  # 14
+        "@app.route(\n"  # 15
+        '    "/imports",\n'  # 16
+        '    defaults={"note": "csv) upload"},\n'  # 17
+        '    methods=["PUT"],\n'  # 18
+        ")\n"  # 19
+        "def imports():\n"  # 20
+        "    return {}\n"  # 21
+        "\n"  # 22
+        "\n"  # 23
+        "@app.route(\n"  # 24
+        '    "/health",\n'  # 25
+        ")\n"  # 26
+        "def health():\n"  # 27
+        "    return {}\n",  # 28
+    )
+
+    hits = survey(run_script, root)["surface"]["http"]
+
+    assert [(h["method"], h["path"]) for h in hits] == [
+        ("POST", "/exports"),
+        ("PUT", "/imports"),
+        ("GET", "/health"),
+    ], (
+        "Each route declares its verbs on a line the join has to reach past a "
+        "paren that is not syntax. A GET here is the phantom: the verb these "
+        f"endpoints answer 405 to, published as their surface; got {hits}"
+    )
+    assert [h["anchor"] for h in hits] == [
+        "src/api.py:6",
+        "src/api.py:15",
+        "src/api.py:24",
+    ], f"the anchor is the @ line, which is what a reader is sent to; got {hits}"
 
 
 # -----------------------------------------------------------------------------
@@ -958,18 +1092,119 @@ def test_a_black_split_declaration_still_declares_its_flag(run_script, tmp_path)
     )
 
 
+
+def test_every_surface_entry_carries_an_anchor(run_script, fixture_repo):
+    """FR-012: the anchor rule the flag scan states, over the arrays it holds for.
+
+    The comment beside ``CLI_FLAG_DECL`` refuses to publish a flag spelling
+    that appears in no file, on the ground that a reader can go and read every
+    entry this script publishes. That was written as a claim about the whole
+    document. The ``tooling`` array carries no anchor on any entry and none of
+    its append sites sets the key: a tooling entry recommends something for
+    this repo rather than reporting something found in it, so there is no line
+    to send anybody to. The claim is true of ``surface`` and ``user_surface``,
+    which is where the flag scan needs it, and the comment now says so. This is
+    the measurement of both halves.
+    """
+    data = survey(run_script, fixture_repo)
+
+    measured, missing = 0, []
+    for top in ("surface", "user_surface"):
+        for bucket, entries in sorted(data[top].items()):
+            assert isinstance(entries, list), (
+                f"{top}.{bucket} is not an array of entries, so counting "
+                f"anchors over it measures something else: {entries!r}"
+            )
+            for entry in entries:
+                measured += 1
+                if "anchor" not in entry:
+                    missing.append(f"{top}.{bucket}: {entry}")
+
+    assert measured >= 5, (
+        "A document with nothing in it satisfies the rule below vacuously, so "
+        "a floor is asserted first. Five is the floor because it rejects the "
+        "empty document, not because it describes this fixture -- the fixture "
+        f"published 11 entries when this was written and only {measured} here, "
+        f"for {fixture_repo}"
+    )
+    assert missing == [], (
+        "A surface entry without an anchor is exactly the claim this script "
+        "says it is not allowed to make:\n" + "\n".join(missing)
+    )
+    assert [e for e in data["tooling"] if "anchor" in e] == [], (
+        "The comment beside CLI_FLAG_DECL names tooling as the one array whose "
+        "entries carry no anchor. An anchor here means that sentence is now "
+        f"the stale half and has to be rewritten, not that this is a bug: "
+        f"{data['tooling']}"
+    )
+
+
 # -----------------------------------------------------------------------------
 # NFR-002 / OT-041: the Python floor is stated where the dependency is taken
 # -----------------------------------------------------------------------------
 def test_tomllib_imported_at_module_level_with_the_floor_comment():
-    """NFR-002, OT-041: tomllib is 3.11+, and the floor is written down."""
-    source = SURVEY_SOURCE.read_text(encoding="utf-8")
-    head = source.split("ROOT =")[0]
+    """NFR-002, OT-041: the floor is named where the dependency on it is taken.
 
-    assert "import tomllib" in head, (
-        "tomllib is imported at module level, not inside the function that needs it; "
-        f"the header of {SURVEY_SOURCE} was:\n{head}"
+    What this replaces was ``"3.11" in head`` over every line above ``ROOT =``,
+    so any four characters spelling that version anywhere in the header
+    satisfied it. Measured: replacing the floor comment in both scripts with
+    ``# See the pytest 3.11 changelog for why the fixtures look like this.``
+    left the floor written down nowhere and the whole suite green. Control:
+    deleting the comment with no decoy in its place turned it red, which is the
+    only thing it was ever measuring.
+
+    What a reader needs is the floor stated where the import that requires it
+    is, so that is the text read here: the run of ``#`` lines directly above
+    ``import tomllib``, which has to name 3.11 and has to say that 3.11 is the
+    requirement rather than mention it in passing. The decoy above names it and
+    says nothing about a floor, which is what separates the two.
+    """
+    source = SURVEY_SOURCE.read_text(encoding="utf-8")
+    assert_floor_comment_sits_on_the_import(source, SURVEY_SOURCE)
+
+
+# -----------------------------------------------------------------------------
+# FR-039 / AC-039: the red-first table above is read, not just written
+# -----------------------------------------------------------------------------
+def test_the_red_first_table_counts_its_own_rows():
+    """FR-039, AC-039: a count in a note about the table is read off the table.
+
+    The note above read "The three rows naming 19941ad" while four rows named
+    it. The fourth was the commander row a cycle-6 fix relabelled, and the
+    count above it was not touched; the substantive claim held for all four, so
+    only the number was wrong. Nothing in the suite read this table at all --
+    the module docstring opens by calling it "the record, and it is the only
+    one", and a record nothing checks is how the number got two cycles out of
+    date.
+
+    Every sentence of the form "<number> rows naming <sha>" anywhere in this
+    docstring is checked against the table rows carrying that sha. Whitespace
+    is folded first, so a sentence rewrapped across two lines is still read.
+    """
+    doc = __doc__ or ""
+    rows = [line for line in doc.splitlines() if re.match(r"^test_\S+\s+\S", line)]
+    assert len(rows) >= 20, (
+        "The table itself was not found, so counting against it measures "
+        f"nothing; matched {len(rows)} rows in the docstring of {__file__}"
     )
-    assert "3.11" in head, (
-        f"A version floor nobody wrote down is a floor nobody knows about:\n{head}"
+
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+             "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+    flat = re.sub(r"\s+", " ", doc)
+    phrases = re.findall(r"(\S+) rows? naming ([0-9a-f]{7})", flat)
+    assert len(phrases) >= 3, (
+        "No count sentence was found. If the notes stopped using this form the "
+        "test has to be rewritten rather than left passing over nothing; "
+        f"found {phrases}"
     )
+
+    for word, sha in phrases:
+        assert word in words, (
+            f"'{word} rows naming {sha}' does not open with a number this test "
+            "can read, so the count it states is unchecked"
+        )
+        counted = len([r for r in rows if sha in r])
+        assert counted == words[word], (
+            f"The note says {word} ({words[word]}) rows name {sha}; the table "
+            f"has {counted}:\n" + "\n".join(r for r in rows if sha in r)
+        )

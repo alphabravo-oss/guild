@@ -1,0 +1,35 @@
+# evidence-cmd: cd plugins/webster && WEBSTER_ROOT=tests/fixtures/repo python3 scripts/llmstxt.py > /tmp/webster-c4-llms.txt; echo "exit=$?"; echo '--- AC-031: no package.json, so the header is the pyproject [project] pair ---'; head -3 /tmp/webster-c4-llms.txt; echo '--- AC-028: the create-item line, with the anchor comment out of it ---'; grep 'create-item' /tmp/webster-c4-llms.txt; echo '--- AC-028: no comment text anywhere in the file ---'; grep -c -e '<!--' -e 'src/app/main.py:15' /tmp/webster-c4-llms.txt; echo '--- AC-029: pages carrying the stub marker, and lines naming any of them ---'; grep -rl 'webster: not written yet' tests/fixtures/repo/docs | sort | sed 's|tests/fixtures/repo/||'; echo 'lines in llms.txt naming one of those pages:'; for f in $(grep -rl 'webster: not written yet' tests/fixtures/repo/docs | sed 's|tests/fixtures/repo/||'); do grep -c "$f" /tmp/webster-c4-llms.txt; done | sort | uniq -c
+# evidence-for: US-007, AC-028, AC-029, AC-031, FR-023
+#
+# AC-031. The fixture has a pyproject.toml and no package.json, so the header is
+# the [project] name and description rather than the checkout's directory name.
+#
+# AC-028. docs/items/create-item.md ends its first prose line with an
+# `<!-- src/app/main.py:15 -->` anchor comment, which reached the published
+# summary intact. The grep -c counts every `<!--` and every occurrence of that
+# anchor in the whole file: zero.
+#
+# AC-029. Ten fixture pages carry the stub marker. Each is grepped for by name
+# in llms.txt and the counts are tallied: every one is 0.
+exit=0
+--- AC-031: no package.json, so the header is the pyproject [project] pair ---
+# fixapp
+
+> A small item store served over HTTP.
+--- AC-028: the create-item line, with the anchor comment out of it ---
+- [Create an item](docs/items/create-item.md): This page shows you how to add an item to your store.
+--- AC-028: no comment text anywhere in the file ---
+0
+--- AC-029: pages carrying the stub marker, and lines naming any of them ---
+docs/advanced/advanced.md
+docs/developer/developer.md
+docs/export/export.md
+docs/faq.md
+docs/getting-started/glossary.md
+docs/getting-started/overview.md
+docs/index.md
+docs/install/install.md
+docs/items/items.md
+docs/troubleshooting/troubleshooting.md
+lines in llms.txt naming one of those pages:
+     10 0

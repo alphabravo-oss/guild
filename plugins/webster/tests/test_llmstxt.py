@@ -35,6 +35,7 @@ test_unterminated_html_comment_publishes_nothing_after_it             FR-023   a
 test_html_comment_never_reaches_the_header                            FR-023   4ae7334 (added b520ca9)
 test_multi_line_header_description_folds_to_one_line                  FR-023   4ae7334 (added b520ca9)
 test_a_stub_readme_is_not_the_header_summary                          FR-023   f31b144 (added cycle 3)
+test_a_placeholder_brace_in_a_readme_line_is_not_the_summary          FR-023   f31b144 (added cycle 8)
 test_a_stub_marker_in_a_description_falls_through_to_the_next_source  FR-023   f31b144 (added cycle 3)
 test_stub_pages_are_absent_from_llms_txt                              FR-023   cfafe8e
 test_first_prose_line_is_taken_without_an_h1                          FR-023   cfafe8e
@@ -43,6 +44,7 @@ test_header_falls_back_to_the_poetry_table                            FR-023   c
 test_package_json_still_wins_for_the_header                           FR-023   guard
 test_frontmatter_description_still_wins                               FR-023   guard
 test_unparseable_pyproject_does_not_break_the_header                  FR-023   guard
+test_the_directory_name_fallback_is_published_as_it_stands            FR-023   guard
 test_tomllib_imported_at_module_level_with_the_floor_comment          NFR-002  cfafe8e
 ====================================================================  =======  =======================
 
@@ -61,6 +63,28 @@ anything, and recorded the first of them as red against the pre-change script.
   passes at cfafe8e because cfafe8e read no pyproject.toml, so a marker sitting
   in one could not reach the header. a802345 opened that route too.
 
+The cycle-8 corrections, which are of the other kind -- a row that was right
+about its revision and wrong about what it measured:
+
+- ``test_a_stub_readme_is_not_the_header_summary`` is named for
+  ``readme_summary``'s stub-marker check and did not measure it. Its README
+  fixture ended in a ``{placeholder}`` line, which ``one_line`` drops before
+  that check can matter, so every assertion held with the check deleted from
+  the script and the suite stayed green. The fixture now carries the marker and
+  no brace. Measured both ways: with the check deleted the test is red and the
+  header publishes ``> This page has not been written for you yet.``; with it
+  restored the suite is green again. The row's revision is unchanged, and it is
+  red at f31b144 for the reason the row has always claimed.
+- ``test_a_placeholder_brace_in_a_readme_line_is_not_the_summary`` is the
+  brace rule the fixture above used to cover by accident, given its own README
+  and its own row. It is red at f31b144 and at cfafe8e, and red under a llmstxt.py
+  whose ``one_line`` drops the marker but not the brace.
+- ``test_the_directory_name_fallback_is_published_as_it_stands`` is filed as a
+  guard on a measurement, not on a fix: it was run against cfafe8e, f31b144 and
+  339a80d and passed at all three. It exists because the comment above the
+  header chain claimed every source is cleaned, and the directory name is the
+  one that is not.
+
 Every test drives the script through the conftest ``run_script`` helper with
 WEBSTER_ROOT and WEBSTER_DOCS in ``env``. Nothing here imports llmstxt.py: its
 module-level ``ROOT``, ``DOCS`` and ``BASE`` resolve from ``os.environ`` at
@@ -75,6 +99,7 @@ No test uses ``@pytest.mark.skip`` or ``xfail``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 # Read as text, never imported — see the module docstring.
@@ -93,6 +118,48 @@ def llmstxt(run_script, root, docs="docs"):
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     return result.stdout
+
+
+def assert_floor_comment_sits_on_the_import(source, path):
+    """The run of ``#`` lines directly above ``import tomllib`` names the floor.
+
+    The same reader as the one in ``test_survey.py``, written out again rather
+    than imported from it. Both scripts take the same dependency for the same
+    reason, so both need the same sentence checked the same way, but a test
+    module importing another test module makes one of them fail for the other's
+    reasons. The one helper this suite shares lives in conftest.py and is
+    ``run_script`` (GI-004); a second one there is not this change's to add.
+    """
+    lines = source.splitlines()
+    found = [n for n, text in enumerate(lines) if text.strip() == "import tomllib"]
+    assert len(found) == 1, (
+        f"expected exactly one `import tomllib` line in {path}; found "
+        f"{len(found)} at lines {[n + 1 for n in found]}"
+    )
+    at = found[0]
+    assert lines[at] == "import tomllib", (
+        "tomllib is imported at module level, not indented inside the function "
+        f"that needs it; {path} line {at + 1} reads {lines[at]!r}"
+    )
+
+    block, above = [], at - 1
+    while above >= 0 and lines[above].lstrip().startswith("#"):
+        block.insert(0, lines[above])
+        above -= 1
+    comment = "\n".join(block)
+
+    assert block, (
+        "The import carries no comment above it. A version floor nobody wrote "
+        f"down is a floor nobody knows about; {path} line {at + 1}"
+    )
+    assert "3.11" in comment, (
+        f"The comment on the import does not name the floor:\n{comment}"
+    )
+    assert re.search(r"floor|requires", comment), (
+        "The comment names 3.11 without saying that 3.11 is the requirement, "
+        "which is also what a mention of some unrelated 3.11 looks like:\n"
+        + comment
+    )
 
 
 def docs_tree(tmp_path, name, pages, pyproject=None, package_json=None, readme=None):
@@ -270,8 +337,19 @@ def test_a_stub_readme_is_not_the_header_summary(run_script, tmp_path):
     The page loop reads every page for the marker, so a stub under docs/ is
     dropped. The README behind the header's ``> `` line is not under docs/, so a
     repo whose README is still the skeleton scaffold.py wrote published that
-    skeleton's first ``{placeholder}`` as the product's summary -- sourced from
-    the one page on disk whose whole content is that nobody has written it yet.
+    skeleton's prose as the product's summary -- sourced from the one page on
+    disk whose whole content is that nobody has written it yet. The check that
+    stops it is the marker read inside ``readme_summary``.
+
+    The fixture below carries the marker and no brace, and that is the whole
+    point of it. It used to end ``{The one problem this solves, in a
+    sentence.}``, and a brace is dropped by ``one_line`` before
+    ``readme_summary``'s marker check can matter: measured, every assertion
+    here held with that check deleted from the script, so the test named for it
+    was reading the brace rule instead. A README whose author cleared the
+    braces but left the marker separates them, and with the check deleted this
+    fixture publishes ``> This page has not been written for you yet.`` as the
+    product's summary. The brace rule keeps its own test below.
     """
     root = docs_tree(
         tmp_path,
@@ -286,23 +364,66 @@ def test_a_stub_readme_is_not_the_header_summary(run_script, tmp_path):
             "\n# Stubapp\n"
             f"\n<!-- {STUB_MARKER} -->\n"
             "\n## Overview\n"
-            "\n{The one problem this solves, in a sentence.}\n"
+            "\nThis page has not been written for you yet.\n"
         ),
     )
 
     out = llmstxt(run_script, root)
 
     assert STUB_MARKER not in out, f"the marker itself was published:\n{out}"
-    assert "The one problem this solves" not in out, (
-        f"a skeleton heading nobody filled in became the product's summary:\n{out}"
-    )
-    assert "{" not in out and "}" not in out, (
-        f"a placeholder brace is a form, not prose:\n{out}"
+    assert "This page has not been written for you yet." not in out, (
+        "The one page whose whole content is that nobody has written it became "
+        f"the sentence a machine reader takes for what this repo is:\n{out}"
     )
     assert out.startswith("# stubapp\n"), f"the name is still the product's:\n{out}"
     assert "\n> " not in out, (
         "With no describable source left the header carries no summary line at "
         f"all, which is the honest answer:\n{out}"
+    )
+    assert "- [Guide](docs/index.md): How to drive it." in out, (
+        f"the written pages are still listed:\n{out}"
+    )
+
+
+def test_a_placeholder_brace_in_a_readme_line_is_not_the_summary(run_script, tmp_path):
+    """FR-023: the other suppressor on the README route, measured on its own.
+
+    ``one_line`` drops a value carrying a brace, because scaffold.py writes its
+    headings as ``{placeholder}`` and a form nobody has filled in is not a
+    description of anything. Until this test that rule was exercised only
+    inside the stub-README test above, whose fixture carried both a marker and
+    a brace -- so either check alone kept it green and neither was measured.
+    This README carries the brace and no marker, which leaves the brace rule as
+    the only thing that can suppress it.
+    """
+    root = docs_tree(
+        tmp_path,
+        "bracereadme",
+        {"index.md": "# Guide\n\nHow to drive it.\n"},
+        pyproject='[project]\nname = "braceapp"\n',
+        readme=(
+            "---\n"
+            'title: "Braceapp"\n'
+            "doc_type: how-to\n"
+            "---\n"
+            "\n# Braceapp\n"
+            "\n## Overview\n"
+            "\n{The one problem this solves, in a sentence.}\n"
+        ),
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert "{" not in out and "}" not in out, (
+        f"a placeholder brace is a form, not prose:\n{out}"
+    )
+    assert "The one problem this solves" not in out, (
+        f"a skeleton heading nobody filled in became the product's summary:\n{out}"
+    )
+    assert out.startswith("# braceapp\n"), f"the name is still the product's:\n{out}"
+    assert "\n> " not in out, (
+        "The README was the last source in the chain, so dropping its line "
+        f"leaves the header with no summary rather than a form:\n{out}"
     )
     assert "- [Guide](docs/index.md): How to drive it." in out, (
         f"the written pages are still listed:\n{out}"
@@ -485,18 +606,57 @@ def test_unparseable_pyproject_does_not_break_the_header(run_script, tmp_path):
     )
 
 
+def test_the_directory_name_fallback_is_published_as_it_stands(run_script, tmp_path):
+    """FR-023: the sixth header source, and the one that is not cleaned.
+
+    Five sources feed the header and all five are authored text -- the two
+    names, the two descriptions, the README's opening line -- so each runs
+    through ``one_line``, which drops a value carrying the stub marker or a
+    scaffold brace and lets the next source in the chain have its turn. The
+    checkout's directory name is the sixth and has no next source: dropping it
+    would leave the file with no ``# `` line at all, and that first line is what
+    the format is for. So it is published exactly as the filesystem spells it,
+    brace and all. The comment above the chain claimed every source was cleaned
+    until this measured which one is not.
+    """
+    root = docs_tree(
+        tmp_path,
+        "{app}",
+        {"index.md": "# Guide\n\nHow to drive it.\n"},
+    )
+
+    out = llmstxt(run_script, root)
+
+    assert out.startswith("# {app}\n"), (
+        "With no package.json, no pyproject.toml and no README, the directory "
+        f"name is the whole of what is known about this repo:\n{out}"
+    )
+    assert "\n> " not in out, (
+        f"there is no description anywhere on disk to publish:\n{out}"
+    )
+    assert "- [Guide](docs/index.md): How to drive it." in out, (
+        f"the written pages are still listed:\n{out}"
+    )
+
+
 # -----------------------------------------------------------------------------
 # NFR-002 / OT-041: the Python floor is stated where the dependency is taken
 # -----------------------------------------------------------------------------
 def test_tomllib_imported_at_module_level_with_the_floor_comment():
-    """NFR-002, OT-041: tomllib is 3.11+, and the floor is written down."""
-    source = LLMSTXT_SOURCE.read_text(encoding="utf-8")
-    head = source.split("ROOT =")[0]
+    """NFR-002, OT-041: the floor is named where the dependency on it is taken.
 
-    assert "import tomllib" in head, (
-        "tomllib is imported at module level, not inside the function that needs it; "
-        f"the header of {LLMSTXT_SOURCE} was:\n{head}"
-    )
-    assert "3.11" in head, (
-        f"A version floor nobody wrote down is a floor nobody knows about:\n{head}"
-    )
+    What this replaces was ``"3.11" in head`` over every line above ``ROOT =``,
+    so any four characters spelling that version anywhere in the header
+    satisfied it. Measured: replacing the floor comment in both scripts with
+    ``# See the pytest 3.11 changelog for why the fixtures look like this.``
+    left the floor written down nowhere and the whole suite green. Control:
+    deleting the comment with no decoy in its place turned it red, which is the
+    only thing it was ever measuring.
+
+    What a reader needs is the floor stated where the import that requires it
+    is, so that is the text read here: the run of ``#`` lines directly above
+    ``import tomllib``, which has to name 3.11 and has to say that 3.11 is the
+    requirement rather than mention it in passing.
+    """
+    source = LLMSTXT_SOURCE.read_text(encoding="utf-8")
+    assert_floor_comment_sits_on_the_import(source, LLMSTXT_SOURCE)
