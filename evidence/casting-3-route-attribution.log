@@ -1,0 +1,82 @@
+# evidence-cmd: cd plugins/webster && rm -rf /tmp/webster-c3-attr && mkdir -p /tmp/webster-c3-attr && for sha in ef57d77 a5484ba ec6aa60 38fb601 eb27489 8b33f45; do git -C ../.. show $sha:plugins/webster/scripts/doctype.py > /tmp/webster-c3-attr/d_$sha.py; done; echo '--- D-129 / D-134 / FR-011: ROUTE_PATH at every revision the docstring names ---'; for sha in ef57d77 a5484ba ec6aa60 38fb601 eb27489 8b33f45; do printf '%s  %s\n' $sha "$(git -C ../.. log -1 --format=%s $sha)"; grep -A2 '^ROUTE_PATH = re.compile' /tmp/webster-c3-attr/d_$sha.py | sed 's/^/    /'; done; echo '--- ec6aa60 and 38fb601 left a5484ba ROUTE_PATH bytes untouched; eb27489 changed them ---'; for sha in a5484ba ec6aa60 38fb601 eb27489; do printf '%s ' $sha; grep -A2 '^ROUTE_PATH = re.compile' /tmp/webster-c3-attr/d_$sha.py | shasum | cut -c1-16; done; echo '--- what each revision of the rule reported, token by token (R = reported a request route) ---'; python3 -c "import sys,importlib;sys.path.insert(0,'/tmp/webster-c3-attr');q=chr(96);toks=['/settings/profile','/etc/hosts.conf','/etc/app.properties','/docs/readme.markdown','/x.template','/.gitignore','/api/v1.0','/v3.0','//'];[print(sha.ljust(9),' '.join(('R:' if importlib.import_module('d_'+sha).ROUTE_PATH.search(q+t+q) else '.:')+t for t in toks)) for sha in ('ef57d77','a5484ba','38fb601','eb27489','8b33f45')]"; echo '--- the two corrected passages, as this commit leaves them ---'; grep -n -A9 'The last two are measured against 19941ad' tests/test_doctype.py; grep -n -A6 'Lifting that cap took one more thing' tests/test_doctype.py
+# evidence-for: FR-011, FR-039, AC-039
+#
+# D-129 (FR-011 / FR-039 / AC-039). The module docstring told a reader that
+# 38fb601 "left the file-extension exclusion capped at the length of `.conf`,
+# so ordinary config paths were reported as routes". Two things in that sentence
+# are wrong and the token table below is where each one is read off. The cap was
+# six letters, not four: `.conf` is four, fitted it, and was never reported --
+# the a5484ba row shows `.:/etc/hosts.conf`. What was reported was every path
+# whose extension ran past six: `.properties`, `.markdown`, `.template`,
+# `.gitignore`, all `R:` on that same row. The docstring now says six letters
+# and picks its examples from the ones that were actually over it, which is what
+# test_doctype.py:334 had said correctly all along.
+#
+# D-134 (FR-011 / FR-039 / AC-039). The same passage, and its restatement in the
+# test's own docstring, gave the `//` empty-segment gap to the cap-lifting
+# commit -- "the same commit let the path body open on a slash". Measured: the
+# a5484ba, ec6aa60 and 38fb601 rows hash identically, so neither ec6aa60 nor
+# 38fb601 touched ROUTE_PATH at all; a5484ba is where the path body became
+# `(/[^`\s]+)` and where `//` first reported (`R://` on its row). eb27489
+# changed only the lookahead -- its path body is a5484ba's bytes -- and what it
+# took with it was the version paths: `/api/v1.0` and `/v3.0` go from `R:` to
+# `.:` on the eb27489 row, because admitting digits made `.0` read as an
+# extension. 8b33f45 closed both. The docstring now attributes `//` to a5484ba
+# and the `.0` regression to eb27489, and says 38fb601 never touched the rule.
+#
+# ROUTE_PATH itself does not move in this commit; the diff is prose only.
+#
+--- D-129 / D-134 / FR-011: ROUTE_PATH at every revision the docstring names ---
+ef57d77  feat(webster): the audience decides what a page is about, not just how hard it reads; 0.8.0 -> 0.9.0
+    ROUTE_PATH = re.compile(r"`(/(?:api|v\d)[\w/{}:.-]*)`|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+    
+    # Architecture vocabulary. Each of these names a part of the system the reader cannot touch.
+a5484ba  fix(webster): the lens that could not see a snake_case symbol or a plain route
+    ROUTE_PATH = re.compile(
+     r"`(?![^`\s]*\.[A-Za-z]{1,6}`)(/[^`\s]+)`"
+     r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+ec6aa60  fix(webster): the lens that read a version number as a symbol, and the tree that passed with nothing in it
+    ROUTE_PATH = re.compile(
+     r"`(?![^`\s]*\.[A-Za-z]{1,6}`)(/[^`\s]+)`"
+     r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+38fb601  fix(webster): the anchors that did not resolve and the standard names with a version digit
+    ROUTE_PATH = re.compile(
+     r"`(?![^`\s]*\.[A-Za-z]{1,6}`)(/[^`\s]+)`"
+     r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+eb27489  fix(webster): the config path a user page names, read as a request route
+    ROUTE_PATH = re.compile(
+     r"`(?![^`\s]*\.[A-Za-z0-9]{1,16}`)(/[^`\s]+)`"
+     r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+8b33f45  fix(webster): the routes the file exclusion swallowed, and the contract the tool printed
+    ROUTE_PATH = re.compile(
+     r"`(?![^`\s]*\.(?=[A-Za-z0-9]{0,15}[A-Za-z])[A-Za-z0-9]{1,16}`)(/[^`\s/]+(?:/[^`\s]*)?)`"
+     r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
+--- ec6aa60 and 38fb601 left a5484ba ROUTE_PATH bytes untouched; eb27489 changed them ---
+a5484ba 4925f9b4ee94cd26
+ec6aa60 4925f9b4ee94cd26
+38fb601 4925f9b4ee94cd26
+eb27489 9b6857232e2c0e6e
+--- what each revision of the rule reported, token by token (R = reported a request route) ---
+ef57d77   .:/settings/profile .:/etc/hosts.conf .:/etc/app.properties .:/docs/readme.markdown .:/x.template .:/.gitignore R:/api/v1.0 R:/v3.0 .://
+a5484ba   R:/settings/profile .:/etc/hosts.conf R:/etc/app.properties R:/docs/readme.markdown R:/x.template R:/.gitignore R:/api/v1.0 R:/v3.0 R://
+38fb601   R:/settings/profile .:/etc/hosts.conf R:/etc/app.properties R:/docs/readme.markdown R:/x.template R:/.gitignore R:/api/v1.0 R:/v3.0 R://
+eb27489   R:/settings/profile .:/etc/hosts.conf .:/etc/app.properties .:/docs/readme.markdown .:/x.template .:/.gitignore .:/api/v1.0 .:/v3.0 R://
+8b33f45   R:/settings/profile .:/etc/hosts.conf .:/etc/app.properties .:/docs/readme.markdown .:/x.template .:/.gitignore R:/api/v1.0 R:/v3.0 .://
+--- the two corrected passages, as this commit leaves them ---
+77:The last two are measured against 19941ad, the commit before this fix. One holds three lines
+78-that the two rounds of route widening broke in turn, each attribution read off ``git show <sha>
+79--- plugins/webster/scripts/doctype.py`` rather than remembered. a5484ba, round one, replaced the
+80-narrow /api and /v<n> rule with a six-letter cap on the file-extension exclusion, so a path whose
+81-extension ran past six — `/etc/app.properties`, `/docs/readme.markdown` — was reported as a
+82-route, while `.conf` is four letters, fitted the cap, and never was. The same commit opened the
+83-path body on a slash, so `//` became a route with no segment in it. eb27489, round two, lifted
+84-that cap to sixteen and admitted digits, which read `.0` as an extension, so `/api/v1.0` and
+85-`/v3.0` stopped being reported at all; its path body is byte-identical to a5484ba's. 38fb601
+86-never touched ROUTE_PATH. The other reads the printed contract rather than the rule behind it.
+343:    Lifting that cap took one more thing with it that this pins as well. eb27489 admitted
+344-    digits into the extension, which made `.0` look like one, so `/api/v1.0` and `/v3.0`
+345-    stopped being reported — routes the narrow /api and /v<n> rule a5484ba replaced had caught
+346-    since ROUTE_PATH was written, which made a fix into a regression. The `//` gap belongs to
+347-    a5484ba rather than to the cap-lifting commit: its path body admitted every character but a
+348-    backtick or a space, a second slash included, and eb27489 left that body byte-identical.
+349-    That made `` `//` `` a path with zero segments when A-008 asks for at least one.

@@ -75,11 +75,15 @@ The first two of those four pass at cfafe8e as well — the narrow CODE_IDENT co
 other two are red on both sides.
 
 The last two are measured against 19941ad, the commit before this fix. One holds three lines
-that the two rounds of route widening broke in turn: 38fb601 left the file-extension exclusion
-capped at the length of `.conf`, so ordinary config paths were reported as routes; lifting that
-cap read `.0` as an extension, so `/api/v1.0` and `/v3.0` stopped being reported at all; and the
-same commit let the path body open on a slash, so `//` became a route with no segment in it.
-The other reads the printed contract rather than the rule behind it.
+that the two rounds of route widening broke in turn, each attribution read off ``git show <sha>
+-- plugins/webster/scripts/doctype.py`` rather than remembered. a5484ba, round one, replaced the
+narrow /api and /v<n> rule with a six-letter cap on the file-extension exclusion, so a path whose
+extension ran past six — `/etc/app.properties`, `/docs/readme.markdown` — was reported as a
+route, while `.conf` is four letters, fitted the cap, and never was. The same commit opened the
+path body on a slash, so `//` became a route with no segment in it. eb27489, round two, lifted
+that cap to sixteen and admitted digits, which read `.0` as an extension, so `/api/v1.0` and
+`/v3.0` stopped being reported at all; its path body is byte-identical to a5484ba's. 38fb601
+never touched ROUTE_PATH. The other reads the printed contract rather than the rule behind it.
 
 - FR-011 / AC-012 / OT-013 the route rule stops at a file and at a path with no segment
     test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither
@@ -131,7 +135,7 @@ from pathlib import Path
 
 import pytest
 
-# The script under test, as text, for the two source-reading tests. Computed here rather than
+# The script under test, as text, for the three source-reading tests. Computed here rather than
 # imported from conftest: this module owns its own path and conftest belongs to the harness.
 DOCTYPE_PY = Path(__file__).resolve().parent.parent / "scripts" / "doctype.py"
 
@@ -336,14 +340,16 @@ def test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither(
     stem at all — every one of them was reported to a reader as naming a request route, on the
     page that told them where their settings live.
 
-    Lifting that cap took two things with it that this pins as well. Admitting digits into the
-    extension made `.0` look like one, so `/api/v1.0` and `/v3.0` stopped being reported —
-    routes that the narrow /api and /v<n> rule the widening replaced had caught since the
-    beginning, which made a fix into a regression. And letting the path body hold a slash made
-    `` `//` `` a path with zero segments when A-008 asks for at least one.
+    Lifting that cap took one more thing with it that this pins as well. eb27489 admitted
+    digits into the extension, which made `.0` look like one, so `/api/v1.0` and `/v3.0`
+    stopped being reported — routes the narrow /api and /v<n> rule a5484ba replaced had caught
+    since ROUTE_PATH was written, which made a fix into a regression. The `//` gap belongs to
+    a5484ba rather than to the cap-lifting commit: its path body admitted every character but a
+    backtick or a space, a second slash included, and eb27489 left that body byte-identical.
+    That made `` `//` `` a path with zero segments when A-008 asks for at least one.
 
-    The plain route on the same page fires throughout, so each half pins its own exclusion
-    rather than the whole rule going quiet."""
+    The plain route on the same page fires throughout, so each assertion below pins its own
+    exclusion rather than the whole rule going quiet."""
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
                "# Guide\n\nOpen `/settings/profile` to change your name. The app keeps its "
                "keys in\n`/etc/app.properties`, its notes in `/docs/readme.markdown`, its "
@@ -445,8 +451,9 @@ def test_architecture_is_reported_for_an_operator_and_for_a_user(run_script, doc
     rules check_lens runs over each line behind an `if` on the audience, leaving CODE_IDENT and
     ARCH_HARD outside it, and the ARCH_HARD half of that sentence had no test at all: the gate
     could be widened to swallow architecture and this section's header would still have claimed
-    both readers were covered. The two pages carry the same two terms and differ only in their
-    audience, so each assertion below is the same prose read by the reader named in it."""
+    both readers were covered. The two pages carry the same two terms in the same sentence and
+    declare different audiences — the file name and the title differ with them — so each
+    assertion below is the same prose read by the reader named in it."""
     write_page(docs_dir, "run.md", "title: Run\ndoc_type: how-to\naudience: operator",
                "# Run\n\nThe middleware logs each call and the service layer keeps a queue.\n")
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
@@ -483,7 +490,7 @@ def test_types_states_the_contract_the_lens_enforces(run_script):
     printed contract exists to prevent.
 
     All five kinds check_lens can report, against all three audiences, rather than the two
-    kinds and the one audience this test first read: an omission from the printed contract is
+    kinds and the two audiences this test first read: an omission from the printed contract is
     the same failure whichever class goes missing, and internal symbols, environment variables
     and architecture were unasserted while the index above claimed the test covered every
     class. Each audience's third line is read on its own rather than its block joined, because
@@ -506,7 +513,9 @@ def test_types_states_the_contract_the_lens_enforces(run_script):
 
     # The five kinds check_lens appends to `named`, against the readers each one fires on.
     # CODE_IDENT and ARCH_HARD run for every audience LENS_MAY_NOT names a contract for;
-    # ENV_VAR, ROUTE_PATH and FLAG run inside the `audience == "user"` gate (FR-017, GI-003).
+    # ROUTE_PATH and FLAG run inside the `audience == "user"` gate (FR-017, GI-003). ENV_VAR
+    # reaches a `user` page only as well, but by a condition of its own on the match rather
+    # than by that gate, so widening the gate would not be what let it out.
     # `developer` has no contract to keep, so no kind may appear on its line either.
     fires_on = {
         "internal symbols": ("user", "operator"),

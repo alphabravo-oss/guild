@@ -1011,11 +1011,11 @@ def main():
     # in the header line above, declares a doc_type of its own, and is never matched against it,
     # because check_typed lives past the `continue` in run_check. A tree of one clean how-to and
     # one stub whose placeholder braces name `create_item`, `/dashboard` and `--verbose` printed
-    # the sentence and exited 0, while the byte-identical stub with the marker removed reported
-    # those three as wrong-lens defects. This branch is only reached when `untyped` is empty and
-    # no page carried an unknown doc_type, so every page counted in `pages` did reach check_typed
-    # and the narrowed sentence is exactly true of them. The stub count rides beside it so the
-    # reader can see what the sentence is not about (AC-020, AC-021, FR-014).
+    # the sentence and exited 0, while that same stub with nothing changed but the marker taken
+    # out reported those three as wrong-lens defects. This branch is only reached when `untyped`
+    # is empty and no page carried an unknown doc_type, so every page counted in `pages` did
+    # reach check_typed and the narrowed sentence is exactly true of them. The stub count rides
+    # beside it so the reader can see what the sentence is not about (AC-020, AC-021, FR-014).
     if not defects and not advisories and not untyped:
         matched = "every written page matches its declared type"
         if stubs:
