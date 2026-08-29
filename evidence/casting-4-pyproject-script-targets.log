@@ -1,7 +1,0 @@
-# evidence-cmd: cd plugins/webster && d=$(mktemp -d) && printf '[project]\nname = "datedapp"\n\n[project.scripts]\nfoo = 1979-05-27\nbar = "pkg.mod:run"\n' > "$d/pyproject.toml" && printf 'x = 1\n' > "$d/api.py" && python3 scripts/survey.py "$d" > "$d/out.json" 2>"$d/err.txt"; printf 'exit=%s\n' "$?"; printf 'stderr=%s\n' "$(wc -c < "$d/err.txt" | tr -d ' ') bytes"; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("name=" + d["name"]); print("surface.cli=" + json.dumps(d["surface"]["cli"]))' "$d/out.json"; rm -rf "$d"
-# evidence-for: US-006, FR-020, FR-021
-
-exit=0
-stderr=0 bytes
-name=datedapp
-surface.cli=[{"name": "bar", "target": "pkg.mod:run", "anchor": "pyproject.toml:1"}]
