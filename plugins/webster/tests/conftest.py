@@ -95,11 +95,15 @@ stop. A module-level name survives every edit short of deleting the
 thing it names, so line numbers appear below only for files outside this
 change's writable surface (GI-007), which nothing in this run may move. There
 are two of them and no others: ``plugins/forge/tests/conftest.py`` and
-``plugins/forge/tests/test_validate_spec.py``. One ``file:line`` string below
-does point inside the surface, and it is not a citation:
+``plugins/forge/tests/test_validate_spec.py``. One ``file:line`` string in
+this file does point inside the surface, and it is not a citation:
 ``src/app/main.py:15`` is the anchor the fixture plants and ``drift.py``
 parses back out of ``docs/items/create-item.md``. Its line moving is the
-scenario, not a reference gone stale.
+scenario, not a reference gone stale. One string, written three times — here,
+above ``TOUCH_MAIN_MARKER``, and in ``build_fixture_repo``'s guard message —
+each one naming that same planted anchor again rather than a further place to
+look. This sentence used to say "one ``file:line`` string below", which is
+true of the distinct string and false of what a reader grepping for it finds.
 
 Fixtures exposed to test modules:
 
@@ -314,9 +318,13 @@ def build_fixture_repo(
     PATH and HOME, nothing else (FR-029) — so a ``TZ`` set in the test process
     with ``os.environ`` and ``time.tzset()`` never reaches the child at all.
     Measured: with ``TZ=Pacific/Kiritimati`` exported in the parent and dropped
-    by that ``env=``, git dated a bare-date commit at the host's ``-0600``. A
-    test written that way would compare two builds in the same zone and report
-    a pass.
+    by that ``env=``, git resolved a bare date in whatever zone the child was
+    in — with nothing forwarding ``TZ``, the host's own, read from
+    ``/etc/localtime``. That offset is ``-0600`` on the machine this was
+    measured on, against the ``+1400`` the parent was holding; on a
+    differently-zoned host it is that host's offset instead, which is the whole
+    of the hazard. A test written that way would compare two builds in one zone
+    and report a pass.
 
     Returns the repository root. Two calls produce identical HEAD hashes on
     this machine (OT-038, ``test_two_fixture_repo_builds_produce_the_same_head``)
@@ -363,10 +371,11 @@ def run_script_fixture() -> Callable[..., subprocess.CompletedProcess]:
 
     Not "the one subprocess helper for this suite", which is what this line
     used to say and what nothing in the suite supports: ``_git`` above shells
-    out, ``build_fixture_repo`` reaches git through it for every commit, and
+    out, ``build_fixture_repo`` reaches git through it for every commit,
     ``test_harness.py`` has ``git``, ``git_in`` and one bare ``subprocess.run``
-    that measures the child interpreter. Those all drive git or python
-    directly; none of them drives a script under test.
+    that measures the child interpreter, and ``test_drift.py`` has a ``git_in``
+    of its own. Those all drive git or python directly; none of them drives a
+    script under test.
 
     What GI-004 and CT-007 actually constrain is the narrower thing: every
     invocation of a script *under test* goes through this helper, so exactly

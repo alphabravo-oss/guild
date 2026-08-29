@@ -497,9 +497,10 @@ def test_fixture_head_survives_a_change_of_host_timezone(build_repo, tmp_path):
     ``conftest``'s ``_git`` passes an explicit environment built from PATH and
     HOME (FR-029) and drops everything else — a ``TZ`` set with ``os.environ``
     and ``time.tzset()`` is not in the child's environment, git falls back to
-    ``/etc/localtime``, and both builds run in the host's zone. Measured:
-    exactly that, dating a bare-date commit at the host's ``-0600`` while the
-    parent said ``+1400``.
+    ``/etc/localtime``, and both builds run in whatever zone the host is in.
+    Measured: exactly that, the commit taking the host's own offset rather than
+    the ``+1400`` the parent was holding — ``-0600`` on the machine this was
+    measured on, and that host's own offset on any other.
 
     Which is why the control comes first. A test that varies ``TZ`` and asserts
     two equal hashes passes just as happily when ``TZ`` reaches nothing at all,
