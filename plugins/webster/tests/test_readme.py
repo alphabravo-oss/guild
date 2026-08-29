@@ -172,20 +172,33 @@ README = PLUGIN_ROOT / "README.md"
 PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 CONFTEST = TESTS_DIR / "conftest.py"
 
-# Read as text and parsed with ``ast``, never imported. GI-004 bars the import
-# outright, and for five of the seven scripts there would be no other way in
-# anyway: drift.py, llmstxt.py, doctype.py, survey.py and slop.py bind their
-# root, their docs directory or their allowlists out of ``sys.argv`` and the
-# environment at module level, so an import here would run that binding against
-# pytest's own argv. scaffold.py and rendered.py read theirs inside ``main`` and
-# would survive it. All seven are parsed the same way regardless, because a rule
-# about which script may be imported is a rule somebody has to keep, and
-# ``ast.parse`` keeps none. The count is stated because this comment once opened
-# "every script binds", which was false for exactly the two it did not name.
-# conftest.py ("Every script binds its root, its docs directory and its
-# allowlists at module level") and the README ("each script binds its root, its
-# docs") carried the same claim in their own words rather than a copy of this
-# one, which is why correcting one of the three left the other two standing.
+# Read as text and parsed with ``ast``, never imported. GI-004 bars the import,
+# and what an import would cost is the binding: drift.py, llmstxt.py,
+# doctype.py, survey.py and slop.py take their root, their docs directory or
+# their allowlists out of ``sys.argv`` and the environment at module level, so
+# importing one from here runs that binding against pytest's own argv —
+# measured, under an argv of ``["pytest", "tests/test_readme.py", "-v"]``
+# drift.py's docs directory binds to ``-v``, and the next import hands back the
+# cached module still holding it, after this process has chdir'd away.
+# scaffold.py and rendered.py read theirs inside ``main`` and would survive it.
+# Frozen is not sealed, though, and this comment used to say it was, in the
+# words "there would be no other way in anyway": ``runpy.run_path`` re-executes
+# the body and re-binds all five, measured on the ``ROOT`` of drift.py,
+# llmstxt.py and survey.py, on doctype.py's ``LENS_ALLOW`` and on slop.py's
+# ``TARGETS``; under ``run_name="__main__"`` it drove ``drift.py check`` to a
+# real JSON line, status ``no_manifest`` at exit 2, in this process and against
+# the tree that re-execution had just bound rather than the one the import
+# held. What an in-process run of those five skips is the process boundary
+# where the environment ``run_script`` builds and the interpreter it resolves
+# apply at all — a cost, not an impossibility. All seven are parsed the same
+# way regardless, because a rule about which script may be imported is a rule
+# somebody has to keep, and ``ast.parse`` keeps none. The five are counted
+# because this comment once opened "every script binds", named no script at
+# all, and was therefore read as covering all seven, when it was false for
+# scaffold.py and for rendered.py. conftest.py and the README each wrote that
+# overstatement in their own words rather than a copy of this one, so each had
+# to be corrected on its own; both now name the five, and this was the last
+# copy standing.
 SCRIPTS = PLUGIN_ROOT / "scripts"
 DRIFT = SCRIPTS / "drift.py"
 

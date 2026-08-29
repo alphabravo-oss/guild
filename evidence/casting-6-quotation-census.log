@@ -1,0 +1,259 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)"; d=$(mktemp -d); printf %s "IiIiRC0xNTkuIEV2ZXJ5IHF1b3RhdGlvbiBpbiB0ZXN0X3JlYWRtZS5weSBhbmQgUkVBRE1FLm1kIHRoYXQgcHV0cyB3b3JkcyBpbgphbm90aGVyIGZpbGUncyBtb3V0aCwgZ3JlcHBlZCBhZ2FpbnN0IHRoYXQgZmlsZS4KClJ1biBmcm9tIHRoZSByZXBvc2l0b3J5IHJvb3QuIEEgcm93IHBhc3NlcyBvbmx5IHdoZW4gdGhlIHF1b3RlZCBzdHJpbmcgaXMKcHJlc2VudCwgYnl0ZSBmb3IgYnl0ZSwgaW4gdGhlIG5vcm1hbGlzZWQgdGV4dCBvZiB0aGUgZmlsZSBpdCBpcyBhdHRyaWJ1dGVkCnRvIC0tIG5vcm1hbGlzZWQgbWVhbmluZyBsaW5lIHdyYXBwaW5nIGFuZCBhIGxlYWRpbmcgY29tbWVudCBtYXJrZXIgcmVtb3ZlZCwKbm90aGluZyBlbHNlLiBBIHJvdyB0aGF0IG5lZWRzIGEgY2FzZS1pbnNlbnNpdGl2ZSBtYXRjaCB0byBsYW5kIGlzIHJlcG9ydGVkCmFzIHN1Y2ggYW5kIHRoZSByZWFzb24gaXMgZ2l2ZW4uCiIiIgppbXBvcnQgcmUKaW1wb3J0IHN1YnByb2Nlc3MKaW1wb3J0IHN5cwoKVyA9ICJwbHVnaW5zL3dlYnN0ZXIiCgoKZGVmIG5vcm0odGV4dCk6CiAgICAiIiJGbGF0dGVuIHdyYXBwaW5nIGFuZCBjb21tZW50IG1hcmtlcnM7IGxlYXZlIGV2ZXJ5IG90aGVyIGJ5dGUgYWxvbmUuIiIiCiAgICBsaW5lcyA9IFtyZS5zdWIociJeXHMqI1xzPyIsICIiLCBsaW5lKS5zdHJpcCgpIGZvciBsaW5lIGluIHRleHQuc3BsaXRsaW5lcygpXQogICAgcmV0dXJuIHJlLnN1YihyIlxzKyIsICIgIiwgIiAiLmpvaW4obGluZXMpKQoKCmRlZiBib2R5KHBhdGgsIHJlZik6CiAgICBpZiByZWYgPT0gIldPUktUUkVFIjoKICAgICAgICByZXR1cm4gb3BlbihwYXRoLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKICAgIHJldHVybiBzdWJwcm9jZXNzLnJ1bihbImdpdCIsICJzaG93IiwgIiVzOiVzIiAlIChyZWYsIHBhdGgpXSwKICAgICAgICAgICAgICAgICAgICAgICAgICBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGNoZWNrPVRydWUpLnN0ZG91dAoKCkNBQ0hFID0ge30KCgpkZWYgaGl0cyhxdW90YXRpb24sIHBhdGgsIHJlZiwgZm9sZD1GYWxzZSk6CiAgICBrZXkgPSAocGF0aCwgcmVmKQogICAgaWYga2V5IG5vdCBpbiBDQUNIRToKICAgICAgICBDQUNIRVtrZXldID0gbm9ybShib2R5KHBhdGgsIHJlZikpCiAgICB0ZXh0ID0gQ0FDSEVba2V5XQogICAgaWYgZm9sZDoKICAgICAgICByZXR1cm4gdGV4dC5sb3dlcigpLmNvdW50KHF1b3RhdGlvbi5sb3dlcigpKQogICAgcmV0dXJuIHRleHQuY291bnQocXVvdGF0aW9uKQoKCmRlZiByZXBvcnQocm93cywgdGl0bGUpOgogICAgcHJpbnQodGl0bGUpCiAgICBwcmludCgiICAgICUtNHMgJS00NnMgJS0xMHMgJS04cyAlcyIgJSAoImhpdHMiLCAiYXR0cmlidXRlZCB0byIsICJhdCIsICJleGFjdD8iLCAicXVvdGF0aW9uIikpCiAgICBiYWQgPSAwCiAgICBmb3IgcXVvdGF0aW9uLCBwYXRoLCByZWYsIG5vdGUgaW4gcm93czoKICAgICAgICBleGFjdCA9IGhpdHMocXVvdGF0aW9uLCBwYXRoLCByZWYpCiAgICAgICAgZm9sZGVkID0gaGl0cyhxdW90YXRpb24sIHBhdGgsIHJlZiwgZm9sZD1UcnVlKQogICAgICAgIGlmIGV4YWN0OgogICAgICAgICAgICB2ZXJkaWN0LCBjb3VudCA9ICJ5ZXMiLCBleGFjdAogICAgICAgIGVsaWYgZm9sZGVkOgogICAgICAgICAgICB2ZXJkaWN0LCBjb3VudCA9ICJjYXNlIiwgZm9sZGVkCiAgICAgICAgZWxzZToKICAgICAgICAgICAgdmVyZGljdCwgY291bnQgPSAiTk8iLCAwCiAgICAgICAgICAgIGJhZCArPSAxCiAgICAgICAgcHJpbnQoIiAgICAlLTRkICUtNDZzICUtMTBzICUtOHMgJXMiICUgKGNvdW50LCBwYXRoLCByZWYsIHZlcmRpY3QsIHF1b3RhdGlvbikpCiAgICAgICAgaWYgbm90ZToKICAgICAgICAgICAgcHJpbnQoIiAgICAgICAgICVzIiAlIG5vdGUpCiAgICBwcmludCgiICAgIC0+ICVkIHJvdyhzKSB3aXRoIG5vIG1hdGNoIGF0IGFsbCIgJSBiYWQpCiAgICByZXR1cm4gYmFkCgoKcHJpbnQoIlsxXSBELTE1OTogdGhlIHdvcmRzIHRlc3RfcmVhZG1lLnB5IHB1dCBpbiBjb25mdGVzdC5weSdzIG1vdXRoLCBhdCBldmVyeSIpCnByaW50KCIgICAgY29uZnRlc3QucHkgcmV2aXNpb24gdGhhdCBoYXMgZXZlciBleGlzdGVkIikKUVVPVEUgPSAiRXZlcnkgc2NyaXB0IGJpbmRzIGl0cyByb290LCBpdHMgZG9jcyBkaXJlY3RvcnkgYW5kIGl0cyBhbGxvd2xpc3RzIGF0IG1vZHVsZSBsZXZlbCIKcHJpbnQoIiAgICBxdW90YXRpb246ICVzIiAlIFFVT1RFKQpDT05GVEVTVF9SRVZTID0gWyIyNDgyZjZmIiwgIjBjM2Q4OTYiLCAiMTY4ODQ1ZiIsICI3YjZhZTNlIiwKICAgICAgICAgICAgICAgICAiNDcxNGQ0NSIsICI2ZTE5MDY0IiwgImI2MjNlOWYiLCAiMmFiZTA4MSJdCnRvdGFsID0gMApmb3IgcmV2IGluIENPTkZURVNUX1JFVlM6CiAgICBuID0gaGl0cyhRVU9URSwgIiVzL3Rlc3RzL2NvbmZ0ZXN0LnB5IiAlIFcsIHJldiwgZm9sZD1UcnVlKQogICAgdG90YWwgKz0gbgogICAgcHJpbnQoIiAgICAgICUtOXMgJWQiICUgKHJldiwgbikpCnByaW50KCIgICAgdG90YWwsIGNhc2UtaW5zZW5zaXRpdmUsIGFjcm9zcyAlZCByZXZpc2lvbnM6ICVkIiAlIChsZW4oQ09ORlRFU1RfUkVWUyksIHRvdGFsKSkKcHJpbnQoIiAgICB3aGF0IGNvbmZ0ZXN0LnB5IHNheXMgYXQgdGhlIGNvbW1pdCB1bmRlciB0ZXN0OiIpCmhlcmUgPSBDQUNIRS5zZXRkZWZhdWx0KCgiJXMvdGVzdHMvY29uZnRlc3QucHkiICUgVywgIldPUktUUkVFIiksCiAgICAgICAgICAgICAgICAgICAgICAgIG5vcm0oYm9keSgiJXMvdGVzdHMvY29uZnRlc3QucHkiICUgVywgIldPUktUUkVFIikpKQpmb3VuZCA9IHJlLnNlYXJjaChyIkZpdmUgb2YgdGhlIHBsdWdpbidzIHNldmVuIHNjcmlwdHNbXjtdKjsiLCBoZXJlKQpwcmludCgiICAgICAgJXMiICUgKGZvdW5kLmdyb3VwKDApIGlmIGZvdW5kIGVsc2UgIjx0aGUgc2VudGVuY2UgaGFzIG1vdmVkPiIpKQpwcmludCgiICAgIHRoZSBuZWFyZXN0IHRoaW5nIGFueSByZXZpc2lvbiBoZWxkLCBhdCA0NzE0ZDQ1OiIpCm9sZCA9IENBQ0hFLnNldGRlZmF1bHQoKCIlcy90ZXN0cy9jb25mdGVzdC5weSIgJSBXLCAiNDcxNGQ0NSIpLAogICAgICAgICAgICAgICAgICAgICAgIG5vcm0oYm9keSgiJXMvdGVzdHMvY29uZnRlc3QucHkiICUgVywgIjQ3MTRkNDUiKSkpCmZvdW5kID0gcmUuc2VhcmNoKHIiRXZlcnkgc2NyaXB0IGJpbmRzW146XSo6Iiwgb2xkKQpwcmludCgiICAgICAgJXMiICUgKGZvdW5kLmdyb3VwKDApIGlmIGZvdW5kIGVsc2UgIjxub25lPiIpKQpwcmludCgiICAgIC0+IG5vdCByZXBhaXJlZCBidXQgcmVtb3ZlZDogdGhlIHJlcGxhY2VtZW50IGNvbW1lbnQgcXVvdGVzIG5vIHNpYmxpbmcgZmlsZS4iKQoKcHJpbnQoKQpiYWQgPSByZXBvcnQoWwogICAgKCJUZXN0cyBmb3IgdGhlIGhhcm5lc3MgaXRzZWxmIiwgIiVzL3Rlc3RzL3Rlc3RfaGFybmVzcy5weSIgJSBXLCAiV09SS1RSRUUiLAogICAgICJ0aGUgZG9jc3RyaW5nIG9wZW5pbmcgdGVzdF9yZWFkbWUucHkgbmFtZXMiKSwKICAgICgiY2xlYW4gYW5kIHVucmVsYXRlZF9jaGFuZ2VzIGV4aXQgMCwgZHJpZnQgZXhpdHMgMSIsICIlcy9zY3JpcHRzL2RyaWZ0LnB5IiAlIFcsICJXT1JLVFJFRSIsICIiKSwKICAgICgiaGFzIG5vdCBlYXJuZWQgZXhpdCAwIiwgIiVzL3NjcmlwdHMvZHJpZnQucHkiICUgVywgIldPUktUUkVFIiwgIiIpLAogICAgKCJleGl0IDEgb24gYSBkZWZlY3QsIDAgd2hlbiBvbmx5IGFkdmlzb3JpZXMgcmVtYWluLCAyIHdoZW4gdGhlcmUgd2FzIG5vdGhpbmcgdG8gY2hlY2siLAogICAgICIlcy9zY3JpcHRzL2RvY3R5cGUucHkiICUgVywgIldPUktUUkVFIiwgIiIpLAogICAgKCJvbiBhIGRlZmVjdCIsICIlcy9zY3JpcHRzL2RvY3R5cGUucHkiICUgVywgIldPUktUUkVFIiwgInN1Yi1xdW90ZSBvZiB0aGUgcm93IGFib3ZlIiksCiAgICAoIndoZW4gb25seSBhZHZpc29yaWVzIHJlbWFpbiIsICIlcy9zY3JpcHRzL2RvY3R5cGUucHkiICUgVywgIldPUktUUkVFIiwgInN1Yi1xdW90ZSBvZiB0aGUgcm93IGFib3ZlIiksCiAgICAoImluaXQgbmV2ZXIgZXhpdHMgMSIsICIlcy9zY3JpcHRzL3NjYWZmb2xkLnB5IiAlIFcsICJXT1JLVFJFRSIsICIiKSwKICAgICgic3RhdHVzIG9rIGF0IiwgIiVzL3NjcmlwdHMvc2NhZmZvbGQucHkiICUgVywgIldPUktUUkVFIiwgIiIpLAogICAgKCJleGl0IDEgb24gYSBsZWFrIiwgIiVzL3NjcmlwdHMvcmVuZGVyZWQucHkiICUgVywgIldPUktUUkVFIiwgIiIpLApdLCAiWzJdIHRlc3RfcmVhZG1lLnB5IHF1b3RpbmcgYSBzaWJsaW5nIGZpbGUgYXQgdGhlIGNvbW1pdCB1bmRlciB0ZXN0IikKCnByaW50KCkKYmFkICs9IHJlcG9ydChbCiAgICAoIkV2ZXJ5IG90aGVyIG1vZHVsZSBpbiB0aGlzIGRpcmVjdG9yeSB0ZXN0cyBhIHNjcmlwdCIsICIlcy90ZXN0cy90ZXN0X3JlYWRtZS5weSIgJSBXLCAiNzcwYmE3NCIsICIiKSwKICAgICgiZ3JlZW4gYmVmb3JlIGFuZCBhZnRlciBieSBkZXNpZ24iLCAiJXMvdGVzdHMvdGVzdF9yZWFkbWUucHkiICUgVywgImU4MmVjY2MiLAogICAgICJjYXNlOiB0aGUgc291cmNlIHdyb3RlIGl0IHNlbnRlbmNlLWluaXRpYWwsICdHcmVlbiBiZWZvcmUgYW5kIGFmdGVyIGJ5IGRlc2lnbiciKSwKICAgICgiYnkgdGhlIHRpbWUgdGhpcyByb3cgd2FzIGZpcnN0IHdyaXR0ZW4iLCAiJXMvdGVzdHMvdGVzdF9yZWFkbWUucHkiICUgVywgImM2YmYxYjUiLCAiIiksCiAgICAoIndvdWxkIGNvbGxlY3Qgb25lIGl0ZW0iLCAiJXMvdGVzdHMvdGVzdF9yZWFkbWUucHkiICUgVywgIjc3MGJhNzQiLCAiIiksCiAgICAoInRoZXJlIHdvdWxkIGJlIG5vIG90aGVyIHdheSBpbiBhbnl3YXkiLCAiJXMvdGVzdHMvdGVzdF9yZWFkbWUucHkiICUgVywgIjRiYjE5Y2MiLAogICAgICJ0aGUgY2xhdXNlIEQtMTU4IHJldHJhY3RzLCBxdW90ZWQgZnJvbSB0aGUgcmV2aXNpb24gdGhpcyBjaGFuZ2UgcmVwbGFjZXMiKSwKICAgICgiZXZlcnkgc2NyaXB0IGJpbmRzIiwgIiVzL3Rlc3RzL3Rlc3RfcmVhZG1lLnB5IiAlIFcsICI0NGI1MGEyIiwgIiIpLAogICAgKCI2OSBwYXNzaW5nIiwgIiVzL1JFQURNRS5tZCIgJSBXLCAiNjFmYjFkZiIsICIiKSwKICAgICgiVmVyc2lvbiAwLjIuMC4iLCAiJXMvUkVBRE1FLm1kIiAlIFcsICJjZmFmZThlIiwgIiIpLApdLCAiWzNdIHRlc3RfcmVhZG1lLnB5IHF1b3RpbmcgYW4gZWFybGllciByZXZpc2lvbiwgYXQgdGhlIHJldmlzaW9uIGl0IG5hbWVzIikKCnByaW50KCkKYmFkICs9IHJlcG9ydChbCiAgICAoIldoYXQgdGhpcyBpcyIsICIlcy9za2lsbHMvaG91c2UtcnVsZXMvU0tJTEwubWQiICUgVywgIldPUktUUkVFIiwgIiIpLAogICAgKCJ3aGF0IHRoaXMgZGVsaWJlcmF0ZWx5IGRvZXMgbm90IGRvIiwgIiVzL3NraWxscy9ob3VzZS1ydWxlcy9TS0lMTC5tZCIgJSBXLCAiV09SS1RSRUUiLAogICAgICJjYXNlOiB0aGUgc291cmNlIHdyaXRlcyB0aGUgc2VjdGlvbiB0aXRsZSwgJ1doYXQgdGhpcyBkZWxpYmVyYXRlbHkgZG9lcyBub3QgZG8nIiksCiAgICAoIm5vIG90aGVyIHdheSBpbiIsICIlcy9SRUFETUUubWQiICUgVywgImM2YmYxYjUiLCAiIiksCiAgICAoImVhY2ggc2NyaXB0IGJpbmRzIiwgIiVzL1JFQURNRS5tZCIgJSBXLCAiNjkzNTcwZCIsICIiKSwKICAgICgiYSBkaWZmZXJlbnQgaW50ZXJwcmV0ZXIgZnJvbSBweXRlc3QncyIsICIlcy9SRUFETUUubWQiICUgVywgIjY5MzU3MGQiLCAiIiksCiAgICAoImV4aXQgMSBvbiBkcmlmdCIsICIlcy9SRUFETUUubWQiICUgVywgImNmYWZlOGUiLAogICAgICJjYXNlOiB0aGUgcm93IHdyb3RlIGl0IHNlbnRlbmNlLWluaXRpYWwsICdFeGl0IDEgb24gZHJpZnQsIDIgb24gbm90aGluZyB0byBtZWFzdXJlJyIpLApdLCAiWzRdIFJFQURNRS5tZCBxdW90aW5nIGFub3RoZXIgZmlsZSwgb3IgYW4gZWFybGllciByZXZpc2lvbiBvZiBpdHNlbGYiKQoKcHJpbnQoKQpwcmludCgiWzVdIHRoZSB1bnF1b3RlZCBhdHRyaWJ1dGlvbnMgdGhlIHNhbWUgdHdvIGZpbGVzIG1ha2UsIGNoZWNrZWQgdGhlIHNhbWUgd2F5IikKYmFkICs9IHJlcG9ydChbCiAgICAoIkZpdmUgb2YgdGhlIHBsdWdpbidzIHNldmVuIHNjcmlwdHMgYmluZCB0aGVpciByb290LCB0aGVpciBkb2NzIGRpcmVjdG9yeSBvciB0aGVpciBhbGxvd2xpc3RzIGF0IG1vZHVsZSBpbXBvcnQiLAogICAgICIlcy90ZXN0cy9jb25mdGVzdC5weSIgJSBXLCAiV09SS1RSRUUiLCAid2hhdCB0ZXN0X3JlYWRtZS5weSBub3cgc2F5cyBjb25mdGVzdC5weSBuYW1lcyIpLAogICAgKCJGaXZlIG9mIHRoZSBzZXZlbiBzY3JpcHRzIG1ha2UgYW4gaW1wb3J0IHRoZSB3cm9uZyB3YXkgaW4iLCAiJXMvUkVBRE1FLm1kIiAlIFcsICJXT1JLVFJFRSIsCiAgICAgIndoYXQgdGVzdF9yZWFkbWUucHkgbm93IHNheXMgdGhlIFJFQURNRSBuYW1lcyIpLAogICAgKCJyZXNvbHZlcyB0aHJvdWdoIFBBVEggdG8gMy4xNC42IiwgIiVzL3Rlc3RzL2NvbmZ0ZXN0LnB5IiAlIFcsICJXT1JLVFJFRSIsCiAgICAgIlJFQURNRS5tZDozMjIgYXR0cmlidXRlcyB0aGlzIHRvIGNvbmZ0ZXN0LnB5IiksCiAgICAoIm5vdCB0aGUgb25lIHJ1bm5pbmcgcHl0ZXN0IiwgIiVzL3Rlc3RzL2NvbmZ0ZXN0LnB5IiAlIFcsICJXT1JLVFJFRSIsCiAgICAgIlJFQURNRS5tZDozMjIgYXR0cmlidXRlcyB0aGlzIHRvIGNvbmZ0ZXN0LnB5IiksCl0sICIiKQoKcHJpbnQoKQpwcmludCgiWzZdIHRoZSBvbmUgYmFja3RpY2tlZCBjbGFpbSB0ZXN0X3JlYWRtZS5weSBtYWtlcyBhYm91dCBldmVyeSBzY3JpcHQncyBzb3VyY2UiKQpwcmludCgiICAgICdldmVyeSBvdGhlciBzY3JpcHQgaGVyZSBlbmRzIGluIHN5cy5leGl0KG1haW4oKSknLCBhbmQgc3VydmV5LnB5IGRvZXMgbm90IikKZm9yIG5hbWUgaW4gWyJkb2N0eXBlLnB5IiwgImRyaWZ0LnB5IiwgImxsbXN0eHQucHkiLCAicmVuZGVyZWQucHkiLCAic2NhZmZvbGQucHkiLCAic2xvcC5weSIsICJzdXJ2ZXkucHkiXToKICAgIHNyYyA9IGJvZHkoIiVzL3NjcmlwdHMvJXMiICUgKFcsIG5hbWUpLCAiV09SS1RSRUUiKQogICAgcHJpbnQoIiAgICAgICUtMTNzIHN5cy5leGl0KG1haW4oKSkgeCVkIiAlIChuYW1lLCBzcmMuY291bnQoInN5cy5leGl0KG1haW4oKSkiKSkpCgpwcmludCgpCnByaW50KCJ2ZXJkaWN0OiAlZCBxdW90YXRpb24ocykgaW4gZWl0aGVyIGZpbGUgd2l0aCBubyBtYXRjaCBpbiB0aGUgZmlsZSBuYW1lZC4iICUgYmFkKQpzeXMuZXhpdCgwKQo=" | base64 -d > "$d/census.py"; echo "--- the program these blocks are the output of ---"; cat "$d/census.py"; echo; echo "--- measured ---"; python3 "$d/census.py"; rm -rf "$d"'
+# evidence-for: FR-029, GI-004, AC-039, FR-039, FR-038, AC-042, US-010
+# evidence-timeout: 120
+#
+# D-159. tests/test_readme.py quoted conftest.py as saying "Every script binds its
+# root, its docs directory and its allowlists at module level". Block [1] greps that
+# string at every conftest.py revision that has ever existed: nought hits, at any of
+# the eight, case folded. The nearest any of them held ends "at module import, from
+# argv or os.environ", and the sentence conftest.py carries now opens "Five of the
+# plugin seven scripts". The quotation is removed rather than repaired: the comment
+# that replaces it quotes no sibling file at all, so there is nothing left in it for
+# another casting to move under.
+#
+# Blocks [2] to [5] are the census the defect asks for -- every remaining quotation in
+# test_readme.py and in README.md that puts words in another file mouth, or in an
+# earlier revision of its own, grepped against that file at that revision. A row is
+# "yes" only on a byte-for-byte match once line wrapping and a leading comment marker
+# are removed. Three rows land only case folded, and all three are the same thing:
+# a sentence-initial capital lowered because the quotation sits mid-sentence. Each
+# names the source spelling on the line below it. No row is missing.
+
+--- the program these blocks are the output of ---
+"""D-159. Every quotation in test_readme.py and README.md that puts words in
+another file's mouth, grepped against that file.
+
+Run from the repository root. A row passes only when the quoted string is
+present, byte for byte, in the normalised text of the file it is attributed
+to -- normalised meaning line wrapping and a leading comment marker removed,
+nothing else. A row that needs a case-insensitive match to land is reported
+as such and the reason is given.
+"""
+import re
+import subprocess
+import sys
+
+W = "plugins/webster"
+
+
+def norm(text):
+    """Flatten wrapping and comment markers; leave every other byte alone."""
+    lines = [re.sub(r"^\s*#\s?", "", line).strip() for line in text.splitlines()]
+    return re.sub(r"\s+", " ", " ".join(lines))
+
+
+def body(path, ref):
+    if ref == "WORKTREE":
+        return open(path, encoding="utf-8").read()
+    return subprocess.run(["git", "show", "%s:%s" % (ref, path)],
+                          capture_output=True, text=True, check=True).stdout
+
+
+CACHE = {}
+
+
+def hits(quotation, path, ref, fold=False):
+    key = (path, ref)
+    if key not in CACHE:
+        CACHE[key] = norm(body(path, ref))
+    text = CACHE[key]
+    if fold:
+        return text.lower().count(quotation.lower())
+    return text.count(quotation)
+
+
+def report(rows, title):
+    print(title)
+    print("    %-4s %-46s %-10s %-8s %s" % ("hits", "attributed to", "at", "exact?", "quotation"))
+    bad = 0
+    for quotation, path, ref, note in rows:
+        exact = hits(quotation, path, ref)
+        folded = hits(quotation, path, ref, fold=True)
+        if exact:
+            verdict, count = "yes", exact
+        elif folded:
+            verdict, count = "case", folded
+        else:
+            verdict, count = "NO", 0
+            bad += 1
+        print("    %-4d %-46s %-10s %-8s %s" % (count, path, ref, verdict, quotation))
+        if note:
+            print("         %s" % note)
+    print("    -> %d row(s) with no match at all" % bad)
+    return bad
+
+
+print("[1] D-159: the words test_readme.py put in conftest.py's mouth, at every")
+print("    conftest.py revision that has ever existed")
+QUOTE = "Every script binds its root, its docs directory and its allowlists at module level"
+print("    quotation: %s" % QUOTE)
+CONFTEST_REVS = ["2482f6f", "0c3d896", "168845f", "7b6ae3e",
+                 "4714d45", "6e19064", "b623e9f", "2abe081"]
+total = 0
+for rev in CONFTEST_REVS:
+    n = hits(QUOTE, "%s/tests/conftest.py" % W, rev, fold=True)
+    total += n
+    print("      %-9s %d" % (rev, n))
+print("    total, case-insensitive, across %d revisions: %d" % (len(CONFTEST_REVS), total))
+print("    what conftest.py says at the commit under test:")
+here = CACHE.setdefault(("%s/tests/conftest.py" % W, "WORKTREE"),
+                        norm(body("%s/tests/conftest.py" % W, "WORKTREE")))
+found = re.search(r"Five of the plugin's seven scripts[^;]*;", here)
+print("      %s" % (found.group(0) if found else "<the sentence has moved>"))
+print("    the nearest thing any revision held, at 4714d45:")
+old = CACHE.setdefault(("%s/tests/conftest.py" % W, "4714d45"),
+                       norm(body("%s/tests/conftest.py" % W, "4714d45")))
+found = re.search(r"Every script binds[^:]*:", old)
+print("      %s" % (found.group(0) if found else "<none>"))
+print("    -> not repaired but removed: the replacement comment quotes no sibling file.")
+
+print()
+bad = report([
+    ("Tests for the harness itself", "%s/tests/test_harness.py" % W, "WORKTREE",
+     "the docstring opening test_readme.py names"),
+    ("clean and unrelated_changes exit 0, drift exits 1", "%s/scripts/drift.py" % W, "WORKTREE", ""),
+    ("has not earned exit 0", "%s/scripts/drift.py" % W, "WORKTREE", ""),
+    ("exit 1 on a defect, 0 when only advisories remain, 2 when there was nothing to check",
+     "%s/scripts/doctype.py" % W, "WORKTREE", ""),
+    ("on a defect", "%s/scripts/doctype.py" % W, "WORKTREE", "sub-quote of the row above"),
+    ("when only advisories remain", "%s/scripts/doctype.py" % W, "WORKTREE", "sub-quote of the row above"),
+    ("init never exits 1", "%s/scripts/scaffold.py" % W, "WORKTREE", ""),
+    ("status ok at", "%s/scripts/scaffold.py" % W, "WORKTREE", ""),
+    ("exit 1 on a leak", "%s/scripts/rendered.py" % W, "WORKTREE", ""),
+], "[2] test_readme.py quoting a sibling file at the commit under test")
+
+print()
+bad += report([
+    ("Every other module in this directory tests a script", "%s/tests/test_readme.py" % W, "770ba74", ""),
+    ("green before and after by design", "%s/tests/test_readme.py" % W, "e82eccc",
+     "case: the source wrote it sentence-initial, 'Green before and after by design'"),
+    ("by the time this row was first written", "%s/tests/test_readme.py" % W, "c6bf1b5", ""),
+    ("would collect one item", "%s/tests/test_readme.py" % W, "770ba74", ""),
+    ("there would be no other way in anyway", "%s/tests/test_readme.py" % W, "4bb19cc",
+     "the clause D-158 retracts, quoted from the revision this change replaces"),
+    ("every script binds", "%s/tests/test_readme.py" % W, "44b50a2", ""),
+    ("69 passing", "%s/README.md" % W, "61fb1df", ""),
+    ("Version 0.2.0.", "%s/README.md" % W, "cfafe8e", ""),
+], "[3] test_readme.py quoting an earlier revision, at the revision it names")
+
+print()
+bad += report([
+    ("What this is", "%s/skills/house-rules/SKILL.md" % W, "WORKTREE", ""),
+    ("what this deliberately does not do", "%s/skills/house-rules/SKILL.md" % W, "WORKTREE",
+     "case: the source writes the section title, 'What this deliberately does not do'"),
+    ("no other way in", "%s/README.md" % W, "c6bf1b5", ""),
+    ("each script binds", "%s/README.md" % W, "693570d", ""),
+    ("a different interpreter from pytest's", "%s/README.md" % W, "693570d", ""),
+    ("exit 1 on drift", "%s/README.md" % W, "cfafe8e",
+     "case: the row wrote it sentence-initial, 'Exit 1 on drift, 2 on nothing to measure'"),
+], "[4] README.md quoting another file, or an earlier revision of itself")
+
+print()
+print("[5] the unquoted attributions the same two files make, checked the same way")
+bad += report([
+    ("Five of the plugin's seven scripts bind their root, their docs directory or their allowlists at module import",
+     "%s/tests/conftest.py" % W, "WORKTREE", "what test_readme.py now says conftest.py names"),
+    ("Five of the seven scripts make an import the wrong way in", "%s/README.md" % W, "WORKTREE",
+     "what test_readme.py now says the README names"),
+    ("resolves through PATH to 3.14.6", "%s/tests/conftest.py" % W, "WORKTREE",
+     "README.md:322 attributes this to conftest.py"),
+    ("not the one running pytest", "%s/tests/conftest.py" % W, "WORKTREE",
+     "README.md:322 attributes this to conftest.py"),
+], "")
+
+print()
+print("[6] the one backticked claim test_readme.py makes about every script's source")
+print("    'every other script here ends in sys.exit(main())', and survey.py does not")
+for name in ["doctype.py", "drift.py", "llmstxt.py", "rendered.py", "scaffold.py", "slop.py", "survey.py"]:
+    src = body("%s/scripts/%s" % (W, name), "WORKTREE")
+    print("      %-13s sys.exit(main()) x%d" % (name, src.count("sys.exit(main())")))
+
+print()
+print("verdict: %d quotation(s) in either file with no match in the file named." % bad)
+sys.exit(0)
+
+--- measured ---
+[1] D-159: the words test_readme.py put in conftest.py's mouth, at every
+    conftest.py revision that has ever existed
+    quotation: Every script binds its root, its docs directory and its allowlists at module level
+      2482f6f   0
+      0c3d896   0
+      168845f   0
+      7b6ae3e   0
+      4714d45   0
+      6e19064   0
+      b623e9f   0
+      2abe081   0
+    total, case-insensitive, across 8 revisions: 0
+    what conftest.py says at the commit under test:
+      Five of the plugin's seven scripts bind their root, their docs directory or their allowlists at module import, from argv or ``os.environ``, before a test could set any of them: ``drift.py``'s ``ROOT`` and ``_DOCS_ARG``;
+    the nearest thing any revision held, at 4714d45:
+      Every script binds its root, its docs directory and its allowlists at module import, from argv or ``os.environ``, before a test could set any of them:
+    -> not repaired but removed: the replacement comment quotes no sibling file.
+
+[2] test_readme.py quoting a sibling file at the commit under test
+    hits attributed to                                  at         exact?   quotation
+    1    plugins/webster/tests/test_harness.py          WORKTREE   yes      Tests for the harness itself
+         the docstring opening test_readme.py names
+    1    plugins/webster/scripts/drift.py               WORKTREE   yes      clean and unrelated_changes exit 0, drift exits 1
+    1    plugins/webster/scripts/drift.py               WORKTREE   yes      has not earned exit 0
+    1    plugins/webster/scripts/doctype.py             WORKTREE   yes      exit 1 on a defect, 0 when only advisories remain, 2 when there was nothing to check
+    1    plugins/webster/scripts/doctype.py             WORKTREE   yes      on a defect
+         sub-quote of the row above
+    1    plugins/webster/scripts/doctype.py             WORKTREE   yes      when only advisories remain
+         sub-quote of the row above
+    1    plugins/webster/scripts/scaffold.py            WORKTREE   yes      init never exits 1
+    2    plugins/webster/scripts/scaffold.py            WORKTREE   yes      status ok at
+    1    plugins/webster/scripts/rendered.py            WORKTREE   yes      exit 1 on a leak
+    -> 0 row(s) with no match at all
+
+[3] test_readme.py quoting an earlier revision, at the revision it names
+    hits attributed to                                  at         exact?   quotation
+    1    plugins/webster/tests/test_readme.py           770ba74    yes      Every other module in this directory tests a script
+    1    plugins/webster/tests/test_readme.py           e82eccc    case     green before and after by design
+         case: the source wrote it sentence-initial, 'Green before and after by design'
+    1    plugins/webster/tests/test_readme.py           c6bf1b5    yes      by the time this row was first written
+    1    plugins/webster/tests/test_readme.py           770ba74    yes      would collect one item
+    1    plugins/webster/tests/test_readme.py           4bb19cc    yes      there would be no other way in anyway
+         the clause D-158 retracts, quoted from the revision this change replaces
+    1    plugins/webster/tests/test_readme.py           44b50a2    yes      every script binds
+    1    plugins/webster/README.md                      61fb1df    yes      69 passing
+    1    plugins/webster/README.md                      cfafe8e    yes      Version 0.2.0.
+    -> 0 row(s) with no match at all
+
+[4] README.md quoting another file, or an earlier revision of itself
+    hits attributed to                                  at         exact?   quotation
+    1    plugins/webster/skills/house-rules/SKILL.md    WORKTREE   yes      What this is
+    1    plugins/webster/skills/house-rules/SKILL.md    WORKTREE   case     what this deliberately does not do
+         case: the source writes the section title, 'What this deliberately does not do'
+    1    plugins/webster/README.md                      c6bf1b5    yes      no other way in
+    1    plugins/webster/README.md                      693570d    yes      each script binds
+    1    plugins/webster/README.md                      693570d    yes      a different interpreter from pytest's
+    1    plugins/webster/README.md                      cfafe8e    case     exit 1 on drift
+         case: the row wrote it sentence-initial, 'Exit 1 on drift, 2 on nothing to measure'
+    -> 0 row(s) with no match at all
+
+[5] the unquoted attributions the same two files make, checked the same way
+
+    hits attributed to                                  at         exact?   quotation
+    1    plugins/webster/tests/conftest.py              WORKTREE   yes      Five of the plugin's seven scripts bind their root, their docs directory or their allowlists at module import
+         what test_readme.py now says conftest.py names
+    1    plugins/webster/README.md                      WORKTREE   yes      Five of the seven scripts make an import the wrong way in
+         what test_readme.py now says the README names
+    1    plugins/webster/tests/conftest.py              WORKTREE   yes      resolves through PATH to 3.14.6
+         README.md:322 attributes this to conftest.py
+    1    plugins/webster/tests/conftest.py              WORKTREE   yes      not the one running pytest
+         README.md:322 attributes this to conftest.py
+    -> 0 row(s) with no match at all
+
+[6] the one backticked claim test_readme.py makes about every script's source
+    'every other script here ends in sys.exit(main())', and survey.py does not
+      doctype.py    sys.exit(main()) x1
+      drift.py      sys.exit(main()) x1
+      llmstxt.py    sys.exit(main()) x1
+      rendered.py   sys.exit(main()) x1
+      scaffold.py   sys.exit(main()) x1
+      slop.py       sys.exit(main()) x1
+      survey.py     sys.exit(main()) x0
+
+verdict: 0 quotation(s) in either file with no match in the file named.

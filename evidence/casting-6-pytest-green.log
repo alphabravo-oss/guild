@@ -1,0 +1,28 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)/plugins/webster"; echo "--- what the suite collects: the number README.md records (OT-036, FR-038, AC-042) ---"; uvx pytest -q --collect-only 2>&1 | tail -2; echo; echo "--- the run ---"; uvx pytest -q 2>&1 | tail -3; echo; echo "--- the count README.md records, and the test that reads it back ---"; grep -n "^[0-9][0-9]* passing" README.md; grep -n "def test_status_passing_count_matches_the_collected_suite" tests/test_readme.py; echo; echo "--- this casting own module, on its own ---"; uvx pytest -q tests/test_readme.py 2>&1 | tail -2'
+# evidence-for: OT-036, US-010, FR-038, AC-042, FR-043, NFR-001
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# The collected count is 148 and README.md records 148. This cycle changed a comment
+# and nothing else, so the number must not have moved, and the block below is where a
+# reader checks that rather than taking it from the commit message. The one red is
+# test_harness.py GI-007 scope guard, which reports this run own committed evidence/
+# logs as paths outside plugins/webster -- true, and the lead strips them on
+# acceptance. Every other test passes, and test_readme.py is run again on its own.
+
+--- what the suite collects: the number README.md records (OT-036, FR-038, AC-042) ---
+
+148 tests collected in 0.02s
+
+--- the run ---
+=========================== short test summary info ============================
+FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+1 failed, 147 passed in 13.35s
+
+--- the count README.md records, and the test that reads it back ---
+179:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+683:def test_status_passing_count_matches_the_collected_suite(request):
+
+--- this casting own module, on its own ---
+......                                                                   [100%]
+6 passed in 0.05s

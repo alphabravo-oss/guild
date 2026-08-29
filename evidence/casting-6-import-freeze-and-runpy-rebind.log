@@ -1,0 +1,188 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)"; d=$(mktemp -d); printf %s "IiIiRC0xNTguIFdoYXQgYW4gaW1wb3J0IG9mIGEgd2Vic3RlciBzY3JpcHQgYmluZHMsIGFuZCB3aGF0IHJ1bnB5IGRvZXMgaW5zdGVhZC4KClJ1biBmcm9tIHRoZSByZXBvc2l0b3J5IHJvb3QuIFRoZSBjb21tZW50IGFib3ZlIGBgU0NSSVBUU2BgIGluCnBsdWdpbnMvd2Vic3Rlci90ZXN0cy90ZXN0X3JlYWRtZS5weSBpcyB3cml0dGVuIG9mZiB0aGVzZSBmb3VyIGJsb2Nrcy4KIiIiCmltcG9ydCBhc3QKaW1wb3J0IGNvbnRleHRsaWIKaW1wb3J0IGltcG9ydGxpYi51dGlsCmltcG9ydCBpbwppbXBvcnQganNvbgppbXBvcnQgb3MKaW1wb3J0IHJ1bnB5CmltcG9ydCBzeXMKaW1wb3J0IHRlbXBmaWxlCgpTQ1JJUFRTID0gb3MucGF0aC5hYnNwYXRoKCJwbHVnaW5zL3dlYnN0ZXIvc2NyaXB0cyIpClNFVkVOID0gWyJkb2N0eXBlLnB5IiwgImRyaWZ0LnB5IiwgImxsbXN0eHQucHkiLCAicmVuZGVyZWQucHkiLAogICAgICAgICAic2NhZmZvbGQucHkiLCAic2xvcC5weSIsICJzdXJ2ZXkucHkiXQoKcHJpbnQoIlswXSB3aGljaCBvZiB0aGUgc2V2ZW4gYmluZCBvdXQgb2YgYXJndiBvciB0aGUgZW52aXJvbm1lbnQgYXQgbW9kdWxlIGxldmVsIikKcHJpbnQoIiAgICAoYSB0b3AtbGV2ZWwgYXNzaWdubWVudCB3aG9zZSB2YWx1ZSByZWFkcyBzeXMuYXJndiwgb3MuZW52aXJvbiBvciBvcy5nZXRlbnYpIikKYmluZGVycyA9IFtdCmZvciBuYW1lIGluIFNFVkVOOgogICAgcGF0aCA9IG9zLnBhdGguam9pbihTQ1JJUFRTLCBuYW1lKQogICAgc3JjID0gb3BlbihwYXRoLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKICAgIGZvdW5kID0gW10KICAgIGZvciBub2RlIGluIGFzdC5wYXJzZShzcmMpLmJvZHk6CiAgICAgICAgaWYgbm90IGlzaW5zdGFuY2Uobm9kZSwgKGFzdC5Bc3NpZ24sIGFzdC5Bbm5Bc3NpZ24pKToKICAgICAgICAgICAgY29udGludWUKICAgICAgICBzZWcgPSBhc3QuZ2V0X3NvdXJjZV9zZWdtZW50KHNyYywgbm9kZSkgb3IgIiIKICAgICAgICBpZiBub3QgYW55KGsgaW4gc2VnIGZvciBrIGluICgic3lzLmFyZ3YiLCAib3MuZW52aXJvbiIsICJvcy5nZXRlbnYiKSk6CiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgdGFyZ2V0cyA9IG5vZGUudGFyZ2V0cyBpZiBpc2luc3RhbmNlKG5vZGUsIGFzdC5Bc3NpZ24pIGVsc2UgW25vZGUudGFyZ2V0XQogICAgICAgIGZvciB0YXJnZXQgaW4gdGFyZ2V0czoKICAgICAgICAgICAgaWYgaXNpbnN0YW5jZSh0YXJnZXQsIGFzdC5OYW1lKToKICAgICAgICAgICAgICAgIGZvdW5kLmFwcGVuZCh0YXJnZXQuaWQpCiAgICBpZiBmb3VuZDoKICAgICAgICBiaW5kZXJzLmFwcGVuZChuYW1lKQogICAgcHJpbnQoIiAgICAlLTEzcyAlcyIgJSAobmFtZSwgIiwgIi5qb2luKGZvdW5kKSBvciAibm9uZSIpKQpwcmludCgiICAgIGJpbmRlcnMgPSAlZCBvZiAlZDogJXMiICUgKGxlbihiaW5kZXJzKSwgbGVuKFNFVkVOKSwgIiwgIi5qb2luKGJpbmRlcnMpKSkKCkEgPSB0ZW1wZmlsZS5ta2R0ZW1wKHByZWZpeD0id2Vic3Rlci1BLSIpCkIgPSB0ZW1wZmlsZS5ta2R0ZW1wKHByZWZpeD0id2Vic3Rlci1CLSIpCm9zLm1ha2VkaXJzKG9zLnBhdGguam9pbihCLCAiZG9jcyIpKQp3aXRoIG9wZW4ob3MucGF0aC5qb2luKEIsICJkb2NzIiwgImluZGV4Lm1kIiksICJ3IiwgZW5jb2Rpbmc9InV0Zi04IikgYXMgZmg6CiAgICBmaC53cml0ZSgiLS0tXG5kb2NfdHlwZTogb3ZlcnZpZXdcbmF1ZGllbmNlOiB1c2VyXG4tLS1cblxuIyBJbmRleFxuXG5BIHBhZ2UuXG4iKQpSRUFMID0ge29zLnBhdGgucmVhbHBhdGgoQSk6ICJBIiwgb3MucGF0aC5yZWFscGF0aChCKTogIkIifQoKCmRlZiB3aGVyZSh2YWx1ZSk6CiAgICAiIiJBIHRtcGRpciBwYXRoIGFzIEEgb3IgQiwgc28gdGhlIGxvZyBjYXJyaWVzIG5vIHZvbGF0aWxlIHBhdGguIiIiCiAgICByZXR1cm4gUkVBTC5nZXQob3MucGF0aC5yZWFscGF0aChzdHIodmFsdWUpKSwgcmVwcih2YWx1ZSkpCgoKcHJpbnQoKQpwcmludCgiWzFdIHdoYXQgYW4gaW1wb3J0IGJpbmRzLCBhbmQgd2hhdCB0aGF0IGNvc3RzIikKb3MuY2hkaXIoQSkKc3lzLmFyZ3YgPSBbInB5dGVzdCIsICJ0ZXN0cy90ZXN0X3JlYWRtZS5weSIsICItdiJdCnByaW50KCIgICAgY3dkID0gQTsgc3lzLmFyZ3YgPSAlciIgJSAoc3lzLmFyZ3YsKSkKc3BlYyA9IGltcG9ydGxpYi51dGlsLnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCJkcmlmdF9pbXBvcnRlZCIsIG9zLnBhdGguam9pbihTQ1JJUFRTLCAiZHJpZnQucHkiKSkKZHJpZnQgPSBpbXBvcnRsaWIudXRpbC5tb2R1bGVfZnJvbV9zcGVjKHNwZWMpCnN5cy5tb2R1bGVzW3NwZWMubmFtZV0gPSBkcmlmdApzcGVjLmxvYWRlci5leGVjX21vZHVsZShkcmlmdCkKZmlyc3Rfcm9vdCwgZmlyc3RfZG9jc19hcmcgPSBkcmlmdC5ST09ULCBkcmlmdC5fRE9DU19BUkcKcHJpbnQoIiAgICAgIGRyaWZ0LlJPT1QgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgLT4gJXMiICUgd2hlcmUoZmlyc3Rfcm9vdCkpCnByaW50KCIgICAgICBkcmlmdC5fRE9DU19BUkcgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC0+ICVyICAgKHN5cy5hcmd2WzJdKSIgJSBmaXJzdF9kb2NzX2FyZykKcHJpbnQoIiAgICAgIGRyaWZ0LkRPQ1MgYmFzZW5hbWUgICAgICAgICAgICAgICAgICAgICAgICAgLT4gJXIiICUgb3MucGF0aC5iYXNlbmFtZShkcmlmdC5ET0NTKSkKb3MuY2hkaXIoQikKc3lzLmFyZ3YgPSBbInB5dGVzdCIsICJ0ZXN0cy90ZXN0X2RyaWZ0LnB5IiwgInNpdGUiXQpwcmludCgiICAgIGN3ZCA9IEI7IHN5cy5hcmd2ID0gJXI7IGFzayBmb3IgdGhlIG1vZHVsZSBhZ2FpbiIgJSAoc3lzLmFyZ3YsKSkKcHJpbnQoIiAgICAgIHRoZSBjYWNoZWQgbW9kdWxlIG9iamVjdCBjb21lcyBiYWNrICAgICAgICAgLT4gJXMiICUgKHN5cy5tb2R1bGVzWyJkcmlmdF9pbXBvcnRlZCJdIGlzIGRyaWZ0KSkKcHJpbnQoIiAgICAgIFJPT1Qgc3RpbGwgbmFtZXMgdGhlIGZpcnN0IGN3ZCAgICAgICAgICAgICAgLT4gJXMiICUgKGRyaWZ0LlJPT1QgPT0gZmlyc3Rfcm9vdCkpCnByaW50KCIgICAgICBfRE9DU19BUkcgc3RpbGwgdGhlIGZpcnN0IGFyZ3ZbMl0gICAgICAgICAgIC0+ICVzIiAlIChkcmlmdC5fRE9DU19BUkcgPT0gZmlyc3RfZG9jc19hcmcpKQoKcHJpbnQoKQpwcmludCgiWzJdIGZyb3plbiBpcyBub3Qgc2VhbGVkOiBydW5weS5ydW5fcGF0aCByZS1leGVjdXRlcyB0aGUgYm9keSBhbmQgcmUtYmluZHMiKQoKCmRlZiByZWJpbmQoc2NyaXB0LCBuYW1lLCBjd2QsIGFyZ3YsIGVudik6CiAgICBmb3Iga2V5IGluICgiV0VCU1RFUl9ST09UIiwgIldFQlNURVJfRE9DUyIsICJXRUJTVEVSX0JBU0VfVVJMIiwKICAgICAgICAgICAgICAgICJXRUJTVEVSX0xFTlNfQUxMT1ciLCAiV0VCU1RFUl9TVVJWRVkiKToKICAgICAgICBvcy5lbnZpcm9uLnBvcChrZXksIE5vbmUpCiAgICBvcy5lbnZpcm9uLnVwZGF0ZShlbnYpCiAgICBvcy5jaGRpcihjd2QpCiAgICBzeXMuYXJndiA9IGFyZ3YKICAgIHdpdGggY29udGV4dGxpYi5yZWRpcmVjdF9zdGRvdXQoaW8uU3RyaW5nSU8oKSk6CiAgICAgICAgZ2xvYnMgPSBydW5weS5ydW5fcGF0aChvcy5wYXRoLmpvaW4oU0NSSVBUUywgc2NyaXB0KSkKICAgIHJldHVybiBnbG9ic1tuYW1lXQoKCkNBU0VTID0gWwogICAgKCJkcmlmdC5weSIsICJST09UIiwgd2hlcmUsICJjd2QiLAogICAgIChBLCBbImRyaWZ0LnB5IiwgImNoZWNrIl0sIHt9KSwgKEIsIFsiZHJpZnQucHkiLCAiY2hlY2siXSwge30pKSwKICAgICgibGxtc3R4dC5weSIsICJST09UIiwgd2hlcmUsICJlbnYiLAogICAgIChBLCBbImxsbXN0eHQucHkiXSwgeyJXRUJTVEVSX1JPT1QiOiBBfSksIChCLCBbImxsbXN0eHQucHkiXSwgeyJXRUJTVEVSX1JPT1QiOiBCfSkpLAogICAgKCJkb2N0eXBlLnB5IiwgIkxFTlNfQUxMT1ciLCBsYW1iZGEgdjogcmVwcihzb3J0ZWQodikpLCAiZW52IiwKICAgICAoQSwgWyJkb2N0eXBlLnB5Il0sIHsiV0VCU1RFUl9MRU5TX0FMTE9XIjogImFscGhhLCBiZXRhIn0pLAogICAgIChBLCBbImRvY3R5cGUucHkiXSwgeyJXRUJTVEVSX0xFTlNfQUxMT1ciOiAiZ2FtbWEifSkpLAogICAgKCJzdXJ2ZXkucHkiLCAiUk9PVCIsIHdoZXJlLCAiYXJndiIsCiAgICAgKEEsIFsic3VydmV5LnB5IiwgQV0sIHt9KSwgKEEsIFsic3VydmV5LnB5IiwgQl0sIHt9KSksCiAgICAoInNsb3AucHkiLCAiVEFSR0VUUyIsIHJlcHIsICJhcmd2IiwKICAgICAoQSwgWyJzbG9wLnB5Il0sIHt9KSwgKEEsIFsic2xvcC5weSIsICJSRUFETUUubWQiLCAibm90ZXMiXSwge30pKSwKXQpST1cgPSAiICAgICUtMTJzICUtMTFzICUtN3MgJS0yNHMgJS0yNHMgJXMiCnByaW50KFJPVyAlICgic2NyaXB0IiwgImdsb2JhbCIsICJkcml2ZW4iLCAiZmlyc3QgcnVuIiwgInNlY29uZCBydW4iLCAicmUtYm91bmQiKSkKZm9yIHNjcmlwdCwgbmFtZSwgc2hvdywgZHJpdmVuLCBvbmUsIHR3byBpbiBDQVNFUzoKICAgIGZpcnN0ID0gc2hvdyhyZWJpbmQoc2NyaXB0LCBuYW1lLCAqb25lKSkKICAgIHNlY29uZCA9IHNob3cocmViaW5kKHNjcmlwdCwgbmFtZSwgKnR3bykpCiAgICBwcmludChST1cgJSAoc2NyaXB0LCBuYW1lLCBkcml2ZW4sIGZpcnN0LCBzZWNvbmQsIGZpcnN0ICE9IHNlY29uZCkpCgpwcmludCgpCnByaW50KCJbM10gdGhlIHNhbWUgbWVjaGFuaXNtIGRyaXZlcyBhIHJlYWwgcnVuLCBpbiB0aGlzIHByb2Nlc3MiKQpvcy5jaGRpcihCKQpzeXMuYXJndiA9IFsiZHJpZnQucHkiLCAiY2hlY2siXQpmb3Iga2V5IGluICgiV0VCU1RFUl9ST09UIiwgIldFQlNURVJfRE9DUyIpOgogICAgb3MuZW52aXJvbi5wb3Aoa2V5LCBOb25lKQpidWYgPSBpby5TdHJpbmdJTygpCmNvZGUgPSBOb25lCnRyeToKICAgIHdpdGggY29udGV4dGxpYi5yZWRpcmVjdF9zdGRvdXQoYnVmKToKICAgICAgICBydW5weS5ydW5fcGF0aChvcy5wYXRoLmpvaW4oU0NSSVBUUywgImRyaWZ0LnB5IiksIHJ1bl9uYW1lPSJfX21haW5fXyIpCmV4Y2VwdCBTeXN0ZW1FeGl0IGFzIGV4YzoKICAgIGNvZGUgPSBleGMuY29kZQpvdXQgPSBidWYuZ2V0dmFsdWUoKS5zdHJpcCgpCnBhcnNlZCA9IGpzb24ubG9hZHMob3V0KQpwcmludCgiICAgIEEgaG9sZHMgbm8gZG9jcy8gYXQgYWxsOyBCIGhvbGRzIGRvY3MvIHdpdGggb25lIHBhZ2UgYW5kIG5vIG1hbmlmZXN0IikKcHJpbnQoIiAgICBydW5weS5ydW5fcGF0aChkcmlmdC5weSwgcnVuX25hbWU9XCJfX21haW5fX1wiKSwgc3lzLmFyZ3YgPSAlciIgJSAoc3lzLmFyZ3YsKSkKcHJpbnQoIiAgICAgIFN5c3RlbUV4aXQgY29kZSAgICAgICAgICAgICAgICAgICAgICAgICAgIC0+ICVyIiAlIGNvZGUpCnByaW50KCIgICAgICBzdGRvdXQgcGFyc2VzIGFzIEpTT04gICAgICAgICAgICAgICAgICAgICAtPiAlcyIgJSBvdXQuc3RhcnRzd2l0aCgieyIpKQpwcmludCgiICAgICAgc3RhdHVzICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgLT4gJXIiICUgcGFyc2VkWyJzdGF0dXMiXSkKcHJpbnQoIiAgICAgIGRvY3NfZGlyIHNpdHMgdW5kZXIgICAgICAgICAgICAgICAgICAgICAgIC0+ICVzIiAlIHdoZXJlKG9zLnBhdGguZGlybmFtZShwYXJzZWRbImRvY3NfZGlyIl0pKSkKcHJpbnQoIiAgICAgICh0aGUgZnJvemVuIGltcG9ydCB3b3VsZCBoYXZlIGFuc3dlcmVkICdub19kb2NzJywgZnJvbSBBKSIpCg==" | base64 -d > "$d/bind.py"; echo "--- the program these blocks are the output of ---"; cat "$d/bind.py"; echo; echo "--- measured ---"; python3 "$d/bind.py"; rm -rf "$d"'
+# evidence-for: GI-004, FR-039, AC-039, US-010, FR-038
+# evidence-timeout: 120
+#
+# D-158. tests/test_readme.py said GI-004 barred the import and that "for five of the
+# seven scripts there would be no other way in anyway". The first half is a rule and
+# stands; the second was a claim about Python and is false. Block [0] counts the five
+# binders out of the seven by AST rather than by memory. Block [1] measures what an
+# import actually costs -- under pytest own argv drift.py binds its docs directory to
+# the string "-v", and the cached module keeps it after this process has chdir(2)ed
+# away. Block [2] measures the retraction: runpy.run_path re-executes the module body
+# and re-binds every one of the five. Block [3] drives drift.py check to a real JSON
+# line at exit 2 in this process, against the tree the re-execution bound -- status
+# no_manifest, where the frozen import would have answered no_docs. conftest.py and
+# README.md had already retracted the same overstatement; this was the last copy.
+
+--- the program these blocks are the output of ---
+"""D-158. What an import of a webster script binds, and what runpy does instead.
+
+Run from the repository root. The comment above ``SCRIPTS`` in
+plugins/webster/tests/test_readme.py is written off these four blocks.
+"""
+import ast
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import runpy
+import sys
+import tempfile
+
+SCRIPTS = os.path.abspath("plugins/webster/scripts")
+SEVEN = ["doctype.py", "drift.py", "llmstxt.py", "rendered.py",
+         "scaffold.py", "slop.py", "survey.py"]
+
+print("[0] which of the seven bind out of argv or the environment at module level")
+print("    (a top-level assignment whose value reads sys.argv, os.environ or os.getenv)")
+binders = []
+for name in SEVEN:
+    path = os.path.join(SCRIPTS, name)
+    src = open(path, encoding="utf-8").read()
+    found = []
+    for node in ast.parse(src).body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        seg = ast.get_source_segment(src, node) or ""
+        if not any(k in seg for k in ("sys.argv", "os.environ", "os.getenv")):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                found.append(target.id)
+    if found:
+        binders.append(name)
+    print("    %-13s %s" % (name, ", ".join(found) or "none"))
+print("    binders = %d of %d: %s" % (len(binders), len(SEVEN), ", ".join(binders)))
+
+A = tempfile.mkdtemp(prefix="webster-A-")
+B = tempfile.mkdtemp(prefix="webster-B-")
+os.makedirs(os.path.join(B, "docs"))
+with open(os.path.join(B, "docs", "index.md"), "w", encoding="utf-8") as fh:
+    fh.write("---\ndoc_type: overview\naudience: user\n---\n\n# Index\n\nA page.\n")
+REAL = {os.path.realpath(A): "A", os.path.realpath(B): "B"}
+
+
+def where(value):
+    """A tmpdir path as A or B, so the log carries no volatile path."""
+    return REAL.get(os.path.realpath(str(value)), repr(value))
+
+
+print()
+print("[1] what an import binds, and what that costs")
+os.chdir(A)
+sys.argv = ["pytest", "tests/test_readme.py", "-v"]
+print("    cwd = A; sys.argv = %r" % (sys.argv,))
+spec = importlib.util.spec_from_file_location("drift_imported", os.path.join(SCRIPTS, "drift.py"))
+drift = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = drift
+spec.loader.exec_module(drift)
+first_root, first_docs_arg = drift.ROOT, drift._DOCS_ARG
+print("      drift.ROOT                                  -> %s" % where(first_root))
+print("      drift._DOCS_ARG                             -> %r   (sys.argv[2])" % first_docs_arg)
+print("      drift.DOCS basename                         -> %r" % os.path.basename(drift.DOCS))
+os.chdir(B)
+sys.argv = ["pytest", "tests/test_drift.py", "site"]
+print("    cwd = B; sys.argv = %r; ask for the module again" % (sys.argv,))
+print("      the cached module object comes back         -> %s" % (sys.modules["drift_imported"] is drift))
+print("      ROOT still names the first cwd              -> %s" % (drift.ROOT == first_root))
+print("      _DOCS_ARG still the first argv[2]           -> %s" % (drift._DOCS_ARG == first_docs_arg))
+
+print()
+print("[2] frozen is not sealed: runpy.run_path re-executes the body and re-binds")
+
+
+def rebind(script, name, cwd, argv, env):
+    for key in ("WEBSTER_ROOT", "WEBSTER_DOCS", "WEBSTER_BASE_URL",
+                "WEBSTER_LENS_ALLOW", "WEBSTER_SURVEY"):
+        os.environ.pop(key, None)
+    os.environ.update(env)
+    os.chdir(cwd)
+    sys.argv = argv
+    with contextlib.redirect_stdout(io.StringIO()):
+        globs = runpy.run_path(os.path.join(SCRIPTS, script))
+    return globs[name]
+
+
+CASES = [
+    ("drift.py", "ROOT", where, "cwd",
+     (A, ["drift.py", "check"], {}), (B, ["drift.py", "check"], {})),
+    ("llmstxt.py", "ROOT", where, "env",
+     (A, ["llmstxt.py"], {"WEBSTER_ROOT": A}), (B, ["llmstxt.py"], {"WEBSTER_ROOT": B})),
+    ("doctype.py", "LENS_ALLOW", lambda v: repr(sorted(v)), "env",
+     (A, ["doctype.py"], {"WEBSTER_LENS_ALLOW": "alpha, beta"}),
+     (A, ["doctype.py"], {"WEBSTER_LENS_ALLOW": "gamma"})),
+    ("survey.py", "ROOT", where, "argv",
+     (A, ["survey.py", A], {}), (A, ["survey.py", B], {})),
+    ("slop.py", "TARGETS", repr, "argv",
+     (A, ["slop.py"], {}), (A, ["slop.py", "README.md", "notes"], {})),
+]
+ROW = "    %-12s %-11s %-7s %-24s %-24s %s"
+print(ROW % ("script", "global", "driven", "first run", "second run", "re-bound"))
+for script, name, show, driven, one, two in CASES:
+    first = show(rebind(script, name, *one))
+    second = show(rebind(script, name, *two))
+    print(ROW % (script, name, driven, first, second, first != second))
+
+print()
+print("[3] the same mechanism drives a real run, in this process")
+os.chdir(B)
+sys.argv = ["drift.py", "check"]
+for key in ("WEBSTER_ROOT", "WEBSTER_DOCS"):
+    os.environ.pop(key, None)
+buf = io.StringIO()
+code = None
+try:
+    with contextlib.redirect_stdout(buf):
+        runpy.run_path(os.path.join(SCRIPTS, "drift.py"), run_name="__main__")
+except SystemExit as exc:
+    code = exc.code
+out = buf.getvalue().strip()
+parsed = json.loads(out)
+print("    A holds no docs/ at all; B holds docs/ with one page and no manifest")
+print("    runpy.run_path(drift.py, run_name=\"__main__\"), sys.argv = %r" % (sys.argv,))
+print("      SystemExit code                           -> %r" % code)
+print("      stdout parses as JSON                     -> %s" % out.startswith("{"))
+print("      status                                    -> %r" % parsed["status"])
+print("      docs_dir sits under                       -> %s" % where(os.path.dirname(parsed["docs_dir"])))
+print("      (the frozen import would have answered 'no_docs', from A)")
+
+--- measured ---
+[0] which of the seven bind out of argv or the environment at module level
+    (a top-level assignment whose value reads sys.argv, os.environ or os.getenv)
+    doctype.py    LENS_ALLOW, SURVEY_PATH
+    drift.py      ROOT, _DOCS_ARG
+    llmstxt.py    ROOT, DOCS, BASE
+    rendered.py   none
+    scaffold.py   none
+    slop.py       TARGETS
+    survey.py     ROOT
+    binders = 5 of 7: doctype.py, drift.py, llmstxt.py, slop.py, survey.py
+
+[1] what an import binds, and what that costs
+    cwd = A; sys.argv = ['pytest', 'tests/test_readme.py', '-v']
+      drift.ROOT                                  -> A
+      drift._DOCS_ARG                             -> '-v'   (sys.argv[2])
+      drift.DOCS basename                         -> '-v'
+    cwd = B; sys.argv = ['pytest', 'tests/test_drift.py', 'site']; ask for the module again
+      the cached module object comes back         -> True
+      ROOT still names the first cwd              -> True
+      _DOCS_ARG still the first argv[2]           -> True
+
+[2] frozen is not sealed: runpy.run_path re-executes the body and re-binds
+    script       global      driven  first run                second run               re-bound
+    drift.py     ROOT        cwd     A                        B                        True
+    llmstxt.py   ROOT        env     A                        B                        True
+    doctype.py   LENS_ALLOW  env     ['alpha', 'beta']        ['gamma']                True
+    survey.py    ROOT        argv    A                        B                        True
+    slop.py      TARGETS     argv    ['docs']                 ['README.md', 'notes']   True
+
+[3] the same mechanism drives a real run, in this process
+    A holds no docs/ at all; B holds docs/ with one page and no manifest
+    runpy.run_path(drift.py, run_name="__main__"), sys.argv = ['drift.py', 'check']
+      SystemExit code                           -> 2
+      stdout parses as JSON                     -> True
+      status                                    -> 'no_manifest'
+      docs_dir sits under                       -> B
+      (the frozen import would have answered 'no_docs', from A)
