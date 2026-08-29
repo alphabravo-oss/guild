@@ -340,9 +340,24 @@ MESSAGE_LITERAL = re.compile(
     r"""(?:Error|error|throw|toast|notify|message)[^"'\n]{0,30}["']([A-Z][^"']{12,110})["']""")
 # FastAPI says none of those words. It raises HTTPException, so every 404 and 409 text in a
 # FastAPI app was missing from the surface the troubleshooting page is written against, and the
-# page ended up paraphrasing errors the reader can read for themselves. The gap before the
-# string admits neither a quote nor { nor [, which is what keeps a dict or list detail out: only
-# a string literal is text somebody reads.
+# page ended up paraphrasing errors the reader can read for themselves.
+#
+# The string is reached through the call's argument list, not through a window of characters
+# that happens to start at the call. The difference is the whole of this branch's correctness: a
+# free-floating window runs straight past the closing paren, so
+# `raise HTTPException(status_code=410)  # "Gone for good now"` published a source comment and
+# `HTTPException(404) if missing else fallback("Item was archived")` published the other arm of
+# a ternary. Both were handed to a writer as text this product shows a user, and neither is a
+# string this product emits at all -- a message the product never says is worse than a message
+# missed, because the troubleshooting page is then written against something that cannot happen.
+# So the gap before the literal admits no `)` and no `#` and cannot leave the call it began in,
+# and the literal must be followed by the `,` or `)` that ends an argument. `{` and `[` stay out
+# on their own account: a dict or list detail is a machine-readable payload, and only a string
+# literal is text somebody reads. A-018's "within about 40 characters" is the length of the
+# argument list before the literal, which is what bounds it.
+#
+# Two argument shapes, which are the two A-018 names: `detail=` anywhere in the list, and a
+# string sitting second after a status code.
 #
 # The two branches have different floors and both are counted here the same way: the whole
 # captured string, leading capital included. MESSAGE_LITERAL takes thirteen characters and up
@@ -353,7 +368,9 @@ MESSAGE_LITERAL = re.compile(
 # characters and the other in quantifier digits, so the two numbers read as a comparison and
 # were not one. tests/test_survey.py measures both rather than restating them.
 HTTP_EXCEPTION_MESSAGE = re.compile(
-    r"""HTTPException\([^"'\n{\[]{0,40}?(?:detail\s*=\s*)?["']([A-Z][^"']{3,110})["']""")
+    r"""HTTPException\(\s*"""
+    r"""(?:[^"'\n{}\[\]()#]{0,40}?detail\s*=\s*|[\w.]{1,30}\s*,\s*)"""
+    r"""["']([A-Z][^"']{3,110})["']\s*[,)]""")
 
 seen_msgs = set()
 for p in walk(exts={".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"}):
@@ -370,13 +387,39 @@ for p in walk(exts={".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"}):
                 user_surface["messages"].append({"text": v, "anchor": f"{r}:{i}"})
 
 # Subcommands a person types, which is the user surface of anything without a screen.
+SUBCOMMAND = re.compile(
+    r"""(?:\.command\(|add_parser\(|Use:\s*)["']([a-z][a-z0-9 :_-]{1,40})["']""")
+# The other half of what a person types. A subcommand name has to begin with a lowercase letter,
+# so a hyphen-led token could never come out of the pattern above, and doctype.py's flag lens --
+# which excuses a `--verbose` on a user page when the product's own survey declares it -- had
+# nothing to excuse anything with. The suppression path existed end to end and could not fire:
+# every flag a command-line product documented was still reported as a leak, and the only way
+# out was to name it by hand in WEBSTER_LENS_ALLOW.
+#
+# Read from the declaration a reader can be sent to: argparse's add_argument, optparse's
+# add_option, and the `.option(` that click, commander and yargs all spell the same way. Only a
+# literal that is itself a flag spec counts, so `help="use -x for that"` contributes nothing and
+# `default="-"` contributes nothing -- a junk entry here would widen doctype.py's allowlist and
+# turn a real finding into a pass, which is the direction this plugin refuses to fail in. One
+# literal can hold several flags, because commander writes "-o, --out <path>" as a single
+# string. Go's flag package and pflag declare a bare name and leave the dashes to the framework,
+# so nothing here matches them: a spelling that appears in no file is a claim, and every entry
+# in this JSON carries an anchor exactly so that a reader can go and read it.
+CLI_FLAG_DECL = re.compile(r"(?:\badd_argument|\badd_option|\.option)\s*\(")
+CLI_STRING = re.compile(r"""["']([^"'\n]*)["']""")
+CLI_FLAG_TOKEN = re.compile(r"^--?[A-Za-z][\w-]*$")
+
 seen_cmds = set()
 for p in walk(exts={".ts", ".js", ".py", ".go"}):
     r = rel(p)
     for i, line in enumerate(read(p).splitlines(), 1):
-        for m in re.finditer(
-                r"""(?:\.command\(|add_parser\(|Use:\s*)["']([a-z][a-z0-9 :_-]{1,40})["']""", line):
-            v = m.group(1).split()[0]
+        names = [m.group(1).split()[0] for m in SUBCOMMAND.finditer(line)]
+        for m in CLI_FLAG_DECL.finditer(line):
+            for lit in CLI_STRING.findall(line[m.end():]):
+                if lit.startswith("-"):
+                    names += [t for t in re.split(r"[,\s]+", lit.strip())
+                              if CLI_FLAG_TOKEN.match(t)]
+        for v in names:
             if v in seen_cmds:
                 continue
             seen_cmds.add(v)

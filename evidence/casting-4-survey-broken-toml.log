@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/webster && t=$(mktemp -d) && d=$t/brokentoml && mkdir -p "$d/src" && printf "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/items\")\ndef list_items():\n    return []\n" > "$d/src/api.py" && printf "[project]\nname = \ndescription = \"never read\"\n" > "$d/pyproject.toml" && python3 scripts/survey.py "$d" > "$t/out.json"; s=$?; printf "exit: %s\n" "$s"; python3 -c "import json; d=json.load(open(\"$t/out.json\")); print(\"name: \"+d[\"name\"]); print(\"description: \"+repr(d[\"description\"])); print(\"http entries: \"+str(len(d[\"surface\"][\"http\"])))"; rm -rf "$t"
+# evidence-for: AC-027, FR-020
+
+exit: 0
+name: brokentoml
+description: ''
+http entries: 1

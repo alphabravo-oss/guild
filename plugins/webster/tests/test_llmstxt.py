@@ -3,10 +3,22 @@
 One of the test modules US-010 asks for, one per script.
 
 Which spec fix each test pins, and the revision it is RED against (FR-039,
-AC-039). Measured, not reasoned about: every row below was produced by checking
-that revision's llmstxt.py into a scratch copy of this suite and running these
-tests against it. The command and its whole output are committed at
-``evidence/casting-4-red-first-measured.log``.
+AC-039). Measured, not reasoned about. Each row is one run: copy the plugin to
+a scratch directory, put that revision's llmstxt.py in it, and run this module
+against it --
+
+    cp -R plugins/webster "$scratch/webster"
+    git show REV:plugins/webster/scripts/llmstxt.py \
+        > "$scratch/webster/scripts/llmstxt.py"
+    cd "$scratch/webster" && uvx pytest tests/test_llmstxt.py -v
+
+This table is the record, and it is the only one. An earlier version of it
+cited a committed evidence log for the run; the run's evidence is stripped from
+the repository once consumed, so the citation named a file no reader can open
+and the table was left asserting a measurement nobody could reach. The command
+above is here instead, because a record whose backing nobody can re-run is a
+record that reports a pass without checking -- which is what the two corrections
+below are corrections of.
 
 "red against REV" means this file fails when the suite runs against the
 llmstxt.py at REV. "guard" means it passed at every revision measured and exists
@@ -50,10 +62,13 @@ anything, and recorded the first of them as red against the pre-change script.
   in one could not reach the header. a802345 opened that route too.
 
 Every test drives the script through the conftest ``run_script`` helper with
-WEBSTER_ROOT and WEBSTER_DOCS in ``env``. Nothing here imports llmstxt.py: it
-resolves ROOT, DOCS and BASE from ``os.environ`` at module import
-(llmstxt.py:12-14), so an import would freeze the wrong docs directory before a
-test could set one (GI-004).
+WEBSTER_ROOT and WEBSTER_DOCS in ``env``. Nothing here imports llmstxt.py: its
+module-level ``ROOT``, ``DOCS`` and ``BASE`` resolve from ``os.environ`` at
+import time, so an import would freeze the wrong docs directory before a test
+could set one (GI-004). Named rather than numbered, for the reason conftest.py's
+docstring sets out at greater length: the line numbers this suite's first draft
+cited into the scripts had every one of them moved by the time anybody read
+them.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``.
 """

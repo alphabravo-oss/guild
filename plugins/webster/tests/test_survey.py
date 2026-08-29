@@ -3,14 +3,23 @@
 One of the test modules US-010 asks for, one per script.
 
 Which spec fix each test pins, and the revision it is RED against (FR-039,
-AC-039). Measured, not reasoned about: every row below was produced by checking
-that revision's survey.py into a scratch copy of this suite and running these
-tests against it. The command and its whole output are committed at
-``evidence/casting-4-red-first-measured.log``. An earlier version of this table
-was written by reading the diffs instead, and a row in the sibling module came
-out false -- see the correction note in ``test_llmstxt.py``. FR-039 makes this
-docstring the only evidence of the red-first property that anybody has, so a row
-nobody ran is a record that reports a pass without checking.
+AC-039). Measured, not reasoned about. Each row is one run: copy the plugin to
+a scratch directory, put that revision's survey.py in it, and run this module
+against it --
+
+    cp -R plugins/webster "$scratch/webster"
+    git show REV:plugins/webster/scripts/survey.py \
+        > "$scratch/webster/scripts/survey.py"
+    cd "$scratch/webster" && uvx pytest tests/test_survey.py -v
+
+This table is the record, and it is the only one. An earlier version of it
+cited a committed evidence log for the run; the run's evidence is stripped from
+the repository once consumed, so the citation named a file no reader can open
+and the table was left asserting a measurement nobody could reach. The command
+above is here instead, because a record whose backing nobody can re-run is a
+record that reports a pass without checking -- and an earlier version of this
+table, written by reading the diffs rather than by running anything, did get a
+row in the sibling module wrong. See the correction note in ``test_llmstxt.py``.
 
 "red against REV" means this file fails when the suite runs against the
 survey.py at REV. "guard" means it passed at every revision measured and exists
@@ -34,24 +43,36 @@ test_package_json_still_wins_over_pyproject                   FR-020      guard
 test_unparseable_pyproject_leaves_the_survey_running          FR-020      guard
 test_httpexception_detail_and_positional_are_messages         FR-022/032  cfafe8e
 test_httpexception_dict_detail_contributes_no_message         FR-022      guard
+test_httpexception_publishes_only_its_own_arguments           FR-022/032  19941ad (added cycle 4)
 test_message_floors_are_measured_in_whole_strings             FR-022      cfafe8e (added cycle 3)
+test_option_flags_reach_the_user_surface_commands             FR-012      19941ad (added cycle 4)
+test_a_flag_named_only_in_prose_is_not_a_command              FR-012      19941ad (added cycle 4)
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
 ============================================================  ==========  =======================
 
-Two rows carry a note the column has no room for:
+Rows carrying a note the column has no room for:
 
 - ``test_mock_patch_decorator_is_not_an_http_endpoint`` is red at cfafe8e too.
   It names a802345 because a802345 is the commit whose decorator joining it was
   written against, and the nearer baseline is the informative one.
-- ``test_message_floors_are_measured_in_whole_strings`` was added this cycle to
+- ``test_message_floors_are_measured_in_whole_strings`` was added in cycle 3 to
   measure the two message floors rather than restate them in a comment, and is
   red at cfafe8e because the HTTPException branch it measures did not exist
   there. Against a802345 and every commit since it is a guard.
+- The three rows naming 19941ad are red at cfafe8e and at every revision
+  between, measured. Each names the nearest baseline for the same reason.
+- ``test_a_flag_named_only_in_prose_is_not_a_command`` is red at 19941ad for a
+  reason the column cannot show: there the commands list for its tree was empty
+  altogether, so it fails because nothing was emitted rather than because noise
+  was. It is a boundary on the fix beside it -- every name in that list is a
+  term doctype.py stops reporting -- and from this cycle on it is a guard.
 
 Every test drives the script through the conftest ``run_script`` helper. Nothing
-here imports survey.py: it resolves ROOT from ``sys.argv`` at module import
-(survey.py:13), so an import would freeze the wrong root before a test could set
-one (GI-004).
+here imports survey.py: its module-level ``ROOT`` resolves from ``sys.argv`` at
+import time, so an import would freeze the wrong root before a test could set
+one (GI-004). Named rather than numbered, for the reason conftest.py's docstring
+sets out at greater length: the line numbers this suite's first draft cited into
+the scripts had every one of them moved by the time anybody read them.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``.
 """
@@ -448,6 +469,47 @@ def test_httpexception_dict_detail_contributes_no_message(run_script, tmp_path):
     )
 
 
+def test_httpexception_publishes_only_its_own_arguments(run_script, tmp_path):
+    """FR-022, FR-032, AC-026: a message the product never says is worse than one missed.
+
+    The branch used to reach its string through a plain 40-character window
+    opening at ``HTTPException(``, and a window that wide runs straight past the
+    closing paren. A source comment on the same line, and the other arm of a
+    ternary, were both published as text this product shows a user. Neither is a
+    string it emits at all, so a troubleshooting page written from the survey
+    was written against something that cannot happen.
+
+    The two documented forms in the same tree are the control: bounding the scan
+    to the argument list has to keep finding both.
+    """
+    root = python_project(
+        tmp_path,
+        "argsonly",
+        "from fastapi import FastAPI, HTTPException\n"
+        "\n\ndef commented():\n"
+        '    raise HTTPException(status_code=410)  # "Gone for good now"\n'
+        "\n\ndef either(missing):\n"
+        '    return HTTPException(404) if missing else fallback("Item was archived")\n'
+        "\n\ndef keyword():\n"
+        '    raise HTTPException(status_code=404, detail="Item not found")\n'
+        "\n\ndef positional():\n"
+        '    raise HTTPException(404, "Not found")\n',
+    )
+
+    texts = message_texts(survey(run_script, root))
+
+    assert "Gone for good now" not in texts, (
+        "A comment is a note to the next reader of the source, not a string the "
+        f"product ever prints; got {texts}"
+    )
+    assert "Item was archived" not in texts, (
+        "The else arm of a ternary is nowhere inside the HTTPException call, and "
+        f"standing within forty characters of one is not being an argument; got {texts}"
+    )
+    assert "Item not found" in texts, f"the detail= form is still a message; got {texts}"
+    assert "Not found" in texts, f"the positional form is still a message; got {texts}"
+
+
 def test_message_floors_are_measured_in_whole_strings(run_script, tmp_path):
     """FR-022, AC-026: both branches' floors, counted the one way that is visible.
 
@@ -487,6 +549,76 @@ def test_message_floors_are_measured_in_whole_strings(run_script, tmp_path):
         f"{{3,110}} comes to with the capital counted; got {texts}"
     )
     assert "Bad" not in texts, f"three does not; got {texts}"
+
+
+# -----------------------------------------------------------------------------
+# FR-012 / AC-013 / OT-014: the flags a product declares are flags it may document
+# -----------------------------------------------------------------------------
+def test_option_flags_reach_the_user_surface_commands(run_script, fixture_repo):
+    """FR-012, AC-013, OT-014: the list doctype.py's flag lens is suppressed by.
+
+    doctype.py reports a backticked ``--verbose`` on a user page and excuses it
+    when the product's own survey names it in ``user_surface.commands``. A
+    command name has to begin with a lowercase letter, so the survey could not
+    emit a hyphen-led token at all and the excuse had nothing to draw on: the
+    whole WEBSTER_SURVEY path for flags was inert end to end, and every flag a
+    command-line product documented stayed a defect until somebody named it by
+    hand in WEBSTER_LENS_ALLOW.
+
+    The fixture's CLI declares three subcommands and one option, which is both
+    halves of the check: the option has to arrive, and the subcommands the
+    pattern already found have to still be there.
+    """
+    source = (fixture_repo / "src" / "cli" / "main.py").read_text(encoding="utf-8")
+    assert 'add_argument("--out")' in source, (
+        "This test is about that declaration; the fixture CLI no longer carries it"
+    )
+
+    data = survey(run_script, fixture_repo)
+
+    commands = data["user_surface"]["commands"]
+    names = {c["name"] for c in commands}
+    assert "--out" in names, (
+        "A flag the product declares is a flag its user pages are allowed to "
+        f"name, and this is the only list that says so; commands held {commands}"
+    )
+    assert {"serve", "migrate", "export-data"} <= names, (
+        f"the subcommands the pattern already found are still there; got {commands}"
+    )
+    out = [c for c in commands if c["name"] == "--out"]
+    assert out[0]["anchor"] == "src/cli/main.py:10", (
+        "The anchor is the declaration a reader can be sent to read, which is "
+        f"what makes the entry checkable rather than a claim; got {out}"
+    )
+
+
+def test_a_flag_named_only_in_prose_is_not_a_command(run_script, tmp_path):
+    """FR-012, GI-002: this list widens a check, so what goes in it is load-bearing.
+
+    Every name here becomes a term doctype.py stops reporting. A dash inside a
+    help string, or a default value of ``"-"``, would therefore turn a real
+    finding into a pass, and a false pass is worse than a finding because the
+    reader trusts the page exactly as far as they trust the gate. Only a literal
+    that is itself a flag spec counts.
+    """
+    root = python_project(
+        tmp_path,
+        "flagnoise",
+        "import argparse\n"
+        "\n\ndef build():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        '    parser.add_argument("outfile")\n'
+        '    parser.add_argument("-v", "--verbose", help="pass -x for the old behaviour")\n'
+        '    parser.add_argument("--retries", type=int, default="-")\n'
+        "    return parser\n",
+    )
+
+    names = {c["name"] for c in survey(run_script, root)["user_surface"]["commands"]}
+
+    assert names == {"-v", "--verbose", "--retries"}, (
+        "One literal per flag spec: the positional is not a flag, the -x in a "
+        f"help sentence is prose, and a default of - is a value; got {sorted(names)}"
+    )
 
 
 # -----------------------------------------------------------------------------
