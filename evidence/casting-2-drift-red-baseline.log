@@ -1,9 +1,0 @@
-# evidence-cmd: t=$(mktemp -d); cp -R plugins/webster "$t/webster"; git show a2b1e1d:plugins/webster/scripts/drift.py > "$t/webster/scripts/drift.py"; cd "$t/webster"; COLUMNS=110 uvx pytest tests/test_drift.py -p no:cacheprovider --tb=no -q --no-header -rf -k "no_git_note or partly_hashed" 2>&1; rm -rf "$t"
-# evidence-for: AC-039, FR-039, FR-004, US-001, US-002, US-010
-# evidence-volatile: \d+\.\d+s
-
-FF                                                                                                     [100%]
-========================================== short test summary info ===========================================
-FAILED tests/test_drift.py::test_no_git_note_does_not_claim_digests_compared - AssertionError: expected the...
-FAILED tests/test_drift.py::test_partly_hashed_manifest_is_not_reported_clean - AssertionError: expected th...
-2 failed, 27 deselected in 0.78s
