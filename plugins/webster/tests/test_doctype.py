@@ -1,13 +1,16 @@
 """Tests for plugins/webster/scripts/doctype.py — the lens, the allowlists, the stubs.
 
 One red-to-green test per fix (US-010, AC-039). Measured against commit cfafe8e, the pre-change
-baseline AC-039 names, as the sibling modules do: 19 of the 25 tests in the first index below
-fail there and all 25 pass after. The measurement was taken at 2abe081 — this suite's own first
-commit, which is where these tests could first be run — and it stands for cfafe8e because
-``git show cfafe8e:plugins/webster/scripts/doctype.py`` and the same command at 2abe081 hash to
-the same bytes: 2abe081 added the harness and touched no script. The numbers were right and the
-sentence naming 2abe081 "the last one before this change" was not.
-The other six are negative controls that must pass on both sides, and each is marked
+baseline AC-039 names, as the sibling modules do: 20 of the 27 tests in the first index below
+fail there and all 27 pass after. The measurement is direct — a detached worktree at cfafe8e
+with this tests/ directory and pyproject.toml copied in over a scripts/ directory left as
+cfafe8e wrote it, and ``uvx pytest tests/test_doctype.py`` run inside it, which reports 24
+failed and 9 passed across the whole module. An earlier version of this paragraph measured at
+2abe081 — this suite's own first commit, the earliest place these tests could be run at all —
+and carried the numbers across on the grounds that 2abe081 added the harness and touched no
+script, so ``git show 2abe081:plugins/webster/scripts/doctype.py`` hashes to cfafe8e's bytes.
+Those numbers were right and the sentence naming 2abe081 "the last one before this change" was
+not. The other seven are negative controls that must pass on both sides, and each is marked
 (control) below — a control that went red would mean the fix broke something it was supposed to
 leave alone. The red-first property is recorded here rather than enforced at runtime (FR-039):
 a test that re-ran itself against an old checkout would need a git worktree per assertion.
@@ -24,9 +27,11 @@ Each test names the fix it pins:
 - FR-012 the new FLAG regex, suppressed by the allowlist (OT-014)
     test_flags_are_wrong_lens_on_a_user_page
     test_flag_named_in_lens_allow_is_not_reported  (control)
-- FR-017 / GI-003 routes and flags fire only for `user` (OT-015)
+- FR-017 / GI-003 routes and flags fire only for `user`; symbols and architecture for both
+  (OT-015, AC-014)
     test_operator_page_is_not_reported_for_a_route_or_a_flag
     test_operator_page_is_still_reported_for_a_symbol
+    test_architecture_is_reported_for_an_operator_and_for_a_user  (control)
 - FR-015 IDENT_ALLOW compares lowercased and carries real product names (OT-016)
     test_product_names_are_not_internal_symbols
     test_no_ident_allow_entry_is_all_caps
@@ -48,6 +53,8 @@ Each test names the fix it pins:
 - FR-014 / FR-036 an all-stub tree is not checked (OT-020)
     test_tree_of_only_stubs_exits_two_with_nothing_to_check
     test_one_written_page_among_stubs_exits_by_that_page  (control)
+- FR-014 / AC-020 / AC-021 the pass line is worded over the pages that were read as writing
+    test_the_pass_line_names_the_written_pages_it_matched
 - FR-040 / CT-004 a defect on a stub beats not-checked (OT-042)
     test_all_stub_tree_with_a_defect_exits_one
 
@@ -79,9 +86,14 @@ The other reads the printed contract rather than the rule behind it.
 - FR-012 / FR-017 / GI-003 `types` names every class the lens reports, for the right reader
     test_types_states_the_contract_the_lens_enforces
 
-Every test drives the script through the conftest ``run_script`` helper (GI-004, CT-007) and
-every assertion quotes the captured exit code, stdout and stderr, because a bare
-``assert result.returncode == 1`` tells a reader nothing about which of eight rules fired.
+Every test that runs the script drives it through the conftest ``run_script`` helper (GI-004,
+CT-007), and every assertion on a run quotes the captured exit code, stdout and stderr, because
+a bare ``assert result.returncode == 1`` tells a reader nothing about which of eight rules
+fired. The two source-reading tests named in the next paragraph are the exception to both
+halves of that sentence, and the only exception to either: they start no process, so there is
+no exit code to quote, and their assertions quote the allowlist entries they read instead. The
+sentence used to open "Every test", flatly, three lines above the paragraph that disclosed the
+two it was not true of.
 
 Two tests read ``scripts/doctype.py`` as text rather than running it, because both pin an
 allowlist entry that could never match. An entry the matching regex cannot produce has no
@@ -406,6 +418,42 @@ def test_operator_page_is_still_reported_for_a_symbol(run_script, docs_dir):
     )
 
 
+def test_architecture_is_reported_for_an_operator_and_for_a_user(run_script, docs_dir):
+    """GI-003 / FR-017: the half of the clause the audience gate must not take with it.
+
+    "ROUTE_PATH and the new FLAG regex fire only when audience == 'user'; CODE_IDENT and
+    ARCH_HARD keep firing for operator." Gating routes and flags meant putting two of the four
+    rules behind an `if` inside the loop that runs all four, and the ARCH_HARD half of that
+    sentence had no test at all: the gate could be widened to swallow architecture and this
+    section's header would still have claimed both readers were covered. The two pages carry
+    the same two terms and differ only in their audience, so each assertion below is the same
+    prose read by the reader named in it."""
+    write_page(docs_dir, "run.md", "title: Run\ndoc_type: how-to\naudience: operator",
+               "# Run\n\nThe middleware logs each call and the service layer keeps a queue.\n")
+    write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
+               "# Guide\n\nThe middleware logs each call and the service layer keeps a queue.\n")
+
+    result = check(run_script, docs_dir)
+
+    assert result.returncode == 1, (
+        f"Architecture is forbidden to both readers: LENS_MAY_NOT names it on the user line "
+        f"and on the operator line.\n{outcome(result)}"
+    )
+    for audience in ("operator", "user"):
+        for term in ("middleware", "service layer"):
+            assert f"a '{audience}' page names part of the architecture, {term}" in \
+                result.stdout, (
+                    f"ARCH_HARD keeps firing for a '{audience}' page. The route and flag gate "
+                    f"sits inside the same loop, and nothing here was pinned before."
+                    f"\n{outcome(result)}"
+                )
+    assert "a request route" not in result.stdout and "a command-line flag" not in \
+        result.stdout, (
+            f"The control on the gate itself: neither page names a route or a flag, so the "
+            f"four assertions above are about architecture alone.\n{outcome(result)}"
+        )
+
+
 def test_types_states_the_contract_the_lens_enforces(run_script):
     """``doctype.py types`` is where a writer reads the lens before the lens reads them.
 
@@ -413,32 +461,55 @@ def test_types_states_the_contract_the_lens_enforces(run_script):
     for a `user` page while check_lens had already grown the flag rule and widened routes past
     the /api and /v<n> prefixes. A writer read that list, wrote `--verbose`, and got a
     wrong-lens defect for a class the tool had just told them was allowed — the one failure a
-    printed contract exists to prevent. The operator line is asserted from the other side: it
-    must not pick the flags up, because GI-003 is what makes an operator page allowed to be
-    about them."""
+    printed contract exists to prevent.
+
+    All five kinds check_lens can report, against all three audiences, rather than the two
+    kinds and the one audience this test first read: an omission from the printed contract is
+    the same failure whichever class goes missing, and internal symbols, environment variables
+    and architecture were unasserted while the index above claimed the test covered every
+    class. Each audience's third line is read on its own rather than its block joined, because
+    the operator's `assumes` line names environment variables as something an operator
+    handles — joined, the negative assertion for that reader would have read the wrong
+    line."""
     result = run_script("doctype.py", "types")
 
     assert result.returncode == 0, f"Expected exit 0 from `types`.\n{outcome(result)}"
     lines = result.stdout.splitlines()
-    blocks = {}
+    contracts = {}
     for i, line in enumerate(lines):
         m = re.match(r"\s\s(user|operator|developer)\s+grade\s", line)
         if m:
-            blocks[m.group(1)] = " ".join(part.strip() for part in lines[i:i + 3])
-    assert set(blocks) == {"user", "operator", "developer"}, (
+            contracts[m.group(1)] = lines[i + 2].strip()
+    assert set(contracts) == {"user", "operator", "developer"}, (
         f"`types` prints one three-line block per audience — the reader line, the assumes "
-        f"line, and the contract. Found blocks for {sorted(blocks)}.\n{outcome(result)}"
+        f"line, and the contract. Found blocks for {sorted(contracts)}.\n{outcome(result)}"
     )
-    for named in ("flag", "route"):
-        assert named in blocks["user"], (
-            f"The printed contract for a `user` page never says {named}, and check_lens "
-            f"reports both. Got: {blocks['user']}\n{outcome(result)}"
-        )
-    for unnamed in ("flag", "route"):
-        assert unnamed not in blocks["operator"], (
-            f"GI-003 keeps {unnamed}s firing for `user` only, so the operator contract must "
-            f"not claim them. Got: {blocks['operator']}\n{outcome(result)}"
-        )
+
+    # The five kinds check_lens appends to `named`, against the readers each one fires on.
+    # CODE_IDENT and ARCH_HARD run for every audience LENS_MAY_NOT names a contract for;
+    # ENV_VAR, ROUTE_PATH and FLAG run inside the `audience == "user"` gate (FR-017, GI-003).
+    # `developer` has no contract to keep, so no kind may appear on its line either.
+    fires_on = {
+        "internal symbols": ("user", "operator"),
+        "architecture": ("user", "operator"),
+        "environment variable": ("user",),
+        "route": ("user",),
+        "flag": ("user",),
+    }
+    for kind, readers in fires_on.items():
+        for audience in ("user", "operator", "developer"):
+            if audience in readers:
+                assert kind in contracts[audience], (
+                    f"check_lens reports {kind} on a '{audience}' page and the printed "
+                    f"contract for that reader never says so. Got: {contracts[audience]}"
+                    f"\n{outcome(result)}"
+                )
+            else:
+                assert kind not in contracts[audience], (
+                    f"check_lens never reports {kind} on a '{audience}' page, so the printed "
+                    f"contract for that reader must not claim it. Got: "
+                    f"{contracts[audience]}\n{outcome(result)}"
+                )
 
 
 # -----------------------------------------------------------------------------
@@ -523,15 +594,25 @@ def test_survey_labels_extend_the_allowlist(run_script, docs_dir, tmp_path):
 
 
 def test_survey_screen_names_and_commands_extend_the_allowlist(run_script, docs_dir, tmp_path):
+    """FR-013 / CT-003: screens.name and commands feed the same allowlist as labels, and the
+    two sides meet lowercased.
+
+    The survey spells the screen `auditLog` where the page writes `AuditLog`. Both spellings
+    are tokens CODE_IDENT reports — camelCase and PascalCase are two of its branches — so the
+    lowercasing on either side is load-bearing here and dropping it turns this test red. The
+    comment that used to stand on the line below named `auditlog` as the spelling the page
+    might use instead: an all-lowercase token carrying no underscore matches no branch of
+    CODE_IDENT, so it is never reported with a survey or without one, and the allowlist could
+    not have been what excused it."""
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
                "# Guide\n\nOpen `AuditLog`, then run `--export` on it.\n")
-    # Lowercased on both sides (CT-003): the survey says AuditLog, the page could say auditlog.
-    survey = survey_json(tmp_path, screens=("AuditLog",), commands=("--export",))
+    survey = survey_json(tmp_path, screens=("auditLog",), commands=("--export",))
 
     result = check(run_script, docs_dir, WEBSTER_SURVEY=str(survey))
 
     assert "wrong-lens" not in result.stdout, (
-        f"screens.name and commands feed the same allowlist as labels.\n{outcome(result)}"
+        f"screens.name and commands feed the same allowlist as labels, and the `auditLog` in "
+        f"the survey has to reach the `AuditLog` on the page.\n{outcome(result)}"
     )
     assert result.returncode == 0, f"Expected exit 0.\n{outcome(result)}"
 
@@ -580,18 +661,38 @@ def test_a_screen_name_reaches_the_lens_and_a_screen_path_does_not(
 # survey that cannot be read is a smaller allowlist rather than a crash
 # -----------------------------------------------------------------------------
 def test_header_line_counts_the_terms_the_survey_contributed(run_script, docs_dir, tmp_path):
+    """FR-035: the number in the header is the size of the allowlist the survey contributed.
+
+    Two surveys of different sizes, run one after the other against the same page. This test
+    used to assert the single literal ``lens allowlist: 3 terms from WEBSTER_SURVEY`` against
+    a fixture holding exactly three terms, which a constant 3 printed by the header satisfies
+    — and a count that is not read from the allowlist is the whole of what FR-035 forbids.
+
+    Every term below is a single word, and ``load_survey_allow`` adds each term twice: once as
+    given and once with its whitespace removed, which for a single word is the same string.
+    The expected count is therefore the length of the tuple, taken from the fixture rather
+    than written out beside it."""
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
                "# Guide\n\nA page that names nothing forbidden.\n")
-    survey = survey_json(tmp_path, labels=("DataSources", "AuditLog"), commands=("export",))
+    small = ("DataSources", "AuditLog")
+    large = ("DataSources", "AuditLog", "Billing", "Retention", "Exports")
+    small_dir = tmp_path / "small"
+    small_dir.mkdir()
+    large_dir = tmp_path / "large"
+    large_dir.mkdir()
 
-    result = check(run_script, docs_dir, WEBSTER_SURVEY=str(survey))
+    for survey, terms in ((survey_json(small_dir, labels=small), small),
+                          (survey_json(large_dir, labels=large), large)):
+        result = check(run_script, docs_dir, WEBSTER_SURVEY=str(survey))
 
-    assert "lens allowlist: 3 terms from WEBSTER_SURVEY" in result.stdout, (
-        f"Expected the header line to name the source and the count.\n{outcome(result)}"
-    )
-    assert str(survey) in result.stdout, (
-        f"Expected the header line to name which file was read.\n{outcome(result)}"
-    )
+        assert f"lens allowlist: {len(terms)} terms from WEBSTER_SURVEY" in result.stdout, (
+            f"The header counts the terms this survey contributed, and this one holds "
+            f"{len(terms)}: {list(terms)}. Two surveys of different sizes, because one "
+            f"fixture cannot tell a real count from a constant.\n{outcome(result)}"
+        )
+        assert str(survey) in result.stdout, (
+            f"Expected the header line to name which file was read.\n{outcome(result)}"
+        )
 
 
 def test_missing_survey_file_does_not_crash(run_script, docs_dir, tmp_path):
@@ -752,7 +853,7 @@ def test_tree_of_only_stubs_exits_two_with_nothing_to_check(run_script, docs_dir
         f"Expected the nothing-to-check line, mirroring drift.py's no_anchors."
         f"\n{outcome(result)}"
     )
-    assert "every page matches its declared type" not in result.stdout, (
+    assert "matches its declared type" not in result.stdout, (
         f"Nothing was matched against a declared type, so the pass line must not print."
         f"\n{outcome(result)}"
     )
@@ -771,7 +872,7 @@ def test_empty_docs_tree_is_not_checked(run_script, docs_dir):
         f"The FR-036 line with N=0. Zero stubs and zero pages is still nothing to check."
         f"\n{outcome(result)}"
     )
-    assert "every page matches its declared type" not in result.stdout, (
+    assert "matches its declared type" not in result.stdout, (
         f"There was no page to match against a declared type.\n{outcome(result)}"
     )
 
@@ -794,6 +895,55 @@ def test_all_stub_tree_with_a_defect_exits_one(run_script, docs_dir):
         f"The nothing-to-check line prints only when no defect was found (FR-036)."
         f"\n{outcome(result)}"
     )
+
+
+def test_the_pass_line_names_the_written_pages_it_matched(run_script, docs_dir):
+    """AC-020 / AC-021 / FR-014: the sentence a passing run ends on, over the pages it read.
+
+    A stub is counted among the pages in the header line, declares a doc_type of its own, and
+    is never matched against it. "every page matches its declared type" therefore spoke for a
+    population the run had not measured, and the two guards this file already had covered only
+    the all-stub tree and the empty tree — the mixed tree, the ordinary shape of a docs
+    directory part way through being written, went unread.
+
+    The second run is what makes the first one's silence visible: the same stub with its
+    marker deleted and no other byte changed reports the three tokens its placeholder braces
+    name. A sentence that had been true of every page in the tree would have had nothing left
+    to find there."""
+    write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
+               "# Guide\n\nOpen the app and choose a store from the list.\n")
+    write_stub(docs_dir, "items.md", "title: Items\ndoc_type: how-to\naudience: user")
+
+    result = check(run_script, docs_dir)
+
+    assert result.returncode == 0, (
+        f"One clean written page and one well-formed stub is a passing run (AC-021)."
+        f"\n{outcome(result)}"
+    )
+    assert "every written page matches its declared type" in result.stdout, (
+        f"The pass line has to name the population the run measured: the pages read as "
+        f"writing, which are the only ones check_typed saw.\n{outcome(result)}"
+    )
+    assert "1 stubs were not matched against theirs" in result.stdout, (
+        f"The stub count rides beside the sentence, so the reader can see what it is not "
+        f"about.\n{outcome(result)}"
+    )
+
+    stub = docs_dir / "items.md"
+    stub.write_text(stub.read_text(encoding="utf-8").replace(STUB_MARKER, ""), encoding="utf-8")
+
+    written = check(run_script, docs_dir)
+
+    assert written.returncode == 1, (
+        f"The same page without the stub marker, and nothing else changed."
+        f"\n{outcome(written)}"
+    )
+    for named in ("`create_item`", "/dashboard", "`--verbose`"):
+        assert named in written.stdout, (
+            f"{named} is inside the skeleton's placeholder braces. The run above reported "
+            f"none of the three and still said every page matched, which is the claim this "
+            f"test narrows.\n{outcome(written)}"
+        )
 
 
 def test_one_written_page_among_stubs_exits_by_that_page(run_script, docs_dir):

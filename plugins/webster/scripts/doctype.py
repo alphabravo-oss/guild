@@ -987,19 +987,31 @@ def main():
         if len(untyped) > 12:
             print(f"  ... and {len(untyped) - 12} more")
     # Zero pages read as writing is not the same as every page passing. A tree of skeletons
-    # resolved every rule it had and printed "every page matches its declared type", and so did
-    # a docs directory holding no page at all, because this gate asked for stubs > 0 rather
-    # than for pages == 0 — the stub count was never the question. `untyped` and `advisories`
-    # can only be filled on the same path that increments `pages`, so defects are the only
-    # other thing left to ask about, and FR-040 answers it in its own words: a frontmatter
+    # resolved every rule it had and printed the pass line below, and so did a docs directory
+    # holding no page at all, because this gate asked for stubs > 0 rather than for pages == 0
+    # — the stub count was never the question. `untyped` and `advisories` can only be filled
+    # on the same path that increments `pages`, so defects are the only other thing left to
+    # ask about, and FR-040 answers it in its own words: a frontmatter
     # defect on a stub is a real finding, and "nothing to check" is reserved for zero non-stub
     # pages AND zero defects. A run that did find something must never report that there was
     # nothing to look at (FR-040, CT-004).
     if not pages and not defects:
         print(f"{stubs} stubs, nothing to check")
         return 2
+    # "every page" spoke for a population that included the stubs. A stub is counted as a page
+    # in the header line above, declares a doc_type of its own, and is never matched against it,
+    # because check_typed lives past the `continue` in run_check. A tree of one clean how-to and
+    # one stub whose placeholder braces name `create_item`, `/dashboard` and `--verbose` printed
+    # the sentence and exited 0, while the byte-identical stub with the marker removed reported
+    # those three as wrong-lens defects. This branch is only reached when `untyped` is empty and
+    # no page carried an unknown doc_type, so every page counted in `pages` did reach check_typed
+    # and the narrowed sentence is exactly true of them. The stub count rides beside it so the
+    # reader can see what the sentence is not about (AC-020, AC-021, FR-014).
     if not defects and not advisories and not untyped:
-        print("every page matches its declared type")
+        matched = "every written page matches its declared type"
+        if stubs:
+            matched += f"; {stubs} stubs were not matched against theirs"
+        print(matched)
     return 1 if defects else 0
 
 

@@ -1,0 +1,138 @@
+# evidence-cmd: cd plugins/webster && out=$(mktemp); COLUMNS=120 uvx pytest -p no:cacheprovider -q --no-header tests/test_doctype.py > "$out" 2>&1; code=$?; tail -1 "$out" | sed -E 's/ in [0-9.]+s$//'; echo "pytest exit=$code"; grep -E '^FAILED ' "$out" || echo 'FAILED: none'; rm -f "$out"; echo "test functions in tests/test_doctype.py: $(grep -cE '^def test' tests/test_doctype.py)"; echo '--- FR-039: every assertion on a run quotes the captured streams ---'; python3 -c "import ast;src=open('tests/test_doctype.py',encoding='utf-8').read();t=ast.parse(src);f=[n for n in t.body if isinstance(n,ast.FunctionDef) and n.name.startswith('test_')];runs=lambda n:any(isinstance(c,ast.Call) and isinstance(c.func,ast.Name) and c.func.id in ('run_script','check') for c in ast.walk(n));q=lambda a:a.msg is not None and any(isinstance(c,ast.Call) and isinstance(c.func,ast.Name) and c.func.id=='outcome' for c in ast.walk(a.msg));R=[n for n in f if runs(n)];S=[n for n in f if not runs(n)];A=lambda g:[a for n in g for a in ast.walk(n) if isinstance(a,ast.Assert)];print('tests that run the script:',len(R));print('tests that read the source instead:',len(S),sorted(n.name for n in S));print('assertions on a run:',len(A(R)));print('assertions on a run quoting no captured stream:',[n.name for n in R for a in ast.walk(n) if isinstance(a,ast.Assert) and not q(a)]);print('assertions on a source read:',len(A(S)));print('module imports subprocess or doctype:','import subprocess' in src or 'import doctype' in src)"; echo '--- FR-039 / AC-039: the module docstring names the fix each test pins ---'; python3 -c "import ast; print(ast.get_docstring(ast.parse(open('tests/test_doctype.py', encoding='utf-8').read())))"
+# evidence-for: US-010, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# US-010 / AC-039. The module for this casting, run whole with nothing
+# deselected, plus the count of test functions it defines. The whole-suite count
+# is deliberately not taken here: other castings are committing to tests/ in
+# this cycle and it would be a number about their work, not this casting's.
+#
+# The AST block underneath is the module read back against its own opening
+# paragraph (D-097). That paragraph used to open "Every test drives the script
+# through run_script and every assertion quotes the captured exit code, stdout
+# and stderr" while two tests in the module run no process and seven of its
+# assertions quote no stream. Both halves now name the population they are true
+# of, and the numbers below are that population counted: the assertions on a
+# run that quote no captured stream are none, and the seven that quote none
+# belong to the two source-reading tests, which the paragraph names.
+#
+# The docstring printed last is where FR-039 lives: every fix in this casting
+# is listed against the test that pins it, with the commit each one is red
+# against recorded in prose rather than enforced at runtime.
+33 passed
+pytest exit=0
+FAILED: none
+test functions in tests/test_doctype.py: 33
+--- FR-039: every assertion on a run quotes the captured streams ---
+tests that run the script: 31
+tests that read the source instead: 2 ['test_every_universal_acronym_is_reachable_by_the_acronym_regex', 'test_no_ident_allow_entry_is_all_caps']
+assertions on a run: 81
+assertions on a run quoting no captured stream: []
+assertions on a source read: 7
+module imports subprocess or doctype: False
+--- FR-039 / AC-039: the module docstring names the fix each test pins ---
+Tests for plugins/webster/scripts/doctype.py — the lens, the allowlists, the stubs.
+
+One red-to-green test per fix (US-010, AC-039). Measured against commit cfafe8e, the pre-change
+baseline AC-039 names, as the sibling modules do: 20 of the 27 tests in the first index below
+fail there and all 27 pass after. The measurement is direct — a detached worktree at cfafe8e
+with this tests/ directory and pyproject.toml copied in over a scripts/ directory left as
+cfafe8e wrote it, and ``uvx pytest tests/test_doctype.py`` run inside it, which reports 24
+failed and 9 passed across the whole module. An earlier version of this paragraph measured at
+2abe081 — this suite's own first commit, the earliest place these tests could be run at all —
+and carried the numbers across on the grounds that 2abe081 added the harness and touched no
+script, so ``git show 2abe081:plugins/webster/scripts/doctype.py`` hashes to cfafe8e's bytes.
+Those numbers were right and the sentence naming 2abe081 "the last one before this change" was
+not. The other seven are negative controls that must pass on both sides, and each is marked
+(control) below — a control that went red would mean the fix broke something it was supposed to
+leave alone. The red-first property is recorded here rather than enforced at runtime (FR-039):
+a test that re-ran itself against an old checkout would need a git worktree per assertion.
+
+Each test names the fix it pins:
+
+- FR-010 CODE_IDENT gains snake_case and matches acronym-initial PascalCase (OT-011, OT-012)
+    test_snake_case_symbol_is_wrong_lens
+    test_acronym_initial_pascal_is_wrong_lens
+    test_path_and_env_var_are_not_symbols  (control)
+- FR-011 ROUTE_PATH matches any backticked path but not a file (OT-013)
+    test_plain_route_is_wrong_lens
+    test_path_with_a_file_extension_is_not_a_route  (control)
+- FR-012 the new FLAG regex, suppressed by the allowlist (OT-014)
+    test_flags_are_wrong_lens_on_a_user_page
+    test_flag_named_in_lens_allow_is_not_reported  (control)
+- FR-017 / GI-003 routes and flags fire only for `user`; symbols and architecture for both
+  (OT-015, AC-014)
+    test_operator_page_is_not_reported_for_a_route_or_a_flag
+    test_operator_page_is_still_reported_for_a_symbol
+    test_architecture_is_reported_for_an_operator_and_for_a_user  (control)
+- FR-015 IDENT_ALLOW compares lowercased and carries real product names (OT-016)
+    test_product_names_are_not_internal_symbols
+    test_no_ident_allow_entry_is_all_caps
+- FR-013 / CT-003 WEBSTER_SURVEY extends the allowlist at runtime (OT-017)
+    test_survey_labels_extend_the_allowlist
+    test_without_the_survey_the_same_label_is_reported  (control)
+    test_survey_screen_names_and_commands_extend_the_allowlist
+- FR-035 the check header line states what the survey contributed (OT-017)
+    test_header_line_counts_the_terms_the_survey_contributed
+    test_missing_survey_file_does_not_crash
+    test_malformed_survey_file_does_not_crash
+- FR-016 / FR-041 / FR-033 API and CLI are universal; WARNING is gone (OT-018)
+    test_api_and_cli_are_not_undefined_jargon
+    test_every_universal_acronym_is_reachable_by_the_acronym_regex
+- FR-014 stubs get the frontmatter checks and nothing else (OT-019)
+    test_stub_without_audience_is_reported
+    test_stub_placeholder_prose_produces_no_other_finding  (control)
+    test_stub_with_an_unknown_audience_or_type_is_reported
+- FR-014 / FR-036 an all-stub tree is not checked (OT-020)
+    test_tree_of_only_stubs_exits_two_with_nothing_to_check
+    test_one_written_page_among_stubs_exits_by_that_page  (control)
+- FR-014 / AC-020 / AC-021 the pass line is worded over the pages that were read as writing
+    test_the_pass_line_names_the_written_pages_it_matched
+- FR-040 / CT-004 a defect on a stub beats not-checked (OT-042)
+    test_all_stub_tree_with_a_defect_exits_one
+
+Six more tests are measured against a later commit instead, because each pins a defect one of
+the widenings above introduced rather than one it fixed. Four are measured against 9859317:
+
+- FR-010 / AC-011 the widened CODE_IDENT still excludes ALL-CAPS
+    test_all_caps_with_a_digit_is_not_an_internal_symbol
+- FR-010 / FR-015 / AC-011 a versioned standard name is not an internal symbol
+    test_versioned_standard_names_are_not_internal_symbols
+- FR-013 / CT-003 / AC-016 a screen's name reaches the lens and a screen's path does not
+    test_a_screen_name_reaches_the_lens_and_a_screen_path_does_not
+- FR-040 / CT-004 zero pages checked is never exit 0
+    test_empty_docs_tree_is_not_checked
+
+The first two of those four pass at cfafe8e as well — the narrow CODE_IDENT could match neither
+`HTTP2` nor `IPv4` — which is what makes them regression guards rather than fix guards. The
+other two are red on both sides.
+
+The last two are measured against 19941ad, the commit before this fix. One holds three lines
+that the two rounds of route widening broke in turn: 38fb601 left the file-extension exclusion
+capped at the length of `.conf`, so ordinary config paths were reported as routes; lifting that
+cap read `.0` as an extension, so `/api/v1.0` and `/v3.0` stopped being reported at all; and the
+same commit let the path body open on a slash, so `//` became a route with no segment in it.
+The other reads the printed contract rather than the rule behind it.
+
+- FR-011 / AC-012 / OT-013 the route rule stops at a file and at a path with no segment
+    test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither
+- FR-012 / FR-017 / GI-003 `types` names every class the lens reports, for the right reader
+    test_types_states_the_contract_the_lens_enforces
+
+Every test that runs the script drives it through the conftest ``run_script`` helper (GI-004,
+CT-007), and every assertion on a run quotes the captured exit code, stdout and stderr, because
+a bare ``assert result.returncode == 1`` tells a reader nothing about which of eight rules
+fired. The two source-reading tests named in the next paragraph are the exception to both
+halves of that sentence, and the only exception to either: they start no process, so there is
+no exit code to quote, and their assertions quote the allowlist entries they read instead. The
+sentence used to open "Every test", flatly, three lines above the paragraph that disclosed the
+two it was not true of.
+
+Two tests read ``scripts/doctype.py`` as text rather than running it, because both pin an
+allowlist entry that could never match. An entry the matching regex cannot produce has no
+observable behaviour to assert against in either direction: it excuses nothing and nothing is
+reported, so the source is the only place the promise lives. Nothing here imports doctype
+(GI-004).
+
+No test uses ``@pytest.mark.skip`` or ``xfail``.
