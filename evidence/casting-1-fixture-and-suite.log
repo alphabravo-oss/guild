@@ -1,0 +1,65 @@
+# evidence-cmd: cd "$(git rev-parse --show-toplevel)"; T=$(mktemp -d); printf "%s\n" 'import os, subprocess, sys, tempfile, types' 'FIX = "plugins/webster/tests/fixtures/repo"' 'print("[1] FR-042 / GI-005 / AC-040: what the committed fixture must not carry")' 'hits = subprocess.run(["find", FIX, "-name", ".git", "-o", "-name", "website",' '                       "-o", "-name", ".webster.json"], capture_output=True, text=True).stdout.split()' 'print("    find %s \\( -name .git -o -name website -o -name .webster.json \\)" % FIX)' 'print("    matches: %d  %s" % (len(hits), sorted(hits) or "(none -- all three exclusions hold)"))' 'print("    files in the committed tree: %d"' '      % int(subprocess.run("find %s -type f | wc -l" % FIX, shell=True,' '                           capture_output=True, text=True).stdout.strip()))' '' 'st = types.ModuleType("pytest")' 'st.fixture = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))' 'sys.modules["pytest"] = st' 'CONF = os.path.abspath("plugins/webster/tests/conftest.py")' 'm = types.ModuleType("c"); m.__file__ = CONF' 'exec(compile(open(CONF, encoding="utf-8").read(), CONF, "exec"), m.__dict__)' 'GE = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}' 'GE.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})' 'def head(r):' '    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=r, capture_output=True,' '                          text=True, env=GE).stdout.strip()' 'print()' 'print("[2] FR-030 / OT-038 / AC-040: the builder, run three times into three directories")' 'root = tempfile.mkdtemp()' 'repos = [m.build_fixture_repo(os.path.join(root, n)) for n in ("a", "b", "c")]' 'for n, r in zip("abc", repos):' '    print("    build %s HEAD %s" % (n, head(r)))' 'print("    all three agree: %s" % (len({head(r) for r in repos}) == 1))' 'print("    subjects, in order: %s" % subprocess.run(' '    ["git", "log", "--format=%s", "--reverse"], cwd=repos[0], capture_output=True,' '    text=True, env=GE).stdout.split("\n")[:-1])' 'print()' 'print("[3] NFR-005: a test that mutates its copy cannot reach another test'"'"'s")' 'mp = os.path.join(repos[0], "src", "app", "main.py")' 'open(mp, "a").write("\n# mutated by the first consumer\n")' 'other = os.path.join(repos[1], "src", "app", "main.py")' 'print("    edited build a'"'"'s main.py; build b'"'"'s copy carries the edit: %s"' '      % ("mutated by the first consumer" in open(other).read()))' 'print("    build b still clean per git status --porcelain:            %s"' '      % (not subprocess.run(["git", "status", "--porcelain"], cwd=repos[1],' '                            capture_output=True, text=True, env=GE).stdout.strip()))' 'print("    and the committed source tree was not touched:             %s"' '      % ("mutated by the first consumer" not in open(FIX + "/src/app/main.py").read()))' 'print()' 'print("[4] NFR-004: every subprocess in the suite carries an explicit ceiling")' 'import ast, glob' 'rows = []' 'for f in sorted(glob.glob("plugins/webster/tests/*.py")):' '    tree = ast.parse(open(f, encoding="utf-8").read(), f)' '    for n in ast.walk(tree):' '        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)' '                and n.func.attr == "run" and isinstance(n.func.value, ast.Name)' '                and n.func.value.id == "subprocess"):' '            kw = {k.arg: k for k in n.keywords}' '            rows.append((os.path.basename(f), n.lineno,' '                         ast.unparse(kw["timeout"].value) if "timeout" in kw else "NONE"))' 'print("    every subprocess.run under tests/, found by AST:")' 'for f, ln, to in rows:' '    print("      %-18s line %-4d timeout=%s" % (f, ln, to))' 'print("    calls: %d   carrying an explicit timeout: %d"' '      % (len(rows), sum(1 for r in rows if r[2] != "NONE")))' 'print("    " + subprocess.run(["grep", "-n", "SCRIPT_TIMEOUT = ", CONF],' '                              capture_output=True, text=True).stdout.strip())' 'print("    " + subprocess.run(["grep", "-n", "^GIT_TIMEOUT = ",' '                               "plugins/webster/tests/test_harness.py"],' '                              capture_output=True, text=True).stdout.strip())' > "$T/e.py"; python3 "$T/e.py"; rm -rf "$T"; echo; echo "[5] AC-038 / NFR-001 / OT-036: the suite at this commit"; R=$(mktemp); ( cd plugins/webster && uvx pytest -q --tb=no -p no:cacheprovider > "$R" 2>&1 ); echo "    whole suite exit: $?"; echo "    $( cd plugins/webster && uvx pytest --collect-only -q -p no:cacheprovider 2>&1 | grep "tests collected" )"; echo "    summary: $(tail -1 "$R")"; echo "    not green at this commit:"; grep -E "^FAILED" "$R" | sed "s/^/      /"; rm -f "$R"; echo; echo "[6] AC-042: the release metadata casting 6 owns, read only"; grep -n "\"version\"" plugins/webster/.claude-plugin/plugin.json | sed "s/^/    /"; grep -n "passing across" plugins/webster/README.md | sed "s/^/    /"
+# evidence-for: US-010, FR-030, FR-042, AC-038, AC-040, AC-042, NFR-001, NFR-004, NFR-005, OT-036, OT-038, GI-005
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# GRIND cycle 16 fixture and suite state for casting 1.
+#
+# Blocks [1] to [3] are the fixture invariants: the committed tree carries none of GI-005's
+# three exclusions, three independent builds of it reach one HEAD, and an edit to one build
+# reaches neither another build nor the committed source. Block [4] enumerates every
+# subprocess.run under tests/ by AST rather than by grepping for the word timeout, so the
+# ceiling claim is measured over the calls themselves; six calls, six ceilings, both constants
+# 30 seconds.
+#
+# Block [5] is the honest state of the suite at this commit, not the state after the lead's
+# strip. AC-038, NFR-001 and OT-036 ask that `cd plugins/webster && uvx pytest` exit 0 with the
+# count README records. The count is right -- 148 collected, and README pins 148 -- but the run
+# exits 1, and the one red is test_only_the_writable_file_set_is_tracked_and_changed. That test
+# reads the baseline..HEAD diff against GI-007's five writable locations, and this run's own
+# evidence/ logs are committed paths outside them. It goes green on the strip commit that
+# removes them. NFR-001 forbids skip and xfail, so the test fails and names them rather than
+# being taught not to look; this log records the failure instead of hiding behind a filtered
+# invocation.
+#
+# Block [6] reads the two files casting 6 owns. Nothing in this casting writes them.
+
+[1] FR-042 / GI-005 / AC-040: what the committed fixture must not carry
+    find plugins/webster/tests/fixtures/repo \( -name .git -o -name website -o -name .webster.json \)
+    matches: 0  (none -- all three exclusions hold)
+    files in the committed tree: 24
+
+[2] FR-030 / OT-038 / AC-040: the builder, run three times into three directories
+    build a HEAD d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+    build b HEAD d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+    build c HEAD d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+    all three agree: True
+    subjects, in order: ['init', 'docs', 'touch main']
+
+[3] NFR-005: a test that mutates its copy cannot reach another test's
+    edited build a's main.py; build b's copy carries the edit: False
+    build b still clean per git status --porcelain:            True
+    and the committed source tree was not touched:             True
+
+[4] NFR-004: every subprocess in the suite carries an explicit ceiling
+    every subprocess.run under tests/, found by AST:
+      conftest.py        line 252  timeout=SCRIPT_TIMEOUT
+      conftest.py        line 286  timeout=SCRIPT_TIMEOUT
+      test_drift.py      line 206  timeout=GIT_TIMEOUT
+      test_harness.py    line 221  timeout=GIT_TIMEOUT
+      test_harness.py    line 325  timeout=GIT_TIMEOUT
+      test_harness.py    line 404  timeout=GIT_TIMEOUT
+    calls: 6   carrying an explicit timeout: 6
+    140:SCRIPT_TIMEOUT = 30
+    126:GIT_TIMEOUT = 30
+
+[5] AC-038 / NFR-001 / OT-036: the suite at this commit
+    whole suite exit: 1
+    148 tests collected in 0.02s
+    summary: 1 failed, 147 passed in 13.65s
+    not green at this commit:
+      FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+
+[6] AC-042: the release metadata casting 6 owns, read only
+    3:  "version": "0.11.0",
+    179:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
