@@ -5,18 +5,17 @@ subprocess (GI-004, CT-007). Nothing here imports drift.py: it resolves ROOT,
 DOCS and MANIFEST at module import, so an import would freeze the wrong tree.
 
 Which fix each test pins, and how it failed before it — bar the one row that
-pins no fix and is marked guard. No citation here names a line number: ten
-revisions of drift.py landed between ``caa2e5c``, the commit that wrote this
-module, and ``02f4e9e``, the one that ships it — read back from
-``git log --oneline --reverse caa2e5c..02f4e9e --
-plugins/webster/scripts/drift.py`` rather than remembered — and every line
+pins no fix and is marked guard. No citation here names a line number: drift.py
+has been rewritten over and over since ``caa2e5c``, the commit that wrote this
+module — count the revisions with ``git log --oneline --reverse caa2e5c..HEAD
+-- plugins/webster/scripts/drift.py`` rather than from memory — and every line
 number this module once cited had gone stale by the time anyone read it, so
-functions and fields name the code instead. The version of this sentence that
-said "rewritten three times" was written in 3ab01dd, the third of those ten,
-and named no end, so it went stale the way the line numbers it explains had.
-Both ends are named for that reason, and the commit that names them touches no
-file under ``scripts/`` — which is what keeps the range closed rather than one
-short again the moment it lands.
+functions and fields name the code instead. Two earlier versions of this
+sentence went stale the way those line numbers had. The one written in 3ab01dd,
+the third of those revisions, said "rewritten three times" and named no end.
+The one that closed the range at ``02f4e9e`` named an end that held only while
+no further commit touched the file, and the commit carrying this sentence
+touches it. A count expires and an end SHA expires; the command does not.
 Every row but one was measured RED by running this module against ``git show
 cfafe8e:plugins/webster/scripts/drift.py``, the pre-change baseline AC-039
 names; "was at" is the revision the row's last column describes. Measured, that
@@ -1278,9 +1277,11 @@ def test_no_git_note_does_not_claim_digests_compared(run_script, fixture_repo):
 
     Two runs of one scenario, differing in nothing but the manifest's
     ``lineHashes`` key, so what is pinned is that the sentence is conditional
-    rather than that it is worded any particular way. Both runs report no_git:
-    that is the branch with no ``re-record`` of its own, so the digest sentence
-    is the only thing in the note that can name the line half at all.
+    rather than that it is worded any particular way. Both runs report no_git
+    from the head-is-None branch, and that branch's note carries no
+    ``re-record`` of its own — two of the four do and two do not — so the
+    digest sentence is the only thing in its note that can name the line half
+    at all.
 
     RED again at a2b1e1d, in the third run below: the sentence the first run
     prints said "every resolvable anchor carried a recorded digest and was

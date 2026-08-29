@@ -590,8 +590,14 @@ def main():
     # The code half. A git question that cannot be asked becomes a status of its own rather
     # than an empty answer; not_checked holds the one that stops the run at exit 2.
     #
-    # Every note below names what WAS measured as well as what was not. They used to say the
-    # pages had been compared "against nothing", and that was false in all four branches: the
+    # Every note below names what WAS measured as well as what was not. They used to name only
+    # what was not: at 457658b the head-is-None branch said "nothing here compared the pages
+    # against the code" and the no-recorded-commit branch "the pages have not been compared
+    # against the code", while the head_missing branch named the commit that was gone and the
+    # diff it could not take, and the branch that catches git giving up part-way carried "git
+    # stopped answering part-way through the check" plus the exception text and stopped there.
+    # Not one of the four named a thing the run HAD measured, and a note listing only failures
+    # reads as a run that measured nothing — which was false in all four branches: the
     # anchors half has already run by the time this line is reached (ST-004) and is printed
     # under every status but no_docs — which returns above doc_files(), having found no
     # directory to walk, and carries no anchor field of any kind — and in the
@@ -600,8 +606,11 @@ def main():
     # note that understates its own run teaches the reader to skip the findings beside it,
     # which is the same false pass as a clean that was never earned, arriving by the other road.
     #
-    # What they may claim stops at those two halves. Each branch also asserted that "the
-    # recorded line digests were still compared", and from here none of them can know: the line
+    # What they may claim stops at those two halves. Each branch also said the recorded line
+    # digests had been compared, in its own wording rather than in one shared string: joined
+    # across their continuations at 66dab76 the four read "the anchors were resolved and the
+    # recorded line digests compared", "their recorded line digests compared" twice, and "their
+    # recorded line digests were still compared". From here none of them can know: the line
     # half runs below, and against a manifest written before lineHashes existed (AC-006) it
     # compares nothing at all — so a pre-change manifest checked without a repository printed
     # no_git beside a sentence saying the line half had covered what the code half could not.
