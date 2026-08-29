@@ -1,0 +1,18 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); s="$d/plugins/webster/scripts/drift.py"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-27T16:49:56+00:00 GIT_COMMITTER_DATE=2026-08-27T16:49:56+00:00; show='import json,sys;d=json.load(sys.stdin);print("  status       :",d["status"]);print("  suspect_pages:",d["suspect_pages"]);print("  note         :",d["note"])'; for n in a b c; do cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/$n"; done; echo '=== ST-004 no_git, git cannot resolve HEAD: anchors and digests still measured ==='; (cd "$t/a" && python3 "$s" record docs > /dev/null; printf '\n# edit\n' >> src/app/main.py; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); echo '=== FR-009 no_git, the manifest records no commit: the working tree WAS read ==='; (cd "$t/b" && git -c init.defaultBranch=main init -q . && python3 "$s" record docs > /dev/null && git add -A && git commit -q -m init; printf '\n# edit\n' >> src/app/main.py; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); echo '=== ST-005 head_missing, the recorded commit is gone: the working tree WAS read ==='; (cd "$t/c" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m A && printf 'x\n' >> README.md && git add -- README.md && git commit -q -m B && python3 "$s" record docs > /dev/null && git reset -q --hard HEAD~1 && git reflog expire --expire=now --all && git gc --prune=now -q; printf '\n# edit\n' >> src/app/main.py; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); rm -rf "$t"
+# evidence-for: FR-002, FR-009, FR-006, FR-037, AC-003, AC-004
+
+=== ST-004 no_git, git cannot resolve HEAD: anchors and digests still measured ===
+  status       : no_git
+  suspect_pages: {}
+  note         : git could not resolve HEAD (not installed, not a repository, or no commits yet), so the anchors were resolved and the recorded line digests compared but neither the working tree nor the diff since the record was read: suspect_pages is empty here because nothing looked, not because nothing moved; 12 of 13 pages cite no source
+  exit         : 2
+=== FR-009 no_git, the manifest records no commit: the working tree WAS read ===
+  status       : no_git
+  suspect_pages: {'docs/items/create-item.md': ['src/app/main.py:15']}
+  note         : this manifest records no commit — record ran where git could not resolve HEAD — so the working tree was read and the anchors and their recorded line digests compared, and only the diff since the record is missing, having no commit to start from; re-record; 12 of 13 pages cite no source
+  exit         : 2
+=== ST-005 head_missing, the recorded commit is gone: the working tree WAS read ===
+  status       : head_missing
+  suspect_pages: {'docs/items/create-item.md': ['src/app/main.py:15']}
+  note         : the recorded commit c2b21f3bfbab is not in this repository any more, so the working tree was read and the anchors and their recorded line digests compared, and only the diff since the record could not be taken; re-record; 12 of 13 pages cite no source
+  exit         : 2

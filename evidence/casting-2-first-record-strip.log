@@ -1,0 +1,15 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); git -C "$d" show cfafe8e:plugins/webster/scripts/drift.py > "$t/drift-cfafe8e.py"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-27T16:49:56+00:00 GIT_COMMITTER_DATE=2026-08-27T16:49:56+00:00; show='import json,sys;d=json.load(sys.stdin);print("  status       :",d["status"]);print("  suspect_pages:",d["suspect_pages"])'; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/r"; cd "$t/r" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m init && python3 "$t/drift-cfafe8e.py" record docs > /dev/null; printf '\n# edit\n' >> src/app/main.py; printf '\n# edit\n' >> src/cli/main.py; echo '=== what .stdout.strip() then [3:] did to each record, two modified files ==='; python3 -c "import subprocess; out = subprocess.run(['git','--no-pager','status','--short','--untracked-files=all'],capture_output=True,text=True,check=True).stdout.strip(); [print('  record', i, 'after strip', repr(l).ljust(26), '-> [3:]', repr(l[3:])) for i, l in enumerate(out.splitlines()[:3])]"; echo '=== the consequence at cfafe8e: only the first record lost its path ==='; python3 "$t/drift-cfafe8e.py" check docs | python3 -c "$show"; python3 "$t/drift-cfafe8e.py" check docs > /dev/null 2>&1; echo "  exit         : $?"; echo '=== the same tree at this commit: --porcelain -z, no strip ==='; python3 "$d/plugins/webster/scripts/drift.py" check docs | python3 -c "$show"; python3 "$d/plugins/webster/scripts/drift.py" check docs > /dev/null 2>&1; echo "  exit         : $?"; cd "$d"; rm -rf "$t"
+# evidence-for: FR-001, FR-002, US-001, AC-001
+
+=== what .stdout.strip() then [3:] did to each record, two modified files ===
+  record 0 after strip 'M src/app/main.py'        -> [3:] 'rc/app/main.py'
+  record 1 after strip ' M src/cli/main.py'       -> [3:] 'src/cli/main.py'
+  record 2 after strip '?? docs/.webster.json'    -> [3:] 'docs/.webster.json'
+=== the consequence at cfafe8e: only the first record lost its path ===
+  status       : clean
+  suspect_pages: {}
+  exit         : 0
+=== the same tree at this commit: --porcelain -z, no strip ===
+  status       : drift
+  suspect_pages: {'docs/items/create-item.md': ['src/app/main.py:15']}
+  exit         : 1

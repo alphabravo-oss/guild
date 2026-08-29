@@ -34,16 +34,27 @@ SRC_EXT = ("ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cc|cpp|cs|php|sh
 ANCHOR = re.compile(rf"(?<![\w./-])([\w./-]+\.(?:{SRC_EXT})):(\d+)\b")
 
 NO_HEAD_NOTE = ("git could not resolve HEAD here, so this manifest records no commit; the next "
-                "check reports no_git instead of comparing the pages against nothing")
+                "check still resolves the anchors and compares the recorded line digests, and "
+                "reports no_git for the one half it has no commit to start the diff from")
 
 
 class GitUnavailable(Exception):
     """git could not answer the question that was asked.
 
     Every failure used to become an empty string, and an empty string reads exactly like
-    "nothing changed": a tree with no git, a repo with no commits, and a recorded HEAD that had
-    been rebased away all reported `clean`. A false pass is worse than a finding, because the
-    reader trusts the page exactly as far as they trust the gate.
+    "nothing changed" — but not identically for the three failures this covers, and the
+    difference is why they end at exit 2 rather than at a tidier exit 0. Replayed against the
+    pre-change script: a tree with no git reported `clean` at exit 0, and so did a recorded HEAD
+    that had been rebased away, whose `diff OLD..HEAD` exited 128 into that empty string. A
+    repository with no commits reported `drift` at exit 1 instead — `status --short` lists every
+    file as `??` where nothing has been committed yet, so the cited file was read as dirty and
+    its page went suspect.
+
+    That third one is not the counter-example it looks like. It is the same defect under the
+    opposite sign: an exit code describing git's state rather than the pages', which would
+    report drift on a set whose every page was correct. A false pass and a finding nobody can
+    act on both end with the reader trusting the gate less than the page, and neither is an
+    answer, so a git that cannot answer now says so instead.
     """
 
 
@@ -51,10 +62,15 @@ def git(*args):
     """Raw stdout from one git command, or GitUnavailable.
 
     The result is deliberately NOT stripped. `git status --porcelain` puts the two status
-    letters in columns 1-2 and the path from column 4, so a leading space is data: stripping it
-    shifted every ` M path` record left by one, the slice that followed cut the path down to
-    `rc/app/main.py`, no anchor ever matched it, and an uncommitted edit to a cited file
-    reported clean. Callers that want one value strip it themselves.
+    letters in columns 1-2 and the path from column 4, so a leading space is data. str.strip()
+    takes the leading whitespace off the whole string and not off each line, so exactly one
+    record ever shifted left by one — the first — and every record after it sliced correctly.
+    One was enough. Measured against the fixture, the first record is ` M src/app/main.py`,
+    untracked entries sorting after the modified ones; the slice that followed cut it down to
+    `rc/app/main.py`, no anchor matched it, and an uncommitted edit to a cited file reported
+    clean. A defect that mangles only the first record is not a smaller defect than one that
+    mangles all of them — it is one that disappears from any test where the cited file happens
+    to sort second. Callers that want one value strip it themselves.
 
     The decoding is pinned here rather than left to `text=True`, which decodes with the locale's
     preferred encoding: US-ASCII under LC_ALL=C, so the first non-ASCII byte of a path in the
@@ -136,9 +152,9 @@ def porcelain_paths(out):
 def repo_prefix():
     """Where ROOT sits inside its git repository, as a prefix ending in "/", or "".
 
-    git names every path in `status --porcelain` and in `diff --name-only` relative to the
-    repository root, never to the directory the command ran in: --porcelain is documented
-    immune to status.relativePaths and diff has no such setting at all. Anchors, pages and
+    git names every path in `status --porcelain` relative to the repository root, never to the
+    directory the command ran in: --porcelain is documented immune to status.relativePaths, and
+    it holds under color.status=always too. Anchors, pages and
     the docs directory are all relative to WEBSTER_ROOT. Those are the same namespace only
     when WEBSTER_ROOT is itself the repository root, which is the layout this file was written
     in and is not the layout of an ordinary monorepo. With the project one directory down, git
@@ -148,6 +164,17 @@ def repo_prefix():
     to a cited file printed unrelated_changes at exit 0 with a note reading "no page cites any
     of them", with the page sitting in the tree citing it. Resolve the prefix once and put
     git's answers into the pages' namespace before anything is compared.
+
+    `diff` needs one thing more, which an earlier version of this comment denied: it said "diff
+    has no such setting at all", and `diff.relative` is exactly such a setting. Set true in a
+    developer's ~/.gitconfig it makes `diff --name-only` name paths from the directory the
+    command ran in, so with the docs one level down the diff handed under_root()
+    `src/app/main.py` where this prefix is `site/`; every path was dropped as living outside
+    ROOT, `changed` came back empty, and a COMMITTED edit to a cited file printed clean at
+    exit 0 — US-001 negated outright by a line of configuration no repository under test
+    carries, because the suite pins GIT_CONFIG_GLOBAL at os.devnull. That false comment is why
+    no guard existed. The diff call pins --no-relative; the flag and the config arrived in the
+    same git release, so a git too old for the flag has no config to override.
     """
     return git("rev-parse", "--show-prefix").strip()
 
@@ -473,11 +500,22 @@ def main():
 
     # The code half. A git question that cannot be asked becomes a status of its own rather
     # than an empty answer; not_checked holds the one that stops the run at exit 2.
+    #
+    # Every note below names what WAS measured as well as what was not. They used to say the
+    # pages had been compared "against nothing", and that was false in all three branches: the
+    # anchors half runs unconditionally (ST-004) and is printed under every status, and in the
+    # two branches that reach the porcelain read the working tree is measured too — suspect
+    # pages found that way are listed in the same envelope the note appears in. A not-checked
+    # note that understates its own run teaches the reader to skip the findings beside it,
+    # which is the same false pass as a clean that was never earned, arriving by the other road.
     changed, dirty, not_checked, git_note = [], [], "", ""
     if head is None:
         not_checked = "no_git"
         git_note = ("git could not resolve HEAD (not installed, not a repository, or no commits "
-                    "yet), so nothing here compared the pages against the code")
+                    "yet), so the anchors were resolved and the recorded line digests compared "
+                    "but neither the working tree nor the diff since the record was read: "
+                    "suspect_pages is empty here because nothing looked, not because nothing "
+                    "moved")
     else:
         try:
             prefix = repo_prefix()
@@ -492,22 +530,31 @@ def main():
             if not recorded:
                 not_checked = "no_git"
                 git_note = ("this manifest records no commit — record ran where git could not "
-                            "resolve HEAD — so there is nothing for the diff to start from and "
-                            "the pages have not been compared against the code; re-record")
+                            "resolve HEAD — so the working tree was read and the anchors and "
+                            "their recorded line digests compared, and only the diff since the "
+                            "record is missing, having no commit to start from; re-record")
             elif not commit_exists(recorded):
                 not_checked = "head_missing"
                 git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
-                            "more, so the diff since the record cannot be taken; re-record")
+                            "more, so the working tree was read and the anchors and their "
+                            "recorded line digests compared, and only the diff since the record "
+                            "could not be taken; re-record")
             elif recorded != head:
+                # --no-relative: with diff.relative set true in a user's ~/.gitconfig this diff
+                # names its paths from the directory it ran in rather than from the repository
+                # root, and repo_prefix() records what that cost. The porcelain read above
+                # needs no such flag, having no such setting.
                 changed = code_paths(
-                    under_root(git("diff", "--name-only", f"{recorded}..HEAD").splitlines(),
-                               prefix),
+                    under_root(git("diff", "--name-only", "--no-relative",
+                                   f"{recorded}..HEAD").splitlines(), prefix),
                     inside_docs, docs_paths)
         except GitUnavailable as e:
             # git answered the first question and not the second. Reporting the half-answer as
             # a result is the false pass this whole file exists to stop.
             not_checked, changed, dirty = "no_git", [], []
-            git_note = f"git stopped answering part-way through the check ({e})"
+            git_note = (f"git stopped answering part-way through the check ({e}), so the "
+                        "working-tree reading was discarded along with the diff; the anchors "
+                        "and their recorded line digests were still compared")
 
     # The line half. A cited file can be touched without the cited line moving, and a cited
     # line can change under a file name that a diff since the record never names, so the two

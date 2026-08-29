@@ -17,6 +17,7 @@ test                                                pins           was at   was,
 test_uncommitted_edit_to_cited_file_is_drift        FR-001 AC-001  cfafe8e  status clean, exit 0
 test_staged_rename_marks_old_and_new_path_dirty     FR-001 AC-002  cfafe8e  suspect_pages {}
 test_docs_below_the_git_root_still_match_anchors    FR-001 US-001  f31b144  unrelated_changes, 0
+test_diff_relative_config_still_reports_drift       FR-001 AC-001  944c958  status clean, exit 0
 test_docs_tree_at_the_repo_root_reaches_clean       FR-001 FR-005  19941ad  unrelated_changes, 0
 test_check_outside_a_git_repo_reports_no_git        FR-002 AC-003  cfafe8e  status drift, exit 1
 test_rebased_away_head_reports_head_missing         FR-037 AC-004  cfafe8e  status clean, exit 0
@@ -95,16 +96,29 @@ GIT_ENV = {
 GIT_TIMEOUT = 30
 
 
-def git_in(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def git_in(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     """Run one git command inside ``repo`` with a fixed identity and no user config.
 
     Tests mutate their repository — edit, rename, commit, rebase away — and the
     mutation is the premise of the assertion that follows, so ``check=True`` by
     default makes a broken premise an error at that line instead of a confusing
     failure three lines later.
+
+    ``extra_env`` overrides that isolation for the one test that needs a
+    developer's configuration to reach git, and it exists so the premise of that
+    test — that the configuration is genuinely in effect — is checked with the
+    same helper as everything else rather than with a second copy of this
+    subprocess call.
     """
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     env.update(GIT_ENV)
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["git", *args],
         cwd=str(repo),
@@ -323,6 +337,85 @@ def test_docs_below_the_git_root_still_match_anchors(run_script, fixture_repo, t
         "expected only the edited source file to count: the manifest, which git names "
         f"site/{MANIFEST}, is inside the docs tree and is not code; got "
         f"{data['code_files_changed']}\n{outcome(result)}"
+    )
+
+
+def test_diff_relative_config_still_reports_drift(run_script, fixture_repo, tmp_path):
+    """FR-001 / FR-005 / US-001 / AC-001 / ST-001 — one line of ~/.gitconfig, US-001 negated.
+
+    ``diff.relative = true`` makes ``git diff --name-only`` name its paths from the directory
+    the command ran in instead of from the repository root. ``git status --porcelain`` has no
+    such setting, so the two halves of the code check stop agreeing on what a path is the
+    moment the docs sit below the repository root — and the diff half is the only half that
+    can see a change that has already been COMMITTED.
+
+    RED at 944c958: status clean at exit 0. The diff said ``src/app/main.py`` where
+    ``repo_prefix()`` said ``site/``, ``under_root()`` dropped it as living outside ROOT,
+    ``changed`` came back empty, and a committed edit to the file ``docs/items/create-item.md``
+    cites was reported as a tree where nothing at all had happened. The edit below is appended
+    past the cited line on purpose: line 15 is unchanged, so its recorded digest still matches
+    and the hash half cannot cover for the diff half.
+
+    The suite could not see this because every other test here pins ``GIT_CONFIG_GLOBAL`` at
+    ``os.devnull`` — correctly, so that a developer's settings cannot change an assertion. This
+    test pins it at a file it writes itself, which is the same isolation with one setting in it.
+    """
+    relative_config = tmp_path / "gitconfig-diff-relative"
+    relative_config.write_text("[diff]\n\trelative = true\n", encoding="utf-8")
+    developer = {"GIT_CONFIG_GLOBAL": str(relative_config), "GIT_CONFIG_NOSYSTEM": "1"}
+
+    mono = tmp_path / "mono"
+    site = mono / "site"
+    mono.mkdir()
+    shutil.copytree(fixture_repo, site, ignore=shutil.ignore_patterns(".git"))
+    git_in(mono, "-c", "init.defaultBranch=main", "init", "-q", ".")
+    git_in(mono, "add", "-A")
+    git_in(mono, "commit", "-q", "-m", "the project one directory below the repository root")
+
+    prefix = git_in(site, "rev-parse", "--show-prefix").stdout.strip()
+    assert prefix == "site/", (
+        "this test needs the docs one directory below the git root; git reports the prefix "
+        f"as {prefix!r}"
+    )
+
+    recorded = record(run_script, site)["gitHead"]
+    cited = site / CITED_FILE
+    cited.write_text(cited.read_text(encoding="utf-8") + "\n# committed edit\n", encoding="utf-8")
+    git_in(site, "add", "--", CITED_FILE)
+    git_in(site, "commit", "-q", "-m", "edit the cited file and commit it")
+
+    # The premise: with that configuration in force the diff really does answer in the wrong
+    # namespace. Without this the test would still pass if the config silently failed to load,
+    # and would then be pinning nothing.
+    named = git_in(
+        site, "diff", "--name-only", f"{recorded}..HEAD", extra_env=developer
+    ).stdout.split()
+    assert named == [CITED_FILE], (
+        f"this test needs diff.relative in force, which names the change {CITED_FILE!r} from "
+        f"the cwd rather than site/{CITED_FILE}; git named {named!r}"
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=site, env=developer)
+    data = parsed(result)
+
+    assert data["hash_mismatches"] == [], (
+        "this test needs the committed edit to leave the cited line alone, so that only the "
+        f"diff half can notice it; got {data['hash_mismatches']!r}\n{outcome(result)}"
+    )
+    assert data["suspect_pages"] == {CITING_PAGE: [ANCHOR]}, (
+        f"expected {CITING_PAGE} suspect through {ANCHOR} with diff.relative set; got "
+        f"{data['suspect_pages']!r}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 1, (
+        f"expected the committed edit to {CITED_FILE} to count as one changed code file; got "
+        f"{data['code_files_changed']}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected status drift for a committed edit to {CITED_FILE}; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 alongside status drift; got {result.returncode}\n{outcome(result)}"
     )
 
 
@@ -1317,8 +1410,8 @@ def test_null_head_in_the_manifest_reports_no_git(run_script, fixture_repo, tmp_
     half, git_note stayed empty, and the envelope came back saying nothing had
     changed — with git working and a commit sitting right there that the pages
     were never compared against. ``NO_HEAD_NOTE`` promises the reader of that
-    record exactly the opposite: "the next check reports no_git instead of
-    comparing the pages against nothing".
+    record exactly the opposite: the next check "reports no_git for the one half
+    it has no commit to start the diff from".
 
     ``test_record_without_a_commit_writes_a_null_head`` cannot catch this. That
     repository still has no commits when its check runs, so ``head_sha()``

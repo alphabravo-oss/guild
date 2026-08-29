@@ -1,0 +1,21 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); s="$d/plugins/webster/scripts/drift.py"; git -C "$d" show 944c958:plugins/webster/scripts/drift.py > "$t/drift-944c958.py"; printf '[diff]\n\trelative = true\n' > "$t/gitconfig"; export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-27T16:49:56+00:00 GIT_COMMITTER_DATE=2026-08-27T16:49:56+00:00; for n in before after; do mkdir -p "$t/$n"; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/$n/site"; (cd "$t/$n" && GIT_CONFIG_GLOBAL=/dev/null git -c init.defaultBranch=main init -q . && GIT_CONFIG_GLOBAL=/dev/null git add -A && GIT_CONFIG_GLOBAL=/dev/null git commit -q -m "project one directory below the repository root"); done; echo '=== the layout: docs one directory below the repository root ==='; (cd "$t/after/site" && GIT_CONFIG_GLOBAL=/dev/null git rev-parse --show-prefix); echo '=== the setting: diff.relative names the change from the cwd, status does not ==='; for n in before after; do (cd "$t/$n/site" && GIT_CONFIG_GLOBAL=/dev/null python3 "$s" record docs > /dev/null; printf '\n# committed edit\n' >> src/app/main.py; GIT_CONFIG_GLOBAL=/dev/null git add -- src/app/main.py; GIT_CONFIG_GLOBAL=/dev/null git commit -q -m "edit the cited file and commit it"); done; (cd "$t/after/site" && r=$(python3 -c "import json;print(json.load(open('docs/.webster.json'))['gitHead'])") && GIT_CONFIG_GLOBAL="$t/gitconfig" git --no-pager diff --name-only "$r..HEAD" | sed 's/^/  diff --name-only            : /' && GIT_CONFIG_GLOBAL="$t/gitconfig" git --no-pager diff --name-only --no-relative "$r..HEAD" | sed 's/^/  diff --name-only --no-relative: /' && GIT_CONFIG_GLOBAL="$t/gitconfig" git --no-pager status --porcelain -z --untracked-files=all | tr '\0' '\n' | grep . | sed 's/^/  status --porcelain -z         : /'); echo '=== D-050 at 944c958: a COMMITTED edit to the cited file ==='; (cd "$t/before/site" && GIT_CONFIG_GLOBAL="$t/gitconfig" python3 "$t/drift-944c958.py" check docs | python3 -c "import json,sys;d=json.load(sys.stdin);print('  status                 :',d['status']);print('  suspect_pages          :',d['suspect_pages']);print('  code_files_changed     :',d['code_files_changed']);print('  hash_mismatches        :',d['hash_mismatches'])"; GIT_CONFIG_GLOBAL="$t/gitconfig" python3 "$t/drift-944c958.py" check docs > /dev/null 2>&1; echo "  exit                   : $?"); echo '=== D-050 fixed: the same tree, the same setting ==='; (cd "$t/after/site" && GIT_CONFIG_GLOBAL="$t/gitconfig" python3 "$s" check docs | python3 -c "import json,sys;d=json.load(sys.stdin);print('  status                 :',d['status']);print('  suspect_pages          :',d['suspect_pages']);print('  code_files_changed     :',d['code_files_changed']);print('  hash_mismatches        :',d['hash_mismatches'])"; GIT_CONFIG_GLOBAL="$t/gitconfig" python3 "$s" check docs > /dev/null 2>&1; echo "  exit                   : $?"); rm -rf "$t"
+# evidence-for: US-001, FR-001, FR-005, AC-001
+
+=== the layout: docs one directory below the repository root ===
+site/
+=== the setting: diff.relative names the change from the cwd, status does not ===
+  diff --name-only            : src/app/main.py
+  diff --name-only --no-relative: site/src/app/main.py
+  status --porcelain -z         : ?? site/docs/.webster.json
+=== D-050 at 944c958: a COMMITTED edit to the cited file ===
+  status                 : clean
+  suspect_pages          : {}
+  code_files_changed     : 0
+  hash_mismatches        : []
+  exit                   : 0
+=== D-050 fixed: the same tree, the same setting ===
+  status                 : drift
+  suspect_pages          : {'docs/items/create-item.md': ['src/app/main.py:15']}
+  code_files_changed     : 1
+  hash_mismatches        : []
+  exit                   : 1
