@@ -24,48 +24,58 @@ revision's slop.py in it, and run this module against it --
 
 The revisions measured are every commit that has touched slop.py since the
 pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5,
-ad38ed9, f33f7c2 — read back from ``git log --oneline --reverse cfafe8e..HEAD
--- plugins/webster/scripts/slop.py`` rather than remembered. The version of
-this sentence that stopped at ad38ed9 named five and so left out the revision
-of slop.py that actually ships: f33f7c2 rewrote the missing-target comment in
-``main()`` in the same commit that first wrote this table, and a list written
-inside a commit cannot name that commit. Adding it is therefore a separate
-commit, and that commit touches no file under ``scripts/`` — which is what
-keeps this list closed rather than one short again.
+ad38ed9, f33f7c2, f3e30a5 — read back from ``git log --oneline --reverse
+cfafe8e..HEAD -- plugins/webster/scripts/slop.py`` rather than remembered.
+
+This list has been one short twice, both times for the same structural reason:
+a list written inside a commit cannot name that commit. The version that
+stopped at ad38ed9 left out f33f7c2, which rewrote the missing-target comment
+in ``main()`` in the same commit that first wrote this table. The version that
+stopped at f33f7c2 left out f3e30a5, which rewrote the comment on the kept
+supplementary range in the same commit that closed the first omission. Both
+were closed the same way, and it is the only way that works: a second commit
+that touches no file under ``scripts/``, so the list it writes is complete when
+it lands and stays complete. This paragraph was written by such a commit.
 
 "red against REV" means this file fails when the suite runs against the slop.py
 at REV and passes against the next revision in that list. "guard" means it
-passed at all six and exists to stop a fix from taking something else away
-with it. "added" is the commit the row's test first appeared in; no test in
-this module has been amended since.
+passed at all seven and exists to stop a fix from taking something else away
+with it. "added" is the commit the row's test first appeared in; where a second
+commit is named, the test's body was amended there.
 
-=======================================================  ============  =======
+=======================================================  ============  ================
 test                                                     red against   added
-=======================================================  ============  =======
+=======================================================  ============  ================
 test_weak_verb_page_reports_medium_and_exits_zero        cfafe8e       af10189
 test_supercharge_still_exits_one                         guard         af10189
 test_human_co_author_trailer_exits_zero                  cfafe8e       af10189
 test_ai_co_author_trailer_reports_agent_attribution      guard         af10189
-test_text_marks_in_headings_are_not_emoji                cfafe8e       af10189
-test_presentation_emoji_in_heading_is_reported           cfafe8e       af10189
+test_text_marks_in_headings_are_not_emoji                cfafe8e       af10189, f3e30a5
+test_presentation_emoji_in_heading_is_reported           cfafe8e       af10189, f3e30a5
 test_missing_target_exits_two                            cfafe8e       af10189
 test_dangling_symlink_page_exits_two                     af10189       ba33497
 test_kept_supplementary_range_reports_a_non_emoji_block  guard         ba33497
 test_pruned_directories_are_neither_checked_nor_counted  guard         ad38ed9
-=======================================================  ============  =======
+=======================================================  ============  ================
+
+The two rows amended at f3e30a5 kept their assertions and changed the prose
+around them: one comment split four marks as "the first two" and "the last
+two" when the two pairs interleave, and one assertion message called two of
+three headings "the two in the supplementary plane" when only one of them is.
+Neither row moved when the run below was repeated against f3e30a5.
 
 The one row naming a revision later than cfafe8e, ``test_dangling_symlink_page_exits_two``,
 is red at cfafe8e as well. The four rows filed "guard" are the four that pass
-at cfafe8e, and they pass at all six; no row in this module passes at cfafe8e
-and fails later. Run across the six the module goes 6 red at cfafe8e, 1 red at
-af10189, and 10 green at each of ba33497, ecc7dd5, ad38ed9 and f33f7c2. The
-last of those is green for a reason worth writing down rather than inferring:
-f33f7c2 changed slop.py's missing-target comment and nothing else, so there was
-no behaviour there for a row to move on, and re-running it is how that is known
-instead of assumed. The measurement was run because the same table in
+at cfafe8e, and they pass at all seven; no row in this module passes at cfafe8e
+and fails later. Run across the seven the module goes 6 red at cfafe8e, 1 red
+at af10189, and 10 green at each of ba33497, ecc7dd5, ad38ed9, f33f7c2 and
+f3e30a5. The last two are green for a reason worth writing down rather than
+inferring: each changed comment text in slop.py and no code, so there was no
+behaviour there for a row to move on, and re-running them is how that is known
+instead of assumed. The measurement was first run because the same table in
 ``test_scaffold.py`` carried a row labelled "green before and after by design"
-that is red against five of the seven revisions measured there. Every row below
-survived it unchanged.
+that is red against five of the eight revisions measured there. Every row below
+survived both runs unchanged.
 
 - ``test_weak_verb_page_reports_medium_and_exits_zero`` — FR-024 / OT-030.
   RED on the pre-change script: robust, leverage, elevate and empower were

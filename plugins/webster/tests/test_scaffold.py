@@ -24,11 +24,17 @@ revision's scaffold.py in it, and run this module against it --
 
 The revisions measured are every commit that has touched scaffold.py since the
 pre-change script AC-039 names, in order: cfafe8e, af10189, ecc7dd5, 3dadc71,
-8387b46, 5fc0761, ad38ed9.
+8387b46, 5fc0761, ad38ed9, f3e30a5 — read back from ``git log --oneline
+--reverse cfafe8e..HEAD -- plugins/webster/scripts/scaffold.py`` rather than
+remembered. This list stayed complete without anyone arranging it until
+f3e30a5, because until then no commit that wrote the list had also touched
+scaffold.py. f3e30a5 corrected a sentence in that script's module docstring, so
+it had to be added by a later commit that touches no file under ``scripts/`` —
+the rule the sibling table in ``test_slop.py`` states, which now binds here too.
 
 "red against REV" means this file fails when the suite runs against the
 scaffold.py at REV and passes against the next revision in that list. "guard"
-means it passed at all seven and exists to stop a fix from taking something
+means it passed at all eight and exists to stop a fix from taking something
 else away with it. "added" is the commit the row's test first appeared in;
 where further commits are named, the test's body was amended there.
 
@@ -51,7 +57,7 @@ test_a_refused_read_drops_the_violations_it_had_collected   8387b46       ad38ed
 
 Every row naming a revision later than cfafe8e is red at cfafe8e as well, with
 no exception in this module: the only two rows that pass at cfafe8e are the two
-filed "guard", and those pass at all seven.
+filed "guard", and those pass at all eight.
 
 Two rows are red against a revision later than the commit that added them, and
 they are not the same case. ``test_help_names_an_exit_set_for_both_modes`` was
@@ -59,7 +65,7 @@ added at 3dadc71 and amended at ad38ed9, and it is the amended text that is red
 through 5fc0761 -- the second wording defect the row below describes.
 ``test_a_refused_read_drops_the_violations_it_had_collected`` was never
 amended, and it is the correction this table exists for. It was recorded here
-as "green before and after by design". Run against the seven revisions above it
+as "green before and after by design". Run against the eight revisions above it
 is red against five of them, green only from 5fc0761 -- the commit that gave
 ``os.walk`` its ``onerror``, and the scaffold.py revision immediately before
 ad38ed9, where the test was written. It was therefore already green on the day
