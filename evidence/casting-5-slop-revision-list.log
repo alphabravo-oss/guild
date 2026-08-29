@@ -1,0 +1,55 @@
+# evidence-cmd: bash -c 'r=$PWD; echo "== git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py =="; git log --format="%h" --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py; echo; echo "== the list the module docstring names =="; sed -n "/^The revisions measured are/,/^$/p" plugins/webster/tests/test_slop.py | tr "\n" " " | grep -o "in order: [^—]*"; echo; echo "== red-first matrix, one run per revision =="; d=$(mktemp -d); for REV in cfafe8e af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2 f3e30a5 368b269 2830b9c; do mkdir -p "$d/$REV"; cp -R "$r/plugins/webster" "$d/$REV/webster"; git show "$REV:plugins/webster/scripts/slop.py" > "$d/$REV/webster/scripts/slop.py"; printf "%-9s %s\n" "$REV" "$(cd "$d/$REV/webster" && uvx pytest tests/test_slop.py -q 2>&1 | grep -E "passed|failed" | tail -1)"; done; rm -rf "$d"; echo; echo "== the last four changed comment text and no code =="; printf "%s\n" "import ast,subprocess" "def norm(rev):" "    s=subprocess.run([\"git\",\"show\",rev+\":plugins/webster/scripts/slop.py\"],capture_output=True,text=True).stdout" "    t=ast.parse(s)" "    for n in ast.walk(t):" "        if isinstance(n,(ast.Module,ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):" "            b=n.body" "            if b and isinstance(b[0],ast.Expr) and isinstance(b[0].value,ast.Constant) and isinstance(b[0].value.value,str):" "                n.body=b[1:] or [ast.Pass()]" "    return ast.dump(ast.fix_missing_locations(t))" "v=[\"ad38ed9\",\"f33f7c2\",\"f3e30a5\",\"368b269\",\"2830b9c\"]" "for i in range(1,len(v)):" "    print(\"  \"+v[i-1]+\" -> \"+v[i]+\"  code identical after stripping comments and docstrings: \"+str(norm(v[i-1])==norm(v[i])))" | python3 -; echo; echo "== closers touch no file under plugins/webster/scripts/, and 2830b9c did not touch this file =="; for rev in 359504f 4431242 56738b1; do printf "  %-9s files under scripts/: %s\n" "$rev" "$(git show --name-only --format= "$rev" | grep -c "^plugins/webster/scripts/")"; done; printf "  %-9s touches tests/test_slop.py: %s\n" "2830b9c" "$(git show --name-only --format= 2830b9c | grep -c "tests/test_slop.py")"'
+# evidence-for: US-010, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+#
+# The self-referential half of D-140. 2830b9c rewrote the missing-target comment
+# in slop.py and did not touch this file, so the revision list this module
+# publishes was one short of it -- the second of the two cases the docstring
+# names, a list complete on the day it landed and outlived by a later change.
+# The first two blocks are the list read back from git beside the list the
+# docstring names; they agree, nine revisions. The matrix is one run of this
+# module per revision and is what the "all nine" counts in the docstring are
+# taken from: 6 red at cfafe8e, 1 red at af10189, 10 green at each of the other
+# seven. 2830b9c is green because it moved no code, which the ast block shows by
+# parsing each revision and comparing the trees with comments and docstrings
+# stripped -- the same reason the three before it are green, hence "the last
+# four". The closer block is the "touches no file under scripts/" claim for the
+# three earlier closing commits; for this one it is the commit stat itself,
+# which is test_slop.py and this log.
+
+== git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py ==
+af10189
+ba33497
+ecc7dd5
+ad38ed9
+f33f7c2
+f3e30a5
+368b269
+2830b9c
+
+== the list the module docstring names ==
+in order: cfafe8e, af10189, ba33497, ecc7dd5, ad38ed9, f33f7c2, f3e30a5, 368b269, 2830b9c 
+
+== red-first matrix, one run per revision ==
+cfafe8e   6 failed, 4 passed in 0.20s
+af10189   1 failed, 9 passed in 0.19s
+ba33497   10 passed in 0.47s
+ecc7dd5   10 passed in 0.17s
+ad38ed9   10 passed in 0.19s
+f33f7c2   10 passed in 0.18s
+f3e30a5   10 passed in 0.19s
+368b269   10 passed in 0.18s
+2830b9c   10 passed in 0.18s
+
+== the last four changed comment text and no code ==
+  ad38ed9 -> f33f7c2  code identical after stripping comments and docstrings: True
+  f33f7c2 -> f3e30a5  code identical after stripping comments and docstrings: True
+  f3e30a5 -> 368b269  code identical after stripping comments and docstrings: True
+  368b269 -> 2830b9c  code identical after stripping comments and docstrings: True
+
+== closers touch no file under plugins/webster/scripts/, and 2830b9c did not touch this file ==
+  359504f   files under scripts/: 0
+  4431242   files under scripts/: 0
+  56738b1   files under scripts/: 0
+  2830b9c   touches tests/test_slop.py: 0
