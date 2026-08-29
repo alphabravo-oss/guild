@@ -1,4 +1,4 @@
-# evidence-cmd: bash -c 'r=$PWD; echo "== git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py =="; git log --format="%h" --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py; echo; echo "== the list the module docstring names =="; sed -n "/^The revisions measured are/,/^$/p" plugins/webster/tests/test_slop.py | tr "\n" " " | grep -o "in order: [^—]*"; echo; echo "== red-first matrix, one run of this module per revision =="; d=$(mktemp -d); for REV in cfafe8e af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2 f3e30a5 368b269 2830b9c 8fe80e2; do mkdir -p "$d/$REV"; cp -R "$r/plugins/webster" "$d/$REV/webster"; git show "$REV:plugins/webster/scripts/slop.py" > "$d/$REV/webster/scripts/slop.py"; printf "%-9s %s\n" "$REV" "$(cd "$d/$REV/webster" && uvx pytest tests/test_slop.py -q 2>&1 | grep -E "passed|failed" | tail -1)"; done; rm -rf "$d"; echo; echo "== the last five changed comment text in slop.py and no code =="; printf "%s\n" "import ast,io,subprocess,tokenize" "def src(rev):" "    return subprocess.run([\"git\",\"show\",rev+\":plugins/webster/scripts/slop.py\"],capture_output=True,text=True).stdout" "def comments(s):" "    return [t.string for t in tokenize.generate_tokens(io.StringIO(s).readline) if t.type==tokenize.COMMENT]" "def nodoc(s):" "    t=ast.parse(s)" "    for n in ast.walk(t):" "        if isinstance(n,(ast.Module,ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):" "            b=n.body" "            if b and isinstance(b[0],ast.Expr) and isinstance(b[0].value,ast.Constant) and isinstance(b[0].value.value,str): n.body=b[1:] or [ast.Pass()]" "    return ast.dump(ast.fix_missing_locations(t))" "v=[\"ad38ed9\",\"f33f7c2\",\"f3e30a5\",\"368b269\",\"2830b9c\",\"8fe80e2\"]" "for a,b in zip(v,v[1:]):" "    sa,sb=src(a),src(b)" "    print(\"  %s -> %s  comment text changed: %-5s  code identical after stripping docstrings: %s\" % (a,b,comments(sa)!=comments(sb),nodoc(sa)==nodoc(sb)))" | python3 -; echo; echo "== files under plugins/webster/scripts/ per commit: 0 closes the list, 1 is what reopens it =="; for rev in 359504f 4431242 56738b1 4f61d2d 8fe80e2; do printf "  %-9s %s\n" "$rev" "$(git show --name-only --format= "$rev" | grep -c "^plugins/webster/scripts/")"; done'
+# evidence-cmd: bash -c 'r=$PWD; echo "== git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py =="; git log --format="%h" --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py; echo; echo "== the list the module docstring names =="; sed -n "/^The revisions measured are/,/^$/p" plugins/webster/tests/test_slop.py | tr "\n" " " | grep -o "in order: [^—]*"; echo; echo "== red-first matrix, one run of this module per revision =="; d=$(mktemp -d); for REV in cfafe8e af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2 f3e30a5 368b269 2830b9c 8fe80e2; do mkdir -p "$d/$REV"; cp -R "$r/plugins/webster" "$d/$REV/webster"; git show "$REV:plugins/webster/scripts/slop.py" > "$d/$REV/webster/scripts/slop.py"; printf "%-9s %s\n" "$REV" "$(cd "$d/$REV/webster" && uvx pytest tests/test_slop.py -q 2>&1 | grep -E "passed|failed" | tail -1)"; done; rm -rf "$d"; echo; echo "== the last five changed comment text in slop.py and no code =="; printf "%s\n" "import ast,io,subprocess,tokenize" "def src(rev):" "    return subprocess.run([\"git\",\"show\",rev+\":plugins/webster/scripts/slop.py\"],capture_output=True,text=True).stdout" "def comments(s):" "    return [t.string for t in tokenize.generate_tokens(io.StringIO(s).readline) if t.type==tokenize.COMMENT]" "def nodoc(s):" "    t=ast.parse(s)" "    for n in ast.walk(t):" "        if isinstance(n,(ast.Module,ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):" "            b=n.body" "            if b and isinstance(b[0],ast.Expr) and isinstance(b[0].value,ast.Constant) and isinstance(b[0].value.value,str): n.body=b[1:] or [ast.Pass()]" "    return ast.dump(ast.fix_missing_locations(t))" "v=[\"ad38ed9\",\"f33f7c2\",\"f3e30a5\",\"368b269\",\"2830b9c\",\"8fe80e2\"]" "for a,b in zip(v,v[1:]):" "    sa,sb=src(a),src(b)" "    print(\"  %s -> %s  comment text changed: %-5s  code identical after stripping docstrings: %s\" % (a,b,comments(sa)!=comments(sb),nodoc(sa)==nodoc(sb)))" | python3 -; echo; echo "== files under plugins/webster/scripts/ per commit: 0 closes the list, 1 is what reopens it =="; for rev in 359504f 4431242 56738b1 4f61d2d 8fe80e2; do printf "  %-9s %s\n" "$rev" "$(git show --name-only --format= "$rev" | grep -c "^plugins/webster/scripts/")"; done; echo; echo "== which slop.py revision each closing commit first names in this module =="; for c in 359504f 4431242 56738b1 4f61d2d 05f76f6; do added=""; for r in af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2 f3e30a5 368b269 2830b9c 8fe80e2; do b=$(git show "$c^:plugins/webster/tests/test_slop.py" | grep -c "$r"); a=$(git show "$c:plugins/webster/tests/test_slop.py" | grep -c "$r"); test "$b" = "0" && test "$a" != "0" && added="$added $r"; done; printf "  %-9s first names:%s\n" "$c" "${added:- nothing new}"; done'
 # evidence-for: US-010, FR-039, AC-039
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
@@ -19,10 +19,13 @@
 # pair -- comment text differs, code does not. That is the same reason the
 # four before it are green, hence "the last five".
 #
-# The last block is the "touches no file under scripts/" claim for the four
-# earlier closing commits, and the 1 against 8fe80e2 is the reopening this
-# commit closes. This commit's own stat is tests/test_slop.py and two evidence
-# logs; it changes no file under plugins/webster/scripts/.
+# The last two blocks are the closing-move claims the docstring makes by name.
+# Each of the five closing commits touches 0 files under scripts/ except
+# 8fe80e2, whose 1 is the reopening this one closes, and each first names
+# exactly one slop.py revision in this module -- which is what "4f61d2d added
+# 2830b9c" and "the commit that added 8fe80e2" assert. This commit's own stat
+# is tests/test_slop.py and this log; it changes no file under
+# plugins/webster/scripts/.
 
 == git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py ==
 af10189
@@ -39,15 +42,15 @@ f3e30a5
 in order: cfafe8e, af10189, ba33497, ecc7dd5, ad38ed9, f33f7c2, f3e30a5, 368b269, 2830b9c, 8fe80e2 
 
 == red-first matrix, one run of this module per revision ==
-cfafe8e   6 failed, 4 passed in 0.44s
-af10189   1 failed, 9 passed in 0.51s
-ba33497   10 passed in 0.50s
+cfafe8e   6 failed, 4 passed in 0.22s
+af10189   1 failed, 9 passed in 0.23s
+ba33497   10 passed in 0.21s
 ecc7dd5   10 passed in 0.20s
 ad38ed9   10 passed in 0.20s
-f33f7c2   10 passed in 0.21s
-f3e30a5   10 passed in 0.21s
-368b269   10 passed in 0.21s
-2830b9c   10 passed in 0.21s
+f33f7c2   10 passed in 0.19s
+f3e30a5   10 passed in 0.19s
+368b269   10 passed in 0.20s
+2830b9c   10 passed in 0.20s
 8fe80e2   10 passed in 0.20s
 
 == the last five changed comment text in slop.py and no code ==
@@ -63,3 +66,10 @@ f3e30a5   10 passed in 0.21s
   56738b1   0
   4f61d2d   0
   8fe80e2   1
+
+== which slop.py revision each closing commit first names in this module ==
+  359504f   first names: f33f7c2
+  4431242   first names: f3e30a5
+  56738b1   first names: 368b269
+  4f61d2d   first names: 2830b9c
+  05f76f6   first names: 8fe80e2

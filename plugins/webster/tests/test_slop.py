@@ -69,9 +69,10 @@ versions, reading the number off the revisions and printing it under the word
 versions -- and amended the paragraph above in the same commit, so its list
 stopped at 2830b9c. The commit that added 8fe80e2 to the list above touches no
 file under ``scripts/``; it is named here by what it did rather than by its
-hash, because a paragraph cannot carry the hash of the commit it lands in,
-which is what "This commit added 2830b9c" in the paragraph above turned into
-the moment that paragraph was edited by a later one.
+hash, because a paragraph cannot carry the hash of the commit it lands in. The
+paragraph above said "This commit added 2830b9c", which was true where 4f61d2d
+wrote it and would have named 8fe80e2 the moment 8fe80e2 edited the paragraph
+around it, so 8fe80e2 replaced it with 4f61d2d's hash in the same edit.
 
 "red against REV" means this file fails when the suite runs against the slop.py
 at REV and passes against the next revision in that list. "guard" means it
