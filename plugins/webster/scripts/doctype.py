@@ -7,7 +7,10 @@ here; the rest are reported as what a human reviewer should judge.
 
   types                 list the content types, the readers, and what each is for
   template <type> [aud] print the starting skeleton, in the variant that reader needs
-  check [docs]          check every page. exit 1 on a defect, 0 when only advisories remain
+  check [docs]          check every written page, and every stub for its frontmatter alone.
+                        exit 1 on a defect, 0 when only advisories remain, 2 when there was
+                        nothing to check: no docs directory, or no page that is not a stub
+                        and no frontmatter defect on the stubs either
 
 Every page declares two things: what it is (`doc_type`) and who it is for (`audience`). The
 second one is a lens before it is a reading grade. A page can describe a status enum in short
@@ -132,8 +135,18 @@ DEFAULT_AUDIENCE = "user"
 # The moment it names the machinery underneath, the reader is being shown the implementation
 # instead of the product. `operator` may name the things an operator actually handles, and
 # `developer` may name anything.
+#
+# The first string is the whole printed contract: `doctype.py types` prints it as "may not name
+# ...", and it is the only place the tool tells a writer what the lens forbids before the lens
+# fires. It said symbols, routes, environment variables and architecture while check_lens had
+# already grown the flag rule and widened routes past the /api and /v<n> prefixes, so a writer
+# read the contract, wrote `--verbose` on a user page, and got a defect for a class the tool had
+# just told them was allowed. Every kind check_lens can report has to be named here, and only
+# for the audience it fires on: flags and routes stay off the operator line because GI-003 keeps
+# them off the operator page.
 LENS_MAY_NOT = {
- "user": ("internal symbols, routes, environment variables and architecture",
+ "user": ("internal symbols, any route path, command-line flags, environment variables and "
+          "architecture",
           "write it from the screen: what the reader sees, clicks, types and gets back"),
  "operator": ("internal symbols and architecture",
               "an operator handles config and commands, not the code underneath them"),
@@ -201,12 +214,19 @@ ENV_VAR = re.compile(r"`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`")
 # `/.gitignore`, `/x.template` — was over the length or held a digit, and every one of them was
 # reported to a reader as naming a request route. Sixteen is past every extension in ordinary
 # use, and the comment above this line claimed the exclusion without ever saying it was capped.
-# Admitting digits costs a version in the last segment: `/api/v1.0` now reads as a file and is
-# not reported, while `/api/v1.0/users` still is, because there the dot is not in the last
-# segment. `/etc/hosts` has no extension at all and is the gap A-008 accepts; WEBSTER_LENS_ALLOW
-# covers both.
+# Admitting digits so `.7z` and `.mp4` keep reading as files took the version paths with them:
+# `.0` matched as an extension, so `/api/v1.0` and `/v3.0` went quiet — two routes the narrow
+# /api and /v<n> rule this widening replaced had always reported, which made the fix a
+# regression for the shape it was built from. The inner lookahead asks the extension for one
+# letter somewhere, which `.0` has none of and every real extension has at least one. What that
+# costs is a last segment ending in a bare number: `/data/backup.2024` reads as a route, and
+# WEBSTER_LENS_ALLOW is the answer there, as it is for `/etc/hosts`, which has no extension at
+# all and is the gap A-008 accepts.
+# The first segment may not be empty. `[^`\s]+` let the path body open on a second slash, so
+# `//` was matched as a path with no segment in it when A-008 asks for at least one, and a page
+# writing `//` is showing a reader a comment marker or an empty root, not a route.
 ROUTE_PATH = re.compile(
- r"`(?![^`\s]*\.[A-Za-z0-9]{1,16}`)(/[^`\s]+)`"
+ r"`(?![^`\s]*\.(?=[A-Za-z0-9]{0,15}[A-Za-z])[A-Za-z0-9]{1,16}`)(/[^`\s/]+(?:/[^`\s]*)?)`"
  r"|(?:^|\s)((?:GET|POST|PUT|PATCH|DELETE)\s+/\S+)")
 # A flag is something typed at a terminal, and a page written from the screen has no terminal in
 # it. Suppressed by WEBSTER_LENS_ALLOW or by the product's own commands and labels, because a

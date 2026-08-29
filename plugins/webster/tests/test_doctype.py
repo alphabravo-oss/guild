@@ -1,8 +1,13 @@
 """Tests for plugins/webster/scripts/doctype.py — the lens, the allowlists, the stubs.
 
-One red-to-green test per fix (US-010, AC-039). Measured against commit 2abe081, the last one
-before this change: 19 of the 25 tests in the first index below fail there and all 25 pass
-after. The other six are negative controls that must pass on both sides, and each is marked
+One red-to-green test per fix (US-010, AC-039). Measured against commit cfafe8e, the pre-change
+baseline AC-039 names, as the sibling modules do: 19 of the 25 tests in the first index below
+fail there and all 25 pass after. The measurement was taken at 2abe081 — this suite's own first
+commit, which is where these tests could first be run — and it stands for cfafe8e because
+``git show cfafe8e:plugins/webster/scripts/doctype.py`` and the same command at 2abe081 hash to
+the same bytes: 2abe081 added the harness and touched no script. The numbers were right and the
+sentence naming 2abe081 "the last one before this change" was not.
+The other six are negative controls that must pass on both sides, and each is marked
 (control) below — a control that went red would mean the fix broke something it was supposed to
 leave alone. The red-first property is recorded here rather than enforced at runtime (FR-039):
 a test that re-ran itself against an old checkout would need a git worktree per assertion.
@@ -46,8 +51,8 @@ Each test names the fix it pins:
 - FR-040 / CT-004 a defect on a stub beats not-checked (OT-042)
     test_all_stub_tree_with_a_defect_exits_one
 
-Four more tests are measured against commit 9859317 instead, because they pin defects the
-widening above introduced rather than the ones it fixed:
+Six more tests are measured against a later commit instead, because each pins a defect one of
+the widenings above introduced rather than one it fixed. Four are measured against 9859317:
 
 - FR-010 / AC-011 the widened CODE_IDENT still excludes ALL-CAPS
     test_all_caps_with_a_digit_is_not_an_internal_symbol
@@ -58,16 +63,21 @@ widening above introduced rather than the ones it fixed:
 - FR-040 / CT-004 zero pages checked is never exit 0
     test_empty_docs_tree_is_not_checked
 
-One more is measured against commit 38fb601, for the same reason — the widening left the
-file-extension exclusion capped at the length of `.conf`, so the ordinary config paths a user
-page names were still reported as routes:
-
-- FR-011 / AC-012 the extension exclusion holds at the lengths files really have
-    test_long_and_dotfile_extensions_are_not_routes
-
-The first two of those four pass at 2abe081 as well — the narrow CODE_IDENT could match neither
+The first two of those four pass at cfafe8e as well — the narrow CODE_IDENT could match neither
 `HTTP2` nor `IPv4` — which is what makes them regression guards rather than fix guards. The
 other two are red on both sides.
+
+The last two are measured against 19941ad, the commit before this fix. One holds three lines
+that the two rounds of route widening broke in turn: 38fb601 left the file-extension exclusion
+capped at the length of `.conf`, so ordinary config paths were reported as routes; lifting that
+cap read `.0` as an extension, so `/api/v1.0` and `/v3.0` stopped being reported at all; and the
+same commit let the path body open on a slash, so `//` became a route with no segment in it.
+The other reads the printed contract rather than the rule behind it.
+
+- FR-011 / AC-012 / OT-013 the route rule stops at a file and at a path with no segment
+    test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither
+- FR-012 / FR-017 / GI-003 `types` names every class the lens reports, for the right reader
+    test_types_states_the_contract_the_lens_enforces
 
 Every test drives the script through the conftest ``run_script`` helper (GI-004, CT-007) and
 every assertion quotes the captured exit code, stdout and stderr, because a bare
@@ -287,18 +297,28 @@ def test_path_with_a_file_extension_is_not_a_route(run_script, docs_dir):
     assert result.returncode == 0, f"Expected exit 0.\n{outcome(result)}"
 
 
-def test_long_and_dotfile_extensions_are_not_routes(run_script, docs_dir):
-    """The same exclusion, at the lengths ordinary config paths actually have.
+def test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither(
+        run_script, docs_dir):
+    """Where the route rule stops: at a file, and at a path with no segment in it.
 
     ``.conf`` is four letters and fitted the old six-letter cap. ``.properties`` is ten,
     ``.markdown`` is eight, ``.template`` is eight, and ``/.gitignore`` is a dotfile with no
     stem at all — every one of them was reported to a reader as naming a request route, on the
-    page that told them where their settings live. The route on the same page still fires, so
-    this pins the exclusion rather than the whole rule going quiet."""
+    page that told them where their settings live.
+
+    Lifting that cap took two things with it that this pins as well. Admitting digits into the
+    extension made `.0` look like one, so `/api/v1.0` and `/v3.0` stopped being reported —
+    routes that the narrow /api and /v<n> rule the widening replaced had caught since the
+    beginning, which made a fix into a regression. And letting the path body hold a slash made
+    `` `//` `` a path with zero segments when A-008 asks for at least one.
+
+    The plain route on the same page fires throughout, so each half pins its own exclusion
+    rather than the whole rule going quiet."""
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
                "# Guide\n\nOpen `/settings/profile` to change your name. The app keeps its "
                "keys in\n`/etc/app.properties`, its notes in `/docs/readme.markdown`, its "
-               "ignore list in\n`/.gitignore` and its letter in `/x.template`.\n")
+               "ignore list in\n`/.gitignore` and its letter in `/x.template`. It talks to "
+               "`/api/v1.0` and\n`/v3.0`, and it writes `//` when it means nothing at all.\n")
 
     result = check(run_script, docs_dir)
 
@@ -307,12 +327,18 @@ def test_long_and_dotfile_extensions_are_not_routes(run_script, docs_dir):
             f"{path} is a file a reader may really have to open. The extension exclusion used "
             f"to be capped at six letters, so this one was over it.\n{outcome(result)}"
         )
-    assert "a request route, /settings/profile" in result.stdout, (
-        f"The route on the same page must still be reported; widening the exclusion must not "
-        f"switch the rule off.\n{outcome(result)}"
+    assert "a request route, //" not in result.stdout, (
+        f"`//` names no segment, and A-008 asks a route for at least one. The path body used "
+        f"to admit a slash, so an empty root was reported as a route.\n{outcome(result)}"
     )
+    for route in ("/settings/profile", "/api/v1.0", "/v3.0"):
+        assert f"a request route, {route}" in result.stdout, (
+            f"{route} is a route a user page must not name. A version in the last segment is "
+            f"not a file extension, and admitting digits to reach `.7z` used to make it look "
+            f"like one.\n{outcome(result)}"
+        )
     assert result.returncode == 1, (
-        f"Expected exit 1 from the route alone.\n{outcome(result)}"
+        f"Expected exit 1 from the routes alone.\n{outcome(result)}"
     )
 
 
@@ -379,6 +405,41 @@ def test_operator_page_is_still_reported_for_a_symbol(run_script, docs_dir):
     assert "a command-line flag" not in result.stdout, (
         f"The flag on the same page stays silent.\n{outcome(result)}"
     )
+
+
+def test_types_states_the_contract_the_lens_enforces(run_script):
+    """``doctype.py types`` is where a writer reads the lens before the lens reads them.
+
+    It printed "may not name internal symbols, routes, environment variables and architecture"
+    for a `user` page while check_lens had already grown the flag rule and widened routes past
+    the /api and /v<n> prefixes. A writer read that list, wrote `--verbose`, and got a
+    wrong-lens defect for a class the tool had just told them was allowed — the one failure a
+    printed contract exists to prevent. The operator line is asserted from the other side: it
+    must not pick the flags up, because GI-003 is what makes an operator page allowed to be
+    about them."""
+    result = run_script("doctype.py", "types")
+
+    assert result.returncode == 0, f"Expected exit 0 from `types`.\n{outcome(result)}"
+    lines = result.stdout.splitlines()
+    blocks = {}
+    for i, line in enumerate(lines):
+        m = re.match(r"\s\s(user|operator|developer)\s+grade\s", line)
+        if m:
+            blocks[m.group(1)] = " ".join(part.strip() for part in lines[i:i + 3])
+    assert set(blocks) == {"user", "operator", "developer"}, (
+        f"`types` prints one three-line block per audience — the reader line, the assumes "
+        f"line, and the contract. Found blocks for {sorted(blocks)}.\n{outcome(result)}"
+    )
+    for named in ("flag", "route"):
+        assert named in blocks["user"], (
+            f"The printed contract for a `user` page never says {named}, and check_lens "
+            f"reports both. Got: {blocks['user']}\n{outcome(result)}"
+        )
+    for unnamed in ("flag", "route"):
+        assert unnamed not in blocks["operator"], (
+            f"GI-003 keeps {unnamed}s firing for `user` only, so the operator contract must "
+            f"not claim them. Got: {blocks['operator']}\n{outcome(result)}"
+        )
 
 
 # -----------------------------------------------------------------------------

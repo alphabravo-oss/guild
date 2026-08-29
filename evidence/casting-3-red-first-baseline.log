@@ -1,0 +1,31 @@
+# evidence-cmd: echo "doctype.py at cfafe8e  $(git show cfafe8e:plugins/webster/scripts/doctype.py | shasum | cut -d' ' -f1)"; echo "doctype.py at 2abe081  $(git show 2abe081:plugins/webster/scripts/doctype.py | shasum | cut -d' ' -f1)"; sed -n '/^One red-to-green test per fix/,/^sentence naming 2abe081/p' plugins/webster/tests/test_doctype.py; rm -rf /tmp/webster-c3-red && mkdir -p /tmp/webster-c3-red && cp -R plugins/webster /tmp/webster-c3-red/webster && git show 19941ad:plugins/webster/scripts/doctype.py > /tmp/webster-c3-red/webster/scripts/doctype.py && echo '--- the two tests, against doctype.py at 19941ad ---' && ( cd /tmp/webster-c3-red/webster && uvx pytest tests/test_doctype.py -q -k "double_slash or types_states" 2>&1 | tail -4 ); echo '--- the whole module, against doctype.py at HEAD ---'; ( cd plugins/webster && uvx pytest tests/test_doctype.py -q 2>&1 | tail -2 )
+# evidence-for: FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+#
+# D-048. The module docstring named 2abe081 — this suite's own first commit — as "the
+# last one before this change", when the baseline AC-039 names is cfafe8e. The two
+# hashes below are why the numbers in that docstring were right anyway: doctype.py is
+# the same bytes at both, because 2abe081 added the harness and touched no script. The
+# docstring now names cfafe8e, as test_drift.py and test_llmstxt.py do, and says which
+# commit the measurement was taken at.
+#
+# The red-first property FR-039 records, measured rather than reasoned about: this
+# cycle's two changed tests run against doctype.py at 19941ad, then the whole module
+# against HEAD.
+doctype.py at cfafe8e  1f4a296926eac56447b92e9e7590526d652fb274
+doctype.py at 2abe081  1f4a296926eac56447b92e9e7590526d652fb274
+One red-to-green test per fix (US-010, AC-039). Measured against commit cfafe8e, the pre-change
+baseline AC-039 names, as the sibling modules do: 19 of the 25 tests in the first index below
+fail there and all 25 pass after. The measurement was taken at 2abe081 — this suite's own first
+commit, which is where these tests could first be run — and it stands for cfafe8e because
+``git show cfafe8e:plugins/webster/scripts/doctype.py`` and the same command at 2abe081 hash to
+the same bytes: 2abe081 added the harness and touched no script. The numbers were right and the
+sentence naming 2abe081 "the last one before this change" was not.
+--- the two tests, against doctype.py at 19941ad ---
+=========================== short test summary info ============================
+FAILED tests/test_doctype.py::test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither
+FAILED tests/test_doctype.py::test_types_states_the_contract_the_lens_enforces
+2 failed, 29 deselected in 0.10s
+--- the whole module, against doctype.py at HEAD ---
+...............................                                          [100%]
+31 passed in 0.61s

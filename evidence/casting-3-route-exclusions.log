@@ -1,0 +1,19 @@
+# evidence-cmd: cd plugins/webster && rm -rf /tmp/webster-c3-routes && mkdir -p /tmp/webster-c3-routes/docs && printf '%s\n' '---' 'title: Guide' 'doc_type: how-to' 'audience: user' '---' '' '# Guide' '' 'Open `/settings/profile` to change your name, and the app talks to `/api/v1.0`' 'and `/v3.0`. It writes `//` when it means nothing at all. It keeps keys in' '`/etc/app.properties`, notes in `/docs/readme.markdown`, its ignore list in' '`/.gitignore` and its letter in `/x.template`.' > /tmp/webster-c3-routes/docs/guide.md && python3 scripts/doctype.py check /tmp/webster-c3-routes/docs; echo "exit=$?"
+# evidence-for: FR-011, AC-012
+#
+# D-040. One user page naming three routes and five paths that are not routes.
+# Reported: /settings/profile (the widening A-008 asked for), /api/v1.0 and /v3.0
+# (routes the narrow /api and /v<n> rule always caught, which the digit-admitting
+# extension exclusion had silently dropped). Not reported: the four file paths, whose
+# extensions each hold a letter, and `//`, which is a path with no segment in it.
+1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (3)
+
+  wrong-lens  (3)
+      write it from the screen: what the reader sees, clicks, types and gets back
+    guide.md:9  a 'user' page names a request route, /settings/profile
+    guide.md:9  a 'user' page names a request route, /api/v1.0
+    guide.md:10  a 'user' page names a request route, /v3.0
+exit=1

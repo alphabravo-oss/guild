@@ -1,0 +1,35 @@
+# evidence-cmd: cd plugins/webster && sed -n '/^  types  /,/^ *and no frontmatter defect/p' scripts/doctype.py; echo '--- no docs directory ---'; python3 scripts/doctype.py check /tmp/webster-c3-absent; echo "exit=$?"; rm -rf /tmp/webster-c3-stubs && mkdir -p /tmp/webster-c3-stubs/ok/docs /tmp/webster-c3-stubs/bad/docs && printf '%s\n' '---' 'title: Stub' 'doc_type: how-to' 'audience: user' '---' '' '<!-- webster: not written yet -->' '' '{What `create_item` does at `/dashboard` when you pass `--verbose`.}' > /tmp/webster-c3-stubs/ok/docs/stub.md && sed '/^audience: user$/d' /tmp/webster-c3-stubs/ok/docs/stub.md > /tmp/webster-c3-stubs/bad/docs/stub.md; echo '--- every page a well-formed stub ---'; python3 scripts/doctype.py check /tmp/webster-c3-stubs/ok/docs; echo "exit=$?"; echo '--- every page a stub, one without audience ---'; python3 scripts/doctype.py check /tmp/webster-c3-stubs/bad/docs; echo "exit=$?"
+# evidence-for: FR-014, FR-040
+#
+# D-042. The usage text a reader gets from the top of doctype.py, then every exit it
+# claims, taken from the tool. It used to say "check every page. exit 1 on a defect,
+# 0 when only advisories remain" — the pre-change contract, from before stubs were
+# checked for frontmatter alone and before exit 2 existed. Below: 2 for no docs
+# directory, 2 for a tree with nothing in it but well-formed stubs, and 1 when one of
+# those stubs has no audience, which is FR-040's rule that a defect beats not-checked.
+# The stub's placeholder prose names a symbol, a route and a flag and none of them is
+# reported, which is the frontmatter-alone half of the same sentence.
+  types                 list the content types, the readers, and what each is for
+  template <type> [aud] print the starting skeleton, in the variant that reader needs
+  check [docs]          check every written page, and every stub for its frontmatter alone.
+                        exit 1 on a defect, 0 when only advisories remain, 2 when there was
+                        nothing to check: no docs directory, or no page that is not a stub
+                        and no frontmatter defect on the stubs either
+--- no docs directory ---
+no docs directory at /tmp/webster-c3-absent
+exit=2
+--- every page a well-formed stub ---
+0 pages checked, 0 against a declared type, 1 stubs (frontmatter only)
+no survey allowlist
+1 stubs, nothing to check
+exit=2
+--- every page a stub, one without audience ---
+0 pages checked, 0 against a declared type, 1 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (1)
+
+  no-audience  (1)
+      add 'audience: user', 'operator' or 'developer'. It decides what the page may be about, not just how hard the sentences may be
+    stub.md  the page does not say who it is for
+exit=1
