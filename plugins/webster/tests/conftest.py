@@ -65,7 +65,8 @@ Fixtures exposed to test modules:
 - ``fixture_repo`` -> ``Path`` to a git repo built from ``tests/fixtures/repo/``,
   replaying the source fixture's three commits (FR-030).
 - ``build_repo``  -> the ``build_fixture_repo`` callable, for the tests that need
-  a second independent copy (OT-038's two-consecutive-builds check).
+  a second independent copy (OT-038's two-consecutive-builds check) or a build
+  under a different environment (the timezone pair that measures AC-040).
 """
 
 from __future__ import annotations
@@ -104,10 +105,22 @@ SCRIPT_TIMEOUT = 30
 _BASE_ENV_KEYS = ("PATH", "HOME")
 
 # The source fixture's three commits, replayed in order. Times are the source
-# repo's own clock times restated at +0000. The offset must be explicit: a bare
-# date string picks up the host's timezone, which changes the commit object and
-# therefore the hash, which is exactly what OT-038 asks two consecutive builds
-# to prove cannot happen.
+# repo's own clock times restated at +00:00. The offset must be explicit: git
+# reads a date that carries none in whatever timezone the committing process is
+# in, so one string becomes a different instant, records a different offset
+# field, and produces a different commit object — a different hash — on a
+# machine set to a different zone. Measured under git 2.50.1: the bare form of
+# the first date below commits at +1400 under TZ=Pacific/Kiritimati and at
+# -0700 under TZ=America/Los_Angeles, two distinct HEADs; with the offset
+# written in, both zones give one.
+#
+# That is a claim about *other machines*, and the two-consecutive-builds check
+# OT-038 asks for cannot reach it: both of those builds run in one process, on
+# one host, in one zone, and agree with or without the offset. An earlier
+# version of this comment named them as its evidence anyway. What proves this
+# sentence is test_harness.py's
+# ``test_fixture_head_survives_a_change_of_host_timezone``, which builds the
+# fixture under two zones 21 hours apart and asserts one HEAD (AC-040).
 FIXTURE_AUTHOR_NAME = "t"
 FIXTURE_AUTHOR_EMAIL = "t@t"
 TOUCH_MAIN_SUBJECT = "touch main"
@@ -190,18 +203,25 @@ def _git(
     *,
     cwd: Path,
     date: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run one git command inside ``cwd`` with a fixed identity and no user config.
 
     ``check=True``: a failure here is a broken harness, not a finding, and it
     should surface as an error at fixture setup rather than as a confusing
     assertion failure three lines into a test.
+
+    ``extra_env`` is applied last and may therefore override anything above it.
+    See ``build_fixture_repo`` for the one caller that passes it and why the
+    environment has to be reached here rather than in the test process.
     """
     env = base_env()
     env.update(_GIT_ENV)
     if date is not None:
         env["GIT_AUTHOR_DATE"] = date
         env["GIT_COMMITTER_DATE"] = date
+    if extra_env:
+        env.update({key: str(value) for key, value in extra_env.items()})
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
@@ -215,7 +235,9 @@ def _git(
     )
 
 
-def build_fixture_repo(dest: str | Path) -> Path:
+def build_fixture_repo(
+    dest: str | Path, *, env: dict[str, str] | None = None
+) -> Path:
     """Copy ``tests/fixtures/repo/`` to ``dest`` and replay its three commits.
 
     The committed tree carries no ``.git``, no ``website/`` and no
@@ -223,8 +245,22 @@ def build_fixture_repo(dest: str | Path) -> Path:
     manifest a test needs is produced by running ``drift.py record`` through
     ``run_script`` — never shipped pre-recorded.
 
-    Returns the repository root. Two calls produce identical HEAD hashes, on
-    this machine and on any other (OT-038).
+    ``env`` adds to (or overrides) the environment every git call in this
+    function runs under, the way ``run_script``'s ``env`` does for a script. It
+    exists for one caller and one reason: the only way to ask what this
+    fixture's HEAD would be on a machine in a different timezone is to hand git
+    a different ``TZ``, and ``_git`` builds its environment from ``base_env`` —
+    PATH and HOME, nothing else (FR-029) — so a ``TZ`` set in the test process
+    with ``os.environ`` and ``time.tzset()`` never reaches the child at all.
+    Measured: with ``TZ=Pacific/Kiritimati`` exported in the parent and dropped
+    by that ``env=``, git dated a bare-date commit at the host's ``-0600``. A
+    test written that way would compare two builds in the same zone and report
+    a pass.
+
+    Returns the repository root. Two calls produce identical HEAD hashes on
+    this machine (OT-038, ``test_two_fixture_repo_builds_produce_the_same_head``)
+    and on a machine in any other timezone (AC-040,
+    ``test_fixture_head_survives_a_change_of_host_timezone``).
     """
     dest = Path(dest)
     shutil.copytree(FIXTURE_REPO_SRC, dest)
@@ -240,9 +276,13 @@ def build_fixture_repo(dest: str | Path) -> Path:
         )
     pre_touch_main = committed_main[len(TOUCH_MAIN_MARKER) :]
 
-    _git(["-c", "init.defaultBranch=main", "init", "-q", "."], cwd=dest)
-    _git(["config", "user.name", FIXTURE_AUTHOR_NAME], cwd=dest)
-    _git(["config", "user.email", FIXTURE_AUTHOR_EMAIL], cwd=dest)
+    _git(
+        ["-c", "init.defaultBranch=main", "init", "-q", "."],
+        cwd=dest,
+        extra_env=env,
+    )
+    _git(["config", "user.name", FIXTURE_AUTHOR_NAME], cwd=dest, extra_env=env)
+    _git(["config", "user.email", FIXTURE_AUTHOR_EMAIL], cwd=dest, extra_env=env)
 
     # Commits 1 and 2 see main.py without the marker line; commit 3 restores it
     # and is therefore a real one-line diff, as in the source fixture.
@@ -250,8 +290,8 @@ def build_fixture_repo(dest: str | Path) -> Path:
     for subject, date, paths in FIXTURE_COMMITS:
         if subject == TOUCH_MAIN_SUBJECT:
             main_py.write_text(committed_main, encoding="utf-8")
-        _git(["add", "--", *paths], cwd=dest)
-        _git(["commit", "-q", "-m", subject], cwd=dest, date=date)
+        _git(["add", "--", *paths], cwd=dest, extra_env=env)
+        _git(["commit", "-q", "-m", subject], cwd=dest, date=date, extra_env=env)
 
     return dest
 
@@ -279,11 +319,14 @@ def fixture_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def build_repo() -> Callable[[str | Path], Path]:
+def build_repo() -> Callable[..., Path]:
     """Return ``build_fixture_repo`` for tests needing a second, independent copy.
 
-    ``fixture_repo`` can only hand a test one repository. OT-038 asks for two
-    consecutive builds to produce the same HEAD, and a rename or rebase scenario
-    may want a pristine reference alongside the mutated copy.
+    ``fixture_repo`` can only hand a test one repository, and it hands it over
+    already built, so a test cannot vary the environment the build ran in.
+    Both matter here: OT-038 asks for two consecutive builds to produce the same
+    HEAD, AC-040 asks for the same HEAD on another machine — which is two builds
+    under two ``TZ`` values — and a rename or rebase scenario may want a
+    pristine reference alongside the mutated copy.
     """
     return build_fixture_repo

@@ -1,0 +1,21 @@
+# evidence-cmd: d=$(mktemp -d) && cp -R plugins/webster "$d/w" && cd "$d/w" && cp tests/conftest.py c.orig && printf "== unmutated ==\n" && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k host_timezone 2>&1 | tail -1 && printf "== mutant 1: FIXTURE_COMMITS dates lose their +00:00 offset ==\n" && sed "s/+00:00//g" c.orig > tests/conftest.py && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k host_timezone 2>&1 | grep -E "^(E +AssertionError|[0-9]+ (passed|failed))" ; printf "== mutant 2: build_fixture_repo stops passing env to git ==\n" && sed "s/extra_env=env/extra_env=None/g" c.orig > tests/conftest.py && uvx pytest tests/test_harness.py -q -p no:cacheprovider -k host_timezone 2>&1 | grep -E "^(E +AssertionError|[0-9]+ (passed|failed))"
+# evidence-for: FR-030, AC-040
+# evidence-volatile: \d+\.\d+s
+#
+# The new test can fail, shown against a throwaway copy of the plugin so the
+# working tree is never mutated. Mutant 1 removes the property under test and
+# the main assertion catches it. Mutant 2 cuts the env plumbing so TZ never
+# reaches git; both builds then run in one zone and agree, which is the shape
+# of a check that passes without checking. The control catches that one, and
+# names which of the two causes it was from the recorded dates. An earlier
+# draft of this test ran its control against git directly and survived mutant
+# 2 green. D-068.
+
+== unmutated ==
+1 passed, 4 deselected in 0.58s
+== mutant 1: FIXTURE_COMMITS dates lose their +00:00 offset ==
+E       AssertionError: the fixture's HEAD depends on the building machine's timezone: TZ=Pacific/Kiritimati gave 36737888c75fb6e10d092b7421f82c3194f817f4, TZ=America/Los_Angeles gave 043b58a628b36aa1df0e390759a459bdb77edbdc. Every date in conftest.FIXTURE_COMMITS must carry an explicit offset — the control above measured '2026-08-27 16:49:56 +1400' against '2026-08-27 16:49:56 -0700' for one bare string. Without it, AC-040's deterministic hashes across machines is false and every drift assertion naming a commit becomes a local result.
+1 failed, 4 deselected in 0.65s
+== mutant 2: build_fixture_repo stops passing env to git ==
+E       AssertionError: the control did not diverge: the fixture built with every date overridden to '2026-08-27T16:49:56', which carries no offset, reached the same HEAD (d30d7d33a0bd3b878985789bdfd132034cb5b4b9) under TZ=Pacific/Kiritimati and TZ=America/Los_Angeles. Either build_repo's env is not reaching the git child — in which case the assertion below compares two builds in one timezone and can only pass — or this machine has no tzdata for these zones. The recorded dates tell them apart: '2026-08-27 16:51:11 +0000' against '2026-08-27 16:51:11 +0000', which are the FIXTURE_COMMITS times at +0000 if the env was dropped and 2026-08-27T16:49:56 at +0000 if the zones are missing.
+1 failed, 4 deselected in 0.33s

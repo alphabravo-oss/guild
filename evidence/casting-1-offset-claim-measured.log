@@ -1,0 +1,14 @@
+# evidence-cmd: for z in Pacific/Kiritimati America/Los_Angeles; do for d in 2026-08-27T16:49:56 2026-08-27T16:49:56+00:00; do r=$(mktemp -d); git -C "$r" -c init.defaultBranch=main init -q . && echo hi > "$r/f.txt" && git -C "$r" add f.txt && TZ="$z" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$r" commit -q -m x && printf "TZ=%-21s date=%-26s %s %s\n" "$z" "$d" "$(git -C "$r" rev-parse HEAD)" "$(git -C "$r" log -1 --format=%ai)"; done; done
+# evidence-for: FR-030, AC-040
+#
+# The measurement the FIXTURE_COMMITS comment now states, at git level and
+# clear of the harness: one commit, one date string, two zones.
+#   bare date     -> two hashes, recorded at +1400 and -0700
+#   date +00:00   -> one hash, recorded at +0000 under both
+# The divergence is between zones, which is between machines. Two consecutive
+# builds on one host never vary this, so OT-038 cannot be its evidence. D-068.
+
+TZ=Pacific/Kiritimati    date=2026-08-27T16:49:56        553bad1b29d1360b3c3897078d005d7988425066 2026-08-27 16:49:56 +1400
+TZ=Pacific/Kiritimati    date=2026-08-27T16:49:56+00:00  360ef8f4a7a5b520fbae18bc36a17dac0469ae0f 2026-08-27 16:49:56 +0000
+TZ=America/Los_Angeles   date=2026-08-27T16:49:56        e00ff07a9815c16d7d52e855aaf7c875becb0691 2026-08-27 16:49:56 -0700
+TZ=America/Los_Angeles   date=2026-08-27T16:49:56+00:00  360ef8f4a7a5b520fbae18bc36a17dac0469ae0f 2026-08-27 16:49:56 +0000

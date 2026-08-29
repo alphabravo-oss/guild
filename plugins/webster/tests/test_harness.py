@@ -5,7 +5,7 @@ GI-007; OT-038, OT-043; AC-039, AC-040).
 Every other module in this suite tests a webster script. This one tests the
 things those modules stand on, because a harness claim nobody measures is the
 same false pass ``drift.py`` and ``doctype.py`` are being fixed to stop
-reporting — and four such claims had already gone bad:
+reporting — and five such claims had already gone bad:
 
 - ``conftest.py``'s interpreter-skew docstring asserted the child ``python3``
   "resolves through PATH to 3.14.6" and is "not the one running pytest". Under
@@ -32,6 +32,14 @@ reporting — and four such claims had already gone bad:
   GI-007 reported a change as inside its surface at the moment it was not.
   The question is now put to ``git ls-tree -r HEAD``, which is the tree the
   diff is actually about.
+- the comment above ``conftest.py``'s ``FIXTURE_COMMITS`` said the explicit
+  ``+00:00`` offset averts a divergence that "is exactly what OT-038 asks two
+  consecutive builds to prove cannot happen". Two builds in one process on one
+  host agree with or without the offset — the divergence a bare date causes is
+  between machines in different zones, and nothing here varied one. The
+  comment named as its evidence the one test that could not supply it, so the
+  only claim in this harness about *other* machines went unmeasured while
+  reading as though it had been settled.
 
 Which requirement each test pins, and whether it is a red-first fix test or a
 guard over a truth that was asserted but never measured (FR-039 asks for this
@@ -42,14 +50,15 @@ test                                                    pins            kind
 ======================================================  ==============  ==========================
 test_run_script_child_python3_clears_the_plugin_floor   CT-007 FR-029   guard (docstring was wrong)
 test_two_fixture_repo_builds_produce_the_same_head      FR-030 OT-038   guard (build_repo unused)
+test_fixture_head_survives_a_change_of_host_timezone    FR-030 AC-040   guard (offset unmeasured)
 test_committed_fixture_excludes_git_website_manifest    FR-042 AC-040   guard (GI-005 unmeasured)
 test_only_the_writable_file_set_is_tracked_and_changed  FR-043 OT-043   guard (GI-007 unmeasured)
 ======================================================  ==============  ==========================
 
-None of the four is red-first in the ``AC-039`` sense: they pin no script fix,
+None of the five is red-first in the ``AC-039`` sense: they pin no script fix,
 so there is no pre-change script they fail against. They are the tests that
-would have caught the two harness claims above, and FR-042 / FR-043 were the
-only two FR ids in this casting named by no test at all.
+would have caught the claims above, and FR-042 / FR-043 were the only two FR
+ids in this casting named by no test at all.
 
 No test here uses ``@pytest.mark.skip`` or ``xfail`` (NFR-001). The one path
 that cannot assert everything — a checkout too shallow to reach the change's
@@ -94,6 +103,19 @@ VERSION_PROBE = "import sys; print(sys.version_info[:2])"
 BASELINE_COMMIT = "cfafe8e"
 
 GIT_TIMEOUT = 30
+
+# Two zones 21 hours apart and on opposite sides of the date line, so a date
+# with no offset is not merely a different instant under each but a different
+# calendar day. Both have shipped in tzdata for decades; if a machine somehow
+# lacks them git falls back to UTC, and the control in the timezone test finds
+# two equal hashes and says so rather than passing quietly.
+TZ_EAST = "Pacific/Kiritimati"  # +14, the earliest zone there is
+TZ_WEST = "America/Los_Angeles"  # -07/-08
+
+# The control commit's timestamp, deliberately written without an offset: it is
+# the form ``conftest.FIXTURE_COMMITS`` does not use, and showing what that form
+# does under two zones is the control's entire job.
+BARE_DATE = "2026-08-27T16:49:56"
 
 # Same reasoning as ``conftest.py``'s ``_GIT_ENV`` and ``test_drift.py``'s
 # ``GIT_ENV``: a developer's ~/.gitconfig arrives through HOME, and ``status.relativePaths``
@@ -257,8 +279,8 @@ def resolve_baseline() -> tuple[str | None, str]:
 
 def git_in(repo: Path, *args: str) -> subprocess.CompletedProcess:
     """``git`` inside a built fixture repository rather than this one."""
-    env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
-    env.update(GIT_ENV)
+    proc_env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+    proc_env.update(GIT_ENV)
     return subprocess.run(
         ["git", *args],
         cwd=str(repo),
@@ -266,8 +288,38 @@ def git_in(repo: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         check=True,
         timeout=GIT_TIMEOUT,
-        env=env,
+        env=proc_env,
     )
+
+
+def bare_dated_build(build_repo, dest: Path, tz: str) -> tuple[str, str]:
+    """Build the fixture under ``tz`` with its offsets overridden away.
+
+    The control for the timezone test, and it has to run through the real
+    ``build_repo`` rather than driving git directly. A control written against
+    git proves ``TZ`` reaches *git* and says nothing about whether it reaches
+    the *fixture*, which is the thing under test. Measured: with
+    ``build_fixture_repo`` mutated to drop its ``env`` argument on the floor, a
+    direct-git control passed and carried the timezone test green with it —
+    both fixture builds had quietly run in one zone. Written this way the
+    mutation is caught here instead.
+
+    ``conftest``'s ``_git`` applies ``extra_env`` after the dates it takes from
+    ``FIXTURE_COMMITS``, so ``GIT_AUTHOR_DATE``/``GIT_COMMITTER_DATE`` below
+    replace every commit's date with the offset-less ``BARE_DATE``: the same
+    builder, the same code path, the one property removed.
+    """
+    repo = build_repo(
+        dest,
+        env={
+            "GIT_AUTHOR_DATE": BARE_DATE,
+            "GIT_COMMITTER_DATE": BARE_DATE,
+            "TZ": tz,
+        },
+    )
+    head = git_in(repo, "rev-parse", "HEAD").stdout.strip()
+    recorded = git_in(repo, "log", "-1", "--format=%ai").stdout.strip()
+    return head, recorded
 
 
 def outcome(result: subprocess.CompletedProcess) -> str:
@@ -336,10 +388,18 @@ def test_two_fixture_repo_builds_produce_the_same_head(build_repo, tmp_path):
     """Two consecutive fixture builds produce byte-identical history (FR-030, OT-038).
 
     This is the check ``build_repo`` was added for and then never received.
-    The property is not decoration: ``GIT_AUTHOR_DATE``/``GIT_COMMITTER_DATE``
-    carry an explicit ``+0000`` offset precisely because a bare date picks up
-    the host's timezone, and a fixture whose HEAD moves between machines turns
-    every drift assertion that names a commit into a machine-local result.
+    What it proves is same-host determinism: two builds, one process, one
+    machine, one timezone. The fixture reads no clock of its own, nothing
+    outside it reaches the commit objects, and a second build of the same tree
+    lands on the same hash — which is the whole of OT-038.
+
+    It is *not* evidence for the explicit ``+00:00`` offset in
+    ``conftest.FIXTURE_COMMITS``, and the comment above that constant used to
+    cite it as though it were. Both builds here run in whatever zone this
+    process is in and agree with or without an offset; the divergence a bare
+    date causes is between machines.
+    ``test_fixture_head_survives_a_change_of_host_timezone`` is what varies the
+    zone and measures that (AC-040).
     """
     first = build_repo(tmp_path / "first")
     second = build_repo(tmp_path / "second")
@@ -351,9 +411,12 @@ def test_two_fixture_repo_builds_produce_the_same_head(build_repo, tmp_path):
 
     assert heads[0][1] == heads[1][1], (
         f"two consecutive fixture_repo builds disagree on HEAD: "
-        f"{heads[0][0]}={heads[0][1]}, {heads[1][0]}={heads[1][1]}. The commit "
-        f"dates in conftest.FIXTURE_COMMITS must carry an explicit timezone "
-        f"offset, and nothing outside the fixture may reach the commit objects."
+        f"{heads[0][0]}={heads[0][1]}, {heads[1][0]}={heads[1][1]}. Something "
+        f"outside conftest.FIXTURE_COMMITS reached the commit objects — a clock "
+        f"read at build time, a ~/.gitconfig arriving through HOME, or a file "
+        f"whose content differs between the two copies. The timezone offset is "
+        f"not the suspect here: both builds ran in this process's zone, so it "
+        f"cannot be what separates them."
     )
 
     # splitlines(), not split(): one subject is "touch main", and splitting on
@@ -363,6 +426,63 @@ def test_two_fixture_repo_builds_produce_the_same_head(build_repo, tmp_path):
         f"the fixture is meant to replay the source repo's three commits "
         f"(init, docs, touch main); got {subjects!r}. A collapsed history "
         f"still gives two identical HEADs, so the equality above cannot catch it."
+    )
+
+
+def test_fixture_head_survives_a_change_of_host_timezone(build_repo, tmp_path):
+    """The fixture's HEAD is one hash under two host timezones (FR-030, AC-040).
+
+    AC-040 asks for "deterministic commit hashes across machines", and the
+    explicit ``+00:00`` on every date in ``conftest.FIXTURE_COMMITS`` is the
+    only thing delivering it. Nothing measured that. The two-build check above
+    cannot: it varies nothing a bare date would be read against.
+
+    A machine's timezone is what a bare date is resolved in, so varying ``TZ``
+    is what varying the machine amounts to here. It is handed to git through
+    ``build_repo``'s ``env`` rather than set on this process, because
+    ``conftest``'s ``_git`` passes an explicit environment built from PATH and
+    HOME (FR-029) and drops everything else — a ``TZ`` set with ``os.environ``
+    and ``time.tzset()`` is not in the child's environment, git falls back to
+    ``/etc/localtime``, and both builds run in the host's zone. Measured:
+    exactly that, dating a bare-date commit at the host's ``-0600`` while the
+    parent said ``+1400``.
+
+    Which is why the control comes first. A test that varies ``TZ`` and asserts
+    two equal hashes passes just as happily when ``TZ`` reaches nothing at all,
+    and a check that cannot fail is the false pass this suite exists to stop.
+    The control builds the fixture through the same ``build_repo``, under both
+    zones, with its offsets overridden away, and requires the two hashes to
+    *differ*; only then does the equality below mean anything.
+    """
+    east_head, east_when = bare_dated_build(build_repo, tmp_path / "bare-east", TZ_EAST)
+    west_head, west_when = bare_dated_build(build_repo, tmp_path / "bare-west", TZ_WEST)
+    assert east_head != west_head, (
+        f"the control did not diverge: the fixture built with every date "
+        f"overridden to {BARE_DATE!r}, which carries no offset, reached the "
+        f"same HEAD ({east_head}) under TZ={TZ_EAST} and TZ={TZ_WEST}. Either "
+        f"build_repo's env is not reaching the git child — in which case the "
+        f"assertion below compares two builds in one timezone and can only "
+        f"pass — or this machine has no tzdata for these zones. The recorded "
+        f"dates tell them apart: {east_when!r} against {west_when!r}, which "
+        f"are the FIXTURE_COMMITS times at +0000 if the env was dropped and "
+        f"{BARE_DATE} at +0000 if the zones are missing."
+    )
+
+    east = build_repo(tmp_path / "east", env={"TZ": TZ_EAST})
+    west = build_repo(tmp_path / "west", env={"TZ": TZ_WEST})
+    east_fixture = git_in(east, "rev-parse", "HEAD").stdout.strip()
+    west_fixture = git_in(west, "rev-parse", "HEAD").stdout.strip()
+
+    assert east_fixture == west_fixture, (
+        f"the fixture's HEAD depends on the building machine's timezone: "
+        f"TZ={TZ_EAST} gave {east_fixture}, TZ={TZ_WEST} gave {west_fixture}. "
+        f"Every date in conftest.FIXTURE_COMMITS must carry an explicit offset "
+        f"— the control above measured {east_when!r} against {west_when!r} for "
+        f"one bare string. Without it, AC-040's deterministic hashes across "
+        f"machines is false and every drift assertion naming a commit becomes "
+        f"a local result.\n"
+        f"east:\n{git_in(east, 'log', '--format=%H %aI %s', '--reverse').stdout}"
+        f"west:\n{git_in(west, 'log', '--format=%H %aI %s', '--reverse').stdout}"
     )
 
 
