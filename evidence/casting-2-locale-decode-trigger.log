@@ -1,0 +1,18 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); s="$d/plugins/webster/scripts/drift.py"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-28T00:00:00+00:00 GIT_COMMITTER_DATE=2026-08-28T00:00:00+00:00; enc='import locale,sys;print("  preferred encoding:",locale.getpreferredencoding(False),"| utf8_mode:",sys.flags.utf8_mode)'; show='import json,sys;d=json.load(sys.stdin);print("  status            :",d["status"]);print("  code_files_changed:",d["code_files_changed"])'; echo '=== D-066 the condition the old comment named: LC_ALL=C on its own ==='; LC_ALL=C LANG=C python3 -c "$enc"; echo '=== the condition the FR-002 test sets: PEP 538 coercion and PEP 540 mode both off ==='; LC_ALL=C LANG=C PYTHONCOERCECLOCALE=0 PYTHONUTF8=0 python3 -c "$enc"; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/r"; u=$(printf 'src/app/caf\303\251.py'); (cd "$t/r" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m init && python3 "$s" record docs > /dev/null && printf '# uncited helper\n' > "$u"); echo '=== the untracked path git must print, in bytes US-ASCII cannot represent ==='; (cd "$t/r" && git --no-pager status --porcelain -z --untracked-files=all | tr '\0' '\n' | grep 'app/caf' | LC_ALL=C od -An -c | sed 's/^/  porcelain bytes  :/'); echo '=== the same tree under LC_ALL=C alone, where the decode cannot fail ==='; (cd "$t/r" && LC_ALL=C LANG=C python3 "$s" check docs | python3 -c "$show"; LC_ALL=C LANG=C python3 "$s" check docs > /dev/null 2>&1; echo "  exit              : $?"); echo '=== and under the real trigger, where text=True raised UnicodeDecodeError ==='; (cd "$t/r" && LC_ALL=C LANG=C PYTHONCOERCECLOCALE=0 PYTHONUTF8=0 python3 "$s" check docs | python3 -c "$show"; LC_ALL=C LANG=C PYTHONCOERCECLOCALE=0 PYTHONUTF8=0 python3 "$s" check docs > /dev/null 2>&1; echo "  exit              : $?"); rm -rf "$t"
+# evidence-for: US-001, FR-002, FR-037
+
+=== D-066 the condition the old comment named: LC_ALL=C on its own ===
+  preferred encoding: utf-8 | utf8_mode: 1
+=== the condition the FR-002 test sets: PEP 538 coercion and PEP 540 mode both off ===
+  preferred encoding: US-ASCII | utf8_mode: 0
+=== the untracked path git must print, in bytes US-ASCII cannot represent ===
+  porcelain bytes  :   ?   ?       s   r   c   /   a   p   p   /   c   a   f 303 251
+  porcelain bytes  :   .   p   y  \n
+=== the same tree under LC_ALL=C alone, where the decode cannot fail ===
+  status            : unrelated_changes
+  code_files_changed: 1
+  exit              : 0
+=== and under the real trigger, where text=True raised UnicodeDecodeError ===
+  status            : unrelated_changes
+  code_files_changed: 1
+  exit              : 0

@@ -1,0 +1,24 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); s="$d/plugins/webster/scripts/drift.py"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_AUTHOR_DATE=2026-08-28T00:00:00+00:00 GIT_COMMITTER_DATE=2026-08-28T00:00:00+00:00; show='import json,sys;d=json.load(sys.stdin);print("  status       :",d["status"]);print("  hashes       :",d["hashes"]);print("  note         :",d["note"])'; strip='import json,sys;p="docs/.webster.json";m=json.load(open(p));m.pop("lineHashes") if sys.argv[1]=="all" else m.__setitem__("lineHashes",{});json.dump(m,open(p,"w"),indent=2)'; for n in a b c e; do cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/$n"; done; echo '=== ST-004 no_git, hashes checked: the digest sentence the run earned ==='; (cd "$t/a" && python3 "$s" record docs > /dev/null; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); echo '=== FR-004 / AC-006 the same run against a manifest predating lineHashes ==='; (cd "$t/b" && python3 "$s" record docs > /dev/null; python3 -c "$strip" all; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); echo '=== the third state: the record held the anchor and no digest for it ==='; (cd "$t/c" && python3 "$s" record docs > /dev/null; python3 -c "$strip" some; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); echo '=== ST-005 head_missing with no recorded digests: no "only the diff" left ==='; (cd "$t/e" && git -c init.defaultBranch=main init -q . && git add -A && git commit -q -m A && printf 'x\n' >> README.md && git add -- README.md && git commit -q -m B && python3 "$s" record docs > /dev/null && git reset -q --hard HEAD~1 && git reflog expire --expire=now --all && git gc --prune=now -q; python3 -c "$strip" all; python3 "$s" check docs | python3 -c "$show"; python3 "$s" check docs > /dev/null 2>&1; echo "  exit         : $?"); rm -rf "$t"
+# evidence-for: US-001, FR-004, FR-006, FR-009, AC-006
+# evidence-volatile: \b[0-9a-f]{12}\b
+
+=== ST-004 no_git, hashes checked: the digest sentence the run earned ===
+  status       : no_git
+  hashes       : checked
+  note         : git could not resolve HEAD (not installed, not a repository, or no commits yet), so the anchors were resolved but neither the working tree nor the diff since the record was read: suspect_pages is empty here because nothing looked, not because nothing moved; every resolvable anchor carried a recorded digest and was compared against the line as it stands now; 12 of 13 pages cite no source
+  exit         : 2
+=== FR-004 / AC-006 the same run against a manifest predating lineHashes ===
+  status       : no_git
+  hashes       : not_recorded
+  note         : git could not resolve HEAD (not installed, not a repository, or no commits yet), so the anchors were resolved but neither the working tree nor the diff since the record was read: suspect_pages is empty here because nothing looked, not because nothing moved; this manifest holds no line digests at all, so no cited line was compared against what it said at record either; re-record writes the map; 12 of 13 pages cite no source
+  exit         : 2
+=== the third state: the record held the anchor and no digest for it ===
+  status       : no_git
+  hashes       : partial
+  note         : git could not resolve HEAD (not installed, not a repository, or no commits yet), so the anchors were resolved but neither the working tree nor the diff since the record was read: suspect_pages is empty here because nothing looked, not because nothing moved; no digest was recorded for 1 of 1 resolvable anchors, so the lines listed under unhashed_anchors were never compared against what they said at record; re-record; 12 of 13 pages cite no source
+  exit         : 2
+=== ST-005 head_missing with no recorded digests: no "only the diff" left ===
+  status       : head_missing
+  hashes       : not_recorded
+  note         : the recorded commit d4d64d1a4061 is not in this repository any more, so the working tree was read and the anchors resolved, but the diff since the record could not be taken; re-record; this manifest holds no line digests at all, so no cited line was compared against what it said at record either; re-record writes the map; 12 of 13 pages cite no source
+  exit         : 2

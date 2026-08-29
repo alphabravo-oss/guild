@@ -28,6 +28,7 @@ test_record_writes_a_line_hash_per_anchor           FR-003 OT-005  cfafe8e  no l
 test_changed_cited_line_is_reported_as_a_mismatch   FR-003 AC-005  cfafe8e  no hash_mismatches key
 test_hash_mismatch_alone_is_drift                   FR-007         cfafe8e  status clean, exit 0
 test_manifest_without_line_hashes_is_not_recorded   FR-004 AC-006  cfafe8e  no hashes key
+test_no_git_note_does_not_claim_digests_compared    FR-004 AC-006  66dab76  note claimed compared
 test_partly_hashed_manifest_is_not_reported_clean   FR-003 FR-007  f31b144  status clean, exit 0
 test_anchor_past_end_of_file_gets_no_line_hash      FR-034         cfafe8e  no lineHashes key
 test_anchor_citing_line_zero_is_a_broken_anchor     FR-034 FR-003  19941ad  hashes_partial, exit 2
@@ -860,6 +861,78 @@ def test_manifest_without_line_hashes_is_not_recorded(run_script, fixture_repo):
     )
     assert result.returncode == 0, (
         f"expected exit 0; got {result.returncode}\n{outcome(result)}"
+    )
+
+
+def test_no_git_note_does_not_claim_digests_compared(run_script, fixture_repo):
+    """FR-004 / AC-006 / FR-009 / ST-004 — a not-checked note may not overstate the line half.
+
+    RED at 66dab76: the three git branches built their note before ``hashes``
+    existed, so each of them asserted that "the recorded line digests were
+    still compared" whatever the manifest held. Against a manifest written
+    before ``lineHashes`` (AC-006) nothing had been compared at all, and the
+    sentence sat beside an empty ``suspect_pages`` telling the reader the line
+    half had covered what the code half could not. The only clause that ever
+    corrected it fired for ``partial``, so ``not_recorded`` — the one state
+    where the claim is flatly false — was the state that never reached it.
+
+    Two runs of one scenario, differing in nothing but the manifest's
+    ``lineHashes`` key, so what is pinned is that the sentence is conditional
+    rather than that it is worded any particular way. Both runs report no_git:
+    that is the branch with no ``re-record`` of its own, so the digest sentence
+    is the only thing in the note that can name the line half at all.
+    """
+    record(run_script, fixture_repo)
+    with_hashes = manifest_of(fixture_repo)
+    assert with_hashes.get("lineHashes"), (
+        f"this test needs a manifest carrying digests to strip; got {with_hashes!r}"
+    )
+    # The anchors half is unchanged between the two runs, and so is the tree: only the
+    # manifest key moves, and check never writes the manifest back.
+    shutil.rmtree(fixture_repo / ".git")
+
+    hashed = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    hashed_data = parsed(hashed)
+    write_manifest(fixture_repo, {k: v for k, v in with_hashes.items() if k != "lineHashes"})
+    stripped = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    stripped_data = parsed(stripped)
+
+    assert hashed_data["hashes"] == "checked", (
+        f"this test needs the first run to have compared every digest; got "
+        f"{hashed_data['hashes']!r}\n{outcome(hashed)}"
+    )
+    assert stripped_data["hashes"] == "not_recorded", (
+        f"this test needs the second run to have had none to compare; got "
+        f"{stripped_data['hashes']!r}\n{outcome(stripped)}"
+    )
+    assert hashed_data["status"] == stripped_data["status"] == "no_git", (
+        f"expected both runs to reach the same not-checked status; got "
+        f"{hashed_data['status']!r} and {stripped_data['status']!r}\n{outcome(stripped)}"
+    )
+    assert stripped.returncode == 2, (
+        f"expected exit 2 from a check with no repository; got {stripped.returncode}\n"
+        f"{outcome(stripped)}"
+    )
+
+    # Clauses rather than the whole note, because the two runs legitimately share every
+    # sentence that is not about digests — the git branch that fired and the unanchored-pages
+    # count are the same on both.
+    hashed_clauses = set(hashed_data["note"].split("; "))
+    stripped_clauses = set(stripped_data["note"].split("; "))
+    assert [c for c in hashed_clauses if "digest" in c], (
+        f"expected the run that did compare digests to say so; got "
+        f"{hashed_data['note']!r}\n{outcome(hashed)}"
+    )
+    assert [c for c in stripped_clauses if "digest" in c], (
+        f"expected the run that had none to compare to say that too, rather than leaving the "
+        f"reader to infer it from the hashes field; got {stripped_data['note']!r}\n"
+        f"{outcome(stripped)}"
+    )
+    shared = sorted(c for c in hashed_clauses & stripped_clauses if "digest" in c)
+    assert not shared, (
+        f"expected no sentence about digests to be shared by a run that compared all of them "
+        f"and a run that had none recorded to compare; both notes carry {shared!r}\n"
+        f"{outcome(stripped)}"
     )
 
 

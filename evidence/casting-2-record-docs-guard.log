@@ -1,0 +1,13 @@
+# evidence-cmd: d=$PWD; t=$(mktemp -d); s="$d/plugins/webster/scripts/drift.py"; echo '=== D-067 os.makedirs calls left in drift.py ==='; echo "  count             : $(grep -c 'os\.makedirs' "$s" || true)"; echo '=== record against a tree with no docs directory: main() answers before the dispatch ==='; mkdir -p "$t/bare"; (cd "$t/bare" && python3 "$s" record docs | python3 -c 'import json,sys;print("  status            :",json.load(sys.stdin)["status"])'; python3 "$s" record docs > /dev/null 2>&1; echo "  exit              : $?"; if [ -e docs ]; then echo "  docs created      : yes"; else echo "  docs created      : no"; fi); echo '=== CT-002 record where DOCS does exist, unchanged ==='; cp -R "$d/plugins/webster/tests/fixtures/repo" "$t/r"; (cd "$t/r" && python3 "$s" record docs | python3 -c 'import json,sys;d=json.load(sys.stdin);print("  status            :",d["status"]);print("  anchors           :",d["anchors"]);print("  lineHashes        :",d["lineHashes"])'); rm -rf "$t"
+# evidence-for: FR-006, FR-009
+
+=== D-067 os.makedirs calls left in drift.py ===
+  count             : 0
+=== record against a tree with no docs directory: main() answers before the dispatch ===
+  status            : no_docs
+  exit              : 2
+  docs created      : no
+=== CT-002 record where DOCS does exist, unchanged ===
+  status            : recorded
+  anchors           : 1
+  lineHashes        : 1

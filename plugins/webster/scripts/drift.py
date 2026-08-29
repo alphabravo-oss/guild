@@ -73,12 +73,19 @@ def git(*args):
     to sort second. Callers that want one value strip it themselves.
 
     The decoding is pinned here rather than left to `text=True`, which decodes with the locale's
-    preferred encoding: US-ASCII under LC_ALL=C, so the first non-ASCII byte of a path in the
-    porcelain output raised UnicodeDecodeError. That is a ValueError, not one of the errors
-    caught below, so it left main() as a traceback at exit 1 — the code that means drift, handed
-    to a caller when nothing had been measured at all. surrogateescape decodes any byte git can
-    print, and UTF-8 is what the pages themselves were read as, so a path git names still equals
-    the path an anchor cites.
+    preferred encoding. An earlier version of this comment named "US-ASCII under LC_ALL=C" as
+    the failing condition, and that condition is the one case that cannot fail: LC_ALL=C is
+    exactly what PEP 538 coerces to C.UTF-8 and what PEP 540 turns UTF-8 mode on for, so CPython
+    hands the run a UTF-8 preferred encoding and every byte decodes. The real trigger is a
+    non-UTF-8 locale with neither of those in effect — PYTHONCOERCECLOCALE=0 and PYTHONUTF8=0,
+    or a minimal image carrying no C.UTF-8 to coerce to, which is the pair
+    test_non_ascii_path_under_a_c_locale_still_answers sets to reach it. There the preferred
+    encoding really is US-ASCII, and the first non-ASCII byte of a path in the porcelain output
+    raised UnicodeDecodeError. That is a ValueError, not one of the errors caught below, so it
+    left main() as a traceback at exit 1 — the code that means drift, handed to a caller when
+    nothing had been measured at all. surrogateescape decodes any byte git can print, and UTF-8
+    is what the pages themselves were read as, so a path git names still equals the path an
+    anchor cites.
     """
     try:
         return subprocess.run(["git", "--no-pager", *args], cwd=ROOT, check=True,
@@ -338,8 +345,11 @@ def read_manifest():
     That is the same class as the git errors swallowed one function above, under the opposite
     sign, and FR-006 reserves exit 1 for `drift` alone.
 
-    The decode is pinned to UTF-8 for the same reason git() pins its own: the locale's
-    preferred encoding is US-ASCII under LC_ALL=C, and a manifest is JSON, which is UTF-8.
+    The decode is pinned to UTF-8 for the same reason git() pins its own, and against the same
+    condition git()'s docstring now states rather than the LC_ALL=C this one used to name: a
+    non-UTF-8 locale reached with PEP 538 coercion and PEP 540 UTF-8 mode both out of the way
+    leaves the preferred encoding at US-ASCII. A manifest is JSON, which is UTF-8 by definition,
+    so what the reader's locale prefers is not a fact about the file.
 
     Returns (None, reason) for every unusable state, so that the caller has one not-checked
     exit and one envelope shape rather than one per failure.
@@ -451,7 +461,11 @@ def main():
     head = head_sha()
 
     if mode == "record":
-        os.makedirs(DOCS, exist_ok=True)
+        # No makedirs here: main() returns no_docs at exit 2 above for anything that is not
+        # already a directory, so record cannot be reached with a DOCS to create. The call that
+        # used to sit on this line could never make one, and reading as though it could is how
+        # a guard gets moved later by someone who believes this branch still covers it.
+        #
         # An anchor whose line number is past the end of its file gets no entry: it is already
         # a broken anchor at check time, and inventing a hash for a line that does not exist
         # would report the right failure under the wrong name.
@@ -508,14 +522,22 @@ def main():
     # pages found that way are listed in the same envelope the note appears in. A not-checked
     # note that understates its own run teaches the reader to skip the findings beside it,
     # which is the same false pass as a clean that was never earned, arriving by the other road.
+    #
+    # What they may claim stops at those two halves. Each branch also asserted that "the
+    # recorded line digests were still compared", and from here none of them can know: the line
+    # half runs below, and against a manifest written before lineHashes existed (AC-006) it
+    # compares nothing at all — so a pre-change manifest checked without a repository printed
+    # no_git beside a sentence saying the line half had covered what the code half could not.
+    # The only clause that ever corrected it fired for `partial`. That sentence is written with
+    # the rest of the notes instead, at the first point where `hashes` can say which of the
+    # three things happened. Overstating a run is the same failure as understating one.
     changed, dirty, not_checked, git_note = [], [], "", ""
     if head is None:
         not_checked = "no_git"
         git_note = ("git could not resolve HEAD (not installed, not a repository, or no commits "
-                    "yet), so the anchors were resolved and the recorded line digests compared "
-                    "but neither the working tree nor the diff since the record was read: "
-                    "suspect_pages is empty here because nothing looked, not because nothing "
-                    "moved")
+                    "yet), so the anchors were resolved but neither the working tree nor the "
+                    "diff since the record was read: suspect_pages is empty here because "
+                    "nothing looked, not because nothing moved")
     else:
         try:
             prefix = repo_prefix()
@@ -530,15 +552,14 @@ def main():
             if not recorded:
                 not_checked = "no_git"
                 git_note = ("this manifest records no commit — record ran where git could not "
-                            "resolve HEAD — so the working tree was read and the anchors and "
-                            "their recorded line digests compared, and only the diff since the "
-                            "record is missing, having no commit to start from; re-record")
+                            "resolve HEAD — so the working tree was read and the anchors "
+                            "resolved, but the diff since the record could not be taken, having "
+                            "no commit to start from; re-record")
             elif not commit_exists(recorded):
                 not_checked = "head_missing"
                 git_note = (f"the recorded commit {recorded[:12]} is not in this repository any "
-                            "more, so the working tree was read and the anchors and their "
-                            "recorded line digests compared, and only the diff since the record "
-                            "could not be taken; re-record")
+                            "more, so the working tree was read and the anchors resolved, but "
+                            "the diff since the record could not be taken; re-record")
             elif recorded != head:
                 # --no-relative: with diff.relative set true in a user's ~/.gitconfig this diff
                 # names its paths from the directory it ran in rather than from the repository
@@ -554,7 +575,7 @@ def main():
             not_checked, changed, dirty = "no_git", [], []
             git_note = (f"git stopped answering part-way through the check ({e}), so the "
                         "working-tree reading was discarded along with the diff; the anchors "
-                        "and their recorded line digests were still compared")
+                        "were still resolved")
 
     # The line half. A cited file can be touched without the cited line moving, and a cited
     # line can change under a file name that a diff since the record never names, so the two
@@ -657,10 +678,25 @@ def main():
                      "and the Sourced gate cannot report a pass")
     if git_note:
         notes.append(git_note)
+    # The line half's own sentence, and the first point in this function where `hashes` exists
+    # to make it conditional — which is why the git branches above no longer try to say it. The
+    # two arms below `partial` are stated only under a not-checked status, where the reader is
+    # being told a half of the run did not happen and needs to know whether this one did; on a
+    # run that answers, the `hashes` field says the same thing without a sentence, and the note
+    # stays what it was.
     if unhashed:
         notes.append(f"no digest was recorded for {len(unhashed)} of {len(resolvable)} "
                      "resolvable anchors, so the lines listed under unhashed_anchors were "
                      "never compared against what they said at record; re-record")
+    elif not_checked and hashes == "not_recorded":
+        notes.append("this manifest holds no line digests at all, so no cited line was compared "
+                     "against what it said at record either; re-record writes the map")
+    elif not_checked and resolvable:
+        # No count here, where the two notes above carry one. `checked` is a claim about every
+        # resolvable anchor rather than about a number of them, and the count that would go in
+        # this sentence reads as a finding beside two sentences where it is one.
+        notes.append("every resolvable anchor carried a recorded digest and was compared "
+                     "against the line as it stands now")
     if status == "unrelated_changes":
         notes.append(f"{code_files_changed} code file(s) changed since the record and no page "
                      "cites any of them" if code_files_changed else
