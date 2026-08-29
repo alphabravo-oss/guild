@@ -45,6 +45,18 @@ red-first property is recorded here rather than enforced at runtime):
   ``except Exception`` to the three families a malformed file raises, so that
   an OSError reaches the ``cannot_read`` boundary instead of being filed as a
   violation. This pins the half that must not move.
+- ``test_every_documented_envelope_leads_with_status`` — FR-028 / CT-005. RED on
+  the script as it stood: the docstring claimed "every one of those is a JSON
+  object on stdout whose first key is ``status``", and ``init``'s exit-0
+  envelope led with ``created`` and had no ``status`` key at all, so the one
+  assertion that reads the claim back — first key, then value, on each of the
+  seven envelopes the docstring enumerates — raised ``KeyError: 'status'`` on
+  the ordinary success path. The other tests here each check one envelope in
+  depth and so could not see that the *set* was described wrongly. This is the
+  test that reads the published contract back off the script; the envelopes it
+  reaches are the six a non-root process can provoke, and ``cannot_read``'s
+  unlistable-directory half is left to the page half, because the only fixture
+  for it is a mode bit root reads straight through.
 
 No test uses ``@pytest.mark.skip`` or ``xfail`` (A-029).
 """
@@ -214,8 +226,10 @@ def test_help_names_an_exit_set_for_both_modes(run_script):
 # -----------------------------------------------------------------------------
 def test_unreadable_page_exits_two_without_a_traceback(run_script, tmp_path):
     docs = tmp_path / "docs"
-    assert run_script("scaffold.py", "init", "--docs", docs).returncode == 0, (
-        "The tree this test breaks has to be built first"
+    built = run_script("scaffold.py", "init", "--docs", docs)
+    assert built.returncode == 0, (
+        f"The tree this test breaks has to be built first; init gave "
+        f"{built.returncode}" + outcome(built)
     )
 
     # The control runs first and on the same tree, so the exit 2 below can only
@@ -270,8 +284,10 @@ def test_unreadable_page_exits_two_without_a_traceback(run_script, tmp_path):
 # -----------------------------------------------------------------------------
 def test_malformed_category_json_stays_a_violation(run_script, tmp_path):
     docs = tmp_path / "docs"
-    assert run_script("scaffold.py", "init", "--docs", docs).returncode == 0, (
-        "The tree this test breaks has to be built first"
+    built = run_script("scaffold.py", "init", "--docs", docs)
+    assert built.returncode == 0, (
+        f"The tree this test breaks has to be built first; init gave "
+        f"{built.returncode}" + outcome(built)
     )
     category = docs / "install" / "_category_.json"
 
@@ -304,4 +320,62 @@ def test_malformed_category_json_stays_a_violation(run_script, tmp_path):
         assert "unreadable _category_.json" in problems, (
             f"Expected the malformed file named as the violation for {body!r}; "
             f"got {problems}" + outcome(result)
+        )
+
+
+# -----------------------------------------------------------------------------
+# FR-028 / CT-005: the docstring enumerates seven envelopes and claims one shape
+# for all of them. This is the assertion that reads that claim back.
+# -----------------------------------------------------------------------------
+def test_every_documented_envelope_leads_with_status(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    not_a_directory = tmp_path / "regular-file"
+    not_a_directory.write_text("a file, not a directory\n", encoding="utf-8")
+
+    built = run_script("scaffold.py", "init", "--docs", docs)
+    clean = run_script("scaffold.py", "check", "--docs", docs)
+
+    # cannot_read is provoked before the tree is broken and the link is pulled
+    # straight back out, so the violations run below reports the missing root
+    # page rather than a page the boundary refused to open.
+    broken = docs / "install" / "broken.md"
+    broken.symlink_to("nowhere.md")
+    unreadable = run_script("scaffold.py", "check", "--docs", docs)
+    broken.unlink()
+
+    (docs / "index.md").unlink()
+    violations = run_script("scaffold.py", "check", "--docs", docs)
+
+    documented = [
+        ("init", 0, "ok", built),
+        ("init", 2, "bad_subject",
+         run_script("scaffold.py", "init", "--docs", tmp_path / "typo",
+                    "--subject", "Bad Key:Label")),
+        ("init", 2, "cannot_write",
+         run_script("scaffold.py", "init", "--docs", not_a_directory)),
+        ("check", 0, "ok", clean),
+        ("check", 1, "violations", violations),
+        ("check", 2, "no_docs",
+         run_script("scaffold.py", "check", "--docs", tmp_path / "nowhere")),
+        ("check", 2, "cannot_read", unreadable),
+    ]
+
+    for mode, code, status, result in documented:
+        assert result.returncode == code, (
+            f"The docstring puts {mode}'s {status} envelope at exit {code}; got "
+            f"{result.returncode}" + outcome(result)
+        )
+        payload = json.loads(result.stdout)
+        leading = next(iter(payload))
+        # json.loads preserves document order, so the first key of the dict is
+        # the first key a reader sees. The docstring promises it is `status` on
+        # every one of these, which is what lets a caller read a single field to
+        # tell a refused write from a bad key from a tree that is simply fine.
+        assert leading == "status", (
+            f"The docstring says every envelope leads with `status`; {mode}'s "
+            f"{status} envelope leads with {leading!r}" + outcome(result)
+        )
+        assert payload["status"] == status, (
+            f"Expected {mode} to report status {status!r} at exit {code}; got "
+            f"{payload['status']!r}" + outcome(result)
         )

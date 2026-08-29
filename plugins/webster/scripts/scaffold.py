@@ -2,20 +2,24 @@
 """Create and validate the documentation tree, in the layout Harvester uses.
 
   init   write the tree, the _category_.json files, and optionally the Docusaurus site.
-         exit 0 once the tree is written; exit 2 with a JSON status when it could not run --
-         bad_subject for a --subject key that cannot become a directory name, cannot_write
-         for a directory or a page the filesystem refused. init never exits 1.
-  check  validate an existing tree against the layout. exit 1 on any violation, exit 0 when
-         there are none, and exit 2 with a JSON status when there was nothing to check --
-         no_docs for no directory at --docs, cannot_read for a page under it that could not
-         be read.
+         status ok at exit 0 once the tree is written; exit 2 with a JSON status when it could
+         not run -- bad_subject for a --subject key that cannot become a directory name,
+         cannot_write for a directory or a page the filesystem refused. init never exits 1.
+  check  validate an existing tree against the layout. status violations at exit 1 on any
+         violation, status ok at exit 0 when there are none, and exit 2 with a JSON status
+         when there was nothing to check -- no_docs for no directory at --docs, cannot_read
+         for anything under it the filesystem refused, a page that could not be opened or a
+         directory that could not be listed.
 
-Every one of those is a JSON object on stdout whose first key is `status`. The 1 and the 2 are
-not interchangeable, which is why init states an exit set of its own even though it has no
-violations to report. Each of the three exit-2 statuses used to leave through exit 1 instead --
-a `sys.exit(str)` for the bad key, an uncaught OSError for the refused write and for the
-unreadable page -- so a caller reading JSON got an empty stdout and a code telling it to go fix
-a layout that had never been written or looked at.
+Every one of those is a JSON object on stdout whose first key is `status`, init's exit-0
+envelope included. It carries one for the same reason the others do: a caller reading `status`
+to tell bad_subject from cannot_write would otherwise get a KeyError on the single path where
+nothing went wrong, and a field you have to guard on the good run is a field nobody trusts on
+the bad ones. The 1 and the 2 are not interchangeable, which is why init states an exit set of
+its own even though it has no violations to report. Each of the three exit-2 statuses used to
+leave through exit 1 instead -- a `sys.exit(str)` for the bad key, an uncaught OSError for the
+refused write and for the refused read -- so a caller reading JSON got an empty stdout and a
+code telling it to go fix a layout that had never been written or looked at.
 
 The layout is subject-first: a directory per thing in the product, each with an overview page
 named after the subject and task pages named as verbs. Diataxis lives inside a subject, not at
@@ -201,7 +205,12 @@ def do_init(a):
                           "error": e.strerror or type(e).__name__, "created": made}))
         return 2
 
-    print(json.dumps({"created": made, "subjects": [k for k, _ in subjects],
+    # `status` first, like every other envelope this script prints. The success path was the one
+    # exception, and the docstring above claimed otherwise, so a caller that read `status` to
+    # tell bad_subject from cannot_write hit a KeyError on the ordinary run -- which teaches it
+    # to stop reading the field at all and go back to guessing from the exit code.
+    print(json.dumps({"status": "ok", "created": made,
+                      "subjects": [k for k, _ in subjects],
                       "docs": docs, "site": a.site_dir if a.site else None}, indent=2))
     return 0
 
