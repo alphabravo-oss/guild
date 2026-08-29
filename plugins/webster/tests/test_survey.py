@@ -45,8 +45,10 @@ test_httpexception_detail_and_positional_are_messages         FR-022/032  cfafe8
 test_httpexception_dict_detail_contributes_no_message         FR-022      guard
 test_httpexception_publishes_only_its_own_arguments           FR-022/032  19941ad (added cycle 4)
 test_message_floors_are_measured_in_whole_strings             FR-022      cfafe8e (added cycle 3)
+test_detail_after_a_collection_argument_is_still_a_message    FR-022/032  944c958 (added cycle 5)
 test_option_flags_reach_the_user_surface_commands             FR-012      19941ad (added cycle 4)
 test_a_flag_named_only_in_prose_is_not_a_command              FR-012      19941ad (added cycle 4)
+test_a_flag_named_in_another_flags_help_is_not_a_command      FR-012      944c958 (added cycle 5)
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
 ============================================================  ==========  =======================
 
@@ -66,6 +68,15 @@ Rows carrying a note the column has no room for:
   altogether, so it fails because nothing was emitted rather than because noise
   was. It is a boundary on the fix beside it -- every name in that list is a
   term doctype.py stops reporting -- and from this cycle on it is a guard.
+- The two rows naming 944c958 are the cycle-5 corrections, and each is red at
+  944c958 for one assertion out of its several. In
+  ``test_a_flag_named_in_another_flags_help_is_not_a_command`` it is the
+  ``--keep`` declaration, whose help sentence opens with a flag; the ``--out``
+  declaration the defect names is already green there, and the test docstring
+  says so rather than leaving the reader to assume otherwise. In
+  ``test_detail_after_a_collection_argument_is_still_a_message`` it is the three
+  detail= strings; the three exclusions in the same tree are green at 944c958
+  and stay green, which is what makes them the control.
 
 Every test drives the script through the conftest ``run_script`` helper. Nothing
 here imports survey.py: its module-level ``ROOT`` resolves from ``sys.argv`` at
@@ -469,6 +480,59 @@ def test_httpexception_dict_detail_contributes_no_message(run_script, tmp_path):
     )
 
 
+def test_detail_after_a_collection_argument_is_still_a_message(run_script, tmp_path):
+    """FR-022, FR-032, AC-026: which mechanism keeps a dict detail out, measured.
+
+    The comment above the pattern used to say the gap before the literal
+    excluded `{` and `[` because a collection detail is a machine-readable
+    payload. It is the quote required immediately after ``detail=`` that does
+    that, and the exclusions could only ever reach something else: a real
+    ``detail=`` string standing after an earlier argument that happened to be a
+    collection or a string. ``headers={"X": "1"}`` ahead of the detail cost the
+    writer the sentence the product actually shows, which is the failure the
+    branch exists to fix rather than an instance of it.
+
+    The dict and list details in the same tree are the control -- what excludes
+    them has to keep excluding them once the gap stops trying to.
+    """
+    root = python_project(
+        tmp_path,
+        "afterdict",
+        "from fastapi import FastAPI, HTTPException\n"
+        "\napp = FastAPI()\n"
+        "\n\ndef after_dict():\n"
+        '    raise HTTPException(status_code=422, headers={"X": "1"}, detail="Bad input")\n'
+        "\n\ndef after_list():\n"
+        '    raise HTTPException(status_code=422, allow=[1, 2], detail="Too many")\n'
+        "\n\ndef after_string():\n"
+        '    raise HTTPException(status_code=400, code="bad_req", detail="Try again")\n'
+        "\n\ndef dict_detail():\n"
+        '    raise HTTPException(status_code=422, detail={"loc": "Body of the request"})\n'
+        "\n\ndef list_detail():\n"
+        '    raise HTTPException(status_code=422, detail=[{"msg": "Field is required"}])\n'
+        "\n\ndef mapped_detail():\n"
+        '    raise HTTPException(status_code=404, detail=CODES["Item not found"])\n',
+    )
+
+    texts = message_texts(survey(run_script, root))
+
+    assert "Bad input" in texts, (
+        "A detail= string is the sentence the product shows, and an earlier "
+        f"argument being a dict does not make it less so; got {texts}"
+    )
+    assert "Too many" in texts, f"the same for a list argument; got {texts}"
+    assert "Try again" in texts, f"and for a string argument; got {texts}"
+    assert "Body of the request" not in texts, (
+        "A dict detail is kept out by the quote demanded after detail=, which a "
+        f"`{{` fails on its first character; got {texts}"
+    )
+    assert "Field is required" not in texts, f"a list detail the same way; got {texts}"
+    assert "Item not found" not in texts, (
+        "and a detail read out of a lookup table is not a literal this file "
+        f"holds either; got {texts}"
+    )
+
+
 def test_httpexception_publishes_only_its_own_arguments(run_script, tmp_path):
     """FR-022, FR-032, AC-026: a message the product never says is worse than one missed.
 
@@ -598,8 +662,11 @@ def test_a_flag_named_only_in_prose_is_not_a_command(run_script, tmp_path):
     Every name here becomes a term doctype.py stops reporting. A dash inside a
     help string, or a default value of ``"-"``, would therefore turn a real
     finding into a pass, and a false pass is worse than a finding because the
-    reader trusts the page exactly as far as they trust the gate. Only a literal
-    that is itself a flag spec counts.
+    reader trusts the page exactly as far as they trust the gate. What is read
+    is the call's option strings, which are its positional arguments; a
+    keyword's value is not one. ``test_a_flag_named_in_another_flags_help_is_not_a_command``
+    below is the case that names why the distinction has to be positional rather
+    than a guess about what a literal looks like.
     """
     root = python_project(
         tmp_path,
@@ -618,6 +685,57 @@ def test_a_flag_named_only_in_prose_is_not_a_command(run_script, tmp_path):
     assert names == {"-v", "--verbose", "--retries"}, (
         "One literal per flag spec: the positional is not a flag, the -x in a "
         f"help sentence is prose, and a default of - is a value; got {sorted(names)}"
+    )
+
+
+def test_a_flag_named_in_another_flags_help_is_not_a_command(run_script, tmp_path):
+    """FR-012, AC-013, GI-002: a flag the product does not have, excusing a page that names it.
+
+    The test beside this one holds because ``help="pass -x for the old
+    behaviour"`` does not begin with a dash, not because the branch knew it was
+    a help string: every literal on the line was read and the dash-leading ones
+    were mined for flags. A help sentence that opens with a flag is ordinary
+    English -- ``help="-x is the short form of --purge"`` -- and it declared -x
+    and --purge as commands this product has.
+
+    That is a false pass with a name on it. doctype.py folds
+    ``user_surface.commands`` into the allowlist its flag lens is suppressed by,
+    so a page that backticks ``--purge`` stops being reported: the wrong-lens
+    finding is waived by the survey's own claim that the product has a --purge,
+    and the product does not. Reading only the positional option strings is what
+    makes the excuse come from a declaration rather than from prose about one.
+
+    ``--out``'s own help sentence names ``--force`` mid-string, which the old
+    branch already let alone -- measured, at 944c958, before this was written.
+    It is here because it is the shape the defect describes, and it is a
+    boundary rather than the thing that goes red: the ``--keep`` line beside it
+    is what fails without the fix.
+    """
+    root = python_project(
+        tmp_path,
+        "helpprose",
+        "import argparse\n"
+        "\n\ndef build():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        '    parser.add_argument("--out", help="unlike --force, writes to a path")\n'
+        '    parser.add_argument("--keep", help="-x is the short form of --purge")\n'
+        '    parser.add_argument("-n", "--dry-run", action="store_true", default="-")\n'
+        "    return parser\n",
+    )
+
+    names = {c["name"] for c in survey(run_script, root)["user_surface"]["commands"]}
+
+    assert "--out" in names, (
+        f"the flag this call declares is still the flag it declares; got {sorted(names)}"
+    )
+    assert "--force" not in names, (
+        "--force appears in this repo only inside another flag's help text, so a "
+        "page naming it would be excused by a command that does not exist; got "
+        f"{sorted(names)}"
+    )
+    assert names == {"--out", "--keep", "-n", "--dry-run"}, (
+        "-x and --purge are prose in a help sentence and store_true and - are "
+        f"keyword values, so none of the four is declared here; got {sorted(names)}"
     )
 
 

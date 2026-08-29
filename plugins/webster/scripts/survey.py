@@ -350,11 +350,26 @@ MESSAGE_LITERAL = re.compile(
 # a ternary. Both were handed to a writer as text this product shows a user, and neither is a
 # string this product emits at all -- a message the product never says is worse than a message
 # missed, because the troubleshooting page is then written against something that cannot happen.
-# So the gap before the literal admits no `)` and no `#` and cannot leave the call it began in,
-# and the literal must be followed by the `,` or `)` that ends an argument. `{` and `[` stay out
-# on their own account: a dict or list detail is a machine-readable payload, and only a string
-# literal is text somebody reads. A-018's "within about 40 characters" is the length of the
-# argument list before the literal, which is what bounds it.
+# Staying inside the argument list is therefore the gap's whole job, and the characters it
+# refuses are what does it: no `(` and no `)`, so the gap cannot leave the call it began in, and
+# no `#`, so it cannot walk into a trailing comment. The newline in the class does no work --
+# the scan reads one line at a time and never offers it one -- and is there so the pattern is
+# still bounded if it is ever run over joined text. A-018's "within about 40 characters" is the
+# length of that argument list before the literal, and the literal must be followed by the `,`
+# or `)` that ends an argument.
+#
+# What keeps a dict or list detail out is not the gap at all: it is the quote required
+# immediately after `detail=`, which `detail={"loc": ...}` and `detail=[{...}]` and
+# `detail=CODES["x"]` each fail on their first character. The gap used to refuse `{`, `[` and
+# quotes as well, on the stated grounds that a collection is a machine-readable payload -- but
+# the quote after `detail=` had already settled that, and the only thing those exclusions could
+# still reach was a real `detail=` string standing after an earlier argument that happened to be
+# a collection or a string: `HTTPException(status_code=422, headers={"X": "1"}, detail="Bad
+# input")` published nothing. Dropping a message the product does say is the failure this branch
+# exists to fix, so those characters are back in the gap and the comment no longer credits them
+# with work the quote was doing. The forty characters are the bound that is left, and it is a
+# real one -- an argument list longer than that ahead of the detail is still out of reach, which
+# is why the count is A-018's number rather than a rounder one.
 #
 # Two argument shapes, which are the two A-018 names: `detail=` anywhere in the list, and a
 # string sitting second after a status code.
@@ -369,7 +384,7 @@ MESSAGE_LITERAL = re.compile(
 # were not one. tests/test_survey.py measures both rather than restating them.
 HTTP_EXCEPTION_MESSAGE = re.compile(
     r"""HTTPException\(\s*"""
-    r"""(?:[^"'\n{}\[\]()#]{0,40}?detail\s*=\s*|[\w.]{1,30}\s*,\s*)"""
+    r"""(?:[^\n()#]{0,40}?detail\s*=\s*|[\w.]{1,30}\s*,\s*)"""
     r"""["']([A-Z][^"']{3,110})["']\s*[,)]""")
 
 seen_msgs = set()
@@ -397,15 +412,26 @@ SUBCOMMAND = re.compile(
 # out was to name it by hand in WEBSTER_LENS_ALLOW.
 #
 # Read from the declaration a reader can be sent to: argparse's add_argument, optparse's
-# add_option, and the `.option(` that click, commander and yargs all spell the same way. Only a
-# literal that is itself a flag spec counts, so `help="use -x for that"` contributes nothing and
-# `default="-"` contributes nothing -- a junk entry here would widen doctype.py's allowlist and
-# turn a real finding into a pass, which is the direction this plugin refuses to fail in. One
-# literal can hold several flags, because commander writes "-o, --out <path>" as a single
-# string. Go's flag package and pflag declare a bare name and leave the dashes to the framework,
-# so nothing here matches them: a spelling that appears in no file is a claim, and every entry
-# in this JSON carries an anchor exactly so that a reader can go and read it.
+# add_option, and the `.option(` that click, commander and yargs all spell the same way.
+#
+# What is read from it is the option strings, and those are the call's positional arguments:
+# all three libraries take the spellings first, and everything from the first `name=` onwards --
+# help=, action=, type=, default=, metavar= -- is metadata about the flag rather than another
+# flag. Reading every literal on the line instead meant a keyword's value was mined exactly like
+# a spelling, so a help sentence that opened with a flag,
+# `add_argument("--keep", help="-x is the short form of --purge")`, declared -x and --purge as
+# commands this product has. That is the one direction this branch is not allowed to fail in:
+# every name in this list is a term doctype.py stops reporting, so a flag named only in another
+# flag's prose arrives downstream as a standing excuse for a real wrong-lens finding on a flag
+# the product does not have. The scan therefore stops at the first keyword argument and at the
+# end of the call, and a keyword's value is never reached.
+#
+# One option string can still hold several flags, because commander writes "-o, --out <path>" as
+# a single literal. Go's flag package and pflag declare a bare name and leave the dashes to the
+# framework, so nothing here matches them: a spelling that appears in no file is a claim, and
+# every entry in this JSON carries an anchor exactly so that a reader can go and read it.
 CLI_FLAG_DECL = re.compile(r"(?:\badd_argument|\badd_option|\.option)\s*\(")
+CLI_ARG_END = re.compile(r",\s*\w+\s*=|[)#]")
 CLI_STRING = re.compile(r"""["']([^"'\n]*)["']""")
 CLI_FLAG_TOKEN = re.compile(r"^--?[A-Za-z][\w-]*$")
 
@@ -415,7 +441,12 @@ for p in walk(exts={".ts", ".js", ".py", ".go"}):
     for i, line in enumerate(read(p).splitlines(), 1):
         names = [m.group(1).split()[0] for m in SUBCOMMAND.finditer(line)]
         for m in CLI_FLAG_DECL.finditer(line):
-            for lit in CLI_STRING.findall(line[m.end():]):
+            # The leading comma is the one the call's own `(` does not write, so a declaration
+            # that opens with a keyword -- `.option(name="--x")` -- is cut at its first argument
+            # by the same expression rather than by a second one spelled slightly differently.
+            args = "," + line[m.end():]
+            stop = CLI_ARG_END.search(args)
+            for lit in CLI_STRING.findall(args[:stop.start()] if stop else args):
                 if lit.startswith("-"):
                     names += [t for t in re.split(r"[,\s]+", lit.strip())
                               if CLI_FLAG_TOKEN.match(t)]
