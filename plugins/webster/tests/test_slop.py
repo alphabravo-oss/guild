@@ -24,11 +24,18 @@ revision's slop.py in it, and run this module against it --
 
 The revisions measured are every commit that has touched slop.py since the
 pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5,
-ad38ed9.
+ad38ed9, f33f7c2 — read back from ``git log --oneline --reverse cfafe8e..HEAD
+-- plugins/webster/scripts/slop.py`` rather than remembered. The version of
+this sentence that stopped at ad38ed9 named five and so left out the revision
+of slop.py that actually ships: f33f7c2 rewrote the missing-target comment in
+``main()`` in the same commit that first wrote this table, and a list written
+inside a commit cannot name that commit. Adding it is therefore a separate
+commit, and that commit touches no file under ``scripts/`` — which is what
+keeps this list closed rather than one short again.
 
 "red against REV" means this file fails when the suite runs against the slop.py
 at REV and passes against the next revision in that list. "guard" means it
-passed at all five and exists to stop a fix from taking something else away
+passed at all six and exists to stop a fix from taking something else away
 with it. "added" is the commit the row's test first appeared in; no test in
 this module has been amended since.
 
@@ -49,8 +56,13 @@ test_pruned_directories_are_neither_checked_nor_counted  guard         ad38ed9
 
 The one row naming a revision later than cfafe8e, ``test_dangling_symlink_page_exits_two``,
 is red at cfafe8e as well. The four rows filed "guard" are the four that pass
-at cfafe8e, and they pass at all five; no row in this module passes at cfafe8e
-and fails later. The measurement was run because the same table in
+at cfafe8e, and they pass at all six; no row in this module passes at cfafe8e
+and fails later. Run across the six the module goes 6 red at cfafe8e, 1 red at
+af10189, and 10 green at each of ba33497, ecc7dd5, ad38ed9 and f33f7c2. The
+last of those is green for a reason worth writing down rather than inferring:
+f33f7c2 changed slop.py's missing-target comment and nothing else, so there was
+no behaviour there for a row to move on, and re-running it is how that is known
+instead of assumed. The measurement was run because the same table in
 ``test_scaffold.py`` carried a row labelled "green before and after by design"
 that is red against five of the seven revisions measured there. Every row below
 survived it unchanged.

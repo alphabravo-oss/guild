@@ -1,0 +1,70 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)"; for rev in cfafe8e af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2; do d=$(mktemp -d); cp -R plugins/webster "$d/webster"; git show "$rev:plugins/webster/scripts/slop.py" > "$d/webster/scripts/slop.py"; out=$(cd "$d/webster" && uvx pytest tests/test_slop.py -v -p no:cacheprovider 2>&1 | sed -E -n "s%^tests/test_slop\.py::([a-z_0-9]+) (PASSED|FAILED).*%\2 \1%p"); echo "--- test_slop.py against slop.py at $rev: $(printf "%s" "$out" | grep -c PASSED) passed, $(printf "%s" "$out" | grep -c FAILED) failed ---"; printf "%s\n" "$out" | sed "s%^%  %"; rm -rf "$d"; done'
+# evidence-for: FR-039, AC-039
+# evidence-timeout: 300
+
+--- test_slop.py against slop.py at cfafe8e: 4 passed, 6 failed ---
+  FAILED test_weak_verb_page_reports_medium_and_exits_zero
+  PASSED test_supercharge_still_exits_one
+  FAILED test_human_co_author_trailer_exits_zero
+  PASSED test_ai_co_author_trailer_reports_agent_attribution
+  FAILED test_text_marks_in_headings_are_not_emoji
+  FAILED test_presentation_emoji_in_heading_is_reported
+  FAILED test_missing_target_exits_two
+  FAILED test_dangling_symlink_page_exits_two
+  PASSED test_kept_supplementary_range_reports_a_non_emoji_block
+  PASSED test_pruned_directories_are_neither_checked_nor_counted
+--- test_slop.py against slop.py at af10189: 9 passed, 1 failed ---
+  PASSED test_weak_verb_page_reports_medium_and_exits_zero
+  PASSED test_supercharge_still_exits_one
+  PASSED test_human_co_author_trailer_exits_zero
+  PASSED test_ai_co_author_trailer_reports_agent_attribution
+  PASSED test_text_marks_in_headings_are_not_emoji
+  PASSED test_presentation_emoji_in_heading_is_reported
+  PASSED test_missing_target_exits_two
+  FAILED test_dangling_symlink_page_exits_two
+  PASSED test_kept_supplementary_range_reports_a_non_emoji_block
+  PASSED test_pruned_directories_are_neither_checked_nor_counted
+--- test_slop.py against slop.py at ba33497: 10 passed, 0 failed ---
+  PASSED test_weak_verb_page_reports_medium_and_exits_zero
+  PASSED test_supercharge_still_exits_one
+  PASSED test_human_co_author_trailer_exits_zero
+  PASSED test_ai_co_author_trailer_reports_agent_attribution
+  PASSED test_text_marks_in_headings_are_not_emoji
+  PASSED test_presentation_emoji_in_heading_is_reported
+  PASSED test_missing_target_exits_two
+  PASSED test_dangling_symlink_page_exits_two
+  PASSED test_kept_supplementary_range_reports_a_non_emoji_block
+  PASSED test_pruned_directories_are_neither_checked_nor_counted
+--- test_slop.py against slop.py at ecc7dd5: 10 passed, 0 failed ---
+  PASSED test_weak_verb_page_reports_medium_and_exits_zero
+  PASSED test_supercharge_still_exits_one
+  PASSED test_human_co_author_trailer_exits_zero
+  PASSED test_ai_co_author_trailer_reports_agent_attribution
+  PASSED test_text_marks_in_headings_are_not_emoji
+  PASSED test_presentation_emoji_in_heading_is_reported
+  PASSED test_missing_target_exits_two
+  PASSED test_dangling_symlink_page_exits_two
+  PASSED test_kept_supplementary_range_reports_a_non_emoji_block
+  PASSED test_pruned_directories_are_neither_checked_nor_counted
+--- test_slop.py against slop.py at ad38ed9: 10 passed, 0 failed ---
+  PASSED test_weak_verb_page_reports_medium_and_exits_zero
+  PASSED test_supercharge_still_exits_one
+  PASSED test_human_co_author_trailer_exits_zero
+  PASSED test_ai_co_author_trailer_reports_agent_attribution
+  PASSED test_text_marks_in_headings_are_not_emoji
+  PASSED test_presentation_emoji_in_heading_is_reported
+  PASSED test_missing_target_exits_two
+  PASSED test_dangling_symlink_page_exits_two
+  PASSED test_kept_supplementary_range_reports_a_non_emoji_block
+  PASSED test_pruned_directories_are_neither_checked_nor_counted
+--- test_slop.py against slop.py at f33f7c2: 10 passed, 0 failed ---
+  PASSED test_weak_verb_page_reports_medium_and_exits_zero
+  PASSED test_supercharge_still_exits_one
+  PASSED test_human_co_author_trailer_exits_zero
+  PASSED test_ai_co_author_trailer_reports_agent_attribution
+  PASSED test_text_marks_in_headings_are_not_emoji
+  PASSED test_presentation_emoji_in_heading_is_reported
+  PASSED test_missing_target_exits_two
+  PASSED test_dangling_symlink_page_exits_two
+  PASSED test_kept_supplementary_range_reports_a_non_emoji_block
+  PASSED test_pruned_directories_are_neither_checked_nor_counted

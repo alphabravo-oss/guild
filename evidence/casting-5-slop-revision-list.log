@@ -1,0 +1,14 @@
+# evidence-cmd: python3 -c "import ast,re,subprocess as sp; root=sp.run(['git','rev-parse','--show-toplevel'],capture_output=True,text=True).stdout.strip(); rel='plugins/webster/scripts/slop.py'; log=sp.run(['git','-C',root,'log','--oneline','--abbrev=7','--reverse','cfafe8e..HEAD','--',rel],capture_output=True,text=True).stdout.rstrip(); print('git log --oneline --reverse cfafe8e..HEAD -- '+rel); print(log); shas=['cfafe8e']+[l.split()[0] for l in log.splitlines()]; doc=ast.get_docstring(ast.parse(open(root+'/plugins/webster/tests/test_slop.py').read())); listed=re.findall(r'[0-9a-f]{7}',re.search(r'in order: (.*?) --- ',doc.replace(chr(8212),' --- '),re.S).group(1)); print(''); print('from git, AC-039 baseline first: '+' '.join(shas)); print('from the module docstring      : '+' '.join(listed)); print('identical                      : '+str(listed==shas))"
+# evidence-for: FR-039, AC-039
+# evidence-timeout: 60
+
+git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py
+af10189 fix(webster): slop.py fails on real tells only, and scaffold.py checks before it writes
+ba33497 fix(webster): the unreadable target slop.py reported as slop, and the range comment that spoke for Unicode
+ecc7dd5 fix(webster): the write scaffold.py could not make, and the lines its comments pointed at
+ad38ed9 fix(webster): the read that answered a refusal as an absence, and two sentences about the wrong population
+f33f7c2 fix(webster): the row recorded as unfailable, and the sibling count that left one out
+
+from git, AC-039 baseline first: cfafe8e af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2
+from the module docstring      : cfafe8e af10189 ba33497 ecc7dd5 ad38ed9 f33f7c2
+identical                      : True
