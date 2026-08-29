@@ -49,9 +49,13 @@ the axis loosely enough that the label read as a claim about both.
 - ``test_status_passing_count_matches_the_collected_suite`` — FR-038 / AC-042 /
   NFR-001. RED against both. The cfafe8e Status section states no count at all,
   so the read raises before there is anything to compare; at 61fb1df it read
-  ``69 passing``, written by hand when the suite had 69 and never moved again —
-  77 test functions by the time this row was first written, 147 now. That is
-  exactly the drift this test makes impossible to commit.
+  ``69 passing``, written by hand at 9859317 when the suite defined exactly 69
+  and never moved again — 77 by 61fb1df, 148 now. The revision is named because
+  "by the time this row was first written" was not a moment anyone could
+  re-measure to 77: this module arrived with three tests of its own, so the
+  commit that first wrote this row defined 80, and 77 is 61fb1df, the state the
+  stale 69 had fallen behind. That is exactly the drift this test makes
+  impossible to commit.
 - ``test_status_section_names_the_run_command_and_the_version`` — AC-042 /
   OT-040 / NFR-003. RED against cfafe8e, green against 61fb1df. The cfafe8e
   Status section carries neither half: no ``cd plugins/webster && uvx pytest``,
@@ -171,8 +175,11 @@ CONFTEST = TESTS_DIR / "conftest.py"
 # would survive it. All seven are parsed the same way regardless, because a rule
 # about which script may be imported is a rule somebody has to keep, and
 # ``ast.parse`` keeps none. The count is stated because this comment once opened
-# "every script binds", which was false for exactly the two it did not name and
-# is the same sentence conftest.py and the README each carried a copy of.
+# "every script binds", which was false for exactly the two it did not name.
+# conftest.py ("Every script binds its root, its docs directory and its
+# allowlists at module level") and the README ("each script binds its root, its
+# docs") carried the same claim in their own words rather than a copy of this
+# one, which is why correcting one of the three left the other two standing.
 SCRIPTS = PLUGIN_ROOT / "scripts"
 DRIFT = SCRIPTS / "drift.py"
 
@@ -700,8 +707,9 @@ def test_status_section_names_the_run_command_and_the_version():
     )
     assert f"Version {manifest_version}." in section, (
         f"{README} Status section does not say 'Version {manifest_version}.' "
-        f"while {PLUGIN_JSON} does. The README carried 'Version 0.2.0' through "
-        f"eight releases of the manifest before anything compared the two."
+        f"while {PLUGIN_JSON} does. The README read 'Version 0.2.0.' at every "
+        f"one of the eleven manifest releases from 0.3.0 to 0.10.0 before "
+        f"anything compared the two."
     )
 
 

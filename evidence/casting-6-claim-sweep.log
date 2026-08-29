@@ -1,0 +1,71 @@
+# evidence-cmd: echo '--- A. the count, in the three places it now has to agree ---'; grep -n '^148 passing' plugins/webster/README.md | sed 's/^/  /'; grep -n '77 by 61fb1df, 148 now' plugins/webster/tests/test_readme.py | sed 's/^/  /'; python3 -c "import ast,glob;print('  AST census:',sum(len([n for n in ast.parse(open(f,encoding='utf-8').read()).body if isinstance(n,ast.FunctionDef) and n.name.startswith('test')]) for f in sorted(glob.glob('plugins/webster/tests/test_*.py'))))"; echo '--- B. ATTRIBUTION: 69 was written at 9859317; 77 is 61fb1df; the row own commit defined 80 ---'; for r in 9859317 61fb1df 770ba74; do printf '  %s defines ' "$r"; git ls-tree -r --name-only "$r" plugins/webster/tests/ | grep 'test_.*\.py$' | while read f; do git show "$r:$f" | grep -c '^def test_'; done | paste -sd+ - | bc; done; printf '  README at 61fb1df read: '; git show 61fb1df:plugins/webster/README.md | grep -o '^[0-9]* passing'; printf '  the commit that wrote that number: '; git log --format=%h --reverse -S'69 passing' -- plugins/webster/README.md | head -1; echo '--- C. ATTRIBUTION: the manifest releases the README sat out at Version 0.2.0. ---'; git log --reverse --format=%h -- plugins/webster/.claude-plugin/plugin.json | while read c; do m=$(git show "$c:plugins/webster/.claude-plugin/plugin.json" | grep -o '"version": "[^"]*"' | grep -o '[0-9][0-9.]*'); r=$(git show "$c:plugins/webster/README.md" 2>/dev/null | grep -o '^Version [0-9.]*' | head -1); printf '    %s manifest=%-8s README=%s\n' "$c" "$m" "${r:-none}"; done; echo '--- D. EQUIVALENCE: the binds claim, as each of the three files actually worded it ---'; printf '  %-40s ' plugins/webster/tests/conftest.py; git show 6e19064:plugins/webster/tests/conftest.py | grep -o '[Ee]very script binds its root'; printf '  %-40s ' plugins/webster/README.md; git show 693570d:plugins/webster/README.md | grep -o 'each script binds its root'; printf '  %-40s ' plugins/webster/tests/test_readme.py; git show 693570d:plugins/webster/tests/test_readme.py | grep -o 'every script binds ROOT'; echo '--- E. COVERAGE clauses re-measured against the tree, all left standing ---'; printf '  test modules: '; ls plugins/webster/tests/test_*.py | wc -l | tr -d ' '; printf '  scripts: '; ls plugins/webster/scripts/*.py | wc -l | tr -d ' '; printf '  tomllib importers: '; grep -l tomllib plugins/webster/scripts/*.py | xargs -n1 basename | paste -sd, -; printf '  scripts printing a JSON status: '; grep -l '"status"' plugins/webster/scripts/*.py | xargs -n1 basename | paste -sd, -; printf '  scripts reading built HTML: '; grep -l 'website/build' plugins/webster/scripts/*.py | xargs -n1 basename | paste -sd, -; printf '  scripts NOT ending in sys.exit(main()): '; for f in plugins/webster/scripts/*.py; do [ "$(grep -v '^[[:space:]]*$' "$f" | tail -1 | sed 's/^[[:space:]]*//')" = 'sys.exit(main())' ] || basename "$f"; done | paste -sd, -; printf '  test_drift.py tests that never name fixture_repo: '; python3 -c "import ast;t=ast.parse(open('plugins/webster/tests/test_drift.py',encoding='utf-8').read());print(len([n for n in t.body if isinstance(n,ast.FunctionDef) and n.name.startswith('test') and 'fixture_repo' not in ast.unparse(n)]))"; printf '  test_harness.py tests: '; grep -c '^def test_' plugins/webster/tests/test_harness.py; printf '  Unslopped ever in skills/house-rules: '; git log --format=%h -S'Unslopped' -- plugins/webster/skills/house-rules | head -1 | grep . || echo 'never'
+# evidence-for: FR-038, AC-042, GI-001
+# evidence-timeout: 300
+#
+# The lead's ruling for cycle 12: sweep every ATTRIBUTION, EQUIVALENCE and
+# COVERAGE clause in this casting's files (README.md, .claude-plugin/plugin.json,
+# tests/test_readme.py) and measure each against the tree or against git history
+# before leaving it standing. Four clauses failed measurement and were corrected;
+# the rest are re-measured here and left as they were.
+#
+#   A. the count, 147 -> 148, in the README and in test_readme.py's own record.
+#   B. "77 test functions by the time this row was first written" attributed 77
+#      to 770ba74, the commit that first wrote the row. 770ba74 defines 80: this
+#      module arrived carrying three tests of its own. 77 is 61fb1df, the state
+#      the stale 69 had fallen behind, and the clause now names that revision.
+#      The other half of the same sentence holds: 9859317 wrote "69 passing"
+#      into a tree that defines exactly 69.
+#   C. "carried 'Version 0.2.0' through eight releases of the manifest" -- the
+#      manifest shipped eleven releases, 0.3.0 through 0.10.0, with the README
+#      reading Version 0.2.0. at every one of them. 9859317 is the release that
+#      corrected both. Eight was a number no reader could re-run.
+#   D. "the same sentence conftest.py and the README each carried a copy of" --
+#      the three files worded the claim three ways (Every/each, its root/ROOT),
+#      so they carried the same claim rather than copies of one sentence. That
+#      is why correcting one of the three left the other two standing, which is
+#      the history this comment exists to explain.
+#
+#   E. the COVERAGE clauses that survived measurement unchanged: eight test
+#      modules; seven scripts; only llmstxt.py and survey.py import tomllib;
+#      only drift.py and scaffold.py print a JSON status; only rendered.py reads
+#      built HTML; survey.py alone does not end in sys.exit(main()); every test
+#      in test_drift.py names fixture_repo; test_harness.py measures five
+#      things; Unslopped has never been in skills/house-rules.
+
+--- A. the count, in the three places it now has to agree ---
+  179:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+  53:  and never moved again — 77 by 61fb1df, 148 now. The revision is named because
+  AST census: 148
+--- B. ATTRIBUTION: 69 was written at 9859317; 77 is 61fb1df; the row own commit defined 80 ---
+  9859317 defines 69
+  61fb1df defines 77
+  770ba74 defines 80
+  README at 61fb1df read: 69 passing
+  the commit that wrote that number: 9859317
+--- C. ATTRIBUTION: the manifest releases the README sat out at Version 0.2.0. ---
+    656567c manifest=0.3.0    README=Version 0.2.0.
+    318bdc3 manifest=0.3.1    README=Version 0.2.0.
+    5e9704f manifest=0.4.0    README=Version 0.2.0.
+    aab6a27 manifest=0.4.1    README=Version 0.2.0.
+    68b5a97 manifest=0.5.0    README=Version 0.2.0.
+    1541af2 manifest=0.5.1    README=Version 0.2.0.
+    27d4470 manifest=0.6.0    README=Version 0.2.0.
+    d76da47 manifest=0.7.0    README=Version 0.2.0.
+    8fc2264 manifest=0.8.0    README=Version 0.2.0.
+    ef57d77 manifest=0.9.0    README=Version 0.2.0.
+    cfafe8e manifest=0.10.0   README=Version 0.2.0.
+    9859317 manifest=0.11.0   README=Version 0.11.0.
+--- D. EQUIVALENCE: the binds claim, as each of the three files actually worded it ---
+  plugins/webster/tests/conftest.py        Every script binds its root
+  plugins/webster/README.md                each script binds its root
+  plugins/webster/tests/test_readme.py     every script binds ROOT
+--- E. COVERAGE clauses re-measured against the tree, all left standing ---
+  test modules: 8
+  scripts: 7
+  tomllib importers: llmstxt.py,survey.py
+  scripts printing a JSON status: drift.py,scaffold.py
+  scripts reading built HTML: rendered.py
+  scripts NOT ending in sys.exit(main()): survey.py
+  test_drift.py tests that never name fixture_repo: 0
+  test_harness.py tests: 5
+  Unslopped ever in skills/house-rules: never

@@ -1,0 +1,54 @@
+# evidence-cmd: allowed='^plugins/webster/(scripts/[a-z_]+\.py|\.claude-plugin/plugin\.json|README\.md|pyproject\.toml|tests/)'; changed=$(git diff --name-only cfafe8e..HEAD | sort); echo '--- inside the GI-007 writable set ---'; printf '%s\n' "$changed" | grep -cE "$allowed" | sed 's/^/  paths: /'; printf '%s\n' "$changed" | grep -E "$allowed" | sed -E 's|^plugins/webster/(tests/fixtures)/.*|  \1/... (fixture tree)|;t;s/^/  /' | sort -u; echo '--- this run own bookkeeping, stripped by the lead at acceptance ---'; ev=$(printf '%s\n' "$changed" | grep -E '^evidence/'); printf '%s\n' "${ev:-  none}" | sed 's|^evidence/|  evidence/|'; echo '--- outside both, which GI-007 forbids ---'; out=$(printf '%s\n' "$changed" | grep -vE "$allowed" | grep -vE '^evidence/'); echo "${out:-  none}"
+# evidence-for: FR-043, GI-007, OT-043, GI-001
+# evidence-timeout: 300
+#
+# OT-043 / FR-043 / GI-007: every path the whole change has touched since the
+# cfafe8e baseline, sorted into the writable set, this run's own evidence
+# bookkeeping, and anything outside both. The third group is the one that has to
+# be empty, and is. The fixture tree under tests/fixtures/ is folded to one line
+# because it is thirty files of committed fixture repository that GI-007 allows
+# wholesale and listing each adds nothing a reader can act on.
+#
+# The evidence/ group is why tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+# is red at this commit and green at the lead's strip commit: those logs are the
+# run's bookkeeping showing through its own scope check, not a violation.
+
+--- inside the GI-007 writable set ---
+  paths: 43
+  plugins/webster/.claude-plugin/plugin.json
+  plugins/webster/pyproject.toml
+  plugins/webster/README.md
+  plugins/webster/scripts/doctype.py
+  plugins/webster/scripts/drift.py
+  plugins/webster/scripts/llmstxt.py
+  plugins/webster/scripts/scaffold.py
+  plugins/webster/scripts/slop.py
+  plugins/webster/scripts/survey.py
+  plugins/webster/tests/__init__.py
+  plugins/webster/tests/conftest.py
+  plugins/webster/tests/test_doctype.py
+  plugins/webster/tests/test_drift.py
+  plugins/webster/tests/test_harness.py
+  plugins/webster/tests/test_llmstxt.py
+  plugins/webster/tests/test_readme.py
+  plugins/webster/tests/test_scaffold.py
+  plugins/webster/tests/test_slop.py
+  plugins/webster/tests/test_survey.py
+  tests/fixtures/... (fixture tree)
+--- this run own bookkeeping, stripped by the lead at acceptance ---
+  evidence/casting-2-drift-tests.log
+  evidence/casting-2-no-docs-guard.log
+  evidence/casting-2-red-first-sweep.log
+  evidence/casting-2-swept-claims.log
+  evidence/casting-3-claim-sweep.log
+  evidence/casting-3-route-attribution.log
+  evidence/casting-4-claim-sweep.log
+  evidence/casting-4-decorator-join-lines-early.log
+  evidence/casting-4-join-completion-test.log
+  evidence/casting-4-red-first-measured.log
+  evidence/casting-4-tests-green.log
+  evidence/casting-6-claim-sweep.log
+  evidence/casting-6-release-metadata.log
+  evidence/casting-6-scope-boundary.log
+--- outside both, which GI-007 forbids ---
+  none
