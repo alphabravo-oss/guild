@@ -698,11 +698,15 @@ def check_lens(rel, text, audience, dt, env_vars):
         for m in ENV_VAR.finditer(line):
             if audience == "user" and m.group(1) in env_vars:
                 named.append((n, f"`{m.group(1)}`", "an environment variable"))
-        # Routes and flags belong to whoever is holding a terminal, and LENS_MAY_NOT says an
-        # operator is. Running these two on an operator page reported it for naming
-        # `/api/health` on a page that is allowed to be about exactly that, and widening
-        # ROUTE_PATH would have multiplied the false finding. Symbols and architecture below
-        # keep firing for an operator, which is what LENS_MAY_NOT['operator'] actually forbids.
+        # LENS_MAY_NOT['user'] names "any route path" and "command-line flags" among the
+        # things a user page may not name. LENS_MAY_NOT['operator'] names only internal
+        # symbols and architecture, so an operator page may name a route or a flag because
+        # that line leaves them out — left out for the reader AUDIENCES['operator'] describes,
+        # comfortable with a terminal and assuming one, not because LENS_MAY_NOT says anything
+        # about terminals itself. Running these two for an operator reported a page for naming
+        # `/api/health` when that page is allowed to be about exactly that, and widening
+        # ROUTE_PATH would have multiplied the false finding. CODE_IDENT and ARCH_HARD stay
+        # outside this gate because both lines forbid them (FR-017, GI-003).
         if audience == "user":
             for m in ROUTE_PATH.finditer(line):
                 named.append((n, m.group(1) or m.group(2), "a request route"))
@@ -997,8 +1001,10 @@ def main():
     # a docs directory holding no page at all, because this gate asked for stubs > 0 rather
     # than for pages == 0 — the stub count was never the question. `untyped` and `advisories`
     # can only be filled on the same path that increments `pages`, so defects are the only
-    # other thing left to ask about: a frontmatter defect on a stub is a real finding and wins
-    # over not-checked, the way a broken anchor beats no_anchors in drift.py (FR-040, CT-004).
+    # other thing left to ask about, and FR-040 answers it in its own words: a frontmatter
+    # defect on a stub is a real finding, and "nothing to check" is reserved for zero non-stub
+    # pages AND zero defects. A run that did find something must never report that there was
+    # nothing to look at (FR-040, CT-004).
     if not pages and not defects:
         print(f"{stubs} stubs, nothing to check")
         return 2

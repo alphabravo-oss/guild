@@ -780,8 +780,8 @@ def test_all_stub_tree_with_a_defect_exits_one(run_script, docs_dir):
     result = check(run_script, docs_dir)
 
     assert result.returncode == 1, (
-        f"A frontmatter defect on a stub is a real finding and wins over not-checked, the way "
-        f"a broken anchor wins in drift.py (FR-040).\n{outcome(result)}"
+        f"A frontmatter defect on a stub is a real finding: FR-040 reserves 'nothing to "
+        f"check' for zero non-stub pages AND zero defects.\n{outcome(result)}"
     )
     assert "no-audience" in result.stdout, (
         f"Expected the no-audience defect to be reported, not swallowed by the exit 2 path."

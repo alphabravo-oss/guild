@@ -1,0 +1,51 @@
+# evidence-cmd: cd plugins/webster && sed -n '/# LENS_MAY_NOT\[.user.\] names /,/(FR-017, GI-003)\./p' scripts/doctype.py; echo '--- the two LENS_MAY_NOT lines the comment quotes, as the tool prints them ---'; python3 scripts/doctype.py types | sed -n '/may not name/p'; echo '--- every terminal claim in the module, by owner ---'; grep terminal scripts/doctype.py; printf 'terminal claims inside the LENS_MAY_NOT literal: '; sed -n '/^LENS_MAY_NOT = {/,/^}/p' scripts/doctype.py | grep -c terminal; rm -rf /tmp/webster-c3-gate; mkdir -p /tmp/webster-c3-gate/user/docs /tmp/webster-c3-gate/op/docs; printf '%s\n' '---' 'title: Guide' 'doc_type: how-to' 'audience: user' '---' '' '# Guide' '' 'Poll `/api/health` and run it with `--verbose`, then read `getUser`.' > /tmp/webster-c3-gate/user/docs/guide.md; sed 's/audience: user/audience: operator/' /tmp/webster-c3-gate/user/docs/guide.md > /tmp/webster-c3-gate/op/docs/guide.md; echo '--- user page: route, flag and symbol all fire ---'; python3 scripts/doctype.py check /tmp/webster-c3-gate/user/docs; echo "exit=$?"; echo '--- operator page: route and flag silent, symbol still fires ---'; python3 scripts/doctype.py check /tmp/webster-c3-gate/op/docs; echo "exit=$?"
+# evidence-for: FR-012, FR-017
+#
+# D-054. The comment beside the audience gate, next to every claim it makes.
+# It used to say "LENS_MAY_NOT says an operator is [holding a terminal]", which
+# LENS_MAY_NOT never said: the terminal claim belongs to AUDIENCES['operator'],
+# and the literal itself carries none (the count below is 0). The comment now
+# quotes the two LENS_MAY_NOT lines as they read after D-041 corrected the user
+# line — "any route path" and "command-line flags" on user, symbols and
+# architecture only on operator — which is the asymmetry the gate enforces.
+        # LENS_MAY_NOT['user'] names "any route path" and "command-line flags" among the
+        # things a user page may not name. LENS_MAY_NOT['operator'] names only internal
+        # symbols and architecture, so an operator page may name a route or a flag because
+        # that line leaves them out — left out for the reader AUDIENCES['operator'] describes,
+        # comfortable with a terminal and assuming one, not because LENS_MAY_NOT says anything
+        # about terminals itself. Running these two for an operator reported a page for naming
+        # `/api/health` when that page is allowed to be about exactly that, and widening
+        # ROUTE_PATH would have multiplied the false finding. CODE_IDENT and ARCH_HARD stay
+        # outside this gate because both lines forbid them (FR-017, GI-003).
+--- the two LENS_MAY_NOT lines the comment quotes, as the tool prints them ---
+             may not name internal symbols, any route path, command-line flags, environment variables and architecture
+             may not name internal symbols and architecture
+--- every terminal claim in the module, by owner ---
+   "who": "Installs, configures and runs the product. Comfortable with a terminal.",
+   "assumes": "a terminal, a package manager, environment variables, a hosting dashboard",
+# A flag is something typed at a terminal, and a page written from the screen has no terminal in
+        # comfortable with a terminal and assuming one, not because LENS_MAY_NOT says anything
+        # about terminals itself. Running these two for an operator reported a page for naming
+terminal claims inside the LENS_MAY_NOT literal: 0
+--- user page: route, flag and symbol all fire ---
+1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (3)
+
+  wrong-lens  (3)
+      write it from the screen: what the reader sees, clicks, types and gets back
+    guide.md:9  a 'user' page names an internal symbol name, `getUser`
+    guide.md:9  a 'user' page names a request route, /api/health
+    guide.md:9  a 'user' page names a command-line flag, `--verbose`
+exit=1
+--- operator page: route and flag silent, symbol still fires ---
+1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (1)
+
+  wrong-lens  (1)
+      an operator handles config and commands, not the code underneath them
+    guide.md:9  a 'operator' page names an internal symbol name, `getUser`
+exit=1
