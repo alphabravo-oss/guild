@@ -1,9 +1,9 @@
-# evidence-cmd: bash -c 'echo "== what each revision of tests/test_doctype.py said the rule count was =="; for c in $(git log --format=%h --reverse -- plugins/webster/tests/test_doctype.py); do printf "%-9s %s\n" "$c" "$(git show $c:plugins/webster/tests/test_doctype.py | tr "\n" " " | tr -s " " | grep -o "which of [a-z]* rules fired" | head -1)"; done; echo; echo "== the revision that added this test =="; git log --format=%h --reverse -S"test_the_rule_count_in_this_docstring_is_the_scripts_own_census" -- plugins/webster/tests/test_doctype.py; echo; echo "== the census the docstring states, run at each doctype.py revision it names =="; r=$PWD; d=$(mktemp -d); for REV in cfafe8e 19941ad 9859317 63e5e58; do mkdir -p "$d/$REV"; cp -R "$r/plugins/webster" "$d/$REV/webster"; git show "$REV:plugins/webster/scripts/doctype.py" > "$d/$REV/webster/scripts/doctype.py"; printf "%-9s %s\n" "$REV" "$(cd "$d/$REV/webster" && uvx pytest tests/test_doctype.py::test_the_rule_count_in_this_docstring_is_the_scripts_own_census -q 2>&1 | grep -E "passed|failed" | tail -1)"; done; rm -rf "$d"; echo; echo "== every grind cycle closed between a5484ba and 1d80501, which is what four was wrong about =="; git log --format="%h %s" a5484ba..1d80501 | grep -E "strip (consumed run evidence|cycle)"'
+# evidence-cmd: bash -c 'echo "== what each revision of tests/test_doctype.py from a5484ba to 1d80501 said the rule count was =="; for c in $(git log --format=%h --reverse a5484ba~1..1d80501 -- plugins/webster/tests/test_doctype.py); do printf "%-9s %s\n" "$c" "$(git show $c:plugins/webster/tests/test_doctype.py | tr "\n" " " | tr -s " " | grep -o "which of [a-z]* rules fired" | head -1)"; done; echo; echo "== the revision that added this test =="; git log --format=%h --reverse -S"test_the_rule_count_in_this_docstring_is_the_scripts_own_census" a5484ba~1..1d80501 -- plugins/webster/tests/test_doctype.py; echo; echo "== the census the docstring states, run at each doctype.py revision it names =="; r=$PWD; d=$(mktemp -d); for REV in cfafe8e 19941ad 9859317 63e5e58; do mkdir -p "$d/$REV"; cp -R "$r/plugins/webster" "$d/$REV/webster"; git show "$REV:plugins/webster/scripts/doctype.py" > "$d/$REV/webster/scripts/doctype.py"; printf "%-9s %s\n" "$REV" "$(cd "$d/$REV/webster" && uvx pytest tests/test_doctype.py::test_the_rule_count_in_this_docstring_is_the_scripts_own_census -q 2>&1 | grep -E "passed|failed" | tail -1)"; done; rm -rf "$d"; echo; echo "== every grind cycle closed between a5484ba and 1d80501, which is what four was wrong about =="; git log --format="%h %s" a5484ba..1d80501 | grep -E "strip (consumed run evidence|cycle)"'
 # evidence-for: FR-039, AC-039
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
 
-== what each revision of tests/test_doctype.py said the rule count was ==
+== what each revision of tests/test_doctype.py from a5484ba to 1d80501 said the rule count was ==
 a5484ba   which of eight rules fired
 ec6aa60   which of eight rules fired
 38fb601   which of eight rules fired
@@ -13,8 +13,6 @@ eb27489   which of eight rules fired
 de34734   which of eight rules fired
 0ac652d   which of eight rules fired
 1d80501   which of ten rules fired
-c11f518   which of ten rules fired
-eb4a584   which of ten rules fired
 
 == the revision that added this test ==
 1d80501
