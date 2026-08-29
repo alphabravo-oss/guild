@@ -194,12 +194,18 @@ if "python" in stack:
         for i, line in enumerate(lines, 1):
             joined = line
             if PY_DECORATOR_OPEN.match(line):
-                # Six lines is past any real decorator: an unbalanced paren means the line was
-                # something else and the join must stop rather than swallow the function.
+                # The cap is a bound on how far the read goes, not a statement about how long
+                # a decorator gets. A route carrying six keyword arguments one to a line is
+                # ordinary, and the join stops six lines in whether or not the call ended
+                # there. What the cap is for is the other direction: a `(` that opened
+                # something else must not let the join swallow the function beneath it.
                 for cont in lines[i:i + 6]:
                     joined += " " + cont.strip()
                     if joined.count("(") <= joined.count(")"):
                         break
+            # Whether the call was read to its end. Anything below that reasons from something
+            # being *absent* has to ask first, because unread and absent are the same text.
+            whole_call = joined.count("(") <= joined.count(")")
             m = PY_DECORATOR.search(joined)
             if not m:
                 continue
@@ -218,6 +224,17 @@ if "python" in stack:
             methods = [verb.upper()]
             if verb == "route":
                 listed = FLASK_METHODS.search(joined)
+                # Flask serves GET for a route that declares no methods, so an absent
+                # methods= is itself a declaration -- but only where the whole call was
+                # read. Past the cap the two are indistinguishable, and defaulting anyway
+                # published GET for a route whose methods=["POST"] sat one line further out:
+                # a verb that endpoint answers 405 to, wrong in the one detail a reader
+                # copies. The same rule as the leading slash above settles it -- a phantom
+                # endpoint is worse than a missing one -- so a route whose verbs were never
+                # reached is left out rather than guessed at. ROUTE is not the fallback
+                # either; that is the verb no client can send this branch exists to stop.
+                if not listed and not whole_call:
+                    continue
                 methods = ([v.upper() for v in re.findall(r"['\"]([A-Za-z]+)['\"]", listed.group(1))]
                            if listed else []) or ["GET"]
             for method in methods:
@@ -412,10 +429,13 @@ SUBCOMMAND = re.compile(
 # out was to name it by hand in WEBSTER_LENS_ALLOW.
 #
 # Read from the declaration a reader can be sent to: argparse's add_argument, optparse's
-# add_option, and the `.option(` that click, commander and yargs all spell the same way.
+# add_option, and the `.option(` that click and commander both spell the same way. yargs
+# spells `.option(` too and nothing here reads it, deliberately: its key is the flag's name
+# without the dashes -- `.option("out", {alias: "o"})` -- and a token carrying no dash is not
+# a spelling this list is able to publish, so the call is read and dropped rather than mined.
 #
 # What is read from it is the option strings, and those are the call's positional arguments:
-# all three libraries take the spellings first, and everything from the first `name=` onwards --
+# all three declarations take the spellings first, and everything from the first `name=` onwards --
 # help=, action=, type=, default=, metavar= -- is metadata about the flag rather than another
 # flag. Reading every literal on the line instead meant a keyword's value was mined exactly like
 # a spelling, so a help sentence that opened with a flag,
@@ -427,7 +447,7 @@ SUBCOMMAND = re.compile(
 # end of the call, and a keyword's value is never reached.
 #
 # A keyword is not the only place a description sits, and stopping at one was not enough.
-# commander and yargs spell the call `.option(flags, description)`, so the sentence is the
+# commander spells the call `.option(flags, description)`, so the sentence is the
 # second *positional* argument: no `name=` ends the scan, the closing paren is the only stop,
 # and `.option("--keep", "-x is the short form of --purge")` published --keep, -x and --purge
 # together. The same false excuse reached doctype.py by the other door. What ends the positional
@@ -470,10 +490,12 @@ for p in walk(exts={".ts", ".js", ".py", ".go"}):
             # Reading one line at a time saw `parser.add_argument(` and no literal at all, so a
             # formatted project declared no flags whatsoever and doctype.py had nothing to
             # suppress a `--verbose` on a user page with: the WEBSTER_SURVEY path was inert for
-            # exactly the projects that run a formatter. Same join, same six-line cap and same
-            # reason as the decorator pass above -- a paren still unbalanced by then means the
-            # read has left the call -- and the anchor stays `i`, the line the call opens on,
-            # because that is the line a reader is sent to.
+            # exactly the projects that run a formatter. Same join and same six-line cap as
+            # the decorator pass above, and the cap is there for the same reason: it stops a
+            # `(` that opened something else from swallowing the lines beneath it. Hitting it
+            # costs a flag rather than inventing one, which is the direction this list is
+            # allowed to fail in. The anchor stays `i`, the line the call opens on, because
+            # that is the line a reader is sent to.
             if args.count("(") + 1 > args.count(")"):
                 for cont in lines[i:i + 6]:
                     args += " " + cont.strip()

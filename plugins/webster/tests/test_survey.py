@@ -37,6 +37,7 @@ test_black_split_decorator_is_anchored_to_the_at_line         FR-019      cfafe8
 test_mock_patch_decorator_is_not_an_http_endpoint             FR-019      a802345 (added 4ae7334)
 test_flask_route_reports_its_declared_methods                 FR-019      cfafe8e
 test_flask_route_without_methods_reports_get                  FR-019      cfafe8e
+test_a_route_whose_methods_the_join_never_read_is_not_a_get   FR-019      3aa48f7 (added cycle 7)
 test_pyproject_name_description_and_scripts                   FR-020/021  cfafe8e
 test_poetry_legacy_tables_are_the_fallback                    FR-020/021  cfafe8e
 test_package_json_still_wins_over_pyproject                   FR-020      guard
@@ -50,7 +51,7 @@ test_option_flags_reach_the_user_surface_commands             FR-012      19941a
 test_a_flag_named_only_in_prose_is_not_a_command              FR-012      19941ad (added cycle 4)
 test_a_flag_named_in_another_flags_help_is_not_a_command      FR-012      944c958 (added cycle 5)
 test_a_positional_description_is_not_a_flag_spec              FR-012      66dab76 (added cycle 6)
-test_a_commander_option_string_still_declares_its_spellings   FR-012      guard
+test_a_commander_option_string_still_declares_its_spellings   FR-012      19941ad (added cycle 6)
 test_a_black_split_declaration_still_declares_its_flag        FR-012      66dab76 (added cycle 6)
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
 ============================================================  ==========  =======================
@@ -84,10 +85,24 @@ Rows carrying a note the column has no room for:
   scan, and each is red there for the whole of what it measures rather than for
   one assertion: at 66dab76 the commander tree publishes ``-x`` and ``--purge``
   along with ``--keep``, and the Black-split tree publishes nothing at all.
-  ``test_a_commander_option_string_still_declares_its_spellings`` between them
-  is the guard on the first fix -- an option string holding two spellings and a
-  ``<value>`` placeholder is a declaration, and stopping the scan at prose must
-  not stop it there.
+- ``test_a_commander_option_string_still_declares_its_spellings`` was added
+  beside those two as the boundary on the first of them -- an option string
+  holding two spellings and a ``<value>`` placeholder is a declaration, and
+  stopping the scan at prose must not stop it there -- and it was filed as a
+  guard, meaning it passed at every revision measured. Nobody had measured it.
+  It is red at cfafe8e and stays red through 19941ad, because the flag scan it
+  reads did not exist before d7eb572 added it and the commands list for its
+  tree was empty; from d7eb572 on it is green and stays green, which is what
+  makes it the control for the cycle-6 fix rather than the thing that goes red
+  there. The label was read off the fix it was written beside instead of off a
+  run, which is the same way this table got a row wrong in the sibling module.
+- ``test_a_route_whose_methods_the_join_never_read_is_not_a_get`` names
+  3aa48f7, and it is red at cfafe8e too -- for the other half of what it
+  measures. At 3aa48f7 the long route publishes ``GET /exports``, the phantom
+  the row exists for. At cfafe8e there is no decorator joining at all, so
+  neither route is published and it is the three-line control that goes red.
+  The nearer baseline is the one that shows the phantom, which is why the
+  column carries it.
 
 Every test drives the script through the conftest ``run_script`` helper. Nothing
 here imports survey.py: its module-level ``ROOT`` resolves from ``sys.argv`` at
@@ -357,6 +372,68 @@ def test_flask_route_without_methods_reports_get(run_script, tmp_path):
     assert [(h["method"], h["path"]) for h in data["surface"]["http"]] == [
         ("GET", "/health")
     ], f"got {data['surface']['http']}"
+
+
+def test_a_route_whose_methods_the_join_never_read_is_not_a_get(run_script, tmp_path):
+    """FR-019, AC-024, OT-023: absent and unread are the same text in the join.
+
+    The join reads the ``@`` line and six lines after it. A decorator longer
+    than that is not exotic -- ``/exports`` below carries the keyword arguments
+    Flask actually takes, one to a line, the way a formatter writes them -- and
+    its ``methods=["POST"]`` sits one line past where the read stops. What
+    reached the verb decision was a text with no ``methods=`` in it, which is
+    also what a route that declares none looks like, and the GET default fired
+    on both alike. The published entry was ``GET /exports``: a verb that
+    endpoint answers 405 to, in the one detail a reader copies out of the JSON.
+
+    Nothing is published for it now. Not ROUTE either -- FR-019 exists to stop
+    that word reaching a reader, and a route whose verbs were never read is the
+    missing endpoint the file prefers to the phantom one.
+
+    ``/health`` in the same tree is the control, and it is the case the cap is
+    not in the way of: three lines, no ``methods=``, whole call read, so the
+    Flask default is a real declaration there and stays GET.
+    """
+    root = python_project(
+        tmp_path,
+        "flaskcap",
+        "from flask import Flask\n"  # 1
+        "\n"  # 2
+        "app = Flask(__name__)\n"  # 3
+        "\n"  # 4
+        "\n"  # 5
+        "@app.route(\n"  # 6
+        '    "/exports",\n'  # 7
+        '    endpoint="exports",\n'  # 8
+        "    strict_slashes=False,\n"  # 9
+        "    merge_slashes=True,\n"  # 10
+        "    provide_automatic_options=True,\n"  # 11
+        '    defaults={"kind": "csv"},\n'  # 12
+        '    methods=["POST"],\n'  # 13
+        ")\n"  # 14
+        "def exports():\n"  # 15
+        "    return {}\n"  # 16
+        "\n"  # 17
+        "\n"  # 18
+        "@app.route(\n"  # 19
+        '    "/health",\n'  # 20
+        ")\n"  # 21
+        "def health():\n"  # 22
+        "    return {}\n",  # 23
+    )
+
+    hits = survey(run_script, root)["surface"]["http"]
+
+    assert [h for h in hits if h["path"] == "/exports"] == [], (
+        "This route serves POST alone, and the declaration saying so sits past "
+        "the line the join stops on. A verb guessed from a text that was cut "
+        f"before it is a phantom endpoint, not a finding; got {hits}"
+    )
+    assert [(h["method"], h["path"]) for h in hits] == [("GET", "/health")], (
+        "The three-line route is the control: its whole call was read, so an "
+        "absent methods= there really is Flask's GET default and has to stay "
+        f"published; got {hits}"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -754,8 +831,8 @@ def test_a_positional_description_is_not_a_flag_spec(run_script, tmp_path):
     """FR-012, AC-013, GI-002: the description is a positional argument too.
 
     The test above holds because argparse and click spell a flag's prose as
-    ``help=``, and the scan stops at the first keyword argument. commander and
-    yargs do not spell it that way: ``.option(flags, description)`` puts the
+    ``help=``, and the scan stops at the first keyword argument. commander does
+    not spell it that way: ``.option(flags, description)`` puts the
     sentence in the second *positional* argument, so no ``name=`` ends the scan
     and the closing paren is the only stop. Every literal in the call was read,
     and ``.option("--keep", "-x is the short form of --purge")`` published
@@ -800,10 +877,13 @@ def test_a_commander_option_string_still_declares_its_spellings(run_script, tmp_
     not end it here: this literal *is* a declaration, and both flags in it are
     flags the product has.
 
-    This is the boundary on the test above rather than the thing that goes red.
-    It is green at 66dab76 and stays green, which is what makes it the control:
-    the placeholder was already dropped by the token filter there, and the fix
-    beside it must not take the two spellings with it.
+    This is the boundary on the test above rather than the thing that goes red
+    there. It is green at 66dab76 and stays green, which is what makes it the
+    control: the placeholder was already dropped by the token filter there, and
+    the fix beside it must not take the two spellings with it. Green from
+    d7eb572, where the flag scan first exists; red at cfafe8e and at every
+    revision before that, which is the measurement the module docstring's table
+    filed as a guard without taking.
     """
     root = python_project(tmp_path, "commanderspec", "# no CLI in this file\n")
     root.joinpath("src", "cli.js").write_text(

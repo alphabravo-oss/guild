@@ -2,6 +2,13 @@
 """Build an llms.txt from the docs tree, to the llmstxt.org format.
 
 Prints to stdout. Never invents a page: every entry is a file that exists on disk.
+
+The written file is what exit 0 means here, and there are two ways to return exit 2 instead:
+no docs directory at the resolved path, and a tree holding no page to publish. This script
+reports no findings and has no gate to fail, so it signals nothing with the code between
+them. The second exit 2 covers a tree of nothing but stubs as well as an empty one -- an
+unwritten page is dropped before the count is taken, and a header with no pages under it is a
+file claiming a product has no documentation.
 """
 import json, os, re, subprocess, sys
 # tomllib is standard library from Python 3.11, which is this plugin's floor. Every interpreter

@@ -45,6 +45,18 @@ test_record_without_a_commit_writes_a_null_head     FR-009 OT-010  cfafe8e  gitH
 test_null_head_in_the_manifest_reports_no_git       FR-005 FR-009  9859317  status clean, exit 0
 ==================================================  =============  =======  =======================
 
+Two of those tests pin a second fix each, and the table above carries one row
+per test rather than one per fix. Both were RED again at a2b1e1d, where the
+notes counted a population wider than the comparison loop had read:
+``test_no_git_note_does_not_claim_digests_compared`` for the not-checked
+sentence "every resolvable anchor ... was compared", said over a tree that had
+grown a citation the record never held (ST-004, ST-005, FR-004), and
+``test_partly_hashed_manifest_is_not_reported_clean`` for "1 of 3 resolvable
+anchors" where 1 of the 2 the record held is what was measured (CT-001,
+FR-004). A citation added after the record cannot be missing a digest the
+record never took, so counting it in either number states the gap over a set
+nothing compared.
+
 The exit map under test is FR-006: clean and unrelated_changes 0, drift 1, and
 no_docs / no_manifest / no_anchors / no_git / head_missing / hashes_partial 2.
 
@@ -76,6 +88,10 @@ MANIFEST = "docs/.webster.json"
 # src/cli/main.py:1 is `import argparse`. The .md / .mdx pair below cites it, and the committed
 # fixture cites it from nowhere else, so a page reaching it is the page under test.
 MDX_ANCHOR = "src/cli/main.py:1"
+# A third resolvable line, cited by nothing in the committed fixture, for the tests that need a
+# citation the pages grew AFTER the record: it resolves like any other anchor, and the record
+# holds neither an entry nor a digest for it.
+GROWN_ANCHOR = "src/cli/main.py:5"
 # Written by the latin-1 test and named in that repository's .gitignore, so git has nothing to
 # say about it and the per-anchor hash is the only thing left that can notice an edit.
 LATIN1_FILE = "src/app/legacy.py"
@@ -881,6 +897,16 @@ def test_no_git_note_does_not_claim_digests_compared(run_script, fixture_repo):
     rather than that it is worded any particular way. Both runs report no_git:
     that is the branch with no ``re-record`` of its own, so the digest sentence
     is the only thing in the note that can name the line half at all.
+
+    RED again at a2b1e1d, in the third run below: the sentence the first run
+    prints said "every resolvable anchor carried a recorded digest and was
+    compared", and a citation the pages grow after the record is resolvable and
+    is never compared — the loop passes over an anchor the record did not hold
+    without a digest and without counting it. A tree that had grown one was
+    therefore told, under a status that means half the run did not happen, that
+    the half that did had covered a set wider than it read. The third run is
+    the same scenario with one such citation, and the same difference property:
+    the two runs may not print the same digest sentence.
     """
     record(run_script, fixture_repo)
     with_hashes = manifest_of(fixture_repo)
@@ -935,6 +961,49 @@ def test_no_git_note_does_not_claim_digests_compared(run_script, fixture_repo):
         f"{outcome(stripped)}"
     )
 
+    # A third run of the same scenario, differing from the first in one citation the page grew
+    # after the record. It resolves, so the sentence the first run printed quantified over it;
+    # the comparison loop never reached it, because the record holds no digest for an anchor it
+    # did not have. What is pinned is again a difference rather than a wording: a run that
+    # compared every anchor its tree has may not print the sentence a run prints when the tree
+    # carries one it never recorded, or the reader of a not-checked run is told the line half
+    # covered a wider set than it read.
+    write_manifest(fixture_repo, with_hashes)
+    faq = fixture_repo / "docs/faq.md"
+    faq.write_text(
+        faq.read_text(encoding="utf-8")
+        + f"\nThe command line parses first. <!-- {MDX_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+
+    grown = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    grown_data = parsed(grown)
+
+    assert grown_data["status"] == "no_git" and grown_data["hashes"] == "checked", (
+        f"this run needs the same not-checked status with every recorded digest compared; got "
+        f"{grown_data['status']!r} / {grown_data['hashes']!r}\n{outcome(grown)}"
+    )
+    assert grown_data["docs_edited_since_record"], (
+        f"this run needs the added citation to register as a docs edit, which is the field the "
+        f"note points the reader at\n{outcome(grown)}"
+    )
+    grown_digest = sorted(c for c in grown_data["note"].split("; ") if "digest" in c)
+    hashed_digest = sorted(c for c in hashed_clauses if "digest" in c)
+    assert grown_digest != hashed_digest, (
+        f"expected the digest sentence of a run whose tree grew a citation to differ from the "
+        f"run that compared every anchor it had; both say {grown_digest!r}\n{outcome(grown)}"
+    )
+    grown_clause = " ".join(grown_digest)
+    assert re.search(r"\b1 citation", grown_clause), (
+        f"expected the note to say how many citations the record did not hold, one being what "
+        f"this run added; got {grown_clause!r}\n{outcome(grown)}"
+    )
+    assert "docs_edited_since_record" in grown_clause, (
+        f"expected the note to send the reader to the field that reports a citation the pages "
+        f"grew, rather than leaving it as an anchor nothing measured; got {grown_clause!r}\n"
+        f"{outcome(grown)}"
+    )
+
 
 def test_partly_hashed_manifest_is_not_reported_clean(run_script, fixture_repo):
     """FR-003 / FR-005 / FR-007 / AC-006 — `checked` has to mean every anchor.
@@ -954,6 +1023,13 @@ def test_partly_hashed_manifest_is_not_reported_clean(run_script, fixture_repo):
     A manifest with no lineHashes key at all is a different state and keeps reporting
     not_recorded with no drift (FR-004 / AC-006);
     ``test_manifest_without_line_hashes_is_not_recorded`` is the control for it.
+
+    RED again at a2b1e1d, in the third stage below: the note printed the count of anchors
+    carrying no digest "of len(resolvable)", and a citation the pages grew after the record is
+    resolvable while the numerator can never contain it — there is no record entry for it to be
+    missing a digest from. One digest removed from a record of two, in a tree that had since
+    grown a third citation, read as "1 of 3 resolvable anchors" where 1 of 2 is the whole of
+    what was measured, which understates the gap by whatever the pages added in between.
     """
     faq = fixture_repo / "docs/faq.md"
     faq.write_text(
@@ -967,6 +1043,7 @@ def test_partly_hashed_manifest_is_not_reported_clean(run_script, fixture_repo):
         f"this test needs two hashed anchors to remove one of; got {manifest['lineHashes']!r}"
     )
 
+    mdx_digest = manifest["lineHashes"][MDX_ANCHOR]
     del manifest["lineHashes"][ANCHOR]
     write_manifest(fixture_repo, manifest)
 
@@ -992,6 +1069,18 @@ def test_partly_hashed_manifest_is_not_reported_clean(run_script, fixture_repo):
     assert data["note"], (
         f"expected a note saying which half was not measured\n{outcome(result)}"
     )
+    # The control for the two numbers the run below moves apart: here every anchor that resolves
+    # is one the record held, so the two readings of the denominator agree at 2 and only the
+    # third stage can tell them apart.
+    partial_clause = [c for c in data["note"].split("; ") if "digest" in c]
+    assert len(partial_clause) == 1, (
+        f"expected exactly one clause of the note to be about digests; got {partial_clause!r}\n"
+        f"{outcome(result)}"
+    )
+    assert re.search(r"\b1 of (?:the )?2\b", partial_clause[0]), (
+        f"expected the note to state the gap as 1 of the 2 anchors the record held; got "
+        f"{partial_clause[0]!r}\n{outcome(result)}"
+    )
 
     # FR-007: now the anchor that WAS hashed stops matching. The finding has to win.
     manifest["lineHashes"][MDX_ANCHOR] = "0" * 16
@@ -1013,6 +1102,47 @@ def test_partly_hashed_manifest_is_not_reported_clean(run_script, fixture_repo):
     assert data["hashes"] == "partial" and data["unhashed_anchors"] == [ANCHOR], (
         "expected the partial coverage still reported alongside the finding; got "
         f"{data['hashes']!r} / {data['unhashed_anchors']!r}\n{outcome(result)}"
+    )
+
+    # The third stage: the mismatch put back to what the file says, and one citation the page
+    # grew after the record. The anchor that lost its digest is one of the two the record held,
+    # and the third was never in the record to be missing one — so the denominator is 2 whatever
+    # the tree has grown, and a note that counts 3 states the gap over a set nothing compared.
+    manifest["lineHashes"][MDX_ANCHOR] = mdx_digest
+    write_manifest(fixture_repo, manifest)
+    index = fixture_repo / "docs/index.md"
+    index.write_text(
+        index.read_text(encoding="utf-8")
+        + f"\nThe parser is built here. <!-- {GROWN_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["anchors"] == 3 and data["broken_anchors"] == [], (
+        f"this stage needs three anchors that all resolve; got {data['anchors']} with "
+        f"{data['broken_anchors']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "hashes_partial" and data["unhashed_anchors"] == [ANCHOR], (
+        f"expected the grown citation to leave the not-checked status where it was, on the one "
+        f"anchor the record held no digest for; got {data['status']!r} / "
+        f"{data['unhashed_anchors']!r}\n{outcome(result)}"
+    )
+    grown_clause = [c for c in data["note"].split("; ") if "digest" in c]
+    assert len(grown_clause) == 1, (
+        f"expected exactly one clause of the note to be about digests; got {grown_clause!r}\n"
+        f"{outcome(result)}"
+    )
+    assert re.search(r"\b1 of (?:the )?2\b", grown_clause[0]), (
+        f"expected the denominator to stay at the 2 anchors the record held; got "
+        f"{grown_clause[0]!r}\n{outcome(result)}"
+    )
+    assert not re.search(r"\bof (?:the )?3\b", grown_clause[0]), (
+        f"expected the citation the page grew after the record to be counted under its own "
+        f"name rather than in the denominator: it carries no digest because the record never "
+        f"had one to take, which is not the same as a digest that was not compared; got "
+        f"{grown_clause[0]!r}\n{outcome(result)}"
     )
 
 

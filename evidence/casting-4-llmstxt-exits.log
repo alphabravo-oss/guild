@@ -1,0 +1,20 @@
+# evidence-cmd: d=$(mktemp -d); mkdir -p "$d/nodocs" "$d/nopages/docs" "$d/allstubs/docs" "$d/good/docs"; printf "just a note, not a page\n" > "$d/nopages/docs/notes.txt"; printf -- "---\ntitle: A\n---\n\nwebster: not written yet\n" > "$d/allstubs/docs/index.md"; printf -- "---\ntitle: B\n---\n\nThe first prose line.\n" > "$d/good/docs/index.md"; for c in nodocs nopages allstubs good; do WEBSTER_ROOT="$d/$c" python3 plugins/webster/scripts/llmstxt.py > /dev/null 2>&1; echo "$c exit=$?"; done; echo "--- codes the docstring publishes ---"; python3 -c 'import ast,re,sys; d=ast.get_docstring(ast.parse(open("plugins/webster/scripts/llmstxt.py").read())); print(" ".join(sorted(set(re.findall(r"\bexits?\s+(\d)\b", d)))))'; echo "--- codes main() returns ---"; python3 -c 'import ast; t=ast.parse(open("plugins/webster/scripts/llmstxt.py").read()); m=[n for n in t.body if getattr(n,"name",None)=="main"][0]; print(" ".join(sorted({str(n.value.value) for n in ast.walk(m) if isinstance(n,ast.Return) and isinstance(n.value,ast.Constant)})))'; rm -rf "$d"
+# evidence-for: US-007, FR-038, AC-042
+# D-082 (casting 4's half). llmstxt.py published no exit contract while having one. The
+# four runs are the four ways out: no docs directory, a tree with no markdown page, a tree
+# whose every page carries the stub marker -- dropped before the count is taken, so it
+# reaches the same refusal as the empty one -- and a tree with a real page.
+#
+# The last two blocks are the docstring's claim and the code's returns, read separately and
+# compared. They now name the same set. The README row for this script (casting 6) has a
+# source to be checked against; until that row is written, test_readme.py's
+# test_the_script_table_publishes_each_scripts_own_exit_set is red on this pair by design.
+
+nodocs exit=2
+nopages exit=2
+allstubs exit=2
+good exit=0
+--- codes the docstring publishes ---
+0 2
+--- codes main() returns ---
+0 2

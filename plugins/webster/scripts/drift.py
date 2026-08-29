@@ -7,13 +7,20 @@
 
 Statuses and exit codes for check: clean and unrelated_changes exit 0, drift exits 1, and
 no_docs, no_manifest, no_anchors, no_git, head_missing and hashes_partial exit 2. An anchor
-that no longer resolves is drift, and drift is a P0. `clean` is reserved for a set where
+that no longer resolves is drift, and drift is a P0, on any run that had a set to check.
+Where the set could not be checked the status says that first: no_anchors, no_git and
+head_missing take the exit code ahead of drift, because "nothing here could be checked" is a
+different claim from "this was checked and it is wrong". A broken anchor found under one of
+those is still listed in broken_anchors beside the not-checked status rather than dropped,
+because the anchors half runs whether or not git can answer. `clean` is reserved for a set where
 nothing changed at all: code that changed but that no page cites is `unrelated_changes`,
 because a gate that fails on ordinary development teaches the reader to stop reading the gate.
 `hashes_partial` is the same refusal for the line half: an anchor the record itself held that
 resolves but carries no recorded digest was never compared, and a run holding one has not
-earned exit 0. A citation a page grew after the record is not one of those — there was nothing
-to take a digest of — and it is reported as the docs edit it is.
+earned exit 0. It is the one not-checked status that sits BELOW drift, being the narrower
+claim: some anchors were measured and some were not, so a finding the run did make is still
+reported as a finding. A citation a page grew after the record is not one of those — there was
+nothing to take a digest of — and it is reported as the docs edit it is.
 
 The docs directory is the second argument, or WEBSTER_DOCS, or "docs". It was env-var only
 until a real audit pointed the command at a repo whose docs live in `documentation/`, got
@@ -597,7 +604,7 @@ def main():
     # rather than unhashed, and counting it here would report one failure as two.
     broken_set = {b["anchor"] for b in broken}
     resolvable = [a for a in sorted(anchors) if a not in broken_set]
-    mismatched, unhashed = [], []
+    mismatched, unhashed, added = [], [], []
     if recorded_hashes is None:
         # FR-004 / AC-006: a manifest written before lineHashes existed. No comparison is
         # possible, none is invented, and the absence is never itself a reason to report drift.
@@ -610,6 +617,15 @@ def main():
                 # never compared against anything and still cannot report a pass.
                 if recorded_set is None or a in recorded_set:
                     unhashed.append(a)
+                else:
+                    # A citation the pages grew after the record. Nothing was skipped here —
+                    # there was no line to take a digest of when record ran — but it is counted
+                    # rather than dropped, because the notes below carry numbers and a note that
+                    # cannot see this population states them over the wrong one: the anchor sits
+                    # in `resolvable` while nothing compared it, so a count of unhashed anchors
+                    # "of len(resolvable)" understated the gap, and a sentence quantified over
+                    # every resolvable anchor claimed a comparison this loop had not made.
+                    added.append(a)
                 continue
             now = line_hash(a)
             if now is not None and now != want:
@@ -625,6 +641,12 @@ def main():
         # with the code that means it does. `checked` therefore means every anchor the record
         # held was compared, and a citation the pages grew afterwards is not one of those.
         hashes = "partial" if unhashed else "checked"
+
+    # The loop split `resolvable` three ways: compared, unhashed, and the citations the pages
+    # grew after the record. The first two are the anchors the record held and this run had
+    # something to say about, so they are the population the digest notes below count over; the
+    # third is counted separately, under its own name, and never folded into a total with them.
+    recorded_resolvable = len(resolvable) - len(added)
 
     # a page is suspect when code it cites appears in the changed set
     suspect = {}
@@ -685,18 +707,44 @@ def main():
     # run that answers, the `hashes` field says the same thing without a sentence, and the note
     # stays what it was.
     if unhashed:
-        notes.append(f"no digest was recorded for {len(unhashed)} of {len(resolvable)} "
-                     "resolvable anchors, so the lines listed under unhashed_anchors were "
-                     "never compared against what they said at record; re-record")
+        # Numerator and denominator over one population. The count of anchors the record held
+        # no digest for was printed "of len(resolvable)", and len(resolvable) also holds the
+        # citations the pages grew afterwards — which the numerator cannot contain, there being
+        # no record entry to be missing a digest from. A manifest missing one digest of the two
+        # it held, in a tree that had since grown a third citation, read as "1 of 3 resolvable
+        # anchors" where 1 of 2 is what was measured: a gap understated by whatever the pages
+        # added in between, in the one note whose whole job is to state its size.
+        grown = ((f", and {len(added)} further anchor(s) resolve here that the record does not "
+                  "hold at all — the pages grew those citations after it, so there was no line "
+                  "to take a digest of when record ran") if added else "")
+        notes.append(f"no digest was recorded for {len(unhashed)} of the {recorded_resolvable} "
+                     "anchors that resolve here and this record should hold a digest for, so "
+                     "the lines listed under unhashed_anchors were never compared against what "
+                     f"they said at record{grown}; re-record")
     elif not_checked and hashes == "not_recorded":
         notes.append("this manifest holds no line digests at all, so no cited line was compared "
                      "against what it said at record either; re-record writes the map")
     elif not_checked and resolvable:
-        # No count here, where the two notes above carry one. `checked` is a claim about every
-        # resolvable anchor rather than about a number of them, and the count that would go in
-        # this sentence reads as a finding beside two sentences where it is one.
-        notes.append("every resolvable anchor carried a recorded digest and was compared "
-                     "against the line as it stands now")
+        # Quantified over the anchors the comparison loop actually reached, which is not every
+        # anchor that resolves. This sentence used to say "every resolvable anchor carried a
+        # recorded digest and was compared", and a citation added after the record is resolvable
+        # and was never compared — the loop passes over it without a digest and without counting
+        # it — so on a tree that had grown one, a not-checked run told the reader the line half
+        # had covered a set wider than the one it read. A broken anchor the record DID hold a
+        # digest for is outside this sentence too, for the same reason: it is in broken_anchors,
+        # not in anything that was compared.
+        grown = ""
+        if added:
+            # docs_edited_since_record is where a citation the pages grew is reported, and it is
+            # named only where this run actually observed it: an anchors map hand-edited out of
+            # the manifest reaches this same count with the docs tree untouched, and pointing at
+            # a false field would be the same overstatement one sentence later.
+            grown = (f", and {len(added)} citation(s) here are not in the record at all, so "
+                     "there was no digest to compare them against"
+                     + (" — the docs edit docs_edited_since_record reports" if docs_edited
+                        else ""))
+        notes.append("every anchor that resolves here and that the record held a digest for "
+                     f"was compared against the line as it stands now{grown}")
     if status == "unrelated_changes":
         notes.append(f"{code_files_changed} code file(s) changed since the record and no page "
                      "cites any of them" if code_files_changed else

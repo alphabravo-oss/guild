@@ -1,0 +1,15 @@
+# evidence-cmd: d=$(mktemp -d); mkdir -p "$d/src"; printf "[project]\nname = \"flagdemo\"\n" > "$d/pyproject.toml"; printf "import argparse, optparse, click\n\np = argparse.ArgumentParser()\np.add_argument(\"--verbose\", action=\"store_true\", help=\"argparse spells it help=\")\n\no = optparse.OptionParser()\no.add_option(\"-q\", \"--quiet\", help=\"optparse takes the spellings first too\")\n\n\n@click.option(\"--count\", default=1, help=\"click puts them first as well\")\ndef run(count):\n    return count\n" > "$d/src/a.py"; printf "program.option(\"-o, --out <path>\", \"commander puts the sentence second\");\nyargs.option(\"out\", { alias: \"o\", describe: \"yargs names the flag without dashes\" });\n" > "$d/src/cli.js"; python3 plugins/webster/scripts/survey.py "$d" | python3 -c 'import json,sys; print("\n".join(sorted(c["name"] for c in json.load(sys.stdin)["user_surface"]["commands"])))'; rm -rf "$d"
+# evidence-for: US-006, FR-012
+# D-077. The CLI flag scan's comment named click, commander and yargs as spelling
+# `.option(` the same way, and named commander and yargs as putting the description in the
+# second positional argument. One tree, five declarations, one per library the comment names
+# plus optparse. Every flag below comes from argparse, optparse, click or commander. yargs
+# contributes neither `out` nor `o`: its key carries no dash, CLI_FLAG_TOKEN takes only a
+# dashed token, and the call is read and dropped. The comment now says that.
+
+--count
+--out
+--quiet
+--verbose
+-o
+-q

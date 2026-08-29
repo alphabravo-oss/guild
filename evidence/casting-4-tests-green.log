@@ -1,0 +1,16 @@
+# evidence-cmd: cd plugins/webster && uvx pytest tests/test_survey.py tests/test_llmstxt.py -q -p no:cacheprovider
+# evidence-for: US-006, US-007, AC-022, AC-023, AC-024, AC-025, AC-026, AC-027, AC-028, AC-029, AC-030, AC-031, AC-039, FR-018, FR-019, FR-020, FR-021, FR-022, FR-023, FR-031, FR-032, FR-039, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+# The two modules this casting owns, green at its commit. Every acceptance criterion and
+# functional requirement above is pinned by a named test in one of them; the red-first table
+# in each module docstring records the revision each of those tests fails at, and
+# evidence/casting-4-red-first-table.log is the run that table was written from.
+#
+# The other six modules are not run here. Two checks in tests/test_readme.py are red at this
+# commit by design and belong to casting 6: the suite count moved by the one test this
+# casting added, and the README's llmstxt.py row does not yet publish the exit set that
+# script's docstring now states.
+
+.......................................                                  [100%]
+39 passed in 1.74s

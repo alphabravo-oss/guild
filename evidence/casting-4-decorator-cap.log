@@ -1,0 +1,20 @@
+# evidence-cmd: d=$(mktemp -d); mkdir -p "$d/src"; printf "[project]\nname = \"capdemo\"\n" > "$d/pyproject.toml"; printf "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\n    \"/exports\",\n    endpoint=\"exports\",\n    strict_slashes=False,\n    merge_slashes=True,\n    provide_automatic_options=True,\n    defaults={\"kind\": \"csv\"},\n    methods=[\"POST\"],\n)\ndef exports():\n    return {}\n\n\n@app.route(\n    \"/health\",\n)\ndef health():\n    return {}\n" > "$d/src/api.py"; for rev in cfafe8e 3aa48f7 WORKING; do w=$(mktemp -d); if [ "$rev" = WORKING ]; then cp plugins/webster/scripts/survey.py "$w/survey.py"; else git show "$rev:plugins/webster/scripts/survey.py" > "$w/survey.py"; fi; echo "--- $rev ---"; python3 "$w/survey.py" "$d" | python3 -c 'import json,sys; hits=json.load(sys.stdin)["surface"]["http"]; print("\n".join(h["method"]+" "+h["path"]+" "+h["anchor"] for h in hits) or "(no http surface)")'; rm -rf "$w"; done; rm -rf "$d"
+# evidence-for: US-006, FR-019, AC-023, AC-024
+# evidence-timeout: 180
+# D-076. One tree, two Flask routes. /exports serves POST alone and says so on the eighth
+# line of its decorator, one past where the join stops; /health is the three-line control
+# whose whole call is read and whose absent methods= really is Flask's GET default.
+#
+# cfafe8e is the pre-change script: no decorator joining, so neither route is seen.
+# 3aa48f7 is the revision this defect was found at: /exports is published as GET, a verb
+# that endpoint answers 405 to. WORKING is this casting's fix: the GET default now fires
+# only where the whole call was read, so /exports is left out rather than guessed at and
+# /health is unchanged.
+
+--- cfafe8e ---
+(no http surface)
+--- 3aa48f7 ---
+GET /exports src/api.py:6
+GET /health src/api.py:19
+--- WORKING ---
+GET /health src/api.py:19
