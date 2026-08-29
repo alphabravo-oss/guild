@@ -1,0 +1,10 @@
+# evidence-cmd: sh -c 'set -e; D=$(mktemp -d); cp -R plugins/webster "$D/webster"; git show 339a80d:plugins/webster/scripts/drift.py > "$D/webster/scripts/drift.py"; cd "$D/webster"; uvx pytest tests/test_drift.py -q -k "cited_file_outside_the_docs_root or cited_file_inside_the_docs_tree or no_manifest_envelope_lists_broken_anchors" 2>&1 | tail -5'
+# evidence-for: US-010, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+=========================== short test summary info ============================
+FAILED tests/test_drift.py::test_cited_file_outside_the_docs_root_is_drift - ...
+FAILED tests/test_drift.py::test_cited_file_inside_the_docs_tree_is_drift - A...
+FAILED tests/test_drift.py::test_no_manifest_envelope_lists_broken_anchors - ...
+3 failed, 29 deselected in 0.97s

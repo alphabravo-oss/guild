@@ -1,0 +1,14 @@
+# evidence-cmd: sh -c 'set -e; D=$(mktemp -d); GIT_AUTHOR_NAME=t; GIT_AUTHOR_EMAIL=t@t; GIT_COMMITTER_NAME=t; GIT_COMMITTER_EMAIL=t@t; GIT_CONFIG_GLOBAL=/dev/null; GIT_CONFIG_NOSYSTEM=1; export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM; S=$PWD/plugins/webster/scripts/drift.py; F=$PWD/plugins/webster/tests/fixtures/repo; mkdir -p "$D/repo/docs/examples"; cp -R "$F/." "$D/repo/"; printf "import sys\n\nprint(\"hello\", file=sys.stdout)\n" > "$D/repo/docs/examples/sample.py"; printf -- "---\ntitle: \"Running the sample\"\ndoc_type: explanation\naudience: user\n---\n\n# Running the sample\n\nThe sample runs on its own. <!-- docs/examples/sample.py:1 -->\n" > "$D/repo/docs/examples/running-the-sample.md"; cd "$D/repo"; git -c init.defaultBranch=main init -q .; git add -A; git commit -q -m base; echo "== record =="; python3 "$S" record docs | python3 -c "import json,sys; d=json.load(sys.stdin); print(\"anchors\", d[\"anchors\"], \"lineHashes\", d[\"lineHashes\"])"; printf "print(\"and again\")\n" >> docs/examples/sample.py; git add -- docs/examples/sample.py; git commit -q -m edit; echo "== git names the change =="; git diff --name-only --no-relative HEAD~1..HEAD; echo "== check =="; python3 "$S" check docs | python3 -c "import json,sys; d=json.load(sys.stdin); print(\"status\", d[\"status\"]); print(\"suspect_pages\", json.dumps(d[\"suspect_pages\"], sort_keys=True)); print(\"code_files_changed\", d[\"code_files_changed\"]); print(\"docs_edited_since_record\", d[\"docs_edited_since_record\"]); print(\"hash_mismatches\", d[\"hash_mismatches\"])"; E=0; python3 "$S" check docs >/dev/null || E=$?; echo "exit $E"'
+# evidence-for: US-001, FR-005
+
+== record ==
+anchors 2 lineHashes 2
+== git names the change ==
+docs/examples/sample.py
+== check ==
+status drift
+suspect_pages {"docs/examples/running-the-sample.md": ["docs/examples/sample.py:1"]}
+code_files_changed 0
+docs_edited_since_record False
+hash_mismatches []
+exit 1

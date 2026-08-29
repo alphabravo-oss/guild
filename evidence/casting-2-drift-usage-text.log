@@ -1,0 +1,33 @@
+# evidence-cmd: python3 -c 'import ast; d=ast.get_docstring(ast.parse(open("plugins/webster/scripts/drift.py", encoding="utf-8").read())); print(d.split("\n\nThe docs directory")[0])'
+# evidence-for: FR-006, FR-034
+
+Drift detection for documentation, on the openwiki model.
+
+  record [docs]   store HEAD, a hash of the docs tree, every anchor the docs cite, and a hash
+                  of each cited line that resolves
+  check  [docs]   report what changed since the last record, and which anchors no longer resolve
+
+Statuses and exit codes for check: clean and unrelated_changes exit 0, drift exits 1, and
+no_docs, no_manifest, no_anchors, no_git, head_missing and hashes_partial exit 2. An anchor
+that no longer resolves is drift, and drift is a P0, on any run that had a set to check.
+Where the set could not be checked the status says that first. Five statuses take the exit
+code ahead of drift, not the three this paragraph used to name: no_docs, no_manifest,
+no_anchors, no_git and head_missing. Both of the two it left out are reachable with a broken
+anchor in hand — a tree whose manifest is missing or unreadable resolves every anchor it has,
+lists the broken ones, and still reports no_manifest rather than drift — so the run this
+paragraph described least well was the run that had a finding in it. The reason is one reason
+for all five: "nothing here could be checked" is a different claim from "this was checked and
+it is wrong". hashes_partial is the one exit-2 status that sits below drift instead, for the
+reason its own paragraph below gives. A broken anchor found under the four of the five that
+reach the anchors half — no_manifest, no_anchors, no_git and head_missing — is still listed in
+broken_anchors beside the not-checked status rather than dropped, because the anchors half
+runs whether or not git can answer. no_docs is the fifth, and it returns before a page is
+read, so its envelope carries no anchor field at all. `clean` is reserved for a set where
+nothing changed at all: code that changed but that no page cites is `unrelated_changes`,
+because a gate that fails on ordinary development teaches the reader to stop reading the gate.
+`hashes_partial` is the same refusal for the line half: an anchor the record itself held that
+resolves but carries no recorded digest was never compared, and a run holding one has not
+earned exit 0. It is the one not-checked status that sits BELOW drift, being the narrower
+claim: some anchors were measured and some were not, so a finding the run did make is still
+reported as a finding. A citation a page grew after the record is not one of those — there was
+nothing to take a digest of — and it is reported as the docs edit it is.

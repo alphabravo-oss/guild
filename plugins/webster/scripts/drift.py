@@ -2,17 +2,25 @@
 """Drift detection for documentation, on the openwiki model.
 
   record [docs]   store HEAD, a hash of the docs tree, every anchor the docs cite, and a hash
-                  of each cited line
+                  of each cited line that resolves
   check  [docs]   report what changed since the last record, and which anchors no longer resolve
 
 Statuses and exit codes for check: clean and unrelated_changes exit 0, drift exits 1, and
 no_docs, no_manifest, no_anchors, no_git, head_missing and hashes_partial exit 2. An anchor
 that no longer resolves is drift, and drift is a P0, on any run that had a set to check.
-Where the set could not be checked the status says that first: no_anchors, no_git and
-head_missing take the exit code ahead of drift, because "nothing here could be checked" is a
-different claim from "this was checked and it is wrong". A broken anchor found under one of
-those is still listed in broken_anchors beside the not-checked status rather than dropped,
-because the anchors half runs whether or not git can answer. `clean` is reserved for a set where
+Where the set could not be checked the status says that first. Five statuses take the exit
+code ahead of drift, not the three this paragraph used to name: no_docs, no_manifest,
+no_anchors, no_git and head_missing. Both of the two it left out are reachable with a broken
+anchor in hand — a tree whose manifest is missing or unreadable resolves every anchor it has,
+lists the broken ones, and still reports no_manifest rather than drift — so the run this
+paragraph described least well was the run that had a finding in it. The reason is one reason
+for all five: "nothing here could be checked" is a different claim from "this was checked and
+it is wrong". hashes_partial is the one exit-2 status that sits below drift instead, for the
+reason its own paragraph below gives. A broken anchor found under the four of the five that
+reach the anchors half — no_manifest, no_anchors, no_git and head_missing — is still listed in
+broken_anchors beside the not-checked status rather than dropped, because the anchors half
+runs whether or not git can answer. no_docs is the fifth, and it returns before a page is
+read, so its envelope carries no anchor field at all. `clean` is reserved for a set where
 nothing changed at all: code that changed but that no page cites is `unrelated_changes`,
 because a gate that fails on ordinary development teaches the reader to stop reading the gate.
 `hashes_partial` is the same refusal for the line half: an anchor the record itself held that
@@ -193,14 +201,58 @@ def repo_prefix():
     return git("rev-parse", "--show-prefix").strip()
 
 
+def repo_root_of(prefix):
+    """The repository root, as an absolute path, derived from the prefix git printed.
+
+    Derived from ROOT and the prefix rather than read back from `rev-parse --show-toplevel`,
+    because that answer has every symlink resolved while ROOT is os.path.abspath of the
+    directory the caller named and keeps its own. On a macOS default, where /tmp is a link to
+    /private/tmp, the two spellings of one directory never compare equal, and comparing them
+    would put every path in the repository outside it. Counting the prefix's segments does the
+    same arithmetic without leaving the caller's namespace.
+    """
+    if not prefix:
+        return ROOT
+    return os.path.abspath(
+        os.path.join(ROOT, *[os.pardir] * len(prefix.strip("/").split("/"))))
+
+
+def in_repo_space(target, repo_root):
+    """One anchor's target as git names it: relative to the repository root.
+
+    Anchors are written relative to WEBSTER_ROOT and git names every path relative to the
+    repository root, so comparing the two spellings directly is right only where those are the
+    same directory. normpath collapses the `../` of a citation that reaches out of ROOT, and
+    join lets an absolute citation replace ROOT outright, so a file cited either way arrives
+    here as the one path git prints for it.
+
+    A target outside the repository comes back with a leading `../`, which no path in
+    `git status` or `git diff` output can equal, so it matches nothing and is named nowhere.
+    """
+    return os.path.relpath(os.path.normpath(os.path.join(ROOT, target)), repo_root)
+
+
 def under_root(paths, prefix):
     """The paths git named, restated relative to ROOT, with everything outside ROOT dropped.
 
-    A path in the repository but outside ROOT can be neither drift nor docs: every anchor
-    resolves through os.path.join(ROOT, target), so no anchor can name it, and doc_files() only
-    walks DOCS, so no page can be it. Counting it as code churn would report a sibling
-    package's ordinary commit as a change in this docs set's scope; dropping it says the thing
-    that is true, which is that nothing this set describes moved.
+    This narrowing is for the code-churn COUNT and for nothing else. code_files_changed is a
+    number about this docs set's own scope, and a sibling package's ordinary commit is not a
+    change in it, so dropping those paths is what keeps the count from reporting the
+    monorepo's traffic as this set's.
+
+    It must not be the oracle that decides which pages are suspect, and it was. The docstring
+    that justified that read "every anchor resolves through os.path.join(ROOT, target), so no
+    anchor can name it, and doc_files() only walks DOCS, so no page can be it", and both
+    halves are false. os.path.join does not confine what it returns: join(ROOT,
+    "../shared/lib.py") walks out of ROOT and join(ROOT, "/outside/thing.py") discards ROOT
+    altogether, and DOCS is itself allowed to be an absolute path outside ROOT. A page citing
+    ../shared/lib.py was matched by ANCHOR, collected, resolved and hashed like any other, and
+    then the file it names was dropped here — so a committed edit to a line of that file other
+    than the cited one printed clean at exit 0. The line half still covered the cited line
+    itself, so what the drop took away is exactly the file-touched signal, and it took it away
+    for every citation that leaves ROOT. The suspect oracle is built in main() from the paths
+    git named BEFORE this call,
+    with each anchor put into git's namespace by in_repo_space().
     """
     out = []
     for path in paths:
@@ -231,6 +283,12 @@ def code_paths(candidates, inside_docs, docs_paths):
     Deliberately not the rule for both cases. Applied to an ordinary docs/ directory it would
     turn docs/_category_.json and every image beside a page into code, and an author replacing
     a screenshot would be told code no page cites had changed.
+
+    Like under_root() above, this narrowing belongs to the count alone. A page may cite a code
+    sample that lives beside it inside the docs tree, and filtering that file out of the
+    suspect oracle left a committed edit to it reporting clean: tree_hash() covers .md and
+    .mdx only, so docs_edited_since_record did not see it either, and no field in the envelope
+    said anything at all. The oracle reads the paths git named before this call.
     """
     if inside_docs:
         return [p for p in candidates if not p.startswith(inside_docs)]
@@ -504,8 +562,13 @@ def main():
 
     old, manifest_note = read_manifest()
     if old is None:
+        # broken_anchors, not `broken`. This was the one status that published the list under a
+        # second name, while the module docstring above and audit.md both name broken_anchors
+        # as THE field a reader looks in — so a consumer reading it got nothing back from a
+        # no_manifest run, which is the run most likely to be holding broken anchors, nothing
+        # here having been recorded yet.
         print(json.dumps({"status": "no_manifest", "docs_dir": DOCS,
-                          "anchors": len(anchors), "broken": broken,
+                          "anchors": len(anchors), "broken_anchors": broken,
                           "note": manifest_note}, indent=2))
         return 2
 
@@ -524,7 +587,9 @@ def main():
     #
     # Every note below names what WAS measured as well as what was not. They used to say the
     # pages had been compared "against nothing", and that was false in all three branches: the
-    # anchors half runs unconditionally (ST-004) and is printed under every status, and in the
+    # anchors half has already run by the time this line is reached (ST-004) and is printed
+    # under every status but no_docs — which returns above doc_files(), having found no
+    # directory to walk, and carries no anchor field of any kind — and in the
     # two branches that reach the porcelain read the working tree is measured too — suspect
     # pages found that way are listed in the same envelope the note appears in. A not-checked
     # note that understates its own run teaches the reader to skip the findings beside it,
@@ -539,6 +604,18 @@ def main():
     # the rest of the notes instead, at the first point where `hashes` can say which of the
     # three things happened. Overstating a run is the same failure as understating one.
     changed, dirty, not_checked, git_note = [], [], "", ""
+    # The paths git named, in git's own namespace and before either narrowing below. This is
+    # the suspect oracle, and it has to hold every path git printed: under_root() and
+    # code_paths() each drop a population for the code-churn COUNT, and the oracle used to be
+    # read off what they returned, so a cited file living outside ROOT (a `../` citation across
+    # a monorepo package boundary) or inside the docs tree (a code sample beside the page that
+    # explains it) had its only git signal filtered away, and a committed edit to a non-cited
+    # line of it printed clean at exit 0 under a user story titled "A cited file edit is never
+    # reported clean". The counts stay narrow; the oracle stops being their by-product.
+    git_paths = set()
+    # ROOT is the repository root until git says otherwise, which is what repo_prefix() below
+    # asks. Every branch that never asks leaves git_paths empty, so nothing is mapped against it.
+    repo_root = ROOT
     if head is None:
         not_checked = "no_git"
         git_note = ("git could not resolve HEAD (not installed, not a repository, or no commits "
@@ -548,10 +625,11 @@ def main():
     else:
         try:
             prefix = repo_prefix()
-            dirty = code_paths(
-                under_root(porcelain_paths(
-                    git("status", "--porcelain", "-z", "--untracked-files=all")), prefix),
-                inside_docs, docs_paths)
+            repo_root = repo_root_of(prefix)
+            named = porcelain_paths(
+                git("status", "--porcelain", "-z", "--untracked-files=all"))
+            git_paths.update(named)
+            dirty = code_paths(under_root(named, prefix), inside_docs, docs_paths)
             # A manifest with no recorded commit has no point for the diff to start from, and
             # falling past this to compare nothing is the false clean NO_HEAD_NOTE promises the
             # reader of that record will not happen. git answering now does not make a record
@@ -572,14 +650,14 @@ def main():
                 # names its paths from the directory it ran in rather than from the repository
                 # root, and repo_prefix() records what that cost. The porcelain read above
                 # needs no such flag, having no such setting.
-                changed = code_paths(
-                    under_root(git("diff", "--name-only", "--no-relative",
-                                   f"{recorded}..HEAD").splitlines(), prefix),
-                    inside_docs, docs_paths)
+                named = git("diff", "--name-only", "--no-relative",
+                            f"{recorded}..HEAD").splitlines()
+                git_paths.update(path for path in named if path)
+                changed = code_paths(under_root(named, prefix), inside_docs, docs_paths)
         except GitUnavailable as e:
             # git answered the first question and not the second. Reporting the half-answer as
             # a result is the false pass this whole file exists to stop.
-            not_checked, changed, dirty = "no_git", [], []
+            not_checked, changed, dirty, git_paths = "no_git", [], [], set()
             git_note = (f"git stopped answering part-way through the check ({e}), so the "
                         "working-tree reading was discarded along with the diff; the anchors "
                         "were still resolved")
@@ -638,8 +716,16 @@ def main():
         # and the exit-2 not-checked shape the Technical Design makes the template for every
         # new not-checked status. This takes the stricter one, for the reason no_anchors is
         # already exit 2: a gate that cannot say whether a claim still holds must not answer
-        # with the code that means it does. `checked` therefore means every anchor the record
-        # held was compared, and a citation the pages grew afterwards is not one of those.
+        # with the code that means it does. `checked` therefore means every anchor this set
+        # cites now, that resolves now, and that the record holds a digest for was compared.
+        # Three populations sit outside that, and the field says nothing about any of them: a
+        # citation the pages grew after the record, there having been no line to take a digest
+        # of when record ran; an anchor the record held whose file or line is now gone, which
+        # `resolvable` above excludes and broken_anchors reports by name; and an anchor the
+        # record held whose citation the pages have since DROPPED, which is not in this tree's
+        # anchors at all and so is never reached by the loop above. The last two can empty the
+        # loop's set between them, so a run that compared none of the record's digests still
+        # prints `checked`.
         hashes = "partial" if unhashed else "checked"
 
     # The loop split `resolvable` three ways: compared, unhashed, and the citations the pages
@@ -648,11 +734,14 @@ def main():
     # third is counted separately, under its own name, and never folded into a total with them.
     recorded_resolvable = len(resolvable) - len(added)
 
-    # a page is suspect when code it cites appears in the changed set
+    # A page is suspect when a file it cites is one of the paths git named. The anchor is put
+    # into git's namespace rather than the paths into the anchors', because the page chooses
+    # how it spells a citation — `../shared/lib.py` and an absolute path can name one file —
+    # and normpath resolves both of those spellings to the path git prints, where a string
+    # comparison would give each of them its own answer.
     suspect = {}
     for a, cited_by in anchors.items():
-        target = a.rpartition(":")[0]
-        if target in changed or target in dirty:
+        if in_repo_space(a.rpartition(":")[0], repo_root) in git_paths:
             for page in cited_by:
                 suspect.setdefault(page.split(":")[0], []).append(a)
 
@@ -733,6 +822,14 @@ def main():
         # had covered a set wider than the one it read. A broken anchor the record DID hold a
         # digest for is outside this sentence too, for the same reason: it is in broken_anchors,
         # not in anything that was compared.
+        #
+        # A third population is outside it, and it is the one the wording used to claim
+        # outright: an anchor the record holds a digest for whose citation the pages have since
+        # DROPPED. It still resolves and the record still holds its digest, and this loop never
+        # saw it, because the loop iterates the anchors THIS tree cites. "every anchor that
+        # resolves here and that the record held a digest for" named that anchor and said it
+        # had been compared, on a run where nothing had looked at it. The sentence starts from
+        # the set the loop reads instead.
         grown = ""
         if added:
             # docs_edited_since_record is where a citation the pages grew is reported, and it is
@@ -743,8 +840,9 @@ def main():
                      "there was no digest to compare them against"
                      + (" — the docs edit docs_edited_since_record reports" if docs_edited
                         else ""))
-        notes.append("every anchor that resolves here and that the record held a digest for "
-                     f"was compared against the line as it stands now{grown}")
+        notes.append("every anchor this set cites now that resolves here and that the record "
+                     "holds a digest for was compared against the line as it stands now"
+                     f"{grown}")
     if status == "unrelated_changes":
         notes.append(f"{code_files_changed} code file(s) changed since the record and no page "
                      "cites any of them" if code_files_changed else

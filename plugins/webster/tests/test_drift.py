@@ -18,12 +18,15 @@ test_uncommitted_edit_to_cited_file_is_drift        FR-001 AC-001  cfafe8e  stat
 test_staged_rename_marks_old_and_new_path_dirty     FR-001 AC-002  cfafe8e  suspect_pages {}
 test_docs_below_the_git_root_still_match_anchors    FR-001 US-001  f31b144  unrelated_changes, 0
 test_diff_relative_config_still_reports_drift       FR-001 AC-001  944c958  status clean, exit 0
+test_cited_file_outside_the_docs_root_is_drift      FR-005 US-001  693570d  status clean, exit 0
+test_cited_file_inside_the_docs_tree_is_drift       FR-005 ST-001  693570d  status clean, exit 0
 test_docs_tree_at_the_repo_root_reaches_clean       FR-001 FR-005  19941ad  unrelated_changes, 0
 test_check_outside_a_git_repo_reports_no_git        FR-002 AC-003  cfafe8e  status drift, exit 1
 test_rebased_away_head_reports_head_missing         FR-037 AC-004  cfafe8e  status clean, exit 0
 test_non_ascii_path_under_a_c_locale_still_answers  FR-002 FR-037  9859317  traceback, no JSON
 test_unparseable_manifest_reports_no_manifest       FR-006 CT-001  19c97f9  traceback, no JSON
 test_wrong_typed_manifest_field_is_no_manifest      FR-006 CT-001  f31b144  traceback, no JSON
+test_no_manifest_envelope_lists_broken_anchors      AC-003 CT-001  693570d  key named `broken`
 test_record_writes_a_line_hash_per_anchor           FR-003 OT-005  cfafe8e  no lineHashes key
 test_changed_cited_line_is_reported_as_a_mismatch   FR-003 AC-005  cfafe8e  no hash_mismatches key
 test_hash_mismatch_alone_is_drift                   FR-007         cfafe8e  status clean, exit 0
@@ -98,6 +101,48 @@ LATIN1_FILE = "src/app/legacy.py"
 LATIN1_ANCHOR = "src/app/legacy.py:1"
 LATIN1_BEFORE = b"# caf\xe9 loader, latin-1, older than the tree it lives in\n"
 LATIN1_AFTER = b"# caf\xe8 loader, latin-1, older than the tree it lives in\n"
+
+# A citation that leaves WEBSTER_ROOT: one package of a monorepo citing the loader it shares
+# with its sibling. Every layer of the script accepts it — ANCHOR matches it, collect_anchors
+# collects it, resolves() resolves it, record hashes it — and under_root() then drops the file
+# it names out of the lists the suspect oracle used to be read off.
+OUTSIDE_ROOT_ANCHOR = "../shared/lib.py:1"
+OUTSIDE_ROOT_FILE = "shared/lib.py"
+OUTSIDE_ROOT_PAGE = "docs/shared-loader.md"
+
+# A code sample that lives beside the page explaining it. Inside the docs tree, so code_paths()
+# drops it, and neither .md nor .mdx, so tree_hash() does not cover it either: with the oracle
+# read off the filtered lists there was no field left in the envelope that could report it.
+IN_DOCS_ANCHOR = "docs/examples/sample.py:1"
+IN_DOCS_FILE = "docs/examples/sample.py"
+IN_DOCS_PAGE = "docs/examples/running-the-sample.md"
+
+# A file this fixture has never had, cited by a page in a tree where record has never run: an
+# anchors half with a finding in it under a status that says nothing was compared.
+MISSING_ANCHOR = "src/app/gone.py:3"
+MISSING_ANCHOR_PAGE = "docs/gone.md"
+
+
+# Where ``write_page`` puts the claim, and so the line every anchor in one of its pages is
+# cited from: five frontmatter lines between two ``---`` fences, a blank, the H1, a blank.
+# Named rather than written into an assertion, so that a change to the page shape below moves
+# the expectation with it instead of turning a citation assertion red for its own reason.
+WRITE_PAGE_CLAIM_LINE = 10
+
+
+def write_page(repo: Path, relpath: str, title: str, audience: str, claim: str) -> None:
+    """Write one frontmattered page at ``relpath`` carrying ``claim`` and its anchor.
+
+    The three tests below each need a page the committed fixture does not have, and each needs
+    it to be a page doc_files() will walk rather than a bare file with an anchor in it.
+    """
+    page = repo / relpath
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(
+        f'---\nsidebar_position: 60\ntitle: "{title}"\ndoc_type: explanation\n'
+        f"audience: {audience}\n---\n\n# {title}\n\n{claim}\n",
+        encoding="utf-8",
+    )
 
 # Same isolation as conftest's own git calls: a developer's ~/.gitconfig reaches
 # these repositories through HOME, and commit.gpgsign or core.autocrlf there
@@ -436,6 +481,176 @@ def test_diff_relative_config_still_reports_drift(run_script, fixture_repo, tmp_
     )
 
 
+def test_cited_file_outside_the_docs_root_is_drift(run_script, fixture_repo, tmp_path):
+    """FR-005 / US-001 / ST-001 / ST-006 — a ``../`` citation is a citation.
+
+    One package of a monorepo may cite a file it shares with its sibling, and every layer of
+    this script accepts that citation: ANCHOR matches it, ``collect_anchors`` collects it,
+    ``resolves()`` resolves it, and ``record`` writes it a ``lineHashes`` entry. The manifest
+    assertion below pins that, so this test cannot come out green by the citation quietly
+    ceasing to be one.
+
+    RED at 693570d: status clean at exit 0, with every field that could have reported the
+    edit — suspect_pages, code_files_changed, hash_mismatches, broken_anchors — empty.
+    ``under_root()`` dropped ``shared/lib.py`` for not starting with the ``site/`` prefix —
+    right for the code-churn count, which is a number about this docs set's own scope — and the
+    suspect oracle was read off the list that drop produced, so the one file this page cites
+    was the one file git's answer could not be about. ``under_root()``'s docstring said no
+    anchor could name such a path, "every anchor resolves through os.path.join(ROOT, target)";
+    ``os.path.join`` does not confine what it returns.
+
+    The edit lands past the cited line on purpose. Line 1 is untouched, so its recorded digest
+    still matches and the line half cannot cover for the file signal that went missing.
+    """
+    mono = tmp_path / "mono"
+    site = mono / "site"
+    mono.mkdir()
+    shutil.copytree(fixture_repo, site, ignore=shutil.ignore_patterns(".git"))
+    (mono / "shared").mkdir()
+    (mono / OUTSIDE_ROOT_FILE).write_text(
+        "def load():\n    return 1\n# a line no page cites\n", encoding="utf-8"
+    )
+    write_page(
+        site,
+        OUTSIDE_ROOT_PAGE,
+        "Shared loader",
+        "developer",
+        f"The loader comes from the sibling package. <!-- {OUTSIDE_ROOT_ANCHOR} -->",
+    )
+    git_in(mono, "-c", "init.defaultBranch=main", "init", "-q", ".")
+    git_in(mono, "add", "-A")
+    git_in(mono, "commit", "-q", "-m", "a site beside the package it shares a loader with")
+
+    prefix = git_in(site, "rev-parse", "--show-prefix").stdout.strip()
+    assert prefix == "site/", (
+        "this test needs the docs one directory below the git root, with the cited file in "
+        f"the other; git reports the prefix as {prefix!r}"
+    )
+
+    recorded = record(run_script, site)["gitHead"]
+    assert OUTSIDE_ROOT_ANCHOR in manifest_of(site)["lineHashes"], (
+        f"this test needs {OUTSIDE_ROOT_ANCHOR} recorded as an ordinary anchor; the manifest "
+        f"holds {sorted(manifest_of(site)['lineHashes'])!r}"
+    )
+
+    lib = mono / OUTSIDE_ROOT_FILE
+    lib.write_text(
+        lib.read_text(encoding="utf-8") + "# committed edit, not the cited line\n",
+        encoding="utf-8",
+    )
+    git_in(mono, "add", "--", OUTSIDE_ROOT_FILE)
+    git_in(mono, "commit", "-q", "-m", "edit the shared loader away from the cited line")
+
+    # The premise: git names the change, and names it from the repository root.
+    named = git_in(
+        site, "diff", "--name-only", "--no-relative", f"{recorded}..HEAD"
+    ).stdout.split()
+    assert OUTSIDE_ROOT_FILE in named, (
+        f"this test needs git to name {OUTSIDE_ROOT_FILE} as changed since the record; git "
+        f"named {named!r}"
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=site)
+    data = parsed(result)
+
+    assert data["hash_mismatches"] == [], (
+        "this test needs the committed edit to leave the cited line alone, so that only the "
+        f"file signal can notice it; got {data['hash_mismatches']!r}\n{outcome(result)}"
+    )
+    assert data["suspect_pages"] == {OUTSIDE_ROOT_PAGE: [OUTSIDE_ROOT_ANCHOR]}, (
+        f"expected {OUTSIDE_ROOT_PAGE} suspect through {OUTSIDE_ROOT_ANCHOR}; got "
+        f"{data['suspect_pages']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected status drift for a committed edit to the cited {OUTSIDE_ROOT_FILE}; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 alongside status drift; got {result.returncode}\n{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 0, (
+        "code_files_changed counts this docs set's own scope and the shared package is "
+        "outside it, so the narrowing under_root() does for the count stays in force; only "
+        f"the oracle moved. got {data['code_files_changed']}\n{outcome(result)}"
+    )
+
+
+def test_cited_file_inside_the_docs_tree_is_drift(run_script, fixture_repo):
+    """FR-005 / US-001 / ST-001 / ST-006 — a code sample under docs/ is still cited code.
+
+    RED at 693570d: status clean at exit 0, and no field of the envelope reported the edit:
+    suspect_pages, code_files_changed, hash_mismatches and docs_edited_since_record were all
+    empty or false at once. ``code_paths()`` filters the docs tree out of the changed and dirty lists so that an author
+    replacing a screenshot is not told code changed — right for the count — and the suspect
+    oracle was read off those filtered lists, so the sample lost its only git signal.
+    ``tree_hash()`` covers .md and .mdx alone and did not cover it either, so
+    ``docs_edited_since_record`` stayed false as well.
+
+    The count is asserted at 0 beside the status: the filtering this fix keeps and the oracle
+    it moves are two different populations, and widening the count instead would report an
+    author's ordinary docs edit as code churn.
+    """
+    write_page(
+        fixture_repo,
+        IN_DOCS_PAGE,
+        "Running the sample",
+        "user",
+        f"The sample runs on its own. <!-- {IN_DOCS_ANCHOR} -->",
+    )
+    sample = fixture_repo / IN_DOCS_FILE
+    sample.write_text('import sys\n\nprint("hello", file=sys.stdout)\n', encoding="utf-8")
+    git_in(fixture_repo, "add", "-A")
+    git_in(fixture_repo, "commit", "-q", "-m", "a runnable sample and the page explaining it")
+
+    recorded = record(run_script, fixture_repo)["gitHead"]
+    assert IN_DOCS_ANCHOR in manifest_of(fixture_repo)["lineHashes"], (
+        f"this test needs {IN_DOCS_ANCHOR} recorded as an ordinary anchor; the manifest holds "
+        f"{sorted(manifest_of(fixture_repo)['lineHashes'])!r}"
+    )
+
+    sample.write_text(
+        sample.read_text(encoding="utf-8") + 'print("and again")\n', encoding="utf-8"
+    )
+    git_in(fixture_repo, "add", "--", IN_DOCS_FILE)
+    git_in(fixture_repo, "commit", "-q", "-m", "extend the sample past the cited line")
+
+    named = git_in(
+        fixture_repo, "diff", "--name-only", "--no-relative", f"{recorded}..HEAD"
+    ).stdout.split()
+    assert IN_DOCS_FILE in named, (
+        f"this test needs git to name {IN_DOCS_FILE} as changed since the record; git named "
+        f"{named!r}"
+    )
+
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["hash_mismatches"] == [], (
+        "this test needs the committed edit to leave the cited line alone, so that only the "
+        f"file signal can notice it; got {data['hash_mismatches']!r}\n{outcome(result)}"
+    )
+    assert data["docs_edited_since_record"] is False, (
+        "this test needs the docs-tree digest to stay put, so that the oracle is the only "
+        f"thing that can report the sample; got {data['docs_edited_since_record']!r}\n"
+        f"{outcome(result)}"
+    )
+    assert data["code_files_changed"] == 0, (
+        "a file inside the docs tree is not code churn and the count still says so; got "
+        f"{data['code_files_changed']}\n{outcome(result)}"
+    )
+    assert data["suspect_pages"] == {IN_DOCS_PAGE: [IN_DOCS_ANCHOR]}, (
+        f"expected {IN_DOCS_PAGE} suspect through {IN_DOCS_ANCHOR}; got "
+        f"{data['suspect_pages']!r}\n{outcome(result)}"
+    )
+    assert data["status"] == "drift", (
+        f"expected status drift for a committed edit to the cited {IN_DOCS_FILE}; got "
+        f"{data['status']!r}\n{outcome(result)}"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 alongside status drift; got {result.returncode}\n{outcome(result)}"
+    )
+
+
 def test_docs_tree_at_the_repo_root_reaches_clean(run_script, fixture_repo):
     """FR-001 / FR-005 / US-001 / US-002 / ST-006 — WEBSTER_DOCS="." is a real layout.
 
@@ -758,6 +973,51 @@ def test_wrong_typed_manifest_field_is_no_manifest(run_script, fixture_repo):
             f"expected the note to name {field} as the field that is wrong; got "
             f"{data['note']!r}\n{outcome(result)}"
         )
+
+
+def test_no_manifest_envelope_lists_broken_anchors(run_script, fixture_repo):
+    """AC-003 / CT-001 / FR-006 — one key for the broken-anchor list, under every status with one.
+
+    RED at 693570d: the no_manifest envelope published the list under ``broken`` while every
+    other status that publishes it uses ``broken_anchors`` — the name the module docstring and
+    ``commands/audit.md`` both give as THE field to read. A consumer reading broken_anchors got
+    nothing back from a no_manifest run, which is the run most likely to be holding broken
+    anchors, nothing here having been recorded yet.
+
+    Nothing in this suite read either key under this status, so emptying the list entirely was
+    invisible. The assertion is on the anchor rather than on the key alone, for that reason.
+    """
+    write_page(
+        fixture_repo,
+        MISSING_ANCHOR_PAGE,
+        "A claim about code that is gone",
+        "developer",
+        f"The handler was removed in the rewrite. <!-- {MISSING_ANCHOR} -->",
+    )
+
+    # No record has run in this tree: the fixture ships without a manifest (GI-005), which is
+    # what puts the run under no_manifest with an anchors half that has already found a finding.
+    result = run_script("drift.py", "check", "docs", cwd=fixture_repo)
+    data = parsed(result)
+
+    assert data["status"] == "no_manifest" and result.returncode == 2, (
+        f"expected no_manifest at exit 2 with no manifest recorded; got {data['status']!r} at "
+        f"exit {result.returncode}\n{outcome(result)}"
+    )
+    assert "broken" not in data, (
+        "the broken-anchor list is published under one key across every status that carries "
+        "one; got a second "
+        f"key `broken` beside broken_anchors\n{outcome(result)}"
+    )
+    assert [b["anchor"] for b in data["broken_anchors"]] == [MISSING_ANCHOR], (
+        f"expected {MISSING_ANCHOR} listed under broken_anchors on a no_manifest run; got "
+        f"{data['broken_anchors']!r}\n{outcome(result)}"
+    )
+    cited_from = f"{MISSING_ANCHOR_PAGE}:{WRITE_PAGE_CLAIM_LINE}"
+    assert data["broken_anchors"][0]["cited_by"] == [cited_from], (
+        f"expected the broken anchor to name {cited_from} as the page to fix; got "
+        f"{data['broken_anchors'][0]['cited_by']!r}\n{outcome(result)}"
+    )
 
 
 # ---------------------------------------------------------------------------
