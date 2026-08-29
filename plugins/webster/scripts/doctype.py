@@ -272,40 +272,30 @@ def load_survey_allow(path):
             return
         term = term.strip().lower()
         terms.add(term)
-        # The screen survey.py calls "Data Sources" is the DataSourcesPage component, and a
-        # page writes it as `DataSources`. survey.py's component-per-screen leg splits the
-        # CamelCase base name on its capitals before recording it, so every name it emits is
-        # spaced and the spaced form on its own could never equal a backticked token: the whole
-        # screens leg allowed nothing.
+        # A screen name may arrive spaced — "Data Sources" — where a page backticks the same
+        # screen closed up, `DataSources`, and a spaced term can never equal a backticked
+        # token, so the whitespace-stripped spelling of the same name is allowed too. One
+        # source, two spellings; not a fourth source.
         terms.add("".join(term.split()))
 
     try:
         with open(path, encoding="utf-8") as fh:
             user_surface = json.load(fh).get("user_surface") or {}
-        # The shape survey.py writes: user_surface.labels[] carry `text`, user_surface
-        # .commands[] carry `name`. Field paths rather than survey.py line numbers, because
-        # nothing re-reads survey.py to notice when a cited line has moved — the four line
-        # numbers that used to be in this function all pointed at the wrong statement, in a
-        # plugin whose whole subject is anchors that no longer resolve. A field path and a
-        # function name below are greppable, and stay true across an edit that moves them.
-        for key, field in (("labels", "text"), ("commands", "name")):
+        # The shape survey.py writes, stated by field and by field only: user_surface.labels[]
+        # carry `text`, user_surface.commands[] carry `name`, and user_surface.screens[] carry
+        # `path` always and `name` only sometimes, spaced or not. Field paths rather than
+        # survey.py line numbers, and no account of how survey.py fills them, because nothing
+        # re-reads survey.py to notice when a cited line or an internal has moved — the four
+        # line numbers that used to be in this function all pointed at the wrong statement, in
+        # a plugin whose whole subject is anchors that no longer resolve.
+        #
+        # Three sources, and this tuple is all three of them. A screen carrying only a `path`
+        # therefore contributes nothing: its file stem would be a fourth source, and the path
+        # itself must not be one either — a screen at /dashboard cannot be what excuses the
+        # `/dashboard` route finding the lens exists to make.
+        for key, field in (("labels", "text"), ("screens", "name"), ("commands", "name")):
             for item in user_surface.get(key) or []:
                 add(item.get(field) if isinstance(item, dict) else item)
-        # user_surface.screens[] always carry `path` and carry `name` only sometimes:
-        # survey.py's add_screen() takes the name as an optional argument, and both the router
-        # leg and the App-Router leg call it without one, so reading `name` alone transported
-        # nothing for them. The last segment of the path without its extension is the word a
-        # page writes. The path itself is deliberately not added — a screen at /dashboard must
-        # not excuse the `/dashboard` route finding the lens exists to make.
-        for item in user_surface.get("screens") or []:
-            if not isinstance(item, dict):
-                add(item)
-                continue
-            name = item.get("name")
-            if isinstance(name, str) and name.strip():
-                add(name)
-            elif isinstance(item.get("path"), str):
-                add(os.path.splitext(os.path.basename(item["path"]))[0])
         return terms, True
     except Exception:
         return set(), False

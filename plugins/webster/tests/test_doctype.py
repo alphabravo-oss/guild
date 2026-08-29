@@ -58,8 +58,8 @@ the widenings above introduced rather than one it fixed. Four are measured again
     test_all_caps_with_a_digit_is_not_an_internal_symbol
 - FR-010 / FR-015 / AC-011 a versioned standard name is not an internal symbol
     test_versioned_standard_names_are_not_internal_symbols
-- FR-013 / CT-003 / AC-016 the screens leg carries a term a page can actually write
-    test_survey_screens_carry_a_term_a_page_can_write
+- FR-013 / CT-003 / AC-016 a screen's name reaches the lens and a screen's path does not
+    test_a_screen_name_reaches_the_lens_and_a_screen_path_does_not
 - FR-040 / CT-004 zero pages checked is never exit 0
     test_empty_docs_tree_is_not_checked
 
@@ -159,11 +159,10 @@ def survey_json(tmp_path: Path, *, labels=(), screens=(), commands=()) -> Path:
     """A saved survey.py document, in the shape survey.py actually writes.
 
     user_surface.labels[] carry `text`, user_surface.commands[] carry `name`, and
-    user_surface.screens[] carry `path` always and `name` only on the component-per-screen leg,
-    because survey.py's add_screen() takes the name as an optional argument. Field paths and a
-    function name rather than survey.py line numbers: this docstring is a claim about another
-    file that nothing re-reads, and the line numbers that used to be here all pointed at the
-    wrong statement."""
+    user_surface.screens[] carry `path` always and `name` only sometimes. Field paths rather
+    than survey.py line numbers, and no account of how survey.py fills them: this docstring is
+    a claim about another file that nothing re-reads, and the line numbers that used to be here
+    all pointed at the wrong statement."""
     path = tmp_path / "webster-survey.json"
     path.write_text(json.dumps({
         "user_surface": {
@@ -537,12 +536,15 @@ def test_survey_screen_names_and_commands_extend_the_allowlist(run_script, docs_
     assert result.returncode == 0, f"Expected exit 0.\n{outcome(result)}"
 
 
-def test_survey_screens_carry_a_term_a_page_can_write(run_script, docs_dir, tmp_path):
-    """The two screen shapes survey.py really writes, neither of which is the token a page
-    backticks. A component screen carries the spaced label survey.py derives from the filename
-    (`DataSourcesPage.tsx` -> "Data Sources"), and a router screen carries a path and no name at
-    all. Built here rather than through ``survey_json``, which always sets a name equal to the
-    term under test and so could never have caught this."""
+def test_a_screen_name_reaches_the_lens_and_a_screen_path_does_not(
+    run_script, docs_dir, tmp_path
+):
+    """The two screen shapes, against the three sources FR-013 names. A screen carrying a
+    `name` contributes that name even when it arrives spaced ("Data Sources") and the page
+    backticks it closed up (`DataSources`). A screen carrying only a `path` contributes
+    nothing: neither the path nor its file stem is one of the three, so a page naming the stem
+    is still reported. Built here rather than through ``survey_json``, which always sets a name
+    equal to the term under test and so could never separate the two shapes."""
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
                "# Guide\n\nOpen `DataSources`, which the app builds from `DataSourcesPage`.\n")
     survey = tmp_path / "screens-only.json"
@@ -560,15 +562,16 @@ def test_survey_screens_carry_a_term_a_page_can_write(run_script, docs_dir, tmp_
     result = check(run_script, docs_dir, WEBSTER_SURVEY=str(survey))
 
     assert "an internal symbol name, `DataSources`" not in result.stdout, (
-        f"The spaced screen name is the product naming its own screen; it can only reach the "
-        f"lens with its whitespace removed.\n{outcome(result)}"
+        f"screens.name is one of the three sources; spaced, it can only reach the lens with "
+        f"its whitespace removed.\n{outcome(result)}"
     )
-    assert "an internal symbol name, `DataSourcesPage`" not in result.stdout, (
-        f"A screen with no name at all still names a file, and its stem is the term a page "
-        f"writes.\n{outcome(result)}"
+    assert "an internal symbol name, `DataSourcesPage`" in result.stdout, (
+        f"The path-only screen names no term the allowlist may take. Reading its file stem "
+        f"would be a fourth source, and FR-013 names three.\n{outcome(result)}"
     )
-    assert result.returncode == 0, (
-        f"Expected exit 0: both tokens are the product\'s own screen.\n{outcome(result)}"
+    assert result.returncode == 1, (
+        f"Expected exit 1: the named screen is excused, the path-only screen is not."
+        f"\n{outcome(result)}"
     )
 
 
