@@ -1,0 +1,63 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)" && T=plugins/webster/tests/test_drift.py && S=plugins/webster/scripts/drift.py && echo "--- D-135: no_docs in this module before this commit, and after it ---" && printf "at 8989d75: %s occurrence(s), all of it the docstring sentence claiming the map was under test:\n" "$(git show 8989d75:$T | grep -c no_docs)" && git show 8989d75:$T | grep -n no_docs && printf "\nat this commit: %s occurrence(s), of which assertions reading it off a status field: %s\n" "$(grep -c no_docs $T)" "$(sed -n "s/.*\[.status.\] == .\(no_docs\).*/\1/p" $T | wc -l | tr -d " ")" && echo && echo "--- coverage clause: no test uses skip or xfail ---" && printf "decorator lines matching @pytest: %s\n" "$(grep -cE "^ *@pytest" $T)" && printf "pytest imported by this module at all: %s\n" "$(grep -cE "^(import|from) pytest" $T)" && echo "the one textual mention is the sentence making the claim:" && grep -n "pytest.mark" $T && echo && echo "--- coverage clause: the ONE test that lets a developers git config reach the script ---" && grep -n "extra_env=" $T && printf "call sites passing extra_env: %s\n" "$(grep -c "extra_env=" $T)" && echo && echo "--- attribution clause: ten revisions of drift.py in caa2e5c..02f4e9e, and none after ---" && printf "revisions in caa2e5c..02f4e9e: %s\n" "$(git rev-list --count caa2e5c..02f4e9e -- $S)" && printf "revisions after 02f4e9e, which is what keeps the range closed: %s\n" "$(git rev-list --count 02f4e9e..HEAD -- $S)" && printf "3ab01dd is revision number %s of those ten, and is the commit that wrote the sentence saying so:\n" "$(git rev-list --reverse caa2e5c..02f4e9e -- $S | grep -n 3ab01dd | cut -d: -f1)" && git show 3ab01dd -- $T | grep "^+.*rewritten three times" && echo && echo "--- equivalence clause: the .md and .mdx twins share one helper, so page, citation and edit are byte-identical ---" && sed -n "/^def write_citing_page/,/^    return page$/p" $T && sed -n "/^def record_then_touch_uncited/,/^    return page, result, parsed(result)/p" $T && echo && echo "--- equivalence clause: the latin-1 cited file is named in that repositorys own .gitignore ---" && grep -n "gitignore" $T && printf "a .gitignore in the committed fixture (GI-005 ships none): %s\n" "$(ls -a plugins/webster/tests/fixtures/repo | grep -c gitignore)"'
+# evidence-for: FR-006, FR-039, AC-039
+# evidence-timeout: 120
+
+--- D-135: no_docs in this module before this commit, and after it ---
+at 8989d75: 1 occurrence(s), all of it the docstring sentence claiming the map was under test:
+73:no_docs / no_manifest / no_anchors / no_git / head_missing / hashes_partial 2.
+
+at this commit: 13 occurrence(s), of which assertions reading it off a status field: 1
+
+--- coverage clause: no test uses skip or xfail ---
+decorator lines matching @pytest: 0
+pytest imported by this module at all: 0
+the one textual mention is the sentence making the claim:
+89:No test uses ``@pytest.mark.skip`` or ``xfail``. A drift test that skips is the
+
+--- coverage clause: the ONE test that lets a developers git config reach the script ---
+488:        site, "diff", "--name-only", f"{recorded}..HEAD", extra_env=developer
+call sites passing extra_env: 1
+
+--- attribution clause: ten revisions of drift.py in caa2e5c..02f4e9e, and none after ---
+revisions in caa2e5c..02f4e9e: 10
+revisions after 02f4e9e, which is what keeps the range closed: 0
+3ab01dd is revision number 3 of those ten, and is the commit that wrote the sentence saying so:
++line number: drift.py has been rewritten three times since these were written
+
+--- equivalence clause: the .md and .mdx twins share one helper, so page, citation and edit are byte-identical ---
+def write_citing_page(repo: Path, ext: str) -> str:
+    """Write ``docs/notes<ext>`` citing ``src/cli/main.py:1`` and return its relative path.
+
+    The two pages this builds differ in one character — the extension — so the pair of tests
+    that use it can show that a page is a page under either name. Shared rather than
+    parametrized on purpose: ``test_readme.py`` counts one collected item per top-level test
+    function and refuses a parametrized module by name, so the twins are written out.
+    """
+    page = f"docs/notes{ext}"
+    (repo / page).write_text(
+        '---\nsidebar_position: 50\ntitle: "Notes"\ndoc_type: explanation\n'
+        "audience: user\n---\n\n# Notes\n\n"
+        f"The command line parses your arguments first. <!-- {MDX_ANCHOR} -->\n",
+        encoding="utf-8",
+    )
+    return page
+def record_then_touch_uncited(run_script, repo: Path, ext: str) -> tuple:
+    """Add the page, record, append a line to the file it cites, and check.
+
+    The cited file is ``src/cli/main.py``, which no page in the committed fixture cites, so the
+    only thing that can make it suspect is the page this helper just wrote.
+    """
+    page = write_citing_page(repo, ext)
+    record(run_script, repo)
+    target = repo / UNCITED_FILE
+    target.write_text(target.read_text(encoding="utf-8") + "# touched\n", encoding="utf-8")
+    result = run_script("drift.py", "check", "docs", cwd=repo)
+    return page, result, parsed(result)
+
+--- equivalence clause: the latin-1 cited file is named in that repositorys own .gitignore ---
+121:# Written by the latin-1 test and named in that repository's .gitignore, so git has nothing to
+1626:    The cited file is named in .gitignore so that git has nothing to report about it: with the
+1631:    (fixture_repo / ".gitignore").write_text(f"{LATIN1_FILE}\n", encoding="utf-8")
+1639:    # untracked .gitignore would itself show up as a changed code file.
+1640:    git_in(fixture_repo, "add", "--", ".gitignore")
+a .gitignore in the committed fixture (GI-005 ships none): 0

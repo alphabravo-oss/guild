@@ -1,0 +1,31 @@
+# evidence-cmd: sh -c 'cd "$(git rev-parse --show-toplevel)" && echo "--- the guard, green against the drift.py this commit ships ---" && (cd plugins/webster && uvx pytest tests/test_drift.py -p no:cacheprovider -q -k no_docs_directory 2>&1 | tail -2) && echo && echo "--- green against the cfafe8e baseline too, which is what makes it a guard and not a red-first row ---" && D=$(mktemp -d) && cp -R plugins/webster "$D/w" && git show cfafe8e:plugins/webster/scripts/drift.py > "$D/w/scripts/drift.py" && (cd "$D/w" && uvx pytest tests/test_drift.py -p no:cacheprovider -q -k no_docs_directory 2>&1 | tail -2); rm -rf "$D"; echo && echo "--- because the branch it pins is the same branch at both revisions ---" && git show cfafe8e:plugins/webster/scripts/drift.py | grep -n -A1 "if not os.path.isdir(DOCS):" && echo "  ^^^ cfafe8e" && grep -n -A1 "if not os.path.isdir(DOCS):" plugins/webster/scripts/drift.py && echo "  ^^^ this commit" && echo && echo "--- the nine statuses FR-006 names, and how many assertions in test_drift.py read each off a status field ---" && for s in clean unrelated_changes drift no_docs no_manifest no_anchors no_git head_missing hashes_partial; do printf "%-18s %s\n" "$s" "$(sed -n "s/.*\[.status.\] == .\([a-z_]*\).*/\1/p" plugins/webster/tests/test_drift.py | grep -c "^$s$")"; done'
+# evidence-for: FR-006, FR-039, AC-039
+# evidence-volatile: [0-9]+\.[0-9]+s
+# evidence-timeout: 120
+
+--- the guard, green against the drift.py this commit ships ---
+.                                                                        [100%]
+1 passed, 32 deselected in 0.40s
+
+--- green against the cfafe8e baseline too, which is what makes it a guard and not a red-first row ---
+.                                                                        [100%]
+1 passed, 32 deselected in 0.28s
+
+--- because the branch it pins is the same branch at both revisions ---
+99:    if not os.path.isdir(DOCS):
+100-        print(json.dumps({"status": "no_docs", "docs_dir": DOCS})); return 2
+  ^^^ cfafe8e
+526:    if not os.path.isdir(DOCS):
+527-        print(json.dumps({"status": "no_docs", "docs_dir": DOCS})); return 2
+  ^^^ this commit
+
+--- the nine statuses FR-006 names, and how many assertions in test_drift.py read each off a status field ---
+clean              3
+unrelated_changes  4
+drift              15
+no_docs            1
+no_manifest        4
+no_anchors         1
+no_git             5
+head_missing       1
+hashes_partial     2

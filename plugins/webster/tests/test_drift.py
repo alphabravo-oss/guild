@@ -4,9 +4,10 @@ Every test drives the script through the conftest ``run_script`` helper as a
 subprocess (GI-004, CT-007). Nothing here imports drift.py: it resolves ROOT,
 DOCS and MANIFEST at module import, so an import would freeze the wrong tree.
 
-Which fix each test pins, and how it failed before it. No citation here names a
-line number: ten revisions of drift.py landed between ``caa2e5c``, the commit
-that wrote this module, and ``02f4e9e``, the one that ships it — read back from
+Which fix each test pins, and how it failed before it — bar the one row that
+pins no fix and is marked guard. No citation here names a line number: ten
+revisions of drift.py landed between ``caa2e5c``, the commit that wrote this
+module, and ``02f4e9e``, the one that ships it — read back from
 ``git log --oneline --reverse caa2e5c..02f4e9e --
 plugins/webster/scripts/drift.py`` rather than remembered — and every line
 number this module once cited had gone stale by the time anyone read it, so
@@ -16,9 +17,15 @@ and named no end, so it went stale the way the line numbers it explains had.
 Both ends are named for that reason, and the commit that names them touches no
 file under ``scripts/`` — which is what keeps the range closed rather than one
 short again the moment it lands.
-Every row was measured RED by running this module against ``git show
+Every row but one was measured RED by running this module against ``git show
 cfafe8e:plugins/webster/scripts/drift.py``, the pre-change baseline AC-039
-names; "was at" is the revision the row's last column describes.
+names; "was at" is the revision the row's last column describes. Measured, that
+baseline fails 32 of the 33 rows below. The thirty-third is the ``no_docs``
+row, whose last column reads guard rather than a failure: that status printed
+correctly at cfafe8e and prints correctly now, so there is no fix for it to pin
+and no "was, before" to describe. AC-039 asks for a red-first test per fix,
+which leaves a status that was never broken free to be held by a guard — and
+not free to be held by nothing, which is what held it until that row landed.
 
 ==================================================  =============  =======  =======================
 test                                                pins           was at   was, before the fix
@@ -30,6 +37,7 @@ test_diff_relative_config_still_reports_drift       FR-001 AC-001  944c958  stat
 test_cited_file_outside_the_docs_root_is_drift      FR-005 US-001  693570d  status clean, exit 0
 test_cited_file_inside_the_docs_tree_is_drift       FR-005 ST-001  693570d  status clean, exit 0
 test_docs_tree_at_the_repo_root_reaches_clean       FR-001 FR-005  19941ad  unrelated_changes, 0
+test_check_with_no_docs_directory_reports_no_docs   FR-006 AC-039  cfafe8e  guard: green at cfafe8e
 test_check_outside_a_git_repo_reports_no_git        FR-002 AC-003  cfafe8e  status drift, exit 1
 test_rebased_away_head_reports_head_missing         FR-037 AC-004  cfafe8e  status clean, exit 0
 test_non_ascii_path_under_a_c_locale_still_answers  FR-002 FR-037  9859317  traceback, no JSON
@@ -71,6 +79,12 @@ nothing compared.
 
 The exit map under test is FR-006: clean and unrelated_changes 0, drift 1, and
 no_docs / no_manifest / no_anchors / no_git / head_missing / hashes_partial 2.
+Under test means asserted: each of those nine names is read off a ``status``
+field by a test above. The sentence named nine and reached eight for as long as
+it stood — ``no_docs`` appeared in this module exactly once, in the line above
+this one, while all 32 tests handed drift.py a docs directory that was there —
+so the only evidence for the one status nothing measured was the sentence
+claiming it was measured.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``. A drift test that skips is the
 same false pass the script is being fixed to stop reporting.
@@ -731,6 +745,83 @@ def test_docs_tree_at_the_repo_root_reaches_clean(run_script, fixture_repo):
         f"expected only {CITED_FILE} to count as code; got "
         f"{data['code_files_changed']}\n{outcome(result)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# FR-006: the status that returns before anything has been read
+# ---------------------------------------------------------------------------
+def test_check_with_no_docs_directory_reports_no_docs(run_script, fixture_repo):
+    """FR-006 / AC-039 / CT-001 / ST-004 — no_docs at exit 2, by either way DOCS is named.
+
+    A guard, not a red-first row, and the table above marks it so. Measured
+    against ``git show cfafe8e:plugins/webster/scripts/drift.py`` — the
+    pre-change baseline every other row fails — this test passes: that revision
+    printed ``no_docs`` at exit 2 for a directory that is not there, and HEAD
+    prints the same envelope from the same guard. There is no fix here to pin.
+
+    It is here because FR-006's exit map named ``no_docs`` and nothing in this
+    module read it. The status appeared exactly once in the file, in the
+    docstring sentence claiming the map was under test, while all 32 other tests
+    handed drift.py a docs directory that existed. A status named in a coverage
+    claim and asserted nowhere is the unearned pass this script is being fixed
+    to stop printing, arriving one layer up in the prose about the tests.
+
+    Both spellings are exercised because ``DOCS`` has two sources — ``sys.argv[2]``
+    and ``WEBSTER_DOCS``, joined to ``ROOT`` at module import — and a guard that
+    covered one would leave the other free to resolve somewhere else entirely.
+    The fixture's own ``docs/`` is left in place for both, so what is measured is
+    a directory that was NAMED and is absent, not a repository with no docs at all.
+
+    The envelope assertion is drift.py's own claim, which nothing measured either:
+    its module docstring says no_docs "returns before a page is read, so its
+    envelope carries no anchor field at all". It is the one status of the nine
+    that publishes no anchors half — every other exit-2 status still lists
+    ``broken_anchors`` beside it (ST-004) — and that is a property of where the
+    guard sits, above ``doc_files()``, rather than of a field list somebody wrote.
+    """
+    missing = "documentation"
+    assert not (fixture_repo / missing).exists(), (
+        f"this test needs {missing}/ to be absent from the committed fixture; "
+        f"something now ships it, and the runs below would be measuring a "
+        f"directory that is there"
+    )
+    assert (fixture_repo / "docs").is_dir(), (
+        "this test needs the fixture's own docs/ to still exist, so that no_docs "
+        "is about the directory that was named and not about a tree with no docs"
+    )
+
+    for source, args, env in (
+        ("sys.argv[2]", (missing,), None),
+        ("WEBSTER_DOCS", (), {"WEBSTER_DOCS": missing}),
+    ):
+        result = run_script("drift.py", "check", *args, cwd=fixture_repo, env=env)
+        data = parsed(result)
+
+        assert data["status"] == "no_docs", (
+            f"expected status no_docs when {source} names a directory that is not "
+            f"there; got {data['status']!r}\n{outcome(result)}"
+        )
+        assert result.returncode == 2, (
+            f"expected exit 2 for a run that could not be made at all, never the "
+            f"exit 0 of a pass; got {result.returncode} via {source}\n{outcome(result)}"
+        )
+        # ``.resolve()`` on both sides: the script takes ROOT from os.path.abspath
+        # of ".", which is the child's os.getcwd() and therefore physically
+        # resolved, while pytest's tmp_path keeps the /var spelling of a macOS
+        # /private/var. Comparing the two spellings raw fails on this machine for
+        # a reason that has nothing to do with the status under test.
+        assert Path(data["docs_dir"]).resolve() == (fixture_repo / missing).resolve(), (
+            f"expected docs_dir to name the directory {source} resolved to, so the "
+            f"reader is told which path was looked for; got {data['docs_dir']!r}\n"
+            f"{outcome(result)}"
+        )
+        anchor_fields = sorted(
+            key for key in data if "anchor" in key or key == "suspect_pages"
+        )
+        assert not anchor_fields, (
+            f"expected the no_docs envelope to carry no anchor field, this status "
+            f"returning above doc_files(); got {anchor_fields}\n{outcome(result)}"
+        )
 
 
 # ---------------------------------------------------------------------------
