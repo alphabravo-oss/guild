@@ -155,20 +155,23 @@ LENS_MAY_NOT = {
 
 # Backticked identifiers that are a symbol in the source rather than something on screen.
 #
-# One capital run and the lowercase tail that follows it. Written once because every branch
-# below needs it: it is what makes `APIClient` two words rather than one unreadable run, and
-# what lets `GraphQL` end on an acronym. The old pattern required every segment to be
+# One capital run and the lowercase tail that follows it. Written once because the three
+# capital-run branches below share it — the snake_case branch names no capital and does not —
+# and it is what makes `APIClient` two words rather than one unreadable run, and what lets
+# `GraphQL` end on an acronym. The old pattern required every segment to be
 # [A-Z][a-z0-9]+, so a name that opened or closed on an acronym never matched: `APIClient` and
-# `HTTPServer` passed the lens while `getUser` was reported, and 14 of the allowlist entries
-# below were unreachable for the same reason.
+# `HTTPServer` passed the lens while `getUser` was reported, and 14 of the 31 entries the
+# allowlist held then were unreachable for the same reason.
 _CAP_RUN = r"(?:[A-Z]+[a-z0-9]*)"
-# One lowercase letter somewhere in the token, asserted once for the whole alternation. Every
-# branch below lets a digit stand in for the lowercase tail — `HTTP2` is [A-Z]{2,} then
-# [a-z0-9]+, `H2O` is [A-Z] then [a-z0-9]+ then a capital run — so widening the branches to
-# reach `APIClient` also reported `SHA256`, `MD5`, `EC2` and `UTF8` as internal symbols on a
-# user page. Requiring the lowercase letter here rather than inside each branch keeps
-# `S3Bucket`, which a per-branch [a-z] would have dropped. The class cannot cross the closing
-# backtick, so the lookahead reads this token and nothing after it.
+# One lowercase letter somewhere in the token, asserted once for the whole alternation. The two
+# capital-initial branches below let a digit stand in for the lowercase tail — `HTTP2` is
+# [A-Z]{2,} then [a-z0-9]+, `H2O` is [A-Z] then [a-z0-9]+ then a capital run — so widening them
+# to reach `APIClient` also reported `SHA256`, `MD5`, `EC2` and `UTF8` as internal symbols on a
+# user page. Those two are the only branches this lookahead is load-bearing for: the other two
+# open on a mandatory [a-z] and carry a lowercase letter by construction. Requiring it here
+# rather than inside those two keeps `S3Bucket`, which a per-branch [a-z] would have dropped.
+# The class cannot cross the closing backtick, so the lookahead reads this token and nothing
+# after it.
 _HAS_LOWER = r"(?=[A-Za-z0-9_]*[a-z])"
 CODE_IDENT = re.compile(
  rf"`{_HAS_LOWER}("
@@ -349,7 +352,13 @@ ON_SCREEN_CUE = re.compile(
 CAPS_RUN = re.compile(r"\b[A-Z][A-Z0-9]{1,}\b(?:\s*(?:&|and|/)?\s*\b[A-Z][A-Z0-9]{1,}\b)+")
 
 
-# ISO/IEC/IEEE 26514 quality characteristics. The four marked measurable are checked below.
+# ISO/IEC/IEEE 26514 quality characteristics. Five are marked measurable here and a sixth
+# measurable elsewhere, and the marking is not the same claim as being checked: accessibility
+# (check_universal), understandability (reading_grade) and subject-fit (check_lens) each have a
+# rule below, conciseness is measured only as sentence length feeding that grade, and
+# consistency has no check in this file at all. This line said "the four marked measurable are
+# checked below", which named a set of the wrong size and promised a check for a term that has
+# none.
 ISO_26514 = {
  "usability": "a human judges whether a reader can find and apply the information",
  "clarity": "a human judges it",

@@ -1,0 +1,46 @@
+# evidence-cmd: cd plugins/webster && echo '--- FR-012 / FR-017 / GI-003: the contract `types` prints, per reader ---'; python3 scripts/doctype.py types | sed -n '/^Audiences/,/^ISO/p'; echo '--- every kind check_lens can report, and the reader gate over each ---'; awk '/^    named = \[\]/,/^    seen = set\(\)/' scripts/doctype.py | grep -E 'if audience == "user"|\.finditer\(|named\.append\('
+# evidence-for: US-003, FR-012, FR-017, AC-014
+#
+# FR-012 / FR-017. `doctype.py types` is where a writer reads the lens before
+# the lens reads them, so a class missing from it is a writer told a thing is
+# allowed by the same build that defects it.
+#
+# The second block is the whole of check_lens's collection loop, filtered to
+# the five kinds it can append and the audience conditions over them, with the
+# indentation left in because the indentation is the gate. An internal symbol
+# name and part of the architecture are collected for whatever reader
+# LENS_MAY_NOT names a contract for; an environment variable, a request route
+# and a command-line flag are each reached only when the audience is `user`.
+#
+# Read against the contract above: the user line names all five, the operator
+# line names the two that fire for an operator and none of the three that do
+# not, and the developer line -- which has no contract to keep -- names none.
+# The guard for this read two of the five before D-093, and the index sentence
+# over it claimed every class.
+
+--- FR-012 / FR-017 / GI-003: the contract `types` prints, per reader ---
+Audiences. The audience is a lens first and a reading grade second:
+  user       grade 10  Uses the product. No development, sysadmin or DevOps background.
+             assumes general computer literacy and a real reason to be here
+             may not name internal symbols, any route path, command-line flags, environment variables and architecture
+  operator   grade 13  Installs, configures and runs the product. Comfortable with a terminal.
+             assumes a terminal, a package manager, environment variables, a hosting dashboard
+             may not name internal symbols and architecture
+  developer  grade 15  Builds against the product or contributes to it.
+             assumes the language, the toolchain, and how to read source
+             may name anything in the system
+
+ISO/IEC/IEEE 26514 quality characteristics:
+--- every kind check_lens can report, and the reader gate over each ---
+        for m in CODE_IDENT.finditer(line):
+                named.append((n, f"`{m.group(1)}`", "an internal symbol name"))
+        for m in ENV_VAR.finditer(line):
+            if audience == "user" and m.group(1) in env_vars:
+                named.append((n, f"`{m.group(1)}`", "an environment variable"))
+        if audience == "user":
+            for m in ROUTE_PATH.finditer(line):
+                named.append((n, m.group(1) or m.group(2), "a request route"))
+            for m in FLAG.finditer(line):
+                named.append((n, f"`{m.group(1)}`", "a command-line flag"))
+        for m in ARCH_HARD.finditer(line):
+            named.append((n, m.group(1), "part of the architecture"))

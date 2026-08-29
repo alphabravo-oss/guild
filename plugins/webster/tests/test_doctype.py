@@ -5,7 +5,7 @@ baseline AC-039 names, as the sibling modules do: 20 of the 27 tests in the firs
 fail there and all 27 pass after. The measurement is direct — a detached worktree at cfafe8e
 with this tests/ directory and pyproject.toml copied in over a scripts/ directory left as
 cfafe8e wrote it, and ``uvx pytest tests/test_doctype.py`` run inside it, which reports 24
-failed and 9 passed across the whole module. An earlier version of this paragraph measured at
+failed and 10 passed across the whole module. An earlier version of this paragraph measured at
 2abe081 — this suite's own first commit, the earliest place these tests could be run at all —
 and carried the numbers across on the grounds that 2abe081 added the harness and touched no
 script, so ``git show 2abe081:plugins/webster/scripts/doctype.py`` hashes to cfafe8e's bytes.
@@ -86,26 +86,45 @@ The other reads the printed contract rather than the rule behind it.
 - FR-012 / FR-017 / GI-003 `types` names every class the lens reports, for the right reader
     test_types_states_the_contract_the_lens_enforces
 
+One more test is measured against no revision of doctype.py at all, because none of them
+changes its answer: the census it runs is ten at cfafe8e, 19941ad, 9859317 and 63e5e58 alike,
+measured. What it is red against is this module's own docstring as 63e5e58 left it, which said
+eight.
+
+- FR-039 / AC-039 the rule count this docstring states is the script's own census
+    test_the_rule_count_in_this_docstring_is_the_scripts_own_census
+
 Every test that runs the script drives it through the conftest ``run_script`` helper (GI-004,
 CT-007), and every assertion on a run quotes the captured exit code, stdout and stderr, because
-a bare ``assert result.returncode == 1`` tells a reader nothing about which of eight rules
-fired. The two source-reading tests named in the next paragraph are the exception to both
+a bare ``assert result.returncode == 1`` tells a reader nothing about which of ten rules
+fired. The three source-reading tests named in the next paragraph are the exception to both
 halves of that sentence, and the only exception to either: they start no process, so there is
-no exit code to quote, and their assertions quote the allowlist entries they read instead. The
-sentence used to open "Every test", flatly, three lines above the paragraph that disclosed the
-two it was not true of.
+no exit code to quote, and their assertions quote the source they read instead. The sentence
+used to open "Every test", flatly, three lines above the paragraph that disclosed the
+exceptions it was not true of.
 
-Two tests read ``scripts/doctype.py`` as text rather than running it, because both pin an
-allowlist entry that could never match. An entry the matching regex cannot produce has no
-observable behaviour to assert against in either direction: it excuses nothing and nothing is
-reported, so the source is the only place the promise lives. Nothing here imports doctype
-(GI-004).
+That "ten" is the script's own census, and it is read rather than restated:
+``test_the_rule_count_in_this_docstring_is_the_scripts_own_census`` takes the number out of the
+sentence above and counts doctype.py's exit-1-capable rules against it. The sentence said
+"eight" from a5484ba, the commit that wrote it, through seven later revisions of this file, and
+the census was ten at every one of them — measured. Nine rule labels reach ``defects.append``
+and ``undefined-jargon`` reaches the same list through ``check_jargon``, which returns its
+findings in the defects slot for a `user` page; ``main`` exits 1 on any of the ten.
+
+Three tests read ``scripts/doctype.py`` as text rather than running it. Two pin an allowlist
+entry that could never match: an entry the matching regex cannot produce has no observable
+behaviour to assert against in either direction — it excuses nothing and nothing is reported,
+so the source is the only place the promise lives. The third is the census above, which has no
+behaviour to assert against either, because the number it checks is a sentence in this
+docstring and nothing a run prints. Nothing here imports doctype (GI-004); the census parses
+the script with ``ast``, the way test_readme.py reads the scripts it checks.
 
 No test uses ``@pytest.mark.skip`` or ``xfail``.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from pathlib import Path
@@ -422,12 +441,12 @@ def test_architecture_is_reported_for_an_operator_and_for_a_user(run_script, doc
     """GI-003 / FR-017: the half of the clause the audience gate must not take with it.
 
     "ROUTE_PATH and the new FLAG regex fire only when audience == 'user'; CODE_IDENT and
-    ARCH_HARD keep firing for operator." Gating routes and flags meant putting two of the four
-    rules behind an `if` inside the loop that runs all four, and the ARCH_HARD half of that
-    sentence had no test at all: the gate could be widened to swallow architecture and this
-    section's header would still have claimed both readers were covered. The two pages carry
-    the same two terms and differ only in their audience, so each assertion below is the same
-    prose read by the reader named in it."""
+    ARCH_HARD keep firing for operator." Gating routes and flags meant putting two of the five
+    rules check_lens runs over each line behind an `if` on the audience, leaving CODE_IDENT and
+    ARCH_HARD outside it, and the ARCH_HARD half of that sentence had no test at all: the gate
+    could be widened to swallow architecture and this section's header would still have claimed
+    both readers were covered. The two pages carry the same two terms and differ only in their
+    audience, so each assertion below is the same prose read by the reader named in it."""
     write_page(docs_dir, "run.md", "title: Run\ndoc_type: how-to\naudience: operator",
                "# Run\n\nThe middleware logs each call and the service layer keeps a queue.\n")
     write_page(docs_dir, "guide.md", "title: Guide\ndoc_type: how-to\naudience: user",
@@ -964,4 +983,90 @@ def test_one_written_page_among_stubs_exits_by_that_page(run_script, docs_dir):
     assert "1 pages checked" in result.stdout, (
         f"Expected the header to count the one page that was read as writing."
         f"\n{outcome(result)}"
+    )
+
+
+# -----------------------------------------------------------------------------
+# FR-039 / AC-039: the rule count this module states is read off the script
+# -----------------------------------------------------------------------------
+def exit_one_rules() -> dict[str, str]:
+    """Every rule label doctype.py can exit 1 on, mapped to the function that appends it.
+
+    A rule reaches the exit-1 slot when it is appended to a list the enclosing function returns
+    FIRST, because every checker in doctype.py returns its defects first and ``run_check`` adds
+    that first element to ``defects``. That is what counts ``check_jargon``'s ``findings``, which
+    is not called ``defects`` and is returned first on a `user` page, and what leaves the
+    advisory labels out: ``advisories`` is only ever returned second.
+
+    Parsed with ``ast`` rather than matched with a regex. The appended dicts hold f-strings with
+    braces in them, so a text scan would depend on key order and on where the literal happens to
+    wrap, and a reflow would change the census without changing a rule."""
+    source = DOCTYPE_PY.read_text(encoding="utf-8")
+    found: dict[str, str] = {}
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        returned_first = {
+            node.value.elts[0].id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Tuple)
+            and node.value.elts
+            and isinstance(node.value.elts[0], ast.Name)
+        }
+        for node in ast.walk(fn):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "append"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in returned_first
+                    and node.args
+                    and isinstance(node.args[0], ast.Dict)):
+                continue
+            for key, value in zip(node.args[0].keys, node.args[0].values):
+                if (isinstance(key, ast.Constant) and key.value == "rule"
+                        and isinstance(value, ast.Constant)):
+                    found[value.value] = fn.name
+    return found
+
+
+def test_the_rule_count_in_this_docstring_is_the_scripts_own_census():
+    """FR-039 / AC-039: a count this module states about the script is read off the script.
+
+    The sentence above said "which of eight rules fired" from a5484ba, the commit that wrote
+    it, through seven later revisions of this file, while doctype.py could exit 1 on ten —
+    measured at cfafe8e, 19941ad, 9859317 and 63e5e58, ten at all four. Nothing read the
+    sentence, which is how a number written once stayed wrong across four grind cycles.
+
+    Neither half is restated here. The number comes out of this module's docstring and the
+    rules come out of doctype.py, so a rule added to the script without a hand on this
+    docstring fails on the comparison rather than passing over a stale number."""
+    doc = __doc__ or ""
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+             "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+             "fourteen": 14, "fifteen": 15, "sixteen": 16}
+    stated = re.findall(r"which of (\S+) rules fired", re.sub(r"\s+", " ", doc))
+    assert len(stated) == 1, (
+        "The sentence this test reads is gone or duplicated. A census with nothing to compare "
+        f"against measures nothing, so it has to be rewritten rather than left passing; found "
+        f"{stated} in the docstring of {__file__}"
+    )
+    assert stated[0] in words, (
+        f"'which of {stated[0]} rules fired' does not state a number this test can read, so "
+        "the count it gives a reader is unchecked"
+    )
+
+    rules = exit_one_rules()
+    assert words[stated[0]] == len(rules), (
+        f"The docstring says doctype.py exits 1 on {stated[0]} ({words[stated[0]]}) rules; "
+        f"{DOCTYPE_PY} has {len(rules)}:\n"
+        + "\n".join(f"  {rule}  ({fn})" for rule, fn in sorted(rules.items()))
+    )
+    assert "undefined-jargon" in rules, (
+        "The census missed check_jargon, whose findings are returned in the defects slot for a "
+        f"`user` page and are as much an exit 1 as any other rule. Found: {sorted(rules)}"
+    )
+    assert "reading-grade" not in rules and "lens-drift" not in rules, (
+        "The census swept up an advisory. An advisory never reaches exit 1 — `main` returns "
+        f"`1 if defects else 0` — so counting one overstates the number. Found: {sorted(rules)}"
     )

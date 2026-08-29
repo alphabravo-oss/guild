@@ -1,0 +1,69 @@
+# evidence-cmd: cd plugins/webster && echo '--- D-129 / FR-039 / AC-039: the number the module docstring states ---'; python3 -c "import ast,re;d=ast.get_docstring(ast.parse(open('tests/test_doctype.py',encoding='utf-8').read()));print(re.findall(r'which of (\S+) rules fired', re.sub(r'\s+',' ',d)))"; echo '--- the census that number is measured against, read out of the script ---'; python3 -c "import ast;src=open('scripts/doctype.py',encoding='utf-8').read();found={};[found.setdefault(v.value,fn.name) for fn in ast.walk(ast.parse(src)) if isinstance(fn,ast.FunctionDef) for first in [{n.value.elts[0].id for n in ast.walk(fn) if isinstance(n,ast.Return) and isinstance(n.value,ast.Tuple) and n.value.elts and isinstance(n.value.elts[0],ast.Name)}] for c in ast.walk(fn) if isinstance(c,ast.Call) and isinstance(c.func,ast.Attribute) and c.func.attr=='append' and isinstance(c.func.value,ast.Name) and c.func.value.id in first and c.args and isinstance(c.args[0],ast.Dict) for k,v in zip(c.args[0].keys,c.args[0].values) if isinstance(k,ast.Constant) and k.value=='rule' and isinstance(v,ast.Constant)];print('exit-1-capable rules:',len(found));[print(' ',r,'->',f) for r,f in sorted(found.items())]"; echo '--- the same census at the four revisions the docstring names ---'; for sha in cfafe8e 19941ad 9859317 63e5e58; do printf '%s ' "$sha"; git -C ../.. show $sha:plugins/webster/scripts/doctype.py | python3 -c "import ast,sys;src=sys.stdin.read();found=set();[found.add(v.value) for fn in ast.walk(ast.parse(src)) if isinstance(fn,ast.FunctionDef) for first in [{n.value.elts[0].id for n in ast.walk(fn) if isinstance(n,ast.Return) and isinstance(n.value,ast.Tuple) and n.value.elts and isinstance(n.value.elts[0],ast.Name)}] for c in ast.walk(fn) if isinstance(c,ast.Call) and isinstance(c.func,ast.Attribute) and c.func.attr=='append' and isinstance(c.func.value,ast.Name) and c.func.value.id in first and c.args and isinstance(c.args[0],ast.Dict) for k,v in zip(c.args[0].keys,c.args[0].values) if isinstance(k,ast.Constant) and k.value=='rule' and isinstance(v,ast.Constant)];print(len(found),'rules')"; done; echo '--- the guard, run, and the same guard against the number as 63e5e58 left it ---'; uvx pytest -p no:cacheprovider -q --no-header tests/test_doctype.py -k census 2>&1 | tail -1 | sed -E 's/ in [0-9.]+s$//'; sed -e 's/which of ten rules/which of eight rules/' tests/test_doctype.py > tests/test_doctype_pre_fix_number.py && uvx pytest -p no:cacheprovider -q --no-header tests/test_doctype_pre_fix_number.py -k the_scripts_own 2>&1 | grep -E '^E +assert 8 == |^[0-9]+ failed'; rm -f tests/test_doctype_pre_fix_number.py; echo '--- D-130 / FR-010: which branches _CAP_RUN and _HAS_LOWER are true of ---'; python3 -c "import re;src=open('scripts/doctype.py',encoding='utf-8').read();body=src[src.index('CODE_IDENT = re.compile('):src.index('r\")\`\")')];branches=[l for l in body.splitlines() if l.strip().startswith(('r\"[','rf\"|','r\"|'))];[print(('_CAP_RUN' in b and 'uses _CAP_RUN ' or 'no _CAP_RUN  ')+b.strip()) for b in branches]"; python3 -c "import re;_CAP_RUN=r'(?:[A-Z]+[a-z0-9]*)';branches={'snake_case':r'[a-z][a-z0-9]*(?:_[a-z0-9]+)+','camelCase':r'[a-z][a-z0-9]*'+_CAP_RUN+'+','PascalCase':r'[A-Z][a-z0-9]+'+_CAP_RUN+'+','acronym-first':r'[A-Z]{2,}[a-z0-9]+'+_CAP_RUN+'*'};tokens=['create_item','getUser','S3Bucket','APIClient','SHA256','MD5','EC2','UTF8','H2O','HTTP2'];[print(name,'| lowercase-free tokens it matches:',[t for t in tokens if re.fullmatch(p,t) and not any(c.islower() for c in t)]) for name,p in branches.items()]"
+# evidence-for: FR-039, AC-039, FR-010
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# D-129 (FR-039 / AC-039). The module docstring told a reader that a bare
+# `assert result.returncode == 1` says nothing about "which of eight rules
+# fired" while doctype.py could exit 1 on ten. Nine labels reach
+# `defects.append`; `undefined-jargon` reaches the same list through
+# `check_jargon`, which returns its findings in the defects slot for a `user`
+# page, and `main` returns `1 if defects else 0` over all ten.
+#
+# The census is read off the script rather than restated: a rule label counts
+# when it is appended to a list its function returns FIRST, which is the slot
+# `run_check` adds to `defects`. That is what admits `check_jargon`'s
+# `findings` and what leaves `reading-grade` and `lens-drift` out, since
+# `advisories` is only ever returned second.
+#
+# The four revisions after it are the docstring's own claim measured: the
+# census is ten at cfafe8e, 19941ad, 9859317 and 63e5e58 alike, so the number
+# was wrong at every commit that carried it and no revision of the script would
+# have made it right.
+#
+# The guard is then run twice: once against the docstring as this commit
+# leaves it, and once against a copy with the number put back to eight, which
+# fails on the comparison rather than passing over a stale word.
+#
+# D-130 (FR-010). Two comments over CODE_IDENT quantified over "every branch"
+# and were true of some. `_CAP_RUN` is written once for the three branches that
+# name a capital run; the snake_case branch never uses it. `_HAS_LOWER` is
+# load-bearing only for the two capital-initial branches, which can spell a
+# whole token out of capitals and digits -- SHA256, MD5, EC2, UTF8, H2O -- while
+# the two lowercase-initial branches open on a mandatory [a-z] and carry a
+# lowercase letter by construction. The last block is each branch run against
+# those tokens: only PascalCase and acronym-first produce any. The regex itself
+# is unchanged; the comments are.
+
+--- D-129 / FR-039 / AC-039: the number the module docstring states ---
+['ten']
+--- the census that number is measured against, read out of the script ---
+exit-1-capable rules: 10
+  explains-mechanism -> check_lens
+  heading-skip -> check_universal
+  internals-leak -> check_universal
+  no-alt-text -> check_universal
+  no-audience -> check_frontmatter
+  type-mixing -> check_typed
+  undefined-jargon -> check_jargon
+  unknown-audience -> check_frontmatter
+  unknown-type -> check_frontmatter
+  wrong-lens -> check_lens
+--- the same census at the four revisions the docstring names ---
+cfafe8e 10 rules
+19941ad 10 rules
+9859317 10 rules
+63e5e58 10 rules
+--- the guard, run, and the same guard against the number as 63e5e58 left it ---
+1 passed, 33 deselected
+E       assert 8 == 10
+1 failed, 33 deselected in 0.04s
+--- D-130 / FR-010: which branches _CAP_RUN and _HAS_LOWER are true of ---
+no _CAP_RUN  r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+"
+uses _CAP_RUN rf"|[a-z][a-z0-9]*{_CAP_RUN}+"        # camelCase: getUser, iPhone, gRPC, iOS
+uses _CAP_RUN rf"|[A-Z][a-z0-9]+{_CAP_RUN}+"        # PascalCase: DataSources, GraphQL, PostgreSQL
+uses _CAP_RUN rf"|[A-Z]{{2,}}[a-z0-9]+{_CAP_RUN}*"  # acronym first: APIClient, HTTPServer, OAuth
+snake_case | lowercase-free tokens it matches: []
+camelCase | lowercase-free tokens it matches: []
+PascalCase | lowercase-free tokens it matches: ['H2O']
+acronym-first | lowercase-free tokens it matches: ['SHA256', 'MD5', 'EC2', 'UTF8', 'HTTP2']

@@ -1,0 +1,25 @@
+# evidence-cmd: cd plugins/webster && rm -rf /tmp/webster-c3-acronyms && mkdir -p /tmp/webster-c3-acronyms/docs && printf '%s\n' '---' 'title: Guide' 'doc_type: how-to' 'audience: user' '---' '' '# Guide' '' 'The API returns your items.' 'The CLI prints them for you.' 'Then ZQX arrives in the mail.' > /tmp/webster-c3-acronyms/docs/guide.md; echo '--- AC-018 / FR-016: API and CLI are universal, an unknown acronym still fires ---'; WEBSTER_SHOW_PER_RULE=50 python3 scripts/doctype.py check /tmp/webster-c3-acronyms/docs; echo "exit=$?"; echo '--- FR-041 / FR-033: WARNING is out of the set and the regex bound is unchanged ---'; python3 -c "import sys; sys.path.insert(0, 'scripts'); import doctype as d; print('ACRONYM pattern:', d.ACRONYM.pattern); print('shortest entry:', min(map(len, d.UNIVERSAL_ACRONYMS)), 'longest entry:', max(map(len, d.UNIVERSAL_ACRONYMS))); print('entries the regex can never produce:', sorted(a for a in d.UNIVERSAL_ACRONYMS if not d.ACRONYM.fullmatch(a))); print('API present:', 'API' in d.UNIVERSAL_ACRONYMS, 'CLI present:', 'CLI' in d.UNIVERSAL_ACRONYMS, 'WARNING present:', 'WARNING' in d.UNIVERSAL_ACRONYMS)"
+# evidence-for: FR-016, FR-033, FR-041, AC-018
+#
+# AC-018. API and CLI are read by their letters and expanding them reads as
+# condescension, so neither is undefined jargon; ZQX, which no reader has met,
+# still is. The second half is the set measured against the regex that has to
+# produce every entry: nothing in it is shorter than two characters or longer
+# than six, so nothing in it is unreachable, and WARNING -- seven characters --
+# is gone rather than the ceiling being widened to reach it.
+
+--- AC-018 / FR-016: API and CLI are universal, an unknown acronym still fires ---
+1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+no survey allowlist
+
+DEFECTS (1)
+
+  undefined-jargon  (1)
+      write it out the first time, '... (ZQX)', or add it to the glossary
+    guide.md:11  'ZQX' is used without ever being expanded
+exit=1
+--- FR-041 / FR-033: WARNING is out of the set and the regex bound is unchanged ---
+ACRONYM pattern: \b([A-Z][A-Z0-9]{1,5})s?\b
+shortest entry: 2 longest entry: 6
+entries the regex can never produce: []
+API present: True CLI present: True WARNING present: False
