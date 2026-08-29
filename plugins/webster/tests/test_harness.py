@@ -142,14 +142,22 @@ BARE_DATE = "2026-08-27T16:49:56"
 # ``GIT_ENV``: a developer's ~/.gitconfig arrives through HOME and the suite
 # cannot enumerate what it holds. That is not the reasoning this comment used
 # to give, which was that ``status.relativePaths`` "or a pathspec alias would
-# change what these queries return on that machine only". Measured against
-# every query this module runs — ``ls-files``, ``ls-tree`` and ``diff
-# --name-only`` — a global ``status.relativePaths = true`` leaves all three
-# byte-identical, because it reaches ``git status`` and nothing here runs it;
-# so does an ``[alias] ls-files`` shadowing the built-in, because git does not
-# let an alias shadow a built-in command. The guard stays because it costs
-# nothing, not because either example was real. Read no configuration but the
-# repository's own.
+# change what these queries return on that machine only". ``git`` and
+# ``git_in`` below are the two helpers that carry this env, and between them
+# they issue six subcommands: ``diff``, ``log``, ``ls-files``, ``ls-tree``,
+# ``merge-base`` and ``rev-parse``. Measured on all six, in every argv form
+# they are called with here: a global ``status.relativePaths`` leaves all six
+# byte-identical whether it is set true or false, because the setting reaches
+# ``git status`` and neither helper runs it — and ``true``, the value the old
+# sentence named, is git's own default, so it could not have moved even that.
+# An ``[alias]`` entry shadowing each of the six leaves all six byte-identical
+# too, because git ignores an alias that hides a built-in. Neither result is
+# an unread config file: under those same two files ``status.relativePaths =
+# false`` does change ``git status --short`` run from a subdirectory, and an
+# alias on a name git has no built-in for does fire. The sentence this
+# replaces said "every query this module runs" and then named three of the
+# six. The guard stays because it costs nothing, not because either example
+# was real. Read no configuration but the repository's own.
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 # GI-007's writable file set, as a predicate. ``scripts/*.py`` is deliberately
@@ -380,7 +388,11 @@ def test_run_script_child_python3_clears_the_plugin_floor(run_script, fixture_re
     running that exact pair reports the exact child. ``run_script`` itself cannot be asked — its
     contract takes a script basename under ``scripts/``, not a ``-c`` argument,
     and widening it for one measurement would change a locked contract that
-    every other module in this suite depends on.
+    every module in this suite but ``test_readme.py`` depends on — the seven
+    that take the ``run_script`` fixture, this one included. That clause read
+    "every other module in this suite depends on" until it was counted;
+    ``test_readme.py`` takes neither ``run_script`` nor ``fixture_repo``, as
+    its own docstring says.
 
     Second, through ``run_script`` for real: ``survey.py`` imports
     ``tomllib`` at module scope, and ``tomllib`` is stdlib only from 3.11. A
@@ -538,10 +550,18 @@ def test_committed_fixture_excludes_git_website_manifest():
     Either one makes the next run's results depend on the last run's mess, and
     a pre-recorded manifest in particular would let a drift test pass without
     ``record`` ever being exercised.
+
+    The message on the missing-tree assertion below said "every other module in
+    this suite builds its repository from it" until the modules were counted.
+    Four do not: ``test_doctype.py`` makes its own empty ``docs_dir`` under
+    ``tmp_path``, and ``test_scaffold.py``, ``test_slop.py`` and
+    ``test_readme.py`` take no repository fixture at all.
     """
     assert FIXTURE_REPO_SRC.is_dir(), (
-        f"the committed fixture tree is missing at {FIXTURE_REPO_SRC}; every "
-        f"other module in this suite builds its repository from it."
+        f"the committed fixture tree is missing at {FIXTURE_REPO_SRC}; the "
+        f"three modules that take conftest's fixture_repo — test_drift.py, "
+        f"test_llmstxt.py and test_survey.py — build their repository from it, "
+        f"and so does this one."
     )
 
     offenders: list[str] = []
