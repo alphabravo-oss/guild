@@ -66,13 +66,22 @@ at all. The other two read their arguments inside ``main`` instead —
 ``scaffold.py`` through ``argparse``, ``rendered.py`` through ``sys.argv`` —
 so a test of either can import once and call ``main`` with ``sys.argv`` set:
 measured, that returns scaffold.py's ``bad_subject`` JSON and exit 2 with no
-subprocess at all. ``run_script`` drives those two the
-same way anyway, because one invocation shape across the suite beats two kinds
-of test plus a rule about which script gets which, and the subprocess shape is
-the one a reader runs. The count is stated because this paragraph once opened
-"Every script binds ...", listed five names, and was read as covering all
-seven: it was false for exactly the two scripts it did not name, and one of
-them, ``scaffold.py``, has a test module sitting beside this file.
+subprocess at all. ``run_script`` takes a script basename, so it can drive any
+of the seven — handed ``rendered.py`` it runs it, exit 0 and ``0 rendered pages
+scanned`` against an empty directory. Of these two the suite calls it on
+``scaffold.py`` only, from ``test_scaffold.py``, and calls it there rather than
+taking the cheaper in-process shape because one invocation shape across the
+suite beats two kinds of test plus a rule about which script gets which, and
+the subprocess shape is the one a reader runs. ``rendered.py`` nothing here
+drives: there is no ``test_rendered.py``, and no test module passes that name
+to ``run_script`` at all. That is a gap in coverage rather than a property of
+the helper, and the README's paragraph on what is not yet exercised records the
+same absence. This passage used to say ``run_script`` "drives those two the
+same way anyway", which was true of one of them. The count is stated because
+this paragraph once opened "Every script binds ...", listed five names, and was
+read as covering all seven: it was false for exactly the two scripts it did not
+name, and one of them, ``scaffold.py``, has a test module sitting beside this
+file.
 
 Those are named by symbol and not by ``file:line`` deliberately. An earlier
 version of this paragraph cited five line numbers into the scripts, and all
