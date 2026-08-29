@@ -81,7 +81,10 @@ Rows carrying a note the column has no room for:
   reason the column cannot show: there the commands list for its tree was empty
   altogether, so it fails because nothing was emitted rather than because noise
   was. It is a boundary on the fix beside it -- every name in that list is a
-  term doctype.py stops reporting -- and from this cycle on it is a guard.
+  term doctype.py stops reporting -- and green at every revision from d7eb572
+  on, measured, which is the work it does now. The column keeps 19941ad rather
+  than "guard": "guard" is defined above as green at every revision measured,
+  and this row is not one.
 - The two rows naming 944c958 are the cycle-5 corrections, and each is red at
   944c958 for one assertion out of its several. In
   ``test_a_flag_named_in_another_flags_help_is_not_a_command`` it is the
@@ -239,8 +242,11 @@ def assert_floor_comment_sits_on_the_import(source, path):
     Read here rather than in each caller because both script modules take the
     same dependency for the same reason and a reader of either needs the same
     sentence. It is a plain function, not a fixture: it touches no process and
-    no temporary tree, and ``run_script`` is the one fixture-shaped helper this
-    suite is allowed (GI-004).
+    no temporary tree, and ``run_script`` is the one script-invoking helper
+    GI-004 gives this suite. That used to read "the one fixture-shaped helper
+    this suite is allowed", which conftest.py's ``fixture_repo`` and
+    ``build_repo`` are as well -- GI-004 constrains the helper that runs a
+    script, not the count of fixtures.
     """
     lines = source.splitlines()
     found = [n for n, text in enumerate(lines) if text.strip() == "import tomllib"]
@@ -285,8 +291,7 @@ def anchor_census(data):
     survey.py states, so it raises rather than being filed under one.
 
     A plain function, not a fixture: it starts no process and touches no tree,
-    and ``run_script`` is the one fixture-shaped helper this suite is allowed
-    (GI-004).
+    and ``run_script`` is the one script-invoking helper GI-004 gives this suite.
     """
     anchored, records_without, strings, empty = set(), set(), set(), set()
 
@@ -768,7 +773,7 @@ def test_unparseable_pyproject_leaves_the_survey_running(run_script, fixture_rep
 # whose bytes are not the format to a file whose contents are not the shape.
 # -----------------------------------------------------------------------------
 def test_a_package_json_that_is_not_an_object_is_read_as_absent(run_script, tmp_path):
-    """US-006: `[1, 2]` is valid JSON, and every read of it below is `pkg.get`.
+    """US-006: `[1, 2]` is valid JSON, and the first read of it below is `pkg.get`.
 
     Two documents rather than one, because neither is exotic and they arrive by
     different routes: an array is what a generator writing a list of workspaces
@@ -1063,7 +1068,8 @@ def test_option_flags_reach_the_user_surface_commands(run_script, fixture_repo):
     names = {c["name"] for c in commands}
     assert "--out" in names, (
         "A flag the product declares is a flag its user pages are allowed to "
-        f"name, and this is the only list that says so; commands held {commands}"
+        "name, and user_surface.commands is the array survey.py publishes a "
+        f"declared flag into; commands held {commands}"
     )
     assert {"serve", "migrate", "export-data"} <= names, (
         f"the subcommands the pattern already found are still there; got {commands}"
@@ -1244,9 +1250,15 @@ def test_a_black_split_declaration_still_declares_its_flag(run_script, tmp_path)
     ``--verbose`` on a user page with: the WEBSTER_SURVEY path was inert for
     exactly the projects that run a formatter.
 
-    The join is the one the decorator pass already uses, cap and all, and the
-    anchor stays the line the call opens on because that is the line a reader is
-    sent to read. Joining does not relax what is read from the call: ``-x`` in
+    The lines are accumulated the way the decorator pass accumulates them and
+    under the same six-line cap. The completion test is not the same one: this
+    pass counts parens in the raw text where the decorator pass counts through
+    ``call_depth_delta``, which skips the ones inside a ``#`` comment or a
+    string. Nothing this test measures turns on that, because ``CLI_ARG_END``
+    cuts the literal scan at the first ``)`` or ``#`` whichever count stopped
+    the join. The anchor stays the line the call opens on because that is the
+    line a reader is sent to read. Joining does not relax what is read from the
+    call: ``-x`` in
     the help sentence is still prose, and so is the description commander splits
     across lines the same way.
     """

@@ -135,8 +135,9 @@ def assert_floor_comment_sits_on_the_import(source, path):
     than imported from it. Both scripts take the same dependency for the same
     reason, so both need the same sentence checked the same way, but a test
     module importing another test module makes one of them fail for the other's
-    reasons. The one helper this suite shares lives in conftest.py and is
-    ``run_script`` (GI-004); a second one there is not this change's to add.
+    reasons. The one script-invoking helper this suite shares lives in
+    conftest.py and is ``run_script`` (GI-004); a second one there is not this
+    change's to add.
     """
     lines = source.splitlines()
     found = [n for n, text in enumerate(lines) if text.strip() == "import tomllib"]

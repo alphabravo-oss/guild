@@ -242,7 +242,7 @@ def call_depth_delta(line):
 
     Counting them in raw text counts the ones inside string literals and `#` comments too. A
     decorator carrying `strict_slashes=False,  # 2) legacy behaviour, see PROJ-14` balanced its
-    call one line early: the join stopped before `methods=["POST"]`, the text handed to the
+    call two lines early: the join stopped before `methods=["POST"]`, the text handed to the
     verb decision below had no methods= in it -- which is also what a route declaring none
     looks like -- and GET was published for an endpoint that answers 405 to it. A quote and a
     `#` are the two places a paren is not syntax, so both spans are skipped before anything is
@@ -595,12 +595,20 @@ for p in walk(exts={".ts", ".js", ".py", ".go"}):
             # Reading one line at a time saw `parser.add_argument(` and no literal at all, so a
             # formatted project declared no flags whatsoever and doctype.py had nothing to
             # suppress a `--verbose` on a user page with: the WEBSTER_SURVEY path was inert for
-            # exactly the projects that run a formatter. Same join and same six-line cap as
-            # the decorator pass above, and the cap is there for the same reason: it stops a
-            # `(` that opened something else from swallowing the lines beneath it. Hitting it
-            # costs a flag rather than inventing one, which is the direction this list is
-            # allowed to fail in. The anchor stays `i`, the line the call opens on, because
-            # that is the line a reader is sent to.
+            # exactly the projects that run a formatter. The lines are accumulated the way the
+            # decorator pass above accumulates them and under the same six-line cap, and the
+            # cap is there for the same reason: it stops a `(` that opened something else from
+            # swallowing the lines beneath it. Hitting the cap costs a flag rather than
+            # inventing one, which is the direction this list is allowed to fail in.
+            #
+            # The completion test is not the same one, and this comment claimed it was. The
+            # decorator pass counts through call_depth_delta, which skips the parens inside a
+            # `#` comment or a string literal; the count here is over the raw text, so a `)`
+            # in either place ends the join early. Nothing a reader sees turns on that,
+            # because CLI_ARG_END cuts the literal scan at the first `)` or `#` whatever
+            # stopped the join -- those are the very characters the two counts disagree about,
+            # so the text past one is never read here either way. The anchor stays `i`, the
+            # line the call opens on, because that is the line a reader is sent to.
             if args.count("(") + 1 > args.count(")"):
                 for cont in lines[i:i + 6]:
                     args += " " + cont.strip()
