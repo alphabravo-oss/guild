@@ -60,10 +60,10 @@ def one_line(value):
     The header is the only place this script publishes a string with no page behind it, so it
     printed whatever pyproject.toml or package.json held. A description ending in an anchor
     comment reached the reader verbatim. A TOML description written across three lines printed
-    its middle line outside the `> ` blockquote entirely, which is why the fold matters as much
-    as the strip: a summary that breaks across lines has stopped being the one line the format
-    asks for. A non-string -- a JSON object under `description` -- yields nothing rather than a
-    Python repr, and the next source in the chain is used instead.
+    every line after the first outside the `> ` blockquote, which is why the fold matters as
+    much as the strip: a summary that breaks across lines has stopped being the one line the
+    format asks for. A non-string -- a JSON object under `description` -- yields nothing rather
+    than a Python repr, and the next source in the chain is used instead.
 
     A value still carrying the stub marker, or a brace from one of scaffold.py's `{placeholder}`
     headings, is dropped on the same grounds. The header line is a claim that this repo is a
@@ -140,9 +140,9 @@ def title_and_summary(path):
     """Title and one-line summary for a page.
 
     The frontmatter `description` is what the author wrote to describe the page, so it is used
-    when present. Falling back to the first body line produces a fragment whenever that line is
-    short or runs past the cut, which is how entries like "They are two different things" and
-    summaries ending mid-clause get published."""
+    when present. The fallback takes the first body line: published whole at 160 characters
+    or fewer, cut at the last full stop before character 161 when one sits past character 40,
+    and otherwise at 160 characters with an ellipsis."""
     text = open(path, encoding="utf-8", errors="replace").read()
     title = strip_comments(frontmatter_field(text, "title")) or None
     summary = strip_comments(frontmatter_field(text, "description")) or None

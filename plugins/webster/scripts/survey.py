@@ -248,8 +248,8 @@ def call_depth_delta(line):
     `#` are the two places a paren is not syntax, so both spans are skipped before anything is
     counted.
 
-    One line at a time, because that is where those two spans end: a `#` comment ends at the
-    newline the join replaces with a space, and a quoted string cannot cross one at all."""
+    One line at a time, which is where a `#` comment ends and a single-quoted string ends. A
+    triple-quoted string does not end there, and a `)` on its later lines is counted as code."""
     delta, i, n = 0, 0, len(line)
     while i < n:
         ch = line[i]
@@ -468,9 +468,9 @@ MESSAGE_LITERAL = re.compile(
 # refuses are what does it: no `(` and no `)`, so the gap cannot leave the call it began in, and
 # no `#`, so it cannot walk into a trailing comment. The newline in the class does no work --
 # the scan reads one line at a time and never offers it one -- and is there so the pattern is
-# still bounded if it is ever run over joined text. A-018's "within about 40 characters" is the
-# length of that argument list before the literal, and the literal must be followed by the `,`
-# or `)` that ends an argument.
+# still bounded if it is ever run over joined text. A-018's "within ~40 chars" is the length
+# of that argument list before the literal, and the literal must be followed by the `,` or `)`
+# that ends an argument.
 #
 # What keeps a dict or list detail out is not the gap at all: it is the quote required
 # immediately after `detail=`, which `detail={"loc": ...}` and `detail=[{...}]` and

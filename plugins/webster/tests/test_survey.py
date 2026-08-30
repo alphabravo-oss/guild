@@ -27,9 +27,9 @@ to stop a fix from taking something else away with it. cfafe8e is the
 pre-change script AC-039 names; a test added by a later fix names the commit it
 was written against.
 
-============================================================  ==========  =======================
+============================================================  ==========  ========================
 test                                                          fix         red against
-============================================================  ==========  =======================
+============================================================  ==========  ========================
 test_os_getenv_read_lands_in_config_undeclared                FR-018/031  cfafe8e
 test_env_regex_allows_whitespace_after_the_bracket            FR-018/031  cfafe8e
 test_env_regex_still_matches_the_go_getenv                    FR-031      guard
@@ -57,10 +57,10 @@ test_a_flag_named_in_another_flags_help_is_not_a_command      FR-012      944c95
 test_a_positional_description_is_not_a_flag_spec              FR-012      66dab76 (added cycle 6)
 test_a_commander_option_string_still_declares_its_spellings   FR-012      19941ad (added cycle 6)
 test_a_black_split_declaration_still_declares_its_flag        FR-012      66dab76 (added cycle 6)
-test_every_surface_entry_carries_an_anchor                    FR-012/021  15f7264 (cycle 10)
+test_every_surface_entry_carries_an_anchor                    FR-012/021  15f7264 (added cycle 10)
 test_tomllib_imported_at_module_level_with_the_floor_comment  NFR-002     cfafe8e
 test_the_red_first_table_counts_its_own_rows                  FR-039      n/a (reads this table)
-============================================================  ==========  =======================
+============================================================  ==========  ========================
 
 Rows carrying a note the column has no room for:
 
