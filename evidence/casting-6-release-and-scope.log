@@ -6,7 +6,7 @@
 # The release and the scope boundary, generated from a clean worktree at the commit that
 # carries this cycle's other logs. plugin.json reads 0.11.0 and the README Status section
 # carries that version, the run command and the count (AC-042, NFR-003, OT-040). The suite
-# collects 148 and reports 147 passed with one red: the GI-007 scope guard in
+# collects 149 and reports 148 passed with one red: the GI-007 scope guard in
 # test_harness.py, which names this run's own committed evidence/ logs and goes green on
 # the lead's strip commit, exactly as its own docstring says it will (OT-036, NFR-001).
 # The scope blocks are FR-043, GI-007 and OT-043: the whole change since the pre-change
@@ -21,13 +21,13 @@
     plugin.json  3:  "version": "0.11.0",
     README.md    188:Version 0.11.0.
     README.md    191:cd plugins/webster && uvx pytest
-    README.md    194:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+    README.md    194:149 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
 
 --- OT-036 and NFR-001: what the suite collects and what it reports ---
     
-    148 tests collected in 0.02s
+    149 tests collected in 0.02s
     FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
-    1 failed, 147 passed in 13.12s
+    1 failed, 148 passed in 13.26s
     (the one red is the GI-007 scope guard naming this run own committed evidence/ logs; it goes green on the lead strip commit, as its own docstring records)
 
 --- FR-043, GI-007, OT-043: the whole change against the pre-change baseline cfafe8e ---
@@ -37,9 +37,9 @@
  3 files changed, 1216 insertions(+), 28 deletions(-)
 
 --- what THIS cycle moved, against the cycle-16 baseline 18e06c9 ---
- plugins/webster/README.md            |  44 ++++++++++-----
- plugins/webster/tests/test_readme.py | 102 +++++++++++++++++++++++++----------
- 2 files changed, 107 insertions(+), 39 deletions(-)
+ plugins/webster/README.md            |  46 +++++++++++-----
+ plugins/webster/tests/test_readme.py | 104 +++++++++++++++++++++++++----------
+ 2 files changed, 109 insertions(+), 41 deletions(-)
 
 --- and that the test_readme.py half of it is docstring text only ---
     AST modulo docstrings, 18e06c9 against HEAD: True

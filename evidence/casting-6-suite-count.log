@@ -1,0 +1,63 @@
+# evidence-cmd: sh -c 'set -e; root="$(git rev-parse --show-toplevel)"; cd "$root/plugins/webster"; t="$(mktemp -d)"; printf "%s\n" "import ast, pathlib, sys" "d = pathlib.Path(sys.argv[1])" "mods = sorted(d.glob(\"test_*.py\"))" "total = 0" "for p in mods:" "    n = sum(1 for x in ast.parse(p.read_text()).body if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.name.startswith(\"test\"))" "    total += n" "    print(f\"      {p.name:<20} {n:>3}\")" "print(f\"      {total} tests across {len(mods)} modules\")" > "$t/count.py"; echo "--- the three places the suite count is written, at the pre-change commit b188ff0 and at HEAD ---"; for rev in b188ff0 HEAD; do echo "    $rev"; git show "$rev:plugins/webster/README.md" | grep -n "^[0-9][0-9]* passing" | sed "s|^|      README.md            |"; git show "$rev:plugins/webster/tests/test_readme.py" | grep -n "69 == \|77 by 61fb1df" | sed "s|^|      tests/test_readme.py |"; done; echo; echo "--- the suite those three claim to count, by the AST rule _scan_module uses ---"; python3 "$t/count.py" tests; echo; echo "--- and what pytest collects and reports (OT-036, NFR-001) ---"; uvx pytest --collect-only -q -p no:cacheprovider 2>&1 | tail -1 | sed "s|^|      |"; uvx pytest -q -p no:cacheprovider 2>&1 | grep -E "^FAILED|passed|failed" | sed "s|^|      |"; echo "      (the one red is the GI-007 scope guard on this run own committed evidence/ logs)"; echo; echo "--- every other count the Status section states about this suite, re-measured ---"; grep -n "passing across eight modules\|six of the seven scripts, one test module each\|measures five" README.md | sed "s|^|      README.md |"; echo "      test modules on disk: $(ls tests/test_*.py | wc -l | tr -d " ")   scripts on disk: $(ls scripts/*.py | wc -l | tr -d " ")"; for s in $(ls scripts/*.py | xargs -n1 basename | sed "s/\.py$//"); do if [ -f "tests/test_$s.py" ]; then echo "      $s.py -> tests/test_$s.py"; else echo "      $s.py -> no test module"; fi; done; echo "      (the five things test_harness.py measures are its five tests in the table above)"; rm -rf "$t"'
+# evidence-for: AC-042, FR-038, US-010, NFR-001, FR-039, AC-039, OT-036
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# D-169. Casting 4's 42fe57b added tests/test_survey.py::test_a_triple_quoted_string_
+# hides_its_parens_from_the_join and took the suite from 148 defined tests to 149,
+# leaving the README Status section stating a count nobody could reach and
+# test_status_passing_count_matches_the_collected_suite red on assert 148 == 149. The
+# first block shows all three places that number is written -- README.md:194 and the
+# two prose copies in test_readme.py's FR-039 / AC-039 red-first record, at the
+# pre-change commit b188ff0 and at HEAD -- so the re-pin is visible as a diff rather
+# than asserted. The second counts the suite by the same AST rule _scan_module uses,
+# per module, and the third is what pytest independently collects and reports: 149
+# either way, with the single red being the GI-007 scope guard that names this run's
+# own committed evidence/ logs and goes green on the lead's strip commit.
+#
+# The last block re-measures every other count the Status section states about this
+# suite, because a stale number is rarely alone. Three held and are unchanged: eight
+# modules against eight tests/test_*.py on disk; six of the seven scripts with one
+# test module each, listed script by script, with rendered.py the one that has none;
+# and test_harness.py measuring five things against its five tests in the table above.
+
+--- the three places the suite count is written, at the pre-change commit b188ff0 and at HEAD ---
+    b188ff0
+      README.md            194:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+      tests/test_readme.py 39:against 61fb1df is ``69 == 148`` and not that revision's own ``69 == 77``:
+      tests/test_readme.py 66:  and never moved again — 77 by 61fb1df, 148 now. The revision is named because
+    HEAD
+      README.md            194:149 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+      tests/test_readme.py 39:against 61fb1df is ``69 == 149`` and not that revision's own ``69 == 77``:
+      tests/test_readme.py 66:  and never moved again — 77 by 61fb1df, 149 now. The revision is named because
+
+--- the suite those three claim to count, by the AST rule _scan_module uses ---
+      test_doctype.py       34
+      test_drift.py         33
+      test_harness.py        5
+      test_llmstxt.py       18
+      test_readme.py         6
+      test_scaffold.py      12
+      test_slop.py          10
+      test_survey.py        31
+      149 tests across 8 modules
+
+--- and what pytest collects and reports (OT-036, NFR-001) ---
+      149 tests collected in 0.02s
+      FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+      1 failed, 148 passed in 13.32s
+      (the one red is the GI-007 scope guard on this run own committed evidence/ logs)
+
+--- every other count the Status section states about this suite, re-measured ---
+      README.md 194:149 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+      README.md 293:Exercised: six of the seven scripts, one test module each. `drift.py` across a dirty tree, a
+      README.md 331:The harness under those modules is exercised as well. `tests/test_harness.py` measures five
+      test modules on disk: 8   scripts on disk: 7
+      doctype.py -> tests/test_doctype.py
+      drift.py -> tests/test_drift.py
+      llmstxt.py -> tests/test_llmstxt.py
+      rendered.py -> no test module
+      scaffold.py -> tests/test_scaffold.py
+      slop.py -> tests/test_slop.py
+      survey.py -> tests/test_survey.py
+      (the five things test_harness.py measures are its five tests in the table above)

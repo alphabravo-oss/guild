@@ -25,7 +25,7 @@
     301:`WEBSTER_SURVEY` allowlist, the architecture rule that keeps firing for an operator after routes
 
 --- the three claims the Status section carries, searched over the whole README and over everything outside the section ---
-    N passing lines      whole file: ['148']  outside Status: []
+    N passing lines      whole file: ['149']  outside Status: []
     Version <digits>     whole file: ['Version 0.11.0.']  outside Status: []
     the run command      whole file: 1  outside Status: 0
     digit runs outside the section: ['0', '1', '2', '26514', '3.11', '67']
