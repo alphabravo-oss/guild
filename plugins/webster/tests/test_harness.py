@@ -162,10 +162,14 @@ GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 # GI-007's writable file set, as a predicate. ``scripts/*.py`` is deliberately
 # depth-1 and ``.py``-only rather than ``scripts/**``: A-035 enumerates the
-# scripts themselves, not the directory holding them. Partway through this
-# change a tree of generated forge-spec markdown sat untracked under
-# ``scripts/``, and a recursive glob would have waved the whole tree through
-# the moment anyone committed it. The predicate is written against that shape
+# scripts themselves, not the directory holding them. Measured against a
+# ``scripts/**`` variant of this predicate over eleven probe paths, the two
+# disagree on exactly two, both the same shape: a markdown file nested under
+# ``scripts/``, which the variant admits and this one refuses. Such a tree of
+# generated forge-spec markdown did sit untracked there partway through this
+# change, and a recursive glob would have waved the whole of it through the
+# moment anyone committed it; it has since been removed, so the shape is the
+# argument and the listing is not. The predicate is written against that shape
 # and asserts nothing about what the working tree happens to hold at any given
 # moment — a guard whose correctness depends on today's directory listing is a
 # guard that stops guarding the day the listing changes.
@@ -232,11 +236,21 @@ def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 def nul_separated(result: subprocess.CompletedProcess) -> list[str]:
     """Paths from a ``-z`` git query.
 
-    ``-z`` rather than the newline forms for the reason A-003 switched
-    ``drift.py`` to ``--porcelain -z``: git quotes and backslash-escapes any
-    path with a space or a non-ASCII byte in the text formats, and a scope
-    check that silently mis-reads such a path is a scope check that passes when
-    it should not.
+    ``-z`` rather than the newline forms because the text forms do not hand
+    every path back as its own bytes. This helper is handed three queries and
+    no others — ``ls-files``, ``ls-tree`` and ``diff --name-only`` — and
+    measured over one tracked path per byte a name may carry, each of the three
+    quoted and backslash-escaped 38 of 130: the 31 control bytes 0x01-0x1f,
+    0x7f, the double quote, the backslash, and all four non-ASCII characters
+    tried, that last group under ``core.quotePath``, which is on by default. A
+    scope check that silently mis-reads such a path is a scope check that
+    passes when it should not.
+
+    A space is not one of the 38, which is what this passage used to claim it
+    was: 0x20 comes back bare from all three. The query that does quote it is
+    ``git status --porcelain``, and 0x20 is the only byte on which it and these
+    three disagree — so it is why A-003 moved ``drift.py`` to ``--porcelain
+    -z``, and it is not a reason that reaches this helper.
     """
     return [path for path in result.stdout.split("\0") if path]
 
@@ -458,10 +472,18 @@ def test_two_fixture_repo_builds_produce_the_same_head(build_repo, tmp_path):
         f"two consecutive fixture_repo builds disagree on HEAD: "
         f"{heads[0][0]}={heads[0][1]}, {heads[1][0]}={heads[1][1]}. Something "
         f"outside conftest.FIXTURE_COMMITS reached the commit objects — a clock "
-        f"read at build time, a ~/.gitconfig arriving through HOME, or a file "
-        f"whose content differs between the two copies. The timezone offset is "
-        f"not the suspect here: both builds ran in this process's zone, so it "
-        f"cannot be what separates them."
+        f"read at build time, or a file whose content differs between the two "
+        f"copies. Two suspects are ruled out before you start. Not a "
+        f"~/.gitconfig arriving through HOME: conftest._GIT_ENV pins "
+        f"GIT_CONFIG_GLOBAL to os.devnull and sets GIT_CONFIG_NOSYSTEM on every "
+        f"git call, and _git is the only way build_fixture_repo reaches git at "
+        f"all, so both files a HOME could offer are shut — measured, a fake "
+        f"HOME carrying a .gitconfig that does move HEAD when it is reached "
+        f"through GIT_CONFIG_GLOBAL leaves it byte-identical when it arrives "
+        f"through HOME. A configuration that did reach these builds would in "
+        f"any case reach both of them alike. And not the timezone offset: both "
+        f"builds ran in this process's zone, so it cannot be what separates "
+        f"them."
     )
 
     # splitlines(), not split(): one subject is "touch main", and splitting on
@@ -544,13 +566,17 @@ def test_fixture_head_survives_a_change_of_host_timezone(build_repo, tmp_path):
 def test_committed_fixture_excludes_git_website_manifest():
     """The committed fixture carries none of GI-005's three exclusions (FR-042, AC-040).
 
-    Walked on the filesystem rather than read out of git, because two of the
-    three can appear without being tracked: a ``.git`` directory left behind by
-    a test that built in-place, and a ``docs/.webster.json`` written by a
-    ``drift.py record`` that ran against the source tree instead of a copy.
-    Either one makes the next run's results depend on the last run's mess, and
-    a pre-recorded manifest in particular would let a drift test pass without
-    ``record`` ever being exercised.
+    Walked on the filesystem rather than read out of git, because all three can
+    appear without being tracked: a ``.git`` directory left behind by a test
+    that built in-place, a ``docs/.webster.json`` written by a ``drift.py
+    record`` that ran against the source tree instead of a copy, and a
+    ``website/`` written by ``scaffold.py init --site``, whose ``--site-dir``
+    defaults to exactly that name. Each makes the next run's results depend on
+    the last run's mess, and a pre-recorded manifest in particular would let a
+    drift test pass without ``record`` ever being exercised. This passage
+    counted two of the three and left ``website/`` out, though a plugin script
+    writes it under its own default name — measured in a temp copy, where
+    ``scaffold.py init --site`` created five untracked files under it.
 
     The message on the missing-tree assertion below said "every other module in
     this suite builds its repository from it" until the modules were counted.

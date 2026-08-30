@@ -144,22 +144,34 @@ FIXTURE_REPO_SRC = FIXTURES_DIR / "repo"
 SCRIPT_TIMEOUT = 30
 
 # FR-029: the base environment is PATH and HOME, plus whatever a test passes
-# explicitly. PATH so ``python3`` and ``git`` resolve, HOME so git can find a
-# user identity if a test does not supply one. Nothing else is inherited: a
-# developer with WEBSTER_DOCS or WEBSTER_LENS_ALLOW exported in their shell
-# would otherwise silently change what the script under test sees, and the
-# suite would pass on their machine and fail in review.
+# explicitly. PATH so ``python3`` and ``git`` resolve. HOME is here for a
+# different reason than this comment used to give — "so git can find a user
+# identity if a test does not supply one" — which measurement contradicts in
+# both halves: ``_GIT_ENV`` below supplies that identity on every call the
+# builder makes, and it also pins ``GIT_CONFIG_GLOBAL`` to ``os.devnull`` and
+# sets ``GIT_CONFIG_NOSYSTEM``, which shuts both of the config files a HOME
+# could offer. Measured: with HOME removed from the environment altogether the
+# fixture still builds and lands on the same HEAD. HOME is passed because
+# ``run_script`` hands it on to the scripts, whose own git calls carry no such
+# pinning — ``drift.py``'s ``repo_prefix`` records the ``diff.relative`` that
+# reaches them through it, and its diff call pins ``--no-relative`` against it.
+# Nothing else is inherited: a developer with WEBSTER_DOCS or
+# WEBSTER_LENS_ALLOW exported in their shell would otherwise silently change
+# what the script under test sees — measured, WEBSTER_DOCS moves ``drift.py``'s
+# output and WEBSTER_LENS_ALLOW takes ``doctype.py`` from four defects to one —
+# and the suite would pass on their machine and fail in review.
 _BASE_ENV_KEYS = ("PATH", "HOME")
 
 # The source fixture's three commits, replayed in order. Times are the source
-# repo's own clock times restated at +00:00. The offset must be explicit: git
-# reads a date that carries none in whatever timezone the committing process is
-# in, so one string becomes a different instant, records a different offset
-# field, and produces a different commit object — a different hash — on a
-# machine set to a different zone. Measured under git 2.50.1: the bare form of
-# the first date below commits at +1400 under TZ=Pacific/Kiritimati and at
-# -0700 under TZ=America/Los_Angeles, two distinct HEADs; with the offset
-# written in, both zones give one.
+# repo's own clock times restated at +00:00 — the same wall-clock digits, a
+# different instant: measured, that repository records all three at -06:00.
+# The offset must be explicit: git reads a date that carries none in whatever
+# timezone the committing process is in, so one string becomes a different
+# instant, records a different offset field, and produces a different commit
+# object — a different hash — on a machine set to a different zone. Measured
+# under git 2.50.1: the bare form of the first date below commits at +1400
+# under TZ=Pacific/Kiritimati and at -0700 under TZ=America/Los_Angeles, two
+# distinct HEADs; with the offset written in, both zones give one.
 #
 # That is a claim about *other machines*, and the two-consecutive-builds check
 # OT-038 asks for cannot reach it: both of those builds run in one process, on
@@ -221,7 +233,19 @@ _GIT_ENV = {
 
 
 def base_env() -> dict[str, str]:
-    """The minimal environment every subprocess in this suite starts from."""
+    """The minimal environment every subprocess in this suite starts from.
+
+    Every one of them, though not all of them through this function. Measured
+    by AST over this file and the eight test modules beside it, the suite makes
+    six ``subprocess.run`` calls; every one passes an explicit ``env``, and
+    every one of the six begins from PATH and HOME alone. Two arrive here —
+    ``run_script`` and ``_git``. The other four rebuild the same two keys
+    inline: ``test_harness.py``'s ``git``, its ``git_in`` and its interpreter
+    probe, and ``test_drift.py``'s ``git_in``. Those four drive git against a
+    repository, or python against ``-c``, rather than driving a webster script,
+    so none of them wants this file's fixture pins carried along with the two
+    keys.
+    """
     return {key: os.environ[key] for key in _BASE_ENV_KEYS if key in os.environ}
 
 
