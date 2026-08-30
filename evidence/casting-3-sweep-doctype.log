@@ -1,0 +1,192 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBDeWNsZS0xNyBzd2VlcDogZXZlcnkgY29ycmVjdGVkIHNlbnRlbmNlIGluIHNjcmlwdHMvZG9jdHlwZS5weSwgbWVhc3VyZWQuCiMgUnVuIGZyb20gdGhlIHJlcG9zaXRvcnkgcm9vdC4KaW1wb3J0IG9zLCByZSwgc3VicHJvY2VzcywgdGVtcGZpbGUsIHBhdGhsaWIKCkRPQ1RZUEUgPSAicGx1Z2lucy93ZWJzdGVyL3NjcmlwdHMvZG9jdHlwZS5weSIKc3JjID0gb3BlbihET0NUWVBFLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKCmRlZiBjb25zdChuYW1lKToKICAgIHJldHVybiBldmFsKHJlLnNlYXJjaChyZiJee25hbWV9ID0gKHJlXC5jb21waWxlXCguK1wpKSQiLCBzcmMsIHJlLk0pLmdyb3VwKDEpLCB7InJlIjogcmV9KQoKZGVmIHJ1bih0cmVlKToKICAgIGVudiA9IHtrOiB2IGZvciBrLCB2IGluIG9zLmVudmlyb24uaXRlbXMoKSBpZiBub3Qgay5zdGFydHN3aXRoKCJXRUJTVEVSXyIpfQogICAgZW52WyJXRUJTVEVSX1NIT1dfUEVSX1JVTEUiXSA9ICI1MCIKICAgIHJldHVybiBzdWJwcm9jZXNzLnJ1bihbInB5dGhvbjMiLCBET0NUWVBFLCAiY2hlY2siLCB0cmVlXSwKICAgICAgICAgICAgICAgICAgICAgICAgICBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGVudj1lbnYpCgpkZWYgdHJlZShwYWdlcyk6CiAgICBkID0gdGVtcGZpbGUubWtkdGVtcCgpCiAgICBmb3IgbmFtZSwgdGV4dCBpbiBwYWdlcy5pdGVtcygpOgogICAgICAgIHBhdGhsaWIuUGF0aChkLCBuYW1lKS53cml0ZV90ZXh0KHRleHQsIGVuY29kaW5nPSJ1dGYtOCIpCiAgICByZXR1cm4gZAoKUEFHRSA9ICItLS1cbnRpdGxlOiB7dH1cbmRvY190eXBlOiBob3ctdG9cbmF1ZGllbmNlOiB1c2VyXG4tLS1cblxuIyB7dH1cblxue2J9XG4iClNUVUIgPSAoIi0tLVxudGl0bGU6IHt0fVxuZG9jX3R5cGU6IGhvdy10b1xue2F9LS0tXG5cbiMge3R9XG5cbiIKICAgICAgICAiPCEtLSB3ZWJzdGVyOiBub3Qgd3JpdHRlbiB5ZXQgLS0+XG5cbiMjIE92ZXJ2aWV3XG5cbnt7UGxhY2Vob2xkZXIufX1cbiIpCgpwcmludCgiPT0gbW9kdWxlIGRvY3N0cmluZzogSVNPXzI2NTE0IGlzIG5pbmUgZW50cmllcywgYW5kIG1hcmtlZCBpcyBub3QgY2hlY2tlZCA9PSIpCmltcG9ydCBhc3QKbW9kID0gYXN0LnBhcnNlKHNyYykKaXNvID0gbmV4dChuIGZvciBuIGluIG1vZC5ib2R5CiAgICAgICAgICAgaWYgaXNpbnN0YW5jZShuLCBhc3QuQXNzaWduKQogICAgICAgICAgIGFuZCBpc2luc3RhbmNlKG4udGFyZ2V0c1swXSwgYXN0Lk5hbWUpIGFuZCBuLnRhcmdldHNbMF0uaWQgPT0gIklTT18yNjUxNCIpCmVudHJpZXMgPSB7ay52YWx1ZTogdi52YWx1ZSBmb3IgaywgdiBpbiB6aXAoaXNvLnZhbHVlLmtleXMsIGlzby52YWx1ZS52YWx1ZXMpfQpwcmludChmIiAgIGVudHJpZXM6IHtsZW4oZW50cmllcyl9IikKcnVsZXMgPSByZS5maW5kYWxsKHInInJ1bGUiOiAiKFthLXotXSspIicsIHNyYykKZm9yIGssIHYgaW4gZW50cmllcy5pdGVtcygpOgogICAgbWFya2VkID0gIm1lYXN1cmFibGUgZWxzZXdoZXJlIiBpZiB2LnN0YXJ0c3dpdGgoIm1lYXN1cmFibGUgZWxzZXdoZXJlIikgZWxzZSAoCiAgICAgICAgIm1lYXN1cmFibGUiIGlmIHYuc3RhcnRzd2l0aCgibWVhc3VyYWJsZSIpIGVsc2UgImEgaHVtYW4ganVkZ2VzIikKICAgIHByaW50KGYiICAge2s6MjB9IG1hcmtlZCB7bWFya2VkOjIwfSB2YWx1ZToge3Z9IikKcHJpbnQoZiIgICBydWxlIGxhYmVscyB0aGlzIGZpbGUgY2FuIGVtaXQ6IHtzb3J0ZWQoc2V0KHJ1bGVzKSl9IikKcHJpbnQoIiAgIGdyZXAgZm9yIGEgY29uc2lzdGVuY3kgcnVsZSBpbiBkb2N0eXBlLnB5OiIsCiAgICAgIFtsIGZvciBsIGluIHNyYy5zcGxpdGxpbmVzKCkgaWYgcmUuc2VhcmNoKHInInJ1bGUiOiAiY29uc2lzdGVuY3knLCBsKV0gb3IgIm5vbmUiKQoKcHJpbnQoIlxuPT0gYXNzaWduZWRfZW52X3ZhcnM6IHR3byByb3V0ZXMgdG8gY291bnRpbmcgYSBuYW1lLCBub3Qgb25lID09IikKZm9yIG4sIGxpbmUgaW4gZW51bWVyYXRlKHNyYy5zcGxpdGxpbmVzKCksIDEpOgogICAgaWYgInJlLmZpbmRpdGVyKHIiIGluIGxpbmUgYW5kICJBLVpdW0EtWjAtOV0qX1tBLVowLTlfXSsiIGluIGxpbmU6CiAgICAgICAgcHJpbnQoZiIgICB7RE9DVFlQRX06e259OiB7bGluZS5zdHJpcCgpfSIpCmQgPSB0cmVlKHsic2hvd24ubWQiOiBQQUdFLmZvcm1hdCh0PSJTaG93biIsIGI9IlNldCB0aGUgZW52aXJvbm1lbnQgdmFyaWFibGUgYERBVEFCQVNFX1VSTGAgYmVmb3JlIHlvdSBzdGFydC4iKSwKICAgICAgICAgICJwbGFpbi5tZCI6IFBBR0UuZm9ybWF0KHQ9IlBsYWluIiwgYj0iVGhlIHJlY2VpcHQgcHJpbnRzIGBEQVRBQkFTRV9VUkxgIGFuZCBub3RoaW5nIGVsc2UgbmFtZXMgaXQuIil9KQpyID0gcnVuKGQpCnByaW50KCIgICBvbmUgdHJlZSwgdHdvIHBhZ2VzLCBubyBgPWAgYW55d2hlcmUgaW4gaXQ6IikKZm9yIGxpbmUgaW4gci5zdGRvdXQuc3BsaXRsaW5lcygpOgogICAgcHJpbnQoZiIgICAgIHtsaW5lfSIpCnByaW50KGYiICAgICBleGl0IHtyLnJldHVybmNvZGV9IikKZCA9IHRyZWUoeyJwbGFpbi5tZCI6IFBBR0UuZm9ybWF0KHQ9IlBsYWluIiwgYj0iVGhlIHJlY2VpcHQgcHJpbnRzIGBEQVRBQkFTRV9VUkxgIGFuZCBub3RoaW5nIGVsc2UgbmFtZXMgaXQuIil9KQpyID0gcnVuKGQpCnByaW50KCIgICB0aGUgc2FtZSBwYWdlIGFsb25lLCB3aXRoIG5vdGhpbmcgY2FsbGluZyB0aGUgbmFtZSBhIHZhcmlhYmxlOiIpCmZvciBsaW5lIGluIHIuc3Rkb3V0LnNwbGl0bGluZXMoKToKICAgIHByaW50KGYiICAgICB7bGluZX0iKQpwcmludChmIiAgICAgZXhpdCB7ci5yZXR1cm5jb2RlfSIpCgpwcmludCgiXG49PSBST1VURV9QQVRIOiB3aGF0IHRoZSBleHRlbnNpb24gbG9va2FoZWFkIGtlZXBzIGFuZCB3aGF0IGl0IGNvc3RzID09IikKUk9VVEVfUEFUSCA9IGV2YWwoInJlLmNvbXBpbGUoIiArIHJlLnNlYXJjaCgKICAgIHIiXlJPVVRFX1BBVEggPSByZVwuY29tcGlsZVwoKC4qPylcKVxuKD89W14gXSkiLCBzcmMsIHJlLk0gfCByZS5TKS5ncm91cCgxKSArICIpIiwgeyJyZSI6IHJlfSkKZm9yIHQgaW4gKCIvc2V0dGluZ3MvcHJvZmlsZSIsICIvZGFzaGJvYXJkIiwgIi9hcGkvdjEuMCIsICIvdjMuMCIsICIvZXRjL2hvc3RzIiwKICAgICAgICAgICIvZXRjL2hvc3RzLmNvbmYiLCAiL2V0Yy9hcHAucHJvcGVydGllcyIsICIvZG9jcy9yZWFkbWUubWFya2Rvd24iLAogICAgICAgICAgIi8uZ2l0aWdub3JlIiwgIi94LnRlbXBsYXRlIiwgIi8vIiwgIi9kYXRhL2JhY2t1cC4yMDI0IiwgIi94LjEyMyIpOgogICAgcHJpbnQoZiIgICB7dDoyNH0gcm91dGU9e2Jvb2woUk9VVEVfUEFUSC5zZWFyY2goZidge3R9YCcpKX0iKQojIFRoZSBwb3B1bGF0aW9uIHRoZSBjb21tZW50IHF1YW50aWZpZXMgb3ZlcjogZXZlcnkgZXh0ZW5zaW9uIG5hbWVkIGluIHRoZQojIFJPVVRFX1BBVEggY29tbWVudCBibG9jaywgYW5kIGV2ZXJ5IGV4dGVuc2lvbiBvbiBhIHBhdGgtc2hhcGVkIHRva2VuIChvbmUKIyBvcGVuaW5nIG9uICIvIikgaW4gdGVzdHMvdGVzdF9kb2N0eXBlLnB5Lgpjb21tZW50ID0gc3JjW3NyYy5pbmRleCgiIyBBbnkgYmFja3RpY2tlZCBwYXRoLCBub3QganVzdCIpOnNyYy5pbmRleCgiUk9VVEVfUEFUSCA9IHJlLmNvbXBpbGUoIildCnRlc3RzID0gb3BlbigicGx1Z2lucy93ZWJzdGVyL3Rlc3RzL3Rlc3RfZG9jdHlwZS5weSIsIGVuY29kaW5nPSJ1dGYtOCIpLnJlYWQoKQpleHRzID0gc2V0KHJlLmZpbmRhbGwociJgKFwuW0EtWmEtejAtOV17MSwyMH0pYCIsIGNvbW1lbnQpKQpmb3IgdG9rIGluIHJlLmZpbmRhbGwociIvW0EtWmEtejAtOS5fLy1dKyIsIGNvbW1lbnQgKyB0ZXN0cyk6CiAgICBzZWcgPSB0b2sucnNwbGl0KCIvIiwgMSlbLTFdCiAgICBpZiAiLiIgaW4gc2VnOgogICAgICAgIGV4dHMuYWRkKCIuIiArIHNlZy5yc3BsaXQoIi4iLCAxKVstMV0pCmV4dHMgPSBzb3J0ZWQoZSBmb3IgZSBpbiBleHRzIGlmIGxlbihlKSA+IDEpCmxvbmdlc3QgPSBtYXgoZXh0cywga2V5PWxlbikKcHJpbnQoZiIgICBleHRlbnNpb25zIG5hbWVkIGluIHRoZSBST1VURV9QQVRIIGNvbW1lbnQgYW5kIG9uIHRoZSB0ZXN0cycgcGF0aHM6IHtleHRzfSIpCnByaW50KGYiICAgbG9uZ2VzdDoge2xvbmdlc3R9ICh7bGVuKGxvbmdlc3QpIC0gMX0gY2hhcmFjdGVycyBhZnRlciB0aGUgZG90KSIpCgpwcmludCgiXG49PSBBUkNIX0hBUkQ6IG5laXRoZXIgJ3JlcG9zaXRvcnknIG5vciAnaW50ZXJmYWNlJyBpcyBpbiB0aGUgcnVsZSA9PSIpCkFSQ0hfSEFSRCA9IGV2YWwoInJlLmNvbXBpbGUoIiArIHJlLnNlYXJjaCgKICAgIHIiXkFSQ0hfSEFSRCA9IHJlXC5jb21waWxlXCgoLio/KVwpXG4oPz1bXiBdKSIsIHNyYywgcmUuTSB8IHJlLlMpLmdyb3VwKDEpICsgIikiLCB7InJlIjogcmV9KQpmb3Igd29yZCBpbiAoInJlcG9zaXRvcnkiLCAiaW50ZXJmYWNlIiwgIm1pZGRsZXdhcmUiLCAic2VydmljZSBsYXllciIpOgogICAgcHJpbnQoZiIgICB7d29yZDoxNn0gbWF0Y2hlZCBieSBBUkNIX0hBUkQ6IHtib29sKEFSQ0hfSEFSRC5zZWFyY2goJ3RoZSAnICsgd29yZCkpfSIpCgpwcmludCgiXG49PSBVTklWRVJTQUxfQUNST05ZTVM6IGV2ZXJ5IGVudHJ5IGlzIHJlYWNoYWJsZSBieSBBQ1JPTllNID09IikKQUNST05ZTSA9IGNvbnN0KCJBQ1JPTllNIikKc3RhcnQgPSBzcmMuaW5kZXgoIlVOSVZFUlNBTF9BQ1JPTllNUyA9IHsiKQpib2R5ID0gc3JjW3N0YXJ0OnNyYy5pbmRleCgiXG59Iiwgc3RhcnQpXQphY3IgPSBzb3J0ZWQoe2UgZm9yIGxpbmUgaW4gYm9keS5zcGxpdGxpbmVzKCkKICAgICAgICAgICAgICBmb3IgZSBpbiByZS5maW5kYWxsKHInIihbXiJdKykiJywgbGluZS5zcGxpdCgiIyIsIDEpWzBdKX0pCnByaW50KGYiICAgZW50cmllczoge2xlbihhY3IpfSIpCnByaW50KGYiICAgdW5yZWFjaGFibGUgKEFDUk9OWU0gY2Fubm90IHByb2R1Y2UgdGhlbSk6ICIKICAgICAgZiJ7W2EgZm9yIGEgaW4gYWNyIGlmIG5vdCBBQ1JPTllNLmZ1bGxtYXRjaChhKV0gb3IgJ25vbmUnfSIpCnByaW50KGYiICAgcmVtb3ZhbHMgcmVjb3JkZWQgYXQgdGhlIGVuZCBvZiB0aGUgc2V0OiIpCmZvciBsaW5lIGluIGJvZHkuc3BsaXRsaW5lcygpOgogICAgaWYgbGluZS5zdHJpcCgpLnN0YXJ0c3dpdGgoIiMgUmVtb3ZlZCIpOgogICAgICAgIHByaW50KGYiICAgICB7bGluZS5zdHJpcCgpfSIpCgpwcmludCgiXG49PSB0aGUgZXhpdCBjb250cmFjdCB0aGUgbW9kdWxlIGRvY3N0cmluZyBwdWJsaXNoZXMgPT0iKQpjYXNlcyA9IFsKICAgICgibm8gZG9jcyBkaXJlY3RvcnkiLCBOb25lKSwKICAgICgib25lIGNsZWFuIHdyaXR0ZW4gcGFnZSIsIHsiZ3VpZGUubWQiOiBQQUdFLmZvcm1hdCh0PSJHdWlkZSIsIGI9Ik9wZW4gdGhlIGFwcCBhbmQgY2hvb3NlIGEgc3RvcmUuIil9KSwKICAgICgic3R1YnMgb25seSwgYm90aCB3ZWxsIGZvcm1lZCIsIHsiYS5tZCI6IFNUVUIuZm9ybWF0KHQ9IkEiLCBhPSJhdWRpZW5jZTogdXNlclxuIiksCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgImIubWQiOiBTVFVCLmZvcm1hdCh0PSJCIiwgYT0iYXVkaWVuY2U6IHVzZXJcbiIpfSksCiAgICAoInN0dWJzIG9ubHksIG9uZSB3aXRob3V0IGF1ZGllbmNlIiwgeyJhLm1kIjogU1RVQi5mb3JtYXQodD0iQSIsIGE9ImF1ZGllbmNlOiB1c2VyXG4iKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgImIubWQiOiBTVFVCLmZvcm1hdCh0PSJCIiwgYT0iIil9KSwKXQpmb3IgbmFtZSwgcGFnZXMgaW4gY2FzZXM6CiAgICB3aGVyZSA9IHRyZWUocGFnZXMpIGlmIHBhZ2VzIGlzIG5vdCBOb25lIGVsc2UgImRvY3MtYWJzZW50LWZpeHR1cmUiCiAgICByID0gcnVuKHdoZXJlKQogICAgcHJpbnQoZiIgICB7bmFtZTozNH0gZXhpdCB7ci5yZXR1cm5jb2RlfSAgfCAge3Iuc3Rkb3V0LnNwbGl0bGluZXMoKVswXX0iKQo= | base64 -d > "$d/m.py"; echo "== the script this log runs =="; cat "$d/m.py"; echo; python3 "$d/m.py"; rm -rf "$d"'
+# evidence-for: US-004, US-005, FR-011, FR-014, FR-016, FR-036, FR-040, FR-041, AC-012, AC-018, AC-020, AC-043, FR-039
+# evidence-timeout: 600
+
+== the script this log runs ==
+# Cycle-17 sweep: every corrected sentence in scripts/doctype.py, measured.
+# Run from the repository root.
+import os, re, subprocess, tempfile, pathlib
+
+DOCTYPE = "plugins/webster/scripts/doctype.py"
+src = open(DOCTYPE, encoding="utf-8").read()
+
+def const(name):
+    return eval(re.search(rf"^{name} = (re\.compile\(.+\))$", src, re.M).group(1), {"re": re})
+
+def run(tree):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("WEBSTER_")}
+    env["WEBSTER_SHOW_PER_RULE"] = "50"
+    return subprocess.run(["python3", DOCTYPE, "check", tree],
+                          capture_output=True, text=True, env=env)
+
+def tree(pages):
+    d = tempfile.mkdtemp()
+    for name, text in pages.items():
+        pathlib.Path(d, name).write_text(text, encoding="utf-8")
+    return d
+
+PAGE = "---\ntitle: {t}\ndoc_type: how-to\naudience: user\n---\n\n# {t}\n\n{b}\n"
+STUB = ("---\ntitle: {t}\ndoc_type: how-to\n{a}---\n\n# {t}\n\n"
+        "<!-- webster: not written yet -->\n\n## Overview\n\n{{Placeholder.}}\n")
+
+print("== module docstring: ISO_26514 is nine entries, and marked is not checked ==")
+import ast
+mod = ast.parse(src)
+iso = next(n for n in mod.body
+           if isinstance(n, ast.Assign)
+           and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "ISO_26514")
+entries = {k.value: v.value for k, v in zip(iso.value.keys, iso.value.values)}
+print(f"   entries: {len(entries)}")
+rules = re.findall(r'"rule": "([a-z-]+)"', src)
+for k, v in entries.items():
+    marked = "measurable elsewhere" if v.startswith("measurable elsewhere") else (
+        "measurable" if v.startswith("measurable") else "a human judges")
+    print(f"   {k:20} marked {marked:20} value: {v}")
+print(f"   rule labels this file can emit: {sorted(set(rules))}")
+print("   grep for a consistency rule in doctype.py:",
+      [l for l in src.splitlines() if re.search(r'"rule": "consistency', l)] or "none")
+
+print("\n== assigned_env_vars: two routes to counting a name, not one ==")
+for n, line in enumerate(src.splitlines(), 1):
+    if "re.finditer(r" in line and "A-Z][A-Z0-9]*_[A-Z0-9_]+" in line:
+        print(f"   {DOCTYPE}:{n}: {line.strip()}")
+d = tree({"shown.md": PAGE.format(t="Shown", b="Set the environment variable `DATABASE_URL` before you start."),
+          "plain.md": PAGE.format(t="Plain", b="The receipt prints `DATABASE_URL` and nothing else names it.")})
+r = run(d)
+print("   one tree, two pages, no `=` anywhere in it:")
+for line in r.stdout.splitlines():
+    print(f"     {line}")
+print(f"     exit {r.returncode}")
+d = tree({"plain.md": PAGE.format(t="Plain", b="The receipt prints `DATABASE_URL` and nothing else names it.")})
+r = run(d)
+print("   the same page alone, with nothing calling the name a variable:")
+for line in r.stdout.splitlines():
+    print(f"     {line}")
+print(f"     exit {r.returncode}")
+
+print("\n== ROUTE_PATH: what the extension lookahead keeps and what it costs ==")
+ROUTE_PATH = eval("re.compile(" + re.search(
+    r"^ROUTE_PATH = re\.compile\((.*?)\)\n(?=[^ ])", src, re.M | re.S).group(1) + ")", {"re": re})
+for t in ("/settings/profile", "/dashboard", "/api/v1.0", "/v3.0", "/etc/hosts",
+          "/etc/hosts.conf", "/etc/app.properties", "/docs/readme.markdown",
+          "/.gitignore", "/x.template", "//", "/data/backup.2024", "/x.123"):
+    print(f"   {t:24} route={bool(ROUTE_PATH.search(f'`{t}`'))}")
+# The population the comment quantifies over: every extension named in the
+# ROUTE_PATH comment block, and every extension on a path-shaped token (one
+# opening on "/") in tests/test_doctype.py.
+comment = src[src.index("# Any backticked path, not just"):src.index("ROUTE_PATH = re.compile(")]
+tests = open("plugins/webster/tests/test_doctype.py", encoding="utf-8").read()
+exts = set(re.findall(r"`(\.[A-Za-z0-9]{1,20})`", comment))
+for tok in re.findall(r"/[A-Za-z0-9._/-]+", comment + tests):
+    seg = tok.rsplit("/", 1)[-1]
+    if "." in seg:
+        exts.add("." + seg.rsplit(".", 1)[-1])
+exts = sorted(e for e in exts if len(e) > 1)
+longest = max(exts, key=len)
+print(f"   extensions named in the ROUTE_PATH comment and on the tests' paths: {exts}")
+print(f"   longest: {longest} ({len(longest) - 1} characters after the dot)")
+
+print("\n== ARCH_HARD: neither 'repository' nor 'interface' is in the rule ==")
+ARCH_HARD = eval("re.compile(" + re.search(
+    r"^ARCH_HARD = re\.compile\((.*?)\)\n(?=[^ ])", src, re.M | re.S).group(1) + ")", {"re": re})
+for word in ("repository", "interface", "middleware", "service layer"):
+    print(f"   {word:16} matched by ARCH_HARD: {bool(ARCH_HARD.search('the ' + word))}")
+
+print("\n== UNIVERSAL_ACRONYMS: every entry is reachable by ACRONYM ==")
+ACRONYM = const("ACRONYM")
+start = src.index("UNIVERSAL_ACRONYMS = {")
+body = src[start:src.index("\n}", start)]
+acr = sorted({e for line in body.splitlines()
+              for e in re.findall(r'"([^"]+)"', line.split("#", 1)[0])})
+print(f"   entries: {len(acr)}")
+print(f"   unreachable (ACRONYM cannot produce them): "
+      f"{[a for a in acr if not ACRONYM.fullmatch(a)] or 'none'}")
+print(f"   removals recorded at the end of the set:")
+for line in body.splitlines():
+    if line.strip().startswith("# Removed"):
+        print(f"     {line.strip()}")
+
+print("\n== the exit contract the module docstring publishes ==")
+cases = [
+    ("no docs directory", None),
+    ("one clean written page", {"guide.md": PAGE.format(t="Guide", b="Open the app and choose a store.")}),
+    ("stubs only, both well formed", {"a.md": STUB.format(t="A", a="audience: user\n"),
+                                      "b.md": STUB.format(t="B", a="audience: user\n")}),
+    ("stubs only, one without audience", {"a.md": STUB.format(t="A", a="audience: user\n"),
+                                          "b.md": STUB.format(t="B", a="")}),
+]
+for name, pages in cases:
+    where = tree(pages) if pages is not None else "docs-absent-fixture"
+    r = run(where)
+    print(f"   {name:34} exit {r.returncode}  |  {r.stdout.splitlines()[0]}")
+
+== module docstring: ISO_26514 is nine entries, and marked is not checked ==
+   entries: 9
+   usability            marked a human judges       value: a human judges whether a reader can find and apply the information
+   clarity              marked a human judges       value: a human judges it
+   accessibility        marked measurable           value: measurable: alt text on images, heading levels not skipped
+   correctness          marked measurable elsewhere value: measurable elsewhere: drift.py resolves every cited anchor
+   consistency          marked measurable           value: measurable: one term for one thing
+   subject-fit          marked measurable           value: measurable: whether the page is about something its reader can act on
+   understandability    marked measurable           value: measurable: reading grade against the stated reader
+   conciseness          marked measurable           value: measurable: sentence length
+   minimalism           marked a human judges       value: a human judges whether anything here is unnecessary
+   rule labels this file can emit: ['explains-mechanism', 'heading-skip', 'internals-leak', 'learning-objective', 'lens-drift', 'no-alt-text', 'no-audience', 'prerequisites', 'reading-grade', 'structured-entries', 'symptom', 'type-mixing', 'undefined-jargon', 'unknown-audience', 'unknown-type', 'wrong-lens']
+   grep for a consistency rule in doctype.py: none
+
+== assigned_env_vars: two routes to counting a name, not one ==
+   plugins/webster/scripts/doctype.py:660: for m in re.finditer(r"(?:^|\s|`)(?:export\s+)?([A-Z][A-Z0-9]*_[A-Z0-9_]+)\s*=", text):
+   plugins/webster/scripts/doctype.py:662: for m in re.finditer(r"(?i)(?:variable|env(?:ironment)?)\b[^\n]{0,40}?`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`", text):
+   one tree, two pages, no `=` anywhere in it:
+     2 pages checked, 2 against a declared type, 0 stubs (frontmatter only)
+     no survey allowlist
+     
+     DEFECTS (2)
+     
+       wrong-lens  (2)
+           write it from the screen: what the reader sees, clicks, types and gets back
+         plain.md:9  a 'user' page names an environment variable, `DATABASE_URL`
+         shown.md:9  a 'user' page names an environment variable, `DATABASE_URL`
+     exit 1
+   the same page alone, with nothing calling the name a variable:
+     1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+     no survey allowlist
+     every written page matches its declared type
+     exit 0
+
+== ROUTE_PATH: what the extension lookahead keeps and what it costs ==
+   /settings/profile        route=True
+   /dashboard               route=True
+   /api/v1.0                route=True
+   /v3.0                    route=True
+   /etc/hosts               route=True
+   /etc/hosts.conf          route=False
+   /etc/app.properties      route=False
+   /docs/readme.markdown    route=False
+   /.gitignore              route=False
+   /x.template              route=False
+   //                       route=False
+   /data/backup.2024        route=True
+   /x.123                   route=True
+   extensions named in the ROUTE_PATH comment and on the tests' paths: ['.0', '.123', '.2024', '.7z', '.conf', '.gitignore', '.markdown', '.mp4', '.properties', '.py', '.template', '.tsx', '.yaml']
+   longest: .properties (10 characters after the dot)
+
+== ARCH_HARD: neither 'repository' nor 'interface' is in the rule ==
+   repository       matched by ARCH_HARD: False
+   interface        matched by ARCH_HARD: False
+   middleware       matched by ARCH_HARD: True
+   service layer    matched by ARCH_HARD: True
+
+== UNIVERSAL_ACRONYMS: every entry is reachable by ACRONYM ==
+   entries: 72
+   unreachable (ACRONYM cannot produce them): none
+   removals recorded at the end of the set:
+     # Removed: "FAQ" and "OK" were each listed twice, so one copy of each is gone.
+     # Removed: "N", "A", "I" — ACRONYM needs two characters, so none of them could ever match and
+     # Removed: "WARNING" — seven characters against ACRONYM's six-character ceiling, so it could
+
+== the exit contract the module docstring publishes ==
+   no docs directory                  exit 2  |  no docs directory at docs-absent-fixture
+   one clean written page             exit 0  |  1 pages checked, 1 against a declared type, 0 stubs (frontmatter only)
+   stubs only, both well formed       exit 2  |  0 pages checked, 0 against a declared type, 2 stubs (frontmatter only)
+   stubs only, one without audience   exit 1  |  0 pages checked, 0 against a declared type, 2 stubs (frontmatter only)

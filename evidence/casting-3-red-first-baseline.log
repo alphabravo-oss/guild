@@ -1,0 +1,83 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBDeWNsZS0xNyBzd2VlcDogdGhlIHJlZC1maXJzdCBiYXNlbGluZSB0ZXN0cy90ZXN0X2RvY3R5cGUucHkncyBkb2NzdHJpbmcgc3RhdGVzLAojIHJlLW1lYXN1cmVkLiBSdW4gZnJvbSB0aGUgcmVwb3NpdG9yeSByb290LgppbXBvcnQgYXN0LCBvcywgcmUsIHNodXRpbCwgc3VicHJvY2Vzcywgc3lzLCB0ZW1wZmlsZQoKVEVTVFMgPSAicGx1Z2lucy93ZWJzdGVyL3Rlc3RzL3Rlc3RfZG9jdHlwZS5weSIKQkFTRSA9ICJjZmFmZThlIgpzcmMgPSBvcGVuKFRFU1RTLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKZG9jID0gYXN0LmdldF9kb2NzdHJpbmcoYXN0LnBhcnNlKHNyYykpCmZpcnN0LCBidWNrZXQgPSBbXSwgMApmb3IgbGluZSBpbiBkb2Muc3BsaXRsaW5lcygpOgogICAgaWYgbGluZS5zdGFydHN3aXRoKCJTaXggbW9yZSB0ZXN0cyIpOgogICAgICAgIGJyZWFrCiAgICBtID0gcmUubWF0Y2gociJccysodGVzdF9cdyspIiwgbGluZSkKICAgIGlmIG06CiAgICAgICAgZmlyc3QuYXBwZW5kKG0uZ3JvdXAoMSkpCmNvbnRyb2xzID0gcmUuZmluZGFsbChyIih0ZXN0X1x3KylccytcKGNvbnRyb2xcKSIsIGRvYykKCmQgPSB0ZW1wZmlsZS5ta2R0ZW1wKCkKd3QgPSBvcy5wYXRoLmpvaW4oZCwgInd0IikKb3MubWFrZWRpcnMod3QpCnRhciA9IHN1YnByb2Nlc3MucnVuKFsiZ2l0IiwgImFyY2hpdmUiLCBCQVNFXSwgY2FwdHVyZV9vdXRwdXQ9VHJ1ZSkKc3VicHJvY2Vzcy5ydW4oWyJ0YXIiLCAiLXgiLCAiLUMiLCB3dF0sIGlucHV0PXRhci5zdGRvdXQsIGNoZWNrPVRydWUpCnNodXRpbC5ybXRyZWUob3MucGF0aC5qb2luKHd0LCAicGx1Z2lucy93ZWJzdGVyL3Rlc3RzIiksIGlnbm9yZV9lcnJvcnM9VHJ1ZSkKc2h1dGlsLmNvcHl0cmVlKCJwbHVnaW5zL3dlYnN0ZXIvdGVzdHMiLCBvcy5wYXRoLmpvaW4od3QsICJwbHVnaW5zL3dlYnN0ZXIvdGVzdHMiKSkKc2h1dGlsLmNvcHkoInBsdWdpbnMvd2Vic3Rlci9weXByb2plY3QudG9tbCIsIG9zLnBhdGguam9pbih3dCwgInBsdWdpbnMvd2Vic3Rlci9weXByb2plY3QudG9tbCIpKQoKZW52ID0gZGljdChvcy5lbnZpcm9uLCBDT0xVTU5TPSIyMDAiKQplbnYucG9wKCJXRUJTVEVSX1NVUlZFWSIsIE5vbmUpCnIgPSBzdWJwcm9jZXNzLnJ1bihbInV2eCIsICJweXRlc3QiLCAidGVzdHMvdGVzdF9kb2N0eXBlLnB5IiwgIi1xIiwgIi0tdGI9bm8iLAogICAgICAgICAgICAgICAgICAgICItcCIsICJubzpjYWNoZXByb3ZpZGVyIl0sCiAgICAgICAgICAgICAgICAgICBjd2Q9b3MucGF0aC5qb2luKHd0LCAicGx1Z2lucy93ZWJzdGVyIiksCiAgICAgICAgICAgICAgICAgICBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGVudj1lbnYpCmZhaWxlZCA9IHNvcnRlZCh7bS5ncm91cCgxKSBmb3IgbSBpbiByZS5maW5kaXRlcihyIl5GQUlMRUQgW15cczpdKzo6KFx3KykiLCByLnN0ZG91dCwgcmUuTSl9KQpzdW1tYXJ5ID0gW2wgZm9yIGwgaW4gci5zdGRvdXQuc3BsaXRsaW5lcygpIGlmIHJlLm1hdGNoKHIiXlxkKyAoZmFpbGVkfHBhc3NlZCkiLCBsKV0KCnByaW50KGYiPT0gdGVzdHMvdGVzdF9kb2N0eXBlLnB5IHJ1biBhZ2FpbnN0IHRoZSBzY3JpcHRzLyBvZiB7QkFTRX0gPT0iKQpwcmludChmIiAgIHtzdW1tYXJ5Wy0xXSBpZiBzdW1tYXJ5IGVsc2Ugci5zdGRvdXQuc3RyaXAoKS5zcGxpdGxpbmVzKClbLTFdfSIpCnByaW50KGYiICAgZmlyc3QgaW5kZXg6IHtsZW4oZmlyc3QpfSB0ZXN0czsgb2YgdGhvc2UgcmVkIGF0IHtCQVNFfTogIgogICAgICBmIntzdW0oMSBmb3IgdCBpbiBmaXJzdCBpZiB0IGluIGZhaWxlZCl9IikKcHJpbnQoZiIgICBmaXJzdC1pbmRleCB0ZXN0cyBncmVlbiBhdCB7QkFTRX06IHtbdCBmb3IgdCBpbiBmaXJzdCBpZiB0IG5vdCBpbiBmYWlsZWRdfSIpCnByaW50KGYiICAgY29udHJvbHMgbWFya2VkIChjb250cm9sKToge2xlbihjb250cm9scyl9OyByZWQgYXQge0JBU0V9OiAiCiAgICAgIGYie1tjIGZvciBjIGluIGNvbnRyb2xzIGlmIGMgaW4gZmFpbGVkXSBvciAnbm9uZSd9IikKcHJpbnQoZiIgICBldmVyeSB0ZXN0IHJlZCBhdCB7QkFTRX0gKHtsZW4oZmFpbGVkKX0pOiIpCmZvciBuYW1lIGluIGZhaWxlZDoKICAgIHByaW50KGYiICAgICB7bmFtZX0iKQpzaHV0aWwucm10cmVlKGQsIGlnbm9yZV9lcnJvcnM9VHJ1ZSkK | base64 -d > "$d/m.py"; echo "== the script this log runs =="; cat "$d/m.py"; echo; python3 "$d/m.py"; rm -rf "$d"'
+# evidence-for: US-010, AC-039, FR-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+== the script this log runs ==
+# Cycle-17 sweep: the red-first baseline tests/test_doctype.py's docstring states,
+# re-measured. Run from the repository root.
+import ast, os, re, shutil, subprocess, sys, tempfile
+
+TESTS = "plugins/webster/tests/test_doctype.py"
+BASE = "cfafe8e"
+src = open(TESTS, encoding="utf-8").read()
+doc = ast.get_docstring(ast.parse(src))
+first, bucket = [], 0
+for line in doc.splitlines():
+    if line.startswith("Six more tests"):
+        break
+    m = re.match(r"\s+(test_\w+)", line)
+    if m:
+        first.append(m.group(1))
+controls = re.findall(r"(test_\w+)\s+\(control\)", doc)
+
+d = tempfile.mkdtemp()
+wt = os.path.join(d, "wt")
+os.makedirs(wt)
+tar = subprocess.run(["git", "archive", BASE], capture_output=True)
+subprocess.run(["tar", "-x", "-C", wt], input=tar.stdout, check=True)
+shutil.rmtree(os.path.join(wt, "plugins/webster/tests"), ignore_errors=True)
+shutil.copytree("plugins/webster/tests", os.path.join(wt, "plugins/webster/tests"))
+shutil.copy("plugins/webster/pyproject.toml", os.path.join(wt, "plugins/webster/pyproject.toml"))
+
+env = dict(os.environ, COLUMNS="200")
+env.pop("WEBSTER_SURVEY", None)
+r = subprocess.run(["uvx", "pytest", "tests/test_doctype.py", "-q", "--tb=no",
+                    "-p", "no:cacheprovider"],
+                   cwd=os.path.join(wt, "plugins/webster"),
+                   capture_output=True, text=True, env=env)
+failed = sorted({m.group(1) for m in re.finditer(r"^FAILED [^\s:]+::(\w+)", r.stdout, re.M)})
+summary = [l for l in r.stdout.splitlines() if re.match(r"^\d+ (failed|passed)", l)]
+
+print(f"== tests/test_doctype.py run against the scripts/ of {BASE} ==")
+print(f"   {summary[-1] if summary else r.stdout.strip().splitlines()[-1]}")
+print(f"   first index: {len(first)} tests; of those red at {BASE}: "
+      f"{sum(1 for t in first if t in failed)}")
+print(f"   first-index tests green at {BASE}: {[t for t in first if t not in failed]}")
+print(f"   controls marked (control): {len(controls)}; red at {BASE}: "
+      f"{[c for c in controls if c in failed] or 'none'}")
+print(f"   every test red at {BASE} ({len(failed)}):")
+for name in failed:
+    print(f"     {name}")
+shutil.rmtree(d, ignore_errors=True)
+
+== tests/test_doctype.py run against the scripts/ of cfafe8e ==
+   24 failed, 10 passed in 1.03s
+   first index: 27 tests; of those red at cfafe8e: 20
+   first-index tests green at cfafe8e: ['test_path_and_env_var_are_not_symbols', 'test_path_with_a_file_extension_is_not_a_route', 'test_flag_named_in_lens_allow_is_not_reported', 'test_architecture_is_reported_for_an_operator_and_for_a_user', 'test_without_the_survey_the_same_label_is_reported', 'test_stub_placeholder_prose_produces_no_other_finding', 'test_one_written_page_among_stubs_exits_by_that_page']
+   controls marked (control): 7; red at cfafe8e: none
+   every test red at cfafe8e (24):
+     test_a_screen_name_reaches_the_lens_and_a_screen_path_does_not
+     test_acronym_initial_pascal_is_wrong_lens
+     test_all_stub_tree_with_a_defect_exits_one
+     test_api_and_cli_are_not_undefined_jargon
+     test_empty_docs_tree_is_not_checked
+     test_every_universal_acronym_is_reachable_by_the_acronym_regex
+     test_files_are_not_routes_versions_are_and_a_bare_double_slash_is_neither
+     test_flags_are_wrong_lens_on_a_user_page
+     test_header_line_counts_the_terms_the_survey_contributed
+     test_malformed_survey_file_does_not_crash
+     test_missing_survey_file_does_not_crash
+     test_no_ident_allow_entry_is_all_caps
+     test_operator_page_is_not_reported_for_a_route_or_a_flag
+     test_operator_page_is_still_reported_for_a_symbol
+     test_plain_route_is_wrong_lens
+     test_product_names_are_not_internal_symbols
+     test_snake_case_symbol_is_wrong_lens
+     test_stub_with_an_unknown_audience_or_type_is_reported
+     test_stub_without_audience_is_reported
+     test_survey_labels_extend_the_allowlist
+     test_survey_screen_names_and_commands_extend_the_allowlist
+     test_the_pass_line_names_the_written_pages_it_matched
+     test_tree_of_only_stubs_exits_two_with_nothing_to_check
+     test_types_states_the_contract_the_lens_enforces

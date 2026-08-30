@@ -1,0 +1,97 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBDeWNsZS0xNyBzd2VlcDogdGhlIGNvdW50cyBhbmQgdGhlIGJhc2VsaW5lIHRlc3RzL3Rlc3RfZG9jdHlwZS5weSBzdGF0ZXMgYWJvdXQKIyBpdHNlbGYsIG1lYXN1cmVkLiBSdW4gZnJvbSB0aGUgcmVwb3NpdG9yeSByb290LgppbXBvcnQgYXN0LCByZSwgc3VicHJvY2Vzcywgc3lzCgpURVNUUyA9ICJwbHVnaW5zL3dlYnN0ZXIvdGVzdHMvdGVzdF9kb2N0eXBlLnB5IgpET0NUWVBFID0gInBsdWdpbnMvd2Vic3Rlci9zY3JpcHRzL2RvY3R5cGUucHkiCnNyYyA9IG9wZW4oVEVTVFMsIGVuY29kaW5nPSJ1dGYtOCIpLnJlYWQoKQpkb2MgPSBhc3QuZ2V0X2RvY3N0cmluZyhhc3QucGFyc2Uoc3JjKSkKCnByaW50KCI9PSB0aGUgaW5kZXggdGhpcyBtb2R1bGUga2VlcHMgb2YgaXRzZWxmID09IikKZGVmaW5lZCA9IHJlLmZpbmRhbGwociJeZGVmICh0ZXN0X1x3KykiLCBzcmMsIHJlLk0pCmluZGV4ZWQgPSByZS5maW5kYWxsKHIiXlxzKyh0ZXN0X1x3KykiLCBkb2MsIHJlLk0pCmZpcnN0LCBzZWNvbmQsIHRoaXJkLCBidWNrZXQgPSBbXSwgW10sIFtdLCAwCmZvciBsaW5lIGluIGRvYy5zcGxpdGxpbmVzKCk6CiAgICBpZiBsaW5lLnN0YXJ0c3dpdGgoIlNpeCBtb3JlIHRlc3RzIik6CiAgICAgICAgYnVja2V0ID0gMQogICAgZWxpZiBsaW5lLnN0YXJ0c3dpdGgoIk9uZSBtb3JlIHRlc3QiKToKICAgICAgICBidWNrZXQgPSAyCiAgICBtID0gcmUubWF0Y2gociJccysodGVzdF9cdyspIiwgbGluZSkKICAgIGlmIG06CiAgICAgICAgKGZpcnN0LCBzZWNvbmQsIHRoaXJkKVtidWNrZXRdLmFwcGVuZChtLmdyb3VwKDEpKQpwcmludChmIiAgIHRlc3QgZnVuY3Rpb25zIGRlZmluZWQ6IHtsZW4oZGVmaW5lZCl9IikKcHJpbnQoZiIgICB0ZXN0IG5hbWVzIGluIHRoZSB0aHJlZSBpbmRleGVzOiB7bGVuKGluZGV4ZWQpfSIpCnByaW50KGYiICAgZmlyc3QgaW5kZXg6IHtsZW4oZmlyc3QpfSAgIHNlY29uZDoge2xlbihzZWNvbmQpfSAgIHRoaXJkOiB7bGVuKHRoaXJkKX0iKQpwcmludChmIiAgIGNvbnRyb2xzIG1hcmtlZCAoY29udHJvbCk6IHtsZW4ocmUuZmluZGFsbChyJ3Rlc3RfXHcrXHMrXChjb250cm9sXCknLCBkb2MpKX0iKQpwcmludChmIiAgIGluZGV4ZWQgYnV0IG5vdCBkZWZpbmVkOiB7c29ydGVkKHNldChpbmRleGVkKSAtIHNldChkZWZpbmVkKSkgb3IgJ25vbmUnfSIpCnByaW50KGYiICAgZGVmaW5lZCBidXQgbm90IGluZGV4ZWQ6IHtzb3J0ZWQoc2V0KGRlZmluZWQpIC0gc2V0KGluZGV4ZWQpKSBvciAnbm9uZSd9IikKcHJpbnQoZiIgICBza2lwIG9yIHhmYWlsIGRlY29yYXRvcnM6ICIKICAgICAgZiJ7W2wuc3RyaXAoKSBmb3IgbCBpbiBzcmMuc3BsaXRsaW5lcygpIGlmIGwubHN0cmlwKCkuc3RhcnRzd2l0aCgnQCcpIGFuZCAoJ3NraXAnIGluIGwgb3IgJ3hmYWlsJyBpbiBsKV0gb3IgJ25vbmUnfSIpCgpwcmludCgiXG49PSB0aGUgdHdvIGNvbW1pdHMgdGhlIGRvY3N0cmluZyBuYW1lcyBhcyBvbmUgYmFzZWxpbmUgPT0iKQpmb3IgcmV2IGluICgiMmFiZTA4MSIsICJjZmFmZThlIik6CiAgICBibG9iID0gc3VicHJvY2Vzcy5ydW4oWyJnaXQiLCAicmV2LXBhcnNlIiwgZiJ7cmV2fTp7RE9DVFlQRX0iXSwKICAgICAgICAgICAgICAgICAgICAgICAgICBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUpLnN0ZG91dC5zdHJpcCgpCiAgICBwcmludChmIiAgIHtyZXZ9OntET0NUWVBFfSAgLT4gIHtibG9ifSIpCgpwcmludCgiXG49PSB3aGF0IFNLRUxFVE9OIGRvZXMgYW5kIGRvZXMgbm90IG5hbWUgPT0iKQpzeXMuYXJndiA9IFsiZG9jdHlwZS5weSJdCmltcG9ydCBpbXBvcnRsaWIudXRpbApzcGVjID0gaW1wb3J0bGliLnV0aWwuc3BlY19mcm9tX2ZpbGVfbG9jYXRpb24oIl9kb2N0eXBlIiwgRE9DVFlQRSkKbW9kID0gaW1wb3J0bGliLnV0aWwubW9kdWxlX2Zyb21fc3BlYyhzcGVjKQpzcGVjLmxvYWRlci5leGVjX21vZHVsZShtb2QpCmZvciB0b2sgaW4gKCJjcmVhdGVfaXRlbSIsICIvZGFzaGJvYXJkIiwgIi0tdmVyYm9zZSIpOgogICAgcHJpbnQoZiIgICB7dG9rOjE0fSBhcHBlYXJzIGluIFNLRUxFVE9OIGVudHJpZXM6ICIKICAgICAgICAgIGYie1trIGZvciBrLCB2IGluIG1vZC5TS0VMRVRPTi5pdGVtcygpIGlmIHRvayBpbiB2XSBvciAnbm9uZSd9IikKcHJpbnQoZiIgICBob3ctdG8gc2tlbGV0b24gaGVhZGluZ3M6ICIKICAgICAgZiJ7W2wgZm9yIGwgaW4gbW9kLlNLRUxFVE9OWydob3ctdG8nXS5zcGxpdGxpbmVzKCkgaWYgbC5zdGFydHN3aXRoKCcjIycpXX0iKQpwcmludChmIiAgIGhvdy10byBza2VsZXRvbiBwbGFjZWhvbGRlcnM6ICIKICAgICAgZiJ7bGVuKHJlLmZpbmRhbGwocidce1tefV0rXH0nLCBtb2QuU0tFTEVUT05bJ2hvdy10byddKSl9IikKcHJpbnQoIiAgIHRoZSBsaW5lcyBvZiBzY2FmZm9sZC5weSB0aGF0IHdyaXRlIGEgc3R1YjoiKQpzY2FmZm9sZCA9IG9wZW4oInBsdWdpbnMvd2Vic3Rlci9zY3JpcHRzL3NjYWZmb2xkLnB5IiwgZW5jb2Rpbmc9InV0Zi04IikucmVhZCgpCmZvciBuLCBsaW5lIGluIGVudW1lcmF0ZShzY2FmZm9sZC5zcGxpdGxpbmVzKCksIDEpOgogICAgaWYgIm5vdCB3cml0dGVuIHlldCIgaW4gbGluZSBvciAic2tlbGV0b25fZm9yKGRvY190eXBlLCBhdWRpZW5jZSkiIGluIGxpbmUgXAogICAgICAgICAgICBvciAiZnJvbSBkb2N0eXBlIGltcG9ydCBTS0VMRVRPTiIgaW4gbGluZToKICAgICAgICBwcmludChmIiAgICAgcGx1Z2lucy93ZWJzdGVyL3NjcmlwdHMvc2NhZmZvbGQucHk6e259OiB7bGluZS5zdHJpcCgpfSIpCgpwcmludCgiXG49PSB0aGUgc3VydmV5LnB5IGZpZWxkcyBsb2FkX3N1cnZleV9hbGxvdyBhbmQgc3VydmV5X2pzb24gY2xhaW0gPT0iKQpzdXJ2ZXkgPSBvcGVuKCJwbHVnaW5zL3dlYnN0ZXIvc2NyaXB0cy9zdXJ2ZXkucHkiLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKZm9yIG4sIGxpbmUgaW4gZW51bWVyYXRlKHN1cnZleS5zcGxpdGxpbmVzKCksIDEpOgogICAgaWYgcmUuc2VhcmNoKHIndXNlcl9zdXJmYWNlXFsiKGxhYmVsc3xjb21tYW5kcykiXF1cLmFwcGVuZCcsIGxpbmUpIFwKICAgICAgICAgICAgb3IgJ2VudHJ5WyJuYW1lIl0gPSBuYW1lJyBpbiBsaW5lIG9yICdlbnRyeSA9IHsicGF0aCI6IHBhdGgnIGluIGxpbmU6CiAgICAgICAgcHJpbnQoZiIgICBwbHVnaW5zL3dlYnN0ZXIvc2NyaXB0cy9zdXJ2ZXkucHk6e259OiB7bGluZS5zdHJpcCgpfSIpCg== | base64 -d > "$d/m.py"; echo "== the script this log runs =="; cat "$d/m.py"; echo; python3 "$d/m.py"; rm -rf "$d"'
+# evidence-for: FR-013, FR-014, FR-039, AC-016, AC-019, AC-039, US-010
+# evidence-timeout: 600
+
+== the script this log runs ==
+# Cycle-17 sweep: the counts and the baseline tests/test_doctype.py states about
+# itself, measured. Run from the repository root.
+import ast, re, subprocess, sys
+
+TESTS = "plugins/webster/tests/test_doctype.py"
+DOCTYPE = "plugins/webster/scripts/doctype.py"
+src = open(TESTS, encoding="utf-8").read()
+doc = ast.get_docstring(ast.parse(src))
+
+print("== the index this module keeps of itself ==")
+defined = re.findall(r"^def (test_\w+)", src, re.M)
+indexed = re.findall(r"^\s+(test_\w+)", doc, re.M)
+first, second, third, bucket = [], [], [], 0
+for line in doc.splitlines():
+    if line.startswith("Six more tests"):
+        bucket = 1
+    elif line.startswith("One more test"):
+        bucket = 2
+    m = re.match(r"\s+(test_\w+)", line)
+    if m:
+        (first, second, third)[bucket].append(m.group(1))
+print(f"   test functions defined: {len(defined)}")
+print(f"   test names in the three indexes: {len(indexed)}")
+print(f"   first index: {len(first)}   second: {len(second)}   third: {len(third)}")
+print(f"   controls marked (control): {len(re.findall(r'test_\w+\s+\(control\)', doc))}")
+print(f"   indexed but not defined: {sorted(set(indexed) - set(defined)) or 'none'}")
+print(f"   defined but not indexed: {sorted(set(defined) - set(indexed)) or 'none'}")
+print(f"   skip or xfail decorators: "
+      f"{[l.strip() for l in src.splitlines() if l.lstrip().startswith('@') and ('skip' in l or 'xfail' in l)] or 'none'}")
+
+print("\n== the two commits the docstring names as one baseline ==")
+for rev in ("2abe081", "cfafe8e"):
+    blob = subprocess.run(["git", "rev-parse", f"{rev}:{DOCTYPE}"],
+                          capture_output=True, text=True).stdout.strip()
+    print(f"   {rev}:{DOCTYPE}  ->  {blob}")
+
+print("\n== what SKELETON does and does not name ==")
+sys.argv = ["doctype.py"]
+import importlib.util
+spec = importlib.util.spec_from_file_location("_doctype", DOCTYPE)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for tok in ("create_item", "/dashboard", "--verbose"):
+    print(f"   {tok:14} appears in SKELETON entries: "
+          f"{[k for k, v in mod.SKELETON.items() if tok in v] or 'none'}")
+print(f"   how-to skeleton headings: "
+      f"{[l for l in mod.SKELETON['how-to'].splitlines() if l.startswith('##')]}")
+print(f"   how-to skeleton placeholders: "
+      f"{len(re.findall(r'\{[^}]+\}', mod.SKELETON['how-to']))}")
+print("   the lines of scaffold.py that write a stub:")
+scaffold = open("plugins/webster/scripts/scaffold.py", encoding="utf-8").read()
+for n, line in enumerate(scaffold.splitlines(), 1):
+    if "not written yet" in line or "skeleton_for(doc_type, audience)" in line \
+            or "from doctype import SKELETON" in line:
+        print(f"     plugins/webster/scripts/scaffold.py:{n}: {line.strip()}")
+
+print("\n== the survey.py fields load_survey_allow and survey_json claim ==")
+survey = open("plugins/webster/scripts/survey.py", encoding="utf-8").read()
+for n, line in enumerate(survey.splitlines(), 1):
+    if re.search(r'user_surface\["(labels|commands)"\]\.append', line) \
+            or 'entry["name"] = name' in line or 'entry = {"path": path' in line:
+        print(f"   plugins/webster/scripts/survey.py:{n}: {line.strip()}")
+
+== the index this module keeps of itself ==
+   test functions defined: 34
+   test names in the three indexes: 34
+   first index: 27   second: 6   third: 1
+   controls marked (control): 7
+   indexed but not defined: none
+   defined but not indexed: none
+   skip or xfail decorators: none
+
+== the two commits the docstring names as one baseline ==
+   2abe081:plugins/webster/scripts/doctype.py  ->  0b951170ff5952f8811e00aeee3451a6dd3a3163
+   cfafe8e:plugins/webster/scripts/doctype.py  ->  0b951170ff5952f8811e00aeee3451a6dd3a3163
+
+== what SKELETON does and does not name ==
+   create_item    appears in SKELETON entries: none
+   /dashboard     appears in SKELETON entries: none
+   --verbose      appears in SKELETON entries: none
+   how-to skeleton headings: ['## Overview', '## Before you start', '## Steps', '## See also']
+   how-to skeleton placeholders: 4
+   the lines of scaffold.py that write a stub:
+     plugins/webster/scripts/scaffold.py:114: from doctype import SKELETON
+     plugins/webster/scripts/scaffold.py:138: fm += ["---", "", f"# {title}", "", "<!-- webster: not written yet -->", ""]
+     plugins/webster/scripts/scaffold.py:139: body = skeleton_for(doc_type, audience) if doc_type else ""
+
+== the survey.py fields load_survey_allow and survey_json claim ==
+   plugins/webster/scripts/survey.py:449: user_surface["labels"].append({"text": v, "anchor": f"{r}:{i}"})
+   plugins/webster/scripts/survey.py:629: user_surface["commands"].append({"name": v, "anchor": f"{r}:{i}"})
+   plugins/webster/scripts/survey.py:642: entry = {"path": path, "anchor": anchor}
+   plugins/webster/scripts/survey.py:644: entry["name"] = name
