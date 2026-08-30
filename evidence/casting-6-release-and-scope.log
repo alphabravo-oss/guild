@@ -1,0 +1,48 @@
+# evidence-cmd: sh -c 'set -e; root="$(git rev-parse --show-toplevel)"; cd "$root/plugins/webster"; echo "--- the release metadata AC-042, NFR-003 and OT-040 ask for ---"; grep -n "\"version\"" .claude-plugin/plugin.json | sed "s/^/    plugin.json  /"; grep -n "^Version \|^cd plugins/webster \|^[0-9][0-9]* passing" README.md | sed "s/^/    README.md    /"; echo; echo "--- OT-036 and NFR-001: what the suite collects and what it reports ---"; uvx pytest -q --collect-only -p no:cacheprovider 2>&1 | tail -2 | sed "s/^/    /"; uvx pytest -q -p no:cacheprovider 2>&1 | grep -E "^FAILED|passed|failed" | sed "s/^/    /"; echo "    (the one red is the GI-007 scope guard naming this run own committed evidence/ logs; it goes green on the lead strip commit, as its own docstring records)"; echo; echo "--- FR-043, GI-007, OT-043: the whole change against the pre-change baseline cfafe8e ---"; cd "$root"; T="plugins/webster/README.md plugins/webster/.claude-plugin/plugin.json plugins/webster/tests/test_readme.py"; git diff --stat cfafe8e -- $T; echo; echo "--- what THIS cycle moved, against the cycle-16 baseline 18e06c9 ---"; git diff --stat 18e06c9..HEAD -- $T; echo; echo "--- and that the test_readme.py half of it is docstring text only ---"; python3 -c "import ast, subprocess; p = \"plugins/webster/tests/test_readme.py\"; f = lambda s: [setattr(n, \"body\", n.body[1:] or [ast.Pass()]) for n in ast.walk(ast.parse(s)) if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.body and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant) and isinstance(n.body[0].value.value, str)]; g = lambda s: (lambda t: ([setattr(n, \"body\", n.body[1:] or [ast.Pass()]) for n in ast.walk(t) if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.body and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant) and isinstance(n.body[0].value.value, str)], ast.dump(t))[1])(ast.parse(s)); before = subprocess.run([\"git\", \"show\", \"18e06c9:\" + p], capture_output=True, text=True, check=True).stdout; print(\"    AST modulo docstrings, 18e06c9 against HEAD:\", g(before) == g(open(p).read()))"; echo; echo "--- GI-001 and GI-006: the markdown layers, marketplace.json and the root badge, against cfafe8e ---"; git diff --stat cfafe8e -- plugins/webster/agents plugins/webster/commands plugins/webster/skills .claude-plugin/marketplace.json README.md; echo "    (nothing listed above means none of them was touched)"'
+# evidence-for: NFR-003, AC-042, FR-043, FR-038, NFR-001, NFR-002, US-010
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# The release and the scope boundary, generated from a clean worktree at the commit that
+# carries this cycle's other logs. plugin.json reads 0.11.0 and the README Status section
+# carries that version, the run command and the count (AC-042, NFR-003, OT-040). The suite
+# collects 148 and reports 147 passed with one red: the GI-007 scope guard in
+# test_harness.py, which names this run's own committed evidence/ logs and goes green on
+# the lead's strip commit, exactly as its own docstring says it will (OT-036, NFR-001).
+# The scope blocks are FR-043, GI-007 and OT-043: the whole change since the pre-change
+# baseline touches three files, this cycle moved two of them, and the test_readme.py half
+# is docstring text only -- its AST modulo docstrings is identical to 18e06c9's, which is
+# a stronger claim than counting comment lines, since a docstring is not a comment. The
+# last block is GI-001 and GI-006: agents, commands, skills, marketplace.json and the root
+# README are untouched, so the pre-existing version drift GI-006 puts out of scope is
+# still there and this change did not reach for it.
+
+--- the release metadata AC-042, NFR-003 and OT-040 ask for ---
+    plugin.json  3:  "version": "0.11.0",
+    README.md    188:Version 0.11.0.
+    README.md    191:cd plugins/webster && uvx pytest
+    README.md    194:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
+
+--- OT-036 and NFR-001: what the suite collects and what it reports ---
+    
+    148 tests collected in 0.02s
+    FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+    1 failed, 147 passed in 13.12s
+    (the one red is the GI-007 scope guard naming this run own committed evidence/ logs; it goes green on the lead strip commit, as its own docstring records)
+
+--- FR-043, GI-007, OT-043: the whole change against the pre-change baseline cfafe8e ---
+ plugins/webster/.claude-plugin/plugin.json |    2 +-
+ plugins/webster/README.md                  |  235 ++++++-
+ plugins/webster/tests/test_readme.py       | 1007 ++++++++++++++++++++++++++++
+ 3 files changed, 1216 insertions(+), 28 deletions(-)
+
+--- what THIS cycle moved, against the cycle-16 baseline 18e06c9 ---
+ plugins/webster/README.md            |  44 ++++++++++-----
+ plugins/webster/tests/test_readme.py | 102 +++++++++++++++++++++++++----------
+ 2 files changed, 107 insertions(+), 39 deletions(-)
+
+--- and that the test_readme.py half of it is docstring text only ---
+    AST modulo docstrings, 18e06c9 against HEAD: True
+
+--- GI-001 and GI-006: the markdown layers, marketplace.json and the root badge, against cfafe8e ---
+    (nothing listed above means none of them was touched)
