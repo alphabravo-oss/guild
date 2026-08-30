@@ -1,0 +1,33 @@
+# evidence-cmd: sh -c 'set -e; cd "$(git rev-parse --show-toplevel)"; t="$(mktemp -d)"; printf "%s\n" '"'"'import os, subprocess'"'"' '"'"'ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()'"'"' '"'"'BASE = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}'"'"' '"'"'W = os.path.join(ROOT, "plugins/webster")'"'"' '"'"'SCOPE = "tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed"'"'"' '"'"''"'"' '"'"'c = subprocess.run(["uvx", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],'"'"' '"'"'                   cwd=W, capture_output=True, text=True, env=BASE, timeout=300)'"'"' '"'"'print("== the suite this casting'"'"'"'"'"'"'"'"'s four files sit in ==")'"'"' '"'"'print("   cd plugins/webster && uvx pytest --collect-only -q -> exit %d" % c.returncode)'"'"' '"'"'print("       %s" % [l for l in c.stdout.splitlines() if l.strip()][-1])'"'"' '"'"'r = subprocess.run(["uvx", "pytest", "-q", "--no-header", "--tb=no", "-rf",'"'"' '"'"'                    "-p", "no:cacheprovider", "--deselect", SCOPE],'"'"' '"'"'                   cwd=W, capture_output=True, text=True, env=BASE, timeout=600)'"'"' '"'"'print("   cd plugins/webster && uvx pytest -q --deselect <the GI-007 scope test> -> exit %d" % r.returncode)'"'"' '"'"'print("       failures: %s"'"'"' '"'"'      % (sorted(l.split(" ")[1] for l in r.stdout.splitlines() if l.startswith("FAILED ")) or "none"))'"'"' '"'"'print("   the scope test is deselected here and only here: it diffs this change against")'"'"' '"'"'print("   GI-007'"'"'"'"'"'"'"'"'s five locations, so it is red exactly while this run'"'"'"'"'"'"'"'"'s own evidence/")'"'"' '"'"'print("   logs are committed and green again on the lead'"'"'"'"'"'"'"'"'s strip commit.")'"'"' '"'"'print()'"'"' '"'"'print("== this casting'"'"'"'"'"'"'"'"'s own two modules ==")'"'"' '"'"'r = subprocess.run(["uvx", "pytest", "tests/test_survey.py", "tests/test_llmstxt.py",'"'"' '"'"'                    "-q", "--no-header", "--tb=no", "-rf", "-p", "no:cacheprovider"],'"'"' '"'"'                   cwd=W, capture_output=True, text=True, env=BASE, timeout=600)'"'"' '"'"'print("   exit %d, failures: %s"'"'"' '"'"'      % (r.returncode,'"'"' '"'"'         sorted(l.split(" ")[1] for l in r.stdout.splitlines() if l.startswith("FAILED ")) or "none"))'"'"' '"'"'for name in ("test_survey.py", "test_llmstxt.py"):'"'"' '"'"'    n = len([l for l in open(os.path.join(W, "tests", name), encoding="utf-8").read().splitlines()'"'"' '"'"'             if l.startswith("def test_")])'"'"' '"'"'    print("   %-16s %d test functions" % (name, n))'"'"' '"'"'print()'"'"' '"'"'BASELINE = "0ea38dd"   # the shared tip this casting'"'"'"'"'"'"'"'"'s correction commit sits on'"'"' '"'"'print("== no executable line in the four swept files moved, against %s ==" % BASELINE)'"'"' '"'"'for rel in ("scripts/survey.py", "scripts/llmstxt.py", "tests/test_survey.py", "tests/test_llmstxt.py"):'"'"' '"'"'    now = open(os.path.join(W, rel), encoding="utf-8").read().splitlines()'"'"' '"'"'    was = subprocess.run(["git", "-C", ROOT, "show", BASELINE + ":plugins/webster/" + rel],'"'"' '"'"'                         capture_output=True, text=True).stdout.splitlines()'"'"' '"'"'    code = lambda ls: [(i + 1, l) for i, l in enumerate(ls)'"'"' '"'"'                       if l.strip() and not l.lstrip().startswith("#")]'"'"' '"'"'    moved = [n for (n, a), (m, b) in zip(code(now), code(was)) if n != m]'"'"' '"'"'    print("   %-20s lines %d -> %d, non-comment lines that changed number: %d"'"'"' '"'"'          % (rel, len(was), len(now), len(moved)))'"'"' > "$t/g.py"; python3 "$t/g.py"; rm -rf "$t"'
+# evidence-for: US-006, US-007
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# GRIND cycle 17. The suite state this casting's four files sit in, and the check that
+# the sweep moved no executable line: every non-comment line in all four files carries
+# the same number it carried at 0ea38dd, the shared tip the correction commit sits on.
+#
+# test_harness.py's GI-007 scope test is deselected in the first run and only there. It
+# diffs this change against GI-007's five writable locations, so it is red exactly while
+# this run's own evidence/ logs are committed, and green again on the lead's strip
+# commit. The collected count is 148 and this change does not move it.
+
+== the suite this casting's four files sit in ==
+   cd plugins/webster && uvx pytest --collect-only -q -> exit 0
+       148 tests collected in 0.02s
+   cd plugins/webster && uvx pytest -q --deselect <the GI-007 scope test> -> exit 0
+       failures: none
+   the scope test is deselected here and only here: it diffs this change against
+   GI-007's five locations, so it is red exactly while this run's own evidence/
+   logs are committed and green again on the lead's strip commit.
+
+== this casting's own two modules ==
+   exit 0, failures: none
+   test_survey.py   30 test functions
+   test_llmstxt.py  18 test functions
+
+== no executable line in the four swept files moved, against 0ea38dd ==
+   scripts/survey.py    lines 718 -> 718, non-comment lines that changed number: 0
+   scripts/llmstxt.py   lines 298 -> 298, non-comment lines that changed number: 0
+   tests/test_survey.py lines 1524 -> 1524, non-comment lines that changed number: 0
+   tests/test_llmstxt.py lines 707 -> 707, non-comment lines that changed number: 0
