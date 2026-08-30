@@ -16,19 +16,19 @@ has, lists the broken ones, and still reports no_manifest rather than drift — 
 paragraph described least well was the run that had a finding in it. The reason is one reason
 for all five: "nothing here could be checked" is a different claim from "this was checked and
 it is wrong". hashes_partial is the one exit-2 status that sits below drift instead, for the
-reason its own paragraph below gives. A broken anchor found under the four of the five that
-reach the anchors half — no_manifest, no_anchors, no_git and head_missing — is still listed in
-broken_anchors beside the not-checked status rather than dropped, because the anchors half
-runs whether or not git can answer. no_docs is the fifth, and it returns before a page is
-read, so its envelope carries no anchor field at all. `clean` is reserved for a set where
-nothing changed at all: code that changed but that no page cites is `unrelated_changes`,
-because a gate that fails on ordinary development teaches the reader to stop reading the gate.
-`hashes_partial` is the same refusal for the line half: an anchor the record itself held that
-resolves but carries no recorded digest was never compared, and a run holding one has not
-earned exit 0. It is the one not-checked status that sits BELOW drift, being the narrower
-claim: some anchors were measured and some were not, so a finding the run did make is still
-reported as a finding. A citation a page grew after the record is not one of those — there was
-nothing to take a digest of — and it is reported as the docs edit it is.
+reason its own paragraph below gives. A broken anchor found under the three of the five that can
+be holding one — no_manifest, no_git and head_missing — is still listed in broken_anchors beside
+the not-checked status rather than dropped, because the anchors half runs whether or not git can
+answer. no_anchors reaches that half holding none, firing as it does on a set with no anchor in
+it. no_docs is the fifth, and it returns before a page is read, so its envelope carries no anchor
+field at all. `clean` is reserved for a set where nothing changed at all: code that changed but
+that no page cites is `unrelated_changes`, because a gate that fails on ordinary development
+teaches the reader to stop reading the gate. `hashes_partial` is the same refusal for the line
+half: an anchor the record itself held that resolves but carries no recorded digest was never
+compared, and a run holding one has not earned exit 0. It is the one not-checked status that sits
+BELOW drift, being the narrower claim: some anchors were measured and some were not, so a finding
+the run did make is still reported as a finding. A citation a page grew after the record is not
+one of those — there was nothing to take a digest of — and it is reported as the docs edit it is.
 
 The docs directory is the second argument, or WEBSTER_DOCS, or "docs". It was env-var only
 until a real audit pointed the command at a repo whose docs live in `documentation/`, got
@@ -326,12 +326,12 @@ def tree_hash(paths):
 
 
 def collect_anchors(paths):
-    """Every file:line the docs cite, mapped back to the page that cites it.
+    """Every file:line the docs cite in a comment or in frontmatter, mapped back to its page.
 
-    Anchors are read from HTML comments and from a frontmatter `sources:` list, never from
-    visible prose. A reader of a published page should not see the implementation path a claim
-    was checked against; the anchor exists so the claim can be re-verified, and that is a job
-    for this script rather than for the reader.
+    Read from HTML comments and from anywhere in a page's frontmatter block, never from visible
+    prose. A `sources:` list is where the house rules ask for a page-level citation, not what
+    this reads: a file:line sitting in a `title:` is collected like any other. A published page
+    should not show the path a claim was checked against, so re-verifying is this script's job.
     """
     found = {}
     for p in paths:
@@ -344,7 +344,7 @@ def collect_anchors(paths):
             for target, tline in ANCHOR.findall(m.group(1)):
                 found.setdefault(f"{target}:{tline}", []).append(f"{rel}:{lineno}")
 
-        # frontmatter: a sources list, for claims that belong to the page as a whole
+        # frontmatter: any file:line in the block, for claims that belong to the page as a whole
         if text.startswith("---"):
             end = text.find("\n---", 3)
             if end > 0:
@@ -453,11 +453,11 @@ def resolves(anchor):
     """Whether the anchor still names a line that is there, and why not when it does not.
 
     Only the end of the file used to be tested, so `src/cli/main.py:0` came back resolvable —
-    while cited_line() enumerates from 1 and can never return a line 0. The anchor was
-    resolvable and unhashable at once: record wrote no digest for it, check counted it as an
-    anchor nothing had measured, and the set reported hashes_partial at exit 2 with a note
-    saying re-record. Re-recording produced the same manifest and the same exit 2, so the state
-    was permanent and no edit to the citation could clear it.
+    while cited_line() enumerates from 1 and can never return a line 0. The anchor was resolvable
+    and unhashable at once: record wrote no digest for it, check counted it as an anchor nothing
+    had measured, and the set reported hashes_partial at exit 2 with a note saying re-record.
+    Re-recording produced that same exit 2, so the note named the one thing that could not clear
+    the state; editing the citation off line 0, or dropping it, did.
 
     Line numbers are 1-based everywhere an anchor is written, so 0 names no line and the
     citation is broken in the way a citation into a deleted file is broken. Reporting it here
@@ -850,9 +850,9 @@ def main():
         grown = ""
         if added:
             # docs_edited_since_record is where a citation the pages grew is reported, and it is
-            # named only where this run actually observed it: an anchors map hand-edited out of
-            # the manifest reaches this same count with the docs tree untouched, and pointing at
-            # a false field would be the same overstatement one sentence later.
+            # named only where this run actually observed it: an anchor hand-edited out of the
+            # manifest's anchors map reaches this same count with the docs tree untouched, and
+            # pointing at a false field would be the same overstatement one sentence later.
             grown = (f", and {len(added)} citation(s) here are not in the record at all, so "
                      "there was no digest to compare them against"
                      + (" — the docs edit docs_edited_since_record reports" if docs_edited

@@ -45,8 +45,8 @@ test_wrong_typed_manifest_field_is_no_manifest      FR-006 CT-001  f31b144  trac
 test_no_manifest_envelope_lists_broken_anchors      AC-003 CT-001  693570d  key named `broken`
 test_record_writes_a_line_hash_per_anchor           FR-003 OT-005  cfafe8e  no lineHashes key
 test_changed_cited_line_is_reported_as_a_mismatch   FR-003 AC-005  cfafe8e  no hash_mismatches key
-test_hash_mismatch_alone_is_drift                   FR-007         cfafe8e  status clean, exit 0
-test_manifest_without_line_hashes_is_not_recorded   FR-004 AC-006  cfafe8e  no hashes key
+test_hash_mismatch_alone_is_drift                   FR-007         cfafe8e  no lineHashes key
+test_manifest_without_line_hashes_is_not_recorded   FR-004 AC-006  cfafe8e  no lineHashes key
 test_no_git_note_does_not_claim_digests_compared    FR-004 AC-006  66dab76  note claimed compared
 test_partly_hashed_manifest_is_not_reported_clean   FR-003 FR-007  f31b144  status clean, exit 0
 test_anchor_past_end_of_file_gets_no_line_hash      FR-034         cfafe8e  no lineHashes key
@@ -1202,7 +1202,10 @@ def test_hash_mismatch_alone_is_drift(run_script, fixture_repo):
     the hash half decides anything by itself. Here the work tree is untouched and
     git has nothing to report, and the check must still refuse to say clean.
 
-    RED at cfafe8e: status clean, exit 0.
+    RED at cfafe8e: that revision wrote no lineHashes key, so the digest this
+    test overwrites was not there to overwrite and the setup raises KeyError
+    before the check runs. The same untouched tree, checked at cfafe8e, printed
+    status clean at exit 0 with no field in the envelope that could disagree.
     """
     record(run_script, fixture_repo)
     manifest = manifest_of(fixture_repo)
@@ -1232,7 +1235,9 @@ def test_hash_mismatch_alone_is_drift(run_script, fixture_repo):
 def test_manifest_without_line_hashes_is_not_recorded(run_script, fixture_repo):
     """FR-004 / AC-006 / OT-007 — a manifest written before this change is not drift.
 
-    RED at cfafe8e: there was no hashes key to report not_recorded with.
+    RED at cfafe8e: that revision wrote no lineHashes key, so the ``pop`` this
+    test strips one with raises KeyError before the check runs, and the envelope
+    it would have read had no hashes key to report not_recorded with either.
     """
     record(run_script, fixture_repo)
     manifest = manifest_of(fixture_repo)
@@ -1579,8 +1584,9 @@ def test_anchor_citing_line_zero_is_a_broken_anchor(run_script, fixture_repo):
     1 and can never return a line 0. The anchor was resolvable and unhashable at once: record
     wrote no digest for it, check counted it under unhashed_anchors, and the set reported
     hashes_partial at exit 2 with a note saying re-record. Re-recording produced the same
-    manifest and the same exit 2, so the state was permanent and nothing the author could do
-    to the citation would clear it.
+    manifest and the same exit 2, so the note named the one thing that could not clear the
+    state; editing the citation off line 0, or dropping it, cleared it at once — which is what
+    a broken anchor asks for and what a status saying re-record sends the author away from.
 
     Line numbers are 1-based everywhere an anchor is written, so 0 names no line and the
     citation is broken in the way ``src/app/missing.py:3`` is broken. Reported as drift it
