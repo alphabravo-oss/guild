@@ -141,7 +141,10 @@ DOCTYPE_PY = Path(__file__).resolve().parent.parent / "scripts" / "doctype.py"
 
 STUB_MARKER = "<!-- webster: not written yet -->"
 
-# The skeleton scaffold.py writes. Its placeholder braces name a symbol, a route and a flag on
+# A stub of the shape scaffold.py writes, abridged. scaffold.py emits the marker and then fills
+# the body from doctype.py's SKELETON, whose entries carry several headings and several brace
+# placeholders; one of each is enough here. The placeholder text is this module's own — no
+# SKELETON entry names `create_item`, `/dashboard` or `--verbose`, and these three are here on
 # purpose: AC-019 asks that a stub's prose produces no lens, jargon or grade finding, and a
 # skeleton that named nothing forbidden would pass that test without proving anything. Built by
 # concatenation rather than str.format, because the braces below are the content under test.
@@ -559,9 +562,12 @@ def test_product_names_are_not_internal_symbols(run_script, docs_dir):
 def test_no_ident_allow_entry_is_all_caps():
     """FR-015 / AC-011: an entry CODE_IDENT cannot produce excuses nothing.
 
-    CODE_IDENT asserts one lowercase letter anywhere in the token (_HAS_LOWER) so that `SHA256`
-    and `EC2` stay the acronym check's business. An IDENT_ALLOW entry with no lowercase letter
-    in it can therefore never be produced, which is the same dead weight FR-041 removed from
+    CODE_IDENT asserts one lowercase letter anywhere in the token (_HAS_LOWER), which is what
+    keeps `SHA256` and `EC2` out of the symbol lens. It does not hand them to the acronym check:
+    check_jargon deletes every backticked span before ACRONYM runs, so a backticked `SHA256`
+    reaches no rule at all and only the bare spelling is reported as undefined jargon. An
+    IDENT_ALLOW entry with no lowercase letter in it can therefore never be produced, which is
+    the same dead weight FR-041 removed from
     UNIVERSAL_ACRONYMS. HTTP2 and HTTP3 are what this pins out: they read like the versioned
     standards `IPv4` and `OAuth2` added beside them, and unlike those two they can never reach
     this set. The set once held `IOS` for the same reason.

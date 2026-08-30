@@ -2,8 +2,11 @@
 """Per-page content-type templates and quality checks.
 
 Content types and their skeletons come from The Good Docs Project. The quality characteristics
-come from ISO/IEC/IEEE 26514, and only the ones that can be measured mechanically are checked
-here; the rest are reported as what a human reviewer should judge.
+come from ISO/IEC/IEEE 26514, and ISO_26514 below records how each of the nine is judged. Being
+marked measurable there is not the same as being checked here: accessibility, understandability
+and subject-fit each have a rule in this file, correctness is drift.py's, conciseness is
+measured only as the sentence length feeding the grade, and consistency has no check here at
+all. The remaining three are marked for a human reviewer to judge.
 
   types                 list the content types, the readers, and what each is for
   template <type> [aud] print the starting skeleton, in the variant that reader needs
@@ -183,9 +186,20 @@ CODE_IDENT = re.compile(
  r")`")
 # Tokens holding a `.` or a `/` are excluded by the closing backtick rather than by a rule of
 # their own: no branch above can consume either character, so `my_config.yaml` and `/etc/hosts`
-# never reach it. ALL-CAPS is excluded by the _HAS_LOWER lookahead above rather than by any
-# branch, which leaves `DATABASE_URL` to ENV_VAR and `SHA256` to the acronym check, whose jobs
-# they are.
+# never reach it. ALL-CAPS splits in two, and only one half is the lookahead's doing.
+# `DATABASE_URL` and `XML` match no branch with the lookahead or without it: the two
+# capital-initial branches demand a lowercase-or-digit tail straight after the opening capitals
+# and neither token has one, and the other two open on a mandatory [a-z]. `DATABASE_URL` goes
+# on to ENV_VAR, the owner FR-010 names for ALL-CAPS ("ENV_VAR's job"), and check_lens reports
+# it once assigned_env_vars has seen the docs set assign that name or call it a variable.
+# `SHA256`, `MD5`, `EC2`, `UTF8` and `HTTP2` are the shapes _HAS_LOWER is for: drop the
+# lookahead and every one of them matches the acronym-first branch, which is what a5484ba did
+# and ec6aa60 undid. Nothing owns them now. check_jargon deletes every backticked span before
+# ACRONYM runs, so a backticked `SHA256` reaches no rule at all, while the same word bare is
+# reported as undefined jargon. That is a gap rather than a design: FR-010 hands ALL-CAPS to
+# ENV_VAR and names no second owner, ENV_VAR requires an underscore, and check_jargon has
+# deleted backticked spans since it was written, so a5484ba is the only revision of this file
+# that ever reported one — and it reported it as an internal symbol, not as an acronym.
 
 # Product and technology names are PascalCase too, and they are not internals. Compared against
 # `m.group(1).lower()`, so the capitalisation here is documentation rather than a matcher: the
@@ -215,14 +229,16 @@ ENV_VAR = re.compile(r"`([A-Z][A-Z0-9]*_[A-Z0-9_]+)`")
 # The bound used to be six letters, which covers `.conf` and `.yaml` and stops there: an
 # ordinary config path on a user page — `/etc/app.properties`, `/docs/readme.markdown`,
 # `/.gitignore`, `/x.template` — was over the length or held a digit, and every one of them was
-# reported to a reader as naming a request route. Sixteen is past every extension in ordinary
-# use, and the comment above this line claimed the exclusion without ever saying it was capped.
+# reported to a reader as naming a request route. Sixteen is past every extension this comment
+# names and every extension on a path in tests/test_doctype.py, the longest of them
+# `.properties` at ten letters, and the comment above this line claimed the exclusion without
+# ever saying it was capped.
 # Admitting digits so `.7z` and `.mp4` keep reading as files took the version paths with them:
 # `.0` matched as an extension, so `/api/v1.0` and `/v3.0` went quiet — two routes the narrow
 # /api and /v<n> rule this widening replaced had always reported, which made the fix a
 # regression for the shape it was built from. The inner lookahead asks the extension for one
-# letter somewhere, which `.0` has none of and every real extension has at least one. What that
-# costs is a last segment ending in a bare number: `/data/backup.2024` reads as a route, and
+# letter somewhere, which `.0` has none of. What that costs is a last segment whose dot is
+# followed by digits alone: `/data/backup.2024` and `/x.123` read as routes, and
 # WEBSTER_LENS_ALLOW is the answer there, as it is for `/etc/hosts`, which has no extension at
 # all and is the gap A-008 accepts.
 # The first segment may not be empty. `[^`\s]+` let the path body open on a second slash, so
@@ -237,8 +253,9 @@ ROUTE_PATH = re.compile(
 FLAG = re.compile(r"`(--?[a-zA-Z][\w-]*)`")
 
 # Architecture vocabulary. Each of these names a part of the system the reader cannot touch.
-# Kept deliberately tight: "repository" alone means a git repository to half of all readers and
-# "interface" alone means the web interface, so neither is here.
+# Kept deliberately tight: "repository" alone can mean a git repository and "interface" alone
+# can mean the web interface, either of which a user page may legitimately be about, so neither
+# is here.
 ARCH_HARD = re.compile(
  r"(?i)\b(handlers?|middlewares?|controllers?|goroutines?|mutexe?s?|subclass(?:es)?|singletons?"
  r"|service layer|data layer|business logic|database schema|the codebase|code ?paths?"
@@ -628,7 +645,11 @@ def assigned_env_vars(docs):
 
     `CREDENTIAL_ERROR` is a status the interface displays and `PIONEER_API_URL` is a variable
     somebody exports, and the two are indistinguishable by shape. So a name counts as a variable
-    only where the documentation shows it being set somewhere."""
+    only where the documentation says so, in one of two ways: an assignment anywhere in the tree
+    (`NAME=`, with or without a leading `export`), or a backticked name within forty characters
+    after the word "variable", "env" or "environment". The second wants no assignment at all, so
+    a page that only writes "the environment variable `DATABASE_URL`" is enough to have that
+    name reported on every `user` page in the set."""
     found = set()
     for dirpath, dirnames, filenames in os.walk(docs):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -1000,10 +1021,10 @@ def main():
     # holding no page at all, because this gate asked for stubs > 0 rather than for pages == 0
     # — the stub count was never the question. `untyped` and `advisories` can only be filled
     # on the same path that increments `pages`, so defects are the only other thing left to
-    # ask about, and FR-040 answers it in its own words: a frontmatter
-    # defect on a stub is a real finding, and "nothing to check" is reserved for zero non-stub
-    # pages AND zero defects. A run that did find something must never report that there was
-    # nothing to look at (FR-040, CT-004).
+    # ask about, and FR-040 answers it in its own words: "Frontmatter defects on stubs are real
+    # findings; exit 2 'nothing to check' only when there are zero non-stub pages AND zero
+    # defects." A run that did find something must never report that there was nothing to look
+    # at (FR-040, CT-004).
     if not pages and not defects:
         print(f"{stubs} stubs, nothing to check")
         return 2
