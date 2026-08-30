@@ -1,0 +1,96 @@
+# evidence-cmd: cd "$(git rev-parse --show-toplevel)"; T=$(mktemp -d); printf "%s\n" 'import ast, os, pathlib, shutil, subprocess, sys, tempfile, time, types' '' 'CONF = "plugins/webster/tests/conftest.py"' 'SRC = "plugins/webster/tests/test_harness.py"' '' 'stub = types.ModuleType("pytest")' 'stub.fixture = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))' 'sys.modules["pytest"] = stub' 'm = types.ModuleType("c"); m.__file__ = os.path.abspath(CONF)' 'exec(compile(open(CONF, encoding="utf-8").read(), CONF, "exec"), m.__dict__)' '' 'W = tempfile.mkdtemp()' 'def build(label, **kw):' '    return m.build_fixture_repo(os.path.join(W, label), **kw)' 'def head(repo):' '    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo),' '                          capture_output=True, text=True, timeout=60).stdout.strip()' '' 'print("[1] the sentence under measurement, as it now stands")' 'lines = open(SRC, encoding="utf-8").read().splitlines()' 's = next(i for i, l in enumerate(lines) if "two consecutive fixture_repo builds disagree" in l)' 'for i in range(s - 1, s + 15):' '    print("    %4d  %s" % (i + 1, lines[i]))' 'print()' '' 'print("[2] the guard the ruled-out cause would have to get past")' 'c = open(CONF, encoding="utf-8").read().splitlines()' 'gs = next(i for i, l in enumerate(c) if l.startswith("_GIT_ENV = "))' 'ge = next(i for i in range(gs, len(c)) if c[i].strip() == "}")' 'for i in range(gs, ge + 1):' '    print("    %4d  %s" % (i + 1, c[i]))' 'tree = ast.parse("\n".join(c), CONF)' 'bf = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)' '          and n.name == "build_fixture_repo")' 'calls = sorted({ast.unparse(n.func) for n in ast.walk(bf) if isinstance(n, ast.Call)})' 'print("    every call build_fixture_repo makes, by AST: %s" % ", ".join(calls))' 'print("    of those, the ones that reach a subprocess: %s"' '      % ([x for x in calls if "subprocess" in x or "system" in x or "popen" in x.lower()] or ["_git"]))' 'print("    -> _git is the only path to git, and _GIT_ENV is on every _git call.")' 'print()' '' 'print("[3] control: two consecutive builds, nothing varied")' 'PINNED = head(build("ctl-a"))' 'print("    HEAD(ctl-a) = %s" % PINNED)' 'print("    HEAD(ctl-b) = %s   equal: %s" % (head(build("ctl-b")), head(build("ctl-b0")) == PINNED))' 'print()' '' 'print("[4] the cause the message used to name: a ~/.gitconfig arriving through HOME")' 'FAKE = os.path.join(W, "fakehome"); os.makedirs(FAKE)' 'IGNORED = "docs/faq.md"' 'excl = os.path.join(FAKE, "excludes"); open(excl, "w").write(IGNORED + "\n")' 'GITCONFIG = os.path.join(FAKE, ".gitconfig")' 'open(GITCONFIG, "w").write(' '    "[core]\n\texcludesFile = %s\n\tautocrlf = true\n[init]\n\tdefaultBranch = trunk\n"' '    "[user]\n\tname = someone else\n\temail = else@example.com\n" % excl)' 'print("    the file placed at $HOME/.gitconfig:")' 'for l in open(GITCONFIG).read().splitlines():' '    print("        %s" % l.replace(FAKE, "<TMP>"))' 'h1 = head(build("home-a", env={"HOME": FAKE}))' 'h2 = head(build("home-b", env={"HOME": FAKE}))' 'print("    HEAD(home-a) = %s   equals the pinned build: %s" % (h1, h1 == PINNED))' 'print("    HEAD(home-b) = %s   equals the pinned build: %s" % (h2, h2 == PINNED))' 'print("    the two HOME builds equal each other:        %s" % (h1 == h2))' 'print()' '' 'print("[5] the mutation that shows that file is live rather than merely inert")' 'h3repo = build("noguard", env={"GIT_CONFIG_GLOBAL": GITCONFIG})' 'h3 = head(h3repo)' 'print("    the SAME file reached through GIT_CONFIG_GLOBAL -- the guard removed,")' 'print("    nothing else changed:")' 'print("    HEAD(noguard) = %s   equals the pinned build: %s" % (h3, h3 == PINNED))' 'tr = subprocess.run(["git", "ls-files", "--", IGNORED], cwd=str(h3repo),' '                    capture_output=True, text=True, timeout=60).stdout' 'print("    git ls-files -- %s in that build -> %r  (the excludesFile dropped it)"' '      % (IGNORED, tr))' 'print("    -> the configuration does move HEAD when git reads it, and git does not")' 'print("       read it through HOME. And a configuration that did reach these builds")' 'print("       would reach both alike, so it could not be what separates them.")' 'print()' '' 'print("[6] the two causes the message keeps, each made to happen")' 'd1 = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(1000000))' 'd2 = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(2000000))' 'c1 = head(build("clock-a", env={"GIT_AUTHOR_DATE": d1, "GIT_COMMITTER_DATE": d1}))' 'c2 = head(build("clock-b", env={"GIT_AUTHOR_DATE": d2, "GIT_COMMITTER_DATE": d2}))' 'print("    a clock read at build time -- each build stamped with its own instant")' 'print("    (%s vs %s):" % (d1, d2))' 'print("        %s  vs  %s   differ: %s" % (c1, c2, c1 != c2))' 'alt = os.path.join(W, "altsrc"); shutil.copytree(m.FIXTURE_REPO_SRC, alt)' 'p = pathlib.Path(alt, "docs", "faq.md")' 'p.write_text(p.read_text(encoding="utf-8") + "\none more line\n", encoding="utf-8")' 'f1 = head(build("file-a"))' 'real = m.FIXTURE_REPO_SRC; m.FIXTURE_REPO_SRC = pathlib.Path(alt)' 'f2 = head(build("file-b")); m.FIXTURE_REPO_SRC = real' 'print("    a file whose content differs between the two copies -- one extra line")' 'print("    in docs/faq.md:")' 'print("        %s  vs  %s   differ: %s" % (f1, f2, f1 != f2))' 'print()' 'print("    Both of the causes the message still names really do separate two")' 'print("    builds. The one it no longer names cannot.")' > "$T/e.py"; python3 "$T/e.py"; rm -rf "$T"
+# evidence-for: US-010, FR-030, AC-040, OT-038, NFR-005
+#
+# GRIND cycle 17, D-166 (PROVE cycle 16 F-06). The assertion behind
+# test_two_fixture_repo_builds_produce_the_same_head listed three candidate causes for two
+# consecutive builds landing on different HEADs, and one of them -- "a ~/.gitconfig arriving
+# through HOME" -- cannot occur.
+#
+# Block [2] establishes why by AST rather than by reading: build_fixture_repo reaches git through
+# _git and through nothing else, and _git applies _GIT_ENV, which pins GIT_CONFIG_GLOBAL to
+# os.devnull and sets GIT_CONFIG_NOSYSTEM. Between them those shut both config files a HOME can
+# offer.
+#
+# Block [4] runs the experiment. A fake HOME carrying a .gitconfig that sets core.excludesFile
+# over a fixture page, core.autocrlf, init.defaultBranch and a different user identity leaves
+# HEAD byte-identical to the pinned build, twice.
+#
+# Block [5] is the control that keeps [4] from being vacuous. The same file, reached through
+# GIT_CONFIG_GLOBAL instead -- the guard removed and nothing else changed -- does move HEAD, and
+# git ls-files shows the excluded page gone from the tree. So the configuration is live; HOME is
+# simply not a road to it. A configuration that did reach these builds would in any case reach
+# both of them alike, which is the second reason the clause could not have been a cause of two
+# builds DIFFERING.
+#
+# Block [6] makes the two causes the message keeps actually happen, so the replacement sentence
+# is not merely shorter but measured: a clock read at build time separates two builds, and so
+# does one extra line in docs/faq.md between the two copies.
+
+[1] the sentence under measurement, as it now stands
+     471      assert heads[0][1] == heads[1][1], (
+     472          f"two consecutive fixture_repo builds disagree on HEAD: "
+     473          f"{heads[0][0]}={heads[0][1]}, {heads[1][0]}={heads[1][1]}. Something "
+     474          f"outside conftest.FIXTURE_COMMITS reached the commit objects — a clock "
+     475          f"read at build time, or a file whose content differs between the two "
+     476          f"copies. Two suspects are ruled out before you start. Not a "
+     477          f"~/.gitconfig arriving through HOME: conftest._GIT_ENV pins "
+     478          f"GIT_CONFIG_GLOBAL to os.devnull and sets GIT_CONFIG_NOSYSTEM on every "
+     479          f"git call, and _git is the only way build_fixture_repo reaches git at "
+     480          f"all, so both files a HOME could offer are shut — measured, a fake "
+     481          f"HOME carrying a .gitconfig that does move HEAD when it is reached "
+     482          f"through GIT_CONFIG_GLOBAL leaves it byte-identical when it arrives "
+     483          f"through HOME. A configuration that did reach these builds would in "
+     484          f"any case reach both of them alike. And not the timezone offset: both "
+     485          f"builds ran in this process's zone, so it cannot be what separates "
+     486          f"them."
+
+[2] the guard the ruled-out cause would have to get past
+     225  _GIT_ENV = {
+     226      "GIT_AUTHOR_NAME": FIXTURE_AUTHOR_NAME,
+     227      "GIT_AUTHOR_EMAIL": FIXTURE_AUTHOR_EMAIL,
+     228      "GIT_COMMITTER_NAME": FIXTURE_AUTHOR_NAME,
+     229      "GIT_COMMITTER_EMAIL": FIXTURE_AUTHOR_EMAIL,
+     230      "GIT_CONFIG_GLOBAL": os.devnull,
+     231      "GIT_CONFIG_NOSYSTEM": "1",
+     232  }
+    every call build_fixture_repo makes, by AST: Path, RuntimeError, _git, committed_main.startswith, len, main_py.read_text, main_py.write_text, shutil.copytree
+    of those, the ones that reach a subprocess: ['_git']
+    -> _git is the only path to git, and _GIT_ENV is on every _git call.
+
+[3] control: two consecutive builds, nothing varied
+    HEAD(ctl-a) = d30d7d33a0bd3b878985789bdfd132034cb5b4b9
+    HEAD(ctl-b) = d30d7d33a0bd3b878985789bdfd132034cb5b4b9   equal: True
+
+[4] the cause the message used to name: a ~/.gitconfig arriving through HOME
+    the file placed at $HOME/.gitconfig:
+        [core]
+        	excludesFile = <TMP>/excludes
+        	autocrlf = true
+        [init]
+        	defaultBranch = trunk
+        [user]
+        	name = someone else
+        	email = else@example.com
+    HEAD(home-a) = d30d7d33a0bd3b878985789bdfd132034cb5b4b9   equals the pinned build: True
+    HEAD(home-b) = d30d7d33a0bd3b878985789bdfd132034cb5b4b9   equals the pinned build: True
+    the two HOME builds equal each other:        True
+
+[5] the mutation that shows that file is live rather than merely inert
+    the SAME file reached through GIT_CONFIG_GLOBAL -- the guard removed,
+    nothing else changed:
+    HEAD(noguard) = 5b46bd15e070907b1f75c38384604a3ec5c5d962   equals the pinned build: False
+    git ls-files -- docs/faq.md in that build -> ''  (the excludesFile dropped it)
+    -> the configuration does move HEAD when git reads it, and git does not
+       read it through HOME. And a configuration that did reach these builds
+       would reach both alike, so it could not be what separates them.
+
+[6] the two causes the message keeps, each made to happen
+    a clock read at build time -- each build stamped with its own instant
+    (1970-01-12T13:46:40+00:00 vs 1970-01-24T03:33:20+00:00):
+        796db56b783d8fd3c4d4d5083d9f241de43b998b  vs  2671a8272aa8c1a1f67621c57df92ecc659f8f8d   differ: True
+    a file whose content differs between the two copies -- one extra line
+    in docs/faq.md:
+        d30d7d33a0bd3b878985789bdfd132034cb5b4b9  vs  5109b3927c6cafe51f371b355b05941e1cce85e4   differ: True
+
+    Both of the causes the message still names really do separate two
+    builds. The one it no longer names cannot.

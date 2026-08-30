@@ -1,0 +1,146 @@
+# evidence-cmd: cd "$(git rev-parse --show-toplevel)"; T=$(mktemp -d); printf "%s\n" 'import ast, os, subprocess, tempfile' '' 'SRC = "plugins/webster/tests/test_harness.py"' 'ENV = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}' 'ENV.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",' '            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",' '            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",' '            "GIT_AUTHOR_DATE": "2026-08-27T16:49:56+00:00",' '            "GIT_COMMITTER_DATE": "2026-08-27T16:49:56+00:00"})' 'def g(*args, cwd):' '    return subprocess.run([b"git", *args], cwd=cwd, capture_output=True, timeout=60, env=ENV)' '' 'print("[1] the population under measurement, and the sentence it is about")' 'text = open(SRC, encoding="utf-8").read()' 'lines = text.splitlines()' 's = next(i for i, l in enumerate(lines) if "def nul_separated" in l)' 'e = next(i for i in range(s, len(lines)) if lines[i].strip() == '"'"'"""'"'"' and i > s + 2)' 'for i in range(s, e + 1):' '    print("    %4d  %s" % (i + 1, lines[i]))' 'print()' '' 'print("[2] which git queries nul_separated() is handed, by AST -- not by reading")' 'tree = ast.parse(text, SRC)' 'sites = sorted((n.lineno, ast.unparse(n.args[0])) for n in ast.walk(tree)' '               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)' '               and n.func.id == "nul_separated")' 'for ln, arg in sites:' '    print("    line %-4d nul_separated(%s)" % (ln, arg))' 'subs = sorted({a.split("(")[1].split(",")[0].strip("'"'"'\" ") for _, a in sites})' 'print("    distinct git subcommands handed to it: %d -- %s" % (len(subs), ", ".join(subs)))' 'print("    call sites in the module: %d, and no others" % len(sites))' 'print()' '' '# One tracked path per byte a name may carry. 0x00 ends a C string and 0x2f is' '# the separator, so the ASCII half is 0x01-0x7f minus 0x2f. A lone byte above' '# 0x7f is an illegal sequence on this filesystem and never lands, so the' '# non-ASCII half is four well-formed UTF-8 characters. Each name carries a hex' '# tag because this filesystem folds case and "aAb" and "aab" would be one file.' 'ASCII = [b for b in range(1, 0x80) if b != 0x2f]' 'WIDE = [("U+00E9", "é"), ("U+20AC", "€"), ("U+4E2D", "中"),' '        ("U+1F600", "\U0001f600")]' 'NAMES = {b"%02x" % b: b"%02x-a" % b + bytes([b]) + b"b.txt" for b in ASCII}' 'NAMES.update({n.encode(): (n + "-w" + ch + ".txt").encode("utf-8") for n, ch in WIDE})' '' 'R = tempfile.mkdtemp().encode()' 'def write(mode):' '    for n in NAMES.values():' '        with open(os.path.join(R, n), mode) as fh:' '            fh.write(b"x\n")' 'write("wb")' 'g(b"-c", b"init.defaultBranch=main", b"init", b"-q", b".", cwd=R)' 'g(b"add", b"-A", cwd=R); g(b"commit", b"-q", b"-m", b"base", cwd=R)' 'BASE = g(b"rev-parse", b"HEAD", cwd=R).stdout.strip()' 'write("ab"); g(b"add", b"-A", cwd=R); g(b"commit", b"-q", b"-m", b"edit", cwd=R)' 'write("ab")' '' 'TRACKED = [f for f in g(b"ls-files", b"-z", cwd=R).stdout.split(b"\0") if f]' 'TAG = {p: p.split(b"-", 1)[0] for p in TRACKED}' 'QUERIES = [' '    ("git ls-files",                    [b"ls-files"], 0, [b"ls-files", b"-z"]),' '    ("git ls-tree -r --name-only HEAD", [b"ls-tree", b"-r", b"--name-only", b"HEAD"], 0,' '                                        [b"ls-tree", b"-r", b"-z", b"--name-only", b"HEAD"]),' '    ("git diff --name-only BASE..HEAD", [b"diff", b"--name-only", BASE + b"..HEAD"], 0,' '                                        [b"diff", b"--name-only", b"-z", BASE + b"..HEAD"]),' '    ("git status --porcelain",          [b"status", b"--porcelain"], 3,' '                                        [b"status", b"--porcelain", b"-z"]),' ']' 'def recs(argv, strip):' '    return [r[strip:] for r in g(*argv, cwd=R).stdout.split(b"\n") if r]' '' 'print("[3] the measurement population")' 'print("    one tracked path per byte a name may carry: <tag>-a<BYTE>b.txt for")' 'print("    0x01-0x7f except 0x2f, plus <tag>-w<CHAR>.txt for four multi-byte UTF-8")' 'print("    characters. 0x00 ends a C string and 0x2f separates components, so")' 'print("    neither can be in a name; a lone byte above 0x7f is an illegal sequence")' 'print("    on this filesystem and never lands, which is why that half is characters.")' 'print("    paths created %d, paths git tracks %d" % (len(NAMES), len(TRACKED)))' 'print("    all are committed, all differ between BASE and HEAD, and all are dirty,")' 'print("    so every query below has every path to report.")' 'print("    git --version             -> %s" % g(b"--version", cwd=R).stdout.decode().strip())' 'print("    git config core.quotePath -> %r  (unset: git'"'"'s own default holds)"' '      % g(b"config", b"--get", b"core.quotePath", cwd=R).stdout)' 'print()' '' 'print("[4] verbatim vs quoted, per query, over all %d" % len(TRACKED))' 'res = {}' 'for label, targv, strip, zargv in QUERIES:' '    seen = set(recs(targv, strip))' '    bare = {p for p in TRACKED if p in seen}' '    res[label] = bare' '    bb = sorted(int(TAG[p], 16) for p in bare if len(TAG[p]) == 2)' '    ctrl = [b for b in ASCII if b <= 0x1f or b == 0x7f]' '    print("    %-34s %3d verbatim / %3d quoted" % (label, len(bare), len(TRACKED) - len(bare)))' '    print("        printable ASCII 0x21-0x7e verbatim: %d of %d"' '          % (len([b for b in bb if 0x21 <= b <= 0x7e]), len([b for b in ASCII if 0x21 <= b <= 0x7e])))' '    print("        verbatim outside 0x21-0x7e:         %s"' '          % (", ".join("0x%02x" % b for b in bb if not (0x21 <= b <= 0x7e)) or "(none)"))' '    print("        the %d control bytes 0x01-0x1f and 0x7f, all quoted: %s"' '          % (len(ctrl), not any(b in bb for b in ctrl)))' '    print("        0x22 (\") quoted: %-5s  0x5c (\\) quoted: %-5s  all four non-ASCII quoted: %s"' '          % (0x22 not in bb, 0x5c not in bb,' '             not any(TAG[p] == n.encode() for p in bare for n, _ in WIDE)))' 'print()' '' 'print("[5] the one byte on which the three and status --porcelain disagree")' 'three = [q[0] for q in QUERIES[:3]]' 'common = res[three[0]] & res[three[1]] & res[three[2]]' 'gap = sorted(int(TAG[p], 16) for p in common - res[QUERIES[3][0]] if len(TAG[p]) == 2)' 'rev = sorted(res[QUERIES[3][0]] - common)' 'print("    verbatim in ls-files AND ls-tree AND diff --name-only, quoted by")' 'print("    git status --porcelain:                     %s"' '      % (", ".join("0x%02x (%r)" % (b, chr(b)) for b in gap) or "(none)"))' 'print("    the reverse -- bare in status, quoted in the three: %s" % (rev or "(none)"))' 'print("    -> a space is why A-003 moved drift.py to --porcelain -z; it is not a")' 'print("       reason that reaches nul_separated, whose three hand it back bare.")' 'print()' '' 'print("[6] the raw records, so nothing above is taken on trust")' 'SHOW = [(b"20", "space 0x20"), (b"09", "tab 0x09"), (b"0a", "newline 0x0a"),' '        (b"22", "double-quote"), (b"5c", "backslash"), (b"7f", "DEL 0x7f"),' '        (b"U+00E9", "U+00E9")]' 'for label, targv, strip, zargv in QUERIES:' '    print("    %s" % label)' '    rr = recs(targv, strip)' '    for tag, human in SHOW:' '        for r in [x for x in rr if x.startswith(tag + b"-") or x.startswith(b'"'"'"'"'"' + tag + b"-")]:' '            print("        %-14s %-9s %r" % (human, "verbatim" if r in TRACKED else "QUOTED", r))' '    print()' '' 'print("[7] the control: core.quotePath is what decides the non-ASCII half")' 'g(b"config", b"core.quotePath", b"false", cwd=R)' 'for label, targv, strip, zargv in QUERIES:' '    rr = recs(targv, strip)' '    hit = [r for r in rr if r.startswith(b"U+00E9-") or r.startswith(b'"'"'"U+00E9-'"'"')]' '    print("    %-34s core.quotePath=false -> %r" % (label, hit[0] if hit else b"?"))' 'g(b"config", b"--unset", b"core.quotePath", cwd=R)' 'print("    -> the setting is live and it is on by default, which is the only")' 'print("       reason the non-ASCII column above reads QUOTED.")' 'print()' '' 'print("[8] and with -z, the form nul_separated() is actually handed")' 'for label, targv, strip, zargv in QUERIES:' '    fields = [f[strip:] for f in g(*zargv, cwd=R).stdout.split(b"\0") if f]' '    print("    %-34s all %d paths returned as their own bytes: %s"' '          % (label, len(TRACKED), set(fields) == set(TRACKED)))' > "$T/e.py"; python3 "$T/e.py"; rm -rf "$T"
+# evidence-for: US-010, FR-043, OT-043, GI-007, CT-007
+#
+# GRIND cycle 17, D-164 (PROVE cycle 16 F-04). test_harness.py's nul_separated docstring said
+# git "quotes and backslash-escapes any path with a space or a non-ASCII byte in the text
+# formats". The non-ASCII half is right; the space half is not, and it is not right for any of
+# the three queries this helper is handed.
+#
+# Block [2] fixes the population by AST rather than by reading: three call sites, three
+# subcommands, no others. Block [4] measures each of them against one tracked path per byte a
+# name may carry -- 130 paths, every ASCII byte a name can hold plus four multi-byte UTF-8
+# characters -- and reports which came back as their own bytes in the newline form. All three
+# quote 38 of the 130: the 31 control bytes 0x01-0x1f, 0x7f, the double quote, the backslash,
+# and all four non-ASCII characters. 0x20 is not among them.
+#
+# Block [5] is the point. Across the four queries, the ONLY byte on which git status --porcelain
+# and the other three disagree is 0x20, and it disagrees in the direction the old sentence
+# assumed for all of them. That is why A-003 switched drift.py to --porcelain -z and why the
+# same reason does not reach nul_separated.
+#
+# Block [7] is the control that keeps [4] from being vacuous: core.quotePath is live and is on by
+# default, so the non-ASCII column is a real default and not an artefact. Block [8] confirms the
+# form the helper is actually handed loses nothing.
+#
+# The docstring's own claim of "38 of 130" and "0x20 comes back bare from all three" is exactly
+# what blocks [4] and [5] print.
+
+[1] the population under measurement, and the sentence it is about
+     236  def nul_separated(result: subprocess.CompletedProcess) -> list[str]:
+     237      """Paths from a ``-z`` git query.
+     238  
+     239      ``-z`` rather than the newline forms because the text forms do not hand
+     240      every path back as its own bytes. This helper is handed three queries and
+     241      no others — ``ls-files``, ``ls-tree`` and ``diff --name-only`` — and
+     242      measured over one tracked path per byte a name may carry, each of the three
+     243      quoted and backslash-escaped 38 of 130: the 31 control bytes 0x01-0x1f,
+     244      0x7f, the double quote, the backslash, and all four non-ASCII characters
+     245      tried, that last group under ``core.quotePath``, which is on by default. A
+     246      scope check that silently mis-reads such a path is a scope check that
+     247      passes when it should not.
+     248  
+     249      A space is not one of the 38, which is what this passage used to claim it
+     250      was: 0x20 comes back bare from all three. The query that does quote it is
+     251      ``git status --porcelain``, and 0x20 is the only byte on which it and these
+     252      three disagree — so it is why A-003 moved ``drift.py`` to ``--porcelain
+     253      -z``, and it is not a reason that reaches this helper.
+     254      """
+
+[2] which git queries nul_separated() is handed, by AST -- not by reading
+    line 266  nul_separated(git('ls-tree', '-r', '-z', '--name-only', 'HEAD'))
+    line 645  nul_separated(git('ls-files', '-z', '--', PLUGIN_REL))
+    line 673  nul_separated(git('diff', '--name-only', '-z', f'{baseline}..HEAD'))
+    distinct git subcommands handed to it: 3 -- diff, ls-files, ls-tree
+    call sites in the module: 3, and no others
+
+[3] the measurement population
+    one tracked path per byte a name may carry: <tag>-a<BYTE>b.txt for
+    0x01-0x7f except 0x2f, plus <tag>-w<CHAR>.txt for four multi-byte UTF-8
+    characters. 0x00 ends a C string and 0x2f separates components, so
+    neither can be in a name; a lone byte above 0x7f is an illegal sequence
+    on this filesystem and never lands, which is why that half is characters.
+    paths created 130, paths git tracks 130
+    all are committed, all differ between BASE and HEAD, and all are dirty,
+    so every query below has every path to report.
+    git --version             -> git version 2.50.1 (Apple Git-155)
+    git config core.quotePath -> b''  (unset: git's own default holds)
+
+[4] verbatim vs quoted, per query, over all 130
+    git ls-files                        92 verbatim /  38 quoted
+        printable ASCII 0x21-0x7e verbatim: 91 of 93
+        verbatim outside 0x21-0x7e:         0x20
+        the 32 control bytes 0x01-0x1f and 0x7f, all quoted: True
+        0x22 (") quoted: True   0x5c (\) quoted: True   all four non-ASCII quoted: True
+    git ls-tree -r --name-only HEAD     92 verbatim /  38 quoted
+        printable ASCII 0x21-0x7e verbatim: 91 of 93
+        verbatim outside 0x21-0x7e:         0x20
+        the 32 control bytes 0x01-0x1f and 0x7f, all quoted: True
+        0x22 (") quoted: True   0x5c (\) quoted: True   all four non-ASCII quoted: True
+    git diff --name-only BASE..HEAD     92 verbatim /  38 quoted
+        printable ASCII 0x21-0x7e verbatim: 91 of 93
+        verbatim outside 0x21-0x7e:         0x20
+        the 32 control bytes 0x01-0x1f and 0x7f, all quoted: True
+        0x22 (") quoted: True   0x5c (\) quoted: True   all four non-ASCII quoted: True
+    git status --porcelain              91 verbatim /  39 quoted
+        printable ASCII 0x21-0x7e verbatim: 91 of 93
+        verbatim outside 0x21-0x7e:         (none)
+        the 32 control bytes 0x01-0x1f and 0x7f, all quoted: True
+        0x22 (") quoted: True   0x5c (\) quoted: True   all four non-ASCII quoted: True
+
+[5] the one byte on which the three and status --porcelain disagree
+    verbatim in ls-files AND ls-tree AND diff --name-only, quoted by
+    git status --porcelain:                     0x20 (' ')
+    the reverse -- bare in status, quoted in the three: (none)
+    -> a space is why A-003 moved drift.py to --porcelain -z; it is not a
+       reason that reaches nul_separated, whose three hand it back bare.
+
+[6] the raw records, so nothing above is taken on trust
+    git ls-files
+        space 0x20     verbatim  b'20-a b.txt'
+        tab 0x09       QUOTED    b'"09-a\\tb.txt"'
+        newline 0x0a   QUOTED    b'"0a-a\\nb.txt"'
+        double-quote   QUOTED    b'"22-a\\"b.txt"'
+        backslash      QUOTED    b'"5c-a\\\\b.txt"'
+        DEL 0x7f       QUOTED    b'"7f-a\\177b.txt"'
+        U+00E9         QUOTED    b'"U+00E9-w\\303\\251.txt"'
+
+    git ls-tree -r --name-only HEAD
+        space 0x20     verbatim  b'20-a b.txt'
+        tab 0x09       QUOTED    b'"09-a\\tb.txt"'
+        newline 0x0a   QUOTED    b'"0a-a\\nb.txt"'
+        double-quote   QUOTED    b'"22-a\\"b.txt"'
+        backslash      QUOTED    b'"5c-a\\\\b.txt"'
+        DEL 0x7f       QUOTED    b'"7f-a\\177b.txt"'
+        U+00E9         QUOTED    b'"U+00E9-w\\303\\251.txt"'
+
+    git diff --name-only BASE..HEAD
+        space 0x20     verbatim  b'20-a b.txt'
+        tab 0x09       QUOTED    b'"09-a\\tb.txt"'
+        newline 0x0a   QUOTED    b'"0a-a\\nb.txt"'
+        double-quote   QUOTED    b'"22-a\\"b.txt"'
+        backslash      QUOTED    b'"5c-a\\\\b.txt"'
+        DEL 0x7f       QUOTED    b'"7f-a\\177b.txt"'
+        U+00E9         QUOTED    b'"U+00E9-w\\303\\251.txt"'
+
+    git status --porcelain
+        space 0x20     QUOTED    b'"20-a b.txt"'
+        tab 0x09       QUOTED    b'"09-a\\tb.txt"'
+        newline 0x0a   QUOTED    b'"0a-a\\nb.txt"'
+        double-quote   QUOTED    b'"22-a\\"b.txt"'
+        backslash      QUOTED    b'"5c-a\\\\b.txt"'
+        DEL 0x7f       QUOTED    b'"7f-a\\177b.txt"'
+        U+00E9         QUOTED    b'"U+00E9-w\\303\\251.txt"'
+
+[7] the control: core.quotePath is what decides the non-ASCII half
+    git ls-files                       core.quotePath=false -> b'U+00E9-w\xc3\xa9.txt'
+    git ls-tree -r --name-only HEAD    core.quotePath=false -> b'U+00E9-w\xc3\xa9.txt'
+    git diff --name-only BASE..HEAD    core.quotePath=false -> b'U+00E9-w\xc3\xa9.txt'
+    git status --porcelain             core.quotePath=false -> b'U+00E9-w\xc3\xa9.txt'
+    -> the setting is live and it is on by default, which is the only
+       reason the non-ASCII column above reads QUOTED.
+
+[8] and with -z, the form nul_separated() is actually handed
+    git ls-files                       all 130 paths returned as their own bytes: True
+    git ls-tree -r --name-only HEAD    all 130 paths returned as their own bytes: True
+    git diff --name-only BASE..HEAD    all 130 paths returned as their own bytes: True
+    git status --porcelain             all 130 paths returned as their own bytes: True
