@@ -61,7 +61,7 @@ ROOT_PAGES = ["index.md", "faq.md"]
 # a product that explains its own notation before explaining itself has got the order wrong.
 GETTING_STARTED = [("overview.md", "quickstart"), ("glossary.md", "glossary")]
 
-# the content type each fixed section holds
+# the content type five of the six fixed sections hold; getting-started's two pages carry their own
 SECTION_TYPE = {"install": "how-to", "advanced": "explanation",
                 "troubleshooting": "troubleshooting", "developer": "explanation",
                 "api": "api-reference"}
@@ -73,11 +73,11 @@ SECTION_AUDIENCE = {"getting-started": "user", "install": "operator", "advanced"
 
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
-# Every page this script writes is UTF-8, said rather than inherited. open()'s default
-# encoding is whatever the locale resolves to, so the same --title writes cleanly under one
-# LANG and raises under another, and unencodable() below could not then be exact about what
-# a write will take. The _category_.json files and the site config are written without it
-# because json.dumps escapes everything above ASCII, which every encoding here can hold.
+# Every page this script writes is UTF-8, said rather than inherited: open()'s default encoding
+# is whatever the locale resolves to, so the same --title writes cleanly under one LANG and
+# raises under another, and unencodable() below could not then be exact about what a write will
+# take. Six files skip it. _category_.json, docusaurus.config.js and package.json carry only
+# json.dumps output, which is ASCII; sidebars.js, .gitignore and custom.css are ASCII literals.
 PAGE_ENCODING = "utf-8"
 
 

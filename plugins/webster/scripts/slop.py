@@ -51,8 +51,8 @@ EMOJI_PRESENTATION_BMP = (
 # Bare ⬆ (U+2B06) is in neither half, by design.
 EMOJI = "[\U0001F300-\U0001FAFF" + EMOJI_PRESENTATION_BMP + "]"
 
-# id, severity, pattern, why. Patterns run per line against markdown source.
-# CASE_SENSITIVE rules are matched without re.I, because their whole point is capitalisation.
+# id, severity, pattern, why. Patterns run per line against markdown source. CASE_SENSITIVE
+# rules run without re.I: the point of four of them, and a no-op in the two emoji rules.
 RULES = [
  ("marketing-buzzword", "high",
   r"\b(supercharge|unleash|revolutioni[sz]e|seamlessly|seamless|effortlessly|effortless|game-chang\w+|cutting-edge|next-level|10x your|unlock the power)\b",
@@ -99,7 +99,7 @@ RULES = [
  # residue, retargeted to markdown
  # The trailer branch used to be a bare `Co-Authored-By:`, which fired on a page whose only
  # sin was crediting a human colleague. A trailer is a tell when it names the tool, so it now
- # has to name one within the trailer's own line.
+ # has to name one within sixty characters of the colon, which is part of that line, not all of it.
  ("agent-attribution", "high",
   r"\b(Generated (by|with)|Written by|Authored by|Created by)\s+(an?\s+)?(" + AI_NAMES + r")\b"
   r"|Co-Authored-By:[^\n]{0,60}\b(" + AI_NAMES + r")\b"
@@ -160,8 +160,8 @@ def files():
     right to drop -- a dot-directory is a tool's own state (.vitepress, .docusaurus, .git)
     and node_modules is somebody else's prose, so a finding in either is not a finding about
     these docs -- and the absolute was the wrong part. It matters because main() prints
-    len() of this list as the number of files checked, so a reader comparing that count
-    against what they can see on disk needs to know which files were never candidates.
+    len() of this list as the number of files checked on the no-findings line and on no
+    other, so only a run that found nothing offers a count to compare against the disk.
 
     A target named on the command line is itself taken as given -- a file is read, a
     directory is walked -- because naming it is the request; the pruning applies to what the
@@ -212,10 +212,10 @@ def main():
 
     # Being there and being readable are two different questions, and the guard above only
     # asks the first. A *.md that is a dangling symlink is walked like any other file and
-    # fails at open(); a directory nothing may list walks as if it were empty. Left alone the
-    # first is a traceback, and a traceback exits 1 -- the code this script reserves for high
-    # severity slop, now reported against a file nothing ever read -- while the second is a
-    # silent exit 0. Both are the false pass the guard above exists to close, one step later.
+    # fails at open(); a directory nothing may list walks as if it were empty. Left alone,
+    # the second is the silent exit 0 the guard above exists to close, one step later, and
+    # the first is its opposite: a traceback, which exits 1 -- the code this script keeps
+    # for high severity slop -- published against a file nothing read. Both are caught below.
     try:
         paths = files()
     except OSError as e:
@@ -251,7 +251,7 @@ def main():
                         bold_bullets.setdefault(path, []).append(n)
                         continue
                     findings.append((sev, path, n, rid, why, line.strip()[:90]))
-            # tricolon: three comma-joined adjectives ending a sentence
+            # tricolon: three comma-joined words before a full stop -- any words, not adjectives
             if not in_fence and re.search(r"\b\w+, \w+,? and \w+\.", line):
                 tricolon_hits.setdefault(path, []).append(n)
 
