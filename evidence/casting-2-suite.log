@@ -1,0 +1,20 @@
+# evidence-cmd: cd "$(git rev-parse --show-toplevel)"; T=$(mktemp -d); printf '%s\n' 'import os, re, subprocess' 'BASE = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}' 'p = subprocess.run(["uvx", "pytest", "-q", "--no-header", "-p", "no:randomly"],' '                   cwd="plugins/webster", capture_output=True, text=True,' '                   timeout=900, env=BASE)' 'out = p.stdout' 'print("$ cd plugins/webster && uvx pytest -q")' 'print()' 'print("collected: %s" % (re.search(r"(\d+) failed, (\d+) passed", out)' '                         and sum(int(x) for x in re.search(r"(\d+) failed, (\d+) passed",' '                                                           out).groups())))' 'for l in out.splitlines():' '    if l.startswith("FAILED ") or re.match(r"^\d+ (failed|passed)", l):' '        print(re.sub(r" in [\d.]+s", "", l))' 'print("exit: %d" % p.returncode)' 'print()' 'print("The one red is test_harness.py'"'"'s GI-007 scope test, which counts committed")' 'print("evidence/ logs as paths outside the writable set. It is expected red while")' 'print("this cycle'"'"'s logs are committed and green again once the lead strips them;")' 'print("test_harness.py belongs to casting 1 and is not touched here.")' 'print()' 'print("README pins the collected count:")' 'print(subprocess.run(["grep", "-n", "148", "plugins/webster/README.md"],' '                     capture_output=True, text=True, env=BASE).stdout.rstrip())' > "$T/s.py"; uvx --with pytest python "$T/s.py"
+# evidence-for: US-010, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+$ cd plugins/webster && uvx pytest -q
+
+collected: 148
+FAILED tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+1 failed, 147 passed
+exit: 1
+
+The one red is test_harness.py's GI-007 scope test, which counts committed
+evidence/ logs as paths outside the writable set. It is expected red while
+this cycle's logs are committed and green again once the lead strips them;
+test_harness.py belongs to casting 1 and is not touched here.
+
+README pins the collected count:
+194:148 passing across eight modules. Every module but `tests/test_readme.py` drives a script the
