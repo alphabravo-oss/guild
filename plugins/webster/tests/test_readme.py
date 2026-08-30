@@ -36,7 +36,7 @@ README, ``plugin.json``, the seven scripts' usage texts, and -- through
 and ``conftest.py``. Putting one old script back proves nothing about the rest,
 so the recipe below moves the first three together. It does not move the
 fourth. ``tests/`` stays at today's tree, which is why the count row's red
-against 61fb1df is ``69 == 148`` and not that revision's own ``69 == 77``:
+against 61fb1df is ``69 == 149`` and not that revision's own ``69 == 77``:
 still a genuine red, and on a comparison one surface wider than the sentence
 this replaces described, which named three surfaces and said all of them moved.
 Each row is one run --
@@ -63,7 +63,7 @@ the axis loosely enough that the label read as a claim about both.
   NFR-001. RED against both. The cfafe8e Status section states no count at all,
   so the read raises before there is anything to compare; at 61fb1df it read
   ``69 passing``, written by hand at 9859317 when the suite defined exactly 69
-  and never moved again — 77 by 61fb1df, 148 now. The revision is named because
+  and never moved again — 77 by 61fb1df, 149 now. The revision is named because
   "by the time this row was first written" was not a moment anyone could
   re-measure to 77: this module arrived with three tests of its own, so the
   commit that first wrote this row defined 80, and 77 is 61fb1df, the state the
