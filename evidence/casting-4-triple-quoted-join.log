@@ -1,0 +1,96 @@
+# evidence-cmd: sh -c 'set -e; cd "$(git rev-parse --show-toplevel)"; t="$(mktemp -d)"; printf "%s\n" '"'"'import difflib, io, json, os, subprocess, tempfile, tokenize'"'"' '"'"'ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()'"'"' '"'"'NEW = os.path.join(ROOT, "plugins/webster/scripts/survey.py")'"'"' '"'"'BASE = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}'"'"' '"'"'W = os.path.join(ROOT, "plugins/webster")'"'"' '"'"'D = tempfile.mkdtemp()'"'"' '"'"''"'"' '"'"'def at(rev):'"'"' '"'"'    p = os.path.join(D, "survey-%s.py" % rev)'"'"' '"'"'    open(p, "w", encoding="utf-8").write(subprocess.run('"'"' '"'"'        ["git", "-C", ROOT, "show", "%s:plugins/webster/scripts/survey.py" % rev],'"'"' '"'"'        capture_output=True, text=True).stdout)'"'"' '"'"'    return p'"'"' '"'"''"'"' '"'"'def tree(src):'"'"' '"'"'    t = tempfile.mkdtemp()'"'"' '"'"'    os.makedirs(os.path.join(t, "src"))'"'"' '"'"'    open(os.path.join(t, "pyproject.toml"), "w", encoding="utf-8").write('"'"'"'"'"'"'"'"'[project]\nname = "tq"\n'"'"'"'"'"'"'"'"')'"'"' '"'"'    open(os.path.join(t, "src", "api.py"), "w", encoding="utf-8").write(src)'"'"' '"'"'    return t'"'"' '"'"''"'"' '"'"'def verbs(script, t):'"'"' '"'"'    r = subprocess.run(["python3", script, t], capture_output=True, text=True, timeout=120)'"'"' '"'"'    return sorted((h["method"], h["path"]) for h in json.loads(r.stdout)["surface"]["http"])'"'"' '"'"''"'"' '"'"'HEAD = '"'"'"'"'"'"'"'"'from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\n    "/exports",\n'"'"'"'"'"'"'"'"''"'"' '"'"'TAIL = '"'"'"'"'"'"'"'"'    methods=["POST"],\n)\ndef exports():\n    return {}\n'"'"'"'"'"'"'"'"''"'"' '"'"'CASES = ['"'"' '"'"'    ("triple-quoted note, ) on its second line",'"'"' '"'"'     HEAD + '"'"'"'"'"'"'"'"'    doc="""a note\n    with a ) paren inside it""",\n'"'"'"'"'"'"'"'"' + TAIL),'"'"' '"'"'    ("the '"'"'"'"'"'"'"'"''"'"'"'"'"'"'"'"''"'"'"'"'"'"'"'"'  spelling, same shape           ",'"'"' '"'"'     HEAD + "    doc='"'"'"'"'"'"'"'"''"'"'"'"'"'"'"'"''"'"'"'"'"'"'"'"'a note\n    with a ) paren inside it'"'"'"'"'"'"'"'"''"'"'"'"'"'"'"'"''"'"'"'"'"'"'"'"',\n" + TAIL),'"'"' '"'"'    ("single-quoted note, one line (control)  ",'"'"' '"'"'     HEAD + '"'"'"'"'"'"'"'"'    doc="a note with a ) paren inside it",\n'"'"'"'"'"'"'"'"' + TAIL),'"'"' '"'"'    ("note closes past the cap, ) inside it   ",'"'"' '"'"'     HEAD + '"'"'"'"'"'"'"'"'    doc="""a note\n    with a ) paren inside it\n    line four\n'"'"'"'"'"'"'"'"''"'"' '"'"'     '"'"'"'"'"'"'"'"'    line five\n    line six\n    and it closes here""",\n'"'"'"'"'"'"'"'"' + TAIL),'"'"' '"'"'    ("note closes past the cap, ) past it too ",'"'"' '"'"'     HEAD + '"'"'"'"'"'"'"'"'    doc="""a note\n    line three\n    line four\n    line five\n'"'"'"'"'"'"'"'"''"'"' '"'"'     '"'"'"'"'"'"'"'"'    line six\n    with a ) paren inside it""",\n'"'"'"'"'"'"'"'"' + TAIL),'"'"' '"'"']'"'"' '"'"'print("== [1] the defect. Every tree declares methods=[\"POST\"]; only the note differs ==")'"'"' '"'"'OLD = at("2333cf1")'"'"' '"'"'for label, src in CASES:'"'"' '"'"'    t = tree(src)'"'"' '"'"'    print("   %s  before %s   after %s" % (label, verbs(OLD, t), verbs(NEW, t)))'"'"' '"'"'print()'"'"' '"'"'print("   before = survey.py at 2333cf1, the commit the defect was measured at.")'"'"' '"'"'print("   after  = the script this commit carries, which is what the gate re-runs.")'"'"' '"'"'print("   GET is the phantom: the verb these routes answer 405 to, published as the")'"'"' '"'"'print("   product'"'"'"'"'"'"'"'"'s surface. The last two rows are the cap. The join reads six")'"'"' '"'"'print("   continuation lines and neither note ends inside them, so the call is never")'"'"' '"'"'print("   read to its end and no verb can be read off it. Before, the ) on a line the")'"'"' '"'"'print("   join did reach balanced the call and the Flask GET default fired anyway;")'"'"' '"'"'print("   after, nothing inside an open string is counted, the depth never reaches")'"'"' '"'"'print("   zero, and the route is left out rather than published wrong. The fifth row")'"'"' '"'"'print("   carries its ) past the cap, so it was already unpublished before the fix --")'"'"' '"'"'print("   it is the control showing the cap was masking the fourth row, not fixing it.")'"'"' '"'"'print()'"'"' '"'"'print("== [2] the red-first row: RED at 2333cf1, green now ==")'"'"' '"'"'T = "test_a_triple_quoted_string_hides_its_parens_from_the_join"'"'"' '"'"'for rev in ("cfafe8e", "3aa48f7", "339a80d", "2333cf1", "this commit"):'"'"' '"'"'    w = tempfile.mkdtemp()'"'"' '"'"'    subprocess.run("git -C %s archive HEAD plugins/webster | tar -x -C %s" % (ROOT, w),'"'"' '"'"'                   shell=True, check=True)'"'"' '"'"'    w = os.path.join(w, "plugins/webster")'"'"' '"'"'    if rev != "this commit":'"'"' '"'"'        open(os.path.join(w, "scripts/survey.py"), "w", encoding="utf-8").write('"'"' '"'"'            open(at(rev), encoding="utf-8").read())'"'"' '"'"'    r = subprocess.run(["uvx", "pytest", "tests/test_survey.py", "-q", "--no-header",'"'"' '"'"'                        "--tb=no", "-p", "no:cacheprovider", "-k", "triple_quoted_string_hides"],'"'"' '"'"'                       cwd=w, capture_output=True, text=True, env=BASE, timeout=600)'"'"' '"'"'    print("   %-13s -> %s" % (rev, [l for l in r.stdout.splitlines() if l.strip()][-1]))'"'"' '"'"'print()'"'"' '"'"'print("   The row names 2333cf1 because that is where the phantom and its control stand")'"'"' '"'"'print("   together: /reports publishes the PATCH it declares while the other three go")'"'"' '"'"'print("   GET. At 339a80d and 3aa48f7 there is no paren-in-a-string handling at all and")'"'"' '"'"'print("   /reports goes GET too; at cfafe8e there is no decorator joining and nothing is")'"'"' '"'"'print("   published for any of the four routes.")'"'"' '"'"'print()'"'"' '"'"'print("== [3] what moved in survey.py, executable lines only ==")'"'"' '"'"'def code_lines(text):'"'"' '"'"'    keep = set()'"'"' '"'"'    try:'"'"' '"'"'        for tok in tokenize.generate_tokens(io.StringIO(text).readline):'"'"' '"'"'            name = tokenize.tok_name[tok.type]'"'"' '"'"'            if name in ("COMMENT", "STRING", "NL", "NEWLINE", "INDENT", "DEDENT",'"'"' '"'"'                        "ENDMARKER", "ENCODING") or name.startswith("FSTRING"):'"'"' '"'"'                continue'"'"' '"'"'            keep.add(tok.start[0])'"'"' '"'"'    except tokenize.TokenError:'"'"' '"'"'        pass'"'"' '"'"'    lines = text.splitlines()'"'"' '"'"'    return [lines[n - 1].rstrip() for n in sorted(keep)]'"'"' '"'"'FIX = "42fe57b"   # the commit carrying D-168; pinned so this log keeps diffing the'"'"' '"'"'                  # fix rather than whatever HEAD~1 becomes once evidence is committed'"'"' '"'"'was = code_lines(subprocess.run(["git", "-C", ROOT, "show", FIX + "~1:plugins/webster/scripts/survey.py"],'"'"' '"'"'                                capture_output=True, text=True).stdout)'"'"' '"'"'now = code_lines(open(NEW, encoding="utf-8").read())'"'"' '"'"'for line in difflib.unified_diff(was, now, lineterm="", n=1):'"'"' '"'"'    if line.startswith(("---", "+++")):'"'"' '"'"'        continue'"'"' '"'"'    print("   %s" % line)'"'"' '"'"'print()'"'"' '"'"'d = list(difflib.ndiff(was, now))'"'"' '"'"'print("   %d executable lines before, %d after: %d written, %d removed, net %+d. Every"'"'"' '"'"'      % (len(was), len(now), len([l for l in d if l.startswith("+ ")]),'"'"' '"'"'         len([l for l in d if l.startswith("- ")]), len(now) - len(was)))'"'"' '"'"'print("   one of them is inside call_depth_delta or at one of its two call sites.")'"'"' > "$t/g.py"; python3 "$t/g.py"; rm -rf "$t"'
+# evidence-for: FR-019, AC-023, AC-024, US-006, FR-039, AC-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 900
+#
+# D-168, GRIND cycle 17 (second casting-4 dispatch). survey.py's decorator join skipped a
+# quoted span one line at a time, on the assumption that a quoted string cannot cross a
+# newline. A triple-quoted one can, and the `)` on its later lines was counted as code:
+# the join stopped before methods=["POST"], `whole_call` was wrongly true, and the Flask
+# GET default published `GET /exports` for a route serving POST alone. That is the phantom
+# endpoint FR-019's join exists to prevent, reached through the one door the cycle-8 fix
+# for the same class did not cover.
+#
+# The open delimiter is now carried out of one line and back into the next. Block [1] is
+# the measurement: five trees that differ only in the note the route carries, each run
+# against the script at 2333cf1 and against this commit. Block [2] is the red-first row
+# the fix comes with. Block [3] is what moved, executable lines only, tokenized rather
+# than eyeballed off the diff.
+#
+# The six-line cap is unchanged and is measured here rather than assumed: a note that
+# closes past it leaves the call unread, and the fix changes that case from a published
+# GET to no entry at all -- the direction survey.py's own comments say this scan is
+# allowed to fail in, because a writer sent to document a phantom finds nothing there.
+
+== [1] the defect. Every tree declares methods=["POST"]; only the note differs ==
+   triple-quoted note, ) on its second line  before [('GET', '/exports')]   after [('POST', '/exports')]
+   the '''  spelling, same shape             before [('GET', '/exports')]   after [('POST', '/exports')]
+   single-quoted note, one line (control)    before [('POST', '/exports')]   after [('POST', '/exports')]
+   note closes past the cap, ) inside it     before [('GET', '/exports')]   after []
+   note closes past the cap, ) past it too   before []   after []
+
+   before = survey.py at 2333cf1, the commit the defect was measured at.
+   after  = the script this commit carries, which is what the gate re-runs.
+   GET is the phantom: the verb these routes answer 405 to, published as the
+   product's surface. The last two rows are the cap. The join reads six
+   continuation lines and neither note ends inside them, so the call is never
+   read to its end and no verb can be read off it. Before, the ) on a line the
+   join did reach balanced the call and the Flask GET default fired anyway;
+   after, nothing inside an open string is counted, the depth never reaches
+   zero, and the route is left out rather than published wrong. The fifth row
+   carries its ) past the cap, so it was already unpublished before the fix --
+   it is the control showing the cap was masking the fourth row, not fixing it.
+
+== [2] the red-first row: RED at 2333cf1, green now ==
+   cfafe8e       -> 1 failed, 30 deselected in 0.35s
+   3aa48f7       -> 1 failed, 30 deselected in 0.34s
+   339a80d       -> 1 failed, 30 deselected in 0.10s
+   2333cf1       -> 1 failed, 30 deselected in 0.05s
+   this commit   -> 1 passed, 30 deselected in 0.05s
+
+   The row names 2333cf1 because that is where the phantom and its control stand
+   together: /reports publishes the PATCH it declares while the other three go
+   GET. At 339a80d and 3aa48f7 there is no paren-in-a-string handling at all and
+   /reports goes GET too; at cfafe8e there is no decorator joining and nothing is
+   published for any of the four routes.
+
+== [3] what moved in survey.py, executable lines only ==
+   @@ -130,5 +130,11 @@
+    FLASK_METHODS = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
+   -def call_depth_delta(line):
+   +def call_depth_delta(line, quote=None):
+        delta, i, n = 0, 0, len(line)
+        while i < n:
+   +        if quote:
+   +            j = line.find(quote, i)
+   +            if j < 0:
+   +                return delta, quote
+   +            i, quote = j + 3, None
+   +            continue
+            ch = line[i]
+   @@ -137,2 +143,6 @@
+            if ch in "\"'":
+   +            if line[i:i + 3] == ch * 3:
+   +                quote = ch * 3
+   +                i += 3
+   +                continue
+                i += 1
+   @@ -147,3 +157,3 @@
+            i += 1
+   -    return delta
+   +    return delta, quote
+    if "python" in stack:
+   @@ -153,3 +163,3 @@
+                joined = line
+   -            depth = call_depth_delta(line)
+   +            depth, quote = call_depth_delta(line)
+                if PY_DECORATOR_OPEN.match(line):
+   @@ -157,3 +167,4 @@
+                        joined += " " + cont.strip()
+   -                    depth += call_depth_delta(cont)
+   +                    delta, quote = call_depth_delta(cont, quote)
+   +                    depth += delta
+                        if depth <= 0:
+
+   365 executable lines before, 376 after: 15 written, 4 removed, net +11. Every
+   one of them is inside call_depth_delta or at one of its two call sites.
