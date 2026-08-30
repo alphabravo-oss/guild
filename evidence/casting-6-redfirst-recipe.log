@@ -1,0 +1,45 @@
+# evidence-cmd: sh -c 'set -e; root="$(git rev-parse --show-toplevel)"; cd "$root"; t="$(mktemp -d)"; printf "%s\n" "import ast, pathlib, subprocess, sys" "def count_text(src, name):" "    return sum(1 for n in ast.parse(src, filename=name).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith(\"test\"))" "if sys.argv[1] == \"revs\":" "    for rev in sys.argv[2:]:" "        names = subprocess.run([\"git\", \"ls-tree\", \"-r\", \"--name-only\", rev, \"plugins/webster/tests/\"], capture_output=True, text=True, check=True).stdout.split()" "        mods = sorted(n for n in names if n.startswith(\"plugins/webster/tests/test_\") and n.endswith(\".py\"))" "        total = sum(count_text(subprocess.run([\"git\", \"show\", rev + \":\" + m], capture_output=True, text=True, check=True).stdout, m) for m in mods)" "        print(f\"    {rev:<8} {total:>3} tests across {len(mods)} module(s)\")" "else:" "    paths = sorted(pathlib.Path(sys.argv[2]).glob(\"tests/test_*.py\"))" "    print(f\"    the built tree holds {sum(count_text(p.read_text(), p.name) for p in paths):>3} tests across {len(paths)} module(s)\")" > "$t/count.py"; echo "--- tests/test_*.py at the revisions the docstring names, counted by the AST rule _scan_module uses ---"; python3 "$t/count.py" revs 9859317 61fb1df cfafe8e HEAD; for rev in 61fb1df cfafe8e; do echo; echo "--- the red-first recipe the docstring records, run verbatim at $rev ---"; scratch="$(mktemp -d)"; cd "$root"; cp -R plugins/webster "$scratch/webster"; rm -rf "$scratch/webster/scripts"; git archive "$rev" plugins/webster/scripts | tar -x --strip-components=2 -C "$scratch/webster"; git show "$rev:plugins/webster/README.md" > "$scratch/webster/README.md"; git show "$rev:plugins/webster/.claude-plugin/plugin.json" > "$scratch/webster/.claude-plugin/plugin.json"; echo "    rolled back: scripts/, README.md, plugin.json.  left alone: tests/, pyproject.toml"; python3 "$t/count.py" tree "$scratch/webster"; ( cd "$scratch/webster" && uvx pytest tests/test_readme.py -q 2>&1 | grep -E "Status section claims|^FAILED|passed|failed" ) | sed -E "s|(/private)?$scratch|<SCRATCH>|g"; rm -rf "$scratch"; done; rm -rf "$t"'
+# evidence-for: FR-039, AC-039, NFR-001, US-010
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# D-162, second half: what the red-first recipe recorded in that docstring actually
+# moves. It rolls back scripts/, README.md and plugin.json and leaves tests/ and
+# pyproject.toml at today's tree, measured by counting the built tree's own test
+# functions -- 148 at both revisions, against 61fb1df's own 77 and cfafe8e's zero. So
+# the count row's red against 61fb1df is 69 == 148, which the assertion line below
+# prints in full, and not that revision's 69 == 77. Still a genuine red at both, four
+# of six at 61fb1df and six of six at cfafe8e, which is what the rows claim. The
+# scratch directory is rewritten to <SCRATCH> inside the command so the body is stable.
+
+--- tests/test_*.py at the revisions the docstring names, counted by the AST rule _scan_module uses ---
+    9859317   69 tests across 6 module(s)
+    61fb1df   77 tests across 6 module(s)
+    cfafe8e    0 tests across 0 module(s)
+    HEAD     148 tests across 8 module(s)
+
+--- the red-first recipe the docstring records, run verbatim at 61fb1df ---
+    rolled back: scripts/, README.md, plugin.json.  left alone: tests/, pyproject.toml
+    the built tree holds 148 tests across 8 module(s)
+            f"{README} Status section claims {declared} passing, but "
+E       AssertionError: <SCRATCH>/webster/README.md Status section claims 69 passing, but <SCRATCH>/webster/tests/test_*.py defines 148 tests. NFR-001 records the suite size in the README, so a test added without touching that line makes the README state a count nobody can reach. Run `cd plugins/webster && uvx pytest` and write the number it reports.
+            f"it passed on two empty sets. A code with no entry anywhere is worse "
+E         The comparison above has nothing to make of a row like that, so it passed on two empty sets. A code with no entry anywhere is worse than one entry disagreeing with another: the reader has nowhere left to look.
+FAILED tests/test_readme.py::test_status_passing_count_matches_the_collected_suite
+FAILED tests/test_readme.py::test_the_script_table_names_drift_pys_own_status_vocabulary
+FAILED tests/test_readme.py::test_the_script_table_publishes_each_scripts_own_exit_set
+FAILED tests/test_readme.py::test_the_script_table_puts_each_status_under_its_scripts_exit_code
+4 failed, 2 passed in 0.08s
+
+--- the red-first recipe the docstring records, run verbatim at cfafe8e ---
+    rolled back: scripts/, README.md, plugin.json.  left alone: tests/, pyproject.toml
+    the built tree holds 148 tests across 8 module(s)
+            f"it passed on two empty sets. A code with no entry anywhere is worse "
+E         The comparison above has nothing to make of a row like that, so it passed on two empty sets. A code with no entry anywhere is worse than one entry disagreeing with another: the reader has nowhere left to look.
+FAILED tests/test_readme.py::test_status_passing_count_matches_the_collected_suite
+FAILED tests/test_readme.py::test_status_section_names_the_run_command_and_the_version
+FAILED tests/test_readme.py::test_readme_documents_webster_survey_and_the_python_floor
+FAILED tests/test_readme.py::test_the_script_table_names_drift_pys_own_status_vocabulary
+FAILED tests/test_readme.py::test_the_script_table_publishes_each_scripts_own_exit_set
+FAILED tests/test_readme.py::test_the_script_table_puts_each_status_under_its_scripts_exit_code
+6 failed in 0.08s

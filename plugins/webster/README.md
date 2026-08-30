@@ -30,9 +30,14 @@ dump written around Python, FastAPI and Sphinx, and produces noise in a repo tha
 ## Install
 
 ```
-/plugin marketplace add ~/Projects/webster
-/plugin install webster@webster
+/plugin marketplace add <the checkout holding .claude-plugin/marketplace.json>
+/plugin install webster@guild
 ```
+
+The marketplace this plugin ships in is named `guild` and lists webster at `./plugins/webster`.
+These two lines used to read `add ~/Projects/webster` and `install webster@webster`, which named
+a directory that is not a marketplace and a marketplace that does not exist, so neither command
+could have run.
 
 ## Use
 
@@ -109,7 +114,7 @@ no fallback path here.
 | `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem, and validates an existing one. A run that reaches a mode prints a JSON object whose first key is the status, the run that went right included, so a caller reading that key never has to guard the one path where nothing went wrong; an argv that reaches neither — no mode at all, or a word that is not init or check — stops in argparse, which writes usage to stderr and leaves stdout empty, so on that one path there is no key to read. Writing a tree reports `ok` at exit 0, and `bad_subject` for a subject key that cannot become a directory name or `cannot_write` for a path the filesystem refused exit 2; init never exits 1. Validating one reports `violations` at exit 1, `ok` at exit 0, and `no_docs` for a missing directory or `cannot_read` for a page or a directory the filesystem refused exit 2 |
 | `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1, advisories alone (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) exit 0, and a tree with nothing to check — no docs directory, or no page that is not a stub and no frontmatter defect on the stubs either — exits 2. Findings are grouped by rule with a count |
 | `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding, exit 2 on a target that is not there or cannot be read |
-| `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text. The only check that sees what a browser sees. Exit 1 on any leak |
+| `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text, an agent instruction file named by name, and a stub marker on a page nobody wrote over. The only check that sees what a browser sees. Exit 1 on any leak |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk. The written file is exit 0; no docs directory at the resolved path, or a tree holding no page to publish — a tree of nothing but stubs included, because an unwritten page is dropped before the count is taken — exits 2 |
 
 ## The layout is fixed
@@ -159,14 +164,24 @@ the reader's own grade. When only that half ran, the verdict is `partial`, which
 
 ## Optional companions
 
-webster works alone. Where these are installed it uses them instead of reimplementing them,
-and where they are absent it marks the affected gate `not_checked` rather than passing it:
+webster works alone. Where one of these is installed, the step that names it reaches for it
+instead of reimplementing it. Only the first is attached to a gate, and its absence leaves that
+gate `partial` rather than `not_checked`, because the mechanical half of Readable still ran and
+a verdict on half a gate is not the same as a verdict on none of it. The other two save work
+inside a step rather than settling anything, so nothing is downgraded when they are missing:
 
 - `courseware:learner`: a naive reader's redline, for the human half of the Readable gate. The
-  mechanical half runs without it
-- `plumb` or `hollis:checker`: anchor resolution, for the Sourced gate
-- `gsd:map-codebase`: the repo survey in `/webster:plan`
-- `repo-visuals`: hero images for a published docs site
+  mechanical half runs without it, so the verdict without it is `partial`
+- `gsd:map-codebase`: the repo survey in `/webster:plan`, where it saves re-deriving a map by
+  hand and settles no sentence
+- `repo-visuals`: hero images for a published docs site, which the README rubric declines to
+  score either way
+
+The Sourced gate has no companion. This list gave it `plumb` or `hollis:checker`, and neither
+name appears anywhere else in the plugin: anchor resolution is `drift.py check`'s own, and a set
+that cites nothing is `no_anchors` at exit 2 rather than a gate waiting on somebody else's tool.
+The sentence above this list used to promise `not_checked` for all four, which was true of none
+of them.
 
 ## Status
 
@@ -327,8 +342,13 @@ divergence that offset averts is between machines in different zones, which noth
 varied.
 
 Not yet exercised: `rendered.py`, which has no test module, so every claim about what it catches
-in built HTML is still untested. Nor the three commands end to end, which means what
-`/webster:plan`, `/webster:write` and `/webster:audit` produce rests on the scripts underneath
-them rather than on a run.
+in built HTML is still untested. Its row above is also the one place in this table where both
+copies of a contract are narrower than the script: the row publishes exit 1 on a leak because
+that is what the script's own usage line publishes, and the script also returns 0 when nothing
+internal reached the reader and 2 when there is no built site to read. The check that reads the
+table compares the row against the usage text, so two narrow copies agree and pass; widening the
+row alone would make them disagree, and the usage line is where the fix belongs. Nor the three
+commands end to end, which means what `/webster:plan`, `/webster:write` and `/webster:audit`
+produce rests on the scripts underneath them rather than on a run.
 
 The name has had no trademark or product search. Do that before anything goes on it.

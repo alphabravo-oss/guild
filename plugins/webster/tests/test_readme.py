@@ -12,10 +12,16 @@ docstring opens "Tests for the harness itself" — among the modules that do, an
 file.
 
 This one tests the README, because the README is the only place in the plugin
-that states a number nothing verified. FR-038 asks the Status section to carry the run command and the
-passing count; AC-042 asks it to carry the version and ``WEBSTER_SURVEY``;
-NFR-001 asks that ``cd plugins/webster && uvx pytest`` exit 0 *with the count
-recorded in README*. A hard-coded count with no test behind it is a claim that
+that states a number nothing verified. FR-038 asks the Status section to carry
+the run command and the passing count; AC-042 asks ``plugin.json`` to read
+0.11.0 and the README to name ``WEBSTER_SURVEY``, which is a claim on the file
+and not on that section -- the variable is introduced in the paragraph beside
+``WEBSTER_LENS_ALLOW``, above the ``## Status`` heading, so the test that pins
+it reads the whole file; NFR-001 asks that ``cd plugins/webster && uvx pytest``
+exit 0 *with the count recorded in README*. The sentence this replaces put
+``WEBSTER_SURVEY`` in the Status section, which is where nothing checks for it
+and where it is not, and the row below on that test already said so.
+A hard-coded count with no test behind it is a claim that
 reports a pass without having checked anything, which is the class of failure
 this whole spec exists to remove — and it fails silently, in the direction that
 looks fine: the first test anybody adds makes the sentence false while every
@@ -24,9 +30,16 @@ gate stays green.
 Which claim each test pins, and the revision it is RED against (FR-039,
 AC-039 — the red-first property is recorded here rather than enforced at
 runtime). Measured, not reasoned about, and measured on a different axis from
-the sibling modules'. What this file reads is the README, ``plugin.json`` and
-the seven scripts' usage texts, so putting one old script back proves nothing
-about it and all three surfaces move together per row. Each row is one run --
+the sibling modules'. What this file reads is four surfaces and 18 files: the
+README, ``plugin.json``, the seven scripts' usage texts, and -- through
+``_scan_module`` -- the suite's own nine modules, the eight ``tests/test_*.py``
+and ``conftest.py``. Putting one old script back proves nothing about the rest,
+so the recipe below moves the first three together. It does not move the
+fourth. ``tests/`` stays at today's tree, which is why the count row's red
+against 61fb1df is ``69 == 148`` and not that revision's own ``69 == 77``:
+still a genuine red, and on a comparison one surface wider than the sentence
+this replaces described, which named three surfaces and said all of them moved.
+Each row is one run --
 
     cp -R plugins/webster "$scratch/webster"
     rm -rf "$scratch/webster/scripts"
@@ -261,10 +274,20 @@ def _read(path: Path) -> str:
 def status_section() -> str:
     """The body under ``## Status``, up to the next ``## `` heading.
 
-    Scoped to the section rather than the whole file because the README names
-    version numbers and counts elsewhere (the merge table, the seven gates),
-    and a whole-file search would happily match one of those and call the
-    Status section verified.
+    Scoped to the section so that a copy of one of its claims written anywhere
+    else in the README cannot stand in for the claim itself. Nothing outside
+    the section stands in for one today, which is the correction: the sentence
+    this replaces said the README named version numbers and counts elsewhere
+    and that a whole-file search would happily match one of those, and measured
+    against the file as it stands none of the three matches anything outside
+    the section -- no second ``<N> passing`` line, no second ``Version
+    <digits>``, no second copy of the run command. The counts the file does
+    state elsewhere it spells as words, nine criteria and seven gates, and the
+    digits it carries outside the section are exit codes, ISO/IEC/IEEE 26514,
+    the 3.11 floor and the 67 pages of the pre-rule run. So the scope is a
+    guard against a copy nobody has written yet rather than against one
+    standing now, and saying otherwise put a measurement in this docstring that
+    the file refutes.
     """
     lines = _read(README).splitlines()
     try:
@@ -415,9 +438,14 @@ def exit_clauses(text: str) -> list[list[tuple[str, str]]]:
     nothing in front of its first code to be that code's clause, and reading
     it the first way filed every case one code late: "on a defect" under exit
     0, "when only advisories remain" under exit 2. That is not a cosmetic
-    misread. It is the whole mapping this module checks, shifted, on the two
-    rows whose scripts print human lines rather than a JSON status and so have
-    no status name to be placed by instead.
+    misread. It is the whole mapping this module checks, shifted, on the three
+    rows that have no status name to be placed by instead -- ``doctype.py``,
+    ``slop.py`` and ``llmstxt.py``. The sentence this replaces said two, and
+    described those two as the scripts here that print human lines rather than
+    a JSON status, which is a different set again: five of the seven publish no
+    status, four of them printing plain lines and ``survey.py`` printing one
+    JSON document with no ``status`` key, and two of those five are exempt for
+    publishing one exit code and none.
     """
     sentences: list[list[tuple[str, str]]] = []
     for paragraph in text.split("\n\n"):
@@ -533,18 +561,23 @@ def better_pairing(doc: dict[str, str], row: dict[str, str]) -> tuple[int, int, 
     ``None`` when nothing beats filing each of the row's clauses under the
     code the row filed it under -- which is the pass.
 
-    This is what places the rows for ``doctype.py`` and ``slop.py``. Those two
-    print human lines rather than a JSON status, so they have no status name
-    for the check above to place, and the only thing their row and their usage
-    text both publish is which case sits under which code. Comparing the two
+    This is what places the rows for ``doctype.py``, ``slop.py`` and
+    ``llmstxt.py``. Only ``drift.py`` and ``scaffold.py`` print a JSON status,
+    and those three print none, so they have no status name for the check above
+    to place, and the only thing their row and their usage text both publish is
+    which case sits under which code. ``llmstxt.py`` is named here because it
+    was not: this paragraph said "those two", written while that script's usage
+    text still published no exit code at all and its row was reached by nothing.
+    Comparing the two
     by shared words, and asking only that the row's own filing be as good as
     every other, is what makes an inverted row visible: swapping the
     ``doctype.py`` row's exit 1 and exit 2 leaves the exit *set* identical --
     every permutation does -- so a check on the set cannot see it, while the
     words follow the cases and go with them. Measured on the table as it
-    stands: each row's own filing is its own best, 23 for ``doctype.py`` and
-    11 for ``slop.py``. ``slop.py`` publishes two codes, so it has exactly one
-    rearrangement and that one scores 0. ``doctype.py`` publishes three, so
+    stands: each row's own filing is its own best, 23 for ``doctype.py``, 11
+    for ``slop.py`` and 17 for ``llmstxt.py``. ``slop.py`` and ``llmstxt.py``
+    publish two codes each, so each has exactly one rearrangement, and those
+    score 0 and 3. ``doctype.py`` publishes three, so
     "inverting" names no single rearrangement of it: swapping its exits 1 and
     2 drops it to 11, its exits 0 and 2 to 4, its exits 0 and 1 to 20, and the
     two three-cycles to 5 and to 7. Every one of the five is below 23, which
@@ -604,9 +637,18 @@ def exit_sites(filename: str) -> set[str]:
 def _scan_module(path: Path) -> tuple[list[str], list[str]]:
     """Top-level ``test_*`` function names in one file, and any generative collection found.
 
-    The parse is AST rather than a grep for ``^def test_``: a helper that
-    defines a nested ``def test_...`` inside a factory, or a commented-out test,
-    would make a text count wrong in the direction that reads as fine.
+    The parse is AST rather than a grep for ``^def test_``. The two constructs
+    this sentence used to name cost that grep nothing, and both were measured:
+    a nested ``def test_...`` inside a factory is indented and a commented-out
+    one carries its ``#`` at column 0, so ``^`` misses each of them exactly as
+    this parse does, and on a module holding one real test beside either, grep,
+    this parse and pytest all answer 1. What does part them is a column-0
+    ``def test_`` inside a triple-quoted string -- a docstring showing the
+    shape of a case, which is prose here and is the shape this very file
+    writes. Grep answers 2 on that module, this parse and pytest 1, and a text
+    count reading one test high is wrong in the direction that reads as fine:
+    the README's number would sit above the suite while every gate stayed
+    green.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     names: list[str] = []
@@ -666,9 +708,15 @@ def suite_tests() -> set[tuple[str, str]]:
 def collected_tests(session) -> set[tuple[str, str]]:
     """``(module filename, test name)`` for every item pytest collected this run.
 
-    Node ids are reduced to the file's basename because the prefix moves with
-    the rootdir: ``tests/test_slop.py::test_x`` from inside the plugin,
-    ``plugins/webster/tests/test_slop.py::test_x`` from the repository root.
+    Node ids are reduced to the file's basename because the prefix is relative
+    to the rootdir, and the rootdir is not the directory pytest was launched
+    from. Measured: from inside the plugin and from the repository root alike
+    the prefix is ``tests/``, because ``pyproject.toml`` here carries a
+    ``[tool.pytest.ini_options]`` table and pytest walks up to it from the path
+    it was handed either way. ``plugins/webster/tests/`` takes forcing it --
+    ``--rootdir .`` from the repository root. The sentence this replaces gave
+    the long prefix to the repository root on its own, which is a launch
+    directory rather than a rootdir and does not produce it.
     """
     collected = set()
     for item in session.items:

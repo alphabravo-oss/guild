@@ -1,0 +1,62 @@
+# evidence-cmd: sh -c 'set -e; root="$(git rev-parse --show-toplevel)"; cd "$root/plugins/webster"; echo "--- every rule rendered.py reports, against what its README row names ---"; python3 -c "import re; src = open(\"scripts/rendered.py\").read(); ids = re.findall(r\"^ \((\\\"[a-z-]+\\\"),\", src, re.M); print(\"    rule ids in scripts/rendered.py:\", [i.strip(chr(34)) for i in ids]); row = [l for l in open(\"README.md\") if l.startswith(\"| \" + chr(96) + \"scripts/rendered.py\" + chr(96))][0]; print(\"    the README row reads:\"); print(\"     \", row.strip())"; echo; echo "--- what rendered.py returns, against what its usage line publishes ---"; grep -n "return [0-9]$\|exit [0-9]" scripts/rendered.py | sed "s/^/    /"; echo; echo "--- widening that row alone, measured: the check compares the row to the usage text, not to the source ---"; scratch="$(mktemp -d)"; cp -R "$root/plugins/webster" "$scratch/webster"; python3 -c "import pathlib, sys; p = pathlib.Path(sys.argv[1]) / \"README.md\"; t = p.read_text(); old = \"The only check that sees what a browser sees. Exit 1 on any leak |\"; new = \"The only check that sees what a browser sees. Exit 1 on any leak, exit 0 when nothing internal reached the reader, exit 2 with no built site to read |\"; assert t.count(old) == 1; p.write_text(t.replace(old, new)); print(\"    row widened in a scratch copy to name exits 0, 1 and 2\")" "$scratch/webster"; ( cd "$scratch/webster" && uvx pytest tests/test_readme.py -q -p no:cacheprovider 2>&1 | grep -E "^E .*rendered|passed|failed" ) | sed "s/^/    /"; rm -rf "$scratch"; echo; echo "--- the optional companions: where each name appears anywhere in the plugin ---"; for name in courseware:learner plumb hollis:checker gsd:map-codebase repo-visuals; do hits="$(grep -rn "$name" agents commands skills scripts tests 2>/dev/null | wc -l | tr -d " ")"; printf "    %-18s %s hit(s) outside README.md\n" "$name" "$hits"; grep -rn "$name" agents commands skills scripts tests 2>/dev/null | sed "s/^/        /"; done; echo; echo "--- the verdict when the one gate-bearing companion is absent ---"; grep -rn "partial" commands/audit.md skills/pedagogy/SKILL.md skills/house-rules/SKILL.md | sed "s/^/    /"; echo; echo "--- who settles the Sourced gate ---"; grep -rn "Sourced" commands/audit.md skills/house-rules/SKILL.md | sed "s/^/    /"'
+# evidence-for: FR-038, AC-042, US-010
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 180
+#
+# The same sweep, on the two README claims that failed hardest. First: the rendered.py
+# row introduced a list with "reports anything internal that reached the reader:" and
+# then named four of that script's six rules, leaving out agent-file and stub-marker.
+# The row now names all six. Second, and NOT fixed here because scripts/ is outside this
+# cycle's writable surface: that script returns 0, 1 and 2 while its usage line publishes
+# only exit 1, and the row copies the usage line. The check compares row against usage
+# text, so two narrow copies agree and pass -- measured below by widening the row alone
+# in a scratch copy, which goes red naming exactly that. Logged to concerns.md.
+# Third: the optional-companions lead-in promised that an absent companion marks its
+# gate not_checked. True of none of the four. plumb and hollis:checker appear nowhere
+# else in the plugin and the Sourced gate is settled by drift.py check; courseware's
+# absence gives partial, which skills/pedagogy states in as many words; and the other
+# two are attached to no gate at all. The list and its lead-in now say that.
+
+--- every rule rendered.py reports, against what its README row names ---
+    rule ids in scripts/rendered.py: ['anchor', 'source-path', 'working-tag', 'frontmatter-key', 'agent-file', 'stub-marker']
+    the README row reads:
+      | `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text, an agent instruction file named by name, and a stub marker on a page nobody wrote over. The only check that sees what a browser sees. Exit 1 on any leak |
+
+--- what rendered.py returns, against what its usage line publishes ---
+    4:  check [build_dir]   scan built HTML for internals that reached the reader. exit 1 on a leak
+    53:        return 2
+    73:        return 0
+    86:    return 1
+
+--- widening that row alone, measured: the check compares the row to the usage text, not to the source ---
+    row widened in a scratch copy to name exits 0, 1 and 2
+                f"it passed on two empty sets. A code with no entry anywhere is worse "
+    E           rendered.py: its usage text exits ['1'], the README row exits ['0', '1', '2']
+    E       assert not ["rendered.py: its usage text exits ['1'], the README row exits ['0', '1', '2']"]
+    1 failed, 5 passed in 0.07s
+
+--- the optional companions: where each name appears anywhere in the plugin ---
+    courseware:learner 4 hit(s) outside README.md
+        commands/audit.md:131:**The human half needs somebody who does not already know.** If `courseware:learner` is
+        skills/pedagogy/SKILL.md:112:The other half needs somebody who does not already know. If `courseware:learner` is installed,
+        skills/house-rules/SKILL.md:218:`courseware:learner`, which is not installed in most repos, so it reported `not_checked`
+        skills/content-types/SKILL.md:144:| Clarity | Measured in part: undefined acronyms, stated outcome, prerequisites. The rest a person judges, and `courseware:learner` is the closest thing to a test |
+    plumb              0 hit(s) outside README.md
+    hollis:checker     0 hit(s) outside README.md
+    gsd:map-codebase   1 hit(s) outside README.md
+        commands/plan.md:80:If `gsd:map-codebase` is installed and the repo is unfamiliar, run it rather than re-deriving
+    repo-visuals       1 hit(s) outside README.md
+        skills/readme-rubric/SKILL.md:191:- Does not score visual quality of screenshots or GIFs. `repo-visuals` covers that if installed
+
+--- the verdict when the one gate-bearing companion is absent ---
+    commands/audit.md:134:Report the gate as `pass` only when both halves ran clean, `partial` when only the mechanical
+    commands/audit.md:137:never ran. `partial` is the honest verdict and it is not a pass.
+    skills/pedagogy/SKILL.md:114:the Readable gate is `partial`, not `not_checked` and not a pass.
+    skills/house-rules/SKILL.md:222:reviewer is available. Report `partial` when only the first half ran, and say which half.
+
+--- who settles the Sourced gate ---
+    commands/audit.md:22:anchor it has, which is not the same as having been checked. **Sourced cannot report a pass on a
+    commands/audit.md:107:`Sourced` is settled by step 1 for anchors that exist. What step 1 cannot settle is a behavioural
+    skills/house-rules/SKILL.md:37:[SPEC]   Authoritative. Sourced. Terse.
+    skills/house-rules/SKILL.md:192:| Sourced | Every behavioural claim has a resolving anchor, in a comment or in frontmatter |
+    skills/house-rules/SKILL.md:212:**Sourced cannot pass on a set with no anchors.** `drift.py check` returns `no_anchors` and exits

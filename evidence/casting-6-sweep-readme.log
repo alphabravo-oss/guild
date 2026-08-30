@@ -1,0 +1,64 @@
+# evidence-cmd: sh -c 'set -e; root="$(git rev-parse --show-toplevel)"; cd "$root/plugins/webster"; echo "--- the Python floor the README states: which scripts import tomllib, and with what fallback ---"; grep -n "^import tomllib\|^ *import tomllib\|except ImportError" scripts/*.py | sed "s/^/    /"; grep -c "Python 3.11" README.md | sed "s/^/    mentions of Python 3.11 in README.md: /"; echo; echo "--- the seven gates: rows in the gate table, and the heading over it ---"; grep -n "^## The seven gates" README.md | sed "s/^/    /"; awk "/^\| Gate \| Passes when \|/,/^$/" README.md | grep -c "^| " | sed "s/^/    lines in the table, header and rule included: /"; echo; echo "--- the five agents the merge table claims were taken whole ---"; ls agents/*.md | wc -l | sed "s/^/    agent files: /"; ls agents/*.md | sed "s/^/      /"; echo; echo "--- the nine-criterion README rubric ---"; grep -c "^### 2\.[0-9]" skills/readme-rubric/SKILL.md | sed "s/^/    criteria under Phase 2 (the rubric): /"; grep -o "^### 2\.[0-9] .*" skills/readme-rubric/SKILL.md | sed "s/^/      /"; echo; echo "--- the marketplace this plugin ships in, and the two install lines that named another ---"; python3 -c "import json; m = json.load(open(\"../../.claude-plugin/marketplace.json\")); print(\"    marketplace name:\", m[\"name\"]); print(\"    webster source:  \", [p[\"source\"] for p in m[\"plugins\"] if p[\"name\"] == \"webster\"][0])"; git show cfafe8e:plugins/webster/README.md | grep -n "plugin marketplace add\|plugin install" | sed "s/^/    was: /"; grep -n "plugin marketplace add\|plugin install" README.md | sed "s/^/    now: /"; test -e "$HOME/Projects/webster" && echo "    the path those lines named exists" || echo "    the path those lines named does not exist on this machine"; echo; echo "--- exercised: six of the seven scripts, one test module each ---"; for s in $(ls scripts/*.py | xargs -n1 basename | sed "s/\.py$//"); do if [ -f "tests/test_$s.py" ]; then echo "    $s.py  -> tests/test_$s.py"; else echo "    $s.py  -> no test module"; fi; done'
+# evidence-for: FR-038, AC-042, NFR-002, US-010
+# evidence-timeout: 120
+#
+# The sweep over README.md prose no GRIND cycle had rewritten (git blame: 656567c,
+# 5e9704f, 68b5a97, 1541af2, d76da47, ef57d77, cfafe8e, 9859317). Five claims measured
+# and held: the 3.11 floor is stated and only survey.py and llmstxt.py import tomllib,
+# both bare with no fallback branch (NFR-002); the gate table under "The seven gates"
+# carries nine lines, a header and a rule and seven gates; five agent files back the
+# merge table's "all five agents"; the README rubric has exactly nine criteria under its
+# Phase 2; and six of the seven scripts have one test module each, rendered.py none.
+# One failed: the Install block named a directory that is not a marketplace and a
+# marketplace that does not exist. marketplace.json names this marketplace guild and
+# lists webster at ./plugins/webster, and ~/Projects/webster is not on this machine, so
+# neither of the two lines could have run. Both are corrected and both states are shown.
+# GI-006 is untouched by that: no version moved, in marketplace.json or in the root
+# badge, and the name is all that changed here.
+
+--- the Python floor the README states: which scripts import tomllib, and with what fallback ---
+    scripts/llmstxt.py:21:import tomllib
+    scripts/survey.py:41:import tomllib
+    mentions of Python 3.11 in README.md: 1
+
+--- the seven gates: rows in the gate table, and the heading over it ---
+    139:## The seven gates
+    lines in the table, header and rule included: 9
+
+--- the five agents the merge table claims were taken whole ---
+    agent files: 5
+      agents/api.md
+      agents/architect.md
+      agents/diagram.md
+      agents/reference.md
+      agents/tutorial.md
+
+--- the nine-criterion README rubric ---
+    criteria under Phase 2 (the rubric): 9
+      ### 2.1 The "what is this" sentence
+      ### 2.2 Hero presence above the fold
+      ### 2.3 Install-to-first-success length
+      ### 2.4 Concrete example before API docs
+      ### 2.5 Audience-jargon match
+      ### 2.6 Scannability
+      ### 2.7 Drift signals
+      ### 2.8 "What this isn't" honesty
+      ### 2.9 Contribution surface
+
+--- the marketplace this plugin ships in, and the two install lines that named another ---
+    marketplace name: guild
+    webster source:   ./plugins/webster
+    was: 33:/plugin marketplace add ~/Projects/webster
+    was: 34:/plugin install webster@webster
+    now: 33:/plugin marketplace add <the checkout holding .claude-plugin/marketplace.json>
+    now: 34:/plugin install webster@guild
+    the path those lines named does not exist on this machine
+
+--- exercised: six of the seven scripts, one test module each ---
+    doctype.py  -> tests/test_doctype.py
+    drift.py  -> tests/test_drift.py
+    llmstxt.py  -> tests/test_llmstxt.py
+    rendered.py  -> no test module
+    scaffold.py  -> tests/test_scaffold.py
+    slop.py  -> tests/test_slop.py
+    survey.py  -> tests/test_survey.py

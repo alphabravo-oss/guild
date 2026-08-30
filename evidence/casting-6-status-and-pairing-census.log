@@ -1,0 +1,55 @@
+# evidence-cmd: sh -c 'set -e; root="$(git rev-parse --show-toplevel)"; cd "$root/plugins/webster"; t="$(mktemp -d)"; printf "%s\n" "import ast, itertools, sys" "sys.path.insert(0, \"tests\")" "import test_readme as T" "TICK = chr(96)" "def cell(name):" "    return TICK + \"scripts/\" + name + TICK" "def stdout_mode(name):" "    tree = ast.parse((T.SCRIPTS / name).read_text())" "    j = p = s = 0" "    for node in ast.walk(tree):" "        if isinstance(node, ast.Call) and getattr(node.func, \"id\", None) == \"print\":" "            arg = ast.unparse(node.args[0]) if node.args else \"\"" "            if arg.startswith(\"json.dumps\"):" "                j += 1" "                s += 1 if \"status\" in arg else 0" "            else:" "                p += 1" "    return j, s, p" "print(\"--- what each script prints on stdout, and what places its README row ---\")" "print(\"  script           json  with-status  plain   row/doc statuses  placed by\")" "for name in T.script_table_scripts():" "    doc = T.script_docstring(name)" "    row = T.script_table_row(cell(name))" "    in_row = sorted(T.statuses_claimed(row, T.TICKED_STATUS))" "    in_doc = sorted(T.statuses_claimed(doc, T.PROSE_STATUS))" "    codes = sorted(T.exit_codes(doc))" "    j, s, p = stdout_mode(name)" "    if in_row or in_doc:" "        placed = \"status names\"" "    elif len(codes) > 1:" "        placed = \"clause words (better_pairing)\"" "    else:" "        placed = \"exempt: publishes \" + str(len(codes)) + \" code \" + str(codes)" "    print(f\"  {name:<14} {j:>4} {s:>11} {p:>6}   {len(in_row)} / {len(in_doc):<3}  {placed}\")" "print()" "print(\"--- better_pairing: each row own filing against every rearrangement of it ---\")" "for name in T.script_table_scripts():" "    doc = T.clauses_by_code(T.script_docstring(name))" "    row = T.clauses_by_code(T.script_table_row(cell(name)))" "    codes = sorted(set(doc) & set(row))" "    if len(codes) < 2:" "        print(f\"  {name:<14} {len(codes)} shared code(s) {codes} -- no rearrangement exists, exempt\")" "        continue" "    score = lambda order: sum(len(T.case_words(doc[c]) & T.case_words(row[u])) for c, u in zip(codes, order))" "    print(f\"  {name:<14} codes {codes}, own filing scores {score(tuple(codes))}\")" "    for order in itertools.permutations(codes):" "        if order != tuple(codes):" "            swap = \", \".join(c + \"->\" + u for c, u in zip(codes, order) if c != u)" "            print(f\"      {score(order):>3}   {swap}\")" "    print(f\"      better_pairing -> {T.better_pairing(doc, row)}\")" > "$t/census.py"; python3 "$t/census.py"; rm -rf "$t"'
+# evidence-for: FR-038, AC-042, FR-039, AC-039
+# evidence-timeout: 120
+#
+# D-165, PROVE cycle 16 F-05. Two sentences said the rows placed by clause words are the
+# two whose scripts print human lines rather than a JSON status. The census below counts
+# each script's stdout print calls: only drift.py and scaffold.py emit a JSON object
+# carrying a status, four scripts print plain lines, and survey.py prints one JSON
+# document with no status key -- five of the seven publish no status, not two. Of those
+# five, three publish more than one exit code and are placed by clause words:
+# doctype.py, slop.py and llmstxt.py, while rendered.py and survey.py are exempt for
+# publishing one code and none. The second block is every rearrangement of every row.
+# doctype.py's own filing scores 23 against 20, 11, 7, 5 and 4; slop.py 11 against 0;
+# llmstxt.py 17 against 3, which is the figure the docstring had never carried.
+
+--- what each script prints on stdout, and what places its README row ---
+  script           json  with-status  plain   row/doc statuses  placed by
+  survey.py         1           0      0   0 / 0    exempt: publishes 0 code []
+  drift.py          4           4      0   9 / 7    status names
+  scaffold.py       7           7      0   6 / 4    status names
+  doctype.py        0           0     24   0 / 0    clause words (better_pairing)
+  slop.py           0           0      6   0 / 0    clause words (better_pairing)
+  rendered.py       0           0      7   0 / 0    exempt: publishes 1 code ['1']
+  llmstxt.py        0           0      1   0 / 0    clause words (better_pairing)
+
+--- better_pairing: each row own filing against every rearrangement of it ---
+  survey.py      0 shared code(s) [] -- no rearrangement exists, exempt
+  drift.py       codes ['0', '1', '2'], own filing scores 11
+        3   1->2, 2->1
+        7   0->1, 1->0
+        1   0->1, 1->2, 2->0
+        1   0->2, 1->0, 2->1
+        3   0->2, 2->0
+      better_pairing -> None
+  scaffold.py    codes ['0', '1', '2'], own filing scores 23
+        3   1->2, 2->1
+       21   0->1, 1->0
+        4   0->1, 1->2, 2->0
+        2   0->2, 1->0, 2->1
+        5   0->2, 2->0
+      better_pairing -> None
+  doctype.py     codes ['0', '1', '2'], own filing scores 23
+       11   1->2, 2->1
+       20   0->1, 1->0
+        5   0->1, 1->2, 2->0
+        7   0->2, 1->0, 2->1
+        4   0->2, 2->0
+      better_pairing -> None
+  slop.py        codes ['1', '2'], own filing scores 11
+        0   1->2, 2->1
+      better_pairing -> None
+  rendered.py    1 shared code(s) ['1'] -- no rearrangement exists, exempt
+  llmstxt.py     codes ['0', '2'], own filing scores 17
+        3   0->2, 2->0
+      better_pairing -> None
