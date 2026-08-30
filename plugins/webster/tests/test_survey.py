@@ -39,6 +39,7 @@ test_flask_route_reports_its_declared_methods                 FR-019      cfafe8
 test_flask_route_without_methods_reports_get                  FR-019      cfafe8e
 test_a_route_whose_methods_the_join_never_read_is_not_a_get   FR-019      3aa48f7 (added cycle 7)
 test_a_paren_in_a_comment_or_a_string_does_not_end_the_join   FR-019      339a80d (added cycle 8)
+test_a_triple_quoted_string_hides_its_parens_from_the_join    FR-019      2333cf1 (added cycle 17)
 test_pyproject_name_description_and_scripts                   FR-020/021  cfafe8e
 test_poetry_legacy_tables_are_the_fallback                    FR-020/021  cfafe8e
 test_package_json_still_wins_over_pyproject                   FR-020      guard
@@ -125,6 +126,16 @@ Rows carrying a note the column has no room for:
   comment balanced the call before ``methods=`` was read. At cfafe8e there is
   no decorator joining at all, so nothing is published for any of the three
   routes and the whole assertion goes red rather than one verb of it.
+- ``test_a_triple_quoted_string_hides_its_parens_from_the_join`` names
+  2333cf1, and it is red at 339a80d, 3aa48f7 and cfafe8e as well -- measured at
+  all four. 2333cf1 is the revision that shows what the row is for: there the
+  two triple-quoted routes and the capped one publish ``GET`` while
+  ``/reports``, the same note written on one line, publishes the ``PATCH`` it
+  declares. The control standing green beside the phantom is the whole of the
+  comparison, and it stands green only there. At 339a80d and 3aa48f7 there is
+  no paren-in-a-string handling at all, so ``/reports`` goes ``GET`` too and
+  the row fails over the gap its sibling above already covers; at cfafe8e there
+  is no decorator joining, so nothing is published for any of the four routes.
 - ``test_every_surface_entry_carries_an_anchor`` was filed as a guard on a
   measurement rather than on a fix, and its anchor half is one: run against
   cfafe8e, 19941ad and 339a80d, that half passed at all three. The census half
@@ -682,6 +693,105 @@ def test_a_paren_in_a_comment_or_a_string_does_not_end_the_join(run_script, tmp_
         "src/api.py:6",
         "src/api.py:15",
         "src/api.py:24",
+    ], f"the anchor is the @ line, which is what a reader is sent to; got {hits}"
+
+
+def test_a_triple_quoted_string_hides_its_parens_from_the_join(run_script, tmp_path):
+    """FR-019, AC-023, OT-023: a string literal that crosses a newline is still a string.
+
+    The test above measures the two places a paren is a character rather than
+    syntax, and both of them end at the newline. A triple-quoted string does
+    not, and the scan read each line as if it did: the ``)`` on the string's
+    second line was counted as code, the join stopped before
+    ``methods=["POST"]``, and ``GET /exports`` was published for a route
+    serving POST alone -- the same phantom endpoint the row above exists to
+    stop, reached through the door the row above does not cover.
+
+    ``/exports`` and ``/imports`` are that shape in the two spellings a
+    triple-quoted string has; nothing about the counting distinguishes them, so
+    both are here rather than one standing for the other. ``/reports`` carries
+    the same note on one line and is the control: it was published correctly
+    before this fix and has to stay published.
+
+    ``/health`` is the cap. Its note closes two lines past the six the join
+    reads, so the call is never read to its end, and what the fix changes is
+    which way that fails. Before it, the ``)`` on the note's second line -- a
+    line the join does reach -- balanced the call, ``whole_call`` was wrongly
+    true, and the GET default fired on a route declaring POST. After it,
+    nothing inside the open string is counted, the depth never reaches zero,
+    and the route is left unpublished rather than published wrong. A missing
+    endpoint over a phantom one is the direction the scan around it fails in,
+    stated twice in ``survey.py`` and measured here.
+    """
+    root = python_project(
+        tmp_path,
+        "triplequote",
+        "from flask import Flask\n"  # 1
+        "\n"  # 2
+        "app = Flask(__name__)\n"  # 3
+        "\n"  # 4
+        "\n"  # 5
+        "@app.route(\n"  # 6
+        '    "/exports",\n'  # 7
+        '    doc="""a note\n'  # 8
+        '    with a ) paren inside it""",\n'  # 9
+        '    methods=["POST"],\n'  # 10
+        ")\n"  # 11
+        "def exports():\n"  # 12
+        "    return {}\n"  # 13
+        "\n"  # 14
+        "\n"  # 15
+        "@app.route(\n"  # 16
+        '    "/imports",\n'  # 17
+        "    doc='''a note\n"  # 18
+        "    with a ) paren inside it''',\n"  # 19
+        '    methods=["PUT"],\n'  # 20
+        ")\n"  # 21
+        "def imports():\n"  # 22
+        "    return {}\n"  # 23
+        "\n"  # 24
+        "\n"  # 25
+        "@app.route(\n"  # 26
+        '    "/reports",\n'  # 27
+        '    doc="a note with a ) paren inside it",\n'  # 28
+        '    methods=["PATCH"],\n'  # 29
+        ")\n"  # 30
+        "def reports():\n"  # 31
+        "    return {}\n"  # 32
+        "\n"  # 33
+        "\n"  # 34
+        "@app.route(\n"  # 35
+        '    "/health",\n'  # 36
+        '    doc="""a note\n'  # 37
+        "    with a ) paren inside it\n"  # 38
+        "    line four\n"  # 39
+        "    line five\n"  # 40
+        "    line six\n"  # 41
+        '    and it closes here""",\n'  # 42
+        '    methods=["POST"],\n'  # 43
+        ")\n"  # 44
+        "def health():\n"  # 45
+        "    return {}\n",  # 46
+    )
+
+    hits = survey(run_script, root)["surface"]["http"]
+
+    assert [(h["method"], h["path"]) for h in hits] == [
+        ("POST", "/exports"),
+        ("PUT", "/imports"),
+        ("PATCH", "/reports"),
+    ], (
+        "Each of the first three routes declares its verbs past a ) inside a "
+        "string literal, and only the third one's literal ends at the newline. "
+        "A GET here is the phantom: the verb these endpoints answer 405 to. "
+        "/health declares POST too, but its note runs past the six lines the "
+        "join reads, so the call is unfinished and publishing any verb for it "
+        f"would be a guess; got {hits}"
+    )
+    assert [h["anchor"] for h in hits] == [
+        "src/api.py:6",
+        "src/api.py:16",
+        "src/api.py:26",
     ], f"the anchor is the @ line, which is what a reader is sent to; got {hits}"
 
 

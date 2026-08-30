@@ -237,7 +237,7 @@ PY_DECORATOR_OPEN = re.compile(r"^\s*@\w+\.(?:get|post|put|patch|delete|route)\s
 FLASK_METHODS = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
 
 
-def call_depth_delta(line):
+def call_depth_delta(line, quote=None):
     """How far one line opens or closes a call, over the parentheses that are code.
 
     Counting them in raw text counts the ones inside string literals and `#` comments too. A
@@ -248,14 +248,33 @@ def call_depth_delta(line):
     `#` are the two places a paren is not syntax, so both spans are skipped before anything is
     counted.
 
-    One line at a time, which is where a `#` comment ends and a single-quoted string ends. A
-    triple-quoted string does not end there, and a `)` on its later lines is counted as code."""
+    A `#` comment and a single-quoted string end at the newline. A triple-quoted one does not,
+    and reading each line as if it did counted the `)` on the string's later lines as code. A
+    decorator carrying `doc='''a note` / `with a ) paren inside it'''` alongside
+    `methods=["POST"]` balanced the call on that second line, and `GET /exports` was published
+    for a route serving POST alone: the same phantom, through the other door. (The example is
+    written with the other delimiter because this docstring is itself a triple-quoted string;
+    both spellings behave the same and both are tracked.) So the open delimiter leaves one
+    line and comes back into the next: `quote` is the delimiter still standing when this line
+    ended, and the caller hands it back on the line after. While one is open nothing is
+    counted, which is also what leaves a string running past the join's cap holding the depth
+    above zero, so the call reads as unfinished rather than as whole."""
     delta, i, n = 0, 0, len(line)
     while i < n:
+        if quote:
+            j = line.find(quote, i)
+            if j < 0:
+                return delta, quote
+            i, quote = j + 3, None
+            continue
         ch = line[i]
         if ch == "#":
             break
         if ch in "\"'":
+            if line[i:i + 3] == ch * 3:
+                quote = ch * 3
+                i += 3
+                continue
             i += 1
             while i < n and line[i] != ch:
                 i += 2 if line[i] == "\\" else 1
@@ -266,7 +285,7 @@ def call_depth_delta(line):
         elif ch == ")":
             delta -= 1
         i += 1
-    return delta
+    return delta, quote
 
 
 if "python" in stack:
@@ -274,7 +293,7 @@ if "python" in stack:
         lines = read(p).splitlines()
         for i, line in enumerate(lines, 1):
             joined = line
-            depth = call_depth_delta(line)
+            depth, quote = call_depth_delta(line)
             if PY_DECORATOR_OPEN.match(line):
                 # The cap is a bound on how far the read goes, not a statement about how long
                 # a decorator gets. A route carrying six keyword arguments one to a line is
@@ -283,7 +302,11 @@ if "python" in stack:
                 # something else must not let the join swallow the function beneath it.
                 for cont in lines[i:i + 6]:
                     joined += " " + cont.strip()
-                    depth += call_depth_delta(cont)
+                    # The delimiter of a triple-quoted string still open at the end of one
+                    # line goes back in at the start of the next, which is the whole of what
+                    # makes this a scan of the call rather than of six separate lines.
+                    delta, quote = call_depth_delta(cont, quote)
+                    depth += delta
                     if depth <= 0:
                         break
             # Whether the call was read to its end, measured over the parentheses that are
