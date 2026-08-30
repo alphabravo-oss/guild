@@ -1,5 +1,5 @@
 ---
-description: Run the five gates over existing documentation and return a prioritised punch list
+description: Run the seven gates over existing documentation and return a prioritised punch list
 allowed-tools: Bash, Read, Glob, Grep, Task
 ---
 
@@ -16,7 +16,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py check <docs-dir>
 somewhere else gets `no_manifest` for a tree that has one, which is a wrong answer that looks
 like a right one.
 
-Exit 0 means clean, 1 means drift, 2 means no manifest or nothing to measure.
+Read the JSON `status`, not just the exit code. Exit 0 is `clean` (nothing changed) or
+`unrelated_changes` (code changed that no page cites — not a finding). Exit 1 is `drift`. Exit 2 is
+one of six not-checked statuses: `no_docs`, `no_manifest`, `no_anchors`, `no_git`, `head_missing`
+(the recorded commit is no longer in the repo) and `hashes_partial` (some anchors were recorded
+without a line digest). `hashes` reports `checked`, `partial` or `not_recorded`.
 
 `no_anchors` is its own status and its own P0. A set where no page cites a source resolves every
 anchor it has, which is not the same as having been checked. **Sourced cannot report a pass on a
@@ -28,16 +32,22 @@ anchor it has, which is not the same as having been checked. **Sourced cannot re
   those pages against the current code before anything else. This is where drift actually lives.
 - `docs_edited_since_record` true means someone edited pages outside this plugin.
 
-On exit 2, say the repo has no manifest, run the rest of the audit, and note that drift cannot be
-measured until `/webster:write` records one.
+On exit 2, report the `status` by name and run the rest of the audit. `no_manifest` means drift
+cannot be measured until `/webster:write` records one. `no_git` and `head_missing` mean the code
+half could not be compared; the anchors half still ran, so `broken_anchors` may be non-empty
+under any of `no_manifest`, `no_git` or `head_missing`, and every one of those is still a P0.
+`hashes_partial` means re-record and re-run. Never summarise exit 2 as "no manifest".
 
 **Do not re-read every page when the drift check is clean.** That is the point of the manifest.
 
 ## Step 2, the surface, to catch what is missing rather than wrong
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . > /tmp/webster-survey.json
 ```
+
+Save it: step 4 reads the same file through `WEBSTER_SURVEY`, so that the labels, screen names
+and commands the product itself prints are not reported as leaked internals on user pages.
 
 The survey returns two surfaces and they answer different questions. **Read `user_surface`
 first.**
@@ -71,8 +81,12 @@ are P0 because navigation is broken without them. A page still carrying
 ## Step 4, content types
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
+WEBSTER_SURVEY=/tmp/webster-survey.json python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
 ```
+
+The header line says whether the allowlist loaded (`lens allowlist: N terms from WEBSTER_SURVEY`)
+or not (`no survey allowlist`). If it did not, the `wrong-lens` count is inflated by the product's
+own vocabulary; fix the survey path before judging it.
 
 Every defect is a P1, with three exceptions that are P0:
 

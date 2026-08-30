@@ -1,0 +1,8 @@
+[project]
+name = "fixapp"
+version = "0.1.0"
+description = "A small item store served over HTTP."
+dependencies = ["fastapi"]
+
+[project.scripts]
+fixapp = "cli.main:main"

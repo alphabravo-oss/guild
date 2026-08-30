@@ -88,7 +88,7 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
 ## Step 4, check each page against its type
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
+WEBSTER_SURVEY=/tmp/webster-survey.json python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
 ```
 
 Defects fail: a page with no declared reader, a page naming something that reader cannot touch,
