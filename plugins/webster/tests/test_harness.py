@@ -183,6 +183,19 @@ _WRITABLE_FILES = frozenset(
 # tracked paths that are legitimately outside the writable set.
 READ_ONLY_LAYERS = ("agents", "commands", "skills")
 
+# Corrected after the Foundry run closed, by the maintainer's decision, not
+# by the change GI-007 scopes. During the run these two files were read-only
+# under GI-001 and the mismatch was recorded as SPEC_CHANGE_REQUIRED:
+# ``commands/audit.md`` published an exit map drift.py no longer has (exit 2
+# summarised as "no manifest" when six statuses carry it, ``unrelated_changes``
+# absent from exit 0) and neither command saved the survey or set
+# ``WEBSTER_SURVEY``, so the allowlist doctype.py reads through it (GI-002,
+# CT-003) could not be reached from the audit at all. The changed half below
+# admits exactly these two paths and no other ``commands/`` file; GI-007's
+# writable set (``in_writable_set``) is unchanged, so a third markdown edit
+# under any read-only layer still fails here.
+POST_RUN_CORRECTIONS = frozenset({"commands/audit.md", "commands/write.md"})
+
 # The Foundry run's own bookkeeping. Each casting commits its re-executable
 # evidence logs under this prefix and the lead strips the directory before the
 # change lands, so the paths pass through the branch's history without ever
@@ -618,8 +631,10 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
     ``scripts/``.
 
     The changed half needs a baseline to diff against and is the one that
-    states FR-043 directly. It allows exactly GI-007's five locations and
-    nothing else, so a bumped ``marketplace.json``, an edited root README badge
+    states FR-043 directly. It allows GI-007's five locations plus the two
+    ``commands/`` files named in ``POST_RUN_CORRECTIONS`` (edited after the run
+    closed, for the reason given there) and nothing else, so a bumped
+    ``marketplace.json``, an edited root README badge
     (both GI-006 violations), another plugin or a stray report directory all
     fail here. It used to allow anything under ``evidence/`` outright, which
     made the only automated guard behind GI-007 accept a sixth location the
@@ -699,14 +714,17 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
     outside = sorted(
         path
         for path in changed
-        if not changed_path_allowed(path) and not strip_already_made(path, head_paths)
+        if not changed_path_allowed(path)
+        and not strip_already_made(path, head_paths)
+        and path[len(prefix) :] not in POST_RUN_CORRECTIONS
     )
     assert not outside, (
         f"the change touches paths outside its declared surface. Baseline "
         f"resolved from {how} ({baseline[:7]}); {len(changed)} paths changed. "
         f"GI-007 allows only {PLUGIN_REL}/{{scripts/*.py, "
         f".claude-plugin/plugin.json, README.md, pyproject.toml, tests/**}} "
-        f"and nothing else in the repository. Committed {RUN_EVIDENCE_PREFIX} "
+        f"plus the post-run corrections in POST_RUN_CORRECTIONS, and nothing else "
+        f"in the repository. Committed {RUN_EVIDENCE_PREFIX} "
         f"logs from this Foundry run appear here until the lead strips them, "
         f"which is the run's own bookkeeping showing through; every other "
         f"entry is a violation to fix. Outside:\n  "
