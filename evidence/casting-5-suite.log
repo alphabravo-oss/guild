@@ -1,0 +1,105 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBDeWNsZS0xNzogdGhlIHN1aXRlIGF0IHRoaXMgY29tbWl0LCBhbmQgd2hpY2ggb2YgY2FzdGluZyA1J3MgdGVzdHMgcGlucyB3aGljaCByZXF1aXJlbWVudC4KIyBSdW4gZnJvbSB0aGUgcmVwb3NpdG9yeSByb290LiBUaGUgR0ktMDA3IHNjb3BlIGd1YXJkIGlzIGRlc2VsZWN0ZWQgYnkgbmFtZTogaXQgcmVhZHMKIyBiYXNlbGluZS4uSEVBRCBhbmQgcmVwb3J0cyB0aGUgZXZpZGVuY2UgbG9ncyB0aGlzIGNvbW1pdCBjYXJyaWVzLCB3aGljaCBpcyB3aGF0IGl0IGlzIGZvci4KaW1wb3J0IGFzdCwgb3MsIHJlLCBzdWJwcm9jZXNzCgpTQ09QRSA9ICgidGVzdHMvdGVzdF9oYXJuZXNzLnB5OjoiCiAgICAgICAgICJ0ZXN0X29ubHlfdGhlX3dyaXRhYmxlX2ZpbGVfc2V0X2lzX3RyYWNrZWRfYW5kX2NoYW5nZWQiKQplbnYgPSBkaWN0KG9zLmVudmlyb24sIENPTFVNTlM9IjIwMCIpCmVudi5wb3AoIldFQlNURVJfU1VSVkVZIiwgTm9uZSkKY3dkID0gInBsdWdpbnMvd2Vic3RlciIKCmNvbGxlY3RlZCA9IHN1YnByb2Nlc3MucnVuKFsidXZ4IiwgInB5dGVzdCIsICItcSIsICItLWNvbGxlY3Qtb25seSIsICItcCIsICJubzpjYWNoZXByb3ZpZGVyIl0sCiAgICAgICAgICAgICAgICAgICAgICAgICAgIGN3ZD1jd2QsIGNhcHR1cmVfb3V0cHV0PVRydWUsIHRleHQ9VHJ1ZSwgZW52PWVudikKcnVuID0gc3VicHJvY2Vzcy5ydW4oWyJ1dngiLCAicHl0ZXN0IiwgIi1xIiwgIi0tdGI9c2hvcnQiLCAiLXAiLCAibm86Y2FjaGVwcm92aWRlciIsCiAgICAgICAgICAgICAgICAgICAgICAiLS1kZXNlbGVjdCIsIFNDT1BFXSwKICAgICAgICAgICAgICAgICAgICAgY3dkPWN3ZCwgY2FwdHVyZV9vdXRwdXQ9VHJ1ZSwgdGV4dD1UcnVlLCBlbnY9ZW52KQpwcmludCgiPT0gdGhlIHdob2xlIHN1aXRlIGF0IHRoaXMgY29tbWl0ID09IikKcHJpbnQoZiIgICBjb2xsZWN0ZWQ6IHtjb2xsZWN0ZWQuc3Rkb3V0LnN0cmlwKCkuc3BsaXRsaW5lcygpWy0xXX0iKQpwcmludChmIiAgIHJ1bjogICAgICAge3J1bi5zdGRvdXQuc3RyaXAoKS5zcGxpdGxpbmVzKClbLTFdfSIpCnByaW50KGYiICAgZGVzZWxlY3RlZDoge1NDT1BFfSIpCgpwcmludCgiXG49PSBjYXN0aW5nIDUncyB0d28gbW9kdWxlczogZXZlcnkgdGVzdCwgYW5kIHRoZSByZXF1aXJlbWVudHMgaXRzIGJ1bGxldCBuYW1lcyA9PSIpCmZvciBuYW1lIGluICgidGVzdF9zbG9wLnB5IiwgInRlc3Rfc2NhZmZvbGQucHkiKToKICAgIHBhdGggPSBmInBsdWdpbnMvd2Vic3Rlci90ZXN0cy97bmFtZX0iCiAgICBzcmMgPSBvcGVuKHBhdGgsIGVuY29kaW5nPSJ1dGYtOCIpLnJlYWQoKQogICAgdCA9IGFzdC5wYXJzZShzcmMpCiAgICB0ZXN0cyA9IFtuLm5hbWUgZm9yIG4gaW4gdC5ib2R5IGlmIGlzaW5zdGFuY2UobiwgYXN0LkZ1bmN0aW9uRGVmKSBhbmQgbi5uYW1lLnN0YXJ0c3dpdGgoInRlc3RfIildCiAgICBkb2MgPSBhc3QuZ2V0X2RvY3N0cmluZyh0LCBjbGVhbj1GYWxzZSkKICAgIGlkcyA9IHNvcnRlZChzZXQocmUuZmluZGFsbChyIlxiKD86VVN8RlJ8TkZSfEFDKS1cZCtcYiIsIHNyYykpKQogICAgcHJpbnQoZiJcbiAgIHtwYXRofToge2xlbih0ZXN0cyl9IHRlc3RzLCByZXF1aXJlbWVudCBJRHMgbmFtZWQ6IHtpZHN9IikKICAgIGJ1bGxldCA9IE5vbmUKICAgIGZvciBsaW5lIGluIGRvYy5zcGxpdGxpbmVzKCk6CiAgICAgICAgaWYgbGluZS5zdGFydHN3aXRoKCItIGBgdGVzdF8iKToKICAgICAgICAgICAgYnVsbGV0ID0gcmUubWF0Y2gociItIGBgKFx3KylgYCguKikiLCBsaW5lKQogICAgICAgICAgICBwcmludChmIiAgICAge2J1bGxldC5ncm91cCgxKTo1OHN9IHtidWxsZXQuZ3JvdXAoMikuc3RyaXAoJyDigJQtJyl9IikKICAgIHByaW50KCIgICAgIHNlY3Rpb24gYmFubmVycyBpbiB0aGUgYm9keToiKQogICAgZm9yIGxpbmUgaW4gc3JjLnNwbGl0bGluZXMoKToKICAgICAgICBpZiByZS5tYXRjaChyIl4jIChGUnxBQ3xVU3xPVHxDVCktIiwgbGluZSk6CiAgICAgICAgICAgIHByaW50KGYiICAgICAgIHtsaW5lfSIpCgpwcmludCgiXG49PSB0aGUgZXhpdC1jb2RlIGNvbnRyYWN0IGJvdGggbW9kdWxlcyBhc3NlcnQsIHJ1biBvbmNlIGVhY2ggaGVyZSA9PSIpCnIgPSBzdWJwcm9jZXNzLnJ1bihbInV2eCIsICJweXRlc3QiLCAidGVzdHMvdGVzdF9zbG9wLnB5IiwgInRlc3RzL3Rlc3Rfc2NhZmZvbGQucHkiLCAiLXEiLAogICAgICAgICAgICAgICAgICAgICItLW5vLWhlYWRlciIsICItcCIsICJubzpjYWNoZXByb3ZpZGVyIl0sCiAgICAgICAgICAgICAgICAgICBjd2Q9Y3dkLCBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGVudj1lbnYpCnByaW50KGYiICAge3Iuc3Rkb3V0LnN0cmlwKCkuc3BsaXRsaW5lcygpWy0xXX0iKQo= | base64 -d > "$d/m.py"; echo "== the script this log runs =="; cat "$d/m.py"; echo; python3 "$d/m.py"; rm -rf "$d"'
+# evidence-for: US-008, US-009, US-010, FR-024, FR-025, FR-026, FR-027, FR-028, FR-039, AC-032, AC-033, AC-034, AC-035, AC-036, AC-037, AC-039
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+== the script this log runs ==
+# Cycle-17: the suite at this commit, and which of casting 5's tests pins which requirement.
+# Run from the repository root. The GI-007 scope guard is deselected by name: it reads
+# baseline..HEAD and reports the evidence logs this commit carries, which is what it is for.
+import ast, os, re, subprocess
+
+SCOPE = ("tests/test_harness.py::"
+         "test_only_the_writable_file_set_is_tracked_and_changed")
+env = dict(os.environ, COLUMNS="200")
+env.pop("WEBSTER_SURVEY", None)
+cwd = "plugins/webster"
+
+collected = subprocess.run(["uvx", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider"],
+                           cwd=cwd, capture_output=True, text=True, env=env)
+run = subprocess.run(["uvx", "pytest", "-q", "--tb=short", "-p", "no:cacheprovider",
+                      "--deselect", SCOPE],
+                     cwd=cwd, capture_output=True, text=True, env=env)
+print("== the whole suite at this commit ==")
+print(f"   collected: {collected.stdout.strip().splitlines()[-1]}")
+print(f"   run:       {run.stdout.strip().splitlines()[-1]}")
+print(f"   deselected: {SCOPE}")
+
+print("\n== casting 5's two modules: every test, and the requirements its bullet names ==")
+for name in ("test_slop.py", "test_scaffold.py"):
+    path = f"plugins/webster/tests/{name}"
+    src = open(path, encoding="utf-8").read()
+    t = ast.parse(src)
+    tests = [n.name for n in t.body if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+    doc = ast.get_docstring(t, clean=False)
+    ids = sorted(set(re.findall(r"\b(?:US|FR|NFR|AC)-\d+\b", src)))
+    print(f"\n   {path}: {len(tests)} tests, requirement IDs named: {ids}")
+    bullet = None
+    for line in doc.splitlines():
+        if line.startswith("- ``test_"):
+            bullet = re.match(r"- ``(\w+)``(.*)", line)
+            print(f"     {bullet.group(1):58s} {bullet.group(2).strip(' —-')}")
+    print("     section banners in the body:")
+    for line in src.splitlines():
+        if re.match(r"^# (FR|AC|US|OT|CT)-", line):
+            print(f"       {line}")
+
+print("\n== the exit-code contract both modules assert, run once each here ==")
+r = subprocess.run(["uvx", "pytest", "tests/test_slop.py", "tests/test_scaffold.py", "-q",
+                    "--no-header", "-p", "no:cacheprovider"],
+                   cwd=cwd, capture_output=True, text=True, env=env)
+print(f"   {r.stdout.strip().splitlines()[-1]}")
+
+== the whole suite at this commit ==
+   collected: 148 tests collected in 0.02s
+   run:       147 passed, 1 deselected in 13.23s
+   deselected: tests/test_harness.py::test_only_the_writable_file_set_is_tracked_and_changed
+
+== casting 5's two modules: every test, and the requirements its bullet names ==
+
+   plugins/webster/tests/test_slop.py: 10 tests, requirement IDs named: ['AC-032', 'AC-033', 'AC-034', 'AC-035', 'AC-039', 'FR-024', 'FR-025', 'FR-026', 'FR-027', 'FR-039', 'US-008']
+     test_weak_verb_page_reports_medium_and_exits_zero          FR-024 / OT-030.
+     test_supercharge_still_exits_one                           FR-024 / OT-030, the other half. Green
+     test_human_co_author_trailer_exits_zero                    FR-025 / OT-031. RED before:
+     test_ai_co_author_trailer_reports_agent_attribution        FR-025 / OT-031,
+     test_text_marks_in_headings_are_not_emoji                  FR-026 / OT-032. RED before:
+     test_presentation_emoji_in_heading_is_reported             FR-026 / OT-032, the
+     test_missing_target_exits_two                              FR-027 / OT-033 / CT-006. RED before:
+     test_dangling_symlink_page_exits_two                       FR-027 / CT-006. RED before: the
+     test_kept_supplementary_range_reports_a_non_emoji_block    FR-026. Green
+     test_pruned_directories_are_neither_checked_nor_counted    FR-027. Green
+     section banners in the body:
+       # FR-024 / OT-030 / AC-032: the four weak verbs surface at medium, and the
+       # FR-025 / OT-031 / AC-033: Co-Authored-By fires on an AI name, not on a human.
+       # FR-026 / OT-032 / AC-034: only Emoji_Presentation=Yes code points count.
+       # FR-027 / OT-033 / AC-035 / CT-006: a target that is not there cannot pass.
+       # FR-026: the supplementary half of the class is kept whole, over-match included.
+       # FR-027: what files() returns is what the count line reports. Both directories
+
+   plugins/webster/tests/test_scaffold.py: 12 tests, requirement IDs named: ['AC-036', 'AC-037', 'AC-039', 'FR-028', 'FR-039', 'US-009']
+     test_bad_subject_key_writes_nothing_and_exits_two          FR-028 / OT-034 /
+     test_valid_subject_key_creates_the_landing_page            FR-028 / OT-035.
+     test_unwritable_docs_path_exits_two_without_a_traceback    FR-028 /
+     test_help_names_an_exit_set_for_both_modes                 FR-028 / CT-005. RED on the
+     test_unreadable_page_exits_two_without_a_traceback         FR-028 / CT-005.
+     test_malformed_category_json_stays_a_violation             FR-028 / CT-005. Green
+     test_unwritable_subject_label_writes_nothing_and_exits_two FR-028 /
+     test_unwritable_title_writes_nothing_and_exits_two         FR-028 / CT-005 /
+     test_unlistable_directory_below_the_top_level_exits_two    FR-028 / CT-005.
+     test_every_documented_envelope_leads_with_status           FR-028 / CT-005. RED on
+     test_unstattable_docs_directory_is_a_could_not_read        FR-028 / CT-005.
+     test_a_refused_read_drops_the_violations_it_had_collected  FR-028 /
+     section banners in the body:
+       # FR-028 / OT-034 / AC-036 / CT-005: validate before the first write.
+       # FR-028 / OT-035 / AC-037: a good key still scaffolds its subject.
+       # FR-028 / CT-005: a write the filesystem refuses is a could-not-run, not a
+       # FR-028 / CT-005 / US-009: a byte no page can hold is found before the write and
+       # FR-028 / CT-005: a directory the walk cannot scan is a could-not-check at any
+       # FR-028 / CT-005: a docs directory that is there and cannot be stat'd is a
+       # FR-028 / CT-005: the same tree twice, once readable and once not. The exit-2
+       # FR-028 / CT-005: the exit contract is published where a caller can read it.
+       # FR-028 / CT-005: a page that cannot be read is a could-not-check, not a
+       # FR-028 / CT-005: narrowing the _category_.json handler must not reclassify
+       # FR-028 / CT-005: the docstring enumerates seven envelopes and claims one shape
+
+== the exit-code contract both modules assert, run once each here ==
+   22 passed in 0.81s

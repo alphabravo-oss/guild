@@ -24,8 +24,8 @@ revision's slop.py in it, and run this module against it --
 
 The revisions measured are every commit that has touched slop.py since the
 pre-change script AC-039 names, in order: cfafe8e, af10189, ba33497, ecc7dd5,
-ad38ed9, f33f7c2, f3e30a5, 368b269, 2830b9c, 8fe80e2 — read back from ``git
-log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py``
+ad38ed9, f33f7c2, f3e30a5, 368b269, 2830b9c, 8fe80e2, 0ea38dd — read back from
+``git log --oneline --reverse cfafe8e..HEAD -- plugins/webster/scripts/slop.py``
 rather than remembered.
 
 This list keeps landing one short, for two different reasons. Only the closing
@@ -74,9 +74,19 @@ paragraph above said "This commit added 2830b9c", which was true where 4f61d2d
 wrote it and would have named 8fe80e2 the moment 8fe80e2 edited the paragraph
 around it, so 8fe80e2 replaced it with 4f61d2d's hash in the same edit.
 
+The sixth time was the second case again. The list ran through 8fe80e2 and named
+every revision there was. 0ea38dd then corrected five sentences in slop.py --
+among them the one that said CASE_SENSITIVE skips ``re.I`` because capitalisation
+is the whole point of those rules, which is the point of four of the six and
+decides nothing in the two emoji rules -- without touching this file, so the list
+aged out of date with nobody editing it. The commit adding 0ea38dd to the list
+above touches no file under ``scripts/``, which is what makes its own list
+complete on the day it lands; it is named here by what it did rather than by its
+hash, for the reason the paragraph above gives.
+
 "red against REV" means this file fails when the suite runs against the slop.py
 at REV and passes against the next revision in that list. "guard" means it
-passed at all ten and exists to stop a fix from taking something else away
+passed at all eleven and exists to stop a fix from taking something else away
 with it. "added" is the commit the row's test first appeared in; where a second
 commit is named, the test's body was amended there.
 
@@ -103,16 +113,17 @@ Neither row moved when the run below was repeated against f3e30a5.
 
 The one row naming a revision later than cfafe8e, ``test_dangling_symlink_page_exits_two``,
 is red at cfafe8e as well. The four rows filed "guard" are the four that pass
-at cfafe8e, and they pass at all ten; no row in this module passes at cfafe8e
-and fails later. Run across the ten the module goes 6 red at cfafe8e, 1 red at
+at cfafe8e, and they pass at all eleven; no row in this module passes at cfafe8e
+and fails later. Run across the eleven the module goes 6 red at cfafe8e, 1 red at
 af10189, and 10 green at each of ba33497, ecc7dd5, ad38ed9, f33f7c2, f3e30a5,
-368b269, 2830b9c and 8fe80e2. The last five are green for a reason worth
-writing down
-rather than inferring: each changed comment text in slop.py and no code, so
-there was no behaviour there for a row to move on, and re-running them is how
-that is known instead of assumed. The measurement was first run because the
+368b269, 2830b9c, 8fe80e2 and 0ea38dd. The last eight of those greens are green
+for a reason worth writing down rather than inferring: slop.py's executable lines
+have not changed since ba33497 -- measured by parsing each revision and dropping
+its comments and docstrings -- so from ecc7dd5 on each revision altered prose and
+no code, and there was no behaviour there for a row to move on. Re-running them is
+how that is known instead of assumed. The measurement was first run because the
 same table in ``test_scaffold.py`` carried a row labelled "green before and
-after by design" that is red against five of the eight revisions measured
+after by design" that is red against five of the nine revisions measured
 there. Every row below has survived each rerun unchanged.
 
 - ``test_weak_verb_page_reports_medium_and_exits_zero`` — FR-024 / OT-030.

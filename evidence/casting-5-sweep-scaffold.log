@@ -1,0 +1,272 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBDeWNsZS0xNyBzd2VlcDogZXZlcnkgc2VudGVuY2UgaW4gc2NyaXB0cy9zY2FmZm9sZC5weSB0aGF0IG5vIGN5Y2xlIHNpbmNlIDkgaGFkIHJld3JpdHRlbiwKIyBtZWFzdXJlZC4gUnVuIGZyb20gdGhlIHJlcG9zaXRvcnkgcm9vdC4gVHdvIGZhaWxlZCBhbmQgYXJlIGNvcnJlY3RlZCBoZXJlOyB0aGUgcmVzdCBoZWxkLgppbXBvcnQgYXN0LCBpbXBvcnRsaWIudXRpbCwganNvbiwgb3MsIHJlLCBzaHV0aWwsIHN1YnByb2Nlc3MsIHN5cywgdGVtcGZpbGUKClNDID0gInBsdWdpbnMvd2Vic3Rlci9zY3JpcHRzL3NjYWZmb2xkLnB5IgpzcmMgPSBvcGVuKFNDLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkKdHJlZSA9IGFzdC5wYXJzZShzcmMpCgoKZGVmIGxvYWQoKToKICAgIHN5cy5hcmd2ID0gWyJzY2FmZm9sZC5weSIsICJjaGVjayJdCiAgICBzcGVjID0gaW1wb3J0bGliLnV0aWwuc3BlY19mcm9tX2ZpbGVfbG9jYXRpb24oInNjbW9kIiwgU0MpCiAgICBtID0gaW1wb3J0bGliLnV0aWwubW9kdWxlX2Zyb21fc3BlYyhzcGVjKQogICAgc3BlYy5sb2FkZXIuZXhlY19tb2R1bGUobSkKICAgIHJldHVybiBtCgoKZGVmIHNlbnRlbmNlKG5lZWRsZSwgbGluZXM9MSk6CiAgICBib2R5ID0gc3JjLnNwbGl0bGluZXMoKQogICAgZm9yIGksIGxpbmUgaW4gZW51bWVyYXRlKGJvZHksIDEpOgogICAgICAgIGlmIG5lZWRsZSBpbiBsaW5lOgogICAgICAgICAgICByZXR1cm4gIlxuIi5qb2luKGYiICAgICB7U0N9OntpICsga30gIHtsfSIgZm9yIGssIGwgaW4gZW51bWVyYXRlKGJvZHlbaSAtIDE6aSAtIDEgKyBsaW5lc10pKQogICAgcmV0dXJuICIgICAgIE5PVCBGT1VORDogIiArIG5lZWRsZQoKCmRlZiBzY2FmZm9sZCgqYXJncywgKiprdyk6CiAgICByZXR1cm4gc3VicHJvY2Vzcy5ydW4oWyJweXRob24zIiwgU0MsICpbc3RyKGEpIGZvciBhIGluIGFyZ3NdXSwKICAgICAgICAgICAgICAgICAgICAgICAgICBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsICoqa3cpCgoKbSA9IGxvYWQoKQpmaXhlZCA9IFtuIGZvciBuLCBfLCBfIGluIG0uRlJPTlRdICsgW24gZm9yIG4sIF8sIF8gaW4gbS5CQUNLXSArIFtuIGZvciBuLCBfLCBfIGluIG0uT1BUSU9OQUxdCgpwcmludCgiPT0gY29ycmVjdGVkOiBTRUNUSU9OX1RZUEUgaG9sZHMgZml2ZSBvZiB0aGUgc2l4IGZpeGVkIHNlY3Rpb25zID09IikKcHJpbnQoc2VudGVuY2UoIiMgdGhlIGNvbnRlbnQgdHlwZSBmaXZlIG9mIHRoZSBzaXgiLCAxKSkKcHJpbnQoZiIgICAgIEZST05UICsgQkFDSyArIE9QVElPTkFMLCB0aGUgZml4ZWQgc2VjdGlvbnM6IHtmaXhlZH0gICh7bGVuKGZpeGVkKX0pIikKcHJpbnQoZiIgICAgIFNFQ1RJT05fVFlQRSBrZXlzOiAgICAge3NvcnRlZChtLlNFQ1RJT05fVFlQRSl9ICAoe2xlbihtLlNFQ1RJT05fVFlQRSl9KSIpCnByaW50KGYiICAgICBTRUNUSU9OX0FVRElFTkNFIGtleXM6IHtzb3J0ZWQobS5TRUNUSU9OX0FVRElFTkNFKX0gICh7bGVuKG0uU0VDVElPTl9BVURJRU5DRSl9KSIpCnByaW50KGYiICAgICBmaXhlZCBzZWN0aW9ucyBhYnNlbnQgZnJvbSBTRUNUSU9OX1RZUEU6ICAgICB7W24gZm9yIG4gaW4gZml4ZWQgaWYgbiBub3QgaW4gbS5TRUNUSU9OX1RZUEVdfSIpCnByaW50KGYiICAgICBmaXhlZCBzZWN0aW9ucyBhYnNlbnQgZnJvbSBTRUNUSU9OX0FVRElFTkNFOiB7W24gZm9yIG4gaW4gZml4ZWQgaWYgbiBub3QgaW4gbS5TRUNUSU9OX0FVRElFTkNFXSBvciAnbm9uZSd9IikKcHJpbnQoZiIgICAgIGdldHRpbmctc3RhcnRlZCdzIG93biBwYWdlcyBjYXJyeSB0aGVpciB0eXBlczoge20uR0VUVElOR19TVEFSVEVEfSIpCnByaW50KCIgICAgIGFuZCBkb19pbml0IG5ldmVyIGFza3MgU0VDVElPTl9UWVBFIGZvciB0aGF0IHNlY3Rpb246IikKZm9yIGksIGxpbmUgaW4gZW51bWVyYXRlKHNyYy5zcGxpdGxpbmVzKCksIDEpOgogICAgaWYgImdldHRpbmctc3RhcnRlZCIgaW4gbGluZSBhbmQgIj09IiBpbiBsaW5lIG9yICJTRUNUSU9OX1RZUEUuZ2V0KG5hbWUiIGluIGxpbmU6CiAgICAgICAgcHJpbnQoZiIgICAgICAge1NDfTp7aX0gIHtsaW5lLnN0cmlwKCl9IikKCnByaW50KCJcbj09IGNvcnJlY3RlZDoganNvbi5kdW1wcyBpcyB0aGUgcmVhc29uIGZvciB0aHJlZSBvZiB0aGUgc2l4IHdyaXRlcyB0aGF0IG9taXQgdGhlIGVuY29kaW5nID09IikKcHJpbnQoc2VudGVuY2UoIiMgRXZlcnkgcGFnZSB0aGlzIHNjcmlwdCB3cml0ZXMgaXMgVVRGLTgiLCA1KSkKcHJpbnQoIiAgICAgZXZlcnkgb3BlbiguLi4sIFwid1wiKSBpbiB0aGlzIHNjcmlwdCwgYW5kIHdoZXRoZXIgaXQgbmFtZXMgYW4gZW5jb2Rpbmc6IikKd3JpdGVzID0gc29ydGVkKChuLmxpbmVubywgW2suYXJnIGZvciBrIGluIG4ua2V5d29yZHNdKSBmb3IgbiBpbiBhc3Qud2Fsayh0cmVlKQogICAgICAgICAgICAgICAgaWYgaXNpbnN0YW5jZShuLCBhc3QuQ2FsbCkgYW5kIGdldGF0dHIobi5mdW5jLCAiaWQiLCBOb25lKSA9PSAib3BlbiIKICAgICAgICAgICAgICAgIGFuZCBhbnkoaXNpbnN0YW5jZShhLCBhc3QuQ29uc3RhbnQpIGFuZCBhLnZhbHVlID09ICJ3IiBmb3IgYSBpbiBuLmFyZ3MpKQpmb3IgbGluZW5vLCBuYW1lZCBpbiB3cml0ZXM6CiAgICBwcmludChmIiAgICAgICB7U0N9OntsaW5lbm99ICBlbmNvZGluZyBuYW1lZDogeydlbmNvZGluZycgaW4gbmFtZWQhczo1fSAiCiAgICAgICAgICBmInwge3NyYy5zcGxpdGxpbmVzKClbbGluZW5vIC0gMV0uc3RyaXAoKVs6NzJdfSIpCnRtcCA9IHRlbXBmaWxlLm1rZHRlbXAoKQpkb2NzID0gb3MucGF0aC5qb2luKHRtcCwgImRvY3MiKQpyID0gc2NhZmZvbGQoImluaXQiLCAiLS1kb2NzIiwgZG9jcywgIi0tc2l0ZSIsICItLXNpdGUtZGlyIiwgb3MucGF0aC5qb2luKHRtcCwgIndlYnNpdGUiKSwKICAgICAgICAgICAgICItLXRpdGxlIiwgIkRva3VtZW50YXRpw7NuIiwgIi0tc3ViamVjdCIsICJjbHVzdGVyczpDbMO8c3RlcnMiKQpwcmludChmIiAgICAgaW5pdCB3aXRoIGEgbm9uLUFTQ0lJIC0tdGl0bGUgYW5kIC0tc3ViamVjdCBsYWJlbDogZXhpdCB7ci5yZXR1cm5jb2RlfSIpCnByaW50KCIgICAgIHRoZSBzaXggZmlsZXMgd3JpdHRlbiB3aXRob3V0IHRoZSBlbmNvZGluZywgYW5kIHdoYXQgbWFrZXMgZWFjaCBvbmUgc2FmZToiKQpyZWFzb25zID0gewogICAgImRvY3MvY2x1c3RlcnMvX2NhdGVnb3J5Xy5qc29uIjogImpzb24uZHVtcCwgZW5zdXJlX2FzY2lpIiwKICAgICJ3ZWJzaXRlL2RvY3VzYXVydXMuY29uZmlnLmpzIjogImpzb24uZHVtcHMsIGVuc3VyZV9hc2NpaSIsCiAgICAid2Vic2l0ZS9wYWNrYWdlLmpzb24iOiAianNvbi5kdW1wcywgZW5zdXJlX2FzY2lpIiwKICAgICJ3ZWJzaXRlL3NpZGViYXJzLmpzIjogImEgZml4ZWQgbGl0ZXJhbCIsCiAgICAid2Vic2l0ZS8uZ2l0aWdub3JlIjogImEgZml4ZWQgbGl0ZXJhbCIsCiAgICAid2Vic2l0ZS9zcmMvY3NzL2N1c3RvbS5jc3MiOiAiYSBmaXhlZCBsaXRlcmFsIiwKfQpmb3IgcmVsLCB3aHkgaW4gcmVhc29ucy5pdGVtcygpOgogICAgcmF3ID0gb3Blbihvcy5wYXRoLmpvaW4odG1wLCByZWwpLCAicmIiKS5yZWFkKCkKICAgIHByaW50KGYiICAgICAgIHtyZWw6MzBzfSBieXRlcyBhYm92ZSBBU0NJSToge3N1bShiID4gMTI3IGZvciBiIGluIHJhdyk6MmR9ICAgKHt3aHl9KSIpCnBhZ2UgPSBvcGVuKG9zLnBhdGguam9pbihkb2NzLCAiY2x1c3RlcnMiLCAiY2x1c3RlcnMubWQiKSwgInJiIikucmVhZCgpCnByaW50KGYiICAgICAgIHsnZG9jcy9jbHVzdGVycy9jbHVzdGVycy5tZCc6MzBzfSBieXRlcyBhYm92ZSBBU0NJSToge3N1bShiID4gMTI3IGZvciBiIGluIHBhZ2UpOjJkfSAgICIKICAgICAgZiIod3JpdHRlbiB3aXRoIGVuY29kaW5nPVBBR0VfRU5DT0RJTkcsIHdoaWNoIGlzIHdoeSBpdCBjYW4gaG9sZCB0aGVtKSIpCnNodXRpbC5ybXRyZWUodG1wLCBpZ25vcmVfZXJyb3JzPVRydWUpCgpwcmludCgiXG49PSBoZWxkOiBpbml0IG5ldmVyIGV4aXRzIDEgPT0iKQpwcmludChzZW50ZW5jZSgiICAgICAgICAgbmV2ZXIgZXhpdHMgMS4iLCAxKSkKdG1wID0gdGVtcGZpbGUubWtkdGVtcCgpCnN1cnJvZ2F0ZSA9IG9zLmZzZGVjb2RlKGIiYVx4ZmZiIikKY2FzZXMgPSBbCiAgICAoImEgd2VsbC1mb3JtZWQgcnVuIiwgWyJpbml0IiwgIi0tZG9jcyIsIG9zLnBhdGguam9pbih0bXAsICJhIildKSwKICAgICgiYSBiYWQgc3ViamVjdCBrZXkiLCBbImluaXQiLCAiLS1kb2NzIiwgb3MucGF0aC5qb2luKHRtcCwgImIiKSwgIi0tc3ViamVjdCIsICJCYWQgS2V5OkwiXSksCiAgICAoImEgbGFiZWwgbm8gcGFnZSBjYW4gaG9sZCIsIFsiaW5pdCIsICItLWRvY3MiLCBvcy5wYXRoLmpvaW4odG1wLCAiYyIpLCAiLS1zdWJqZWN0IiwgIms6IiArIHN1cnJvZ2F0ZV0pLAogICAgKCJhIC0tdGl0bGUgbm8gcGFnZSBjYW4gaG9sZCIsIFsiaW5pdCIsICItLWRvY3MiLCBvcy5wYXRoLmpvaW4odG1wLCAiZCIpLCAiLS10aXRsZSIsIHN1cnJvZ2F0ZV0pLAogICAgKCItLWRvY3MgbmFtaW5nIGEgcmVndWxhciBmaWxlIiwgWyJpbml0IiwgIi0tZG9jcyIsIF9fZmlsZV9fXSksCiAgICAoIi0tcHJvamVjdCBhIGxvbmUgc3Vycm9nYXRlIiwgWyJpbml0IiwgIi0tZG9jcyIsIG9zLnBhdGguam9pbih0bXAsICJmIiksICItLXNpdGUiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAiLS1zaXRlLWRpciIsIG9zLnBhdGguam9pbih0bXAsICJmcyIpLCAiLS1wcm9qZWN0Iiwgc3Vycm9nYXRlXSksCiAgICAoIi0tdXJsIGEgbG9uZSBzdXJyb2dhdGUiLCBbImluaXQiLCAiLS1kb2NzIiwgb3MucGF0aC5qb2luKHRtcCwgImciKSwgIi0tc2l0ZSIsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAiLS1zaXRlLWRpciIsIG9zLnBhdGguam9pbih0bXAsICJncyIpLCAiLS11cmwiLCBzdXJyb2dhdGVdKSwKICAgICgiLS1kb2NzIGEgbG9uZSBzdXJyb2dhdGUiLCBbImluaXQiLCAiLS1kb2NzIiwgb3MucGF0aC5qb2luKHRtcCwgImgiICsgc3Vycm9nYXRlKV0pLApdCmZvciBsYWJlbCwgYXJncyBpbiBjYXNlczoKICAgIHIgPSBzY2FmZm9sZCgqYXJncykKICAgIHN0YXR1cyA9IGpzb24ubG9hZHMoci5zdGRvdXQpWyJzdGF0dXMiXSBpZiByLnN0ZG91dC5zdHJpcCgpLnN0YXJ0c3dpdGgoInsiKSBlbHNlICIobm8gZW52ZWxvcGUpIgogICAgcHJpbnQoZiIgICAgIHtsYWJlbDozMHN9IGV4aXQge3IucmV0dXJuY29kZX0gIHN0YXR1cyB7c3RhdHVzfSIpCnNodXRpbC5ybXRyZWUodG1wLCBpZ25vcmVfZXJyb3JzPVRydWUpCgpwcmludCgiXG49PSBoZWxkOiBkb19pbml0IHVzZWQgdG8gdmFsaWRhdGUgYWZ0ZXIgZm91ciB3cml0ZXMsIGFuZCB2YWxpZGF0ZXMgYWJvdmUgdGhlbSBub3cgPT0iKQpvbGQgPSBzdWJwcm9jZXNzLnJ1bihbImdpdCIsICJzaG93IiwgZiJjZmFmZThlOntTQ30iXSwgY2FwdHVyZV9vdXRwdXQ9VHJ1ZSwgdGV4dD1UcnVlKS5zdGRvdXQKYm9keSA9IG9sZC5zcGxpdCgiZGVmIGRvX2luaXQoYSk6IiwgMSlbMV0KYmVmb3JlID0gYm9keVs6Ym9keS5pbmRleCgic3ViamVjdHMgPSBwYXJzZV9zdWJqZWN0cyIpXQpwcmludChmIiAgICAgYXQgY2ZhZmU4ZSwgcGFyc2Vfc3ViamVjdHMgd2FzIGNhbGxlZCBhZnRlciB0aGVzZSB3cml0ZXM6IikKZm9yIGxpbmUgaW4gYmVmb3JlLnNwbGl0bGluZXMoKToKICAgIGlmICJzdHViKCIgaW4gbGluZSBvciAibWFrZWRpcnMiIGluIGxpbmU6CiAgICAgICAgcHJpbnQoZiIgICAgICAge2xpbmUuc3RyaXAoKVs6NzhdfSIpCmZuID0gbmV4dChuIGZvciBuIGluIHRyZWUuYm9keSBpZiBpc2luc3RhbmNlKG4sIGFzdC5GdW5jdGlvbkRlZikgYW5kIG4ubmFtZSA9PSAiZG9faW5pdCIpCmZpcnN0X3dyaXRlID0gbWluKG4ubGluZW5vIGZvciBuIGluIGFzdC53YWxrKGZuKSBpZiBpc2luc3RhbmNlKG4sIGFzdC5DYWxsKQogICAgICAgICAgICAgICAgICBhbmQgKGdldGF0dHIobi5mdW5jLCAiYXR0ciIsIE5vbmUpID09ICJtYWtlZGlycyIKICAgICAgICAgICAgICAgICAgICAgICBvciBnZXRhdHRyKG4uZnVuYywgImlkIiwgTm9uZSkgaW4gKCJzdHViIiwgImNhdGVnb3J5IikpKQpwYXJzZSA9IG1pbihuLmxpbmVubyBmb3IgbiBpbiBhc3Qud2FsayhmbikgaWYgaXNpbnN0YW5jZShuLCBhc3QuQ2FsbCkKICAgICAgICAgICAgYW5kIGdldGF0dHIobi5mdW5jLCAiaWQiLCBOb25lKSA9PSAicGFyc2Vfc3ViamVjdHMiKQpwcmludChmIiAgICAgYXQgdGhpcyBjb21taXQgcGFyc2Vfc3ViamVjdHMgaXMgY2FsbGVkIGF0IHtTQ306e3BhcnNlfSBhbmQgdGhlIGZpcnN0IHdyaXRlICIKICAgICAgZiJhdCB7U0N9OntmaXJzdF93cml0ZX07IHZhbGlkYXRpb24gaXMgYWJvdmUgZXZlcnkgb25lIG9mIHRoZW06IHtwYXJzZSA8IGZpcnN0X3dyaXRlfSIpCgpwcmludCgiXG49PSBoZWxkOiB0aGUgc2V2ZW4gZW52ZWxvcGVzIHRoZSBtb2R1bGUgZG9jc3RyaW5nIGVudW1lcmF0ZXMgPT0iKQpkb2MgPSBhc3QuZ2V0X2RvY3N0cmluZyhhc3QucGFyc2Uoc3JjKSwgY2xlYW49RmFsc2UpCnN0YXR1c2VzID0gcmUuZmluZGFsbChyIlxiKG9rfGJhZF9zdWJqZWN0fGNhbm5vdF93cml0ZXx2aW9sYXRpb25zfG5vX2RvY3N8Y2Fubm90X3JlYWQpXGIiLCBkb2MpCnByaW50KGYiICAgICBzdGF0dXNlcyBuYW1lZCBpbiB0aGUgZG9jc3RyaW5nOiB7c29ydGVkKHNldChzdGF0dXNlcykpfSIpCnRzcmMgPSBvcGVuKCJwbHVnaW5zL3dlYnN0ZXIvdGVzdHMvdGVzdF9zY2FmZm9sZC5weSIsIGVuY29kaW5nPSJ1dGYtOCIpLnJlYWQoKQpkb2N1bWVudGVkID0gbmV4dChuLnZhbHVlIGZvciBuIGluIGFzdC53YWxrKGFzdC5wYXJzZSh0c3JjKSkKICAgICAgICAgICAgICAgICAgaWYgaXNpbnN0YW5jZShuLCBhc3QuQXNzaWduKQogICAgICAgICAgICAgICAgICBhbmQgZ2V0YXR0cihuLnRhcmdldHNbMF0sICJpZCIsIE5vbmUpID09ICJkb2N1bWVudGVkIikKcm93cyA9IFsoZS5lbHRzWzBdLnZhbHVlLCBlLmVsdHNbMV0udmFsdWUsIGUuZWx0c1syXS52YWx1ZSkgZm9yIGUgaW4gZG9jdW1lbnRlZC5lbHRzXQpwcmludChmIiAgICAgdGhlIHRlc3QgdGhhdCByZWFkcyB0aGUgY2xhaW0gYmFjayBwcm92b2tlcyB7bGVuKHJvd3MpfSBlbnZlbG9wZXM6IikKZm9yIG1vZGUsIGNvZGUsIHN0YXR1cyBpbiByb3dzOgogICAgcHJpbnQoZiIgICAgICAge21vZGU6NnN9IGV4aXQge2NvZGV9ICB7c3RhdHVzfSIpCgpwcmludCgiXG49PSBoZWxkOiB0aGUgdGhyZWUgZmFtaWxpZXMgYSBtYWxmb3JtZWQgX2NhdGVnb3J5Xy5qc29uIHJhaXNlcyA9PSIpCnByaW50KHNlbnRlbmNlKCIgICAgICAgICAgICAgICAgIyBUaGUgdGhyZWUgZmFtaWxpZXMgYSBtYWxmb3JtZWQgZmlsZSByYWlzZXMgaGVyZSIsIDgpKQpmb3IgYm9keXRleHQgaW4gKCdub3QganNvbiBhdCBhbGxcbicsICdbMSwgMl1cbicsICd7InBvc2l0aW9uIjogWzFdfVxuJyk6CiAgICB0cnk6CiAgICAgICAgbG9hZGVkID0ganNvbi5sb2Fkcyhib2R5dGV4dCkKICAgICAgICBwb3MgPSBsb2FkZWQuZ2V0KCJwb3NpdGlvbiIpCiAgICAgICAge30uc2V0ZGVmYXVsdChwb3MsIFtdKQogICAgICAgIHJhaXNlZCA9ICJub3RoaW5nIgogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHJhaXNlZCA9IHR5cGUoZSkuX19uYW1lX18KICAgIHByaW50KGYiICAgICB7Ym9keXRleHQhcjoyMnN9IHJhaXNlcyB7cmFpc2VkfSIpCnByaW50KGYiICAgICBieXRlcyB0aGF0IGFyZSBub3QgVVRGLTggcmFpc2UgIgogICAgICBmInt0eXBlKGpzb24uSlNPTkRlY29kZUVycm9yKCd4JywgJ3knLCAwKSkuX19tcm9fX1sxXS5fX25hbWVfX30gdGhyb3VnaCBVbmljb2RlRGVjb2RlRXJyb3IsICIKICAgICAgZiJhIFZhbHVlRXJyb3I6IHtpc3N1YmNsYXNzKFVuaWNvZGVEZWNvZGVFcnJvciwgVmFsdWVFcnJvcil9IikKCnByaW50KCJcbj09IGhlbGQ6IG9zLmxpc3RkaXIgcmVhY2hlcyBkb2NzLyBhbmQgZWFjaCBkaXJlY3RvcnkgZGlyZWN0bHkgdW5kZXIgaXQsIGFuZCBubyBkZWVwZXIgPT0iKQpwcmludChzZW50ZW5jZSgiICAgICMgZ2l2ZXMgYWJvdmU7IHNsb3AucHkgYW5zd2VycyB0aGUgc2FtZSBjbGFzcyB3aXRoIGEgY2Fubm90LXJlYWQgbGluZSBhdCBleGl0IDIuIFRoZSIsIDQpKQpmb3IgaSwgbGluZSBpbiBlbnVtZXJhdGUoc3JjLnNwbGl0bGluZXMoKSwgMSk6CiAgICBpZiAib3MubGlzdGRpcigiIGluIGxpbmUgb3IgIm9zLndhbGsoIiBpbiBsaW5lOgogICAgICAgIHByaW50KGYiICAgICB7U0N9OntpfSAge2xpbmUuc3RyaXAoKVs6ODJdfSIpCgpwcmludCgiXG49PSBoZWxkOiBzdWJqZWN0cyBhcmUgbnVtYmVyZWQgYmV0d2VlbiBpbnN0YWxsIGFuZCBhZHZhbmNlZCA9PSIpCnByaW50KHNlbnRlbmNlKCIjIEZpeGVkIHNlY3Rpb25zIGFuZCB0aGVpciBzaWRlYmFyIHBvc2l0aW9ucy4iLCAxKSkKcHJpbnQoZiIgICAgIEZST05UIHBvc2l0aW9ucyB7W3AgZm9yIF8sIF8sIHAgaW4gbS5GUk9OVF19LCBCQUNLIHtbcCBmb3IgXywgXywgcCBpbiBtLkJBQ0tdfSwgIgogICAgICBmIk9QVElPTkFMIHtbcCBmb3IgXywgXywgcCBpbiBtLk9QVElPTkFMXX0iKQpzdGFydCA9IG5leHQoa3cudmFsdWUudmFsdWUgZm9yIG4gaW4gYXN0LndhbGsodHJlZSkgaWYgaXNpbnN0YW5jZShuLCBhc3QuQ2FsbCkKICAgICAgICAgICAgIGFuZCBnZXRhdHRyKG4uZnVuYywgImlkIiwgTm9uZSkgPT0gImVudW1lcmF0ZSIKICAgICAgICAgICAgIGFuZCBnZXRhdHRyKG4uYXJnc1swXSwgImlkIiwgTm9uZSkgPT0gInN1YmplY3RzIgogICAgICAgICAgICAgZm9yIGt3IGluIG4ua2V5d29yZHMgaWYga3cuYXJnID09ICJzdGFydCIpCnByaW50KGYiICAgICBzdWJqZWN0cyBhcmUgZW51bWVyYXRlZCBmcm9tIHN0YXJ0PXtzdGFydH0sIHNvIHRoZSBmaXJzdCBzaXRzIGFib3ZlIGluc3RhbGwgYXQgMyAiCiAgICAgIGYiYW5kIGV2ZXJ5IG9uZSBiZWxvdyBhZHZhbmNlZCBhdCA5MSB1bnRpbCB0aGVyZSBhcmUgezkxIC0gc3RhcnR9IG9mIHRoZW0iKQoKcHJpbnQoIlxuPT0gaGVsZDogdGhlIGNvdW50cyB0ZXN0X3NjYWZmb2xkLnB5IGFuZCB0ZXN0X3Nsb3AucHkgdGFrZSBvZiB0aGVtc2VsdmVzLCBieSBBU1QgPT0iKQpmb3IgZiBpbiAoInBsdWdpbnMvd2Vic3Rlci90ZXN0cy90ZXN0X3NjYWZmb2xkLnB5IiwgInBsdWdpbnMvd2Vic3Rlci90ZXN0cy90ZXN0X3Nsb3AucHkiKToKICAgIHQgPSBhc3QucGFyc2Uob3BlbihmLCBlbmNvZGluZz0idXRmLTgiKS5yZWFkKCkpCiAgICB0ZXN0cyA9IFtuIGZvciBuIGluIHQuYm9keSBpZiBpc2luc3RhbmNlKG4sIGFzdC5GdW5jdGlvbkRlZikgYW5kIG4ubmFtZS5zdGFydHN3aXRoKCJ0ZXN0XyIpXQogICAgYXJncyA9IFtbYS5hcmcgZm9yIGEgaW4gbi5hcmdzLmFyZ3NdIGZvciBuIGluIHRlc3RzXQogICAgcHJpbnQoZiIgICAgIHtmfToge2xlbih0ZXN0cyl9IHRlc3RzLCB7c3VtKCdydW5fc2NyaXB0JyBpbiBhIGZvciBhIGluIGFyZ3MpfSB0YWtlIHJ1bl9zY3JpcHQsICIKICAgICAgICAgIGYie3N1bSgndG1wX3BhdGgnIGluIGEgZm9yIGEgaW4gYXJncyl9IHRha2UgdG1wX3BhdGgiKQo= | base64 -d > "$d/m.py"; echo "== the script this log runs =="; cat "$d/m.py"; echo; python3 "$d/m.py"; rm -rf "$d"'
+# evidence-for: US-009, FR-028, AC-036, AC-037
+# evidence-timeout: 600
+== the script this log runs ==
+# Cycle-17 sweep: every sentence in scripts/scaffold.py that no cycle since 9 had rewritten,
+# measured. Run from the repository root. Two failed and are corrected here; the rest held.
+import ast, importlib.util, json, os, re, shutil, subprocess, sys, tempfile
+
+SC = "plugins/webster/scripts/scaffold.py"
+src = open(SC, encoding="utf-8").read()
+tree = ast.parse(src)
+
+
+def load():
+    sys.argv = ["scaffold.py", "check"]
+    spec = importlib.util.spec_from_file_location("scmod", SC)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def sentence(needle, lines=1):
+    body = src.splitlines()
+    for i, line in enumerate(body, 1):
+        if needle in line:
+            return "\n".join(f"     {SC}:{i + k}  {l}" for k, l in enumerate(body[i - 1:i - 1 + lines]))
+    return "     NOT FOUND: " + needle
+
+
+def scaffold(*args, **kw):
+    return subprocess.run(["python3", SC, *[str(a) for a in args]],
+                          capture_output=True, text=True, **kw)
+
+
+m = load()
+fixed = [n for n, _, _ in m.FRONT] + [n for n, _, _ in m.BACK] + [n for n, _, _ in m.OPTIONAL]
+
+print("== corrected: SECTION_TYPE holds five of the six fixed sections ==")
+print(sentence("# the content type five of the six", 1))
+print(f"     FRONT + BACK + OPTIONAL, the fixed sections: {fixed}  ({len(fixed)})")
+print(f"     SECTION_TYPE keys:     {sorted(m.SECTION_TYPE)}  ({len(m.SECTION_TYPE)})")
+print(f"     SECTION_AUDIENCE keys: {sorted(m.SECTION_AUDIENCE)}  ({len(m.SECTION_AUDIENCE)})")
+print(f"     fixed sections absent from SECTION_TYPE:     {[n for n in fixed if n not in m.SECTION_TYPE]}")
+print(f"     fixed sections absent from SECTION_AUDIENCE: {[n for n in fixed if n not in m.SECTION_AUDIENCE] or 'none'}")
+print(f"     getting-started's own pages carry their types: {m.GETTING_STARTED}")
+print("     and do_init never asks SECTION_TYPE for that section:")
+for i, line in enumerate(src.splitlines(), 1):
+    if "getting-started" in line and "==" in line or "SECTION_TYPE.get(name" in line:
+        print(f"       {SC}:{i}  {line.strip()}")
+
+print("\n== corrected: json.dumps is the reason for three of the six writes that omit the encoding ==")
+print(sentence("# Every page this script writes is UTF-8", 5))
+print("     every open(..., \"w\") in this script, and whether it names an encoding:")
+writes = sorted((n.lineno, [k.arg for k in n.keywords]) for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "open"
+                and any(isinstance(a, ast.Constant) and a.value == "w" for a in n.args))
+for lineno, named in writes:
+    print(f"       {SC}:{lineno}  encoding named: {'encoding' in named!s:5} "
+          f"| {src.splitlines()[lineno - 1].strip()[:72]}")
+tmp = tempfile.mkdtemp()
+docs = os.path.join(tmp, "docs")
+r = scaffold("init", "--docs", docs, "--site", "--site-dir", os.path.join(tmp, "website"),
+             "--title", "Dokumentatión", "--subject", "clusters:Clüsters")
+print(f"     init with a non-ASCII --title and --subject label: exit {r.returncode}")
+print("     the six files written without the encoding, and what makes each one safe:")
+reasons = {
+    "docs/clusters/_category_.json": "json.dump, ensure_ascii",
+    "website/docusaurus.config.js": "json.dumps, ensure_ascii",
+    "website/package.json": "json.dumps, ensure_ascii",
+    "website/sidebars.js": "a fixed literal",
+    "website/.gitignore": "a fixed literal",
+    "website/src/css/custom.css": "a fixed literal",
+}
+for rel, why in reasons.items():
+    raw = open(os.path.join(tmp, rel), "rb").read()
+    print(f"       {rel:30s} bytes above ASCII: {sum(b > 127 for b in raw):2d}   ({why})")
+page = open(os.path.join(docs, "clusters", "clusters.md"), "rb").read()
+print(f"       {'docs/clusters/clusters.md':30s} bytes above ASCII: {sum(b > 127 for b in page):2d}   "
+      f"(written with encoding=PAGE_ENCODING, which is why it can hold them)")
+shutil.rmtree(tmp, ignore_errors=True)
+
+print("\n== held: init never exits 1 ==")
+print(sentence("         never exits 1.", 1))
+tmp = tempfile.mkdtemp()
+surrogate = os.fsdecode(b"a\xffb")
+cases = [
+    ("a well-formed run", ["init", "--docs", os.path.join(tmp, "a")]),
+    ("a bad subject key", ["init", "--docs", os.path.join(tmp, "b"), "--subject", "Bad Key:L"]),
+    ("a label no page can hold", ["init", "--docs", os.path.join(tmp, "c"), "--subject", "k:" + surrogate]),
+    ("a --title no page can hold", ["init", "--docs", os.path.join(tmp, "d"), "--title", surrogate]),
+    ("--docs naming a regular file", ["init", "--docs", __file__]),
+    ("--project a lone surrogate", ["init", "--docs", os.path.join(tmp, "f"), "--site",
+                                    "--site-dir", os.path.join(tmp, "fs"), "--project", surrogate]),
+    ("--url a lone surrogate", ["init", "--docs", os.path.join(tmp, "g"), "--site",
+                               "--site-dir", os.path.join(tmp, "gs"), "--url", surrogate]),
+    ("--docs a lone surrogate", ["init", "--docs", os.path.join(tmp, "h" + surrogate)]),
+]
+for label, args in cases:
+    r = scaffold(*args)
+    status = json.loads(r.stdout)["status"] if r.stdout.strip().startswith("{") else "(no envelope)"
+    print(f"     {label:30s} exit {r.returncode}  status {status}")
+shutil.rmtree(tmp, ignore_errors=True)
+
+print("\n== held: do_init used to validate after four writes, and validates above them now ==")
+old = subprocess.run(["git", "show", f"cfafe8e:{SC}"], capture_output=True, text=True).stdout
+body = old.split("def do_init(a):", 1)[1]
+before = body[:body.index("subjects = parse_subjects")]
+print(f"     at cfafe8e, parse_subjects was called after these writes:")
+for line in before.splitlines():
+    if "stub(" in line or "makedirs" in line:
+        print(f"       {line.strip()[:78]}")
+fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "do_init")
+first_write = min(n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call)
+                  and (getattr(n.func, "attr", None) == "makedirs"
+                       or getattr(n.func, "id", None) in ("stub", "category")))
+parse = min(n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "parse_subjects")
+print(f"     at this commit parse_subjects is called at {SC}:{parse} and the first write "
+      f"at {SC}:{first_write}; validation is above every one of them: {parse < first_write}")
+
+print("\n== held: the seven envelopes the module docstring enumerates ==")
+doc = ast.get_docstring(ast.parse(src), clean=False)
+statuses = re.findall(r"\b(ok|bad_subject|cannot_write|violations|no_docs|cannot_read)\b", doc)
+print(f"     statuses named in the docstring: {sorted(set(statuses))}")
+tsrc = open("plugins/webster/tests/test_scaffold.py", encoding="utf-8").read()
+documented = next(n.value for n in ast.walk(ast.parse(tsrc))
+                  if isinstance(n, ast.Assign)
+                  and getattr(n.targets[0], "id", None) == "documented")
+rows = [(e.elts[0].value, e.elts[1].value, e.elts[2].value) for e in documented.elts]
+print(f"     the test that reads the claim back provokes {len(rows)} envelopes:")
+for mode, code, status in rows:
+    print(f"       {mode:6s} exit {code}  {status}")
+
+print("\n== held: the three families a malformed _category_.json raises ==")
+print(sentence("                # The three families a malformed file raises here", 8))
+for bodytext in ('not json at all\n', '[1, 2]\n', '{"position": [1]}\n'):
+    try:
+        loaded = json.loads(bodytext)
+        pos = loaded.get("position")
+        {}.setdefault(pos, [])
+        raised = "nothing"
+    except Exception as e:
+        raised = type(e).__name__
+    print(f"     {bodytext!r:22s} raises {raised}")
+print(f"     bytes that are not UTF-8 raise "
+      f"{type(json.JSONDecodeError('x', 'y', 0)).__mro__[1].__name__} through UnicodeDecodeError, "
+      f"a ValueError: {issubclass(UnicodeDecodeError, ValueError)}")
+
+print("\n== held: os.listdir reaches docs/ and each directory directly under it, and no deeper ==")
+print(sentence("    # gives above; slop.py answers the same class with a cannot-read line at exit 2. The", 4))
+for i, line in enumerate(src.splitlines(), 1):
+    if "os.listdir(" in line or "os.walk(" in line:
+        print(f"     {SC}:{i}  {line.strip()[:82]}")
+
+print("\n== held: subjects are numbered between install and advanced ==")
+print(sentence("# Fixed sections and their sidebar positions.", 1))
+print(f"     FRONT positions {[p for _, _, p in m.FRONT]}, BACK {[p for _, _, p in m.BACK]}, "
+      f"OPTIONAL {[p for _, _, p in m.OPTIONAL]}")
+start = next(kw.value.value for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "id", None) == "enumerate"
+             and getattr(n.args[0], "id", None) == "subjects"
+             for kw in n.keywords if kw.arg == "start")
+print(f"     subjects are enumerated from start={start}, so the first sits above install at 3 "
+      f"and every one below advanced at 91 until there are {91 - start} of them")
+
+print("\n== held: the counts test_scaffold.py and test_slop.py take of themselves, by AST ==")
+for f in ("plugins/webster/tests/test_scaffold.py", "plugins/webster/tests/test_slop.py"):
+    t = ast.parse(open(f, encoding="utf-8").read())
+    tests = [n for n in t.body if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+    args = [[a.arg for a in n.args.args] for n in tests]
+    print(f"     {f}: {len(tests)} tests, {sum('run_script' in a for a in args)} take run_script, "
+          f"{sum('tmp_path' in a for a in args)} take tmp_path")
+
+== corrected: SECTION_TYPE holds five of the six fixed sections ==
+     plugins/webster/scripts/scaffold.py:64  # the content type five of the six fixed sections hold; getting-started's two pages carry their own
+     FRONT + BACK + OPTIONAL, the fixed sections: ['getting-started', 'install', 'advanced', 'troubleshooting', 'developer', 'api']  (6)
+     SECTION_TYPE keys:     ['advanced', 'api', 'developer', 'install', 'troubleshooting']  (5)
+     SECTION_AUDIENCE keys: ['advanced', 'api', 'developer', 'getting-started', 'install', 'troubleshooting']  (6)
+     fixed sections absent from SECTION_TYPE:     ['getting-started']
+     fixed sections absent from SECTION_AUDIENCE: none
+     getting-started's own pages carry their types: [('overview.md', 'quickstart'), ('glossary.md', 'glossary')]
+     and do_init never asks SECTION_TYPE for that section:
+       plugins/webster/scripts/scaffold.py:239  if name == "getting-started":
+       plugins/webster/scripts/scaffold.py:245  doc_type=SECTION_TYPE.get(name, "how-to"),
+       plugins/webster/scripts/scaffold.py:264  doc_type=SECTION_TYPE.get(name, "explanation"),
+
+== corrected: json.dumps is the reason for three of the six writes that omit the encoding ==
+     plugins/webster/scripts/scaffold.py:76  # Every page this script writes is UTF-8, said rather than inherited: open()'s default encoding
+     plugins/webster/scripts/scaffold.py:77  # is whatever the locale resolves to, so the same --title writes cleanly under one LANG and
+     plugins/webster/scripts/scaffold.py:78  # raises under another, and unencodable() below could not then be exact about what a write will
+     plugins/webster/scripts/scaffold.py:79  # take. Six files skip it. _category_.json, docusaurus.config.js and package.json carry only
+     plugins/webster/scripts/scaffold.py:80  # json.dumps output, which is ASCII; sidebars.js, .gitignore and custom.css are ASCII literals.
+     every open(..., "w") in this script, and whether it names an encoding:
+       plugins/webster/scripts/scaffold.py:103  encoding named: False | with open(os.path.join(path, "_category_.json"), "w") as f:
+       plugins/webster/scripts/scaffold.py:140  encoding named: True  | with open(path, "w", encoding=PAGE_ENCODING) as f:
+       plugins/webster/scripts/scaffold.py:364  encoding named: False | open(path, "w").write(body)
+       plugins/webster/scripts/scaffold.py:369  encoding named: False | open(os.path.join(css, "custom.css"), "w").write(
+     init with a non-ASCII --title and --subject label: exit 0
+     the six files written without the encoding, and what makes each one safe:
+       docs/clusters/_category_.json  bytes above ASCII:  0   (json.dump, ensure_ascii)
+       website/docusaurus.config.js   bytes above ASCII:  0   (json.dumps, ensure_ascii)
+       website/package.json           bytes above ASCII:  0   (json.dumps, ensure_ascii)
+       website/sidebars.js            bytes above ASCII:  0   (a fixed literal)
+       website/.gitignore             bytes above ASCII:  0   (a fixed literal)
+       website/src/css/custom.css     bytes above ASCII:  0   (a fixed literal)
+       docs/clusters/clusters.md      bytes above ASCII:  4   (written with encoding=PAGE_ENCODING, which is why it can hold them)
+
+== held: init never exits 1 ==
+     plugins/webster/scripts/scaffold.py:9           never exits 1.
+     a well-formed run              exit 0  status ok
+     a bad subject key              exit 2  status bad_subject
+     a label no page can hold       exit 2  status bad_subject
+     a --title no page can hold     exit 2  status cannot_write
+     --docs naming a regular file   exit 2  status cannot_write
+     --project a lone surrogate     exit 0  status ok
+     --url a lone surrogate         exit 0  status ok
+     --docs a lone surrogate        exit 2  status cannot_write
+
+== held: do_init used to validate after four writes, and validates above them now ==
+     at cfafe8e, parse_subjects was called after these writes:
+       os.makedirs(docs, exist_ok=True)
+       if stub(os.path.join(docs, "index.md"), a.title, 1,
+       if stub(os.path.join(docs, "faq.md"), "FAQ", 99, doc_type="explanation",
+       os.makedirs(d, exist_ok=True)
+       if stub(os.path.join(d, page), t, i, doc_type=dtype, audience="user"):
+       elif stub(os.path.join(d, f"{name}.md"), label, 1,
+     at this commit parse_subjects is called at plugins/webster/scripts/scaffold.py:190 and the first write at plugins/webster/scripts/scaffold.py:225; validation is above every one of them: True
+
+== held: the seven envelopes the module docstring enumerates ==
+     statuses named in the docstring: ['bad_subject', 'cannot_read', 'cannot_write', 'no_docs', 'ok', 'violations']
+     the test that reads the claim back provokes 7 envelopes:
+       init   exit 0  ok
+       init   exit 2  bad_subject
+       init   exit 2  cannot_write
+       check  exit 0  ok
+       check  exit 1  violations
+       check  exit 2  no_docs
+       check  exit 2  cannot_read
+
+== held: the three families a malformed _category_.json raises ==
+     plugins/webster/scripts/scaffold.py:456                  # The three families a malformed file raises here, named rather than caught as
+     plugins/webster/scripts/scaffold.py:457                  # `Exception`: ValueError for bytes that are not UTF-8 or not JSON,
+     plugins/webster/scripts/scaffold.py:458                  # AttributeError for a top-level array, which has no .get, and TypeError for a
+     plugins/webster/scripts/scaffold.py:459                  # position that is itself a list, which setdefault cannot key on. All three are
+     plugins/webster/scripts/scaffold.py:460                  # a file Docusaurus will not order a sidebar from, which is a violation. What
+     plugins/webster/scripts/scaffold.py:461                  # `Exception` also swallowed was OSError -- a file that could not be read at all
+     plugins/webster/scripts/scaffold.py:462                  # -- and reporting that as a violation is the same wrong answer the boundary
+     plugins/webster/scripts/scaffold.py:463                  # above exists to stop, one file further in.
+     'not json at all\n'    raises JSONDecodeError
+     '[1, 2]\n'             raises AttributeError
+     '{"position": [1]}\n'  raises TypeError
+     bytes that are not UTF-8 raise ValueError through UnicodeDecodeError, a ValueError: True
+
+== held: os.listdir reaches docs/ and each directory directly under it, and no deeper ==
+     plugins/webster/scripts/scaffold.py:398      # gives above; slop.py answers the same class with a cannot-read line at exit 2. The
+     plugins/webster/scripts/scaffold.py:399      # walk below carries an onerror for the same reason at one more remove: os.listdir raises
+     plugins/webster/scripts/scaffold.py:400      # here for docs/ and for each directory directly under it, but a subdirectory below one of
+     plugins/webster/scripts/scaffold.py:401      # those is reached by os.walk alone, which drops what it cannot scan without saying so.
+     plugins/webster/scripts/scaffold.py:430  top = sorted(d for d in os.listdir(docs)
+     plugins/webster/scripts/scaffold.py:438  firsts = [f for f in sorted(os.listdir(p)) if f.endswith(".md")
+     plugins/webster/scripts/scaffold.py:471  for dirpath, dirnames, filenames in os.walk(docs, onerror=unreadable):
+     plugins/webster/scripts/scaffold.py:490  for fn in sorted(os.listdir(d)):
+     plugins/webster/scripts/scaffold.py:502  flat = sorted(f for f in os.listdir(docs)
+
+== held: subjects are numbered between install and advanced ==
+     plugins/webster/scripts/scaffold.py:51  # Fixed sections and their sidebar positions. Subjects are numbered between install and advanced.
+     FRONT positions [2, 3], BACK [91, 92, 93], OPTIONAL [90]
+     subjects are enumerated from start=4, so the first sits above install at 3 and every one below advanced at 91 until there are 87 of them
+
+== held: the counts test_scaffold.py and test_slop.py take of themselves, by AST ==
+     plugins/webster/tests/test_scaffold.py: 12 tests, 12 take run_script, 11 take tmp_path
+     plugins/webster/tests/test_slop.py: 10 tests, 10 take run_script, 10 take tmp_path

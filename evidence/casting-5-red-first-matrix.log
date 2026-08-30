@@ -1,0 +1,127 @@
+# evidence-cmd: bash -c 'd=$(mktemp -d); echo IyBDeWNsZS0xNzogdGhlIHJlZC1maXJzdCBtYXRyaXggYm90aCB0ZXN0IG1vZHVsZXMgcHVibGlzaCwgcmUtbWVhc3VyZWQgYWNyb3NzIGV2ZXJ5CiMgcmV2aXNpb24gb2YgdGhlIHNjcmlwdCBlYWNoIG9uZSBkcml2ZXMsIGluY2x1ZGluZyB0aGUgcmV2aXNpb24gdGhpcyBjeWNsZSBhZGRlZC4KIyBSdW4gZnJvbSB0aGUgcmVwb3NpdG9yeSByb290LiBFYWNoIGNlbGwgaXMgb25lIHJ1biBvZiB0aGUgbW9kdWxlIGFnYWluc3Qgb25lCiMgcmV2aXNpb24ncyBzY3JpcHQsIGluIGEgc2NyYXRjaCBjb3B5IG9mIHRoZSBwbHVnaW4sIGV4YWN0bHkgYXMgdGhlIGRvY3N0cmluZ3Mgc2F5LgppbXBvcnQgcmUsIHNodXRpbCwgc3VicHJvY2VzcywgdGVtcGZpbGUsIG9zCgpNQVRSSVggPSB7CiAgICAic2xvcCI6IFsiY2ZhZmU4ZSIsICJhZjEwMTg5IiwgImJhMzM0OTciLCAiZWNjN2RkNSIsICJhZDM4ZWQ5IiwgImYzM2Y3YzIiLAogICAgICAgICAgICAgImYzZTMwYTUiLCAiMzY4YjI2OSIsICIyODMwYjljIiwgIjhmZTgwZTIiLCAiMGVhMzhkZCJdLAogICAgInNjYWZmb2xkIjogWyJjZmFmZThlIiwgImFmMTAxODkiLCAiZWNjN2RkNSIsICIzZGFkYzcxIiwgIjgzODdiNDYiLCAiNWZjMDc2MSIsCiAgICAgICAgICAgICAgICAgImFkMzhlZDkiLCAiZjNlMzBhNSIsICIwZWEzOGRkIl0sCn0KCgpkZWYgZ2l0KCphcmdzKToKICAgIHJldHVybiBzdWJwcm9jZXNzLnJ1bihbImdpdCIsICphcmdzXSwgY2FwdHVyZV9vdXRwdXQ9VHJ1ZSwgdGV4dD1UcnVlLCBjaGVjaz1UcnVlKS5zdGRvdXQKCgpmb3IgbmFtZSwgcmV2cyBpbiBNQVRSSVguaXRlbXMoKToKICAgIHByaW50KGYiPT0gdGVzdHMvdGVzdF97bmFtZX0ucHkgYWdhaW5zdCBldmVyeSByZXZpc2lvbiBvZiBzY3JpcHRzL3tuYW1lfS5weSA9PSIpCiAgICBsaXN0ZWQgPSBnaXQoImxvZyIsICItLW9uZWxpbmUiLCAiLS1yZXZlcnNlIiwgZiJjZmFmZThlLi4wZWEzOGRkIiwKICAgICAgICAgICAgICAgICAiLS0iLCBmInBsdWdpbnMvd2Vic3Rlci9zY3JpcHRzL3tuYW1lfS5weSIpCiAgICBwcmludChmIiAgIGdpdCBsb2cgLS1vbmVsaW5lIC0tcmV2ZXJzZSBjZmFmZThlLi4wZWEzOGRkIC0tIHBsdWdpbnMvd2Vic3Rlci9zY3JpcHRzL3tuYW1lfS5weSIpCiAgICBmb3IgbGluZSBpbiBsaXN0ZWQuc3BsaXRsaW5lcygpOgogICAgICAgIHByaW50KGYiICAgICB7bGluZX0iKQogICAgcHJpbnQoZiIgICB0aGUgZG9jc3RyaW5nJ3MgbGlzdCwgY2ZhZmU4ZSBwbHVzIHRob3NlOiB7bGVuKHJldnMpfSByZXZpc2lvbnMiKQoKICAgIHNjcmF0Y2ggPSB0ZW1wZmlsZS5ta2R0ZW1wKCkKICAgIHBsdWdpbiA9IG9zLnBhdGguam9pbihzY3JhdGNoLCAid2Vic3RlciIpCiAgICBzaHV0aWwuY29weXRyZWUoInBsdWdpbnMvd2Vic3RlciIsIHBsdWdpbikKICAgIGZhaWx1cmVzID0ge30KICAgIGZvciByZXYgaW4gcmV2czoKICAgICAgICB3aXRoIG9wZW4ob3MucGF0aC5qb2luKHBsdWdpbiwgInNjcmlwdHMiLCBmIntuYW1lfS5weSIpLCAidyIsIGVuY29kaW5nPSJ1dGYtOCIpIGFzIGY6CiAgICAgICAgICAgIGYud3JpdGUoZ2l0KCJzaG93IiwgZiJ7cmV2fTpwbHVnaW5zL3dlYnN0ZXIvc2NyaXB0cy97bmFtZX0ucHkiKSkKICAgICAgICByID0gc3VicHJvY2Vzcy5ydW4oWyJ1dngiLCAicHl0ZXN0IiwgZiJ0ZXN0cy90ZXN0X3tuYW1lfS5weSIsICItcSIsICItLW5vLWhlYWRlciIsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAiLXAiLCAibm86Y2FjaGVwcm92aWRlciIsICItcmYiXSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgY3dkPXBsdWdpbiwgY2FwdHVyZV9vdXRwdXQ9VHJ1ZSwgdGV4dD1UcnVlKQogICAgICAgIHJlZCA9IHNvcnRlZChzZXQocmUuZmluZGFsbChyZiJeRkFJTEVEIHRlc3RzL3Rlc3Rfe25hbWV9XC5weTo6KFx3KykiLCByLnN0ZG91dCwgcmUuTSkpKQogICAgICAgIGZhaWx1cmVzW3Jldl0gPSByZWQKICAgICAgICBzdW1tYXJ5ID0gW2wgZm9yIGwgaW4gci5zdGRvdXQuc3BsaXRsaW5lcygpIGlmICIgcGFzc2VkIiBpbiBsIG9yICIgZmFpbGVkIiBpbiBsXVstMV0KICAgICAgICBwcmludChmIiAgIHtyZXY6OXN9IHtyZS5zdWIocicgaW4gWzAtOS5dK3MkJywgJycsIHN1bW1hcnkuc3RyaXAoKSl9IikKICAgIHNodXRpbC5ybXRyZWUoc2NyYXRjaCkKCiAgICBwcmludChmIiAgIHBlciByb3csIHRoZSByZXZpc2lvbnMgaXQgaXMgcmVkIGFnYWluc3Q6IikKICAgIHJvd3MgPSBzb3J0ZWQoe3QgZm9yIHJlZCBpbiBmYWlsdXJlcy52YWx1ZXMoKSBmb3IgdCBpbiByZWR9CiAgICAgICAgICAgICAgICAgIHwgc2V0KHJlLmZpbmRhbGwociJeZGVmICh0ZXN0X1x3KykiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIG9wZW4oZiJwbHVnaW5zL3dlYnN0ZXIvdGVzdHMvdGVzdF97bmFtZX0ucHkiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZW5jb2Rpbmc9InV0Zi04IikucmVhZCgpLCByZS5NKSkpCiAgICBmb3Igcm93IGluIHJvd3M6CiAgICAgICAgcmVkID0gW3JldiBmb3IgcmV2IGluIHJldnMgaWYgcm93IGluIGZhaWx1cmVzW3Jldl1dCiAgICAgICAgcHJpbnQoZiIgICAgIHtyb3c6NThzfSB7J2d1YXJkIChncmVlbiBhdCBldmVyeSByZXZpc2lvbiknIGlmIG5vdCByZWQgZWxzZSAnICcuam9pbihyZWQpfSIpCiAgICBwcmludCgpCg== | base64 -d > "$d/m.py"; echo "== the script this log runs =="; cat "$d/m.py"; echo; python3 "$d/m.py"; rm -rf "$d"'
+# evidence-for: US-010, FR-039, AC-039
+# evidence-timeout: 600
+== the script this log runs ==
+# Cycle-17: the red-first matrix both test modules publish, re-measured across every
+# revision of the script each one drives, including the revision this cycle added.
+# Run from the repository root. Each cell is one run of the module against one
+# revision's script, in a scratch copy of the plugin, exactly as the docstrings say.
+import re, shutil, subprocess, tempfile, os
+
+MATRIX = {
+    "slop": ["cfafe8e", "af10189", "ba33497", "ecc7dd5", "ad38ed9", "f33f7c2",
+             "f3e30a5", "368b269", "2830b9c", "8fe80e2", "0ea38dd"],
+    "scaffold": ["cfafe8e", "af10189", "ecc7dd5", "3dadc71", "8387b46", "5fc0761",
+                 "ad38ed9", "f3e30a5", "0ea38dd"],
+}
+
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+
+
+for name, revs in MATRIX.items():
+    print(f"== tests/test_{name}.py against every revision of scripts/{name}.py ==")
+    listed = git("log", "--oneline", "--reverse", f"cfafe8e..0ea38dd",
+                 "--", f"plugins/webster/scripts/{name}.py")
+    print(f"   git log --oneline --reverse cfafe8e..0ea38dd -- plugins/webster/scripts/{name}.py")
+    for line in listed.splitlines():
+        print(f"     {line}")
+    print(f"   the docstring's list, cfafe8e plus those: {len(revs)} revisions")
+
+    scratch = tempfile.mkdtemp()
+    plugin = os.path.join(scratch, "webster")
+    shutil.copytree("plugins/webster", plugin)
+    failures = {}
+    for rev in revs:
+        with open(os.path.join(plugin, "scripts", f"{name}.py"), "w", encoding="utf-8") as f:
+            f.write(git("show", f"{rev}:plugins/webster/scripts/{name}.py"))
+        r = subprocess.run(["uvx", "pytest", f"tests/test_{name}.py", "-q", "--no-header",
+                            "-p", "no:cacheprovider", "-rf"],
+                           cwd=plugin, capture_output=True, text=True)
+        red = sorted(set(re.findall(rf"^FAILED tests/test_{name}\.py::(\w+)", r.stdout, re.M)))
+        failures[rev] = red
+        summary = [l for l in r.stdout.splitlines() if " passed" in l or " failed" in l][-1]
+        print(f"   {rev:9s} {re.sub(r' in [0-9.]+s$', '', summary.strip())}")
+    shutil.rmtree(scratch)
+
+    print(f"   per row, the revisions it is red against:")
+    rows = sorted({t for red in failures.values() for t in red}
+                  | set(re.findall(r"^def (test_\w+)",
+                                   open(f"plugins/webster/tests/test_{name}.py",
+                                        encoding="utf-8").read(), re.M)))
+    for row in rows:
+        red = [rev for rev in revs if row in failures[rev]]
+        print(f"     {row:58s} {'guard (green at every revision)' if not red else ' '.join(red)}")
+    print()
+
+== tests/test_slop.py against every revision of scripts/slop.py ==
+   git log --oneline --reverse cfafe8e..0ea38dd -- plugins/webster/scripts/slop.py
+     af10189 fix(webster): slop.py fails on real tells only, and scaffold.py checks before it writes
+     ba33497 fix(webster): the unreadable target slop.py reported as slop, and the range comment that spoke for Unicode
+     ecc7dd5 fix(webster): the write scaffold.py could not make, and the lines its comments pointed at
+     ad38ed9 fix(webster): the read that answered a refusal as an absence, and two sentences about the wrong population
+     f33f7c2 fix(webster): the row recorded as unfailable, and the sibling count that left one out
+     f3e30a5 fix(webster): the fourth block the emoji comment never counted, and the fifth entry scaffold.py left off its own tree
+     368b269 fix(webster): the prior comment that never existed, and one reason given for two unlike omissions
+     2830b9c fix(webster): the four earlier versions a comment counted as two, and the two rows said to depart the same way
+     8fe80e2 fix(webster): the three comment texts counted as four versions
+     0ea38dd fix(webster): the flag that decides nothing for two rules, and six more sentences the sweep measured false
+   the docstring's list, cfafe8e plus those: 11 revisions
+   cfafe8e   6 failed, 4 passed
+   af10189   1 failed, 9 passed
+   ba33497   10 passed
+   ecc7dd5   10 passed
+   ad38ed9   10 passed
+   f33f7c2   10 passed
+   f3e30a5   10 passed
+   368b269   10 passed
+   2830b9c   10 passed
+   8fe80e2   10 passed
+   0ea38dd   10 passed
+   per row, the revisions it is red against:
+     test_ai_co_author_trailer_reports_agent_attribution        guard (green at every revision)
+     test_dangling_symlink_page_exits_two                       cfafe8e af10189
+     test_human_co_author_trailer_exits_zero                    cfafe8e
+     test_kept_supplementary_range_reports_a_non_emoji_block    guard (green at every revision)
+     test_missing_target_exits_two                              cfafe8e
+     test_presentation_emoji_in_heading_is_reported             cfafe8e
+     test_pruned_directories_are_neither_checked_nor_counted    guard (green at every revision)
+     test_supercharge_still_exits_one                           guard (green at every revision)
+     test_text_marks_in_headings_are_not_emoji                  cfafe8e
+     test_weak_verb_page_reports_medium_and_exits_zero          cfafe8e
+
+== tests/test_scaffold.py against every revision of scripts/scaffold.py ==
+   git log --oneline --reverse cfafe8e..0ea38dd -- plugins/webster/scripts/scaffold.py
+     af10189 fix(webster): slop.py fails on real tells only, and scaffold.py checks before it writes
+     ecc7dd5 fix(webster): the write scaffold.py could not make, and the lines its comments pointed at
+     3dadc71 fix(webster): the exit contract scaffold.py never published, and the page it read through a bare open()
+     8387b46 fix(webster): the exit contract scaffold.py published but did not keep, and two assertions that swallowed their own output
+     5fc0761 fix(webster): the walk that skipped what it could not list, and the argv byte no page could hold
+     ad38ed9 fix(webster): the read that answered a refusal as an absence, and two sentences about the wrong population
+     f3e30a5 fix(webster): the fourth block the emoji comment never counted, and the fifth entry scaffold.py left off its own tree
+     0ea38dd fix(webster): the flag that decides nothing for two rules, and six more sentences the sweep measured false
+   the docstring's list, cfafe8e plus those: 9 revisions
+   cfafe8e   10 failed, 2 passed
+   af10189   9 failed, 3 passed
+   ecc7dd5   8 failed, 4 passed
+   3dadc71   7 failed, 5 passed
+   8387b46   6 failed, 6 passed
+   5fc0761   2 failed, 10 passed
+   ad38ed9   12 passed
+   f3e30a5   12 passed
+   0ea38dd   12 passed
+   per row, the revisions it is red against:
+     test_a_refused_read_drops_the_violations_it_had_collected  cfafe8e af10189 ecc7dd5 3dadc71 8387b46
+     test_bad_subject_key_writes_nothing_and_exits_two          cfafe8e
+     test_every_documented_envelope_leads_with_status           cfafe8e af10189 ecc7dd5 3dadc71
+     test_help_names_an_exit_set_for_both_modes                 cfafe8e af10189 ecc7dd5 3dadc71 8387b46 5fc0761
+     test_malformed_category_json_stays_a_violation             guard (green at every revision)
+     test_unlistable_directory_below_the_top_level_exits_two    cfafe8e af10189 ecc7dd5 3dadc71 8387b46
+     test_unreadable_page_exits_two_without_a_traceback         cfafe8e af10189 ecc7dd5
+     test_unstattable_docs_directory_is_a_could_not_read        cfafe8e af10189 ecc7dd5 3dadc71 8387b46 5fc0761
+     test_unwritable_docs_path_exits_two_without_a_traceback    cfafe8e af10189
+     test_unwritable_subject_label_writes_nothing_and_exits_two cfafe8e af10189 ecc7dd5 3dadc71 8387b46
+     test_unwritable_title_writes_nothing_and_exits_two         cfafe8e af10189 ecc7dd5 3dadc71 8387b46
+     test_valid_subject_key_creates_the_landing_page            guard (green at every revision)
+
