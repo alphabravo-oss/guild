@@ -72,6 +72,11 @@ than saying nothing.
 
 ## What you return
 
+Send it. Finishing the read does not deliver anything: put the report in a message to whoever
+dispatched you, in full, in this shape. A report that only exists in your own transcript has not
+been read by anybody.
+
+
 ```
 audience: <the audience the page declares>
 verdict: finished | finished-with-friction | stopped

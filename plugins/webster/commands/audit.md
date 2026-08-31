@@ -183,6 +183,11 @@ everything under `getting-started/`, each subject's landing page, and every page
 `troubleshooting/`. Read the rest when the user asks for it, and say which pages went unread
 rather than letting a partial sweep read as a full one.
 
+**Collect every report before you judge any of them.** A reader dispatched as a background agent
+finishes and goes idle without handing anything back; the report arrives when you ask for it.
+Ask each one by name, and read what it sent rather than its transcript. A sweep that acts on the
+two reports that happened to arrive has read two thirds of the documentation.
+
 Each returns a verdict and findings in a closed vocabulary: `stopped`, `assumed`,
 `unresolvable`, `reread`, `orphan`. Weight them:
 

@@ -198,6 +198,11 @@ every gap on the page is filled from your own head before you notice it is a gap
 failure of attention; it is what knowing the answer does. The reader has none of it, which is
 the whole of its value, so do not hand it context to be helpful.
 
+**Collect every report before you judge any of them.** A reader dispatched as a background agent
+finishes and goes idle without handing anything back; the report arrives when you ask for it.
+Ask each one by name, and read what it sent rather than its transcript. A sweep that acts on the
+two reports that happened to arrive has read two thirds of the documentation.
+
 A `stopped` verdict means the page does not work. Fix it and dispatch again. `assumed` and
 `unresolvable` findings are the page skipping an introduction it owes, which is what `pedagogy`
 is about and what nothing mechanical can see.
