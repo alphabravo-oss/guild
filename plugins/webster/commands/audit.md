@@ -100,6 +100,14 @@ Every defect is a P1, with three exceptions that are P0:
   somebody other than the person it says it is for. The fix is usually to move it, not to edit
   the frontmatter until the checker goes quiet.
 
+`glossary-trusted` is an advisory and it is the one to read out loud. It lists terms cleared only
+because the glossary defines them, and nothing anywhere reads a definition for correctness. On a
+set nobody proofreads before it reaches a customer, that is the list of claims the documentation
+made and the tooling took on faith.
+
+Read the `doctype.py` header line before any of the counts. It says which oracle the run used,
+and a run with no survey has judged the documentation using the documentation.
+
 `undefined-jargon` and `explains-mechanism` are P1. Both are the page assuming knowledge of a
 product the reader came to learn.
 
@@ -153,9 +161,15 @@ never ran. `partial` is the honest verdict and it is not a pass.
 ## Step 7.5, build the site, then read what it produced
 
 ```bash
+grep -n onBrokenLinks website/docusaurus.config.js
 cd website && npm install && npm run build
 cd .. && python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rendered.py check website/build
 ```
+
+**Check `onBrokenLinks` before trusting the build.** Anything other than `'throw'` means a dead
+link prints a warning, exits 0, prints `[SUCCESS]` and ships to the reader. Sites scaffolded
+before this was fixed carry `'warn'`, so a green build on one of them is evidence of nothing.
+Fix the config and rebuild rather than reading the warnings by hand.
 
 Every check above reads markdown as text. None compiles it, so a documentation set can pass all
 of them and still fail to build. Invalid YAML in frontmatter, a stray tag, and a link that

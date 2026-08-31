@@ -308,7 +308,14 @@ const config = {{
   tagline: {json.dumps(a.description)},
   url: {json.dumps(a.url)},
   baseUrl: '/',
-  onBrokenLinks: 'warn',
+  // Docusaurus defaults this to 'throw'. It was set to 'warn', which meant a dead internal
+  // link printed a warning, exited 0, printed [SUCCESS], and shipped the 404 to the reader.
+  // house-rules calls Builds "the gate the other six cannot stand in for" and says it passes
+  // when the site "reports no broken links" — and it reported them and passed anyway. A
+  // documentation set is meant to be handed to a customer unread, so the reader is the one who
+  // finds the dead link. Back to the default.
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
   favicon: 'img/favicon.ico',
   organizationName: {json.dumps(a.org)},
   projectName: {json.dumps(a.project)},

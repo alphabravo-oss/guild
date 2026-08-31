@@ -699,6 +699,7 @@ def test_header_line_counts_the_terms_the_survey_contributed(run_script, docs_di
 
     Two surveys of different sizes, run one after the other against the same page. This test
     used to assert the single literal ``lens allowlist: 3 terms from WEBSTER_SURVEY`` against
+    a header line that now also counts the environment variables the survey contributed, and
     a fixture holding exactly three terms, which a constant 3 printed by the header satisfies
     — and a count that is not read from the allowlist is the whole of what FR-035 forbids.
 
@@ -719,7 +720,7 @@ def test_header_line_counts_the_terms_the_survey_contributed(run_script, docs_di
                           (survey_json(large_dir, labels=large), large)):
         result = check(run_script, docs_dir, WEBSTER_SURVEY=str(survey))
 
-        assert f"lens allowlist: {len(terms)} terms from WEBSTER_SURVEY" in result.stdout, (
+        assert f"survey: {len(terms)} product terms" in result.stdout, (
             f"The header counts the terms this survey contributed, and this one holds "
             f"{len(terms)}: {list(terms)}. Two surveys of different sizes, because one "
             f"fixture cannot tell a real count from a constant.\n{outcome(result)}"
@@ -739,8 +740,8 @@ def test_missing_survey_file_does_not_crash(run_script, docs_dir, tmp_path):
         f"A missing survey is an optional input that was not there, not a failure."
         f"\n{outcome(result)}"
     )
-    assert "no survey allowlist" in result.stdout, (
-        f"Expected the header line to say no survey allowlist was loaded.\n{outcome(result)}"
+    assert "no survey:" in result.stdout, (
+        f"Expected the header line to say no survey was loaded.\n{outcome(result)}"
     )
     assert "Traceback" not in result.stderr, f"Expected no traceback.\n{outcome(result)}"
 
@@ -753,7 +754,7 @@ def test_malformed_survey_file_does_not_crash(run_script, docs_dir, tmp_path):
 
     result = check(run_script, docs_dir, WEBSTER_SURVEY=str(broken))
 
-    assert "no survey allowlist" in result.stdout, (
+    assert "no survey:" in result.stdout, (
         f"Expected the header line to say the survey was not loaded.\n{outcome(result)}"
     )
     assert result.returncode == 1, (

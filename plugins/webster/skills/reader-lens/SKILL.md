@@ -40,10 +40,18 @@ The reliable move is mechanical. **Before writing a user page, get the words the
 on itself.** `survey.py` returns them under `user_surface`:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . | python3 -c "
-import json,sys; u=json.load(sys.stdin)['user_surface']
-[print(k, len(v)) for k,v in u.items()]"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . > .webster-survey.json
+WEBSTER_SURVEY=.webster-survey.json \
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
 ```
+
+**Save the survey and pass it.** It is not an optional courtesy: it is the only oracle the lens
+has that lives outside the thing being judged. With it, the product's own screen and button
+names stop being reported as internal symbols, and an environment variable is one the code
+actually reads. Without it, whether `PIONEER_API_URL` on a user page is a leak depends on
+whether some other page in the same set happens to show it being assigned, which means adding a
+page changes the verdict on a different page and deleting one makes a defect disappear. The
+check says which oracle it used on every run.
 
 - `screens`, the pages a person can be on
 - `labels`, the text on buttons, headings, tabs and form fields
@@ -80,8 +88,25 @@ deployment type do I pick. Why did my number come out different from my neighbou
 estimate is safe to spend money on.
 
 If the page explains a mechanism the reader cannot act on, it is a developer page in the wrong
-directory. `doctype.py` tests this crudely and effectively: a `user` explanation page that barely
-addresses the reader is not written for them.
+directory. `doctype.py` measures that as vocabulary: the architecture words the lens knows,
+against the product's own screens, labels and commands from the survey. A page whose machinery
+outnumbers its product is explaining the machine.
+
+It counted second-person pronouns until that was tested, which measured tone rather than
+subject. A page made entirely of "You should know the status field moves between states. You can
+see that the handler writes it." passed: pure mechanism, addressed warmly.
+
+**What the vocabulary count still cannot see.** The page that motivated this rule, a deployment
+lifecycle page opening "A deployment's status is the field everything else in the UI hangs off",
+scores zero machinery: it names no handler, no schema, no goroutine. Its words are the status
+names the interface really displays, so the survey allowlists every one of them. The page is
+still wrong, and it is wrong semantically: it explains how a state machine transitions instead
+of what the reader should do when their deployment stops moving. No word count reaches that.
+
+So this rule catches the page whose vocabulary gives it away and misses the page whose subject
+does. That gap belongs to the human half of the Readable gate, and on a set going to a customer
+unread it is one of the things nobody checked. Say so in the report rather than letting a clean
+`explains-mechanism` count stand in for a page somebody read.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py template explanation user
@@ -101,6 +126,19 @@ Record the list in the plan with a line on why each term belongs to the reader, 
 short. It is a declaration, not a default, because the easy way to defeat this rule is to widen
 it until nothing fires. A term goes on the list when the product's own interface uses it in front
 of that reader, not when removing it would be inconvenient.
+
+## Jargon, and why "expanded somewhere" is not "introduced"
+
+An acronym is cleared when the page expands it **at or before its first use**. Position is the
+whole rule. A page opening with "Configure the NSG first" and closing with an unrelated note
+about "a network security group (NSG)" used to pass, and the reader had already met the term and
+been failed by the time the expansion arrived.
+
+A glossary entry also clears a term, and that is trust rather than verification: nothing reads a
+definition to see whether it is right, so a glossary saying NSG is a Dutch pastry clears it as
+completely as the correct entry does. Those terms are counted and reported as
+`glossary-trusted`. On a set nobody proofreads, that advisory is the list of things the
+documentation asserted and nothing checked. Read it.
 
 ## Jargon, which is the same failure one level down
 

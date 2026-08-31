@@ -185,7 +185,7 @@ of them.
 
 ## Status
 
-Version 0.11.0.
+Version 0.12.0.
 
 ```
 cd plugins/webster && uvx pytest

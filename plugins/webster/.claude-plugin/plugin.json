@@ -1,6 +1,6 @@
 {
   "name": "webster",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Documentation for the person who has to use the thing. Every page declares who it is for, and that declaration decides what the page may be about, not just how hard its sentences may be: a page for a user names screens, buttons and what the product gives back, never a symbol, a route or the architecture. Written from the product's own on-screen vocabulary before anyone opens the source. Fixed layout modelled on Harvester, content types from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Anchors every claim, measures drift against a recorded manifest, and refuses to state what it could not check.",
   "author": {
     "name": "AlphaBravo"

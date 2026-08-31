@@ -185,6 +185,12 @@ case regardless of what the agent file looks like.
 
 ## 8. The gates
 
+**The bar is documentation somebody can hand to a customer without reading it first.** That is
+what every rule here is for, and it changes what a soft verdict means. `not_checked` and
+`partial` are honest reports, and honesty only buys something when a person reads the report. If
+nobody does, an unchecked gate is an unchecked page in front of a customer. So a soft verdict is
+not a smaller pass. It is the list of what shipped on trust, and it is the first thing to say.
+
 A page is not finished until all seven pass. Report the ones that did not, with the reason.
 
 | Gate | Passes when |
@@ -193,7 +199,7 @@ A page is not finished until all seven pass. Report the ones that did not, with 
 | Runnable | Every non-illustrative example has been executed |
 | Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
 | Lens | Every page declares a reader, and names nothing that reader cannot touch |
-| Builds | The site compiles, reports no broken links, and `rendered.py` finds nothing internal on the rendered pages |
+| Builds | The site compiles with `onBrokenLinks: 'throw'`, and `rendered.py` finds nothing internal on the rendered pages |
 | Readable | The mechanical half of `doctype.py check` is clean, and somebody who did not already know the answer got through it |
 | Honest | The two §4 pages exist and the page claims nothing from §3 |
 
@@ -202,6 +208,12 @@ none of them compiles it, so a documentation set can pass every checker and stil
 reader nothing. Invalid YAML in a frontmatter `description`, a stray closing tag at the end of a
 page, and a link written as an absolute path have each taken a whole site down while the
 checkers stayed green. Where there is no site to build, report it `not_checked`.
+
+**A build that warns is not a build that passes.** The scaffold set `onBrokenLinks: 'warn'`,
+so a dead internal link printed a warning, exited 0, printed `[SUCCESS]`, and shipped the 404.
+This table said the gate passes when the site "reports no broken links", and it reported them
+and passed anyway. It is `throw` now, which is Docusaurus's own default. Never lower it: the
+reader is the one who finds a dead link, and on a set nobody proofreads they find it first.
 
 **Compiling is half of it. Reading the result is the other half.** `rendered.py` scans the built
 HTML for anything internal that reached the reader: a visible `file:line`, a source path, a

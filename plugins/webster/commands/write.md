@@ -14,6 +14,11 @@ Re-run the survey so the surface is current:
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/survey.py . > /tmp/webster-survey.json
 ```
 
+Keep that file and pass it to every check below as `WEBSTER_SURVEY`. It is the only thing telling
+them what the product calls its own screens and which names the code really reads as environment
+variables. Without it they infer both from the pages being checked, which is the artifact
+deciding how the artifact is judged.
+
 Run every extractor the plan named. Reference pages are built from that output. Per the
 `extraction` skill, a reference page a model composed from memory is a page that drifts.
 

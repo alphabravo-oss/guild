@@ -640,16 +640,40 @@ def check_universal(rel, text, audience, override):
     return defects, advisories
 
 
-def assigned_env_vars(docs):
-    """Which SCREAMING_SNAKE names are actually environment variables.
+def survey_env_vars(path):
+    """Which SCREAMING_SNAKE names are environment variables, according to the CODE.
 
     `CREDENTIAL_ERROR` is a status the interface displays and `PIONEER_API_URL` is a variable
-    somebody exports, and the two are indistinguishable by shape. So a name counts as a variable
-    only where the documentation says so, in one of two ways: an assignment anywhere in the tree
-    (`NAME=`, with or without a leading `export`), or a backticked name within forty characters
-    after the word "variable", "env" or "environment". The second wants no assignment at all, so
-    a page that only writes "the environment variable `DATABASE_URL`" is enough to have that
-    name reported on every `user` page in the set."""
+    somebody exports, and the two are indistinguishable by shape. The question is real; the
+    previous answer was not. It read the documentation to decide how to judge the documentation,
+    which made the verdict on one page depend on the contents of another: a user page naming
+    `PIONEER_API_URL` was clean on its own and a defect once an unrelated install page happened
+    to show the same name being assigned. Delete that page and the leak disappeared.
+
+    survey.py already reports every variable the code actually reads, under surface.config, with
+    a file:line for each. That is an oracle outside the artifact, which is the only kind worth
+    having: nothing a page says can change the answer."""
+    if not path:
+        return set(), False
+    try:
+        with open(path, encoding="utf-8") as fh:
+            config = (json.load(fh).get("surface") or {}).get("config") or []
+        return {c["name"] for c in config
+                if isinstance(c, dict) and isinstance(c.get("name"), str)}, True
+    except Exception:
+        return set(), False
+
+
+SURVEY_ENV, SURVEY_ENV_LOADED = survey_env_vars(SURVEY_PATH)
+
+
+def assigned_env_vars(docs):
+    """Fallback for when no survey is available: names the docs themselves show being set.
+
+    This is the circular oracle survey_env_vars replaces, kept only so a run with no survey
+    still reports something rather than nothing. `check` says which one it used, because a
+    verdict reached from the artifact under test is worth less than one reached from the code
+    and the reader of the report is entitled to know which they got."""
     found = set()
     for dirpath, dirnames, filenames in os.walk(docs):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -665,9 +689,14 @@ def assigned_env_vars(docs):
 
 
 def glossary_terms(docs):
-    """Every term the documentation set defines somewhere, so a page that uses one is not
-    accused of assuming it. A glossary page defines its headings; any page defines a term it
-    expands in parentheses."""
+    """Every term the documentation set DEFINES, which is only what a glossary page defines.
+
+    This also collected any acronym appearing in parentheses on any page, on the theory that
+    expanding a term defines it. It does, but only for the reader of that page and only from
+    that point on, and collecting them here made the set-wide list bypass the per-page ordering
+    test entirely: one page closing with "a network security group (NSG)" excused NSG's use in
+    the opening line of every other page in the set. A parenthetical is a page-level
+    introduction and belongs to expanded_on_page, which tests whether it came in time."""
     terms = set()
     for dirpath, dirnames, filenames in os.walk(docs):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -675,26 +704,35 @@ def glossary_terms(docs):
             if not fn.endswith(".md"):
                 continue
             text = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read()
-            is_glossary = frontmatter(text).get("doc_type") == "glossary"
+            if frontmatter(text).get("doc_type") != "glossary":
+                continue
             for n, line in prose_lines(text):
-                if is_glossary:
-                    m = re.match(r"^#{2,6}\s+(.+?)\s*$", line)
-                    if m:
-                        terms.add(m.group(1).strip("`*").upper())
-                        for a in ACRONYM.findall(m.group(1)):
-                            terms.add(a)
+                m = re.match(r"^#{2,6}\s+(.+?)\s*$", line)
+                if m:
+                    terms.add(m.group(1).strip("`*").upper())
+                    for a in ACRONYM.findall(m.group(1)):
+                        terms.add(a)
                 for a in re.findall(r"\(([A-Z][A-Z0-9]{1,5})s?\)", line):
                     terms.add(a)
     return terms
 
 
-def expanded_on_page(acr, body):
-    """The page itself introduces the acronym, either as 'network security group (NSG)' or as
-    'NSG (network security group)'. Anything else is the reader being assumed to know it."""
-    if re.search(rf"(?:[A-Za-z][\w-]*\s+){{1,6}}\({acr}s?\)", body):
-        return True
-    if re.search(rf"\b{acr}s?\b\s*\([^)]{{4,90}}\)", body):
-        return True
+def expanded_on_page(acr, body, before=None):
+    """The page introduces the acronym at or before `before`, the offset of its first bare use.
+
+    Position is the whole rule. "A concept is introduced before it is used" is what `pedagogy`
+    asks for and what this is named after, and testing only that an expansion exists somewhere
+    on the page satisfied a page that used NSG in its opening sentence and expanded it in an
+    unrelated closing note. The reader had already met the term and been failed by then.
+
+    `before=None` keeps the old whole-page test, for callers that want existence rather than
+    order."""
+    limit = len(body) if before is None else before
+    for pat in (rf"(?:[A-Za-z][\w-]*\s+){{1,6}}\({acr}s?\)",
+                rf"\b{acr}s?\b\s*\([^)]{{4,90}}\)"):
+        m = re.search(pat, body)
+        if m and m.start() <= limit:
+            return True
     return False
 
 
@@ -761,16 +799,28 @@ def check_lens(rel, text, audience, dt, env_vars):
                                        "fix": "say what the reader sees happen instead"})
 
     # An explanation page for someone who uses the product exists to help them make a decision
-    # they actually face. One that never addresses them is explaining a mechanism they cannot
-    # touch, which is a developer page wearing the wrong frontmatter.
+    # they actually face. One that explains a mechanism they cannot touch is a developer page
+    # wearing the wrong frontmatter.
+    #
+    # This counted second-person pronouns, which measured tone rather than subject. A page made
+    # entirely of "You should know the status field moves between states. You can see that the
+    # handler writes it." passed: pure mechanism, addressed warmly. What the rule is named after
+    # is what the page is ABOUT, so what it counts now is vocabulary. Machinery words against
+    # product words: the architecture terms the lens already knows, against the product's own
+    # screens, labels and commands from the survey. A page whose machinery outnumbers its
+    # product is explaining the machine.
     if audience == "user" and dt == "explanation":
         body = "\n".join(l for _, l in prose_lines(text, tables=False))
         words = len(re.findall(r"[A-Za-z][A-Za-z']+", body))
-        hits = len(SECOND_PERSON.findall(body))
-        if words >= 200 and hits * 100.0 / words < 0.5:
+        machine = len(ARCH_HARD.findall(body)) + len(ARCH_SOFT.findall(body))
+        product = sum(1 for t in SURVEY_ALLOW if t and len(t) > 3
+                      and re.search(rf"\b{re.escape(t)}\b", body, re.I))
+        product += len(SECOND_PERSON.findall(body)) // 8
+        if words >= 200 and machine >= 3 and machine > product:
             defects.append({"page": rel, "rule": "explains-mechanism",
-                            "problem": f"a 'user' explanation page that addresses the reader "
-                                       f"{hits} times in {words} words",
+                            "problem": f"a 'user' explanation page naming the machinery "
+                                       f"{machine} times against {product} mentions of the "
+                                       f"product, in {words} words",
                             "fix": "an explanation for a user exists to settle a choice they "
                                    "face. If it explains something they cannot act on, it is a "
                                    "developer page"})
@@ -779,8 +829,14 @@ def check_lens(rel, text, audience, dt, env_vars):
 
 def check_jargon(rel, text, audience, known):
     """A term used before the reader has met it. This is the mechanical half of the Readable
-    gate, which otherwise depends on a reviewer being available."""
-    findings = []
+    gate, which otherwise depends on a reviewer being available.
+
+    `known` is the glossary, and clearing a term against it is a statement of trust rather than
+    a verification: nothing here reads a definition to see whether it is correct, and a glossary
+    entry saying NSG is a Dutch pastry clears the term as completely as the right one does. The
+    terms cleared that way are counted and reported, so a set that passes on the glossary's word
+    says so out loud instead of passing quietly."""
+    findings, on_trust = [], set()
     body = "\n".join(l for _, l in prose_lines(text))
     linked_glossary = "glossary" in text.lower()
     seen = set()
@@ -791,13 +847,17 @@ def check_jargon(rel, text, audience, known):
         runs = [r.span() for r in CAPS_RUN.finditer(line)]
         for m in ACRONYM.finditer(line):
             a = m.group(1)
-            if a in UNIVERSAL_ACRONYMS or a in known or a in seen:
+            if a in UNIVERSAL_ACRONYMS or a in seen:
+                continue
+            if a in known:
+                on_trust.add(a)
                 continue
             if ON_SCREEN_CUE.search(line[:m.start()]):
                 continue
             if any(x <= m.start() < y for x, y in runs):
                 continue
-            if expanded_on_page(a, body):
+            first = re.search(rf"\b{a}s?\b", body)
+            if expanded_on_page(a, body, first.start() if first else None):
                 continue
             seen.add(a)
             findings.append({"page": f"{rel}:{n}", "rule": "undefined-jargon",
@@ -807,9 +867,16 @@ def check_jargon(rel, text, audience, known):
     if linked_glossary:
         for f in findings:
             f["fix"] += "; the page links the glossary but this term is not in it"
+    trust = []
+    if on_trust:
+        trust.append({"page": rel, "rule": "glossary-trusted",
+                      "problem": f"{len(on_trust)} term(s) cleared only by a glossary entry "
+                                 f"nobody checked: " + ", ".join(sorted(on_trust)[:8]),
+                      "fix": "the glossary says what these mean and no check reads a definition "
+                             "for correctness. Confirm them before this ships unread"})
     if audience == "user":
-        return findings, []
-    return [], findings
+        return findings, trust
+    return [], findings + trust
 
 
 def check_typed(rel, text, dt, spec):
@@ -888,17 +955,19 @@ def survey_line():
     same whether the survey was read or the path was a typo, and the reader is left to guess
     why their product's own labels are being reported as internals."""
     if not SURVEY_PATH:
-        return "no survey allowlist"
+        return ("no survey: the lens has no allowlist and environment variables are judged "
+                "from what the docs themselves say, which is the artifact judging itself. "
+                "Pass WEBSTER_SURVEY=<survey.json>")
     if not SURVEY_LOADED:
-        return f"no survey allowlist: WEBSTER_SURVEY {SURVEY_PATH} could not be read"
-    return (f"lens allowlist: {len(SURVEY_ALLOW)} terms from WEBSTER_SURVEY "
-            f"({SURVEY_PATH})")
+        return f"no survey: WEBSTER_SURVEY {SURVEY_PATH} could not be read"
+    return (f"survey: {len(SURVEY_ALLOW)} product terms and {len(SURVEY_ENV)} environment "
+            f"variables, from {SURVEY_PATH}")
 
 
 def run_check(docs, override):
     defects, advisories, untyped, typed, stubs, pages = [], [], [], 0, 0, 0
     known = glossary_terms(docs)
-    env_vars = assigned_env_vars(docs)
+    env_vars = SURVEY_ENV if SURVEY_ENV_LOADED else assigned_env_vars(docs)
     for dirpath, dirnames, filenames in os.walk(docs):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for fn in sorted(filenames):
