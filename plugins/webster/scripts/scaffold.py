@@ -10,11 +10,11 @@
   check  validate an existing tree against the layout, and with --plan against the page table
          the plan declares: a page planned and never written, a page still a stub, a doc_type
          or an audience that disagrees with its row, and a page written that no row declares.
-         status no_plan at exit 2 when --plan names a file that could not be read.
          status violations at exit 1 on any
          violation, status ok at exit 0 when there are none, and exit 2 with a JSON status
          when the check could not run to completion -- no_docs when nothing is at --docs or
-         what is there is not a directory, cannot_read when the filesystem refused a read:
+         what is there is not a directory, no_plan when --plan names a file that could not be
+         read, cannot_read when the filesystem refused a read:
          --docs itself, a page that could not be opened, or a directory at any depth that
          could not be listed. cannot_read carries no violations list, and it can arrive with
          part of the tree already read; the violations collected before the refusal are
