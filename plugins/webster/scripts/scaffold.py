@@ -7,7 +7,11 @@
          a label that cannot be written, cannot_write for a directory or a page the filesystem
          refused and for a --title or a --description carrying a byte no page can hold. init
          never exits 1.
-  check  validate an existing tree against the layout. status violations at exit 1 on any
+  check  validate an existing tree against the layout, and with --plan against the page table
+         the plan declares: a page planned and never written, a page still a stub, a doc_type
+         or an audience that disagrees with its row, and a page written that no row declares.
+         status no_plan at exit 2 when --plan names a file that could not be read.
+         status violations at exit 1 on any
          violation, status ok at exit 0 when there are none, and exit 2 with a JSON status
          when the check could not run to completion -- no_docs when nothing is at --docs or
          what is there is not a directory, cannot_read when the filesystem refused a read:
@@ -72,6 +76,11 @@ SECTION_AUDIENCE = {"getting-started": "user", "install": "operator", "advanced"
                     "troubleshooting": "user", "developer": "developer", "api": "developer"}
 
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# The plan is a working document that happens to live in the docs directory, and llms.txt and
+# the README are not pages either. Holding them to a plan row would report the plan for not
+# planning itself.
+PLAN_EXEMPT = {"docs-plan.md", "llms.txt", "README.md"}
 
 # Every page this script writes is UTF-8, said rather than inherited: open()'s default encoding
 # is whatever the locale resolves to, so the same --title writes cleanly under one LANG and
@@ -393,7 +402,7 @@ def unreadable(error):
 
 
 def do_check(a):
-    docs, bad = a.docs, []
+    docs, bad, plan = a.docs, [], getattr(a, "plan", None)
 
     # Every read below can be refused, the one that asks whether --docs is a directory
     # included. A *.md that is a dangling symlink is listed like any
@@ -522,10 +531,120 @@ def do_check(a):
                           "error": e.strerror or type(e).__name__}))
         return 2
 
-    print(json.dumps({"status": "ok" if not bad else "violations",
-                      "subjects": subjects, "sections": known,
-                      "violations": bad}, indent=2))
+    planned = None
+    if plan:
+        try:
+            plan_bad, planned = check_plan(docs, plan)
+        except OSError as e:
+            print(json.dumps({"status": "no_plan", "path": plan,
+                              "error": e.strerror or type(e).__name__}))
+            return 2
+        bad += plan_bad
+
+    out = {"status": "ok" if not bad else "violations",
+           "subjects": subjects, "sections": known}
+    if planned is not None:
+        out["planned_pages"] = planned
+    out["violations"] = bad
+    print(json.dumps(out, indent=2))
     return 0 if not bad else 1
+
+
+PLAN_ROW = re.compile(r"^\s*\|(.+)\|\s*$")
+PLAN_RULE = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
+
+
+def plan_rows(text):
+    """Every page the plan declares, as {path, type, audience}, read off its tables.
+
+    A plan is written for a person, so the contract is the table it already uses:
+    `| Path | Type | Audience | ... |`. Columns are located by header name rather than by
+    position, because a plan that adds a column between two of them is still the same plan.
+    Any table without a Path and a Type column is something else, and is skipped rather than
+    guessed at.
+    """
+    rows, header, cells = [], None, None
+    for line in text.splitlines():
+        m = PLAN_ROW.match(line)
+        if not m:
+            header = None
+            continue
+        if PLAN_RULE.match(line):
+            continue
+        cells = [c.strip().strip("`") for c in m.group(1).split("|")]
+        low = [c.lower() for c in cells]
+        if "path" in low and "type" in low:
+            header = low
+            continue
+        if not header:
+            continue
+        row = {}
+        for name in ("path", "type", "audience"):
+            if name in header:
+                i = header.index(name)
+                row[name] = cells[i] if i < len(cells) else ""
+        if row.get("path") and row.get("type"):
+            rows.append(row)
+    return rows
+
+
+def check_plan(docs, plan_path, known_audiences=("user", "operator", "developer")):
+    """Every page the plan declared, against the page that was written.
+
+    The plan is the one place a documentation set records what it meant to be, and until this
+    existed nothing ever compared the two: /webster:plan wrote a row per page, /webster:write
+    read the file, and a page written to the wrong type, given the wrong reader or never
+    written at all went unnoticed unless some other rule happened to trip on it.
+
+    Returns (violations, planned_count) or raises OSError, which the caller reports the way it
+    reports any other refused read.
+    """
+    text = open(plan_path, encoding="utf-8", errors="replace").read()
+    bad, planned = [], plan_rows(text)
+    seen = set()
+
+    for row in planned:
+        rel = row["path"]
+        seen.add(rel)
+        full = os.path.join(docs, rel)
+        if not os.path.isfile(full):
+            bad.append({"where": rel, "problem": "the plan declares this page and it was "
+                                                 "never written"})
+            continue
+        page = open(full, encoding="utf-8", errors="replace").read()
+        if "webster: not written yet" in page:
+            bad.append({"where": rel, "problem": "the plan declares this page and it is still "
+                                                 "a stub"})
+            continue
+        for field, planned_value in (("doc_type", row["type"]),
+                                     ("audience", row.get("audience", ""))):
+            if not planned_value:
+                continue
+            m = re.search(rf"^{field}:\s*(\S+)", page[:600], re.M)
+            actual = m.group(1) if m else None
+            if field == "audience" and planned_value not in known_audiences:
+                bad.append({"where": rel,
+                            "problem": f"the plan gives audience '{planned_value}', which is "
+                                       f"not one of: " + ", ".join(known_audiences)})
+                continue
+            if actual != planned_value:
+                bad.append({"where": rel,
+                            "problem": f"the plan says {field} '{planned_value}' and the page "
+                                       f"says '{actual or 'nothing'}'"})
+
+    for dirpath, dirnames, filenames in os.walk(docs):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), docs)
+            if rel in seen or rel in PLAN_EXEMPT:
+                continue
+            page = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read()
+            if "webster: not written yet" in page:
+                continue
+            bad.append({"where": rel, "problem": "written, and the plan does not declare it"})
+    return bad, len(planned)
 
 
 def main():
@@ -533,6 +652,8 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", choices=["init", "check"])
     ap.add_argument("--docs", default="docs")
+    ap.add_argument("--plan", default=None,
+                    help="also check the tree against the page table in this plan")
     ap.add_argument("--title", default="Documentation")
     ap.add_argument("--description", default="")
     ap.add_argument("--subject", action="append",

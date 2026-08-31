@@ -90,64 +90,75 @@ Load `adr`, `changelog` or `openapi` when the plan calls for those artifacts spe
    part of the architecture. Those pages exist, and they live in `developer/` and `advanced/`.
    Moving a page is the fix; editing its `audience:` until the checker goes quiet is not.
 
-## Step 4, check each page against its type
+## Step 4, converge
+
+**Run every check below, fix what they report, and run them all again. Stop when they are
+clean, not when you have been round once.**
+
+This is the step that decides whether two runs of this plugin produce comparable documentation.
+Writing once and checking once leaves whatever the writer happened to fix on a single pass, and
+a different pass fixes different things. Looping removes the writer's judgement from the
+outcome: the pages converge on whatever the checks accept, and what the checks accept is the
+same today as it was last week.
 
 ```bash
 WEBSTER_SURVEY=/tmp/webster-survey.json python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prose.py check docs
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slop.py docs
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check --plan docs/docs-plan.md
 ```
 
-Defects fail: a page with no declared reader, a page naming something that reader cannot touch,
-an unexpanded acronym on a user page, a `user` explanation page that never addresses the reader,
-a page doing another type's job, an image with no alt text, a skipped heading level.
+**Run all four every round, including the ones that passed last round.** A fix made for one
+check routinely breaks another: splitting a long sentence adds a paragraph, moving a page to fix
+its lens breaks the plan row that named it, and renaming a section to fix a wall of text changes
+the heading density. A round that only re-runs what failed is not a round.
 
-Findings are grouped by rule with a count, so the shape of the problem is visible before the
-list. `WEBSTER_SHOW_PER_RULE` changes how many examples of each are printed.
+Three or four rounds is normal. **If it has not converged after six, stop and say so**, naming
+the findings that survived and what you tried. A loop that keeps going is a loop that is
+rewriting a page to satisfy a rule rather than fixing what the rule found, and the honest report
+is worth more than a green run bought by contorting the prose.
+
+### What each check is for
+
+`doctype.py` judges the page against what it declares. Defects: a page with no declared reader,
+a page naming something that reader cannot touch, an unexpanded acronym on a user page, a `user`
+explanation page that never addresses the reader, a page doing another type's job, an image with
+no alt text, a skipped heading level. Advisories are reported and judged: steps with no
+prerequisites, a reference page with no table, vocabulary that points at the machinery.
 
 **A large `wrong-lens` count usually means the audiences are wrong, not the prose.** Check the
 declarations first. A `developer/` page that never declared itself is read against `user` and
 reports every symbol it names, which is the correct failure and the wrong fix to make by hand.
 
-Advisories are reported and judged: steps with no prerequisites, a reference page with no table,
-prose above the reading grade ceiling, and vocabulary that points at the machinery.
+`prose.py` measures whether the writing can be got through: sentence length against the
+audience's ceiling, paragraphs with somewhere to land, sections short enough to scan, and the
+constructions that take the actor out of an instruction. A `long-sentence` is split, not
+reworded shorter. A `dense-section` gets its parts named or one of them moved to its own page.
 
-## Step 4.5, check the prose can be got through
+`slop.py` catches the tells. Fix every high severity finding and judge the rest: the detector
+cannot tell a legitimate short index from a template, which is why it only fires on repetition.
+Diagram rules run inside `mermaid`, `d2` and `dot` fences, so a diagram in the default palette
+or with nodes named `[Service]` is caught here.
 
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prose.py check docs
-```
+`scaffold.py check --plan` is the one that keeps a second run recognisable as the same
+documentation. It compares the tree against the page table in `docs/docs-plan.md`: a page
+planned and never written, a page still a stub, a `doc_type` or an `audience` that disagrees
+with its row, and a page written that no row declares.
 
-Step 4 judged the page against its declared reader and type. This measures whether the writing
-is shaped to be read: sentence length against the audience's ceiling, paragraphs with somewhere
-to land, sections short enough to scan, and the passive and nominalised constructions that take
-the actor out of an instruction.
+**When the pages and the plan disagree, decide which one is wrong and change that one.** Both
+are legitimate. A subject that turned out to need two pages is the plan being out of date, so
+edit the plan. A page written to the wrong type is the page being wrong, so fix the page.
+Deleting the row to silence the check is neither, and it throws away the only record of what
+this documentation set was meant to be.
 
-Fix every defect. A `long-sentence` is split, not reworded shorter. A `dense-section` gets its
-parts named or one of them moved to its own page. Judge the advisories rather than clearing them
-mechanically.
+## Step 5, record what converged
 
-## Step 5, check for slop before recording anything
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slop.py docs
-```
-
-Fix every high severity finding. Judge the medium and low ones rather than clearing them
-mechanically: the detector cannot tell a legitimate short index from a template, which is why it
-only fires on repetition. Diagram rules run inside `mermaid`, `d2` and `dot` fences, so a diagram
-drawn in the default palette or with nodes named `[Service]` is caught here.
-
-## Step 6, validate the layout
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
-```
-
-Every page carries frontmatter with a title, every directory has a `_category_.json` with a
-unique position, and no page sits loose at the docs root. Then:
+Only once step 4 is clean. Both of these describe the pages as they now are, so running them on
+a tree still being fixed records a set that no longer exists.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/llmstxt.py > llms.txt
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record docs
 ```
 
 `llmstxt.py` builds an llms.txt to the llmstxt.org format from pages that exist on disk. Set
@@ -155,10 +166,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/drift.py record
 
 `drift.py record <docs-dir>` stores the current HEAD, a hash of the docs tree, and every anchor
 the pages cite. It reports how many anchors it found: **if that number is 0, no claim in the set
-can ever be re-verified**, and the Sourced gate fails rather than passing quietly. That is what makes the next `/webster:audit` able to tell you which pages a diff
-invalidated instead of re-reading everything.
+can ever be re-verified**, and the Sourced gate fails rather than passing quietly. That is what
+makes the next `/webster:audit` able to tell you which pages a diff invalidated instead of
+re-reading everything.
 
-## Step 6.5, build the site, because the checkers cannot see this
+## Step 6, build the site, because the checkers cannot see this
 
 ```bash
 cd website && npm install && npm run build
@@ -183,8 +195,7 @@ that the anchors stayed invisible. A page can build cleanly with a visible `file
 path or a `[?]` in it, and every markdown check will have passed. Anything it reports is on the
 page in front of a reader.
 
-Then re-run `llmstxt.py` and `drift.py record`, because a fix here changes the pages they
-describe.
+Then re-run step 5, because a fix here changes the pages it recorded.
 
 If the repo has no site, say the build gate is `not_checked` and why. Do not report it as a pass.
 

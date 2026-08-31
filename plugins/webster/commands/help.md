@@ -19,7 +19,8 @@ The three scripts are runnable on their own, which is what makes them usable in 
 ```
 python3 scripts/survey.py .        two surfaces: the code's, and the one a person sees
                                    (user_surface: screens, labels, error messages, commands)
-python3 scripts/scaffold.py check  the layout gate. exit 1 on any violation
+python3 scripts/scaffold.py check  the layout gate, and with --plan the tree against the
+                                   page table the plan declares. exit 1 on any violation
 python3 scripts/doctype.py types   the content types, the three readers, what each may name
 python3 scripts/doctype.py check   type, reader, lens and jargon. exit 1 on a defect
 python3 scripts/drift.py check     which pages a diff invalidated. exit 1 on drift

@@ -849,3 +849,158 @@ def test_every_documented_envelope_leads_with_status(run_script, tmp_path):
             f"Expected {mode} to report status {status!r} at exit {code}; got "
             f"{payload['status']!r}" + outcome(result)
         )
+
+
+# -----------------------------------------------------------------------------
+# --plan: the tree against what the plan said it would be.
+#
+# /webster:plan wrote a row per page and /webster:write read the file, and until
+# this existed nothing ever compared the two. Run against pioneer's own plan the
+# check found four pages planned and never written and four written that no row
+# declares, which is the drift that makes a second run of the plugin produce a
+# set nobody recognises.
+# -----------------------------------------------------------------------------
+PLAN_TABLE = (
+    "# Documentation plan\n\n"
+    "## Pages\n\n"
+    "| Path | Type | Audience | Agent |\n"
+    "|---|---|---|---|\n"
+)
+
+
+def init_tree(run_script, tmp_path):
+    """A scaffolded tree to hang plan rows on. The plan check reads the tree the same way the
+    layout check does, so the fixture is the one a real run would have produced."""
+    docs = tmp_path / "docs"
+    run_script("scaffold.py", "init", "--docs", docs, "--subject", "guides:Guides")
+    return docs
+
+
+def write_plan(docs, rows):
+    """A plan carrying the page table real plans already use."""
+    body = PLAN_TABLE + "".join(
+        f"| `{path}` | {dtype} | {audience} | reference |\n" for path, dtype, audience in rows
+    )
+    plan = docs / "docs-plan.md"
+    plan.write_text(body, encoding="utf-8")
+    return plan
+
+
+def planned_check(run_script, docs, plan):
+    return run_script("scaffold.py", "check", "--docs", docs, "--plan", plan)
+
+
+def test_a_planned_page_that_was_never_written_is_a_violation(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+    plan = write_plan(docs, [("guides/absent.md", "how-to", "user")])
+
+    result = planned_check(run_script, docs, plan)
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 1, (
+        f"A page the plan declares and nobody wrote is a violation, not a clean tree.\n"
+        f"{result.stdout}"
+    )
+    assert any("never written" in v["problem"] for v in payload["violations"]), (
+        f"Expected the absent page to be named.\n{result.stdout}"
+    )
+
+
+def test_a_page_the_plan_does_not_declare_is_a_violation(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+    (docs / "unplanned.md").write_text(
+        '---\ntitle: "Unplanned"\ndoc_type: how-to\naudience: user\n---\n\n# Unplanned\n\nBody.\n',
+        encoding="utf-8",
+    )
+    plan = write_plan(docs, [])
+
+    result = planned_check(run_script, docs, plan)
+
+    assert "does not declare it" in result.stdout, (
+        f"A page nobody planned is usually a decision somebody made and nobody recorded, "
+        f"which is the half of drift a plan alone cannot show.\n{result.stdout}"
+    )
+
+
+def test_a_doc_type_disagreeing_with_its_row_is_a_violation(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+    (docs / "guide.md").write_text(
+        '---\ntitle: "Guide"\ndoc_type: reference\naudience: user\n---\n\n# Guide\n\nBody.\n',
+        encoding="utf-8",
+    )
+    plan = write_plan(docs, [("guide.md", "how-to", "user")])
+
+    result = planned_check(run_script, docs, plan)
+
+    assert "doc_type 'how-to'" in result.stdout and "'reference'" in result.stdout, (
+        f"The plan and the page each state a type, and a page written to the other one is the "
+        f"defect --plan exists to name.\n{result.stdout}"
+    )
+
+
+def test_an_audience_the_plan_invents_is_named_as_unknown(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+    (docs / "guide.md").write_text(
+        '---\ntitle: "Guide"\ndoc_type: how-to\naudience: user\n---\n\n# Guide\n\nBody.\n',
+        encoding="utf-8",
+    )
+    plan = write_plan(docs, [("guide.md", "how-to", "primary")])
+
+    result = planned_check(run_script, docs, plan)
+
+    assert "not one of" in result.stdout, (
+        f"pioneer's own plan gives 'primary', 'secondary' and 'both' as audiences, none of "
+        f"which is a reader. Reporting that against the page's declaration instead would say "
+        f"the page is wrong when it is the plan that is.\n{result.stdout}"
+    )
+
+
+def test_a_stub_is_reported_as_unwritten_rather_than_as_matching(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+    (docs / "guide.md").write_text(
+        '---\ntitle: "Guide"\ndoc_type: how-to\naudience: user\n---\n\n# Guide\n\n'
+        "<!-- webster: not written yet -->\n",
+        encoding="utf-8",
+    )
+    plan = write_plan(docs, [("guide.md", "how-to", "user")])
+
+    result = planned_check(run_script, docs, plan)
+
+    assert "still a stub" in result.stdout, (
+        f"A scaffolded page carries the planned frontmatter, so matching on frontmatter alone "
+        f"reports an empty tree as fully written.\n{result.stdout}"
+    )
+
+
+def test_a_tree_matching_its_plan_is_clean(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+    (docs / "guide.md").write_text(
+        '---\ntitle: "Guide"\ndoc_type: how-to\naudience: user\n---\n\n# Guide\n\nBody.\n',
+        encoding="utf-8",
+    )
+    plan = write_plan(docs, [("guide.md", "how-to", "user")])
+
+    result = planned_check(run_script, docs, plan)
+    payload = json.loads(result.stdout)
+
+    assert payload["planned_pages"] == 1, (
+        f"The row count is what says the table was read at all; a parser that found no rows "
+        f"reports a matching tree and a broken plan identically.\n{result.stdout}"
+    )
+    assert not [v for v in payload["violations"] if "plan" in v["problem"]], (
+        f"A tree that matches its plan must produce no plan violation.\n{result.stdout}"
+    )
+
+
+def test_an_unreadable_plan_exits_two(run_script, tmp_path):
+    docs = init_tree(run_script, tmp_path)
+
+    result = planned_check(run_script, docs, docs / "absent-plan.md")
+
+    assert result.returncode == 2, (
+        f"--plan named a file and the check could not answer the question it was asked. "
+        f"Reporting a clean tree would be a pass on a check that never ran.\n{result.stdout}"
+    )
+    assert json.loads(result.stdout)["status"] == "no_plan", (
+        f"Every exit-2 path in this script carries a status naming it.\n{result.stdout}"
+    )

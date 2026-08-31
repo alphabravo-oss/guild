@@ -71,11 +71,22 @@ variables are how a claim gets checked. They are not a table of contents.
 ## Step 3, layout
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py check --docs <docs-dir> --plan <docs-dir>/docs-plan.md
 ```
 
-Every violation is a P1, except a missing `index.md` or a subject with no overview page, which
-are P0 because navigation is broken without them. A page still carrying
+**Pass `--plan` whenever the set has one.** It compares the tree against the page table the plan
+declares, and it is the only check that can tell you the documentation drifted from what it was
+meant to be: a page planned and never written, a page still a stub, a `doc_type` or an
+`audience` that disagrees with its row, and a page written that no row declares. Without it a
+docs set can pass every other check while being a different docs set from the one anybody
+agreed to.
+
+A planned page never written is a **P1**. A written page the plan does not declare is a **P1**
+and worth reading closely: it is usually a decision somebody made and nobody recorded, and the
+fix is as often to update the plan as to delete the page.
+
+Every other violation is a P1, except a missing `index.md` or a subject with no overview page,
+which are P0 because navigation is broken without them. A page still carrying
 `<!-- webster: not written yet -->` is a stub and counts as an undocumented surface item.
 
 ## Step 4, content types
