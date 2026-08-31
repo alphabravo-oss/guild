@@ -115,6 +115,25 @@ Accessibility and reading grade are checked on every page, including ones with n
 this works on documentation the plugin never wrote. A page with no `doc_type` cannot be checked
 against a type, and that is worth reporting rather than passing over.
 
+## Step 4.5, prose shape
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prose.py check <docs-dir>
+```
+
+Step 4 asks whether the page is about the right thing for the right reader. This asks whether a
+reader can get through it, which the reading grade in step 4 does not answer and in two measured
+cases answered backwards.
+
+- `long-sentence` and `dense-section` are defects. A sentence past the audience's ceiling is one
+  a reader has to hold open, and a run of text that long with no heading is a wall. Both are P1,
+  and P0 on a page a reader lands on first.
+- `long-paragraph`, `passive-voice`, `nominalisation` and `fragmented` are advisories. Judge
+  them: a reference page is legitimately dense, and a status table is legitimately passive.
+
+`prose.py limits` prints the thresholds. They scale with the declared audience, so run this
+after the audiences in step 4 are right, not before.
+
 ## Step 5, README
 
 Load the `readme-rubric` skill and walk its nine criteria, scoring each with cited line numbers.

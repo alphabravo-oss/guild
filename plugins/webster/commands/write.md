@@ -110,6 +110,21 @@ reports every symbol it names, which is the correct failure and the wrong fix to
 Advisories are reported and judged: steps with no prerequisites, a reference page with no table,
 prose above the reading grade ceiling, and vocabulary that points at the machinery.
 
+## Step 4.5, check the prose can be got through
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prose.py check docs
+```
+
+Step 4 judged the page against its declared reader and type. This measures whether the writing
+is shaped to be read: sentence length against the audience's ceiling, paragraphs with somewhere
+to land, sections short enough to scan, and the passive and nominalised constructions that take
+the actor out of an instruction.
+
+Fix every defect. A `long-sentence` is split, not reworded shorter. A `dense-section` gets its
+parts named or one of them moved to its own page. Judge the advisories rather than clearing them
+mechanically.
+
 ## Step 5, check for slop before recording anything
 
 ```bash

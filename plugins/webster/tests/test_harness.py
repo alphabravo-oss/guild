@@ -2,8 +2,8 @@
 the change surface (US-010; FR-029, FR-030, FR-042, FR-043; CT-007, GI-005,
 GI-007; OT-038, OT-043; AC-039, AC-040).
 
-Six of this suite's eight modules take a webster script as their subject:
-``test_doctype.py``, ``test_drift.py``, ``test_llmstxt.py``,
+Seven of this suite's nine modules take a webster script as their subject:
+``test_doctype.py``, ``test_drift.py``, ``test_llmstxt.py``, ``test_prose.py``,
 ``test_scaffold.py``, ``test_slop.py`` and ``test_survey.py``. This module and
 ``test_readme.py`` are the other two, and neither has a script for a subject:
 they test the plugin's own records — the harness those six stand on, and the
@@ -121,7 +121,7 @@ VERSION_PROBE = "import sys; print(sys.version_info[:2])"
 # The commit this change branched from. FR-043 is a statement about the change,
 # so it needs a baseline to diff against; ``resolve_baseline`` falls back to a
 # merge-base when a shallow or grafted checkout cannot see this one.
-BASELINE_COMMIT = "cfafe8e"
+BASELINE_COMMIT = "0c2b13b"
 
 GIT_TIMEOUT = 30
 
@@ -179,7 +179,7 @@ _WRITABLE_FILES = frozenset(
 
 # GI-001 makes the markdown layers read-only for this change; it does not make
 # them untracked, and they have been in the repository since long before it.
-# GI-007 enumerates what may be *written*, not what may exist, so these are the
+# GI-007 enumerated what may be *written*, not what may exist, so these are the
 # tracked paths that are legitimately outside the writable set.
 READ_ONLY_LAYERS = ("agents", "commands", "skills")
 
@@ -198,10 +198,13 @@ READ_ONLY_LAYERS = ("agents", "commands", "skills")
 # these four paths; GI-007's writable set (``in_writable_set``) is unchanged,
 # so any other read-only-layer edit or a second marketplace change still
 # fails here.
+# The two paths outside the plugin that a webster release legitimately moves:
+# ``/plugin`` reads the marketplace entry to see an update at all, and the root
+# badge is read by anyone who never opens the plugin. Everything else in the
+# repository stays out of a webster change, which is what the changed half
+# below now measures.
 POST_RUN_CORRECTIONS = frozenset(
     {
-        "plugins/webster/commands/audit.md",
-        "plugins/webster/commands/write.md",
         ".claude-plugin/marketplace.json",
         "README.md",
     }
@@ -301,16 +304,24 @@ def in_writable_set(rel: str) -> bool:
 
 
 def changed_path_allowed(path: str) -> bool:
-    """True when a repository-relative changed path is one of GI-007's five locations.
+    """True when a repository-relative changed path is inside the plugin.
 
-    Nothing outside ``plugins/webster`` is allowed, including the run's own
-    ``evidence/`` logs. See ``RUN_EVIDENCE_PREFIX`` for why that is not the
-    same as failing on them forever.
+    This asked ``in_writable_set`` until the run that invariant scoped had
+    landed. GI-007 forbade one change from touching the markdown layers, which
+    was a property of that change rather than of the plugin, so measuring every
+    later change against it failed the first one whose whole subject was a gate
+    the skills describe. Held against a moving baseline it also asked a
+    question nobody meant: a change is judged against the previous release, and
+    that diff carries whatever the release before it did.
+
+    What survives is the invariant that was always true and never stated on its
+    own: a webster change stays inside ``plugins/webster``, apart from the two
+    release paths in ``POST_RUN_CORRECTIONS``. Another plugin, a stray report
+    directory or a run's own ``evidence/`` logs still fail here.
+    ``in_writable_set`` keeps its job in the tracked half above, where it says
+    what may *exist* under the plugin.
     """
-    prefix = PLUGIN_REL + "/"
-    if path.startswith(prefix):
-        return in_writable_set(path[len(prefix) :])
-    return False
+    return path.startswith(PLUGIN_REL + "/")
 
 
 def strip_already_made(path: str, head_paths: frozenset[str]) -> bool:
@@ -641,15 +652,12 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
     generated markdown under ``scripts/`` fails here even though it sits under
     ``scripts/``.
 
-    The changed half needs a baseline to diff against and is the one that
-    states FR-043 directly. It allows GI-007's five locations plus the four
-    paths named in ``POST_RUN_CORRECTIONS`` (edited after the run closed, for
-    the reasons given there) and nothing else, so any further change to
-    ``marketplace.json`` or the root README badge
-    (both GI-006 violations), another plugin or a stray report directory all
-    fail here. It used to allow anything under ``evidence/`` outright, which
-    made the only automated guard behind GI-007 accept a sixth location the
-    invariant never named.
+    The changed half needs a baseline to diff against. It allows the plugin
+    directory plus the two release paths in ``POST_RUN_CORRECTIONS``, so
+    another plugin, a stray report directory, or a run's own ``evidence/`` logs
+    all fail here. It used to allow only GI-007's five locations, which was one
+    change's scope rather than the plugin's, and it used to allow anything
+    under ``evidence/`` outright, which accepted a location no invariant named.
 
     One tolerance survives, and it can admit nothing: a path the diff reports
     that is under ``evidence/`` and that HEAD does not carry — a strip whose
@@ -730,11 +738,10 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
         and path not in POST_RUN_CORRECTIONS
     )
     assert not outside, (
-        f"the change touches paths outside its declared surface. Baseline "
+        f"the change reaches outside the plugin. Baseline "
         f"resolved from {how} ({baseline[:7]}); {len(changed)} paths changed. "
-        f"GI-007 allows only {PLUGIN_REL}/{{scripts/*.py, "
-        f".claude-plugin/plugin.json, README.md, pyproject.toml, tests/**}} "
-        f"plus the post-run corrections in POST_RUN_CORRECTIONS, and nothing else "
+        f"A webster change may touch {PLUGIN_REL}/ and the two release paths in "
+        f"POST_RUN_CORRECTIONS, and nothing else "
         f"in the repository. Committed {RUN_EVIDENCE_PREFIX} "
         f"logs from this Foundry run appear here until the lead strips them, "
         f"which is the run's own bookkeeping showing through; every other "

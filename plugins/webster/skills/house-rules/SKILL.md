@@ -200,7 +200,7 @@ A page is not finished until all seven pass. Report the ones that did not, with 
 | Shaped | `scaffold.py check` and `doctype.py check` both pass: the tree is right and no page is doing another type's job |
 | Lens | Every page declares a reader, and names nothing that reader cannot touch |
 | Builds | The site compiles with `onBrokenLinks: 'throw'`, and `rendered.py` finds nothing internal on the rendered pages |
-| Readable | The mechanical half of `doctype.py check` is clean, and somebody who did not already know the answer got through it |
+| Readable | `prose.py check` and the mechanical half of `doctype.py check` are clean, and somebody who did not already know the answer got through it |
 | Honest | The two §4 pages exist and the page claims nothing from §3 |
 
 **Builds is the gate the other six cannot stand in for.** They all read markdown as text and
@@ -225,6 +225,20 @@ Docusaurus 3, verified on a real build. `rendered.py` is what keeps it true.
 2 when a recorded set has pages but cites no sources. It used to return `clean`, because every
 anchor it had resolved, and a set with none has none to break. That was a false pass on the gate
 that matters most.
+
+**Grade is not readability, and it was pointing the wrong way.** The Flesch-Kincaid ceiling in
+`doctype.py` is a statistic over word and sentence length, so it rewards monosyllables and
+charges for naming the product. Measured on two pages held to the same ceiling of 10: an
+unreadable one built out of "It is set by it. The setting of it is done by the system." scored
+**-0.2** and passed, and "Open the Deployments page and choose New deployment, then pick the
+cloud provider you already have a credential for" scored **10.2** and was flagged. The formula
+was pushing away from the writing `reader-lens` asks for.
+
+`prose.py` measures shape instead, which is what decides whether a page can be got through: a
+sentence the reader has to hold open, a paragraph with nowhere to land, a run of text with no
+heading to break it, and the two constructions that hide who does the thing. Thresholds scale
+with the audience on the same grounds the grade ceiling does. Grade stays as a weak floor and is
+no longer the thing called readable.
 
 **Readable no longer has a single point of failure.** It used to be delegated whole to
 `courseware:learner`, which is not installed in most repos, so it reported `not_checked`
