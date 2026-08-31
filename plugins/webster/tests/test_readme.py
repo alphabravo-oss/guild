@@ -14,7 +14,7 @@ file.
 This one tests the README, because the README is the only place in the plugin
 that states a number nothing verified. FR-038 asks the Status section to carry
 the run command and the passing count; AC-042 asks ``plugin.json`` to read
-0.12.0 and the README to name ``WEBSTER_SURVEY``, which is a claim on the file
+0.13.0 and the README to name ``WEBSTER_SURVEY``, which is a claim on the file
 and not on that section -- the variable is introduced in the paragraph beside
 ``WEBSTER_LENS_ALLOW``, above the ``## Status`` heading, so the test that pins
 it reads the whole file; NFR-001 asks that ``cd plugins/webster && uvx pytest``
@@ -231,7 +231,7 @@ RUN_COMMAND = "cd plugins/webster && uvx pytest"
 # and a release that moved only some of them is the half-done release this test
 # is here to catch. marketplace.json and the root badge are deliberately NOT
 # checked — GI-006 puts their pre-existing drift out of scope for this change.
-RELEASE_VERSION = "0.12.0"
+RELEASE_VERSION = "0.13.0"
 
 # ``python_files`` in pyproject.toml. Kept as a literal rather than read back
 # out of the config, so that a change to the glob shows up here as a failing

@@ -104,11 +104,16 @@ Two things stand in for that:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prose.py check docs
 ```
 
-catches the mechanical half: an unexpanded acronym, a tutorial with no stated outcome, steps with
-no prerequisites, prose above the reader's grade.
+catch the mechanical half: an unexpanded acronym, a tutorial with no stated outcome, steps with
+no prerequisites, a sentence past the audience's ceiling, a section with no heading to break it.
 
-The other half needs somebody who does not already know. If `courseware:learner` is installed,
-dispatch its redline pass. If it is not, the mechanical half still ran and is reported as such:
-the Readable gate is `partial`, not `not_checked` and not a pass.
+The other half is `webster-reader`, one agent per page, given the page and its declared audience
+and nothing else. It reports where the page stopped it: a term taken as given, an instruction
+naming nothing it can act on, a promise the page does not keep.
+
+**You cannot stand in for it.** You wrote the page with the source open, so every gap gets filled
+from your own head before you notice it is a gap. Neither can you brief it. Its value is entirely
+in what it does not know, and a helpful sentence of context in the dispatch spends that.

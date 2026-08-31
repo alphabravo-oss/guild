@@ -188,7 +188,21 @@ describe.
 
 If the repo has no site, say the build gate is `not_checked` and why. Do not report it as a pass.
 
-## Step 7, finish
+## Step 7, read what you wrote, as somebody who has not
+
+Dispatch `webster-reader` over every page you wrote, one agent per page, concurrently. Give each
+the page path and the declared audience and nothing else.
+
+You cannot do this yourself. You have the source, the plan and the survey in front of you, so
+every gap on the page is filled from your own head before you notice it is a gap. That is not a
+failure of attention; it is what knowing the answer does. The reader has none of it, which is
+the whole of its value, so do not hand it context to be helpful.
+
+A `stopped` verdict means the page does not work. Fix it and dispatch again. `assumed` and
+`unresolvable` findings are the page skipping an introduction it owes, which is what `pedagogy`
+is about and what nothing mechanical can see.
+
+## Step 8, finish
 
 Run `/webster:audit` before reporting done, and report the gate results honestly, including
-any that came back `not_checked`.
+any that came back `not_checked` or `partial`, and which pages went unread.

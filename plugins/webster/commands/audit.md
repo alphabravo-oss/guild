@@ -169,13 +169,37 @@ answer. Readable is therefore two halves, and it used to be one.
 **The mechanical half always runs**, in step 4: unexpanded acronyms, a tutorial with no stated
 outcome, steps with no prerequisites, prose above the reader's own grade. Report what it found.
 
-**The human half needs somebody who does not already know.** If `courseware:learner` is
-installed, dispatch its redline pass over the pages.
+**The other half needs somebody who does not already know.** Dispatch `webster-reader`, one
+agent per page, concurrently. Give each one the page path and the audience the page declares,
+and nothing else.
 
-Report the gate as `pass` only when both halves ran clean, `partial` when only the mechanical
-half ran, and name which half. It was previously delegated whole to a plugin most repos do not
-have, so it reported `not_checked` every time and the only gate that catches hard-to-read prose
-never ran. `partial` is the honest verdict and it is not a pass.
+**Do not summarise the product for them.** The agent is worth something precisely because it has
+not read the source, the plan or the rest of the docs, and a helpful sentence of context in the
+dispatch destroys the instrument. Everyone else reviewing this page already knows the answers,
+which is how a page comes to assume on page four something introduced on page nine.
+
+Reading every page costs an agent per page. Cover the pages a reader lands on first: `index.md`,
+everything under `getting-started/`, each subject's landing page, and every page in
+`troubleshooting/`. Read the rest when the user asks for it, and say which pages went unread
+rather than letting a partial sweep read as a full one.
+
+Each returns a verdict and findings in a closed vocabulary: `stopped`, `assumed`,
+`unresolvable`, `reread`, `orphan`. Weight them:
+
+- a `stopped` verdict on any page is a **P0**. The page did not work.
+- `stopped` and `unresolvable` findings are **P0**. A reader cannot act.
+- `assumed` and `orphan` are **P1**.
+- `reread` is **P1** on a `user` page and **P2** elsewhere.
+
+A page that reads well returns a short report and `finished`. That is a real result and it is
+what the gate is for. A reader returning a long list of things it could in fact do has
+manufactured findings, and the fix is to re-dispatch rather than to act on them.
+
+Report the gate as `pass` only when both halves ran clean over every page, `partial` when only
+some pages were read or only the mechanical half ran, and name which. It was previously
+delegated whole to `courseware:learner`, a plugin most repos do not have, so it reported
+`not_checked` every time and the only gate that catches a page a person cannot follow never ran
+once. `partial` is the honest verdict and it is not a pass.
 
 ## Step 7.5, build the site, then read what it produced
 

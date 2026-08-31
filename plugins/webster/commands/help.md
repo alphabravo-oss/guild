@@ -29,6 +29,12 @@ python3 scripts/rendered.py check  what reached the reader in the built HTML. ex
 python3 scripts/llmstxt.py         an llms.txt built from pages that exist on disk
 ```
 
+Two halves of Readable, and only one of them is a script. `prose.py` and `doctype.py` measure
+what is measurable. `webster-reader` is dispatched one agent per page, given the page and its
+declared audience and nothing else, and reports where the page stopped it. It is never told
+about the product: everything it is worth comes from not knowing, and whoever wrote the page
+cannot stand in for it.
+
 **The rule that shapes everything else**: every page declares who it is for, and that decides
 what the page may be about. A page for a `user` names screens, buttons, fields and what the
 product gives back. It does not name a symbol, a request route, an environment variable or a part

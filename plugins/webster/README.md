@@ -114,6 +114,7 @@ no fallback path here.
 | `scripts/scaffold.py` | Writes the documentation tree in the layout Harvester uses, subject-first directories with `_category_.json` ordering, plus a Docusaurus site whose sidebar is generated from the filesystem, and validates an existing one. A run that reaches a mode prints a JSON object whose first key is the status, the run that went right included, so a caller reading that key never has to guard the one path where nothing went wrong; an argv that reaches neither — no mode at all, or a word that is not init or check — stops in argparse, which writes usage to stderr and leaves stdout empty, so on that one path there is no key to read. Writing a tree reports `ok` at exit 0, and `bad_subject` for a subject key that cannot become a directory name or `cannot_write` for a path the filesystem refused exit 2; init never exits 1. Validating one reports `violations` at exit 1, `ok` at exit 0, and `no_docs` for a missing directory or `cannot_read` for a page or a directory the filesystem refused exit 2 |
 | `scripts/doctype.py` | Per-page content type **and reader**. Skeletons from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Defects (no declared reader, subject matter that reader cannot act on, an acronym the docs never expand, a user explanation page that never addresses the reader, type mixing, missing alt text, skipped heading levels) exit 1, advisories alone (no prerequisites, no table, reading grade, vocabulary pointing at the machinery) exit 0, and a tree with nothing to check — no docs directory, or no page that is not a stub and no frontmatter defect on the stubs either — exits 2. Findings are grouped by rule with a count |
 | `scripts/slop.py` | A copy and residue rule corpus retargeted to markdown, plus tells specific to docs and to generated diagrams. Prose rules skip code fences, diagram rules run only inside `mermaid`, `d2` and `dot` fences. Exit 1 on any high severity finding, exit 2 on a target that is not there or cannot be read |
+| `agents/webster-reader` | Not a script. One agent per page, given the page and its declared audience and nothing else, reporting where the page stopped it. The half of Readable no checker can reach, and the one thing in this plugin whose value is entirely in what it has not read |
 | `scripts/prose.py` | Measures the shape of the prose: sentence length, paragraph length, words under a heading, and the passive and nominalised constructions that hide the actor. Thresholds scale with the page's declared audience, and `limits` prints them. Answers a different question from the Flesch-Kincaid ceiling in `doctype.py`, which is a statistic over syllables and rates monosyllabic passive prose at grade -0.2 while charging a clear sentence 10.2 for naming the product. A `long-sentence` or `dense-section` exits 1; advisories alone (`long-paragraph`, `passive-voice`, `nominalisation`, `fragmented`) exit 0; no docs directory at the resolved path, or a tree of nothing but stubs, exits 2 |
 | `scripts/rendered.py` | Reads the built HTML rather than the markdown, and reports anything internal that reached the reader: a visible `file:line`, a source path, a working-note tag, a frontmatter key printed as text, an agent instruction file named by name, and a stub marker on a page nobody wrote over. The only check that sees what a browser sees. Exit 1 on any leak |
 | `scripts/llmstxt.py` | Builds an llms.txt to the llmstxt.org format from pages that exist on disk. The written file is exit 0; no docs directory at the resolved path, or a tree holding no page to publish — a tree of nothing but stubs included, because an unwritten page is dropped before the count is taken — exits 2 |
@@ -157,11 +158,21 @@ that says seven, and `skills/house-rules` — the list `/webster:audit` actually
 held it. A high severity slop finding is a P1 on the punch list rather than a gate, and the
 `slop.py` row above is where this README describes it.
 
-**Readable used to be one gate and is now two halves.** It was delegated whole to
-`courseware:learner`, which most repos do not have, so it reported `not_checked` every time and
-the only gate that catches hard-to-read prose never ran. The mechanical half now always runs:
-unexpanded acronyms, a tutorial with no stated outcome, steps with no prerequisites, prose above
-the reader's own grade. When only that half ran, the verdict is `partial`, which is not a pass.
+**Readable used to be one gate and is now two halves, both of them webster's own.** It was
+delegated whole to `courseware:learner`, which most repos do not have, so it reported
+`not_checked` every time and the only gate that catches a page a person cannot follow never ran.
+
+The mechanical half is `prose.py` and the readable rules in `doctype.py`: sentence and section
+length against the audience, unexpanded acronyms, a stated outcome, prerequisites before step
+one.
+
+The other half is `webster-reader`, one agent per page, handed the page and its declared
+audience and nothing else. It reports where the page stopped it, in a closed vocabulary:
+`stopped`, `assumed`, `unresolvable`, `reread`, `orphan`. Its value is entirely in what it does
+not know, so it is never briefed on the product, and whoever wrote the page cannot stand in for
+it: with the source open, every gap on the page gets filled from the writer's own head before
+they notice it is a gap. When only the mechanical half ran, or only some pages were read, the
+verdict is `partial`, which is not a pass.
 
 ## Optional companions
 
@@ -171,8 +182,9 @@ gate `partial` rather than `not_checked`, because the mechanical half of Readabl
 a verdict on half a gate is not the same as a verdict on none of it. The other two save work
 inside a step rather than settling anything, so nothing is downgraded when they are missing:
 
-- `courseware:learner`: a naive reader's redline, for the human half of the Readable gate. The
-  mechanical half runs without it, so the verdict without it is `partial`
+- `courseware:learner`: a second naive-reader pass, where a repo already has it. The Readable
+  gate no longer depends on it: `prose.py` is the mechanical half and `webster-reader` is the
+  other, so the verdict without it is `partial`
 - `gsd:map-codebase`: the repo survey in `/webster:plan`, where it saves re-deriving a map by
   hand and settles no sentence
 - `repo-visuals`: hero images for a published docs site, which the README rubric declines to
@@ -186,7 +198,7 @@ of them.
 
 ## Status
 
-Version 0.12.0.
+Version 0.13.0.
 
 ```
 cd plugins/webster && uvx pytest

@@ -141,7 +141,7 @@ characteristics. Four are measured here, one is measured elsewhere, three need a
 | Subject fit | Measured: whether the page is about something its declared reader can act on |
 | Correctness | Measured by `drift.py`, which resolves every cited anchor |
 | Usability | A person judges whether a reader can find and apply it |
-| Clarity | Measured in part: undefined acronyms, stated outcome, prerequisites. The rest a person judges, and `courseware:learner` is the closest thing to a test |
+| Clarity | Measured in part: undefined acronyms, stated outcome, prerequisites, sentence and section length against the reader. The rest is `webster-reader`, which reads the page knowing nothing about the product and reports where it was stopped |
 | Minimalism | A person judges whether anything here is unnecessary |
 
 Do not claim conformance to 26514. It is a purchased standard aimed at organisations with a

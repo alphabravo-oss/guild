@@ -242,10 +242,22 @@ no longer the thing called readable.
 
 **Readable no longer has a single point of failure.** It used to be delegated whole to
 `courseware:learner`, which is not installed in most repos, so it reported `not_checked`
-permanently and the one gate that would catch hard-to-read prose never ran once. It is now two
-halves. The mechanical half always runs: unexpanded acronyms, a tutorial with no stated outcome,
-steps with no prerequisites, prose above the reader's own grade. The human half runs when a
-reviewer is available. Report `partial` when only the first half ran, and say which half.
+permanently and the one gate that would catch a page a person cannot follow never ran once. It
+is now two halves, and both belong to this plugin.
+
+The mechanical half is `prose.py` and the readable rules in `doctype.py`: sentence and section
+length against the audience, unexpanded acronyms, a tutorial with no stated outcome, steps with
+no prerequisites.
+
+The other half is `webster-reader`, one agent per page. It is given the page and the declared
+audience and nothing else, and it reports where the page stopped it, in a closed vocabulary.
+**Its value is entirely in what it does not know.** You cannot run this half yourself and you
+cannot brief it: you have the source and the plan, so you fill every gap on the page from your
+own head before you see that it is a gap. That is what knowing the answer does to a reviewer,
+and it is why a set of documentation can pass every other gate and still fail the first person
+who opens it.
+
+Report `partial` when only the mechanical half ran or only some pages were read, and say which.
 
 **A gate that could not be run reports `not_checked` with a reason. It never reports a pass.**
 A false pass is the worst outcome this plugin can produce, because the reader trusts the page
