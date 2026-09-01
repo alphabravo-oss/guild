@@ -1,0 +1,35 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_liveness.py -q -s --no-header -p no:cacheprovider -k demo_report
+# evidence-for: FR-015, FR-025, AC-021
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# OT-010 rendered, not merely coded. Three ledgers, one Foundry-Liveness call,
+# three different verdicts:
+#
+#   casting-alpha  progressing  advanced to a new step a minute ago.
+#   casting-beta   no_progress  its heartbeat is EXACTLY AS FRESH as alpha's
+#                               (last_line 1m) and it has not moved in 40
+#                               minutes. This is the row that justifies the
+#                               ledger shape: any scheme that only timestamps
+#                               a ping reports beta as healthy.
+#   casting-gamma  stalled      silent for an hour. The no-heartbeat case.
+#
+# Ages print in whole minutes; every ledger offset is an exact multiple of 60s
+# and the true age is that offset plus milliseconds, so the floor division is
+# byte-stable across re-execution.
+#
+
+
+Foundry-Liveness — stall threshold 900s, progress cadence 300s
+
+agent           status         last_progress  last_line  step
+--------------- -------------  -------------  ---------  --------------------
+casting-alpha   progressing              1m         1m  writing the handler
+casting-beta    no_progress             40m         1m  reading defect D-17
+casting-gamma   stalled                 60m        60m  read floor
+
+needs_attention: ['casting-beta', 'casting-gamma']
+
+.
+1 passed, 31 deselected in 0.07s

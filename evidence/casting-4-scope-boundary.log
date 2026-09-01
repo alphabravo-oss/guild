@@ -1,0 +1,45 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && PYTHONPATH=src uv run --quiet python -c "import foundry_mcp.tools.foundry_spawn as m; print(chr(10).join(sorted(n for n,v in vars(m).items() if callable(v) and getattr(v,'__module__','')==m.__name__)))"
+# evidence-for: AC-018, AC-019, AC-020
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 120
+#
+# SCOPE BOUNDARY RECORD — NOT an implementation claim.
+#
+# AC-018 (Foundry-Stream accepts the reconciled stream ids), AC-019
+# (Foundry-Defect / Foundry-Sync accept type PARTIAL) and AC-020 (per-cycle
+# PROVE tranche accumulation) are cited in casting 4's <spec_requirements>
+# because they are siblings of AC-021 under US-006 — one story, four criteria.
+# Casting 4's Requirement Classification assigns only AC-021 to this casting
+# and states of the other three: "AC-018, AC-019 and AC-020 within it belong
+# to castings 2 and 3, and are here as context for the whole story, not as
+# work for you."
+#
+# This file binds those three IDs so the acceptance gate's coverage pass has
+# an explicit, re-executable record of WHERE they are not, rather than an
+# unexplained gap. The command lists every callable DEFINED IN
+# foundry_spawn.py — casting 4's only source file. The complete public
+# surface is three entry points:
+#
+#   foundry_cast_wave        bulk spawn  (FR-020 / AC-025 fix lands here)
+#   foundry_liveness         NEW, FR-015 / AC-021 / CT-004
+#   foundry_spawn_teammate   single spawn (FR-015 protocol block lands here)
+#
+# There is no foundry_mark_stream, no foundry_defect, no foundry_sync and no
+# coverage roll-up handler in this module, and casting 4 is forbidden from
+# editing the modules that hold them (foundry_orchestrator.py, server.py,
+# schemas/vocab.py). Evidence that AC-018/AC-019/AC-020 are SATISFIED belongs
+# to castings 2 and 3 under their own commits.
+#
+
+_agent_id_for_casting
+_agent_liveness_record
+_build_grind_cycle_context
+_parse_progress_timestamp
+_progress_dir
+_progress_protocol_block
+_read_progress_ledger
+_step_key
+_teammate_model
+foundry_cast_wave
+foundry_liveness
+foundry_spawn_teammate

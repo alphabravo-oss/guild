@@ -1,0 +1,59 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_liveness.py -v --no-header -p no:cacheprovider
+# evidence-for: US-006, FR-015, FR-025, AC-021
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# The READ half of the FR-015 loop. Every name below is an assertion about
+# foundry_liveness reading real ledger files off disk; no clock is mocked and
+# no filesystem is faked, so a passing name means the tool behaves that way
+# against wall-clock time exactly as it will in a run.
+#
+# The four names to read first:
+#   ..._stalled_and_progressing_are_distinct_statuses_in_one_report  AC-021/OT-010
+#   ..._the_threshold_boundary_decides_the_status                    the comparison itself
+#   ..._fresh_lines_on_an_unchanged_step_report_no_progress          A-025's second case
+#   ..._no_ledger_at_all_is_an_empty_roster_not_an_error             CT-004's empty input
+#
+# FR-025's derivation is pinned by the four threshold_* names: the constant is
+# above 5x the shortest measured working batch and below half the median, so
+# retuning it to a "generic constant" turns them red.
+#
+
+============================= test session starts ==============================
+collecting ... collected 32 items
+
+tests/test_liveness.py::test_threshold_and_cadence_are_named_constants_not_literals PASSED [  3%]
+tests/test_liveness.py::test_threshold_is_not_the_lead_watchdog_constant PASSED [  6%]
+tests/test_liveness.py::test_threshold_sits_between_the_measured_batch_extremes PASSED [  9%]
+tests/test_liveness.py::test_threshold_is_a_multiple_of_the_cadence PASSED [ 12%]
+tests/test_liveness.py::test_status_vocabulary_is_closed_and_complete PASSED [ 15%]
+tests/test_liveness.py::test_refuses_when_no_run_is_active PASSED        [ 18%]
+tests/test_liveness.py::test_refuses_when_the_run_directory_is_missing PASSED [ 21%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[0] PASSED [ 25%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[-1] PASSED [ 28%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[-900] PASSED [ 31%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[soon] PASSED [ 34%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[bad4] PASSED [ 37%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[True] PASSED [ 40%]
+tests/test_liveness.py::test_never_raises_across_the_boundary PASSED     [ 43%]
+tests/test_liveness.py::test_no_ledger_at_all_is_an_empty_roster_not_an_error PASSED [ 46%]
+tests/test_liveness.py::test_no_identifier_returns_every_agent_in_the_run PASSED [ 50%]
+tests/test_liveness.py::test_an_identifier_returns_only_that_agent PASSED [ 53%]
+tests/test_liveness.py::test_an_unknown_identifier_is_a_named_refusal_listing_the_known PASSED [ 56%]
+tests/test_liveness.py::test_an_identifier_on_a_run_with_no_ledgers_names_the_expected_path PASSED [ 59%]
+tests/test_liveness.py::test_a_recent_line_reports_progressing_with_its_age PASSED [ 62%]
+tests/test_liveness.py::test_a_silent_agent_reports_stalled PASSED       [ 65%]
+tests/test_liveness.py::test_stalled_and_progressing_are_distinct_statuses_in_one_report PASSED [ 68%]
+tests/test_liveness.py::test_the_threshold_boundary_decides_the_status PASSED [ 71%]
+tests/test_liveness.py::test_the_override_is_echoed_so_the_lead_sees_what_was_applied PASSED [ 75%]
+tests/test_liveness.py::test_fresh_lines_on_an_unchanged_step_report_no_progress PASSED [ 78%]
+tests/test_liveness.py::test_no_progress_is_distinct_from_both_other_live_statuses PASSED [ 81%]
+tests/test_liveness.py::test_progress_age_dates_the_step_change_not_the_last_restatement PASSED [ 84%]
+tests/test_liveness.py::test_a_ledger_with_no_parseable_line_reports_unknown PASSED [ 87%]
+tests/test_liveness.py::test_a_naive_timestamp_is_read_as_utc_rather_than_discarded PASSED [ 90%]
+tests/test_liveness.py::test_only_jsonl_files_are_treated_as_ledgers PASSED [ 93%]
+tests/test_liveness.py::test_demo_report_renders_the_three_statuses_side_by_side PASSED [ 96%]
+tests/test_liveness.py::test_the_record_names_the_ledger_it_was_read_from PASSED [100%]
+
+============================== 32 passed in 0.04s ==============================

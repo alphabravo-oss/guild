@@ -1,0 +1,47 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_spawn_progress.py -v --no-header -p no:cacheprovider
+# evidence-for: US-006, US-007, FR-015, FR-020, AC-025
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# The WRITE half of the FR-015 loop, plus the FR-020 bulk-GRIND fix.
+#
+# FR-015 — the progress-protocol block the spawn output hands the lead. The
+# loop is closed by ..._a_line_written_where_the_block_says_is_read_back_by_
+# liveness, which extracts the ledger path FROM THE EMITTED BLOCK (never from
+# a literal), writes one line in the documented shape, and reads it back
+# through the real tool. If the emitted path and the parsed path ever drift,
+# that name goes red.
+#
+# FR-020 / AC-025 — the bulk-GRIND hole. Every bulk_grind_* name builds a REAL
+# throwaway git repository whose HEAD moved past a stamped .cast-baseline-sha,
+# because the context comes from `git diff --name-only baseline..HEAD` and a
+# mocked diff would only prove the mock agrees with the test author:
+#   ..._bulk_grind_returns_grind_cycle_context_per_casting     the fix
+#   ..._bulk_cast_returns_no_grind_cycle_context               still GRIND-only
+#   ..._bulk_grind_matches_the_single_spawn_path_it_was_missing  one builder, both paths
+#
+
+============================= test session starts ==============================
+collecting ... collected 18 items
+
+tests/test_spawn_progress.py::test_single_spawn_returns_a_progress_protocol_block PASSED [  5%]
+tests/test_spawn_progress.py::test_the_block_names_the_exact_ledger_path_for_that_casting PASSED [ 11%]
+tests/test_spawn_progress.py::test_the_block_names_the_three_required_line_fields PASSED [ 16%]
+tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [ 22%]
+tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [ 27%]
+tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [ 33%]
+tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [ 38%]
+tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [ 44%]
+tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [ 50%]
+tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [ 55%]
+tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [ 61%]
+tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 66%]
+tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 72%]
+tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 77%]
+tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 83%]
+tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 88%]
+tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 94%]
+tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [100%]
+
+============================== 18 passed in 0.78s ==============================
