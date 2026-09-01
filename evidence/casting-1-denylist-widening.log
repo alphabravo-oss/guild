@@ -23,9 +23,10 @@
 # observation classes must still route to OBSERVATION.
 #
 # NOT in scope here: root cause 2 of D-093 (the promote direction, where
-# tools/foundry.py#_observation_refusal refused a defect on a description
-# heuristic alone). That is casting 3's fix, landing this same cycle; these
-# widened predicates are the contract it relies on.
+# plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_observation_refusal
+# refused a defect on a description heuristic alone). That is casting 3's fix,
+# landing this same cycle; these widened predicates are the contract it relies
+# on.
 
 == D-090/D-093: every realistic security-property claim stays a DEFECT ==
   hmac-signature       SECURITY_PROPERTY_CLAIM
