@@ -20,7 +20,6 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_TYPES,
     STREAM_WIRE_IDS,
     canonical_defect_type,
-    never_demote_class,
     observation_class,
 )
 from foundry_mcp.tools.foundry_state import (
@@ -405,6 +404,128 @@ def _nyquist_transition(from_phase: str) -> dict:
 # --- Phase gate ---
 
 
+def _done_preconditions(fdir: Path, project_root: str) -> dict:
+    """Evaluate the substantive preconditions for entering F6 DONE.
+
+    Returns ``{"passed": bool, "reason": str, "hint": str, "checklist": [...]}``.
+
+    WHY THIS IS A FUNCTION (AC-011 / D-037)
+    ---------------------------------------
+    These checks lived inline in ``foundry_gate``'s "done" branch, and
+    ``foundry_mark_phase_complete("done")`` — the call that actually writes F6
+    and archives the run — read NONE of them. It was an unconditional
+    ``_update_phase`` + ``clear_active_run``. Driven: a run reached DONE with
+    six open escalated-class defects and zero verdicts, straight past a gate
+    that would have refused it, because consulting the gate was a convention
+    the lead was trusted to follow rather than something the transition did.
+    AC-011 says "the RUN cannot reach DONE while any escalated-class defect
+    remains open" — that is a property of the transition, not of an advisory
+    query about the transition.
+
+    So there is one evaluation and two callers. Re-implementing the checks at
+    the transition would have satisfied the same test today and drifted from
+    the gate by the next cycle, which is the shape of the defect being fixed
+    here, not a fix for it.
+
+    Deliberately EXCLUDED, because they are ``foundry_gate``'s call-ordering
+    protocol rather than preconditions of being done:
+
+      - the ``.next-action-called`` handshake, which the transition has
+        already consumed by the time it asks (re-checking it here would refuse
+        every done transition on a token nobody re-armed);
+      - the ``.gate-passed`` stamp, which records that an advisory gate ran.
+
+    That exclusion is the whole discipline of this helper: it enforces exactly
+    the gate's checks, no more.
+    """
+    passed = True
+    reason = ""
+    hint = ""
+    checklist: list[dict] = []
+
+    verdicts = _load_json(fdir / "verdicts.json")
+    verdict_list = verdicts.get("requirements", [])
+    non_verified = sum(1 for r in verdict_list if r.get("verdict") != "VERIFIED")
+    defects = _load_json(fdir / "defects.json")
+    open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
+    teams_result = _check_active_teams(project_root)
+    spec_count = _count_spec_requirements(project_root)
+
+    # FR-020 / AC-025 — the auto-VERIFY hole, closed at the gate.
+    #
+    # Every other check below is vacuously satisfied by a spec that parses
+    # to ZERO requirements: no requirement can be non-VERIFIED, and the
+    # verdict_coverage check guarded itself with `spec_count > 0` and so
+    # skipped. A run whose spec is unresolvable or carries no tagged
+    # requirement IDs therefore sailed through DONE having proved nothing.
+    # Stated first so a more specific failure below still claims `reason`.
+    if spec_count <= 0:
+        passed = False
+        reason = (
+            "The spec parses to ZERO requirement IDs — nothing has been "
+            "verified, so DONE is vacuous."
+        )
+        hint = (
+            "Check that the run's spec resolves (foundry-archive/{run}/spec.md, "
+            "else state.json's spec_path) and that it carries tagged "
+            "requirement IDs (US-N / FR-N / NFR-N / AC-N / VC-N / IR-N / TR-N)."
+        )
+
+    if non_verified > 0:
+        passed = False
+        reason = f"{non_verified} requirement(s) not VERIFIED — THIN/PARTIAL are defects, not follow-ups"
+        hint = "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented."
+    if open_count > 0:
+        passed = False
+        reason = f"{open_count} open defect(s) remain"
+
+    # AC-011 / ST-003: escalation NEVER waives closure. Swapping N
+    # per-instance packets for one structural packet changes the shape of
+    # the work, not whether every instance must reach fixed. Stated as its
+    # own named check so the guarantee is visible in the checklist rather
+    # than merely implied by the open-defect count above.
+    escalated_open = _escalated_classes(fdir, project_root)
+    if escalated_open:
+        passed = False
+        reason = (
+            f"{len(escalated_open)} escalated defect class(es) still have open "
+            f"instances: {', '.join(sorted(escalated_open))}"
+        )
+        hint = (
+            "A structural fix must still close every defect of the class. "
+            "Escalation is not a waiver."
+        )
+    checklist.append({
+        "check": f"escalated_classes_closed (open classes={len(escalated_open)})",
+        "ok": not escalated_open,
+        "classes": sorted(escalated_open),
+    })
+
+    if teams_result["active"]:
+        passed = False
+        reason = f"Active teams: {', '.join(teams_result['teams'])}"
+
+    verdict_count = len(verdict_list)
+    verdicts_complete = True
+    if spec_count > 0 and verdict_count < spec_count:
+        passed = False
+        skipped = spec_count - verdict_count
+        reason = f"Only {verdict_count} verdicts but spec has {spec_count} requirements. {skipped} skipped."
+        hint = "ASSAY must write ALL verdicts to verdicts.json — including THIN/PARTIAL, not just VERIFIED."
+        verdicts_complete = False
+
+    checklist.append({
+        "check": f"spec_requirements_parsed (count={spec_count})",
+        "ok": spec_count > 0,
+    })
+    checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
+    checklist.append({"check": f"zero_defects (open={open_count})", "ok": open_count == 0})
+    checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
+    checklist.append({"check": f"verdict_coverage ({verdict_count}/{spec_count})", "ok": verdicts_complete})
+
+    return {"passed": passed, "reason": reason, "hint": hint, "checklist": checklist}
+
+
 def foundry_gate(
     phase: str,
     project_root: str = ".",
@@ -608,85 +729,14 @@ def foundry_gate(
         checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
 
     elif phase == "done":
-        verdicts = _load_json(fdir / "verdicts.json")
-        verdict_list = verdicts.get("requirements", [])
-        non_verified = sum(1 for r in verdict_list if r.get("verdict") != "VERIFIED")
-        defects = _load_json(fdir / "defects.json")
-        open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
-        teams_result = _check_active_teams(project_root)
-        spec_count = _count_spec_requirements(project_root)
-
-        # FR-020 / AC-025 — the auto-VERIFY hole, closed at the gate.
-        #
-        # Every other check below is vacuously satisfied by a spec that parses
-        # to ZERO requirements: no requirement can be non-VERIFIED, and the
-        # verdict_coverage check guarded itself with `spec_count > 0` and so
-        # skipped. A run whose spec is unresolvable or carries no tagged
-        # requirement IDs therefore sailed through DONE having proved nothing.
-        # Stated first so a more specific failure below still claims `reason`.
-        if spec_count <= 0:
-            passed = False
-            reason = (
-                "The spec parses to ZERO requirement IDs — nothing has been "
-                "verified, so DONE is vacuous."
-            )
-            hint = (
-                "Check that the run's spec resolves (foundry-archive/{run}/spec.md, "
-                "else state.json's spec_path) and that it carries tagged "
-                "requirement IDs (US-N / FR-N / NFR-N / AC-N / VC-N / IR-N / TR-N)."
-            )
-
-        if non_verified > 0:
-            passed = False
-            reason = f"{non_verified} requirement(s) not VERIFIED \u2014 THIN/PARTIAL are defects, not follow-ups"
-            hint = "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented."
-        if open_count > 0:
-            passed = False
-            reason = f"{open_count} open defect(s) remain"
-
-        # AC-011 / ST-003: escalation NEVER waives closure. Swapping N
-        # per-instance packets for one structural packet changes the shape of
-        # the work, not whether every instance must reach fixed. Stated as its
-        # own named check so the guarantee is visible in the checklist rather
-        # than merely implied by the open-defect count above.
-        escalated_open = _escalated_classes(fdir, project_root)
-        if escalated_open:
-            passed = False
-            reason = (
-                f"{len(escalated_open)} escalated defect class(es) still have open "
-                f"instances: {', '.join(sorted(escalated_open))}"
-            )
-            hint = (
-                "A structural fix must still close every defect of the class. "
-                "Escalation is not a waiver."
-            )
-        checklist.append({
-            "check": f"escalated_classes_closed (open classes={len(escalated_open)})",
-            "ok": not escalated_open,
-            "classes": sorted(escalated_open),
-        })
-
-        if teams_result["active"]:
-            passed = False
-            reason = f"Active teams: {', '.join(teams_result['teams'])}"
-
-        verdict_count = len(verdict_list)
-        verdicts_complete = True
-        if spec_count > 0 and verdict_count < spec_count:
-            passed = False
-            skipped = spec_count - verdict_count
-            reason = f"Only {verdict_count} verdicts but spec has {spec_count} requirements. {skipped} skipped."
-            hint = "ASSAY must write ALL verdicts to verdicts.json \u2014 including THIN/PARTIAL, not just VERIFIED."
-            verdicts_complete = False
-
-        checklist.append({
-            "check": f"spec_requirements_parsed (count={spec_count})",
-            "ok": spec_count > 0,
-        })
-        checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
-        checklist.append({"check": f"zero_defects (open={open_count})", "ok": open_count == 0})
-        checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
-        checklist.append({"check": f"verdict_coverage ({verdict_count}/{spec_count})", "ok": verdicts_complete})
+        # Every check lives in _done_preconditions, which the transition that
+        # actually enters F6 calls too (AC-011 / D-037). This branch is the
+        # advisory half of one shared evaluation, not a second opinion.
+        outcome = _done_preconditions(fdir, project_root)
+        passed = outcome["passed"]
+        reason = outcome["reason"]
+        hint = outcome["hint"]
+        checklist.extend(outcome["checklist"])
 
     else:
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
@@ -1383,6 +1433,29 @@ def foundry_mark_phase_complete(
                 "message": "NYQUIST complete → phase is now F6 (DONE). Run archived."}
 
     elif phase == "done":
+        # AC-011 / D-037 — the transition, not just the gate, enforces closure.
+        #
+        # This branch was an unconditional _update_phase + clear_active_run: it
+        # read no verdicts, no open defects and no escalated classes, so the
+        # careful checks in foundry_gate("done") were advisory and a run
+        # reached F6 with six open escalated-class defects and zero verdicts by
+        # simply not calling the gate. AC-011 constrains the RUN ("the run
+        # cannot reach DONE"), which is this call.
+        #
+        # It consults _done_preconditions — the SAME evaluation foundry_gate
+        # runs, exactly its checks and no others. A precondition the gate does
+        # not enforce must not be invented here: the transition and the gate
+        # disagreeing about what "done" means is the failure this is fixing.
+        outcome = _done_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return {
+                "error": f"Cannot mark the run DONE — {outcome['reason']}",
+                "hint": (
+                    outcome["hint"]
+                    or "Call Foundry-Gate(phase='done') for the full checklist."
+                ),
+                "checklist": outcome["checklist"],
+            }
         _update_phase(fdir, "F6")
         # Clear the active run — session is done with this run
         clear_active_run()
@@ -1972,6 +2045,99 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
 # --- Defect lifecycle ---
 
 
+# AC-013 / FR-010 — what makes an `adjacent_path_test` a REAL reference.
+#
+# The gate examined only the statement, by exact equality against the defect's
+# own symbol, and never looked at the test reference at all. Driven and
+# accepted before this: "n/a", "TODO", "tested it manually", and a test named
+# for the defect's own symbol. A-018 asks for "a reference to a test exercising
+# at least one adjacent path" — a string that references no test satisfies the
+# gate's letter and none of its purpose.
+#
+# Three structural rules, each decidable from the string alone, each killing one
+# value observed being accepted:
+#
+#   1. A reference is a LOCATOR, not a sentence — no internal whitespace.
+#      Kills "tested it manually".
+#   2. It must carry a locator separator (:: / \ # or .). Kills "TODO".
+#   3. It must name a test — a "test" or "spec" token somewhere. Kills "n/a",
+#      which clears rule 2 on its slash while referencing nothing.
+#
+# Then one semantic rule, mirroring the statement check's existing philosophy
+# (exact equality is the one thing decidable here): the reference must not name
+# ONLY the path the defect was found on.
+#
+# Deliberately NOT a filesystem existence check. The run's tests live in the
+# target repo at paths this server cannot resolve reliably — monorepo roots,
+# language-specific discovery, tests generated at build time — and a false
+# refusal here blocks a real fix behind an unfalsifiable gate. These rules
+# reject non-answers; they do not certify that the test exists or passes.
+#
+# Kept deliberately language-agnostic: foundry runs against Go, JS and Rust
+# repos, so `path::name`, `path/to/file.ext`, `Class#method` and dotted module
+# paths all clear rules 1-3.
+_TEST_REF_LOCATOR_CHARS = ("::", "/", "\\", "#", ".")
+_TEST_REF_NAMES_A_TEST = re.compile(r"test|spec", re.IGNORECASE)
+# Scaffolding affixes stripped before comparing a test's NAME to the defect's
+# own symbol, so `test_refresh_session` is recognised as naming `refresh_session`.
+_TEST_NAME_AFFIX = re.compile(
+    r"^(?:tests?|specs?|it)[_\-]+|[_\-]+(?:tests?|specs?)$", re.IGNORECASE
+)
+
+
+def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
+    """Name why ``ref`` is not a usable adjacent-path test reference, else None.
+
+    Returns a reason string suitable for a named refusal. Never raises: every
+    branch is a pure string test over the caller's own input.
+    """
+    if any(ch.isspace() for ch in ref):
+        return (
+            f"{ref!r} is prose, not a test reference. Give a locator such as "
+            "tests/test_auth.py::test_sweeper_evicts_stale_sessions."
+        )
+    if not any(sep in ref for sep in _TEST_REF_LOCATOR_CHARS):
+        return (
+            f"{ref!r} names no location. A test reference carries a path or a "
+            "qualified name (path/to/test_file.py::test_name)."
+        )
+    if not _TEST_REF_NAMES_A_TEST.search(ref):
+        return (
+            f"{ref!r} does not name a test. The reference must point at a test "
+            "file or test function."
+        )
+
+    # The reference names ONLY the defect's own source file, with no test
+    # within it singled out — that is the defect's own path restated.
+    if own_file and ref.strip() == own_file.strip():
+        return (
+            f"{ref!r} is the defect's own file, not a test that drives another "
+            "path through it."
+        )
+
+    # Compare the reference's NAME part — the segment after the last locator
+    # separator — to the defect's own symbol. Exact equality only, so a test
+    # like test_refresh_session_from_login_handler (a genuinely adjacent
+    # caller) still passes while test_refresh_session does not.
+    if own_symbol:
+        tail = ref
+        for sep in ("::", "#", "/", "\\"):
+            if sep in tail:
+                tail = tail.rsplit(sep, 1)[1]
+        # Drop a file extension so `test_session.py` compares as `test_session`.
+        if "." in tail:
+            tail = tail.rsplit(".", 1)[0]
+        stripped = _TEST_NAME_AFFIX.sub("", tail)
+        if stripped.casefold() == own_symbol.strip().casefold():
+            return (
+                f"{ref!r} names a test for the defect's own symbol "
+                f"({own_symbol}). AC-013 requires a test driving a NAMED "
+                "adjacent path — a DIFFERENT caller, transition, or concurrent "
+                "interaction than the one the defect was found on."
+            )
+    return None
+
+
 def foundry_mark_defect_fixed(
     defect_id: str,
     cycle: int,
@@ -1996,6 +2162,13 @@ def foundry_mark_defect_fixed(
     in the same shape as the acceptance gate's rejections. The declarations are
     persisted on the defect record, so the blast radius a fix claimed to have
     considered is auditable after the fact.
+
+    Both declarations are also checked for CONTENT, not merely presence: the
+    statement must not restate the defect's own symbol, and the test reference
+    must look like a test reference and must not name only the defect's own
+    path (see ``_test_ref_problem``). A presence-only gate accepted "n/a" and
+    "tested it manually", which is the gate passing while the guarantee it
+    exists for does not hold. Every failing field is named in one refusal.
 
     The whole read-modify-write runs inside ``ledger_transaction`` (FR-020 /
     AC-025). It used to be an UNLOCKED load / mutate / save while every other
@@ -2041,6 +2214,31 @@ def foundry_mark_defect_fixed(
         if not test_ref:
             missing.append("adjacent_path_test")
         own_symbol = (target.get("symbol") or "").strip() if target else ""
+        own_file = (target.get("file") or "").strip() if target else ""
+
+        # Present-but-inadequate declarations, gathered so ONE refusal names
+        # every field that failed (CT-001's "naming each missing field" applies
+        # to a junk declaration exactly as it does to an absent one — a caller
+        # who supplied two non-answers should be told about both, not sent back
+        # twice).
+        invalid: list[dict] = []
+        if statement and own_symbol and statement.casefold() == own_symbol.casefold():
+            # ST-004 / AC-013: the declared path must be ADJACENT — distinct
+            # from the path the defect itself was found on. Restating the
+            # defect's own symbol is the exact non-answer the gate exists to
+            # reject.
+            invalid.append({
+                "field": "adjacent_path_statement",
+                "reason": (
+                    f"it just names the defect's own symbol ({own_symbol}). An "
+                    "adjacent path is a DIFFERENT caller, transition, or "
+                    "concurrent interaction than the one the defect was found on"
+                ),
+            })
+        if test_ref:
+            problem = _test_ref_problem(test_ref, own_symbol, own_file)
+            if problem is not None:
+                invalid.append({"field": "adjacent_path_test", "reason": problem})
 
         if target is None:
             refusal = {"error": f"Defect {defect_id} not found"}
@@ -2060,20 +2258,24 @@ def foundry_mark_defect_fixed(
                     "defect closes and a regression opens in the same cycle."
                 ),
             }
-        # ST-004 / AC-013: the declared path must be ADJACENT — distinct from
-        # the path the defect itself was found on. Restating the defect's own
-        # symbol is the one case that is mechanically decidable here, and it is
-        # the exact non-answer the gate exists to reject.
-        elif own_symbol and statement.casefold() == own_symbol.casefold():
+        elif invalid:
+            fields = [item["field"] for item in invalid]
             refusal = {
                 "error": (
-                    f"Cannot mark {defect_id} fixed — adjacent_path_statement just names "
-                    f"the defect's own symbol ({own_symbol}). An adjacent path is a "
-                    "DIFFERENT caller, transition, or concurrent interaction than the one "
-                    "the defect was found on."
+                    f"Cannot mark {defect_id} fixed — unusable declaration(s): "
+                    + "; ".join(f"{item['field']} — {item['reason']}" for item in invalid)
+                    + "."
                 ),
-                "missing_fields": ["adjacent_path_statement"],
-                "hint": "Name a second path that touches this code, then test that path.",
+                # Same key the absent-field refusal uses, so a caller has one
+                # place to read "which fields must I supply or repair".
+                "missing_fields": fields,
+                "invalid_fields": invalid,
+                "hint": (
+                    "Name a second path that touches this code, then reference the "
+                    "test that drives THAT path — a locator such as "
+                    "tests/test_auth.py::test_sweeper_evicts_stale_sessions, not a "
+                    "note to yourself."
+                ),
             }
         else:
             target["status"] = "fixed"
@@ -2190,7 +2392,7 @@ def foundry_sync_defects(
     rather than partly applied, so the caller never has to guess which of its
     findings landed.
     """
-    from foundry_mcp.tools.foundry import ledger_transaction
+    from foundry_mcp.tools.foundry import ledger_transaction, record_denylist_tripwire
 
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -2325,24 +2527,58 @@ def foundry_sync_defects(
                 isinstance(finding.get("target_kind"), str)
                 and finding["target_kind"].strip().lower() == "comment"
             )
-            if declared_comment and never_demote_class(finding) is None:
-                klass = observation_class(finding)
-                if klass is not None:
-                    outcome = _route_to_observations(
-                        finding, server_cycle, klass, project_root
-                    )
-                    if not outcome.get("error"):
-                        observations += 1
-                        observed.append(
-                            {"classification": klass, "description": desc[:120]}
+            if declared_comment:
+                # D-036 — the denylist decision AND its audit signal are ONE
+                # exported call.
+                #
+                # This read `never_demote_class(finding) is None` and skipped
+                # the whole branch on a match. The finding correctly stayed a
+                # defect, but nothing downstream ran, so
+                # `record_denylist_tripwire` — which tools/foundry.py exports
+                # precisely for this call site, and whose own docstring names
+                # it — never fired on the Sync path. Live-proved: a
+                # SECURITY_PROPERTY_CLAIM comment finding filed through
+                # Foundry-Sync stayed a defect (the enforcement half, correct)
+                # and left observations.json's `tripwire` empty (the audit
+                # half, dead). An audit signal that fires only for the filing
+                # path that did not need auditing is not a control.
+                #
+                # Calling the helper makes the same decision the local check
+                # made and writes the signal as it does. Its NON_COMMENT
+                # fallback cannot fire under this guard — the helper's
+                # `_subject_is_declared_comment` is the same predicate as
+                # `declared_comment` above — so a non-None return means, still
+                # and only, "a denylist entry matched: keep this a defect".
+                #
+                # It is scoped to declared_comment deliberately. A finding with
+                # no `target_kind` is not attempting a demotion (Sync has no
+                # classification argument, so target_kind is the only demotion
+                # signal on this path), and auditing those would fire a
+                # NON_COMMENT tripwire on every ordinary defect and bury the
+                # real ones.
+                denied = record_denylist_tripwire(
+                    fdir, finding, cycle=server_cycle, source=norm["source"]
+                )
+                if denied is not None:
+                    tripwires.append(denied)
+                else:
+                    klass = observation_class(finding)
+                    if klass is not None:
+                        outcome = _route_to_observations(
+                            finding, server_cycle, klass, project_root
                         )
-                        continue
-                    tripwires.append({
-                        "description": desc[:120],
-                        "attempted_class": klass,
-                        "refusal": outcome.get("error", ""),
-                        "tripwire": outcome.get("tripwire", ""),
-                    })
+                        if not outcome.get("error"):
+                            observations += 1
+                            observed.append(
+                                {"classification": klass, "description": desc[:120]}
+                            )
+                            continue
+                        tripwires.append({
+                            "description": desc[:120],
+                            "attempted_class": klass,
+                            "refusal": outcome.get("error", ""),
+                            "tripwire": outcome.get("tripwire", ""),
+                        })
 
             defect = {
                 "id": _mint_defect_id(records),

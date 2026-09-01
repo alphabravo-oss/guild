@@ -571,6 +571,110 @@ def test_done_gate_escalation_check_passes_once_the_class_closes(run_env):
     assert checks[escalation_check]["classes"] == []
 
 
+def test_the_done_transition_itself_refuses_an_open_escalated_class(run_env):
+    """D-037 — AC-011 constrains the RUN, so the TRANSITION must enforce it.
+
+    ``foundry_mark_phase_complete("done")`` was an unconditional
+    ``_update_phase(F6)`` + ``clear_active_run()``: it read no verdicts, no open
+    defects and no escalated classes. Every check above lived in
+    ``foundry_gate("done")``, which is advisory — a lead that simply did not
+    call it archived the run. Driven before the fix: DONE reached with six open
+    escalated-class defects and zero verdicts, which is precisely what AC-011
+    says cannot happen.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=2)
+    _write_defects(fdir, _recurring([0, 1, 2]))
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "error" in result
+    # The named-refusal shape: what is wrong, and what to do about it.
+    assert "DONE" in result["error"]
+    assert result["hint"]
+    # The run did NOT advance.
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F4"
+
+    # The escalated-class check is the one that is visible in the checklist,
+    # named, alongside the others the gate enforces.
+    checks = {c["check"]: c for c in result["checklist"]}
+    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    assert checks[escalation_check]["ok"] is False
+    assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
+
+
+def test_the_done_transition_enforces_exactly_the_gates_checks(run_env):
+    """The other half of D-037, and the trap beside it: the transition must not
+    refuse on conditions the gate does not enforce.
+
+    The two consult ONE evaluation (``_done_preconditions``), so this asserts
+    the property directly rather than by re-listing the checks: for the same
+    run state, the gate's verdict and the transition's agree. A transition
+    stricter than its own gate is unsatisfiable — the lead is told the run is
+    ready and then refused.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=2)
+    _write_defects(fdir, _recurring([0, 1, 2]))
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+
+    _arm(fdir)
+    gate = foundry_gate("done", project_root)
+    _arm(fdir)
+    transition = foundry_mark_phase_complete("done", project_root)
+
+    assert gate["passed"] is False
+    assert transition.get("ok") is not True
+    # Same reason, same checklist — one evaluation, two callers.
+    assert gate["reason"] in transition["error"]
+    assert transition["checklist"] == gate["checklist"]
+
+
+def test_the_done_transition_advances_once_the_gate_would_pass(run_env, monkeypatch):
+    """Closure is the exit, not a waiver. When the preconditions the gate names
+    are actually met, the transition archives the run as it always did — the
+    refusal is a precondition, not a new phase the lead cannot leave."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=3)
+
+    # Every defect of the escalated class closed (ST-003 CLEARED)...
+    defects = _recurring([0, 1, 2])
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 3
+    _write_defects(fdir, defects)
+    # ...and the spec's requirements all carry VERIFIED verdicts.
+    (fdir / "spec.md").write_text(
+        "- FR-001: the thing works\n- FR-002: the other thing works\n",
+        encoding="utf-8",
+    )
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [
+            {"requirement_id": "FR-001", "verdict": "VERIFIED"},
+            {"requirement_id": "FR-002", "verdict": "VERIFIED"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    _arm(fdir)
+    gate = foundry_gate("done", project_root)
+    assert gate["passed"] is True, gate
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F6"
+
+
 def test_an_override_does_not_waive_closure_either(run_env):
     """De-escalating a class restores per-instance packets. It does not close
     anything: the DONE gate still refuses on the open defects themselves."""

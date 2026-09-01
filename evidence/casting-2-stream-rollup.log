@@ -17,5 +17,5 @@
 # _prove_is_clean read path: a spec parsing to ZERO requirements used to skip
 # the coverage check entirely, so any clean .prove-complete drove the F4
 # auto-pass on a spec nothing had been proved against.
-...................                                                      [100%]
-19 passed in 0.16s
+......................                                                   [100%]
+22 passed in 0.20s

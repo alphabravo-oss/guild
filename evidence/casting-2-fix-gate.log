@@ -11,5 +11,5 @@
 # one is missing, supplying both persists the declarations on the record
 # (CT-001), and a statement that merely restates the defect's own symbol is
 # refused because an adjacent path is by definition a different one (AC-013).
-.............                                                            [100%]
-13 passed in 0.43s
+........................................                                 [100%]
+40 passed in 0.58s

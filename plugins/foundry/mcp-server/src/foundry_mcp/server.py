@@ -309,23 +309,40 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "required": ["defect_id", "cycle", "adjacent_path_statement", "adjacent_path_test"],
+                # MANDATORY, but deliberately NOT in `required` (D-039).
+                #
+                # The SDK runs `jsonschema.validate` before dispatch and returns
+                # on the FIRST error, so listing both declarations here made the
+                # handler's refusal unreachable for the exact call CT-001 is
+                # written about: a caller omitting both got one
+                # "'adjacent_path_statement' is a required property" and never
+                # saw that the test reference was missing too. CT-001 requires a
+                # refusal naming EACH missing field, and only the handler can
+                # name more than one. Both fields are enforced — unconditionally
+                # and with the fuller message — in `foundry_mark_defect_fixed`.
+                #
+                # The descriptions below carry the obligation to the caller, and
+                # the tool description states the refusal outright.
+                "required": ["defect_id", "cycle"],
                 "properties": {
                     "defect_id": {"type": "string"},
                     "cycle": {"type": "integer"},
                     "adjacent_path_statement": {
                         "type": "string",
                         "description": (
-                            "Who ELSE calls this, what else transitions here, what runs "
-                            "concurrently. Must name a path other than the one the defect "
-                            "was found on."
+                            "REQUIRED. Who ELSE calls this, what else transitions here, "
+                            "what runs concurrently. Must name a path other than the one "
+                            "the defect was found on."
                         ),
                     },
                     "adjacent_path_test": {
                         "type": "string",
                         "description": (
-                            "Reference to a test exercising at least one NAMED adjacent "
-                            "path (e.g. tests/test_auth.py::test_refresh_reuses_session)."
+                            "REQUIRED. Reference to a test exercising at least one NAMED "
+                            "adjacent path (e.g. tests/test_auth.py::test_refresh_reuses_session). "
+                            "A locator, not a sentence: 'n/a', 'TODO' and 'tested it "
+                            "manually' are refused, as is a test named for the defect's "
+                            "own symbol."
                         ),
                     },
                 },
@@ -568,7 +585,9 @@ async def list_tools() -> list[Tool]:
                 "agent can be told from a dead one. Called with no argument it "
                 "returns every agent in the run; with an agent identifier it "
                 "returns only that agent. A run with no progress ledger returns an "
-                "empty roster, not an error."
+                "empty roster, not an error. Pass stall_seconds to override the "
+                "900s threshold — a longer one for a phase whose steps are "
+                "genuinely slow, a shorter one to sweep for wedged agents."
             ),
             inputSchema={
                 "type": "object",
@@ -576,6 +595,24 @@ async def list_tools() -> list[Tool]:
                     "agent": {
                         "type": "string",
                         "description": "Optional agent identifier. Omit for the whole roster.",
+                    },
+                    # D-002: implemented and tested in the handler, undeclared
+                    # here, so the SDK rejected any call carrying it and
+                    # commands/start.md documented a parameter no MCP caller
+                    # could send.
+                    #
+                    # No `exclusiveMinimum`: the handler already refuses a
+                    # non-positive threshold by name, and a schema bound would
+                    # pre-empt that with a raw validator message — the same
+                    # failure D-039 fixes on Foundry-Fix. `"number"` (which
+                    # jsonschema does not satisfy with a bool) is exactly the
+                    # handler's own accept-set.
+                    "stall_seconds": {
+                        "type": "number",
+                        "description": (
+                            "Optional stall-threshold override, in seconds. Must be "
+                            "greater than 0. Omit for the run-derived default (900s)."
+                        ),
                     },
                 },
             },
@@ -684,12 +721,23 @@ def _dispatch_liveness(args: dict) -> dict:
     server down while the casting that owns foundry_spawn.py is still landing
     this handler, and swallowing the ImportError would hide a real wiring break
     behind a silent no-op. Failing here fails one tool, loudly, naming the
-    symbol. The agent identifier is passed positionally so this registration
-    does not depend on the handler's parameter NAME.
+    symbol. The agent identifier and the threshold override are passed
+    positionally so this registration does not depend on the handler's
+    parameter NAMES.
+
+    ``stall_seconds`` is forwarded unvalidated and un-defaulted (D-002): the
+    handler owns both the default and the named refusal for a bad value, and
+    re-deciding either here would give MCP callers different answers from
+    in-process ones. ``None`` — the shape an omitted key takes — is exactly
+    what the handler reads as "use the derived default".
     """
     from foundry_mcp.tools.foundry_spawn import foundry_liveness
 
-    return foundry_liveness(args.get("agent"), project_root=_project_root)
+    return foundry_liveness(
+        args.get("agent"),
+        args.get("stall_seconds"),
+        project_root=_project_root,
+    )
 
 
 _DISPATCH = {

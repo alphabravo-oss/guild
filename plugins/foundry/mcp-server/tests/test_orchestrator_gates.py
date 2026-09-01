@@ -1389,6 +1389,155 @@ def test_defect_dispatch_carries_target_kind_and_defect_class(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# D-036 — the Sync path fires the never-demote audit tripwire
+# --------------------------------------------------------------------------- #
+
+
+def test_sync_denylist_hit_fires_the_tripwire_end_to_end(run_env):
+    """D-036 / AC-002 / FR-002, driven through Foundry-Sync to the ledger.
+
+    ``foundry_sync_defects``'s auto-demotion branch read
+    ``never_demote_class(finding) is None`` and skipped everything downstream on
+    a match. The ENFORCEMENT half worked — the finding stayed a defect — while
+    the AUDIT half was dead: ``record_denylist_tripwire`` (which tools/foundry.py
+    exports precisely for this call site, and whose docstring names it) could
+    not fire, so ``observations.json.tripwire`` stayed empty across every
+    Sync-path denylist scenario. Live-proved before the fix: a
+    SECURITY_PROPERTY_CLAIM comment finding through Sync left ``tripwire == []``.
+
+    The finding below is deliberately BOTH comment-drift prose — it classifies
+    as LINE_DRIFT_CITE, so it would be demoted to an observation on its own —
+    and a security claim, which vocab's precedence rule says outranks that.
+    Only the denylist keeps it a defect, which is what makes the tripwire the
+    thing under test rather than an incidental side effect.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=4)
+
+    finding = {
+        "source": "trace",
+        "type": "WRONG",
+        "description": (
+            "the comment cites line 88 for the csrf token check but the line "
+            "number is stale and the check moved to the middleware"
+        ),
+        "target_kind": "comment",
+        "symbol": "submit_form",
+        "file": "src/api/forms.py",
+    }
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Sync"]({
+            "cycle": 4,
+            "findings": [finding],
+        })
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result.get("ok") is True, result
+
+    # Enforcement half, unchanged: a denylist match is never demoted.
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(defects) == 1, defects
+    assert defects[0]["status"] == "open"
+    observations = json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+    assert observations.get("observations", []) == []
+
+    # Audit half — the part that was dead.
+    fired = observations["tripwire"]
+    assert len(fired) == 1, fired
+    assert fired[0]["denylist_class"] == vocab.SECURITY_PROPERTY_CLAIM
+    # The source is attributed verbatim to the stream that filed it, and the
+    # cycle is the SERVER's, not the caller's declaration.
+    assert fired[0]["source"] == "trace"
+    assert fired[0]["cycle"] == 4
+    assert fired[0]["symbol"] == "submit_form"
+
+    # ...and the lead is told in the response, not only in the ledger.
+    assert result["denylist_tripwires"][0]["denylist_class"] == (
+        vocab.SECURITY_PROPERTY_CLAIM
+    )
+
+
+def test_sync_still_demotes_a_clean_comment_finding_without_a_tripwire(run_env):
+    """The other side of D-036: routing the decision through
+    ``record_denylist_tripwire`` must not turn ordinary comment-drift prose into
+    a tripwire. Its NON_COMMENT fallback cannot fire under the declared-comment
+    guard, so a legitimate demotion still lands in the observations ledger with
+    the audit channel silent."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Sync"]({
+            "cycle": 2,
+            "findings": [{
+                "source": "trace",
+                "type": "WRONG",
+                # The same LINE_DRIFT_CITE prose as the test above, minus the
+                # security claim — so the ONLY difference between demotion and
+                # a tripwire is the denylist, which is the thing under test.
+                "description": (
+                    "the comment cites line 88 but the symbol moved and the "
+                    "line number is stale"
+                ),
+                "target_kind": "comment",
+                "file": "src/api/forms.py",
+            }],
+        })
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["observations"] == 1, result
+    assert result["added"] == 0, result
+    assert "denylist_tripwires" not in result
+
+    observations = json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+    assert len(observations["observations"]) == 1
+    assert observations.get("tripwire", []) == []
+
+
+def test_an_ordinary_defect_through_sync_fires_no_tripwire(run_env):
+    """The noise guard on the same change. ``record_denylist_tripwire`` reports
+    NON_COMMENT for any finding whose subject is not a declared comment, so
+    calling it for EVERY synced finding would fire a tripwire on every ordinary
+    defect and bury the real ones. It is scoped to demotion attempts."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Sync"]({
+            "cycle": 1,
+            "findings": [{
+                "source": "trace",
+                "type": "UNWIRED",
+                "description": "the submit handler never calls the token store",
+                "file": "src/api/forms.py",
+            }],
+        })
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["added"] == 1, result
+    assert "denylist_tripwires" not in result
+    obs_path = fdir / "observations.json"
+    if obs_path.exists():
+        assert json.loads(obs_path.read_text(encoding="utf-8")).get("tripwire", []) == []
+
+
+# --------------------------------------------------------------------------- #
 # D-033 — a spec that parses to zero requirements cannot reach DONE
 # --------------------------------------------------------------------------- #
 
@@ -1462,6 +1611,83 @@ def test_liveness_tool_is_registered_and_dispatched():
     assert liveness.inputSchema.get("required", []) == []
     assert "agent" in liveness.inputSchema["properties"]
     assert "Foundry-Liveness" in foundry_server._DISPATCH
+
+    # D-002: the handler's stall_seconds override is implemented and tested,
+    # and was declared nowhere — so the SDK rejected any call carrying it and
+    # the parameter was unreachable over MCP. commands/start.md tells the lead
+    # to pass it, which made the gap a doc/behaviour contradiction too.
+    assert "stall_seconds" in liveness.inputSchema["properties"]
+    assert liveness.inputSchema["properties"]["stall_seconds"]["type"] == "number"
+    # No schema bound on the value: the handler already refuses a non-positive
+    # threshold BY NAME, and an `exclusiveMinimum` here would pre-empt that with
+    # a raw validator message — the D-039 failure, repeated on another tool.
+    assert "exclusiveMinimum" not in liveness.inputSchema["properties"]["stall_seconds"]
+    assert "minimum" not in liveness.inputSchema["properties"]["stall_seconds"]
+
+
+def test_liveness_stall_seconds_is_forwarded_to_the_handler(run_env):
+    """D-002 driven: the override must change the ANSWER, not merely validate.
+
+    ``_dispatch_liveness`` passed only ``agent``, so a lead following
+    commands/start.md's "pass stall_seconds= to override" got the 900s default
+    silently. Here one agent sits 10 minutes idle: under the default it is
+    progressing, under a 60s override it is not — the same ledger, two verdicts,
+    which is only possible if the value crossed the dispatcher.
+    """
+    import jsonschema
+
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    pdir = fdir / "progress"
+    pdir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    stamp = (now - timedelta(minutes=10)).isoformat()
+    (pdir / "casting-4.jsonl").write_text(
+        json.dumps({"timestamp": stamp, "phase": "CAST", "step": "writing code"}) + "\n",
+        encoding="utf-8",
+    )
+
+    tools = asyncio.run(foundry_server.list_tools())
+    liveness = next(t for t in tools if t.name == "Foundry-Liveness")
+    args = {"stall_seconds": 60}
+    # The SDK's own pre-dispatch validation, which used to reject this call.
+    jsonschema.validate(instance=args, schema=liveness.inputSchema)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        overridden = foundry_server._DISPATCH["Foundry-Liveness"](args)
+        default = foundry_server._DISPATCH["Foundry-Liveness"]({})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert overridden["ok"] is True, overridden
+    assert overridden["stall_threshold_seconds"] == 60
+    assert default["stall_threshold_seconds"] != 60
+    # Ten minutes of silence: stalled at a 60s threshold, fine at the default.
+    assert "casting-4" in overridden["needs_attention"]
+    assert "casting-4" not in default["needs_attention"]
+
+
+def test_liveness_bad_stall_seconds_reaches_the_handlers_named_refusal(run_env):
+    """The reason no schema bound was added: the handler names the offending
+    value and the legal range, and that message is what an MCP caller must see
+    rather than a jsonschema string."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Liveness"]({"stall_seconds": 0})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["ok"] is False, result
+    assert "stall_seconds" in result["error"]
+    assert result["hint"]
 
 
 def test_no_enum_literal_is_re_declared_in_the_server_schemas():

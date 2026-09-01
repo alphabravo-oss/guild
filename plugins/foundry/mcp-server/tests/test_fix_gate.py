@@ -319,6 +319,202 @@ def test_a_genuinely_adjacent_declaration_is_accepted(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# D-038 / AC-013 — the TEST REFERENCE is examined, not just the statement
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        "n/a",
+        "N/A",
+        "TODO",
+        "tested it manually",
+        "I ran the suite",
+        "see the PR",
+        "-",
+    ],
+)
+def test_a_test_reference_that_references_no_test_is_refused(run_env, junk):
+    """D-038 stated as the values that were driven and ACCEPTED.
+
+    The gate examined the statement by exact equality and never looked at
+    ``adjacent_path_test`` at all, so any non-empty string closed the defect.
+    A-018 asks for "a reference to a test exercising at least one adjacent
+    path"; none of these references a test.
+    """
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=junk,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (junk, result)
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    assert "adjacent_path_test" in result["error"]
+    # The refusal quotes the value back, so the caller can see what was judged.
+    assert junk in result["error"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_a_test_named_for_the_defects_own_symbol_is_refused(run_env):
+    """AC-013 verbatim: 'the referenced test drives a named adjacent path
+    DISTINCT from the path the defect was found on'. A well-formed reference
+    that points straight back at the defect's own symbol satisfies the shape
+    rules and none of the requirement."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="tests/test_session.py::test_refresh_session",
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    assert "refresh_session" in result["error"]
+    assert "adjacent" in result["error"].lower()
+
+
+def test_the_defects_own_file_is_not_a_test_reference(run_env):
+    """Naming the source file the defect was found in is the defect's own path
+    restated in the other field."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session_test.go")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="src/auth/session_test.go",
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_test"]
+
+
+def test_both_declarations_failing_are_named_in_one_refusal(run_env):
+    """CT-001's 'naming each missing field' holds for junk exactly as it does
+    for absence: a caller who supplied two non-answers is told about both,
+    rather than being sent back twice."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement="refresh_session",
+        adjacent_path_test="n/a",
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == [
+        "adjacent_path_statement",
+        "adjacent_path_test",
+    ]
+    assert "adjacent_path_statement" in result["error"]
+    assert "adjacent_path_test" in result["error"]
+    assert {item["field"] for item in result["invalid_fields"]} == {
+        "adjacent_path_statement",
+        "adjacent_path_test",
+    }
+    assert all(item["reason"] for item in result["invalid_fields"])
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        # pytest
+        "tests/test_auth.py::test_sweeper_evicts_stale_sessions",
+        "tests/test_auth.py",
+        # go
+        "internal/auth/sweeper_test.go::TestSweeperEvictsStale",
+        "TestSweeperEvictsStale#auth",
+        # js / ts
+        "src/auth/__tests__/sweeper.test.ts",
+        "src/auth/sweeper.spec.ts",
+        # rust / java-style qualified names
+        "auth::sweeper::tests::evicts_stale_sessions",
+        "AuthSweeperTest#evictsStaleSessions",
+    ],
+)
+def test_real_test_references_across_languages_are_accepted(run_env, ref):
+    """The rules reject non-answers; they must not reject the shapes a real
+    reference takes. Foundry runs against Go, JS and Rust repos, so a
+    pytest-only rule would refuse legitimate fixes — a false refusal here
+    blocks work behind a gate the teammate cannot satisfy."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ref,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, (ref, result)
+    assert result["adjacent_path_test"] == ref
+
+
+def test_an_adjacent_test_sharing_the_symbols_prefix_is_still_accepted(run_env):
+    """The own-symbol rule is exact equality after stripping test scaffolding,
+    not a substring match: a test whose name STARTS with the defect's symbol but
+    goes on to name another caller drives a genuinely adjacent path."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="tests/test_auth.py::test_refresh_session_from_login_handler",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_a_defect_with_no_symbol_only_gets_the_shape_rules(run_env):
+    """The own-symbol comparison needs a symbol. Without one the reference is
+    still required to BE a reference — the gate degrades, it does not switch
+    off."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="", file="")
+
+    refused = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="TODO",
+        project_root=project_root,
+    )
+    assert refused.get("ok") is not True, refused
+
+    accepted = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert accepted["ok"] is True, accepted
+
+
+# --------------------------------------------------------------------------- #
 # FR-005 / ST-001 — the SERVER counter stamps the fix, not the caller
 # --------------------------------------------------------------------------- #
 
@@ -534,27 +730,110 @@ def test_no_active_run_is_refused(run_env):
 # --------------------------------------------------------------------------- #
 
 
-def test_tool_schema_requires_both_declarations():
-    """CT-001: the widened Foundry-Fix inputSchema makes both declarations
-    required, so the client blocks the incomplete call before it is sent — the
-    schema and the runtime guard state the same contract."""
+def test_tool_schema_declares_both_but_leaves_the_ladder_reachable():
+    """D-039 / CT-001: the two declarations are DECLARED but deliberately not in
+    the schema's ``required`` array.
+
+    They were, and it made CT-001 unsatisfiable over MCP. The SDK validates
+    arguments against ``inputSchema`` before dispatch and returns on the FIRST
+    jsonschema error, so a caller omitting both was told about one of them and
+    never reached the handler's ladder — the only code that can name more than
+    one missing field. The obligation lives in the descriptions and in the
+    handler, which refuses unconditionally.
+    """
     from foundry_mcp import server as foundry_server
 
     tools = asyncio.run(foundry_server.list_tools())
     fix = next(t for t in tools if t.name == "Foundry-Fix")
 
-    assert set(fix.inputSchema["required"]) == {
-        "defect_id",
-        "cycle",
-        "adjacent_path_statement",
-        "adjacent_path_test",
-    }
+    assert set(fix.inputSchema["required"]) == {"defect_id", "cycle"}
     props = fix.inputSchema["properties"]
     assert "adjacent_path_statement" in props
     assert "adjacent_path_test" in props
-    # The descriptions carry the semantics A-017 / A-018 specify.
+    # The descriptions carry the semantics A-017 / A-018 specify, and say the
+    # fields are mandatory even though the validator will not enforce it.
     assert "concurrently" in props["adjacent_path_statement"]["description"]
+    assert "REQUIRED" in props["adjacent_path_statement"]["description"]
     assert "adjacent" in props["adjacent_path_test"]["description"].lower()
+    assert "REQUIRED" in props["adjacent_path_test"]["description"]
+    # The tool description still states the refusal, so a lead reading the tool
+    # list learns the contract the validator no longer advertises.
+    assert "REFUSED" in fix.description
+
+
+def test_an_mcp_caller_omitting_both_declarations_sees_the_multi_field_refusal(run_env):
+    """D-039 driven at the boundary an MCP caller actually crosses.
+
+    Reproduces the SDK's own pre-dispatch step — ``jsonschema.validate`` against
+    the advertised ``inputSchema``, exactly as
+    ``mcp.server.lowlevel.Server.call_tool``'s handler runs it — and then the
+    dispatch. Before the fix, validation raised here and the assertion below
+    could never run: the caller saw a single "'adjacent_path_statement' is a
+    required property" and was never told the test reference was missing too.
+    """
+    import jsonschema
+
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    tools = asyncio.run(foundry_server.list_tools())
+    fix = next(t for t in tools if t.name == "Foundry-Fix")
+    args = {"defect_id": "D-001", "cycle": 2}
+
+    # Step 1 — the SDK's validation must let this through, or the handler's
+    # refusal is unreachable no matter how good it is.
+    jsonschema.validate(instance=args, schema=fix.inputSchema)
+
+    # Step 2 — the dispatch the SDK performs next.
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Fix"](args)
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == [
+        "adjacent_path_statement",
+        "adjacent_path_test",
+    ]
+    # CT-001's "naming each missing field" — both, in the one message the
+    # caller is shown.
+    assert "adjacent_path_statement" in result["error"]
+    assert "adjacent_path_test" in result["error"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_a_complete_call_still_validates_against_the_schema(run_env):
+    """NFR-002's no-narrowing half: loosening ``required`` must not have made a
+    well-formed call invalid, and the optional properties still type-check."""
+    import jsonschema
+
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    fix = next(t for t in tools if t.name == "Foundry-Fix")
+
+    jsonschema.validate(
+        instance={
+            "defect_id": "D-001",
+            "cycle": 2,
+            "adjacent_path_statement": ADJACENT_STATEMENT,
+            "adjacent_path_test": ADJACENT_TEST,
+        },
+        schema=fix.inputSchema,
+    )
+    # A wrongly-typed declaration is still caught by the validator — dropping
+    # the fields from `required` did not drop their schema.
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(
+            instance={"defect_id": "D-001", "cycle": 2, "adjacent_path_test": 7},
+            schema=fix.inputSchema,
+        )
 
 
 def test_dispatch_threads_both_declarations_through(run_env):
