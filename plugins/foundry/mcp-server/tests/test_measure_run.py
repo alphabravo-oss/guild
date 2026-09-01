@@ -32,6 +32,15 @@ Test surface (per 09-VALIDATION.md RUN-01 verification rows):
   13. test_run_01_quantitative_gates
   14. test_saturation_threshold_dual_criterion
 
+  FR-013 vocabulary derivation + the FR-018 key/case repair (Tests 15-17).
+
+  D-034 — the gates operating on a REAL archive (Tests 18-28): absent
+  cohort.json and context-at-f2.txt are cohort-study inputs no run writes, the
+  per-cycle roll-up is read rather than ignored, a roll-up proving a higher
+  cycle than state.json names the stale counter, and --context-pct /
+  --baseline-seconds turn the two structurally-MISSING gates into real
+  verdicts.
+
 RED-or-SKIP discipline:
 
 - Module-top guard: ``pytest.skip(allow_module_level=True)`` when
@@ -182,6 +191,8 @@ def make_run_dir(tmp_path: Path) -> Callable[..., Path]:
         omit_handoffs: bool = False,
         omit_state: bool = False,
         cohort_json_override: dict[str, Any] | None = None,
+        omit_cohort: bool = False,
+        rollup: dict[str, Any] | None = None,
     ) -> Path:
         run_dir = tmp_path / cohort_id
         run_dir.mkdir()
@@ -223,9 +234,14 @@ def make_run_dir(tmp_path: Path) -> Callable[..., Path]:
             "spec_path": "forge-specs/phase9-sloppy/spec.md",
             "spec_format_version": "v2.1",
         }
-        (run_dir / "cohort.json").write_text(
-            json.dumps(cohort_json), encoding="utf-8"
-        )
+        if not omit_cohort:
+            (run_dir / "cohort.json").write_text(
+                json.dumps(cohort_json), encoding="utf-8"
+            )
+        if rollup is not None:
+            (run_dir / "stream-rollup.json").write_text(
+                json.dumps(rollup), encoding="utf-8"
+            )
         return run_dir
 
     return _make
@@ -806,3 +822,213 @@ def test_legacy_stream_key_still_counted(
     exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
     assert exit_code == 0, (stdout, stderr)
     assert json.loads(stdout)["per_stream_defects"] == {"TRACE": 1}
+
+
+# ---------------------------------------------------------------------------
+# D-034 — the gates must operate on a REAL run archive (FR-018 / AC-024).
+#
+# A real foundry archive has no cohort.json and no context-at-f2.txt (both are
+# hand-placed cohort-study inputs, written by no run), and — after the release
+# that introduces it — a stream-rollup.json that measure-run never opened.
+# ---------------------------------------------------------------------------
+
+
+def _rollup_doc(cycles: dict[str, Any]) -> dict[str, Any]:
+    """A stream-rollup.json in the shape the server writes and migration emits."""
+    return {"cycles": cycles, "updated_at": "2026-08-30T04:34:50+00:00"}
+
+
+def _entry(items_checked: int, items_total: int, findings: int) -> dict[str, Any]:
+    return {
+        "items_checked": items_checked,
+        "items_total": items_total,
+        "findings": findings,
+        "records": [],
+    }
+
+
+def test_absent_cohort_json_is_not_a_schema_violation(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 18 — D-034's first symptom.
+
+    No foundry run writes cohort.json, so treating its absence as
+    PHASE9_SCHEMA_INVALID made EVERY real archive emit a failure token and exit
+    1 — the instrumentation rejected real data by construction.
+    """
+    run_dir = make_run_dir(omit_cohort=True)
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == []
+    assert payload["cohort_id"] == ""
+
+
+def test_strict_flag_rejects_missing_cohort_json(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 19 — absence is strict-gated, exactly as context-at-f2.txt is,
+    so the cohort-study workflow keeps its strictness.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct="42.7")
+    exit_code, stdout, stderr = _invoke_measure_run("--strict", str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_malformed_cohort_json_is_still_a_schema_violation(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 20 — tolerating ABSENCE must not tolerate a corrupt file."""
+    run_dir = make_run_dir()
+    (run_dir / "cohort.json").write_text("{not json", encoding="utf-8")
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_stream_rollup_coverage_is_read_and_reported(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 21 — D-034's third symptom: the roll-up was never opened.
+
+    defects.json records what each stream FOUND; only stream-rollup.json
+    records what it CHECKED, so without it the instrumentation reported defect
+    yield with no denominator. Coverage is re-keyed onto the canonical
+    UPPERCASE ids so the payload speaks one spelling throughout.
+    """
+    run_dir = make_run_dir(
+        rollup=_rollup_doc(
+            {
+                "2": {"prove": _entry(80, 80, 4), "trace": _entry(12, 15, 1)},
+                "3": {"prove": _entry(165, 165, 0), "test01": _entry(9, 9, 0)},
+            }
+        )
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_cycle_coverage"] == {
+        "2": {
+            "PROVE": {"items_checked": 80, "items_total": 80, "findings": 4},
+            "TRACE": {"items_checked": 12, "items_total": 15, "findings": 1},
+        },
+        "3": {
+            "PROVE": {"items_checked": 165, "items_total": 165, "findings": 0},
+            "TEST-01": {"items_checked": 9, "items_total": 9, "findings": 0},
+        },
+    }
+
+
+def test_absent_stream_rollup_is_not_a_failure(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 22 — archives written before the roll-up existed are exactly the
+    ones this instrumentation has to measure, so absence reports empty.
+    """
+    run_dir = make_run_dir()
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_cycle_coverage"] == {}
+    assert payload["failure_tokens"] == []
+
+
+def test_rollup_proving_a_higher_cycle_names_the_stale_counter(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 23 — survey/data.md FI-1.
+
+    ``state.json["cycle"]`` was written once as 0 and never incremented, so an
+    unrepaired archive reports a cycle count the run never had and the
+    convergence gate PASSes on fiction. The roll-up is keyed BY the server-side
+    cycle counter (FR-005 / ST-001), so its highest key is that counter read
+    from the artifact — not a second counter invented here. When it proves
+    more, report the proven value and NAME the stale one.
+    """
+    run_dir = make_run_dir(  # fixture state.json records cycle 3
+        rollup=_rollup_doc({"3": {"prove": _entry(80, 80, 1)},
+                            "7": {"prove": _entry(80, 80, 0)}})
+    )
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    assert payload["cycles"] == 7, "must report the cycle the run reached"
+    assert "PHASE9_CYCLE_COUNT_INVALID" in payload["failure_tokens"]
+    assert exit_code != 0
+
+
+def test_rollup_agreeing_with_state_is_silent(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 24 — a repaired archive reconciles cleanly and stays quiet."""
+    run_dir = make_run_dir(
+        rollup=_rollup_doc({"3": {"prove": _entry(80, 80, 1)}})
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["cycles"] == 3
+    assert payload["failure_tokens"] == []
+
+
+def test_unknown_stream_in_rollup_is_named(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 25 — a roll-up key outside the roster is NAMED, never coerced."""
+    run_dir = make_run_dir(rollup=_rollup_doc({"3": {"bogus": _entry(1, 1, 0)}}))
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_UNKNOWN_STREAM:bogus" in json.loads(stdout)["failure_tokens"]
+
+
+def test_malformed_stream_rollup_is_a_schema_violation(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 26 — a roll-up that EXISTS but is not the documented shape."""
+    run_dir = make_run_dir()
+    (run_dir / "stream-rollup.json").write_text("{not json", encoding="utf-8")
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_operator_inputs_turn_the_two_missing_gates_real(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 27 — D-034's second symptom: 2 of 4 gates permanently MISSING.
+
+    The F2 context percentage and the wall-clock baseline are measurements no
+    archive holds, so without an input path those two gates can NEVER be
+    anything but MISSING. ``--context-pct`` and ``--baseline-seconds`` supply
+    them; all four gates then return a real verdict.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct=None)
+
+    # Without the inputs: honest MISSING on exactly those two gates.
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    before = json.loads(stdout)["gate_verdicts"]
+    assert before["f2_context_pct"] == "MISSING"
+    assert before["wall_clock_regression_pct"] == "MISSING"
+
+    # With them: four real verdicts, no MISSING left.
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "41.5", "--baseline-seconds", "100.0"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["f2_context_pct"] == 41.5
+    assert "MISSING" not in payload["gate_verdicts"].values(), payload["gate_verdicts"]
+    assert payload["gate_verdicts"]["f2_context_pct"] == "PASS"
+
+
+def test_context_pct_override_wins_over_the_file(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 28 — an explicit measurement beats a stale on-disk one."""
+    run_dir = make_run_dir(context_pct="42.7")
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "13.5"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    assert json.loads(stdout)["f2_context_pct"] == 13.5

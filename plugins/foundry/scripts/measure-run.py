@@ -12,6 +12,13 @@ The stream roster is DERIVED from foundry_mcp.schemas.vocab (FR-013): this
 script was one of six independently re-typed copies of the same vocabulary.
 vocab is stdlib-only and imports nothing from foundry_mcp.tools, so this
 script keeps its "stdlib only; no runtime deps" contract.
+
+Four artifacts are read per run, and each is optional in the way a REAL archive
+makes it optional (FR-018 / AC-024 — the gates must operate on real data):
+defects.json (what streams found), stream-rollup.json (what they checked, keyed
+by the server cycle counter), state.json (the recorded cycle), handoffs.jsonl
+(wall clock). cohort.json and context-at-f2.txt are cohort-study inputs no run
+writes; their absence is strict-gated, never a schema violation.
 """
 from __future__ import annotations
 import argparse, csv, io, json, sys
@@ -77,11 +84,13 @@ class MeasureResult:
     failure_tokens: list[str] = field(default_factory=list)
     disable_lever: str = ""
     wall_clock_regression_pct: float | None = None
+    per_cycle_coverage: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
             "cohort_id": self.cohort_id, "cycles": self.cycles,
             "per_stream_defects": self.per_stream_defects,
+            "per_cycle_coverage": self.per_cycle_coverage,
             "f2_context_pct": self.f2_context_pct,
             "wall_clock_seconds": self.wall_clock_seconds,
             "gate_verdicts": self.gate_verdicts,
@@ -109,9 +118,24 @@ def _load_json(path: Path) -> Any:
         return None
 
 
-def _read_cohort_json(run_dir: Path) -> tuple[str | None, str, list[str]]:
-    """Return (cohort_id, disable_lever, failure_tokens)."""
-    data = _load_json(run_dir / "cohort.json")
+def _read_cohort_json(run_dir: Path, strict: bool) -> tuple[str | None, str, list[str]]:
+    """Return (cohort_id, disable_lever, failure_tokens).
+
+    ``cohort.json`` is a Phase-9 A/B *cohort study* input, hand-placed beside
+    the archive to name which arm it is; no foundry run writes one. Its ABSENCE
+    therefore means "an ordinary run, not a cohort arm" — not a schema
+    violation. Treating it as one made EVERY real archive emit
+    PHASE9_SCHEMA_INVALID and exit 1, which is the failing half of "its
+    run-quality gates operate on real data" (FR-018 / AC-024).
+
+    Absence is strict-gated exactly as context-at-f2.txt is, so the cohort-study
+    workflow keeps its strictness. A cohort.json that EXISTS but is malformed
+    is still a schema violation.
+    """
+    path = run_dir / "cohort.json"
+    if not path.exists():
+        return None, "", (["PHASE9_SCHEMA_INVALID"] if strict else [])
+    data = _load_json(path)
     if not isinstance(data, dict):
         return None, "", ["PHASE9_SCHEMA_INVALID"]
     cohort_id = data.get("cohort_id")
@@ -164,6 +188,76 @@ def _read_state_cycle_count(run_dir: Path) -> tuple[int, list[str]]:
     return cycle, []
 
 
+def _read_stream_rollup(
+    run_dir: Path,
+) -> tuple[dict[str, dict[str, dict[str, int]]], int | None, list[str]]:
+    """Read the per-cycle roll-up (CT-003) — the coverage the ledger cannot show.
+
+    ``defects.json`` records what each stream FOUND; only stream-rollup.json
+    records what each stream CHECKED, and it is the sole artifact keyed by the
+    server-side cycle counter. Leaving it unread is why the instrumentation
+    reported defect yield without the denominator that makes yield meaningful.
+
+    Returns (per_cycle_coverage, highest_cycle_key, failure_tokens). Coverage is
+    re-keyed onto the canonical UPPERCASE ids so the whole payload speaks one
+    spelling, matching per_stream_defects.
+
+    Absence is NOT a failure: archives written before the roll-up existed are
+    precisely the ones this instrumentation has to measure. A file that exists
+    but is not the documented shape is PHASE9_SCHEMA_INVALID.
+    """
+    path = run_dir / "stream-rollup.json"
+    if not path.exists():
+        return {}, None, []
+    data = _load_json(path)
+    if not isinstance(data, dict) or not isinstance(data.get("cycles"), dict):
+        return {}, None, ["PHASE9_SCHEMA_INVALID"]
+
+    coverage: dict[str, dict[str, dict[str, int]]] = {}
+    highest: int | None = None
+    fts: list[str] = []
+    for raw_cycle, bucket in data["cycles"].items():
+        try:
+            cycle = int(raw_cycle)
+        except (TypeError, ValueError):
+            fts.append("PHASE9_SCHEMA_INVALID"); continue
+        if cycle < 0 or not isinstance(bucket, dict):
+            fts.append("PHASE9_SCHEMA_INVALID"); continue
+        if highest is None or cycle > highest:
+            highest = cycle
+        for raw_stream, entry in bucket.items():
+            if not isinstance(raw_stream, str) or not isinstance(entry, dict):
+                fts.append("PHASE9_SCHEMA_INVALID"); continue
+            stream = canonical_stream_id(raw_stream)
+            if stream is None:
+                fts.append(f"PHASE9_UNKNOWN_STREAM:{raw_stream}"); continue
+            counts: dict[str, int] = {}
+            for key in ("items_checked", "items_total", "findings"):
+                value = entry.get(key, 0)
+                counts[key] = 0 if isinstance(value, bool) or not isinstance(value, int) else value
+            coverage.setdefault(str(cycle), {})[stream] = counts
+    return coverage, highest, fts
+
+
+def _reconcile_cycle_count(recorded: int, rollup_highest: int | None) -> tuple[int, list[str]]:
+    """Reconcile state.json's counter against the roll-up's own cycle keys.
+
+    This is NOT a second counter. The roll-up is keyed BY the server-side cycle
+    counter (FR-005 / ST-001), so its highest key is that counter's own value
+    as of the last stream record — read from the artifact rather than recomputed.
+
+    survey/data.md FI-1: ``state.json["cycle"]`` was written once as 0 and never
+    incremented, so an unrepaired archive reports 0 cycles and the convergence
+    gate PASSes on a number the run never had. When the roll-up proves a higher
+    cycle, report the proven value and NAME the stale counter rather than
+    passing a gate on fiction. Migration (migrate-archive.py step 5) is what
+    repairs the archive; this is the detector that stops it going unnoticed.
+    """
+    if rollup_highest is None or rollup_highest <= recorded:
+        return recorded, []
+    return rollup_highest, ["PHASE9_CYCLE_COUNT_INVALID"]
+
+
 def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
     path = run_dir / "defects.json"
     if not path.exists():
@@ -196,7 +290,19 @@ def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
     return counts, fts
 
 
-def _read_context_pct(run_dir: Path, strict: bool) -> tuple[float | None, list[str]]:
+def _read_context_pct(
+    run_dir: Path, strict: bool, override: float | None = None
+) -> tuple[float | None, list[str]]:
+    """Read the F2 context percentage, or take the operator's measurement.
+
+    No run writes context-at-f2.txt — the F2 context percentage is observed by
+    the lead at runtime, not persisted in the archive — so without an input path
+    this gate is structurally incapable of ever being anything but MISSING.
+    ``--context-pct`` supplies the measurement, exactly as ``--baseline-seconds``
+    supplies the wall-clock baseline; an explicit value wins over the file.
+    """
+    if override is not None:
+        return override, []
     miss = ["PHASE9_CONTEXT_FILE_MISSING"] if strict else []
     path = run_dir / "context-at-f2.txt"
     if not path.exists():
@@ -266,20 +372,29 @@ def _is_saturated(
     return rel_drop_pct <= SATURATION_THRESHOLD_DEFECT_YIELD_PCT
 
 
-def _extract_per_run(run_dir: Path, strict: bool, baseline_wall_clock: float | None = None) -> MeasureResult:
+def _extract_per_run(
+    run_dir: Path,
+    strict: bool,
+    baseline_wall_clock: float | None = None,
+    context_pct_override: float | None = None,
+) -> MeasureResult:
     r = MeasureResult()
     failure_tokens: list[str] = []
     if not run_dir.exists() or not run_dir.is_dir():
         r.failure_tokens = ["PHASE9_RUN_DIR_INVALID"]; return r
-    cohort_id, lever, cf = _read_cohort_json(run_dir)
+    cohort_id, lever, cf = _read_cohort_json(run_dir, strict)
     r.cohort_id, r.disable_lever = cohort_id or "", lever; failure_tokens.extend(cf)
     wall_clock, wf = _read_handoffs_wall_clock(run_dir)
     r.wall_clock_seconds = wall_clock; failure_tokens.extend(wf)
-    cycles, cycf = _read_state_cycle_count(run_dir)
-    r.cycles = cycles; failure_tokens.extend(cycf)
+    coverage, rollup_highest, rf = _read_stream_rollup(run_dir)
+    r.per_cycle_coverage = coverage; failure_tokens.extend(rf)
+    recorded, cycf = _read_state_cycle_count(run_dir)
+    failure_tokens.extend(cycf)
+    cycles, recf = _reconcile_cycle_count(recorded, rollup_highest)
+    r.cycles = cycles; failure_tokens.extend(recf)
     per_stream, df = _read_defects_per_stream(run_dir)
     r.per_stream_defects = per_stream; failure_tokens.extend(df)
-    context_pct, ctxf = _read_context_pct(run_dir, strict)
+    context_pct, ctxf = _read_context_pct(run_dir, strict, context_pct_override)
     r.f2_context_pct = context_pct; failure_tokens.extend(ctxf)
     if baseline_wall_clock is not None and baseline_wall_clock > 0:
         r.wall_clock_regression_pct = (wall_clock / baseline_wall_clock - 1.0) * 100.0
@@ -294,8 +409,18 @@ def _extract_per_run(run_dir: Path, strict: bool, baseline_wall_clock: float | N
     return r
 
 
-def _emit_per_run(run_dir: Path, strict: bool) -> int:
-    result = _extract_per_run(run_dir, strict=strict)
+def _emit_per_run(
+    run_dir: Path,
+    strict: bool,
+    baseline_wall_clock: float | None = None,
+    context_pct_override: float | None = None,
+) -> int:
+    result = _extract_per_run(
+        run_dir,
+        strict=strict,
+        baseline_wall_clock=baseline_wall_clock,
+        context_pct_override=context_pct_override,
+    )
     sys.stdout.write(json.dumps(result.to_json_dict(), indent=2) + "\n")
     return 1 if result.failure_tokens else 0
 
@@ -411,7 +536,15 @@ def main(argv: list[str]) -> int:
         return _emit_matrix(args.matrix, strict=args.strict, fmt=args.format)
     if args.run_dir is None:
         _build_parser().error("either run_dir or --matrix RUNS_DIR is required")
-    return _emit_per_run(args.run_dir, strict=args.strict)
+    # --baseline-seconds and --context-pct carry the two measurements no
+    # archive holds. Supplying either turns its gate from MISSING into a real
+    # verdict; omitting both leaves the honest MISSING.
+    return _emit_per_run(
+        args.run_dir,
+        strict=args.strict,
+        baseline_wall_clock=args.baseline_seconds,
+        context_pct_override=args.context_pct,
+    )
 
 
 if __name__ == "__main__":

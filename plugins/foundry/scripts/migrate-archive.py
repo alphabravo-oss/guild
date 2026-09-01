@@ -11,8 +11,8 @@ idempotent (NFR-003) even against a hand-edited or half-migrated archive:
   1. defects.json     — every record gains ``class: null`` and
                         ``classification: "DEFECT"`` when absent
   2. observations.json — created as {"observations": []} when absent
-  3. stream-rollup.json — per-cycle, per-canonical-stream defect counts,
-                        re-derived from the archive's own data
+  3. stream-rollup.json — the per-cycle roll-up, re-derived from the
+                        archive's own data in the shape its consumer reads
   4. progress/        — per-agent progress-ledger directory, created empty
   5. state.json       — ``cycle`` repaired from the run's own data when the
                         recorded value is missing/invalid/too low
@@ -37,17 +37,26 @@ from pathlib import Path
 from typing import Any
 
 try:  # Installed (uvx/pip) case — package is already importable.
-    from foundry_mcp.schemas.vocab import canonical_stream_id
+    from foundry_mcp.schemas.vocab import (
+        STREAM_WIRE_IDS,
+        WIRE_TO_CANONICAL,
+        canonical_stream_id,
+    )
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
-    from foundry_mcp.schemas.vocab import canonical_stream_id
+    from foundry_mcp.schemas.vocab import (
+        STREAM_WIRE_IDS,
+        WIRE_TO_CANONICAL,
+        canonical_stream_id,
+    )
 
 
-# The schema generation this tool brings an archive to. Bump only when a new
-# migration step is added, and add the step to MIGRATION_STEPS below.
-ARCHIVE_SCHEMA_VERSION = 1
+# The schema generation this tool brings an archive to. Bump when a migration
+# step is added (add it to MIGRATION_STEPS below) or when a step's OUTPUT shape
+# changes — v1 wrote a stream-rollup.json its own consumer could not read.
+ARCHIVE_SCHEMA_VERSION = 2
 
 # CLOSED VOCABULARY — the six migration steps, in execution order. The
 # summary reports one outcome per step under exactly these names.
@@ -169,21 +178,120 @@ def _migrate_observations(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, 
 # ---------------------------------------------------------------------------
 
 
-def _derive_stream_rollup(run_dir: Path) -> dict[str, Any]:
-    """Per-cycle, per-canonical-stream defect counts.
+# The roll-up is READ BACK by foundry_orchestrator._rollup_totals, which looks
+# an entry up as ``cycles[str(cycle)][<wire stream id>]`` and requires a dict
+# carrying these four keys. A migrated archive must therefore speak the
+# server's own document shape rather than a derived summary of it: v1 wrote
+# ``cycles[c][<CANONICAL>] = <int>``, which reads back as "no record for this
+# cycle" — silently disabling the very coverage gate the artifact feeds.
+# ``records`` must be present and a list even when empty: _record_stream_rollup
+# appends to ``entry["records"]`` without a setdefault, so omitting it makes the
+# first post-migration stream mark raise KeyError.
+# Extend only via phase-level RFC.
+ROLLUP_ENTRY_KEYS = ("items_checked", "items_total", "findings", "records")  # 4 keys
 
-    Maps each record's ``source`` through vocab.canonical_stream_id exactly
-    as measure-run.py does, so the two artifacts can never disagree. Output
-    is built in a fixed order (numeric by cycle, alphabetical by stream) so
-    re-deriving from the same archive yields a byte-identical document.
+# Canonical id -> wire id. WIRE_TO_CANONICAL is injective, so the inverse is
+# well-defined; it lets a record whose source was persisted in the canonical
+# UPPERCASE spelling still land under the lowercase key the consumer reads.
+_CANONICAL_TO_WIRE = {canon: wire for wire, canon in WIRE_TO_CANONICAL.items()}
+
+# The key=value fields a ``.{stream}-complete`` marker carries.
+_MARKER_FIELDS = ("cycle", "items_checked", "items_total", "findings")  # 4 fields
+
+
+def _new_rollup_entry() -> dict[str, Any]:
+    return {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
+
+
+def _wire_stream_for(raw: str) -> str | None:
+    """Return the wire spelling of a defect ``source``, or None.
+
+    Accepts either spelling — a wire id passes through, a canonical id is
+    inverted — because the consumer keys strictly by wire id. Sources that are
+    legal but are not streams (``assay``, ``temper``) and values outside the
+    vocabulary alike return None; the caller records them by name rather than
+    coercing them onto a stream that did not file them.
+    """
+    canonical = canonical_stream_id(raw)
+    if canonical is None:
+        return None
+    return _CANONICAL_TO_WIRE.get(canonical)
+
+
+def _read_stream_marker(run_dir: Path, wire_stream: str) -> dict[str, int] | None:
+    """Parse a ``.{stream}-complete`` marker's key=value fields.
+
+    The marker is the ONLY place a pre-roll-up archive records coverage, and it
+    holds one cycle's terminal totals. ``cycle=`` sits on the timestamp line
+    rather than at the start of its own line, so tokens are scanned
+    whitespace-separated — foundry_orchestrator._marker_counts reads only
+    line-leading keys and therefore never sees ``cycle`` at all.
+
+    Returns None when the marker is absent, unreadable, or carries no usable
+    cycle; a marker without a cycle cannot be attributed to one.
+    """
+    path = run_dir / f".{wire_stream}-complete"
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    found: dict[str, int] = {}
+    for token in text.split():
+        key, sep, value = token.partition("=")
+        if not sep or key not in _MARKER_FIELDS:
+            continue
+        try:
+            found[key] = int(value)
+        except ValueError:
+            continue
+    cycle = _as_cycle(found.get("cycle"))
+    if cycle is None:
+        return None
+    return {
+        "cycle": cycle,
+        "items_checked": max(found.get("items_checked", 0), 0),
+        "items_total": max(found.get("items_total", 0), 0),
+        "findings": max(found.get("findings", 0), 0),
+    }
+
+
+def _derive_stream_rollup(run_dir: Path) -> tuple[dict[str, Any], dict[str, int]]:
+    """Re-derive the per-cycle roll-up from the archive's own data.
+
+    Two sources, neither invented:
+
+      * ``defects.json`` gives ``findings`` per (cycle, stream) — the ledger is
+        authoritative for what was actually filed, and it covers every cycle.
+      * each ``.{stream}-complete`` marker gives ``items_checked`` /
+        ``items_total`` for the ONE cycle it records. Coverage is not
+        derivable for any other cycle, so those entries carry 0 rather than a
+        fabricated number: inventing coverage would let a migrated archive
+        clear a >=95% gate on data the run never produced.
+
+    The marker's own ``findings`` is taken as a floor. _coverage_shortfall and
+    _prove_is_clean read ``_rollup_totals(...) or _marker_counts(...)``, and a
+    non-empty dict is truthy — so any entry written at the marker's cycle
+    SHADOWS the marker fallback. Taking the max keeps the migrated entry at
+    least as strict as the fallback it replaces; a stream can never be judged
+    cleaner after migration than before it.
+
+    Returns (document, non_stream_source_counts). The document is built in a
+    fixed order (numeric by cycle, alphabetical by stream) so re-deriving from
+    the same archive yields a byte-identical file.
     """
     data = _load_json(run_dir / "defects.json")
     records = data.get("defects") if isinstance(data, dict) else None
     if not isinstance(records, list):
         records = []
 
-    per_cycle: dict[int, dict[str, int]] = {}
-    unresolved: dict[str, int] = {}
+    per_cycle: dict[int, dict[str, dict[str, Any]]] = {}
+    non_stream: dict[str, int] = {}
+
+    def entry_for(cycle: int, wire: str) -> dict[str, Any]:
+        return per_cycle.setdefault(cycle, {}).setdefault(wire, _new_rollup_entry())
+
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -195,42 +303,88 @@ def _derive_stream_rollup(run_dir: Path) -> dict[str, Any]:
             raw = record.get("stream")
         if not isinstance(raw, str):
             continue
-        stream = canonical_stream_id(raw)
-        if stream is None:
-            # Named, not coerced — history keeps its value and the roll-up
-            # records that it falls outside the reconciled vocabulary.
-            unresolved[raw] = unresolved.get(raw, 0) + 1
+        wire = _wire_stream_for(raw)
+        if wire is None:
+            # Named, not coerced — history keeps its value and the summary
+            # reports that it names no stream.
+            non_stream[raw] = non_stream.get(raw, 0) + 1
             continue
-        streams = per_cycle.setdefault(cycle, {})
-        streams[stream] = streams.get(stream, 0) + 1
+        entry_for(cycle, wire)["findings"] += 1
 
-    totals: dict[str, int] = {}
-    for streams in per_cycle.values():
-        for stream, count in streams.items():
-            totals[stream] = totals.get(stream, 0) + count
+    for wire in sorted(STREAM_WIRE_IDS):
+        marker = _read_stream_marker(run_dir, wire)
+        if marker is None:
+            continue
+        entry = entry_for(marker["cycle"], wire)
+        entry["items_checked"] = max(entry["items_checked"], marker["items_checked"])
+        entry["items_total"] = max(entry["items_total"], marker["items_total"])
+        entry["findings"] = max(entry["findings"], marker["findings"])
 
-    return {
+    document = {
         "schema_version": ARCHIVE_SCHEMA_VERSION,
         "cycles": {
-            str(cycle): {k: per_cycle[cycle][k] for k in sorted(per_cycle[cycle])}
+            str(cycle): {
+                wire: per_cycle[cycle][wire] for wire in sorted(per_cycle[cycle])
+            }
             for cycle in sorted(per_cycle)
         },
-        "totals": {k: totals[k] for k in sorted(totals)},
-        "unresolved_sources": {k: unresolved[k] for k in sorted(unresolved)},
+    }
+    return document, {k: non_stream[k] for k in sorted(non_stream)}
+
+
+def _rollup_needs_rebuild(existing: Any) -> bool:
+    """True when the stored roll-up is in a shape _rollup_totals cannot read.
+
+    v1 of this tool wrote ``cycles[c][<CANONICAL>] = <int>``. Those documents
+    are inert and must be re-derived, or an archive "migrated" by v1 keeps a
+    roll-up its consumer silently ignores.
+
+    A document whose entries are ALREADY dicts is either server-written — with
+    a real ``records`` audit trail and real coverage numbers — or already v2.
+    Never re-derive it: the archive's own data cannot reconstruct what the
+    server observed, so a rebuild would be data loss.
+    """
+    if not isinstance(existing, dict):
+        return True
+    cycles = existing.get("cycles")
+    if not isinstance(cycles, dict):
+        return True
+    for bucket in cycles.values():
+        if not isinstance(bucket, dict):
+            return True
+        if any(not isinstance(entry, dict) for entry in bucket.values()):
+            return True
+    return False
+
+
+def _rollup_detail(document: dict[str, Any], non_stream: dict[str, int]) -> dict[str, Any]:
+    """Point-in-time report of what the derivation found.
+
+    Aggregates live in the SUMMARY, never in the document: a persisted total
+    sitting beside live per-cycle data goes stale the moment the server appends
+    the next stream record.
+    """
+    findings: dict[str, int] = {}
+    for bucket in document["cycles"].values():
+        for wire, entry in bucket.items():
+            findings[wire] = findings.get(wire, 0) + entry["findings"]
+    return {
+        "cycles": len(document["cycles"]),
+        "streams": len(findings),
+        "findings_per_stream": {k: findings[k] for k in sorted(findings)},
+        "non_stream_sources": non_stream,
     }
 
 
 def _migrate_stream_rollup(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
     path = run_dir / "stream-rollup.json"
-    derived = _derive_stream_rollup(run_dir)
-    if path.exists():
-        return "no-op", {"reason": "stream-rollup.json already present"}
+    if path.exists() and not _rollup_needs_rebuild(_load_json(path)):
+        return "no-op", {"reason": "stream-rollup.json already readable by _rollup_totals"}
+    outcome = "upgraded" if path.exists() else "created"
+    document, non_stream = _derive_stream_rollup(run_dir)
     if not dry_run:
-        _save_json(path, derived)
-    return "created", {
-        "cycles": len(derived["cycles"]),
-        "streams": len(derived["totals"]),
-    }
+        _save_json(path, document)
+    return outcome, _rollup_detail(document, non_stream)
 
 
 # ---------------------------------------------------------------------------

@@ -36,7 +36,9 @@ PRE_CHANGE = FIXTURES / "pre_change"
 # is present in a working checkout and absent from a clean clone.
 GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
 
-ARCHIVE_SCHEMA_VERSION = 1
+# v2: step 3's output shape changed — v1 wrote a stream-rollup.json that its
+# own consumer (foundry_orchestrator._rollup_totals) could not read (D-029).
+ARCHIVE_SCHEMA_VERSION = 2
 
 
 def _invoke_migrate(*args: str) -> tuple[int, str, str]:
@@ -144,19 +146,113 @@ def test_step_2_observations_ledger_created_empty(archive: Path) -> None:
 
 
 def test_step_3_stream_rollup_is_derived_per_cycle(archive: Path) -> None:
+    """D-029 — the migrated document must be the shape its CONSUMER reads.
+
+    foundry_orchestrator._rollup_totals looks an entry up as
+    ``cycles[str(cycle)][<lowercase wire id>]`` and requires a dict carrying
+    items_checked / items_total / findings / records. v1 wrote
+    ``cycles[c][<CANONICAL>] = <int>``, which reads back as "no record for this
+    cycle" — the artifact existed and fed nothing.
+
+    ``findings`` comes from the ledger; ``items_checked`` / ``items_total``
+    come from the ``.{stream}-complete`` marker at the ONE cycle it records,
+    and are 0 elsewhere because coverage is not derivable per cycle.
+    """
     summary = _migrate(archive)
     assert _outcomes(summary)["stream_rollup"] == "created"
     rollup = json.loads((archive / "stream-rollup.json").read_text())
-    # Keyed by cycle; lowercase wire sources mapped onto canonical ids by the
-    # same vocab.canonical_stream_id call measure-run.py uses.
     assert rollup["cycles"] == {
-        "0": {"PROVE": 1, "TRACE": 1},
-        "2": {"PROVE": 1, "TEST-01": 1},
-        "5": {"PROVE": 1},
+        # trace@0: ledger findings 1 raised to the marker's 3 (never-weaken),
+        # and the marker's real coverage carried through.
+        "0": {
+            "prove": {"items_checked": 0, "items_total": 0, "findings": 1, "records": []},
+            "trace": {"items_checked": 12, "items_total": 15, "findings": 3, "records": []},
+        },
+        "2": {
+            "prove": {"items_checked": 0, "items_total": 0, "findings": 1, "records": []},
+            "test01": {"items_checked": 0, "items_total": 0, "findings": 1, "records": []},
+        },
+        "5": {
+            "prove": {"items_checked": 0, "items_total": 0, "findings": 1, "records": []},
+        },
+        # prove@6 exists ONLY because the marker records it — a cycle with
+        # coverage but no defects must still appear, or the clean-stream check
+        # reads "no record" where the run has a 100%-coverage marker.
+        "6": {
+            "prove": {"items_checked": 40, "items_total": 40, "findings": 0, "records": []},
+        },
     }
-    assert rollup["totals"] == {"PROVE": 3, "TEST-01": 1, "TRACE": 1}
-    # An unknown source is NAMED, never coerced onto a known stream.
-    assert rollup["unresolved_sources"] == {"legacy_stream": 1}
+    # Aggregates live in the SUMMARY, never in the document: a persisted total
+    # beside live per-cycle data goes stale on the server's next append.
+    assert "totals" not in rollup
+    step = summary["steps"]["stream_rollup"]
+    assert step["findings_per_stream"] == {"prove": 3, "test01": 1, "trace": 3}
+    # A source that names no stream is NAMED, never coerced onto one.
+    assert step["non_stream_sources"] == {"legacy_stream": 1}
+
+
+def test_step_3_rollup_is_readable_by_its_consumer(archive: Path) -> None:
+    """The D-029 regression test — read the migrated file the way the server does.
+
+    Imports the real ``_rollup_totals`` rather than re-implementing its lookup,
+    so the assertion tracks the consumer instead of a copy of it.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import _rollup_totals
+
+    _migrate(archive)
+    assert _rollup_totals(archive, 0, "trace") == {
+        "items_checked": 12, "items_total": 15, "findings": 3, "records": 0,
+    }
+    assert _rollup_totals(archive, 6, "prove") == {
+        "items_checked": 40, "items_total": 40, "findings": 0, "records": 0,
+    }
+    assert _rollup_totals(archive, 2, "test01") == {
+        "items_checked": 0, "items_total": 0, "findings": 1, "records": 0,
+    }
+    # A (cycle, stream) the archive proves nothing about still reads as None,
+    # so the marker fallback in _coverage_shortfall keeps working.
+    assert _rollup_totals(archive, 2, "trace") is None
+
+
+def test_step_3_rebuilds_an_unreadable_v1_document(archive: Path) -> None:
+    """An archive migrated by v1 carries a roll-up its consumer ignores.
+
+    The version marker is a fast path, not the detector: step 3 recognises the
+    old int-valued shape itself and re-derives.
+    """
+    (archive / "stream-rollup.json").write_text(
+        json.dumps({"schema_version": 1, "cycles": {"0": {"PROVE": 1, "TRACE": 1}}}),
+        encoding="utf-8",
+    )
+    summary = _migrate(archive)
+    assert _outcomes(summary)["stream_rollup"] == "upgraded"
+    rollup = json.loads((archive / "stream-rollup.json").read_text())
+    assert rollup["cycles"]["0"]["trace"]["items_checked"] == 12
+
+
+def test_step_3_never_rebuilds_a_server_written_document(archive: Path) -> None:
+    """A live roll-up holds records the archive's own data cannot reconstruct.
+
+    Re-deriving over it would be data loss, so an already-dict-valued document
+    is left exactly as found.
+    """
+    live = {
+        "cycles": {
+            "0": {
+                "prove": {
+                    "items_checked": 165,
+                    "items_total": 165,
+                    "findings": 0,
+                    "records": [{"recorded_at": "2026-08-30T04:34:50Z", "findings": 0}],
+                }
+            }
+        },
+        "updated_at": "2026-08-30T04:34:50+00:00",
+    }
+    (archive / "stream-rollup.json").write_text(json.dumps(live), encoding="utf-8")
+    summary = _migrate(archive)
+    assert _outcomes(summary)["stream_rollup"] == "no-op"
+    assert json.loads((archive / "stream-rollup.json").read_text()) == live
 
 
 def test_step_3_rederivation_is_deterministic(archive: Path, tmp_path: Path) -> None:
@@ -352,10 +448,23 @@ def test_grand_vulture_migration(tmp_path: Path) -> None:
     assert state["cycle"] == 17
     assert state["archive_schema_version"] == ARCHIVE_SCHEMA_VERSION
 
-    # --- roll-up carries the real per-stream counts ---
-    rollup = json.loads((dest / "stream-rollup.json").read_text())
-    assert rollup["totals"] == {"PROVE": 165, "TEST": 2, "TRACE": 1}
-    assert sum(rollup["totals"].values()) == 168
+    # --- roll-up carries the real per-stream counts, and its consumer can
+    #     actually read them (D-029) ---
+    from foundry_mcp.tools.foundry_orchestrator import _rollup_totals
+
+    findings_per_stream = summary["steps"]["stream_rollup"]["findings_per_stream"]
+    assert findings_per_stream == {"prove": 165, "test": 2, "trace": 1}
+    assert sum(findings_per_stream.values()) == 168, "every defect accounted for"
+    # cycle 17 is the repaired current cycle AND the markers' cycle, so the
+    # entries there carry grand-vulture's real terminal coverage rather than
+    # shadowing the marker fallback with zeros.
+    assert _rollup_totals(dest, 17, "prove") == {
+        "items_checked": 165, "items_total": 165, "findings": 0, "records": 0,
+    }
+    assert _rollup_totals(dest, 17, "trace") == {
+        "items_checked": 38, "items_total": 38, "findings": 0, "records": 0,
+    }
+    assert _rollup_totals(dest, 0, "prove")["findings"] == 9
 
     # --- OT-012 second half: a second run is a no-op ---
     hash_after_first = _tree_hash(dest)

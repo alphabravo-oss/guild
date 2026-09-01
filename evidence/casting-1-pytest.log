@@ -14,7 +14,8 @@
 # casting completion report and its logic is covered unconditionally by the
 # committed synthetic fixture under tests/fixtures/migrate_archive/.
 
-................................................................s....... [100%]
+...................................................................s.... [ 83%]
+..............                                                           [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:576: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
-71 passed, 1 skipped, 1 deselected in 2.30s
+SKIPPED [1] tests/test_measure_run.py:592: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
+85 passed, 1 skipped, 1 deselected in 2.78s
