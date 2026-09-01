@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from foundry_mcp.tools.foundry_handoff import _hash_str
+from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
@@ -461,6 +462,197 @@ def _composed_redaction_problem(
 
 
 # ---------------------------------------------------------------------------
+# D-135 — the residue floor measures VOLUME; this measures DISCRIMINATION.
+#
+# D-126 asked "how much of the log survived the redaction?" and set the floor
+# at 25%. That closed the annihilation family and nothing else, because the
+# forgery that matters does not annihilate: it redacts ONE LINE. A committed
+# log claiming ``== 1650 passed, 4 skipped in 75.00s ==`` against a command
+# that actually prints ``== 1631 passed, 19 failed, 4 skipped in 78.11s ==``,
+# declared volatile as ``== \d+ passed.*?==`` — "the summary line has a
+# duration in it, so it is volatile", the single most ordinary declaration a
+# reviewer would wave through — leaves 99.4% of the log standing, sails over
+# the floor, and byte-matches. A 25% volume floor cannot see a 0.6%-by-volume
+# redaction that removes 100% of the discriminating content.
+#
+# WHAT THE COMPARATOR CAN ACTUALLY SEE. The redaction is applied identically to
+# both sides, so any span it erases cancels out of the comparison. When the two
+# redacted texts match but the RAW texts do not, the redaction reconciled a
+# disagreement — and the only question worth asking is whether what it
+# reconciled was a FIELD or a CLAIM.
+#
+# It cannot be answered by volume: the corpus's ``rootdir: .*`` swallows an
+# entire line to hide a path, exactly as the forgery swallows an entire line to
+# hide a verdict. It cannot be answered by similarity: two rootdirs share less
+# text than the two summary lines do. It cannot be answered by the pattern's
+# shape: both anchor a literal and wildcard to end-of-line. Measured on the
+# real corpus, every one of those measures ranks the forgery as MORE innocent
+# than the logs it must not refuse.
+#
+# WHAT DOES ANSWER IT is the shape of the disagreeing VALUE. Cold-driven over
+# all 56 committed logs at d3820c5, 30 of them have raw texts that differ, and
+# every single differing span is a duration (``4.86s`` / ``4.57s``), a path
+# (``rootdir:`` lines, ``.planning`` roots, uv's ``.tmphgnUSu`` build dirs) or
+# a size (``12ms``). Not one differs in a bare word or a bare integer. That is
+# not a coincidence about this corpus, it is what a volatile field IS: an
+# environment or timing artifact whose value carries STRUCTURE — a decimal
+# point, a path separator, a unit suffix, a mixed case run. A bare word and a
+# bare integer carry no structure of their own; they are whatever the command
+# SAID. ``passed`` becoming ``failed`` and ``1650`` becoming ``1631`` are the
+# two forgeries PROVE drove, and they are precisely the two shapes a field
+# never takes.
+#
+# So the rule, derived over every member rather than remembered per bypass:
+# where the redaction erased a span in which the two real texts disagree, the
+# spans must align token-for-token and every disagreeing token must be
+# structured. The axes are total by construction — every declared pattern (the
+# whole list, in the composed order the substituter uses), every match
+# (``finditer``, mirroring ``sub``), every whitespace token, and a character
+# partition with no third bucket. Where an axis cannot be walked — a pattern
+# matching a different NUMBER of times on the two sides, or a side roster that
+# is not a pair — the guard REPORTS rather than silently continuing, because an
+# unalignable member is exactly where a bypass would hide.
+#
+# RESIDUAL, stated rather than buried: a disagreement confined to a token that
+# IS structured but IS evidentiary (``coverage: 95.2%`` against ``41.0%``)
+# passes. Nothing textual separates a percentage that varies from one that was
+# fabricated; that is a rule about what a log may cite, not one a comparator
+# can enforce. Recorded in concerns.md.
+# ---------------------------------------------------------------------------
+def _is_unstructured_token(token: str) -> bool:
+    """True when ``token`` is a bare word or a bare integer.
+
+    The partition is total and has no third bucket: a token is unstructured
+    when it is entirely alphabetic or entirely numeric, and structured
+    otherwise — which is every token that mixes the two (``12ms``, ``4f2a``)
+    or carries any character that is neither (``4.86s``, ``/tmp/wt``,
+    ``pid=41``, ``2026-08-14T10:23``, ``.tmpDURf54``). No character can fall
+    outside it, so no member of the axis can arrive unrecognised.
+
+    The distinction it draws is between a VALUE and a WORD. A volatile field's
+    value is supplied by the environment and wears its own structure; a bare
+    word or a bare integer is supplied by the command and is the thing the log
+    is asserting. ``passed`` → ``failed`` and ``1650`` → ``1631`` are the two
+    forgeries this exists to refuse.
+    """
+    return token.isalpha() or token.isdigit()
+
+
+def _field_disagreement_problem(
+    pattern: str, label_a: str, span_a: str, label_b: str, span_b: str
+) -> str | None:
+    """Named reason this erased span hid a CLAIM rather than a FIELD.
+
+    ``span_a`` and ``span_b`` are the same pattern's match on the two real
+    texts, and they differ — so the redaction is about to make two texts that
+    disagree here compare as equal. Returns None when the disagreement has the
+    shape a varying field takes, else the house refusal sentence naming the
+    pattern, both sides' text, and what to do about it.
+    """
+    tokens_a, tokens_b = span_a.split(), span_b.split()
+    verdict: str | None = None
+    if len(tokens_a) != len(tokens_b):
+        verdict = (
+            f"the {label_a} has {len(tokens_a)} words there and the "
+            f"{label_b} has {len(tokens_b)}, so the redaction is not hiding a "
+            f"field whose value moved — it is hiding text that one side "
+            f"reported and the other did not"
+        )
+    else:
+        for token_a, token_b in zip(tokens_a, tokens_b):
+            if token_a == token_b:
+                continue
+            if _is_unstructured_token(token_a) or _is_unstructured_token(token_b):
+                verdict = (
+                    f"{token_a!r} in the {label_a} is {token_b!r} in the "
+                    f"{label_b}, and a bare word or a bare integer is not a "
+                    f"field — it is what the command reported"
+                )
+                break
+    if verdict is None:
+        return None
+    return (
+        f"the declared volatile pattern {pattern!r} erased a span where the "
+        f"{label_a} and the {label_b} DISAGREE, and the disagreement is not "
+        f"field-shaped: {verdict}. The {label_a} says {span_a!r}; the "
+        f"{label_b} says {span_b!r}. Applied to both sides that span cancels "
+        f"out of the comparison, so the gate would report a byte-match "
+        f"between two texts that plainly say different things. A volatile "
+        f"pattern removes a value the ENVIRONMENT varies — a duration, a "
+        f"path, a pid, a timestamp, a size — whose text carries structure of "
+        f"its own. Narrow the pattern to that value, and the comparison will "
+        f"surface the disagreement instead of swallowing it."
+    )
+
+
+def _erased_disagreement_problem(
+    sides: dict[str, str], volatile_patterns: list[str]
+) -> str | None:
+    """Named reason the composed redaction reconciled a disagreement (D-135).
+
+    Called only once the redacted texts have been found EQUAL, which is the
+    only state in which a forgery is being accepted. Walks the declared
+    patterns in the composed order ``_apply_volatile_redaction`` applies them,
+    enumerating each pattern's matches on the running text of every side, so
+    the spans it inspects are byte-for-byte the spans the substituter removed
+    — including at the second rung of the placeholder ladder, where a level-1
+    pattern matches text an earlier pattern created.
+
+    ``sides`` is the SAME mapping ``_compare_byte_match`` redacts and compares,
+    not a re-derivation of it: a side cannot be compared without also being
+    walked here, because there is no second list of sides to forget to extend.
+    A roster that is not a pair is reported rather than silently truncated to
+    its first two members.
+    """
+    if len(sides) != 2:
+        return (
+            f"the comparison carries {len(sides)} sides "
+            f"({', '.join(sorted(sides))}), and this guard aligns a PAIR. "
+            f"A side that is redacted and compared without being checked for "
+            f"erased disagreements is the hole D-135 was filed on. Extend the "
+            f"alignment before adding the side."
+        )
+    (label_a, text_a), (label_b, text_b) = sides.items()
+    if text_a == text_b:
+        return None  # nothing was reconciled; the redaction changed no verdict
+    running_a, running_b = text_a, text_b
+    for pattern in volatile_patterns:
+        replacement = (
+            TIMING_PLACEHOLDER if VOLATILE_PLACEHOLDER in pattern
+            else VOLATILE_PLACEHOLDER
+        )
+        try:
+            spans_a = [m.group(0) for m in re.finditer(pattern, running_a)]
+            spans_b = [m.group(0) for m in re.finditer(pattern, running_b)]
+        except re.error:
+            # Compilation is _apply_volatile_redaction's error to report, with
+            # its own message and its own offending pattern.
+            return None
+        if len(spans_a) != len(spans_b):
+            return (
+                f"the declared volatile pattern {pattern!r} matches "
+                f"{len(spans_a)} time(s) in the {label_a} and {len(spans_b)} "
+                f"time(s) in the {label_b}, so its removed spans cannot be "
+                f"aligned and what it erased cannot be shown to be a varying "
+                f"field. A pattern that fires a different number of times on "
+                f"the two texts is describing their difference, not a field "
+                f"they share. Narrow it until it matches the same field on "
+                f"both sides."
+            )
+        for span_a, span_b in zip(spans_a, spans_b):
+            if span_a == span_b:
+                continue  # erased the same text on both sides; nothing hidden
+            problem = _field_disagreement_problem(
+                pattern, label_a, span_a, label_b, span_b
+            )
+            if problem is not None:
+                return problem
+        running_a = re.sub(pattern, replacement, running_a)
+        running_b = re.sub(pattern, replacement, running_b)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Worktree + subprocess primitives are factored to ``worktree_helpers.py``
 # (Phase 7 / Plan 07-03 — RESEARCH.md Open Question 1 recommendation).
 #
@@ -480,13 +672,21 @@ def _composed_redaction_problem(
 # runs on BOTH committed log and re-execution capture in the same declared
 # order, then byte-compares. Any divergence is a failure.
 #
-# What CLOSES the hatch is the residue gate (D-126), not the per-pattern canary
-# probe that preceded it. Symmetric redaction is the mechanism's strength and
-# its one weakness: patterns applied identically to both sides cancel out of the
-# comparison, so a declaration broad enough to erase both sides makes every log
-# match every capture. The gate measures what the whole declared set actually
-# left of each real side, so "declared volatility" cannot quietly widen into
-# "declared evidence".
+# What CLOSES the hatch is a LADDER of two gates (D-126, then D-135), not the
+# per-pattern canary probe that preceded them. Symmetric redaction is the
+# mechanism's strength and its one weakness: patterns applied identically to
+# both sides cancel out of the comparison, so a declaration broad enough to
+# erase both sides makes every log match every capture.
+#
+#   1. The residue floor (D-126) measures what the whole declared set left of
+#      each real side, so a declaration cannot erase a log wholesale.
+#   2. The disagreement guard (D-135) measures whether what survived still
+#      DISCRIMINATES, so a declaration cannot erase the ONE LINE the two texts
+#      disagree on and buy a byte-match with the other 99.4% intact.
+#
+# Volume was never the property that mattered; it was only the property the
+# first fix could see. Together they are what stops "declared volatility" from
+# quietly widening into "declared evidence".
 #
 # Diff cap: 50 lines via ``_DIFF_CAP_LINES``. Larger diffs append a
 # truncation marker so the failure_detail stays scannable.
@@ -514,9 +714,12 @@ def _compare_byte_match(
 
     Raises:
         ValueError prefixed ``EVIDENCE_VOLATILE_MALFORMED`` when a pattern
-        fails to compile (propagated from ``_apply_volatile_redaction``), or
-        when the composed redaction annihilates either side
-        (``_composed_redaction_problem`` — D-126).
+        fails to compile (propagated from ``_apply_volatile_redaction``), when
+        the composed redaction annihilates either side
+        (``_composed_redaction_problem`` — D-126), or when the redaction bought
+        its byte-match by erasing a span in which the two real texts disagree
+        about something no field varies (``_erased_disagreement_problem`` —
+        D-135).
 
     On mismatch the diff is unified-format via ``difflib.unified_diff``,
     capped at ``_DIFF_CAP_LINES`` lines; if truncated, a "... (N more
@@ -549,6 +752,18 @@ def _compare_byte_match(
     rc = redacted["committed log"]
     rcc = redacted["re-execution capture"]
     if rc == rcc:
+        # D-135. Equality is the only state in which a forgery gets accepted,
+        # so this is where the second rung goes. The residue floor above has
+        # already established that ENOUGH of each side survived; this asks
+        # whether what did survive still DISCRIMINATES — i.e. whether the
+        # redaction bought this equality by erasing a span in which the two
+        # real texts disagree about something a field never varies. It walks
+        # the same `sides` mapping the redaction above walked, so the guard
+        # cannot be extended to a new side by accident.
+        if volatile_patterns:
+            problem = _erased_disagreement_problem(sides, volatile_patterns)
+            if problem is not None:
+                raise ValueError(f"EVIDENCE_VOLATILE_MALFORMED: {problem}")
         return True, None, rc, rcc
     diff_lines = list(
         difflib.unified_diff(
@@ -1315,10 +1530,27 @@ def _append_to_manifest_evidence_provenance(
     manifest, problem = read_document(manifest_path)
     if problem is not None:
         return
+    # D-134. ``read_document`` establishes that the manifest is a MAPPING; it
+    # says nothing about what is inside ``castings``. A manifest whose
+    # ``castings`` is ``"nope"`` or ``[1, 2, 3]`` or ``[None]`` reads back
+    # cleanly and then meets ``c.get("id")`` below, which is an AttributeError
+    # raised out of the evidence gate — a traceback naming no file, from a path
+    # whose whole error contract is a named refusal (NFR-002).
+    #
+    # The shape is established through the SHARED validator rather than a
+    # private isinstance chain, because the point of D-134 is that all six
+    # readers of this document decide on one policy: a rung declared in
+    # ``_MANIFEST_SHAPE`` is covered here the day it is declared, where a
+    # hand-written check at the rung a defect was reported on covers exactly
+    # that rung forever. ``_manifest_shape_problem`` is the TOLERANT half of
+    # the pair, which is the right half here: this is housekeeping on the way
+    # out, and its failure must no more decide the verdict than the orphan
+    # prune's does, so an unusable manifest is a silent no-op — the same
+    # discipline ``_append_to_manifest_stream_skips`` already documents for a
+    # missing file.
+    if _manifest_shape_problem(manifest) is not None:
+        return
     castings = manifest.setdefault("castings", [])
-    if not isinstance(castings, list):
-        castings = []
-        manifest["castings"] = castings
     casting = next(
         (c for c in castings if str(c.get("id")) == str(casting_id)),
         None,

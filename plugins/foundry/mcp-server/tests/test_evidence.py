@@ -2025,3 +2025,450 @@ def test_the_claim_itself_is_refused_to_another_process(tmp_path):
         wh._release_claim(target)
 
     assert _probe() == "FREE", "the claim outlived its holder's release"
+
+
+# --------------------------------------------------------------------------- #
+# D-135 — the residue floor measures VOLUME; these measure DISCRIMINATION.
+# (FR-017 / AC-023 / OT-011 / NFR-002 — SECURITY-RELEVANT, A-AUTO-005.)
+#
+# D-126 replaced the per-pattern canary probe with a composed residue floor and
+# genuinely closed the annihilation family. It did not close the gate. PROVE
+# drove a fabricated log END TO END through the shipped ``verify_evidence`` on
+# a real git repo at a real casting commit: a committed log claiming
+# ``== 1650 passed, 4 skipped in 75.00s ==`` against a command that actually
+# prints ``== 1631 passed, 19 failed, 4 skipped in 78.11s ==``, declared
+# volatile as ``['== \\d+ passed.*?==', '\\d+\\.\\d+s']`` — "the summary line
+# has a duration in it, so it is volatile". Result: ``verdict='accepted'``,
+# ``failure_token=None``, ``log_sha256=sha256:6bfea6b52f8cb162`` against
+# ``captured_sha256=sha256:618dc112c827e21c`` — the raw texts plainly differ —
+# and both redacted forms collapsing to ``sha256:9a56c07c7fa727b0``. The
+# per-pattern probe reported 'clears' for BOTH patterns and the composed
+# residue came in at 99.4%, comfortably over the 25% floor.
+#
+# One line redacted, 99.4% of the log surviving, and a log claiming a fully
+# green 1650-test suite byte-matching a capture containing 19 FAILURES. A gate
+# that can be talked out of comparing is not a gate.
+#
+# EVERY FIXTURE BELOW CARRIES A REAL BODY. That is not decoration: a one-line
+# fixture is annihilated by the D-126 volume floor, which would make this whole
+# block re-assert a guarantee that already held. ``_BODY`` is what keeps the
+# residue high enough that only the discrimination guard can be what refuses.
+# --------------------------------------------------------------------------- #
+
+#: A plausible surrounding log body, long enough that redacting one line leaves
+#: the composed residue far above ``EVIDENCE_MIN_RESIDUE_RATIO``. Mirrors the
+#: shape of the corpus: a header block, some per-item lines, then the summary.
+_BODY = (
+    "== test session starts ==\n"
+    "collected 1650 items across 41 files in the mcp-server package\n"
+    "tests/test_evidence.py ................................ [ 24%]\n"
+    "tests/test_foundry_init.py ...................... [ 51%]\n"
+    "tests/test_observations.py .......................... [ 78%]\n"
+    "tests/test_symbol_cites.py ................ [100%]\n"
+)
+
+
+def _residue_ratio(text: str, patterns: list) -> float:
+    """The D-126 measure, so a fixture can assert it is NOT what refused."""
+    before = evidence._content_residue(text)
+    after = evidence._content_residue(
+        evidence._apply_volatile_redaction(text, patterns)
+    )
+    return len(after) / len(before) if before else 1.0
+
+
+#: PROVE's exact end-to-end forgery, and the shapes it generalises to. Each is
+#: (patterns, committed, captured, culprit) with the SAME structure as the
+#: driven case: raw texts that differ, a declaration that reconciles them, and
+#: a residue far above the volume floor. The first entry is the drive verbatim.
+_DISCRIMINATION_FORGERIES = [
+    pytest.param(
+        [r"== \d+ passed.*?==", r"\d+\.\d+s"],
+        _BODY + "== 1650 passed, 4 skipped in 75.00s ==\n",
+        _BODY + "== 1631 passed, 19 failed, 4 skipped in 78.11s ==\n",
+        r"== \d+ passed.*?==",
+        id="PROVE-driven-1650-passed-vs-19-failures",
+    ),
+    pytest.param(
+        [r"\d+ passed", r"\d+\.\d+s"],
+        _BODY + "== 1650 passed, 4 skipped in 75.00s ==\n",
+        _BODY + "== 1631 passed, 4 skipped in 78.11s ==\n",
+        r"\d+ passed",
+        id="the-same-forgery-with-a-narrow-count-pattern",
+    ),
+    pytest.param(
+        [r"\d+ \w+ in \d+\.\d+s"],
+        _BODY + "===== 84 passed in 0.17s =====\n",
+        _BODY + "===== 84 failed in 0.17s =====\n",
+        r"\d+ \w+ in \d+\.\d+s",
+        id="casting-4-liveness-tests-passed-flipped-to-failed",
+    ),
+    pytest.param(
+        [r"summary: .*"],
+        _BODY + "summary: the suite is green and nothing regressed\n",
+        _BODY + "summary: the suite is red and four things regressed\n",
+        r"summary: .*",
+        id="a-whole-prose-summary-line-declared-volatile",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "patterns,committed,captured,culprit", _DISCRIMINATION_FORGERIES
+)
+def test_a_redaction_that_erases_a_disagreement_is_refused(
+    patterns, committed, captured, culprit
+):
+    """The D-135 bar: the comparator must REFUSE, and must name the pattern.
+
+    An operator handed "the redaction annihilated your log" for a declaration
+    that erased 0.6% of it would go looking in the wrong place. The refusal has
+    to say WHICH pattern erased the disagreement and WHAT each side said there,
+    because the fix is to narrow that one pattern.
+    """
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(committed, captured, patterns)
+    message = str(exc.value)
+    assert "EVIDENCE_VOLATILE_MALFORMED" in message
+    assert message.split(":", 1)[0] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    # repr() is how the house refusal quotes a pattern back at its author.
+    assert repr(culprit) in message, f"the refusal names no culprit: {message}"
+
+
+@pytest.mark.parametrize(
+    "patterns,committed,captured,culprit", _DISCRIMINATION_FORGERIES
+)
+def test_the_residue_floor_could_not_have_caught_these(
+    patterns, committed, captured, culprit
+):
+    """The falsifier for "D-126 already covered this".
+
+    If any forgery above were refused by the composed residue floor, this block
+    would be re-asserting a guarantee that already held and the discrimination
+    guard would be untested scaffolding. Every one leaves residue far above the
+    floor on BOTH sides — which is exactly why volume was the wrong question.
+    """
+    for label, text in (
+        ("committed log", committed),
+        ("re-execution capture", captured),
+    ):
+        redacted = evidence._apply_volatile_redaction(text, patterns)
+        assert (
+            evidence._composed_redaction_problem(label, text, redacted) is None
+        ), f"{label} is caught by the volume floor, so it is not a D-135 witness"
+        assert _residue_ratio(text, patterns) > 0.5, (
+            f"{label} survives at {_residue_ratio(text, patterns):.1%}, close "
+            f"enough to the floor that volume could plausibly be the refuser"
+        )
+
+
+def test_the_forgery_reaches_a_byte_match_without_the_discrimination_guard():
+    """The negative control that makes the block above non-vacuous.
+
+    Driven the way PROVE drove it: the two texts byte-match after redaction
+    while their RAW sha256s differ — the precondition of a forgery. A gate
+    probe is only meaningful when the forgery actually succeeds without the
+    fix, which is the mistake PROVE reported making on its first attempt.
+    """
+    patterns = [r"== \d+ passed.*?==", r"\d+\.\d+s"]
+    committed = _BODY + "== 1650 passed, 4 skipped in 75.00s ==\n"
+    captured = _BODY + "== 1631 passed, 19 failed, 4 skipped in 78.11s ==\n"
+
+    assert evidence._hash_str(committed) != evidence._hash_str(captured)
+    assert evidence._apply_volatile_redaction(
+        committed, patterns
+    ) == evidence._apply_volatile_redaction(captured, patterns), (
+        "the redaction no longer collapses the two texts, so this fixture has "
+        "stopped being the forgery it is here to reproduce"
+    )
+    # And the pre-fix ladder — canary probe plus volume floor — clears it.
+    for pattern in patterns:
+        replacement = (
+            evidence.TIMING_PLACEHOLDER
+            if evidence.VOLATILE_PLACEHOLDER in pattern
+            else evidence.VOLATILE_PLACEHOLDER
+        )
+        assert not evidence._pattern_redacts_everything(pattern, replacement)
+    assert _residue_ratio(committed, patterns) > 0.9
+
+
+@pytest.mark.parametrize("forged_side", ["committed", "captured"])
+def test_both_sides_are_walked_for_erased_disagreements(forged_side):
+    """DERIVED MEMBERSHIP over the sides, the axis D-126 established.
+
+    An attacker picks which side carries the fabrication. A guard bound to the
+    side its defect report happened to name leaves the other open, so the side
+    is parametrized rather than assumed.
+    """
+    honest = _BODY + "== 1650 passed, 4 skipped in 75.00s ==\n"
+    forged = _BODY + "== 1631 passed, 19 failed, 4 skipped in 78.11s ==\n"
+    committed, captured = (
+        (forged, honest) if forged_side == "committed" else (honest, forged)
+    )
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(committed, captured, [r"== \d+ passed.*?=="])
+    assert "EVIDENCE_VOLATILE_MALFORMED" in str(exc.value)
+
+
+def test_a_third_side_is_reported_rather_than_silently_unwalked():
+    """The unrecognised-member rung on the SIDES axis.
+
+    ``_erased_disagreement_problem`` aligns a PAIR. If a side is ever added to
+    the comparison, the guard must say so rather than truncate to the first two
+    and leave the newcomer redacted-but-unchecked — which is the shape of every
+    defect in this escalated class.
+    """
+    problem = evidence._erased_disagreement_problem(
+        {"committed log": "a\n", "re-execution capture": "b\n", "third": "c\n"},
+        [r"\d+\.\d+s"],
+    )
+    assert problem is not None
+    assert "3 sides" in problem and "third" in problem
+
+
+def test_a_pattern_firing_a_different_number_of_times_is_reported():
+    """The unrecognised-member rung on the SPANS axis.
+
+    Two spans lists of different lengths cannot be aligned, and ``zip`` would
+    silently drop the tail — the exact "guard the members you remembered" shape
+    this class keeps re-appearing as. The predicate is driven directly because
+    ``_compare_byte_match`` only reaches it once the redacted texts are equal,
+    and unequal match counts almost always break that equality first; the rung
+    exists so the alignment cannot go wrong if they ever do not.
+    """
+    problem = evidence._erased_disagreement_problem(
+        {
+            "committed log": "worker pid=41 and pid=42 reported in\n",
+            "re-execution capture": "worker pid=41 reported in\n",
+        },
+        [r"pid=\d+"],
+    )
+    assert problem is not None
+    assert "2 time(s)" in problem and "1 time(s)" in problem
+    assert "pid=" in problem
+
+
+#: Decoys that match real text on their OWN lines and erase nothing
+#: evidentiary. Deliberately non-overlapping with the forging pattern, so
+#: declared order cannot be what makes the plant land.
+_DECOY_PATTERNS = [r"rootdir: \S+", r"pid=\d+", r"20\d{2}-\d{2}-\d{2}"]
+
+
+@pytest.mark.parametrize("index", range(len(_DECOY_PATTERNS) + 1))
+def test_the_forging_pattern_is_caught_at_every_declared_index(index):
+    """DERIVED MEMBERSHIP over the declared pattern list.
+
+    ``range(len(_DECOY_PATTERNS) + 1)`` is the plant: adding a decoy adds a
+    position automatically, so the sweep cannot silently stop tracking the list
+    it is meant to be total over. A guard bound to the first declared pattern —
+    or to the last — goes red here.
+    """
+    forging = r"summary: .*"
+    patterns = _DECOY_PATTERNS[:index] + [forging] + _DECOY_PATTERNS[index:]
+    committed = (
+        _BODY + "rootdir: /a/b\npid=41\n2026-08-14\nsummary: green\n"
+    )
+    captured = (
+        _BODY + "rootdir: /c/d\npid=52\n2026-09-01\nsummary: broken\n"
+    )
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(committed, captured, patterns)
+    assert repr(forging) in str(exc.value)
+
+
+#: The words a forged span is planted into, one position at a time.
+_SPAN_WORDS = ["alpha", "bravo", "charlie", "delta"]
+
+
+@pytest.mark.parametrize("position", range(len(_SPAN_WORDS)))
+def test_a_claim_word_is_caught_at_every_token_position_in_the_span(position):
+    """DERIVED MEMBERSHIP over the tokens INSIDE an erased span.
+
+    The disagreement is planted at each token offset in turn, so a guard that
+    compared only the first token — or only the span as a whole — goes red.
+    ``range(len(_SPAN_WORDS))`` tracks the fixture, so widening it widens the
+    sweep rather than leaving the new offset unprobed.
+    """
+    forged = list(_SPAN_WORDS)
+    forged[position] = "omega"
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(
+            _BODY + f"summary: {' '.join(_SPAN_WORDS)}\n",
+            _BODY + f"summary: {' '.join(forged)}\n",
+            [r"summary: .*"],
+        )
+    message = str(exc.value)
+    assert "EVIDENCE_VOLATILE_MALFORMED" in message
+    assert "omega" in message and _SPAN_WORDS[position] in message
+
+
+#: The narrowness floor: every shape of value a volatile field ACTUALLY takes,
+#: each with two genuinely different values, each of which must still
+#: reconcile. Derived from the cold drive of all 56 committed logs at d3820c5 —
+#: durations, rootdir paths, uv build-dir paths, .planning roots, ms sizes —
+#: plus the shapes agents/teammate.md tells authors to declare.
+_NARROWNESS_CONTROLS = [
+    pytest.param(
+        [r"\d+\.\d+s"],
+        _BODY + "==== 84 passed in 0.17s ====\n",
+        _BODY + "==== 84 passed in 0.19s ====\n",
+        id="a-duration",
+    ),
+    pytest.param(
+        [r"rootdir: .*"],
+        _BODY + "rootdir: /Users/ray/guild/plugins/foundry/mcp-server\n",
+        _BODY + "rootdir: /tmp/wt/casting-3/plugins/foundry/mcp-server\n",
+        id="a-rootdir-line-swallowed-whole",
+    ),
+    pytest.param(
+        [r"platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+"],
+        _BODY + "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 "
+        "-- /u/.cache/uv/builds-v0/.tmphgnUSu/bin/python\n",
+        _BODY + "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 "
+        "-- /u/.cache/uv/builds-v0/.tmpDURf54/bin/python\n",
+        id="a-uv-build-dir-inside-a-whole-platform-line",
+    ),
+    pytest.param(
+        [r"20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"],
+        _BODY + "started 2026-08-14T10:23:45 ok\n",
+        _BODY + "started 2026-09-01T04:11:02 ok\n",
+        id="an-iso-timestamp",
+    ),
+    pytest.param(
+        [r"pid=\d+"],
+        _BODY + "worker pid=1234 up\n",
+        _BODY + "worker pid=5678 up\n",
+        id="a-pid",
+    ),
+    pytest.param(
+        [r"Installed \d+ packages? in \d+(\.\d+)?ms"],
+        _BODY + "Installed 5 packages in 12ms\n",
+        _BODY + "Installed 5 packages in 15ms\n",
+        id="a-millisecond-size",
+    ),
+    pytest.param(
+        [r"/[^ ]*/\.planning/[^ ]*"],
+        _BODY + "root /var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09 x\n",
+        _BODY + "root /private/tmp/scratch/clone/.planning/phases/09 x\n",
+        id="a-planning-root",
+    ),
+    pytest.param(
+        [r"\d+\.\d+s", r"completed in <VOLATILE>"],
+        _BODY + "completed in 1.25s\n",
+        _BODY + "completed in 9.90s\n",
+        id="the-second-rung-of-the-placeholder-ladder",
+    ),
+]
+
+
+@pytest.mark.parametrize("patterns,committed,captured", _NARROWNESS_CONTROLS)
+def test_a_genuinely_varying_field_still_reconciles(patterns, committed, captured):
+    """The false-positive floor. D-135's guard changes what the gate ACCEPTS,
+    and a rule that refused these would break every pytest log in the corpus —
+    a regression that would look like whatever the log happened to prove.
+
+    The assertion that the two texts genuinely DIFFER is load-bearing: a
+    control whose sides are identical exercises nothing, because the guard
+    returns early when there is no disagreement to erase.
+    """
+    assert committed != captured, "this control reconciles nothing"
+    matched, diff, _, _ = evidence._compare_byte_match(
+        committed, captured, patterns
+    )
+    assert matched is True, diff
+
+
+def test_the_discrimination_guard_does_not_over_correct_on_the_real_corpus():
+    """The same floor DERIVED from the shipped corpus, so a log added tomorrow
+    is covered the day it lands. Each log's own declared patterns are applied
+    to its own body against itself — the guard must be inert where there is no
+    disagreement to erase."""
+    evidence_dir = REPO_ROOT / "evidence"
+    logs = sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {evidence_dir}")
+
+    refused = []
+    for log in logs:
+        text = log.read_text(encoding="utf-8")
+        header = evidence._parse_evidence_header(text)
+        body = evidence._strip_leading_header_block(text)
+        try:
+            evidence._compare_byte_match(body, body, header.get("volatile", []))
+        except ValueError as exc:  # noqa: PERF203
+            refused.append(f"{log.name}: {exc}")
+    assert refused == [], f"the discrimination guard refuses real evidence: {refused}"
+
+
+def test_a_forged_log_cannot_buy_a_pass_through_the_whole_verifier():
+    """D-135 at the surface where it was exploitable, not at the helper.
+
+    A real command, a body that differs from its output in exactly one line,
+    and the single most ordinary volatile declaration a reviewer would wave
+    through. Before the discrimination guard this produced
+    ``verdict='accepted'`` with ``log_sha256 != captured_sha256``. Neither stub
+    rung can be what saves it: the command is real and the body clears the
+    128-byte TOO_SMALL floor.
+    """
+    import tempfile
+
+    workdir = Path(tempfile.mkdtemp())
+    (workdir / "evidence").mkdir()
+    log = workdir / "evidence" / "casting-3-forged-summary.log"
+    log.write_text(
+        "# evidence-cmd: python3 -c \"print('collected 1650 items across the "
+        "whole suite, which is padding so neither the stub library nor the "
+        "volume floor can be what rejects this log'); print('== 1631 passed, "
+        "19 failed, 4 skipped in 78.11s ==')\"\n"
+        "# evidence-for: FR-017\n"
+        "# evidence-volatile: == \\d+ passed.*?==\n"
+        "\n"
+        "collected 1650 items across the whole suite, which is padding so "
+        "neither the stub library nor the volume floor can be what rejects "
+        "this log\n"
+        "== 1650 passed, 4 skipped in 75.00s ==\n",
+        encoding="utf-8",
+    )
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=workdir, casting_commit="0" * 40
+    )
+
+    assert record["verdict"] == "rejected", record
+    assert record["failure_token"] == "EVIDENCE_VOLATILE_MALFORMED", record
+    assert record["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    assert record["log_sha256"] != record["captured_sha256"], record
+    assert repr(r"== \d+ passed.*?==") in record["failure_detail"], record
+
+
+def test_an_honest_log_with_a_varying_duration_still_passes_the_whole_verifier():
+    """The end-to-end counterpart. Without this, D-135's guard could have been
+    'fixed' by refusing every declaration that reconciles anything at all — the
+    over-correction that would take the whole corpus with it."""
+    import tempfile
+
+    workdir = Path(tempfile.mkdtemp())
+    (workdir / "evidence").mkdir()
+    log = workdir / "evidence" / "casting-3-honest-duration.log"
+    log.write_text(
+        "# evidence-cmd: python3 -c \"import os; print('every line of this "
+        "body is byte-stable across runs except the duration below, which is "
+        "why it is the one field declared volatile'); print('suite complete "
+        "in %d.%02ds' % (len(os.sep), 42))\"\n"
+        "# evidence-for: FR-017\n"
+        "# evidence-volatile: \\d+\\.\\d+s\n"
+        "\n"
+        "every line of this body is byte-stable across runs except the "
+        "duration below, which is why it is the one field declared volatile\n"
+        "suite complete in 9.99s\n",
+        encoding="utf-8",
+    )
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=workdir, casting_commit="0" * 40
+    )
+
+    assert record["verdict"] == "accepted", record
+    assert record["log_sha256"] != record["captured_sha256"], (
+        "the duration did not actually vary, so this control proves nothing"
+    )
