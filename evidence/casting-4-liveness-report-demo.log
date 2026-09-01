@@ -38,4 +38,4 @@ casting-gamma   stalled                 60m        60m           —  read floor
 needs_attention: ['casting-beta', 'casting-delta', 'casting-gamma']
 
 .
-1 passed, 66 deselected in 0.07s
+1 passed, 79 deselected in 0.04s

@@ -35,6 +35,12 @@
 # no new entry point. The public surface is still the three tools above, so
 # the boundary this file records is unchanged.
 #
+# TEMPER cycle 6 (D-115) adds one more PRIVATE helper — _manifest_shape_error,
+# the shared wrong-typed-manifest refusal both spawn doors call — and again no
+# new entry point. D-114 and D-117 changed only the bodies of
+# _agent_liveness_record and foundry_liveness, so they add no name at all. The
+# boundary is still the same three tools.
+#
 _agent_id_for_casting
 _agent_liveness_record
 _build_grind_cycle_context
@@ -42,6 +48,7 @@ _expected_inspect_stream_agents
 _is_terminal
 _latest_teammate_dispatches
 _load_run_state
+_manifest_shape_error
 _missing_stream_records
 _missing_teammate_records
 _parse_progress_timestamp
