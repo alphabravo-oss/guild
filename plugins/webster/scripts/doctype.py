@@ -860,10 +860,14 @@ def check_jargon(rel, text, audience, known):
             if expanded_on_page(a, body, first.start() if first else None):
                 continue
             seen.add(a)
+            # The trailing `s?` is outside the capture, so a page writing K3s reported the
+            # term as K3 and told the writer to expand "(K3)", which is not a word anybody
+            # would write. Report what is on the page.
+            word = m.group(0)
             findings.append({"page": f"{rel}:{n}", "rule": "undefined-jargon",
-                             "problem": f"'{a}' is used without ever being expanded",
-                             "fix": f"write it out the first time, '... ({a})', or add it to "
-                                    f"the glossary"})
+                             "problem": f"'{word}' is used without ever being expanded",
+                             "fix": f"write it out the first time, '... ({word})', or add "
+                                    f"it to the glossary"})
     if linked_glossary:
         for f in findings:
             f["fix"] += "; the page links the glossary but this term is not in it"
