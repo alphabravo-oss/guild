@@ -1,0 +1,105 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && printf "=== the same finding, offered at both filing doors ===\n" && uv run --quiet --with pytest python -c 'import sys, tempfile; sys.path[:0] = ["tests", "src"]; from pathlib import Path; import test_orchestrator_gates as t; from foundry_mcp.tools import foundry_state; from foundry_mcp.tools.foundry import asserts_code_behaviour; from foundry_mcp.schemas.vocab import observation_class; foundry_state.set_active_run("d094-demo"); X = t.NO_SECURITY_VOCABULARY; print("  finding                 :", X); print("  observation_class       :", observation_class({"description": X, "target_kind": "comment"})); print("  asserts_code_behaviour  :", asserts_code_behaviour({"description": X})); print("  reaches defect ledger via Foundry-Sync   :", t._reaches_defect_ledger_via_sync(Path(tempfile.mkdtemp()), X)); print("  reaches defect ledger via Foundry-Defect :", t._reaches_defect_ledger_via_add(Path(tempfile.mkdtemp()), X))' && printf "\n=== the parity pin, and the battery at the door that had no coverage ===\n" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -v --no-header -p no:cacheprovider -k "filing_paths_agree or security_battery or no_security_vocabulary or canonical_comment_prose" 2>&1 | grep -v "^collecting"
+# evidence-for: US-001, FR-013, AC-002, NFR-001
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-094 -- the two filing paths disagreed about what a defect IS.
+#
+# a5d715a added `asserts_code_behaviour`, the promote-direction fail-safe that
+# says a finding asserting what the CODE does is not confined to comment prose,
+# so no comment-prose refusal may fire against it however its wording reads. It
+# was wired into `_observation_refusal`, which only `foundry_add_defect` calls.
+# Its own docstring names a second consumer and the reason for the export:
+# "Exported because `foundry_sync_defects`'s auto-demotion branch faces the
+# mirror of the same question and must not re-derive an answer to it."
+#
+# That wiring was never made. `find_referencing_symbols` returned exactly one
+# call site, in tools/foundry.py, and the symbol appeared nowhere in
+# foundry_orchestrator.py. Sync's demotion branch still ran the two-guard shape
+# that was insufficient before a5d715a: `record_denylist_tripwire`, then
+# `observation_class`.
+#
+# The first block below is that disagreement, driven live. The finding is the
+# NO_SECURITY_VOCABULARY fixture the observation tests added specifically to
+# prove the fail-safe is STRUCTURAL: it carries no security vocabulary, so no
+# widening of vocab's never-demote denylist can ever reach it, and its prose
+# classifies as DIRECTION_WORD. Before the fix the two doors answered
+# differently -- `foundry_add_defect` filed it as D-001, `foundry_sync_defects`
+# returned {"added": 0, "observations": 1} with defects.json left empty and
+# observations.json's `tripwire` also empty, since no denylist entry matches it.
+# A stream that happened to file through the batch door lost a real defect and
+# was told ok:true. Both lines now read True.
+#
+# The guard is placed where the promote path places it -- AFTER the denylist
+# (so a denylisted finding still trips the audit signal D-036 wired) and BEFORE
+# the observation class (so a behavioural claim is never demoted on the strength
+# of its prose). It is IMPORTED from tools/foundry.py, never re-derived: a
+# fail-safe with two copies is a fail-safe that drifts, and the disagreement
+# above is exactly what that costs.
+#
+# The second block is the regression coverage the defect named as missing. No
+# test drove the SECURITY_BATTERY or NO_SECURITY_VOCABULARY fixtures through
+# `foundry_sync_defects` at all, so the gap had no pin either. The corpus is
+# IMPORTED from the tests that pin the other door rather than restated, because
+# a parity test owning its own copy would keep passing while the two corpora
+# drifted -- the shape of the bug it exists to catch.
+#
+# `test_the_two_filing_paths_agree_on_what_a_defect_is` is the derived-membership
+# pin. It asserts an OUTCOME (did this reach the defect ledger?) and never a
+# mechanism: the doors legitimately differ in HOW they decline -- Sync
+# auto-demotes to the observations ledger, Foundry-Defect returns a named
+# refusal telling the caller to re-file -- and pinning which guard admitted a
+# finding would pass for the wrong reason the moment either half moved. The
+# four `prose-*` rows carry the other direction: parity has to hold at "not a
+# defect" too, or a guard that matched everything would satisfy the battery
+# while quietly deleting the observation channel AC-001 exists to fill.
+#
+# Run against the pre-fix tree, `no-security-vocabulary` fails with the message
+# the assertion is written to produce: "the filing paths disagree: Foundry-Sync
+# declined this finding, Foundry-Defect kept it". The ten battery rows pass
+# without the fix -- the denylist rescues those on its own -- which is why the
+# fixture with no security noun in it is the one that makes the pin structural.
+
+=== the same finding, offered at both filing doors ===
+  finding                 : The comment above the cache helper says the dict is reused, but the handler rebuilds it on every call and never stores the result.
+  observation_class       : DIRECTION_WORD
+  asserts_code_behaviour  : True
+  reaches defect ledger via Foundry-Sync   : True
+  reaches defect ledger via Foundry-Defect : True
+
+=== the parity pin, and the battery at the door that had no coverage ===
+============================= test session starts ==============================
+
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[hmac-signature] PASSED [  3%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[constant-time-compare] PASSED [  6%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[rate-limit] PASSED [ 10%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[input-validation] PASSED [ 13%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[stored-plaintext] PASSED [ 16%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[cors] PASSED [ 20%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[nonce-replay] PASSED [ 23%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[bounds-check] PASSED [ 26%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[auth] PASSED [ 30%]
+tests/test_orchestrator_gates.py::test_sync_keeps_every_security_battery_case_as_a_defect[password-salt] PASSED [ 33%]
+tests/test_orchestrator_gates.py::test_sync_keeps_a_behaviour_finding_with_no_security_vocabulary PASSED [ 36%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-hmac-signature] PASSED [ 40%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-constant-time-compare] PASSED [ 43%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-rate-limit] PASSED [ 46%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-input-validation] PASSED [ 50%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-stored-plaintext] PASSED [ 53%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-cors] PASSED [ 56%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-nonce-replay] PASSED [ 60%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-bounds-check] PASSED [ 63%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-auth] PASSED [ 66%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[battery-password-salt] PASSED [ 70%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[no-security-vocabulary] PASSED [ 73%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[prose-line-drift] PASSED [ 76%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[prose-count] PASSED [ 80%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[prose-direction-word] PASSED [ 83%]
+tests/test_orchestrator_gates.py::test_the_two_filing_paths_agree_on_what_a_defect_is[prose-enumeration] PASSED [ 86%]
+tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The cite's line number is stale after the refactor.] PASSED [ 90%]
+tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The docstring says 8 items but there are 9 now.] PASSED [ 93%]
+tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The comment says the helper is defined above, but it moved.] PASSED [ 96%]
+tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The comment's list of streams omits flow_trace.] PASSED [100%]
+
+====================== 30 passed, 93 deselected in 0.07s =======================

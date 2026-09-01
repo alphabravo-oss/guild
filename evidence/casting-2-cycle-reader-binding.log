@@ -56,4 +56,4 @@ tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synth
 tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synthesized_verdicts[float] PASSED [ 92%]
 tests/test_orchestrator_gates.py::test_valid_state_cycle_is_stamped_on_synthesized_verdicts PASSED [100%]
 
-====================== 13 passed, 80 deselected in 0.74s =======================
+====================== 13 passed, 110 deselected in 0.39s ======================

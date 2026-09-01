@@ -41,6 +41,12 @@ AC-023 / CT-004 — the registration halves this casting owns: ``casting_commit`
   reaches ``foundry_accept_casting`` over MCP, and ``Foundry-Liveness`` is
   declared and dispatched.
 
+D-094 (FR-001 / AC-002, spec.md's "Foundry-Sync | same validation as
+  Foundry-Defect") — the auto-demotion branch applies the promote-direction
+  fail-safe ``asserts_code_behaviour`` that ``foundry_add_defect`` applies, so
+  the two filing paths cannot disagree about what a defect is. Pinned as a
+  PARITY assertion across both doors, not as a per-door outcome.
+
 Two claims from earlier versions of this file moved on purpose, both because
 the behaviour they pinned is what FR-014 / FR-020 deliberately change:
   - the marker-write coverage-drop comparison → test_stream_rollup.py, now
@@ -67,6 +73,7 @@ import foundry_mcp
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools.foundry import foundry_add_defect
 from foundry_mcp.tools.foundry_orchestrator import (
     _compute_next_action,
     _count_spec_requirements,
@@ -76,6 +83,19 @@ from foundry_mcp.tools.foundry_orchestrator import (
     foundry_gate,
     foundry_mark_stream,
     foundry_next_action,
+)
+
+# D-094's parity pin drives the SAME fixtures casting 3 pinned on the
+# Foundry-Defect path through Foundry-Sync. They are IMPORTED, not restated: a
+# parity test that owned its own copy of the corpus would keep passing while the
+# two corpora drifted, which is the shape of the bug it exists to catch.
+from tests.test_observations import (
+    COUNT,
+    DIRECTION,
+    DRIFT,
+    ENUMERATION,
+    NO_SECURITY_VOCABULARY,
+    SECURITY_BATTERY,
 )
 
 
@@ -2613,3 +2633,213 @@ def test_valid_state_cycle_is_stamped_on_synthesized_verdicts(run_env):
 
     rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))["requirements"]
     assert [r["cycle"] for r in rows] == [5, 5]
+
+
+# --------------------------------------------------------------------------- #
+# D-094 — the Sync path applies the promote-direction fail-safe too
+#
+# a5d715a added ``asserts_code_behaviour`` — the guard that says a finding
+# asserting what the CODE does is not comment prose, so no comment-prose
+# refusal may fire against it however its wording reads — and wired it into
+# ``_observation_refusal``, which only ``foundry_add_defect`` calls. Its
+# docstring names a second consumer: "Exported because ``foundry_sync_defects``'s
+# auto-demotion branch faces the mirror of the same question and must not
+# re-derive an answer to it." That wiring was never made.
+#
+# So the two filing paths disagreed about what a defect IS. Live-proved with the
+# NO_SECURITY_VOCABULARY fixture — the case carrying no security noun for any
+# denylist widening to reach, whose prose classifies as DIRECTION_WORD:
+# ``foundry_add_defect`` filed it as D-001, and the same finding through
+# ``foundry_sync_defects`` was silently demoted to an observation, with the
+# tripwire empty too since no denylist entry matches it. A stream that happened
+# to file through the batch door lost a real defect and was told ok:true.
+#
+# The pin is deliberately a PARITY assertion over BOTH doors rather than a
+# per-door outcome. What must never regress is not "Sync keeps this one" but
+# "the two paths cannot disagree" — a future change that moves either guard
+# breaks it on whichever side moved, which a one-door test would not.
+# --------------------------------------------------------------------------- #
+
+
+def _second_run(root: Path) -> Path:
+    """A second isolated run under ``root``, for driving the OTHER filing door.
+
+    The run NAME comes from ``get_run_dir`` rather than a literal, so the two
+    doors are always pointed at the same run identity the active-run state
+    resolves — the parity claim is worthless if the doors write to differently
+    named runs.
+    """
+    fdir = foundry_state.get_run_dir(str(root))
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "defects.json").write_text(json.dumps({"defects": []}), encoding="utf-8")
+    _write_state(fdir, phase="F2", cycle=0)
+    return fdir
+
+
+def _reaches_defect_ledger_via_sync(root: Path, description: str) -> bool:
+    """Did a declared-comment finding with this prose land in defects.json,
+    filed through ``foundry_sync_defects``?"""
+    fdir = _second_run(root)
+    fo.foundry_sync_defects(
+        0, [_finding(description=description, target_kind="comment")], str(root)
+    )
+    return bool(json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"])
+
+
+def _reaches_defect_ledger_via_add(root: Path, description: str) -> bool:
+    """The same question at the other door, ``foundry_add_defect``.
+
+    The identity fields match ``_finding``'s defaults so the ONLY difference
+    between the two calls is which handler receives them.
+    """
+    fdir = _second_run(root)
+    foundry_add_defect(
+        cycle=0,
+        source="trace",
+        defect_type="WRONG",
+        description=description,
+        target_kind="comment",
+        symbol="handle",
+        file_path="src/api/a.py",
+        project_root=str(root),
+    )
+    return bool(json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"])
+
+
+@pytest.mark.parametrize("description", SECURITY_BATTERY)
+def test_sync_keeps_every_security_battery_case_as_a_defect(run_env, description):
+    """OT-002 driven through the door that never had coverage.
+
+    Casting 3 pinned this battery on ``foundry_add_defect`` only. Every one of
+    these is a comment claiming a security property the code does not implement,
+    filed with the honest ``target_kind="comment"`` declaration that used to be
+    exactly what made it demotable.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        0, [_finding(description=description, target_kind="comment")], project_root
+    )
+
+    assert result.get("ok") is True, result
+    assert result["added"] == 1, result
+    assert result["observations"] == 0, result
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [d["description"] for d in defects] == [description]
+
+
+def test_sync_keeps_a_behaviour_finding_with_no_security_vocabulary(run_env):
+    """The case that makes the repair STRUCTURAL rather than lexical.
+
+    It is not a security finding at all — a plain correctness one — so no
+    widening of vocab's never-demote denylist could ever reach it, and its prose
+    classifies as DIRECTION_WORD. Only the promote-direction fail-safe rescues
+    it, which is why this test is the one that fails if the guard is ever
+    removed from this branch as redundant.
+
+    The empty tripwire is load-bearing: it proves the denylist had nothing to do
+    with the outcome, so the assertion cannot pass for the wrong reason.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    assert vocab.observation_class(
+        {"description": NO_SECURITY_VOCABULARY, "target_kind": "comment"}
+    ) == "DIRECTION_WORD", (
+        "the fixture no longer trips an observation regex, so it no longer "
+        "exercises the promote-direction guard at all"
+    )
+
+    result = fo.foundry_sync_defects(
+        0,
+        [_finding(description=NO_SECURITY_VOCABULARY, target_kind="comment")],
+        project_root,
+    )
+
+    assert result["added"] == 1, result
+    assert result["observations"] == 0, result
+    assert "denylist_tripwires" not in result, result
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [d["description"] for d in defects] == [NO_SECURITY_VOCABULARY]
+
+    # Read through absence rather than requiring the file: nothing was routed
+    # away from the defect ledger, so the observations writer was never called
+    # and never created it. An unwritten ledger is the strongest form of the
+    # claim, not a gap in it — asserting the file exists would demand a side
+    # effect the correct behaviour does not produce.
+    ledger_path = fdir / "observations.json"
+    observations = (
+        json.loads(ledger_path.read_text(encoding="utf-8"))
+        if ledger_path.exists()
+        else {}
+    )
+    assert observations.get("observations", []) == []
+    assert observations.get("tripwire", []) == []
+
+
+@pytest.mark.parametrize(
+    "description,is_defect",
+    [pytest.param(p.values[0], True, id=f"battery-{p.id}") for p in SECURITY_BATTERY]
+    + [
+        pytest.param(NO_SECURITY_VOCABULARY, True, id="no-security-vocabulary"),
+        # ...and the other direction. A guard biased to over-match would satisfy
+        # every row above while quietly deleting the observation channel, so the
+        # four canonical comment-prose classes ride in the SAME matrix: parity
+        # has to hold at "not a defect" too, or it is only half a claim.
+        pytest.param(DRIFT, False, id="prose-line-drift"),
+        pytest.param(COUNT, False, id="prose-count"),
+        pytest.param(DIRECTION, False, id="prose-direction-word"),
+        pytest.param(ENUMERATION, False, id="prose-enumeration"),
+    ],
+)
+def test_the_two_filing_paths_agree_on_what_a_defect_is(
+    run_env, tmp_path, description, is_defect
+):
+    """D-094's derived-membership pin, and the whole point of the fix.
+
+    ``foundry_sync_defects``'s own inline comment states the invariant: "two
+    filing paths that disagree about what a defect is would be a worse bug than
+    the one being fixed". This asserts it directly, over a corpus imported from
+    the tests that pin the other door.
+
+    It is stated as an OUTCOME (did this reach the defect ledger?) and never as
+    a mechanism. The doors legitimately differ in HOW they decline — Sync
+    auto-demotes to the observations ledger, Foundry-Defect returns a named
+    refusal telling the caller to re-file — and a test that pinned which guard
+    admitted a finding would pass for the wrong reason the moment either half
+    moved.
+    """
+    project_root, _fdir = run_env
+
+    via_sync = _reaches_defect_ledger_via_sync(tmp_path / "sync-door", description)
+    via_add = _reaches_defect_ledger_via_add(tmp_path / "defect-door", description)
+
+    assert via_sync == via_add, (
+        f"the filing paths disagree: Foundry-Sync {'kept' if via_sync else 'declined'} "
+        f"this finding, Foundry-Defect {'kept' if via_add else 'declined'} it — "
+        f"{description!r}"
+    )
+    assert via_sync is is_defect
+
+
+@pytest.mark.parametrize("description", [DRIFT, COUNT, DIRECTION, ENUMERATION])
+def test_sync_still_demotes_the_canonical_comment_prose_classes(run_env, description):
+    """The no-regression half, at this branch rather than across doors.
+
+    The promote-direction guard is biased to over-match on purpose, and
+    over-matching is the safe direction — but a guard that matched EVERYTHING
+    would refuse nothing and quietly delete the observation channel AC-001
+    exists to fill. These four are the canonical comment-prose findings; each
+    must still reach observations.json through Sync.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        0, [_finding(description=description, target_kind="comment")], project_root
+    )
+
+    assert result["added"] == 0, result
+    assert result["observations"] == 1, result
+    assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []

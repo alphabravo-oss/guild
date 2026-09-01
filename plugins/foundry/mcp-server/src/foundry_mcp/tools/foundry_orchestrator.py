@@ -3116,7 +3116,11 @@ def foundry_sync_defects(
     rather than partly applied, so the caller never has to guess which of its
     findings landed.
     """
-    from foundry_mcp.tools.foundry import ledger_transaction, record_denylist_tripwire
+    from foundry_mcp.tools.foundry import (
+        asserts_code_behaviour,
+        ledger_transaction,
+        record_denylist_tripwire,
+    )
 
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -3223,7 +3227,7 @@ def foundry_sync_defects(
                 continue
 
             # Comment-prose findings are OBSERVATIONS, not defects, and are
-            # refused from this ledger. Three rules apply, in this order, and
+            # refused from this ledger. Four rules apply, in this order, and
             # they are the SAME rules the Foundry-Defect filing path applies —
             # two filing paths that disagree about what a defect is would be a
             # worse bug than the one being fixed:
@@ -3237,7 +3241,10 @@ def foundry_sync_defects(
             #      precedence rule) — a security claim, a spec-required-
             #      behaviour claim or an unresolvable cite stays a defect even
             #      when its prose reads like drift.
-            #   3. Only then does the observation class decide.
+            #   3. A finding that ASSERTS WHAT THE CODE DOES is not confined to
+            #      comment prose, so no comment-prose refusal may fire against
+            #      it however its wording reads (D-094).
+            #   4. Only then does the observation class decide.
             #
             # If the ledger writer refuses the demotion anyway, its refusal
             # wins and the finding stays a defect too: AC-002 is a never-weaken
@@ -3280,6 +3287,35 @@ def foundry_sync_defects(
                 )
                 if denied is not None:
                     tripwires.append(denied)
+                elif asserts_code_behaviour(finding):
+                    # D-094 — the promote-direction fail-safe, wired at the
+                    # one point `_observation_refusal` applies it on the
+                    # Foundry-Defect path: AFTER the denylist (so a denylisted
+                    # finding still trips the audit signal above) and BEFORE
+                    # the observation class (so a behavioural claim is never
+                    # demoted on the strength of its prose).
+                    #
+                    # a5d715a added this guard and wired it into
+                    # `_observation_refusal`, which only `foundry_add_defect`
+                    # calls, while its docstring named this branch as the
+                    # second consumer it was exported for. That wiring was
+                    # never made, so the two filing paths disagreed about what
+                    # a defect is: `foundry_add_defect` filed
+                    # NO_SECURITY_VOCABULARY as D-001, and the same finding
+                    # through Foundry-Sync was silently demoted to an
+                    # observation — with no tripwire either, since no denylist
+                    # entry matches it. A stream that files through the wrong
+                    # door lost a real defect and was told the call succeeded.
+                    #
+                    # Imported, never re-derived: a fail-safe with two copies
+                    # is a fail-safe that drifts, and the disagreement above is
+                    # what that costs.
+                    #
+                    # There is nothing to DO here — falling out of the branch
+                    # is the decision. The finding drops through to the defect
+                    # append below, which is exactly what the promote path's
+                    # `return None` means.
+                    pass
                 else:
                     klass = observation_class(finding)
                     if klass is not None:
