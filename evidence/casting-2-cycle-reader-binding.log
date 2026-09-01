@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_orchestrator_gates.py -v -p no:cacheprovider -k "state_cycle" 2>&1 | grep -v "^platform\|^cachedir\|^rootdir\|^configfile\|^plugins\|^collecting"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -v -p no:cacheprovider -k "state_cycle" 2>&1 | grep -v "^platform\|^cachedir\|^rootdir\|^configfile\|^plugins\|^collecting"
 # evidence-for: FR-005, AC-008, NFR-001
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: Installed \d+ packages in \d+ms
@@ -56,4 +56,4 @@ tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synth
 tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synthesized_verdicts[float] PASSED [ 92%]
 tests/test_orchestrator_gates.py::test_valid_state_cycle_is_stamped_on_synthesized_verdicts PASSED [100%]
 
-====================== 13 passed, 76 deselected in 0.33s =======================
+====================== 13 passed, 80 deselected in 0.74s =======================

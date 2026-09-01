@@ -714,6 +714,170 @@ def test_a_real_statement_naming_other_paths_is_accepted(run_env, statement):
 
 
 # --------------------------------------------------------------------------- #
+# D-076 — the over-correction: the gate refused the BEST answer there is
+#
+# D-050's fix added two adjacency patterns as UNANCHORED whole-string searches,
+# under a comment claiming "Anchored patterns only". The claim was false of
+# exactly those two, so any statement carrying "no other"/"nothing else"
+# ANYWHERE was refused — including the clause that CLOSES an enumeration, which
+# is the most rigorous form of the answer A-017 asks for. PROVE drove five good
+# statements through the real gate and all five were refused, in GRIND, the
+# phase where every defect must close.
+#
+# The fix is positional: a bound comes after what it bounds. The three tests
+# below are the three obligations that leaves — the good forms are accepted,
+# every D-050 non-answer is STILL refused, and a denial that bounds nothing is
+# still refused.
+# --------------------------------------------------------------------------- #
+
+
+# The five statements PROVE drove; 5 of 5 were refused before this fix. Each
+# names real adjacent paths and then closes the radius.
+_BOUNDED_ENUMERATIONS = [
+    "_current_cycle is also called by foundry_get_context and "
+    "_format_status_display; no other module reads state.json directly, so "
+    "those two are the adjacent callers.",
+    "run_retry and close_pool both reach _helper, and the reaper thread scans "
+    "the cache concurrently; there are no other transitions",
+    "The retry branch in run_retry and the shutdown path in close_pool both "
+    "reach _helper, and nothing else touches the cache concurrently.",
+    "foundry_get_context and _format_status_display both read the counter, and "
+    "no further callers exist outside tools/.",
+    "Two transitions reach _helper besides the defect's, the retry branch and "
+    "the shutdown path, and no additional threads write the cache.",
+]
+
+
+@pytest.mark.parametrize("statement", _BOUNDED_ENUMERATIONS)
+def test_a_statement_that_bounds_its_enumeration_is_accepted(run_env, statement):
+    """D-076: naming the adjacent paths and THEN closing the radius is an
+    exhaustive answer, and the gate refused it as "declares that there is no
+    adjacent path". A false refusal here is worse than a missed non-answer: it
+    fires in GRIND, where the teammate has no way around it and no instruction
+    for what to write instead."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, (statement, result)
+
+
+# The negative control PROVE ran alongside the finding: all nine values that
+# closed a defect before D-050. Anchoring must not reopen any of them, so this
+# is asserted as one set rather than left implicit across two other tests.
+_D050_NON_ANSWERS = [
+    "x",
+    "none",
+    "n/a",
+    "no adjacent paths",
+    "the same path",
+    "nothing",
+    "-",
+    "0",
+    "Nothing else calls it",
+]
+
+
+@pytest.mark.parametrize("statement", _D050_NON_ANSWERS)
+def test_the_d050_non_answers_are_all_still_refused(run_env, statement):
+    """D-076's negative control. The whole risk of loosening rule 2 is that it
+    reopens D-050, so the nine values D-050 was filed on are driven here
+    explicitly — including "Nothing else calls it", which is the one the
+    loosened patterns used to be solely responsible for and which the anchored
+    leading-negation pattern now catches."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="foundry_mark_stream")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (statement, result)
+    assert result["missing_fields"] == ["adjacent_path_statement"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A denial is a bound only if something was named for it to bound.
+        # These open with a subject and a verb and then decline to answer, so
+        # the coverage the unanchored patterns genuinely had is retained.
+        "I found no other callers.",
+        "The grep shows no other callers.",
+        "Checked the tree: no other callers.",
+        "A careful sweep found nothing else.",
+    ],
+)
+def test_a_denial_that_bounds_nothing_is_still_refused(run_env, statement):
+    """D-076 must not become D-050 again. Simply ^-anchoring the two patterns
+    would have made them dead code — the leading-negation pattern already
+    covers "^no" and "^nothing" — and these four would then have been ACCEPTED.
+    They are refused because the words before the denial do not clear the same
+    substance floor the whole statement must clear."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="foundry_mark_stream")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (statement, result)
+    assert result["missing_fields"] == ["adjacent_path_statement"]
+    # The refusal names the REMEDY, not just the prohibition: the closing
+    # clause is welcome, it just has to follow the enumeration it closes.
+    assert "AFTER the enumeration" in result["error"], result
+
+
+def test_the_whole_statement_patterns_really_are_all_anchored():
+    """D-076's root cause, pinned as the invariant the module claims.
+
+    The comment above ``_STATEMENT_NON_ANSWERS`` asserted "Anchored patterns
+    only" while two of its five members were unanchored whole-string searches.
+    The prose was the only thing saying so and prose cannot fail, so the
+    contradiction survived a full cycle. This derives the claim from the
+    compiled patterns instead: every member of the whole-statement tuple must
+    be ^-anchored, and any future member that is not fails here by pattern.
+
+    The adjacency denials live in their own tuple precisely because they are
+    NOT anchored — they are judged positionally by ``_unbounded_denial``, never
+    by a bare whole-string search.
+    """
+    for pattern in fo._STATEMENT_NON_ANSWERS:
+        assert pattern.pattern.startswith("^"), (
+            f"{pattern.pattern!r} is judged against the WHOLE statement but is "
+            f"not anchored, so it fires wherever the phrase appears — "
+            f"including inside a clause that BOUNDS an enumeration. That is "
+            f"D-076. Anchor it, or move it to _STATEMENT_ADJACENCY_DENIALS "
+            f"where position is judged rather than assumed."
+        )
+
+    # ...and the denials that are deliberately unanchored are reachable only
+    # through the positional judge, so the tuples cannot be quietly merged.
+    assert fo._STATEMENT_ADJACENCY_DENIALS
+    for pattern in fo._STATEMENT_ADJACENCY_DENIALS:
+        assert not pattern.pattern.startswith("^"), pattern.pattern
+        assert pattern not in fo._STATEMENT_NON_ANSWERS
+
+
+# --------------------------------------------------------------------------- #
 # FR-005 / ST-001 — the SERVER counter stamps the fix, not the caller
 # --------------------------------------------------------------------------- #
 

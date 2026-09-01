@@ -1257,6 +1257,141 @@ def test_the_accept_casting_description_leads_with_the_durable_cite_form():
     assert "legacy" in accept.description
 
 
+def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
+    """D-077 / D-078 / FR-017 / AC-023 — the description ENUMERATED the gate's
+    blocking conditions and the enumeration was false.
+
+    It ended "Blocks acceptance if the teammate reported scope cuts OR any
+    requirement has no citation." Two conditions named; the handler has nine
+    hard-reject branches plus the warning-conditional tail, and the word
+    "evidence" appeared nowhere in the string. The one blocking cause it denied
+    existed — ``evidence_verdict == "rejected"`` — was at the time the MOST
+    likely way the gate would block, because EVID-01 was rejecting this run's
+    own evidence logs in a cold worktree. A lead who had not separately read
+    commands/start.md learned nothing from the tool surface itself.
+
+    ASSERTED AS A DERIVATION, not as a literal (D-079's lesson: a pin that
+    quotes the prose it guards can be defeated by editing the prose). Every
+    hard-reject branch is recovered from the handler's own AST by its guard
+    expression, and each must appear in the roster below carrying the
+    vocabulary the description owes it. A branch nobody rostered fails by name,
+    which is the case this exists to catch: a tenth blocking condition added to
+    the handler while the description still names five.
+    """
+    import ast
+
+    from foundry_mcp import server as foundry_server
+
+    handoff_path = Path(fo.__file__).parent / "foundry_handoff.py"
+    source = handoff_path.read_text(encoding="utf-8")
+    function = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "foundry_accept_casting"
+    )
+
+    def _is_hard_reject(stmt: ast.stmt) -> bool:
+        """A `return {... "ok": False ...}` — the gate refusing, not warning."""
+        if not isinstance(stmt, ast.Return) or not isinstance(stmt.value, ast.Dict):
+            return False
+        for key, value in zip(stmt.value.keys, stmt.value.values):
+            if isinstance(key, ast.Constant) and key.value == "ok":
+                return isinstance(value, ast.Constant) and value.value is False
+        return False
+
+    # The guard expression is the identity: it IS the blocking condition, and
+    # it survives rewording of the error text and every line-number shift.
+    guards = {
+        ast.get_source_segment(source, node.test)
+        for node in ast.walk(function)
+        if isinstance(node, ast.If)
+        for stmt in node.body
+        if _is_hard_reject(stmt)
+    }
+
+    # guard expression -> lowercase substrings the tool description owes it.
+    # An empty tuple means the description covers the branch generically and
+    # deliberately does not spend a lead's attention on it.
+    owed = {
+        'not fdir': (),
+        'not spec_result.get("ok")': (),
+        "spec_hash != current_spec_hash": ("spec_hash",),
+        "not prompt_path.exists()": (),
+        "prompt_hash != current_prompt_hash": ("prompt_hash",),
+        "not match": ("<spec_requirements>",),
+        "_read_spec_format_version(evidence_spec_path) is None": (
+            "spec_format_version",
+        ),
+        'evidence_verdict == "rejected"': (
+            "evidence re-execution rejected the casting",
+        ),
+        "unbound": ("bound to no evidence",),
+    }
+
+    assert guards == set(owed), (
+        f"the hard-reject branches of foundry_accept_casting have changed.\n"
+        f"  unrostered (in the code, not in this test): {sorted(guards - set(owed))}\n"
+        f"  stale (in this test, not in the code):      {sorted(set(owed) - guards)}\n"
+        f"Every blocking condition the handler has must be accounted for here, "
+        f"and named in the Foundry-Accept-Casting description if a lead needs "
+        f"it to diagnose a refusal. That description is delivered verbatim into "
+        f"every lead's context and is what they read at the moment of the call."
+    )
+
+    tools = asyncio.run(foundry_server.list_tools())
+    accept = next(t for t in tools if t.name == "Foundry-Accept-Casting")
+    described = accept.description.lower()
+    for guard, tokens in sorted(owed.items()):
+        for token in tokens:
+            assert token in described, (
+                f"the Foundry-Accept-Casting description never says {token!r}, "
+                f"so a lead cannot connect a refusal from `{guard}` to anything "
+                f"the tool told them about."
+            )
+
+    # The scope-flag / citation / unresolved-cite branches do not return
+    # `ok: False` directly — they set `warning`, and the tail return computes
+    # `ok = warning is None`. They block acceptance all the same, so the
+    # description owes them too.
+    for token in ("scope cuts", "no citation", "resolves nowhere"):
+        assert token in described, token
+
+
+def test_the_accept_casting_description_says_what_omitting_the_sha_costs():
+    """D-078: evidence re-execution was documented ONLY in the nested
+    ``casting_commit`` property description — which a lead composing the call
+    from the headline has no reason to open. The silence is the danger: omitting
+    the SHA skips BOTH EVID-01 and EVID-02 and still returns ok:true, so the
+    failure mode is a green acceptance that verified nothing, not an error.
+    """
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    accept = next(t for t in tools if t.name == "Foundry-Accept-Casting")
+    described = accept.description
+
+    # The parameter, the two checks it engages, and the mechanism.
+    assert "casting_commit" in described
+    assert "EVID-01" in described and "EVID-02" in described
+    assert "re-execut" in described.lower()
+
+    # ...and the cost of leaving it out, in the description itself rather than
+    # only in the property below it.
+    lowered = described.lower()
+    assert "silently" in lowered
+    assert "ok:true" in lowered.replace(" ", "")
+
+    # The handler's default is what makes the silence possible; if that ever
+    # becomes required, this warning is the thing that must change with it.
+    import inspect
+
+    from foundry_mcp.tools import foundry_handoff as handoff_module
+
+    params = inspect.signature(handoff_module.foundry_accept_casting).parameters
+    assert params["casting_commit"].default is None
+    assert "casting_commit" not in accept.inputSchema["required"]
+
+
 def test_the_accept_casting_description_agrees_with_the_handlers_own_payload():
     """The three copies must say one thing. This pins the tool description
     against the string the handler itself returns in ``must_verify``, so the two
@@ -1595,6 +1730,118 @@ def test_observation_tools_are_registered_and_reach_their_handlers(run_env):
     # Observations are their own ledger and are NEVER mixed into defects.
     assert not (fdir / "defects.json").exists()
     assert (fdir / "observations.json").exists()
+
+
+def test_an_absent_target_kind_is_refused_at_the_mcp_boundary_too(run_env):
+    """D-074 / AC-002 / FR-002 — D-069's fail-closed writer, defeated one frame
+    up by the dispatch lambda.
+
+    ``foundry_add_observation`` carries ``target_kind: str = ""`` so that an
+    undeclared subject reaches the NON_COMMENT denylist entry; recording an
+    observation IS the demotion, so that path must fail closed. The lambda then
+    passed ``args.get("target_kind", "comment")``, manufacturing the very
+    declaration the denylist checks. Over MCP the writer's guard was never
+    reached: a genuine code-behaviour finding filed with the field absent was
+    RECORDED, the fabricated "comment" was persisted into observations.json
+    where no auditor can distinguish it from a real declaration, and the
+    tripwire — the audit signal that exists precisely to name a demotion
+    attempt — stayed SILENT on the bypass.
+
+    Why no test caught it: the only _DISPATCH-level observation test passes
+    ``target_kind: "comment"`` explicitly, and casting 3's D-069 tests drive the
+    writer, where the fix is. Nothing drove the DISPATCHER with the field
+    absent. This is PROVE's matched pair — same finding, same classification,
+    one argument apart — driven at the layer the caller actually reaches.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=0)
+
+    # A real code-behaviour finding whose prose ALSO trips an observation class
+    # (ENUMERATION), so the only thing standing between it and the observations
+    # ledger is the NON_COMMENT branch.
+    finding = (
+        "The _DISPATCH table registers 14 handlers but the tool roster "
+        "advertises 15, so one tool dispatches to nothing."
+    )
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+
+        declared = foundry_server._DISPATCH["Foundry-Observation"]({
+            "cycle": 0, "source": "prove", "description": finding,
+            "target_kind": "code",
+        })
+        omitted = foundry_server._DISPATCH["Foundry-Observation"]({
+            "cycle": 0, "source": "prove", "description": finding,
+            # target_kind deliberately NOT passed — the bypass, verbatim.
+        })
+    finally:
+        foundry_server._project_root = previous_root
+
+    # Both halves of the pair reach the same verdict. The omitted half used to
+    # return an observation_id.
+    assert declared["denylist_class"] == "NON_COMMENT", declared
+    assert omitted["denylist_class"] == "NON_COMMENT", omitted
+    assert omitted["missing_field"] == "target_kind", omitted
+
+    ledger = json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+    # Nothing was demoted out of the blocking ledger — the collection is not
+    # merely empty, it was never created, because no write ever got past the
+    # denylist.
+    assert ledger.get("observations", []) == [], ledger["observations"]
+    # ...and the fabricated declaration was never persisted anywhere in the
+    # ledger. This is the half that made D-074 worse than D-069: the record
+    # carried target_kind "comment", a declaration the caller never made, so an
+    # auditor reading observations.json could not tell it from a real one.
+    assert '"target_kind": "comment"' not in json.dumps(ledger)
+    # ...and the tripwire fired for BOTH attempts. It used to be silent on
+    # exactly the one that got through.
+    assert [t["denylist_class"] for t in ledger["tripwire"]] == [
+        "NON_COMMENT", "NON_COMMENT",
+    ], ledger["tripwire"]
+
+
+def test_the_observation_schema_advertises_no_target_kind_default(run_env):
+    """D-074's other live site. ``jsonschema.validate`` never applies schema
+    defaults, so ``"default": "comment"`` was inert as validation — what it did
+    was tell every reader of the tool surface that omission means "comment",
+    which the dispatch lambda then made true. Driven through the real
+    ``list_tools`` and the SDK's own pre-dispatch validation step, so the claim
+    is about the advertised schema rather than about the source text.
+    """
+    import jsonschema
+
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=0)
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    prop = tools["Foundry-Observation"].inputSchema["properties"]["target_kind"]
+
+    assert "default" not in prop, (
+        "the advertised schema still promises a target_kind default. Absence "
+        "must travel to the writer AS absence — a default here documents the "
+        "fabrication D-074 is about, even though jsonschema will not apply it."
+    )
+    # The field stays optional in `required`, because the REFUSAL is what
+    # teaches the caller: a jsonschema error names the property, while the
+    # handler names the missing field, the denylist class, and the repair.
+    assert "target_kind" not in tools["Foundry-Observation"].inputSchema["required"]
+    # ...and its description says so, so a lead reading only the tool surface
+    # learns that omitting it is refused rather than defaulted.
+    description = prop["description"]
+    assert "REQUIRED IN PRACTICE" in description, description
+    assert "Foundry-Defect" in description, description
+
+    # The SDK validates before dispatch; an omitted target_kind must survive
+    # that step, or the handler's named refusal is unreachable.
+    args = {"cycle": 0, "source": "prove", "description": "handler never calls the store"}
+    jsonschema.validate(instance=args, schema=tools["Foundry-Observation"].inputSchema)
+    assert "target_kind" not in args, "validation must not inject a declaration"
 
 
 def test_defect_dispatch_carries_target_kind_and_defect_class(run_env):

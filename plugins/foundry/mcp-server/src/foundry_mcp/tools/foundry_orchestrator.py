@@ -2286,15 +2286,35 @@ def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
 #
 #   1. It must not restate the defect's own path — its own symbol or its own
 #      file (the pre-existing rule, now covering both).
-#   2. It must not be a NEGATION. A statement asserting that no other path
-#      exists is a refusal to answer, not an answer; note the gate is already
-#      unsatisfiable in that case, because a fixer with no adjacent path has no
-#      adjacent-path test to reference either. Anchored patterns only, so
-#      `test_no_duplicate_ids` inside a longer statement is untouched.
+#   2. It must not LEAD with a negation. A statement that opens by asserting no
+#      other path exists is a refusal to answer, not an answer; note the gate is
+#      already unsatisfiable in that case, because a fixer with no adjacent path
+#      has no adjacent-path test to reference either. These patterns are
+#      ^-anchored, so `test_no_duplicate_ids` inside a longer statement is
+#      untouched.
+#   2b. A negation LATER in the statement is refused only when it has bounded
+#      nothing — see `_unbounded_denial` below. This is D-076, and it is rule
+#      2's over-correction: the two adjacency patterns used to be UNANCHORED
+#      whole-string searches sitting in the tuple above under a comment
+#      claiming "Anchored patterns only", which was false of exactly those two.
+#      They therefore refused the MOST rigorous form of the answer A-017 asks
+#      for — an enumeration followed by a clause CLOSING it:
+#
+#          "_current_cycle is also called by foundry_get_context and
+#           _format_status_display; no other module reads state.json directly,
+#           so those two are the adjacent callers."
+#
+#      That names two real adjacent callers and then states the radius is
+#      closed, and the gate rejected it as "declares that there is no adjacent
+#      path" — in GRIND, the phase where every defect must close. The property
+#      that separates it from a genuine non-answer is positional and is true of
+#      the language rather than of punctuation: A BOUND COMES AFTER WHAT IT
+#      BOUNDS. So a trailing denial is an answer when something was named
+#      before it, and a refusal when nothing was.
 #   3. It must carry enough substance to have named something —
 #      _STATEMENT_MIN_WORDS words of at least two letters. Kills 'x', '-', '0',
 #      'none', 'n/a', 'nothing', 'no adjacent paths' and 'the same path' on
-#      length alone, and is the floor rule 2's anchored patterns sit on top of.
+#      length alone, and is the floor rules 2 and 2b sit on top of.
 #
 # Like the reference rules, these reject non-answers; they cannot certify that
 # the named path is real. That is the ceiling of what a string check can do,
@@ -2307,11 +2327,41 @@ _STATEMENT_NON_ANSWERS = (
     re.compile(r"^(?:there\s+(?:are|is)\s+)?(?:no|none|not|nothing|never)\b", re.I),
     # "the same path", "same as the defect".
     re.compile(r"^(?:the\s+)?same\b", re.I),
-    # A negation of adjacency anywhere in the statement.
-    re.compile(r"\bno\s+(?:other|adjacent|additional|further)\b", re.I),
-    re.compile(r"\bnothing\s+else\b", re.I),
     re.compile(r"^n\s*/?\s*a$", re.I),
 )
+# Rule 2b (D-076). A negation of adjacency ANYWHERE in the statement. These are
+# deliberately unanchored — a bound is not expected at the start — and are
+# judged by `_unbounded_denial`, never by a bare whole-string search.
+_STATEMENT_ADJACENCY_DENIALS = (
+    re.compile(r"\bno\s+(?:other|adjacent|additional|further)\b", re.I),
+    re.compile(r"\bnothing\s+else\b", re.I),
+)
+
+
+def _unbounded_denial(normalized: str) -> bool:
+    """True when a denial of adjacency has named nothing for it to bound.
+
+    D-076. The test is the text BEFORE the first denial: a statement that
+    enumerated callers and then closed the radius has cleared the same
+    substance floor rule 3 applies to the whole statement, while "I found no
+    other callers" and "the grep shows no other callers" have not — they open
+    with a subject and a verb and then decline to answer.
+
+    Deliberately positional and not a clause tokenizer: splitting English on
+    punctuation would have to guess at the '.' inside ``state.json`` and at how
+    deep a comma nests, and would still accept "Also, no other module calls
+    this" on one word of filler. Counting the words a denial had available to
+    bound needs neither guess.
+    """
+    starts = [
+        match.start()
+        for match in (pattern.search(normalized) for pattern in _STATEMENT_ADJACENCY_DENIALS)
+        if match is not None
+    ]
+    if not starts:
+        return False
+    bounded = _STATEMENT_WORD.findall(normalized[: min(starts)])
+    return len(bounded) < _STATEMENT_MIN_WORDS
 
 
 def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | None:
@@ -2339,6 +2389,18 @@ def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | 
                 "Name who ELSE calls this, what else transitions here, or what "
                 "runs concurrently"
             )
+    if _unbounded_denial(normalized):
+        # D-076: name the REMEDY, which is not "delete the denial". Closing the
+        # radius is the strongest form of the answer — it just has to come
+        # after the answer it closes.
+        return (
+            f"{normalized!r} denies that an adjacent path exists without first "
+            "naming one, so the denial bounds nothing. A closing clause like "
+            '"no other module reads it" is welcome — and is the most rigorous '
+            "form of the answer — but it belongs AFTER the enumeration it "
+            "closes. Name who ELSE calls this, what else transitions here, or "
+            "what runs concurrently, and then bound it"
+        )
     if len(_STATEMENT_WORD.findall(normalized)) < _STATEMENT_MIN_WORDS:
         return (
             f"{normalized!r} is too thin to have named a path. State who else "

@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_stream_rollup.py -q -p no:cacheprovider
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_stream_rollup.py -q -p no:cacheprovider
 # evidence-for: FR-014, FR-020, AC-020, AC-025
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: Installed \d+ packages in \d+ms
@@ -18,4 +18,4 @@
 # the coverage check entirely, so any clean .prove-complete drove the F4
 # auto-pass on a spec nothing had been proved against.
 ......................                                                   [100%]
-22 passed in 0.20s
+22 passed in 0.18s

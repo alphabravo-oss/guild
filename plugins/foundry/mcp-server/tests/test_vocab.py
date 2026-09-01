@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -172,6 +173,50 @@ def test_canonical_defect_type_refuses_unknown_without_coercing() -> None:
 
 def test_finding_classes_is_the_classification_axis() -> None:
     assert vocab.FINDING_CLASSES == frozenset({"DEFECT", "OBSERVATION"})
+
+
+# ---------------------------------------------------------------------------
+# Finding-record vocabularies (D-071).
+#
+# The export-surface half only. What these vocabularies must AGREE WITH — the
+# skills' documented blocks and the schemas served by Validate-Report — is
+# pinned in test_findings_schemas.py, which routes every assertion through the
+# document rather than through this module.
+# ---------------------------------------------------------------------------
+
+
+def test_finding_id_prefixes_is_the_union_over_the_three_skills() -> None:
+    assert vocab.FINDING_ID_PREFIXES == frozenset(
+        {"L", "THIN", "SA", "DEV", "PL", "CR", "SP", "DX", "T"}
+    )
+    assert len(vocab.FINDING_ID_PREFIXES) == 9
+    assert isinstance(vocab.FINDING_ID_PREFIXES, frozenset)
+
+
+def test_finding_id_pattern_is_derived_from_the_prefix_set() -> None:
+    """One edit, not two — the pattern is built from the frozenset.
+
+    Asserted by construction rather than by string equality so adding a
+    prefix does not need an edit here as well.
+    """
+    compiled = re.compile(vocab.FINDING_ID_PATTERN)
+    for prefix in vocab.FINDING_ID_PREFIXES:
+        assert compiled.match(f"{prefix}-1"), f"{prefix}-1 rejected"
+        assert compiled.match(f"{prefix}-4217"), "multi-digit ordinals are legal"
+    # THIN vs T: an anchored match must backtrack out of the shorter branch
+    # rather than committing to it, whichever order the alternation lands in.
+    assert compiled.match("THIN-9")
+    assert not compiled.match("TH-9")
+
+
+def test_temper_domain_statuses_carry_the_five_the_skill_reports() -> None:
+    assert vocab.TEMPER_DOMAIN_STATUSES == frozenset(
+        {"SOLID", "CRACKED", "HOLLOW", "MISSING", "STUCK"}
+    )
+    assert "UNTESTED" not in vocab.TEMPER_DOMAIN_STATUSES, (
+        "UNTESTED was the pre-D-071 schema's invention; temper never "
+        "reports it."
+    )
 
 
 # ---------------------------------------------------------------------------

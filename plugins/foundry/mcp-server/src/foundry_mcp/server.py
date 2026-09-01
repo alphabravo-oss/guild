@@ -262,12 +262,26 @@ async def list_tools() -> list[Tool]:
                         "enum": sorted(OBSERVATION_CLASSES),
                         "description": "Optional — derived from the description when omitted.",
                     },
+                    # D-074 — NO "default" KEY. jsonschema.validate never
+                    # applies schema defaults, so this one was inert as
+                    # validation; what it did was advertise, to every reader of
+                    # the tool surface, that omission means "comment". The
+                    # dispatch lambda below then made that true. Absence must
+                    # travel to the writer AS absence, so it reaches the
+                    # NON_COMMENT branch that fails the demotion closed.
                     "target_kind": {
                         "type": "string",
-                        "default": "comment",
                         "description": (
-                            "Must be 'comment': only comment prose is an "
-                            "observation. Any other value is refused."
+                            "REQUIRED IN PRACTICE, and only 'comment' is "
+                            "accepted: recording an observation IS a demotion "
+                            "out of the blocking defect ledger, so the "
+                            "declaration must be made rather than assumed. "
+                            "Omitting the field is refused server-side under "
+                            "the NON_COMMENT denylist entry and fires the "
+                            "audit tripwire, exactly as a present non-comment "
+                            "value does. A finding about code — a function, a "
+                            "handler, a wiring path — is a defect and belongs "
+                            "in Foundry-Defect."
                         ),
                     },
                     "spec_ref": {"type": "string"},
@@ -559,6 +573,23 @@ async def list_tools() -> list[Tool]:
             # never mentioned the durable form at all. The implementation always
             # accepted both; this is the surface catching up, so path#Symbol
             # leads and file:line is named as the accepted legacy form.
+            # D-077 / D-078 / FR-017 / AC-023 — the enumeration in this string
+            # was FALSE, and false in the direction that hides the gate's most
+            # likely refusal. It named two blocking conditions; the handler has
+            # nine hard-reject branches, and the one it denied existed is the
+            # one that fires most: `evidence_verdict == "rejected"`. The word
+            # "evidence" appeared nowhere. Evidence re-execution was documented
+            # ONLY in the nested `casting_commit` property below, which a lead
+            # composing the call from this headline has no reason to open — so
+            # a lead who omitted the SHA silently skipped both EVID-01 and
+            # EVID-02, got `ok: true`, and had accepted a casting whose
+            # evidence was never run. Per the comment above, this string is the
+            # surface a lead reads at the moment of the call; it must name what
+            # engaging the gate costs and what omitting it costs.
+            #
+            # PINNED, not merely written: test_orchestrator_gates.py derives
+            # every hard-reject guard in `foundry_accept_casting` from its AST
+            # and fails on any branch this description does not account for.
             description=(
                 "Gate acceptance of a completed casting. Requires fresh spec_hash and prompt_hash "
                 "(verifies re-reads happened), extracts the casting's acceptance criteria from the "
@@ -566,10 +597,21 @@ async def list_tools() -> list[Tool]:
                 "and mechanically verifies every requirement ID in the casting's spec slice "
                 "has a path#Symbol citation (the durable form) or a file:line citation (the legacy "
                 "form, still accepted) in the completion report. A path#Symbol cite must resolve in "
-                "the named file; a stale :line hint beside it is never a finding. Returns the AC "
-                "list, requirement IDs, any missing citations, and any unresolved symbol cites. "
-                "Blocks acceptance if the teammate reported scope cuts OR any requirement has no "
-                "citation."
+                "the named file; a stale :line hint beside it is never a finding. "
+                "PASS casting_commit — the casting's commit SHA — to engage the evidence gate: "
+                "EVID-01 re-executes every committed `# evidence-cmd:` at that commit in an "
+                "isolated worktree and rejects the casting on byte-mismatch, and EVID-02 rejects "
+                "it when any requirement ID in the slice is bound to no evidence file. OMIT "
+                "casting_commit and BOTH are skipped SILENTLY while the call still returns "
+                "ok:true — an acceptance that verified no evidence at all. "
+                "Returns the AC list, requirement IDs, any missing citations, any unresolved "
+                "symbol cites, and the evidence verdict and provenance. "
+                "Blocks acceptance if evidence re-execution rejected the casting, if any "
+                "requirement is bound to no evidence, if the teammate reported scope cuts, if any "
+                "requirement has no citation, or if any path#Symbol cite resolves nowhere. "
+                "Refuses before running anything on a stale spec_hash or prompt_hash, a casting "
+                "prompt with no <spec_requirements> block, or a spec whose declared "
+                "spec_format_version is malformed."
             ),
             inputSchema={
                 "type": "object",
@@ -786,10 +828,20 @@ _DISPATCH = {
     "Foundry-Defects": lambda args: foundry_query_defects(
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),
         spec_ref=args.get("spec_ref"), project_root=_project_root),
+    # D-074 — the fallback is "" and must stay "". D-069 gave
+    # `foundry_add_observation` a fail-closed `target_kind=""` default so an
+    # undeclared subject reaches the NON_COMMENT denylist entry; this lambda
+    # then substituted "comment" one frame ABOVE it, so over MCP the writer's
+    # guard was never reached. A genuine code-behaviour finding filed with the
+    # field absent was RECORDED as an observation, the fabricated declaration
+    # was persisted into observations.json where no auditor can tell it from a
+    # real one, and the tripwire stayed silent on the bypass. Defaulting here
+    # in EITHER direction re-decides, in transport, a question the writer owns:
+    # pass absence through as absence.
     "Foundry-Observation": lambda args: foundry_add_observation(
         cycle=args["cycle"], source=args["source"], description=args["description"],
         classification=args.get("classification", ""),
-        target_kind=args.get("target_kind", "comment"),
+        target_kind=args.get("target_kind", ""),
         spec_ref=args.get("spec_ref", ""), symbol=args.get("symbol", ""),
         file_path=args.get("file_path", ""), project_root=_project_root),
     "Foundry-Observations": lambda args: foundry_query_observations(

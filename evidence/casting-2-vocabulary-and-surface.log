@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider
 # evidence-for: US-001, US-006, US-007, FR-013, FR-017, FR-019, AC-018, AC-019, AC-021, AC-023, NFR-002
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: Installed \d+ packages in \d+ms
@@ -40,6 +40,6 @@
 # AC-023 / FR-017: casting_commit reaches foundry_accept_casting over MCP, so
 # the evidence re-execution path stops being dead on the MCP surface.
 
-........................................................................ [ 80%]
-.................                                                        [100%]
-89 passed in 0.47s
+........................................................................ [ 77%]
+.....................                                                    [100%]
+93 passed in 0.51s

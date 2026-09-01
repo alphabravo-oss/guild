@@ -13,6 +13,12 @@ places that drifted independently:
     | marker-clear lists          | foundry_orchestrator grind_start/assay    |
     | instrumentation roster      | measure-run.KNOWN_PHASE9_STREAM_IDS       |
 
+D-071 found a SEVENTH copy the original survey missed — `schemas/findings.py`,
+the report schemas the `Validate-Report` tool serves. It read none of this
+module and still required the `severity` axis the effort abolished, so the
+validator two shipped skills instruct a stream to run rejected that stream's
+own documented output. It now derives from here like every other copy.
+
 Wave 1 ships this module and derives `measure-run.py`'s roster from it. The
 remaining consumers are wired by later castings against the names exported
 here; the export surface is a cross-casting contract and must not be renamed.
@@ -173,6 +179,56 @@ _DEFECT_TYPE_ALIASES: Mapping[str, str] = MappingProxyType(
 # CLOSED VOCABULARY — the classification axis distinguishing a defect from a
 # non-defect finding at filing time. Extend only via phase-level RFC.
 FINDING_CLASSES = frozenset({"DEFECT", "OBSERVATION"})  # 2 items
+
+# ---------------------------------------------------------------------------
+# Finding-record vocabularies.
+#
+# Added by D-071. schemas/findings.py was a SEVENTH copy of the vocabularies
+# above and read none of them, so the validator two shipped skills tell a
+# stream to run rejected that stream's own documented output. Fixing it needed
+# two closed vocabularies that lived only in skill prose; they are declared
+# here so findings.py derives them rather than re-typing them.
+# ---------------------------------------------------------------------------
+
+# CLOSED VOCABULARY — the finding-id prefix families the verification skills
+# tell their streams to emit. A finding id is `<PREFIX>-<N>`; the prefix says
+# which lens produced it, and carries no ordering or grade (see the severity
+# note on DEFECT_TYPES). Provenance, one skill per line:
+#
+#     L, THIN, SA, DEV, PL   skills/trace/SKILL.md   (PL at :214)
+#     CR, SP, DX             skills/prove/SKILL.md   (DX at :134)
+#     T                      skills/temper/SKILL.md  (:123)
+#
+# The set is the UNION over the three skills rather than a per-schema mapping:
+# the prefix's job is to reject a malformed id, not to police which stream
+# filed a report, and a per-schema split would be one more table to drift.
+# Extend only via phase-level RFC.
+FINDING_ID_PREFIXES = frozenset(
+    {
+        "L", "THIN", "SA", "DEV", "PL",
+        "CR", "SP", "DX",
+        "T",
+    }
+)  # 9 items
+
+# JSON-Schema `pattern` accepting exactly the FINDING_ID_PREFIXES families.
+# Derived from the frozenset so a new prefix needs one edit, not two. Sorted
+# longest-first for readability only — the trailing `-\d+$` anchor already
+# makes alternation order irrelevant (an anchored match backtracks out of the
+# `T` branch on "THIN-1" and into the `THIN` branch).
+FINDING_ID_PATTERN = "^(?:{})-\\d+$".format(
+    "|".join(sorted(FINDING_ID_PREFIXES, key=lambda p: (-len(p), p)))
+)
+
+# CLOSED VOCABULARY — the status a temper micro-domain can carry, verbatim
+# from the counts line at skills/temper/SKILL.md:121 ("domains probed,
+# SOLID/CRACKED/HOLLOW/MISSING/STUCK, findings, suggestions"). This is a
+# per-DOMAIN progress state, not a grade on a finding: HOLLOW and MISSING name
+# what the probe found behind the domain, and STUCK is the 3-attempt ceiling
+# from the continuous-temper loop at :147. Extend only via phase-level RFC.
+TEMPER_DOMAIN_STATUSES = frozenset(
+    {"SOLID", "CRACKED", "HOLLOW", "MISSING", "STUCK"}
+)  # 5 items
 
 # ---------------------------------------------------------------------------
 # Finding class names.
