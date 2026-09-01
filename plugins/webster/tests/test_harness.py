@@ -704,7 +704,11 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
         assert tracked, f"tracked-tree scope only: {how}"
         return
 
-    changed = nul_separated(git("diff", "--name-only", "-z", f"{baseline}..HEAD"))
+    # The commit, not the range. A range from a fixed baseline accumulates every commit that
+    # landed meanwhile, so a foundry change pushed by somebody else was reported as a webster
+    # change reaching outside its plugin. "A webster change stays inside plugins/webster" is a
+    # property of a commit, and on a shared main the commit is what there is to measure.
+    changed = nul_separated(git("show", "--name-only", "--pretty=format:", "-z", "HEAD"))
     head_paths = head_tracked_paths()
 
     # Both branches of the one exception, on inputs written here rather than
@@ -738,8 +742,7 @@ def test_only_the_writable_file_set_is_tracked_and_changed():
         and path not in POST_RUN_CORRECTIONS
     )
     assert not outside, (
-        f"the change reaches outside the plugin. Baseline "
-        f"resolved from {how} ({baseline[:7]}); {len(changed)} paths changed. "
+        f"this commit reaches outside the plugin. {len(changed)} paths changed. "
         f"A webster change may touch {PLUGIN_REL}/ and the two release paths in "
         f"POST_RUN_CORRECTIONS, and nothing else "
         f"in the repository. Committed {RUN_EVIDENCE_PREFIX} "
