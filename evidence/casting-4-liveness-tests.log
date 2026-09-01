@@ -36,58 +36,100 @@
 #   ..._a_just_spawned_stream_is_not_yet_late        permanent false alarm that
 #   ..._conditional_streams_are_only_expected_...    would rebuild D-022
 #
+# GRIND cycle 5 added the D-058 section. The roster was built from the ledger
+# files that EXIST plus an expected-STREAM set, so a teammate the run had
+# dispatched which died before writing line one contributed to neither half:
+# it was absent from the report and needs_attention said nothing was wrong.
+# The roster now also reads spawns.log, the run's own record of what it
+# dispatched. Read these first:
+#   ..._a_teammate_that_died_before_line_one_is_on_the_roster   the defect, in
+#                                                   the F1 scenario PROVE drove
+#   ..._a_redispatched_agent_stops_reading_as_finished   the same invisibility
+#                                                   one dispatch on: a stale
+#                                                   terminal line no longer
+#                                                   retires a re-dispatched agent
+#   ..._a_dispatched_teammate_with_a_ledger_appears_exactly_once   the two halves
+#                                                   of the roster key agents
+#                                                   identically or one agent
+#                                                   becomes two rows
+# And the four guards against rebuilding D-022's silting, which pass both
+# before and after the fix precisely because they pin what must NOT change:
+#   ..._a_finished_wave_does_not_accumulate_on_the_roster   what retires a
+#                                                   dispatch is the agent's own
+#                                                   terminal line, not a clock
+#   ..._a_terminal_line_written_after_the_dispatch_still_retires_it
+#   ..._a_dispatch_younger_than_the_threshold_is_not_reported
+#   ..._a_cast_dispatch_is_not_evidence_of_work_during_grind
+#
 ============================= test session starts ==============================
-collecting ... collected 50 items
+collecting ... collected 67 items
 
-tests/test_liveness.py::test_threshold_and_cadence_are_named_constants_not_literals PASSED [  2%]
-tests/test_liveness.py::test_threshold_is_not_the_lead_watchdog_constant PASSED [  4%]
-tests/test_liveness.py::test_threshold_sits_between_the_measured_batch_extremes PASSED [  6%]
-tests/test_liveness.py::test_threshold_is_a_multiple_of_the_cadence PASSED [  8%]
-tests/test_liveness.py::test_status_vocabulary_is_closed_and_complete PASSED [ 10%]
-tests/test_liveness.py::test_neither_healthy_status_calls_for_attention PASSED [ 12%]
-tests/test_liveness.py::test_the_inspect_stream_roster_is_derived_from_the_canonical_vocabulary PASSED [ 14%]
-tests/test_liveness.py::test_refuses_when_no_run_is_active PASSED        [ 16%]
-tests/test_liveness.py::test_refuses_when_the_run_directory_is_missing PASSED [ 18%]
-tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[0] PASSED [ 20%]
-tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[-1] PASSED [ 22%]
-tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[-900] PASSED [ 24%]
-tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[soon] PASSED [ 26%]
-tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[bad4] PASSED [ 28%]
-tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[True] PASSED [ 30%]
-tests/test_liveness.py::test_never_raises_across_the_boundary PASSED     [ 32%]
-tests/test_liveness.py::test_no_ledger_at_all_is_an_empty_roster_not_an_error PASSED [ 34%]
-tests/test_liveness.py::test_no_identifier_returns_every_agent_in_the_run PASSED [ 36%]
-tests/test_liveness.py::test_an_identifier_returns_only_that_agent PASSED [ 38%]
-tests/test_liveness.py::test_an_unknown_identifier_is_a_named_refusal_listing_the_known PASSED [ 40%]
-tests/test_liveness.py::test_an_identifier_on_a_run_with_no_ledgers_names_the_expected_path PASSED [ 42%]
-tests/test_liveness.py::test_a_recent_line_reports_progressing_with_its_age PASSED [ 44%]
-tests/test_liveness.py::test_a_silent_agent_reports_stalled PASSED       [ 46%]
-tests/test_liveness.py::test_stalled_and_progressing_are_distinct_statuses_in_one_report PASSED [ 48%]
-tests/test_liveness.py::test_the_threshold_boundary_decides_the_status PASSED [ 50%]
-tests/test_liveness.py::test_the_override_is_echoed_so_the_lead_sees_what_was_applied PASSED [ 52%]
-tests/test_liveness.py::test_fresh_lines_on_an_unchanged_step_report_no_progress PASSED [ 54%]
-tests/test_liveness.py::test_no_progress_is_distinct_from_both_other_live_statuses PASSED [ 56%]
-tests/test_liveness.py::test_progress_age_dates_the_step_change_not_the_last_restatement PASSED [ 58%]
-tests/test_liveness.py::test_a_ledger_with_no_parseable_line_reports_unknown PASSED [ 60%]
-tests/test_liveness.py::test_a_naive_timestamp_is_read_as_utc_rather_than_discarded PASSED [ 62%]
-tests/test_liveness.py::test_only_jsonl_files_are_treated_as_ledgers PASSED [ 64%]
-tests/test_liveness.py::test_demo_report_renders_the_three_statuses_side_by_side PASSED [ 66%]
-tests/test_liveness.py::test_the_record_names_the_ledger_it_was_read_from PASSED [ 68%]
-tests/test_liveness.py::test_a_finished_agent_reports_done_however_long_ago_it_finished PASSED [ 70%]
-tests/test_liveness.py::test_a_finished_agent_does_not_fill_needs_attention PASSED [ 72%]
-tests/test_liveness.py::test_done_outranks_every_age_check PASSED        [ 74%]
-tests/test_liveness.py::test_a_resumed_agent_leaves_done_behind PASSED   [ 76%]
-tests/test_liveness.py::test_a_non_boolean_done_value_does_not_retire_an_agent PASSED [ 78%]
-tests/test_liveness.py::test_the_protocol_block_tells_agents_to_write_the_terminal_line PASSED [ 80%]
-tests/test_liveness.py::test_expected_stream_agents_with_no_ledger_are_reported PASSED [ 82%]
-tests/test_liveness.py::test_a_missing_stream_record_carries_the_block_that_fixes_it PASSED [ 84%]
-tests/test_liveness.py::test_the_response_tells_the_lead_what_to_do_about_a_missing_stream PASSED [ 86%]
-tests/test_liveness.py::test_a_stream_that_writes_a_ledger_is_read_from_it_like_anyone_else PASSED [ 88%]
-tests/test_liveness.py::test_streams_are_not_expected_outside_inspect PASSED [ 90%]
-tests/test_liveness.py::test_a_just_spawned_stream_is_not_yet_late PASSED [ 92%]
-tests/test_liveness.py::test_a_declared_stream_skip_is_honoured PASSED   [ 94%]
-tests/test_liveness.py::test_conditional_streams_are_only_expected_when_their_input_exists PASSED [ 96%]
-tests/test_liveness.py::test_an_expected_stream_can_be_queried_by_identifier PASSED [ 98%]
-tests/test_liveness.py::test_the_empty_roster_case_survives_the_expected_roster PASSED [100%]
+tests/test_liveness.py::test_threshold_and_cadence_are_named_constants_not_literals PASSED [  1%]
+tests/test_liveness.py::test_threshold_is_not_the_lead_watchdog_constant PASSED [  2%]
+tests/test_liveness.py::test_threshold_sits_between_the_measured_batch_extremes PASSED [  4%]
+tests/test_liveness.py::test_threshold_is_a_multiple_of_the_cadence PASSED [  5%]
+tests/test_liveness.py::test_status_vocabulary_is_closed_and_complete PASSED [  7%]
+tests/test_liveness.py::test_neither_healthy_status_calls_for_attention PASSED [  8%]
+tests/test_liveness.py::test_the_inspect_stream_roster_is_derived_from_the_canonical_vocabulary PASSED [ 10%]
+tests/test_liveness.py::test_refuses_when_no_run_is_active PASSED        [ 11%]
+tests/test_liveness.py::test_refuses_when_the_run_directory_is_missing PASSED [ 13%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[0] PASSED [ 14%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[-1] PASSED [ 16%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[-900] PASSED [ 17%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[soon] PASSED [ 19%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[bad4] PASSED [ 20%]
+tests/test_liveness.py::test_refuses_a_non_positive_or_non_numeric_threshold[True] PASSED [ 22%]
+tests/test_liveness.py::test_never_raises_across_the_boundary PASSED     [ 23%]
+tests/test_liveness.py::test_no_ledger_at_all_is_an_empty_roster_not_an_error PASSED [ 25%]
+tests/test_liveness.py::test_no_identifier_returns_every_agent_in_the_run PASSED [ 26%]
+tests/test_liveness.py::test_an_identifier_returns_only_that_agent PASSED [ 28%]
+tests/test_liveness.py::test_an_unknown_identifier_is_a_named_refusal_listing_the_known PASSED [ 29%]
+tests/test_liveness.py::test_an_identifier_on_a_run_with_no_ledgers_names_the_expected_path PASSED [ 31%]
+tests/test_liveness.py::test_a_recent_line_reports_progressing_with_its_age PASSED [ 32%]
+tests/test_liveness.py::test_a_silent_agent_reports_stalled PASSED       [ 34%]
+tests/test_liveness.py::test_stalled_and_progressing_are_distinct_statuses_in_one_report PASSED [ 35%]
+tests/test_liveness.py::test_the_threshold_boundary_decides_the_status PASSED [ 37%]
+tests/test_liveness.py::test_the_override_is_echoed_so_the_lead_sees_what_was_applied PASSED [ 38%]
+tests/test_liveness.py::test_fresh_lines_on_an_unchanged_step_report_no_progress PASSED [ 40%]
+tests/test_liveness.py::test_no_progress_is_distinct_from_both_other_live_statuses PASSED [ 41%]
+tests/test_liveness.py::test_progress_age_dates_the_step_change_not_the_last_restatement PASSED [ 43%]
+tests/test_liveness.py::test_a_ledger_with_no_parseable_line_reports_unknown PASSED [ 44%]
+tests/test_liveness.py::test_a_naive_timestamp_is_read_as_utc_rather_than_discarded PASSED [ 46%]
+tests/test_liveness.py::test_only_jsonl_files_are_treated_as_ledgers PASSED [ 47%]
+tests/test_liveness.py::test_demo_report_renders_the_three_statuses_side_by_side PASSED [ 49%]
+tests/test_liveness.py::test_the_record_names_the_ledger_it_was_read_from PASSED [ 50%]
+tests/test_liveness.py::test_a_finished_agent_reports_done_however_long_ago_it_finished PASSED [ 52%]
+tests/test_liveness.py::test_a_finished_agent_does_not_fill_needs_attention PASSED [ 53%]
+tests/test_liveness.py::test_done_outranks_every_age_check PASSED        [ 55%]
+tests/test_liveness.py::test_a_resumed_agent_leaves_done_behind PASSED   [ 56%]
+tests/test_liveness.py::test_a_non_boolean_done_value_does_not_retire_an_agent PASSED [ 58%]
+tests/test_liveness.py::test_the_protocol_block_tells_agents_to_write_the_terminal_line PASSED [ 59%]
+tests/test_liveness.py::test_expected_stream_agents_with_no_ledger_are_reported PASSED [ 61%]
+tests/test_liveness.py::test_a_missing_stream_record_carries_the_block_that_fixes_it PASSED [ 62%]
+tests/test_liveness.py::test_the_response_tells_the_lead_what_to_do_about_a_missing_stream PASSED [ 64%]
+tests/test_liveness.py::test_a_stream_that_writes_a_ledger_is_read_from_it_like_anyone_else PASSED [ 65%]
+tests/test_liveness.py::test_streams_are_not_expected_outside_inspect PASSED [ 67%]
+tests/test_liveness.py::test_a_just_spawned_stream_is_not_yet_late PASSED [ 68%]
+tests/test_liveness.py::test_a_declared_stream_skip_is_honoured PASSED   [ 70%]
+tests/test_liveness.py::test_conditional_streams_are_only_expected_when_their_input_exists PASSED [ 71%]
+tests/test_liveness.py::test_an_expected_stream_can_be_queried_by_identifier PASSED [ 73%]
+tests/test_liveness.py::test_the_empty_roster_case_survives_the_expected_roster PASSED [ 74%]
+tests/test_liveness.py::test_a_teammate_that_died_before_line_one_is_on_the_roster PASSED [ 76%]
+tests/test_liveness.py::test_the_dead_teammates_row_dates_the_dispatch_it_never_answered PASSED [ 77%]
+tests/test_liveness.py::test_a_dispatched_teammate_with_a_ledger_appears_exactly_once PASSED [ 79%]
+tests/test_liveness.py::test_a_string_casting_id_keys_the_same_row_as_an_int PASSED [ 80%]
+tests/test_liveness.py::test_only_the_latest_dispatch_dates_the_silence PASSED [ 82%]
+tests/test_liveness.py::test_a_dispatch_younger_than_the_threshold_is_not_reported PASSED [ 83%]
+tests/test_liveness.py::test_the_threshold_override_moves_the_dispatch_gate_too PASSED [ 85%]
+tests/test_liveness.py::test_a_finished_wave_does_not_accumulate_on_the_roster PASSED [ 86%]
+tests/test_liveness.py::test_a_redispatched_agent_stops_reading_as_finished PASSED [ 88%]
+tests/test_liveness.py::test_a_terminal_line_written_after_the_dispatch_still_retires_it PASSED [ 89%]
+tests/test_liveness.py::test_dispatches_are_invisible_outside_cast_and_grind PASSED [ 91%]
+tests/test_liveness.py::test_a_cast_dispatch_is_not_evidence_of_work_during_grind PASSED [ 92%]
+tests/test_liveness.py::test_a_missing_teammate_can_be_queried_by_identifier PASSED [ 94%]
+tests/test_liveness.py::test_the_teammate_instruction_names_the_teammates_own_remedy PASSED [ 95%]
+tests/test_liveness.py::test_both_kinds_of_missing_agent_get_their_own_clause PASSED [ 97%]
+tests/test_liveness.py::test_a_torn_or_alien_spawn_log_never_fails_the_call PASSED [ 98%]
+tests/test_liveness.py::test_no_spawn_log_at_all_is_an_empty_roster PASSED [100%]
 
-============================== 50 passed in 0.05s ==============================
+============================== 67 passed in 0.12s ==============================

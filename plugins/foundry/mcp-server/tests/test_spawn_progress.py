@@ -623,3 +623,138 @@ def test_bulk_grind_without_a_baseline_omits_the_context_quietly(run_env) -> Non
     for casting in result["castings"]:
         assert "grind_cycle_context" not in casting
         assert casting["progress_protocol"].strip()
+
+
+# --------------------------------------------------------------------------- #
+# D-058 adjacent path — the real spawn WRITERS feed the liveness READER
+# --------------------------------------------------------------------------- #
+#
+# `test_liveness.py` proves the roster union against spawns.log records the
+# test authored itself, which proves nothing about whether either spawn tool
+# emits a record the reader can key. These two tests drive the real writers —
+# a different caller than the defect path — into the real reader, so the field
+# names, the casting_id type and the phase spelling are all checked against
+# what production actually writes rather than against a fixture's idea of it.
+
+
+def _age_every_spawn_record(fdir: Path, seconds: float) -> None:
+    """Backdate spawns.log so its records are past the stall threshold.
+
+    ONLY the timestamp moves; every other field stays byte-identical to what
+    the spawn tool wrote. The module reads real wall-clock time by design (no
+    test-only clock seam — see test_liveness.py's header), and a record written
+    a millisecond ago is correctly invisible, so ageing it is the only way to
+    reach the overdue branch with a genuine record.
+    """
+    path = fdir / "spawns.log"
+    moment = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    aged = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        record["timestamp"] = moment
+        aged.append(json.dumps(record))
+    path.write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+
+def _enter_grind(fdir: Path, minutes_ago: float = 200) -> None:
+    entered = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {"phase": "F3", "phase_times": {"F3": {"started_at": entered.isoformat()}}}
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_real_bulk_dispatch_becomes_a_liveness_row(run_env) -> None:
+    """foundry_cast_wave writes spawns.log; foundry_liveness must read it back.
+
+    The bulk record carries `wave` and `bulk` fields the single-spawn one does
+    not, so it is a genuinely different shape reaching the same parser.
+    """
+    project_root, fdir = run_env
+
+    wave = fs.foundry_cast_wave(wave=1, phase="grind", project_root=project_root)
+    assert wave["ok"] is True
+
+    _enter_grind(fdir)
+    _age_every_spawn_record(fdir, seconds=3600)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["agent"] for r in result["agents"]] == ["casting-1", "casting-2"]
+    assert result["needs_attention"] == ["casting-1", "casting-2"]
+    assert all(r["status"] == fs.STATUS_NO_LEDGER for r in result["agents"])
+
+
+def test_a_real_single_dispatch_becomes_a_liveness_row(run_env) -> None:
+    """The other writer, whose record carries neither `wave` nor `bulk`."""
+    project_root, fdir = run_env
+
+    spawn = fs.foundry_spawn_teammate(casting_id=2, phase="grind", project_root=project_root)
+    assert spawn["ok"] is True
+
+    _enter_grind(fdir)
+    _age_every_spawn_record(fdir, seconds=3600)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["agent"] for r in result["agents"]] == ["casting-2"]
+    assert result["agents"][0]["status"] == fs.STATUS_NO_LEDGER
+
+
+def test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write(
+    run_env,
+) -> None:
+    """The closed loop, in its failure state.
+
+    The spawn block names where the teammate must write; the no_ledger row
+    names where the lead should look. If those two paths ever drift apart, the
+    lead reads an empty directory and concludes the agent is fine.
+    """
+    project_root, fdir = run_env
+
+    spawn = fs.foundry_spawn_teammate(casting_id=2, phase="grind", project_root=project_root)
+    _enter_grind(fdir)
+    _age_every_spawn_record(fdir, seconds=3600)
+
+    row = fs.foundry_liveness(agent="casting-2", project_root=project_root)["agents"][0]
+
+    assert row["ledger"] in spawn["progress_protocol"]
+
+
+def test_an_agent_that_obeys_its_block_leaves_the_missing_roster(run_env) -> None:
+    """The fix must be self-clearing, not a row that can only ever be added.
+
+    Same dispatch, same phase — the only thing that changes is that the
+    teammate writes the line its block asked for.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(casting_id=2, phase="grind", project_root=project_root)
+    _enter_grind(fdir)
+    _age_every_spawn_record(fdir, seconds=3600)
+
+    before = fs.foundry_liveness(project_root=project_root)
+    assert before["needs_attention"] == ["casting-2"]
+
+    pdir = fdir / "progress"
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "casting-2.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "phase": "grind",
+                "step": "read floor complete",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    after = fs.foundry_liveness(project_root=project_root)
+    assert after["needs_attention"] == []
+    assert [r["agent"] for r in after["agents"]] == ["casting-2"]
+    assert after["agents"][0]["status"] == fs.STATUS_PROGRESSING

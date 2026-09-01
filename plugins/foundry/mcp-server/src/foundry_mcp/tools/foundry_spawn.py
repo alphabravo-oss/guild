@@ -54,6 +54,25 @@ ledger under the ``no_ledger`` status, carrying that agent's own
 that text is each stream's own agent file (GI-001's shape); until it lands
 there, this is the channel that makes the four streams visible at all rather
 than silently absent from the roster.
+
+THE ROSTER IS WHAT THE RUN DISPATCHED, NOT WHAT LEFT A FILE (D-058)
+-------------------------------------------------------------------
+A roster built only from artifacts that exist cannot show an agent that
+produced none, so the deadest teammate of all — spawned, dead before its first
+ledger line — read as absent, and a lead was told nothing needed attention.
+``spawns.log`` is the record of what the run actually dispatched, so
+``foundry_liveness`` now reads it back: a teammate dispatched for the current
+phase and silent past the threshold gets a ``no_ledger`` row, and a ledger
+whose terminal line predates the agent's most recent dispatch no longer counts
+as finished work.
+
+What bounds that expectation is the agent's own terminal line rather than a
+clock. A spawn record never expires, so an ungated union would accumulate every
+finished wave forever; but an agent that writes ``"done": true`` after its last
+dispatch has answered for it, and drops out until the run asks again. Measured
+against the phase clock the alternative gates fail: a real run sat in ONE F3
+episode across five GRIND cycles, so a phase-episode gate expires nothing
+between cycles, and ``state.cycle`` read 0 throughout.
 """
 
 from __future__ import annotations
@@ -208,6 +227,20 @@ del _unknown_stream_ids
 # are simply not spawned, and reporting them would be the false alarm that
 # teaches a lead to ignore the roster.
 INSPECT_PHASE = "F2"
+
+# CLOSED VOCABULARY — the run phases in which a dispatched teammate is expected
+# to be working, mapped to the `phase` value its `spawns.log` record carries.
+# Keys are `state.json`'s phase, values are what both spawn tools in this module
+# write. Extend only via phase-level RFC.
+#
+# Why a MAPPING and not just a set of phases: the spawn record names the phase
+# it was dispatched for, so a CAST dispatch is not evidence that the agent is
+# working now the run has moved on to GRIND. Matching both halves is what keeps
+# a casting that finished CAST and was never re-dispatched off the GRIND roster.
+# Outside these two phases nothing here is spawned and the roster stays quiet:
+# at F2 the INSPECT streams are the agents in flight (see INSPECT_PHASE above),
+# and from F4 on the lead's own agents are, and neither writes a spawn record.
+TEAMMATE_DISPATCH_PHASES = {"F1": "cast", "F3": "grind"}  # 2 items
 
 
 def _teammate_model() -> str:
@@ -398,11 +431,28 @@ def _step_key(record: dict) -> tuple[str, str]:
     )
 
 
+def _with_dispatch(record: dict, dispatch: dict | None, now: datetime) -> dict:
+    """Annotate a liveness row with the dispatch that put its agent to work.
+
+    Separate from the ledger-derived ages on purpose: those date what the agent
+    SAID, this dates what the run ASKED. A row carrying both lets the lead read
+    "last line three hours ago, dispatched twenty minutes ago" and see at a
+    glance that the silence started after the dispatch, not before it.
+    """
+    if not dispatch:
+        return record
+    moment = dispatch["moment"]
+    record["dispatched_at"] = moment.isoformat()
+    record["dispatched_age_seconds"] = int((now - moment).total_seconds())
+    return record
+
+
 def _agent_liveness_record(
     path: Path,
     now: datetime,
     threshold: float,
     run_rel: str,
+    dispatch: dict | None = None,
 ) -> dict:
     """Report one agent's liveness from its ledger file (CT-004, OT-010).
 
@@ -421,28 +471,36 @@ def _agent_liveness_record(
 
     Both ages are equal while an agent is advancing normally; they separate
     exactly when it starts pinging without progressing.
+
+    ``dispatch`` is this agent's most recent overdue spawn record when one is
+    known (D-058). It exists to stop a stale terminal line retiring an agent
+    the run has since asked to work again — see the status branch below.
     """
     agent_id = path.stem
     ledger_path = f"{run_rel}/{PROGRESS_DIR_NAME}/{path.name}"
     lines = _read_progress_ledger(path)
 
     if not lines:
-        return {
-            "agent": agent_id,
-            "status": STATUS_UNKNOWN,
-            "last_progress_age_seconds": None,
-            "last_line_age_seconds": None,
-            "phase": None,
-            "step": None,
-            "last_timestamp": None,
-            "progress_since": None,
-            "lines": 0,
-            "ledger": ledger_path,
-            "detail": (
-                "Ledger file exists but holds no parseable progress line "
-                "(expected one JSON object per line with a timestamp field)."
-            ),
-        }
+        return _with_dispatch(
+            {
+                "agent": agent_id,
+                "status": STATUS_UNKNOWN,
+                "last_progress_age_seconds": None,
+                "last_line_age_seconds": None,
+                "phase": None,
+                "step": None,
+                "last_timestamp": None,
+                "progress_since": None,
+                "lines": 0,
+                "ledger": ledger_path,
+                "detail": (
+                    "Ledger file exists but holds no parseable progress line "
+                    "(expected one JSON object per line with a timestamp field)."
+                ),
+            },
+            dispatch,
+            now,
+        )
 
     last = lines[-1]
     current_step = _step_key(last["record"])
@@ -458,10 +516,16 @@ def _agent_liveness_record(
     last_line_age = (now - last["moment"]).total_seconds()
     last_progress_age = (now - progress_moment).total_seconds()
 
-    # Terminal outranks every age check: a finished agent is finished however
-    # long ago it finished, and ageing it into STALLED is precisely the bug
-    # this branch exists to prevent.
-    if _is_terminal(last["record"]):
+    # A terminal line retires the work it was written about, not the agent
+    # forever. When the run has dispatched this casting AGAIN since that line,
+    # the agent owes lines it has not written, and reporting `done` would hide
+    # a re-dispatched teammate that died before writing one — the same
+    # invisibility D-058 names, one dispatch further on. Everything about the
+    # existing precedence survives: with no newer dispatch, terminal still
+    # outranks every age check, however long ago it finished.
+    superseded = dispatch is not None and dispatch["moment"] > last["moment"]
+
+    if _is_terminal(last["record"]) and not superseded:
         status = STATUS_DONE
     elif last_line_age >= threshold:
         status = STATUS_STALLED
@@ -471,7 +535,7 @@ def _agent_liveness_record(
         status = STATUS_PROGRESSING
 
     phase, step = current_step
-    return {
+    record = {
         "agent": agent_id,
         "status": status,
         "last_progress_age_seconds": int(last_progress_age),
@@ -483,6 +547,14 @@ def _agent_liveness_record(
         "lines": len(lines),
         "ledger": ledger_path,
     }
+    if superseded and _is_terminal(last["record"]):
+        record["detail"] = (
+            "This ledger ends with a terminal line written BEFORE the agent's "
+            "most recent dispatch, so it declares finished the work the run has "
+            "since asked for again. Nothing has been written since that "
+            "dispatch — read this as silence, not as completed work."
+        )
+    return _with_dispatch(record, dispatch, now)
 
 
 def _load_run_state(fdir: Path) -> dict:
@@ -631,6 +703,124 @@ def _missing_stream_records(
     ]
 
 
+def _latest_teammate_dispatches(fdir: Path) -> dict[str, dict]:
+    """Return the current phase's most recent spawn record per teammate (D-058).
+
+    ``spawns.log`` is the run's record of what it actually dispatched, written
+    by both spawn tools in this module. Reading it back is what lets the roster
+    be derived from the agents the run put to work rather than from the files
+    that happen to exist — a teammate that died before its first ledger line
+    leaves no artifact, and no glob can find it.
+
+    Keyed by ``_agent_id_for_casting`` so the ids match what the ledger glob
+    produces from ``path.stem``. That alignment is load-bearing: key these rows
+    any other way and a single agent appears twice, once per half of the roster.
+
+    Two filters, both narrowing to "dispatched, for THIS phase, most recently":
+
+      * outside ``TEAMMATE_DISPATCH_PHASES`` no teammate is in flight, so the
+        answer is nothing at all;
+      * a record whose own ``phase`` is not the one this run phase dispatches is
+        a previous chapter of the run — a CAST spawn says nothing about whether
+        the agent is working now the run is in GRIND;
+      * per casting the LATEST record wins, because a casting's GRIND
+        re-dispatches are the same worker resuming and only the newest one dates
+        the silence.
+
+    Never raises: a missing, unreadable or torn log degrades to "no dispatches
+    known", the same discipline ``_read_progress_ledger`` holds. Liveness is a
+    diagnostic and must not fail the lead's call over its own inputs.
+    """
+    dispatch_phase = TEAMMATE_DISPATCH_PHASES.get(_load_run_state(fdir).get("phase"))
+    if not dispatch_phase:
+        return {}
+
+    try:
+        raw = (fdir / "spawns.log").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    latest: dict[str, dict] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or record.get("phase") != dispatch_phase:
+            continue
+        casting_id = record.get("casting_id")
+        # `bool` is an `int` subclass, and `casting-True` is not an agent.
+        if isinstance(casting_id, bool) or not isinstance(casting_id, (int, str)):
+            continue
+        token = str(casting_id).strip()
+        if not token:
+            continue
+        moment = _parse_progress_timestamp(record.get("timestamp"))
+        if moment is None:
+            continue
+        agent_id = _agent_id_for_casting(token)
+        known = latest.get(agent_id)
+        # `>=` so that on identical timestamps the later LINE wins: the log is
+        # append-only and chronological, and a bulk wave can write a casting's
+        # records inside the same clock tick.
+        if known is None or moment >= known["moment"]:
+            latest[agent_id] = {"moment": moment, "record": record}
+    return latest
+
+
+def _missing_teammate_records(
+    overdue: dict[str, dict],
+    now: datetime,
+    run_rel: str,
+) -> list[dict]:
+    """Report dispatched teammates that have written no ledger at all (D-058).
+
+    The counterpart to ``_missing_stream_records``, and deliberately not a
+    merge with it: the two halves answer the same question from opposite
+    evidence. A stream writes no spawn record, so its expectation comes from
+    the phase and its age from how long that phase has been running. A teammate
+    writes one, so its expectation and its age both come from the dispatch
+    itself — a strictly better number, and the reason a teammate spawned two
+    minutes into an hour-old phase is not reported as late.
+
+    These rows carry no ``progress_protocol`` block, where the stream rows do.
+    That asymmetry is the point rather than an omission: nothing produces a
+    stream's block, so shipping it with the diagnosis is the fix, while a
+    teammate's block is already returned beside its prompt by both spawn tools
+    here. Naming that producer tells the lead where to look; re-emitting a
+    block it was already handed would only pad the response.
+    """
+    return [
+        {
+            "agent": agent_id,
+            "status": STATUS_NO_LEDGER,
+            "last_progress_age_seconds": None,
+            "last_line_age_seconds": None,
+            "phase": info["record"].get("phase"),
+            "step": None,
+            "last_timestamp": None,
+            "progress_since": None,
+            "lines": 0,
+            "ledger": f"{run_rel}/{PROGRESS_DIR_NAME}/{agent_id}.jsonl",
+            "dispatched_at": info["moment"].isoformat(),
+            "dispatched_age_seconds": int((now - info["moment"]).total_seconds()),
+            "detail": (
+                f"{agent_id} was dispatched from spawns.log "
+                f"{int((now - info['moment']).total_seconds()) // 60} minutes ago and has "
+                "written no progress ledger at all. Either the `progress_protocol` block "
+                "returned beside its prompt was not appended below that prompt — in which "
+                "case the teammate was never told where to write and is healthy but "
+                "invisible — or it died before its first line. This row is the only trace "
+                "of it either way."
+            ),
+        }
+        for agent_id, info in sorted(overdue.items())
+    ]
+
+
 def foundry_liveness(
     agent: str | None = None,
     stall_seconds: int | float | None = None,
@@ -663,25 +853,36 @@ def foundry_liveness(
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
 
-    Roster policy: every ledger file in the run, plus — while the run is in
-    INSPECT — the stream agents it expects that have written no ledger (D-021).
-    A run where nothing has written a ledger and no stream is overdue reports
-    an empty roster with ``ok: True``: an unstarted ledger is a normal
-    early-run state, not an error.
+    Roster policy — three sources, because no one of them sees every agent:
 
-    Nothing is enumerated from ``spawns.log``. It would surface the deadest
-    teammate case of all — spawned, never wrote a line — but the log records a
-    spawn REQUEST rather than a live worker, so a run's finished waves would
-    accumulate in the roster forever with no signal that says otherwise. The
-    INSPECT streams are added despite writing no spawn record because their
-    expectation window is bounded by a phase that ends, which is exactly the
-    property ``spawns.log`` lacks. A teammate that dies before its first line
-    is still invisible here; see ``concerns.md`` for that gap.
+      1. every ledger file in the run;
+      2. while the run is in INSPECT, the stream agents it expects that have
+         written no ledger (D-021);
+      3. while the run is in CAST or GRIND, the teammates ``spawns.log`` says
+         it dispatched for that phase which are silent past the threshold and
+         have not declared themselves done since (D-058).
 
-    An explicitly-named agent with neither a ledger nor an expectation IS a
-    named refusal: the caller asked about a specific worker and the honest
-    answer is that no such agent is known to this run, with the ones that are
-    listed in the hint.
+    A run where nothing has written a ledger, no stream is overdue and no
+    dispatch is outstanding reports an empty roster with ``ok: True``: an
+    unstarted ledger is a normal early-run state, not an error.
+
+    Source 3 is what makes the roster a report on the agents the run DISPATCHED
+    rather than on the artifacts that happen to exist. Without it a teammate
+    that died before writing line one — the deadest case there is — appeared
+    nowhere at all, and the lead was told nothing needed attention.
+
+    What keeps source 3 from silting up is the agent's own terminal line, not a
+    clock. A spawn record never expires, so an ungated union would carry every
+    finished wave forever; an agent that writes ``"done": true`` after its last
+    dispatch has answered for that dispatch and drops out until the run asks
+    again. The clock-based alternatives were measured and rejected: a real run
+    held ONE F3 episode across five GRIND cycles, so a phase-episode gate
+    expires nothing between them, and ``state.cycle`` read 0 throughout.
+
+    An explicitly-named agent with neither a ledger, an expectation nor an
+    outstanding dispatch IS a named refusal: the caller asked about a specific
+    worker and the honest answer is that no such agent is known to this run,
+    with the ones that are listed in the hint.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -710,19 +911,42 @@ def foundry_liveness(
     ledgers = sorted(pdir.glob("*.jsonl")) if pdir.is_dir() else []
     now = datetime.now(timezone.utc)
 
-    records = [_agent_liveness_record(p, now, threshold, run_rel) for p in ledgers]
+    # "Too early to say" is silence. A dispatch younger than the threshold
+    # tells the lead nothing a moment's patience would not, so it is filtered
+    # out here — before it can either synthesize a row or overrule a terminal
+    # line — and the same one gate governs both uses (D-058).
+    overdue = {
+        agent_id: info
+        for agent_id, info in _latest_teammate_dispatches(fdir).items()
+        if (now - info["moment"]).total_seconds() >= threshold
+    }
 
-    # An expected stream agent that HAS written a ledger is reported from that
-    # ledger like anybody else; only the ones with nothing to read get a
-    # synthesized row, so a stream that is obeying the protocol never appears
-    # twice and never appears as no_ledger.
+    records = [
+        _agent_liveness_record(p, now, threshold, run_rel, overdue.get(p.stem))
+        for p in ledgers
+    ]
+
+    # An expected agent that HAS written a ledger is reported from that ledger
+    # like anybody else; only the ones with nothing to read get a synthesized
+    # row, so an agent obeying the protocol never appears twice and never
+    # appears as no_ledger.
     have_ledgers = {record["agent"] for record in records}
-    records.extend(
+    stream_rows = [
         record
         for record in _missing_stream_records(fdir, now, threshold, run_rel)
         if record["agent"] not in have_ledgers
-    )
+    ]
+    teammate_rows = [
+        record
+        for record in _missing_teammate_records(overdue, now, run_rel)
+        if record["agent"] not in have_ledgers
+    ]
+    records.extend(stream_rows)
+    records.extend(teammate_rows)
     records.sort(key=lambda record: record["agent"])
+
+    missing_streams = {record["agent"] for record in stream_rows}
+    missing_teammates = {record["agent"] for record in teammate_rows}
     known = [record["agent"] for record in records]
 
     if agent is not None:
@@ -756,11 +980,17 @@ def foundry_liveness(
         ],
     }
 
+    # Two kinds of invisible agent with two different remedies, so the guidance
+    # is keyed on WHICH kind is missing rather than on the shared status. One
+    # blended instruction would tell a lead holding a dead teammate to go and
+    # edit a stream agent's prompt.
     missing = [r["agent"] for r in records if r["status"] == STATUS_NO_LEDGER]
-    if missing:
-        result["instructions"] = (
-            f"{len(missing)} INSPECT stream agent(s) have written no progress ledger and "
-            f"are therefore invisible to this tool: {', '.join(missing)}. The four "
+    clauses = []
+    streams = [a for a in missing if a in missing_streams]
+    if streams:
+        clauses.append(
+            f"{len(streams)} INSPECT stream agent(s) have written no progress ledger and "
+            f"are therefore invisible to this tool: {', '.join(streams)}. The four "
             "defect-filing stream agents are spawned from the F2 roster, not from "
             "Foundry-Spawn-Teammate, so nothing hands them the progress protocol the way "
             "a teammate spawn does. APPEND each one's `progress_protocol` block (carried "
@@ -768,6 +998,23 @@ def foundry_liveness(
             "exactly as you already do for a teammate. Until then a stream that dies "
             "early is indistinguishable from one still reading the spec."
         )
+    teammates = [a for a in missing if a in missing_teammates]
+    if teammates:
+        clauses.append(
+            f"{len(teammates)} teammate(s) this run dispatched have written no progress "
+            f"ledger and are therefore invisible to this tool: {', '.join(teammates)}. "
+            "Unlike a stream agent, every teammate IS handed a `progress_protocol` block "
+            "beside its prompt by Foundry-Spawn-Teammate and Foundry-Cast-Wave — so the "
+            "first thing to check is whether you appended it BELOW the prompt. If you did "
+            "not, these teammates were never told where to write and may be working "
+            "normally; append it on the next dispatch. If you did, the silence is the "
+            "agent's own: look at the pane before you shut the wave down. Either way "
+            "these rows come from spawns.log, not from a file the agent left, which is "
+            "the only reason a teammate that died before its first line is visible here "
+            "at all."
+        )
+    if clauses:
+        result["instructions"] = " ".join(clauses)
 
     if not records and agent is None:
         result["note"] = (

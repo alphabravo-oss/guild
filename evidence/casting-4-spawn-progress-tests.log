@@ -35,33 +35,54 @@
 #                                                        half must not
 #   ..._a_stream_agent_obeying_its_block_becomes_visible_to_liveness  end to end
 #
+# GRIND cycle 5 added the D-058 adjacent-path section. test_liveness.py proves
+# the roster union against spawns.log records the test wrote itself, which
+# proves nothing about whether either spawn tool emits a record the reader can
+# key. These drive the real WRITERS into the real reader — a different caller
+# than the defect path — so the field names, the casting_id type and the phase
+# spelling are checked against what production writes:
+#   ..._a_real_bulk_dispatch_becomes_a_liveness_row     foundry_cast_wave
+#   ..._a_real_single_dispatch_becomes_a_liveness_row   foundry_spawn_teammate
+#   ..._the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write
+#                                                   the loop closed in its
+#                                                   FAILURE state: the path the
+#                                                   block names and the path the
+#                                                   row names are one path
+#   ..._an_agent_that_obeys_its_block_leaves_the_missing_roster   the fix is
+#                                                   self-clearing, not a row
+#                                                   that can only be added
+#
 ============================= test session starts ==============================
-collecting ... collected 25 items
+collecting ... collected 29 items
 
-tests/test_spawn_progress.py::test_single_spawn_returns_a_progress_protocol_block PASSED [  4%]
-tests/test_spawn_progress.py::test_the_block_names_the_exact_ledger_path_for_that_casting PASSED [  8%]
-tests/test_spawn_progress.py::test_the_block_names_the_three_required_line_fields PASSED [ 12%]
-tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [ 16%]
-tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [ 20%]
-tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [ 24%]
-tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [ 28%]
-tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [ 32%]
-tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [ 36%]
-tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [ 40%]
-tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [ 44%]
-tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 48%]
-tests/test_spawn_progress.py::test_single_spawn_block_carries_the_terminal_line_instruction PASSED [ 52%]
-tests/test_spawn_progress.py::test_bulk_spawn_blocks_carry_the_terminal_line_instruction PASSED [ 56%]
-tests/test_spawn_progress.py::test_a_terminal_line_written_as_instructed_reports_done PASSED [ 60%]
-tests/test_spawn_progress.py::test_the_teammate_variant_is_what_the_spawn_tools_still_emit PASSED [ 64%]
-tests/test_spawn_progress.py::test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in PASSED [ 68%]
-tests/test_spawn_progress.py::test_the_two_variants_share_every_machine_read_field PASSED [ 72%]
-tests/test_spawn_progress.py::test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness PASSED [ 76%]
-tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 80%]
-tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 84%]
-tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 88%]
-tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 92%]
-tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 96%]
-tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [100%]
+tests/test_spawn_progress.py::test_single_spawn_returns_a_progress_protocol_block PASSED [  3%]
+tests/test_spawn_progress.py::test_the_block_names_the_exact_ledger_path_for_that_casting PASSED [  6%]
+tests/test_spawn_progress.py::test_the_block_names_the_three_required_line_fields PASSED [ 10%]
+tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [ 13%]
+tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [ 17%]
+tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [ 20%]
+tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [ 24%]
+tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [ 27%]
+tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [ 31%]
+tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [ 34%]
+tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [ 37%]
+tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 41%]
+tests/test_spawn_progress.py::test_single_spawn_block_carries_the_terminal_line_instruction PASSED [ 44%]
+tests/test_spawn_progress.py::test_bulk_spawn_blocks_carry_the_terminal_line_instruction PASSED [ 48%]
+tests/test_spawn_progress.py::test_a_terminal_line_written_as_instructed_reports_done PASSED [ 51%]
+tests/test_spawn_progress.py::test_the_teammate_variant_is_what_the_spawn_tools_still_emit PASSED [ 55%]
+tests/test_spawn_progress.py::test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in PASSED [ 58%]
+tests/test_spawn_progress.py::test_the_two_variants_share_every_machine_read_field PASSED [ 62%]
+tests/test_spawn_progress.py::test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness PASSED [ 65%]
+tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 68%]
+tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 72%]
+tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 75%]
+tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 79%]
+tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 82%]
+tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [ 86%]
+tests/test_spawn_progress.py::test_a_real_bulk_dispatch_becomes_a_liveness_row PASSED [ 89%]
+tests/test_spawn_progress.py::test_a_real_single_dispatch_becomes_a_liveness_row PASSED [ 93%]
+tests/test_spawn_progress.py::test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write PASSED [ 96%]
+tests/test_spawn_progress.py::test_an_agent_that_obeys_its_block_leaves_the_missing_roster PASSED [100%]
 
-============================== 25 passed in 0.72s ==============================
+============================== 29 passed in 0.89s ==============================

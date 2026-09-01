@@ -19,16 +19,23 @@
 # and the true age is that offset plus milliseconds, so the floor division is
 # byte-stable across re-execution.
 #
+# GRIND cycle 5 adds the fourth row. casting-delta was dispatched an hour ago
+# and has written nothing at all, so every ledger-derived age is blank and the
+# DISPATCH age carries the whole signal. Before D-058 that row did not exist:
+# the roster held three agents and needs_attention named two, neither of them
+# the one that was actually dead (AC-021, OT-010).
+#
 
 Foundry-Liveness — stall threshold 900s, progress cadence 300s
 
-agent           status         last_progress  last_line  step
---------------- -------------  -------------  ---------  --------------------
-casting-alpha   progressing              1m         1m  writing the handler
-casting-beta    no_progress             40m         1m  reading defect D-17
-casting-gamma   stalled                 60m        60m  read floor
+agent           status         last_progress  last_line  dispatched  step
+--------------- -------------  -------------  ---------  ----------  --------------------
+casting-alpha   progressing              1m         1m           —  writing the handler
+casting-beta    no_progress             40m         1m           —  reading defect D-17
+casting-delta   no_ledger                 —          —         60m  
+casting-gamma   stalled                 60m        60m           —  read floor
 
-needs_attention: ['casting-beta', 'casting-gamma']
+needs_attention: ['casting-beta', 'casting-delta', 'casting-gamma']
 
 .
-1 passed, 49 deselected in 0.30s
+1 passed, 66 deselected in 0.07s

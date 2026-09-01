@@ -572,8 +572,17 @@ def test_demo_report_renders_the_three_statuses_side_by_side(run_env) -> None:
     multiple of 60s and the real age is always that offset plus a few
     milliseconds, so the floor division is stable run to run — which is what
     lets this double as re-executable evidence rather than a one-off print.
+
+    The fourth row is D-058. ``casting-delta`` was dispatched an hour ago and
+    has written nothing at all, so it has no ledger to read and every
+    ledger-derived age is honestly blank — and it is on the report anyway,
+    because the roster is built from what the run dispatched. Before the fix
+    that row did not exist and ``needs_attention`` named three agents, none of
+    them the one that was actually dead.
     """
     project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _dispatch(fdir, "delta", seconds_ago=3600)
     _write_ledger(
         fdir,
         "casting-alpha",
@@ -598,30 +607,48 @@ def test_demo_report_renders_the_three_statuses_side_by_side(run_env) -> None:
         f"Foundry-Liveness — stall threshold {result['stall_threshold_seconds']}s, "
         f"progress cadence {result['progress_cadence_seconds']}s",
         "",
-        f"{'agent':<16}{'status':<14}{'last_progress':>14}{'last_line':>11}  step",
-        f"{'-' * 15:<16}{'-' * 13:<14}{'-' * 13:>14}{'-' * 9:>11}  {'-' * 20}",
+        f"{'agent':<16}{'status':<14}{'last_progress':>14}{'last_line':>11}"
+        f"{'dispatched':>12}  step",
+        f"{'-' * 15:<16}{'-' * 13:<14}{'-' * 13:>14}{'-' * 9:>11}"
+        f"{'-' * 10:>12}  {'-' * 20}",
     ]
+
+    def _mins(seconds: int | None) -> str:
+        """Whole minutes, or a dash when the ledger cannot date it.
+
+        A blank is the honest rendering for an agent with no ledger: printing
+        0m would assert a last line it never wrote.
+        """
+        return "—" if seconds is None else f"{seconds // 60}m"
+
     for record in result["agents"]:
         rows.append(
             f"{record['agent']:<16}"
             f"{record['status']:<14}"
-            f"{record['last_progress_age_seconds'] // 60:>12}m"
-            f"{record['last_line_age_seconds'] // 60:>10}m"
-            f"  {record['step']}"
+            f"{_mins(record['last_progress_age_seconds']):>13}"
+            f"{_mins(record['last_line_age_seconds']):>11}"
+            f"{_mins(record.get('dispatched_age_seconds')):>12}"
+            f"  {record['step'] or ''}"
         )
     rows += ["", f"needs_attention: {result['needs_attention']}", ""]
 
     out = "\n".join(rows)
     print(out)
 
-    # The report distinguishes all three, and says so in plain text.
+    # The report distinguishes all four, and says so in plain text.
     assert "progressing" in out
     assert "no_progress" in out
     assert "stalled" in out
+    assert "no_ledger" in out
     # beta's heartbeat is as fresh as alpha's; only its PROGRESS age differs.
     assert re.search(r"casting-beta\s+no_progress\s+40m\s+1m", out)
     assert re.search(r"casting-alpha\s+progressing\s+1m\s+1m", out)
-    assert result["needs_attention"] == ["casting-beta", "casting-gamma"]
+    # delta has no ledger to date, so both ledger ages are blank while the
+    # DISPATCH age carries the whole signal — the shape D-058 added.
+    assert re.search(r"casting-delta\s+no_ledger\s+—\s+—\s+60m", out)
+    assert result["needs_attention"] == [
+        "casting-beta", "casting-delta", "casting-gamma"
+    ]
 
 
 def test_the_record_names_the_ledger_it_was_read_from(run_env) -> None:
@@ -925,3 +952,369 @@ def test_the_empty_roster_case_survives_the_expected_roster(run_env) -> None:
     assert result["ok"] is True
     assert result["agents"] == []
     assert result["needs_attention"] == []
+
+
+# --------------------------------------------------------------------------- #
+# D-058 — the roster is what the run DISPATCHED, not what left a file
+# --------------------------------------------------------------------------- #
+
+
+def _dispatch(
+    fdir: Path,
+    casting_id,
+    seconds_ago: float,
+    phase: str = "grind",
+    **extra,
+) -> None:
+    """Append one spawns.log record, in the shape the spawn tools write.
+
+    Field-for-field what ``foundry_spawn_teammate`` and ``foundry_cast_wave``
+    emit — a test that invented its own shape would pass against a reader that
+    could never parse a real log. ``test_spawn_progress`` closes that by
+    driving the real writer into the real reader.
+    """
+    moment = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+    entry = {
+        "timestamp": moment.isoformat(),
+        "casting_id": casting_id,
+        "phase": phase,
+        "prompt_hash": "sha256:0123456789abcdef",
+        "prompt_path": f"castings/casting-{casting_id}-prompt.md",
+    }
+    entry.update(extra)
+    with (fdir / "spawns.log").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+
+def _enter_phase(fdir: Path, phase: str, minutes_ago: float) -> None:
+    """Put the run in ``phase`` as of ``minutes_ago``."""
+    entered = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {"phase": phase, "phase_times": {phase: {"started_at": entered.isoformat()}}}
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_teammate_that_died_before_line_one_is_on_the_roster(run_env) -> None:
+    """D-058 in one assertion — the scenario PROVE drove at the MCP boundary.
+
+    A run in F1 whose spawns.log records three castings dispatched 4000s ago,
+    where casting-2 died before writing its first ledger line. Before the fix
+    the roster was ['casting-1', 'casting-3'] and needs_attention was empty:
+    the deadest teammate there is read as "nothing to see".
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F1", minutes_ago=5000 / 60)
+    for casting in (1, 2, 3):
+        _dispatch(fdir, casting, seconds_ago=4000, phase="cast")
+    # Two of the three are obeying the protocol. casting-2 never wrote.
+    _write_ledger(fdir, "casting-1", [(60, "cast", "writing tests")])
+    _write_ledger(fdir, "casting-3", [(60, "cast", "read floor")])
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["agent"] for r in result["agents"]] == [
+        "casting-1", "casting-2", "casting-3"
+    ]
+    assert _by_agent(result)["casting-2"]["status"] == fs.STATUS_NO_LEDGER
+    assert result["needs_attention"] == ["casting-2"]
+
+
+def test_the_dead_teammates_row_dates_the_dispatch_it_never_answered(
+    run_env,
+) -> None:
+    """A row saying only "missing" is not actionable; the age is the signal."""
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=90)
+    _dispatch(fdir, 4, seconds_ago=3600)
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["status"] == fs.STATUS_NO_LEDGER
+    assert 3500 <= record["dispatched_age_seconds"] <= 3700
+    assert record["phase"] == "grind"
+    assert record["ledger"].endswith("progress/casting-4.jsonl")
+    # The ledger-derived ages are honestly absent rather than faked to zero.
+    assert record["last_progress_age_seconds"] is None
+    assert record["last_line_age_seconds"] is None
+
+
+def test_a_dispatched_teammate_with_a_ledger_appears_exactly_once(run_env) -> None:
+    """The two halves of the roster must key agents identically.
+
+    The glob half takes ``path.stem`` (``casting-4``) and the spawns.log half
+    builds its key with ``_agent_id_for_casting``. If those two spellings ever
+    diverge, one agent silently becomes two rows — a live one and a phantom
+    ``no_ledger`` twin — which is worse than the invisibility D-058 fixed.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=90)
+    _dispatch(fdir, 4, seconds_ago=3600)
+    _write_ledger(fdir, "casting-4", [(30, "grind", "fixing D-058")])
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["agent"] for r in result["agents"]] == ["casting-4"]
+    assert result["agents"][0]["status"] == fs.STATUS_PROGRESSING
+    assert result["needs_attention"] == []
+    # The live row still carries the dispatch, so the lead can see that the
+    # agent started writing AFTER it was asked to.
+    assert result["agents"][0]["dispatched_age_seconds"] > 3000
+
+
+def test_a_string_casting_id_keys_the_same_row_as_an_int(run_env) -> None:
+    """``foundry_spawn_teammate`` takes ``int | str`` and logs it verbatim.
+
+    Both spellings must land on one agent id, or a casting dispatched once by
+    each path appears twice.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=90)
+    _dispatch(fdir, 4, seconds_ago=3600)
+    _dispatch(fdir, "4", seconds_ago=3000)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["agent"] for r in result["agents"]] == ["casting-4"]
+
+
+def test_only_the_latest_dispatch_dates_the_silence(run_env) -> None:
+    """A casting's GRIND re-dispatches are one worker resuming.
+
+    The oldest record would report an alarming age for an agent that was in
+    fact asked to work again five minutes ago.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    _dispatch(fdir, 4, seconds_ago=9000)
+    _dispatch(fdir, 4, seconds_ago=5000)
+    _dispatch(fdir, 4, seconds_ago=1800)
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert 1700 <= record["dispatched_age_seconds"] <= 1900
+
+
+def test_a_dispatch_younger_than_the_threshold_is_not_reported(run_env) -> None:
+    """"Too early to say" is silence, exactly as it is for a stream agent.
+
+    Without this gate every bulk wave would light up its own roster the second
+    it was spawned, and the lead would learn to ignore the list.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    _dispatch(fdir, 4, seconds_ago=60)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["agents"] == []
+    assert result["needs_attention"] == []
+
+
+def test_the_threshold_override_moves_the_dispatch_gate_too(run_env) -> None:
+    """One threshold governs the whole tool, not just the ledger half."""
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    _dispatch(fdir, 4, seconds_ago=300)
+
+    assert fs.foundry_liveness(project_root=project_root)["agents"] == []
+    swept = fs.foundry_liveness(stall_seconds=120, project_root=project_root)
+    assert [r["agent"] for r in swept["agents"]] == ["casting-4"]
+
+
+def test_a_finished_wave_does_not_accumulate_on_the_roster(run_env) -> None:
+    """The anti-noise pin, and the reason this union is gated on the ledger.
+
+    A spawn record never expires. If the roster were bounded by a clock alone,
+    every casting the run ever dispatched would sit in needs_attention for the
+    rest of the run — the exact silting-up D-022 removed. What retires a
+    dispatch is the agent answering it with a terminal line.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    for casting in (1, 2, 3):
+        _dispatch(fdir, casting, seconds_ago=9000)
+        _write_ledger(fdir, f"casting-{casting}", [(8900, "grind", "fixing")])
+        _append_terminal_line(fdir, f"casting-{casting}", 8600, "committed")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["status"] for r in result["agents"]] == [fs.STATUS_DONE] * 3
+    assert result["needs_attention"] == []
+    assert "instructions" not in result
+
+
+def test_a_redispatched_agent_stops_reading_as_finished(run_env) -> None:
+    """The same invisibility, one dispatch on.
+
+    casting-4 finished CAST, wrote its terminal line, and was re-dispatched for
+    GRIND — then died before writing anything. Its ledger still ends with
+    ``done: true``, so a reader that trusts the file alone reports `done` and
+    the lead is told a dead teammate's work is over.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _write_ledger(fdir, "casting-4", [(9000, "cast", "self-check run")])
+    _append_terminal_line(fdir, "casting-4", 8700, "committed 9f21ac3")
+    _dispatch(fdir, 4, seconds_ago=3600)
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["status"] == fs.STATUS_STALLED
+    assert "detail" in record
+    assert record["dispatched_age_seconds"] < record["last_line_age_seconds"]
+
+
+def test_a_terminal_line_written_after_the_dispatch_still_retires_it(
+    run_env,
+) -> None:
+    """The other side of the boundary, and the one that keeps the fix quiet.
+
+    Same ledger, same dispatch, opposite order: the agent answered the
+    dispatch and then finished. Read as anything but `done` this would put
+    every completed GRIND casting back on the watchlist.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _dispatch(fdir, 4, seconds_ago=9000)
+    _write_ledger(fdir, "casting-4", [(8000, "grind", "fixing D-058")])
+    _append_terminal_line(fdir, "casting-4", 3600, "committed 9f21ac3")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["status"] == fs.STATUS_DONE
+    assert "detail" not in record
+
+
+def test_dispatches_are_invisible_outside_cast_and_grind(run_env) -> None:
+    """Outside F1/F3 no teammate is in flight, so the roster stays quiet.
+
+    At F2 the streams are the agents working, and reporting last cycle's
+    teammates alongside them would bury the stream rows in stale ones.
+    """
+    project_root, fdir = run_env
+    _dispatch(fdir, 4, seconds_ago=9000)
+
+    for phase in ("F0", "F2", "F4", "F6"):
+        _enter_phase(fdir, phase, minutes_ago=300)
+        agents = [r["agent"] for r in fs.foundry_liveness(project_root=project_root)["agents"]]
+        assert "casting-4" not in agents, f"a teammate row leaked into {phase}"
+
+
+def test_a_cast_dispatch_is_not_evidence_of_work_during_grind(run_env) -> None:
+    """The spawn record names the phase it was for, and that is honoured.
+
+    A casting built in CAST and never re-dispatched has nothing owing in
+    GRIND. Reading its CAST record as an outstanding dispatch would put every
+    casting the run ever built on the GRIND roster forever.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _dispatch(fdir, 5, seconds_ago=9000, phase="cast")
+    _dispatch(fdir, 6, seconds_ago=9000, phase="grind")
+
+    agents = [r["agent"] for r in fs.foundry_liveness(project_root=project_root)["agents"]]
+
+    assert agents == ["casting-6"]
+
+
+def test_a_missing_teammate_can_be_queried_by_identifier(run_env) -> None:
+    """CT-004's identifier form must reach the dispatch-derived rows too."""
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _dispatch(fdir, 4, seconds_ago=3600)
+
+    result = fs.foundry_liveness(agent="casting-4", project_root=project_root)
+
+    assert result["ok"] is True
+    assert [r["agent"] for r in result["agents"]] == ["casting-4"]
+    assert result["agents"][0]["status"] == fs.STATUS_NO_LEDGER
+
+
+def test_the_teammate_instruction_names_the_teammates_own_remedy(run_env) -> None:
+    """A dead teammate must not be described with the stream agent's fix.
+
+    The two kinds are invisible for different reasons: nothing hands a stream
+    its protocol block, while a teammate is handed one beside its prompt. One
+    blended instruction would send the lead to edit a stream agent's prompt
+    over a teammate that simply died.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _dispatch(fdir, 4, seconds_ago=3600)
+
+    instructions = fs.foundry_liveness(project_root=project_root)["instructions"]
+
+    assert "casting-4" in instructions
+    assert "Foundry-Cast-Wave" in instructions
+    assert "spawns.log" in instructions
+    assert "F2 roster" not in instructions
+
+
+def test_both_kinds_of_missing_agent_get_their_own_clause(run_env) -> None:
+    """A GRIND-phase run cannot produce both, but the composition must hold.
+
+    Keyed on which kind is missing rather than on the shared status, so
+    neither clause can swallow the other's agents.
+    """
+    project_root, fdir = run_env
+    # F2 with an overdue phase produces stream rows; a grind dispatch produces
+    # none here, so this pins that the stream clause still stands alone.
+    _enter_inspect(fdir, minutes_ago=40)
+    _dispatch(fdir, 4, seconds_ago=3600)
+
+    result = fs.foundry_liveness(project_root=project_root)
+    instructions = result["instructions"]
+
+    assert "F2 roster" in instructions
+    assert "progress_protocol" in instructions
+    assert "casting-4" not in instructions
+
+
+def test_a_torn_or_alien_spawn_log_never_fails_the_call(run_env) -> None:
+    """The log is a best-effort append that may be interrupted mid-line.
+
+    One torn write must not blind the lead to every good record around it, and
+    must never raise across the MCP boundary.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    (fdir / "spawns.log").write_text(
+        "\n".join(
+            [
+                "{not json at all",
+                json.dumps(["a", "list", "not", "an", "object"]),
+                json.dumps({"casting_id": 7, "phase": "grind"}),  # no timestamp
+                json.dumps({"phase": "grind", "timestamp": "nonsense"}),
+                json.dumps(
+                    {"casting_id": True, "phase": "grind", "timestamp": "2026-01-01T00:00:00+00:00"}
+                ),
+                json.dumps(
+                    {"casting_id": "  ", "phase": "grind", "timestamp": "2026-01-01T00:00:00+00:00"}
+                ),
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _dispatch(fdir, 4, seconds_ago=3600)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    assert [r["agent"] for r in result["agents"]] == ["casting-4"]
+
+
+def test_no_spawn_log_at_all_is_an_empty_roster(run_env) -> None:
+    """A run in F1 before its first dispatch has nothing to report."""
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F1", minutes_ago=300)
+    assert not (fdir / "spawns.log").exists()
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    assert result["agents"] == []
