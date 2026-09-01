@@ -139,7 +139,16 @@ to use the thing rather than run or extend it.
 | `install/`, `advanced/` | `operator` |
 | `api/`, `developer/` | `developer` |
 
-`scaffold.py check` reports a page whose declared audience disagrees with its section. When a page
+`scaffold.py check` reports a page whose declared audience disagrees with its section.
+
+**Some products have no `user`.** Pioneer's own index says its reader is comfortable in a
+terminal and a cloud console, and all 67 of its pages are written for one; held to the default
+map its `getting-started/` and `troubleshooting/` pages reported a mismatch for declaring the
+reader they actually have. `--user-audience` says who the end reader really is, and
+`--subject-audience` already made the same admission for the subject directories. The layout is
+Harvester's, and Harvester is infrastructure too.
+
+When a page
 turns out to be about something its reader cannot touch, **the fix is to move the page**. Editing
 the `audience:` field until the checker goes quiet is the way this rule is defeated, and it is
 worth naming because it is the cheapest thing to do and it is always wrong.
