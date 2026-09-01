@@ -73,6 +73,35 @@ dispatch has answered for it, and drops out until the run asks again. Measured
 against the phase clock the alternative gates fail: a real run sat in ONE F3
 episode across five GRIND cycles, so a phase-episode gate expires nothing
 between cycles, and ``state.cycle`` read 0 throughout.
+
+EVERY READ IN THIS MODULE GOES THROUGH ONE PRIMITIVE (D-138)
+------------------------------------------------------------
+``foundry_state.read_text_file`` / ``read_json`` are the only ways bytes enter
+this module, and that is a binding rule rather than a habit:
+``test_spawn_progress.test_no_read_in_this_module_can_raise_a_decode_error``
+walks this file's AST and reports any ``read_text`` or ``open`` that is not
+covered for the decode family, with no allow-list to enrol a new one in.
+
+The rule exists because the five reads here were guarded five different ways
+and none of the five caught the same thing. ``UnicodeDecodeError`` is a
+``ValueError``, so ``except OSError`` (the progress ledger, ``spawns.log``,
+``.cast-baseline-sha``) missed it, ``except json.JSONDecodeError`` (the
+manifest) missed it, and the two prompt reads had no handler at all. One
+non-UTF-8 byte in a file FOUNDRY ITSELF WROTE therefore took Foundry-Liveness
+— CT-004 / AC-021 / OT-010's whole surface — down with a traceback naming no
+file, from a module whose entire error contract is a named ``ok: False``
+refusal.
+
+Which of the two answers a read owes depends on who is listening, not on which
+file it is:
+
+  refuse   the spawn doors and ``foundry_liveness``, where a human asked a
+           question and deserves the file's NAME —
+           ``foundry_state.document_refusal`` for one file,
+           ``_unreadable_artifacts_refusal`` for several;
+  degrade  ``_build_grind_cycle_context`` and ``_skipped_stream_ids``, whose
+           contract is that they never fail a spawn. They still call the same
+           primitive, so "unreadable" means one thing across the module.
 """
 
 from __future__ import annotations
@@ -387,19 +416,26 @@ def _parse_progress_timestamp(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _read_progress_ledger(path: Path) -> list[dict]:
-    """Return the parseable progress lines in one ledger, oldest first.
+def _read_progress_ledger(path: Path) -> tuple[list[dict], str | None]:
+    """Return ``(lines, problem)`` for one ledger — parseable lines, oldest first.
 
     Malformed lines are skipped rather than fatal: the ledger is written by a
     working agent with a best-effort append that may be interrupted mid-line,
     and one torn write must not blind the lead to every good line around it.
     Lines are returned in file order — an append-only ledger is already
     chronological, and re-sorting would hide a clock anomaly worth seeing.
+
+    A torn LINE and an unreadable FILE are different answers, which is why this
+    returns two values rather than an empty list for both. A bad line is the
+    agent's own doing mid-append and the rest of its ledger is still evidence;
+    a file whose bytes will not decode is an artifact FOUNDRY wrote that nobody
+    can read, and the lead has to be told which one (D-138). ``problem`` NAMES
+    THE FILE and is non-None only in the second case; an absent ledger is not a
+    problem, because ``read_text_file`` says so once for every reader.
     """
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return []
+    raw, problem = read_text_file(path)
+    if problem is not None:
+        return [], problem
 
     lines: list[dict] = []
     for line in raw.splitlines():
@@ -416,7 +452,7 @@ def _read_progress_ledger(path: Path) -> list[dict]:
         if moment is None:
             continue
         lines.append({"record": record, "moment": moment})
-    return lines
+    return lines, None
 
 
 def _is_terminal(record: dict) -> bool:
@@ -456,12 +492,21 @@ def _with_dispatch(record: dict, dispatch: dict | None, now: datetime) -> dict:
 
 def _agent_liveness_record(
     path: Path,
+    lines: list[dict],
     now: datetime,
     threshold: float,
     run_rel: str,
     dispatch: dict | None = None,
 ) -> dict:
     """Report one agent's liveness from its ledger file (CT-004, OT-010).
+
+    Takes the ledger's already-parsed ``lines`` rather than reading the file
+    itself, because the READ can fail in a way this function has no vocabulary
+    for: a row cannot say "this agent's ledger will not decode" — every status
+    it can return asserts something about an agent, and the honest statement
+    there is about the FILE. So the caller reads, and a read problem becomes a
+    named refusal for the whole call instead of a row that quietly reports an
+    unreadable ledger as ``unknown`` (D-138).
 
     Two ages, because one number cannot answer "slow or dead":
 
@@ -485,7 +530,6 @@ def _agent_liveness_record(
     """
     agent_id = path.stem
     ledger_path = f"{run_rel}/{PROGRESS_DIR_NAME}/{path.name}"
-    lines = _read_progress_ledger(path)
 
     if not lines:
         return _with_dispatch(
@@ -758,8 +802,8 @@ def _missing_stream_records(
     ]
 
 
-def _latest_teammate_dispatches(fdir: Path) -> dict[str, dict]:
-    """Return the current phase's most recent spawn record per teammate (D-058).
+def _latest_teammate_dispatches(fdir: Path) -> tuple[dict[str, dict], str | None]:
+    """Return ``(dispatches, problem)`` — the phase's latest spawn per teammate (D-058).
 
     ``spawns.log`` is the run's record of what it actually dispatched, written
     by both spawn tools in this module. Reading it back is what lets the roster
@@ -782,18 +826,30 @@ def _latest_teammate_dispatches(fdir: Path) -> dict[str, dict]:
         re-dispatches are the same worker resuming and only the newest one dates
         the silence.
 
-    Never raises: a missing, unreadable or torn log degrades to "no dispatches
-    known", the same discipline ``_read_progress_ledger`` holds. Liveness is a
-    diagnostic and must not fail the lead's call over its own inputs.
+    Never raises. A missing log and a torn LINE both degrade to "no dispatches
+    known", the same discipline ``_read_progress_ledger`` holds — a diagnostic
+    must not fail the lead's call over its own inputs. Bytes that will not
+    DECODE are the one case that is reported instead of swallowed, and the
+    reason is D-138: this read was ``except OSError:`` alone, which does not
+    catch ``UnicodeDecodeError`` (a ``ValueError``, not an ``OSError``), so one
+    bad byte in a log FOUNDRY ITSELF WRITES took Foundry-Liveness — CT-004 /
+    AC-021 / OT-010's entire surface — down with a traceback naming no file.
+    Degrading silently instead would have been the other half of that defect:
+    the roster would simply stop showing dispatched teammates, which is the
+    invisibility D-058 exists to end.
+
+    The read happens BEFORE the phase gate on purpose. The gate answers "are
+    teammates in flight right now"; the artifact is corrupt at every phase, and
+    a lead diagnosing a run at F2 or F4 is exactly as entitled to be told which
+    file will not decode as one at F3.
     """
+    raw, problem = read_text_file(fdir / "spawns.log")
+    if problem is not None:
+        return {}, problem
+
     dispatch_phase = TEAMMATE_DISPATCH_PHASES.get(_load_run_state(fdir).get("phase"))
     if not dispatch_phase:
-        return {}
-
-    try:
-        raw = (fdir / "spawns.log").read_text(encoding="utf-8")
-    except OSError:
-        return {}
+        return {}, None
 
     latest: dict[str, dict] = {}
     for line in raw.splitlines():
@@ -823,7 +879,41 @@ def _latest_teammate_dispatches(fdir: Path) -> dict[str, dict]:
         # records inside the same clock tick.
         if known is None or moment >= known["moment"]:
             latest[agent_id] = {"moment": moment, "record": record}
-    return latest
+    return latest, None
+
+
+def _unreadable_artifacts_refusal(problems: list[str]) -> dict:
+    """The house named refusal for run artifacts whose bytes will not decode.
+
+    ``foundry_state.document_refusal`` is the SINGLE-file form and is what both
+    spawn doors return; this is the same sentence for the many-file case, which
+    liveness needs because it reads a whole directory of ledgers and a lead told
+    about only the first corrupt one goes round the loop once per bad file.
+    ``foundry_orchestrator._artifact_guard`` is the same shape one module over
+    and is deliberately mirrored down to ``corrupt_artifacts``; it omits ``ok``
+    because its callers return bare dicts, and this module's contract is the
+    ``ok: False`` variant (house rule 1), which is the only difference.
+
+    Each entry in ``problems`` already NAMES ITS FILE — ``read_text_file``
+    writes that name — so this function never has to know which artifacts a
+    caller read. That is what keeps "which files are judged" a property of the
+    reads themselves rather than a list kept somewhere alongside them.
+    """
+    return {
+        "ok": False,
+        "error": (
+            "Run artifacts cannot be read: " + "; ".join(problems) + ". "
+            "These are files foundry itself wrote, so a decode failure here is "
+            "corruption in the run directory rather than bad input."
+        ),
+        "hint": (
+            "Repair or delete the named file(s), then retry. A deleted progress "
+            "ledger simply re-appears when its agent next writes; a deleted "
+            "spawns.log costs the dispatch history the roster is derived from, "
+            "so prefer repairing that one."
+        ),
+        "corrupt_artifacts": problems,
+    }
 
 
 def _missing_teammate_records(
@@ -907,6 +997,9 @@ def foundry_liveness(
             }
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
+        When a run artifact this tool reads will not decode, the failure form
+        additionally carries ``corrupt_artifacts`` — every offending file, not
+        just the first (D-138).
 
     Roster policy — three sources, because no one of them sees every agent:
 
@@ -983,19 +1076,41 @@ def foundry_liveness(
     ledgers = sorted(pdir.glob("*.jsonl")) if pdir.is_dir() else []
     now = datetime.now(timezone.utc)
 
+    # Every read this tool performs, done first and judged together (D-138).
+    #
+    # The membership of that set is not written down anywhere, and must not be:
+    # each read reports its OWN problem through the one primitive all of them
+    # call, so the artifacts judged here are exactly the artifacts read, by
+    # construction. A list of "the files liveness cares about" would be right
+    # today and wrong the first time a reader is added — which is the class
+    # this whole cycle is closing, one tool over.
+    #
+    # Ledgers before the dispatch log because that is the order they are read
+    # in, and every corrupt file is named rather than only the first: a lead
+    # who repairs one file and re-runs, twice, has been made to do the tool's
+    # work for it.
+    ledger_reads = [(p, _read_progress_ledger(p)) for p in ledgers]
+    dispatches, dispatch_problem = _latest_teammate_dispatches(fdir)
+
+    problems = [problem for _p, (_lines, problem) in ledger_reads if problem is not None]
+    if dispatch_problem is not None:
+        problems.append(dispatch_problem)
+    if problems:
+        return _unreadable_artifacts_refusal(problems)
+
     # "Too early to say" is silence. A dispatch younger than the threshold
     # tells the lead nothing a moment's patience would not, so it is filtered
     # out here — before it can either synthesize a row or overrule a terminal
     # line — and the same one gate governs both uses (D-058).
     overdue = {
         agent_id: info
-        for agent_id, info in _latest_teammate_dispatches(fdir).items()
+        for agent_id, info in dispatches.items()
         if (now - info["moment"]).total_seconds() >= threshold
     }
 
     records = [
-        _agent_liveness_record(p, now, threshold, run_rel, overdue.get(p.stem))
-        for p in ledgers
+        _agent_liveness_record(p, lines, now, threshold, run_rel, overdue.get(p.stem))
+        for p, (lines, _problem) in ledger_reads
     ]
 
     # An expected agent that HAS written a ledger is reported from that ledger
@@ -1321,7 +1436,15 @@ def foundry_spawn_teammate(
             ),
         }
 
-    prompt_text = prompt_path.read_text(encoding="utf-8")
+    # The prompt is a run artifact like any other, and the third member of the
+    # decode family in this module (D-138). It carried no handler at all, so a
+    # single non-UTF-8 byte in a file F0.5 DECOMPOSE wrote raised
+    # UnicodeDecodeError straight out of Foundry-Spawn-Teammate — from the door
+    # whose entire error contract is a named refusal, and one line after that
+    # contract had been honoured twice for the manifest beside it.
+    prompt_text, prompt_problem = read_text_file(prompt_path)
+    if prompt_problem is not None:
+        return document_refusal(prompt_path, prompt_problem)
 
     if not prompt_text.strip():
         return {
@@ -1428,13 +1551,13 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     below" and then shown nothing is the same blindness this block exists to
     prevent, wearing the block's own authority.
     """
-    baseline_file = fdir / ".cast-baseline-sha"
-    if not baseline_file.exists():
-        return ""
-    try:
-        baseline_sha = baseline_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
+    # The fourth member of the decode family here, and the one where the
+    # tolerant answer really is right: this helper's contract is that it never
+    # fails a spawn, so an unreadable marker degrades to "no scoped context"
+    # exactly as an absent one does. What it must not do is decide that for
+    # itself with its own `except OSError`, which caught the missing file and
+    # not the undecodable one (D-138). ``read_text_file`` returns "" for both.
+    baseline_sha = read_text_file(fdir / ".cast-baseline-sha")[0].strip()
     if not baseline_sha:
         return ""
 
@@ -1619,7 +1742,13 @@ def foundry_cast_wave(
                 "error": f"casting-{cid}-prompt.md does not exist (wave {wave})",
                 "hint": "Re-run F0.5 DECOMPOSE — every casting must have a pre-authored prompt.",
             }
-        prompt_text = prompt_path.read_text(encoding="utf-8")
+        # The bulk door's copy of the single door's prompt read, and the fifth
+        # member (D-138). Refusing here rather than at the end of the loop is
+        # the D-132 property one rung down: a wave whose third prompt will not
+        # decode must not have logged two spawns to spawns.log first.
+        prompt_text, prompt_problem = read_text_file(prompt_path)
+        if prompt_problem is not None:
+            return document_refusal(prompt_path, prompt_problem)
         if not prompt_text.strip():
             return {
                 "ok": False,

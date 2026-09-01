@@ -1,0 +1,80 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_spawn_progress.py -q -s --no-header -p no:cacheprovider -k render_decode_read
+# evidence-for: FR-019, NFR-002, AC-021
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# D-138 — THE READ EDGE, DERIVED OVER THE MODULE RATHER THAN PATCHED AT THE
+# SITE THAT REPORTED IT.
+#
+# THE HARM, driven at ab5a430: append one 0xe9 byte to spawns.log — a log
+# foundry itself writes, from this very module — and Foundry-Liveness raises
+#
+#   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 109
+#
+# straight across the MCP boundary, naming no file. Foundry-Liveness is
+# CT-004 / AC-021 / OT-010's entire surface.
+#
+# THE FIVE MEMBERS, GUARDED FIVE DIFFERENT WAYS, NONE OF THEM THIS ONE. At
+# d3820c5 this scan reported TEN unguarded reads in foundry_spawn.py, not the
+# one the defect named:
+#
+#   _read_progress_ledger:394         except OSError
+#   _latest_teammate_dispatches:794   except OSError            <- reported
+#   _build_grind_cycle_context:1430   except OSError
+#   foundry_spawn_teammate:1319       no handler at all
+#   foundry_cast_wave:1615            no handler at all
+#   _load_run_state:616               except (OSError, JSONDecodeError)  }
+#   _skipped_stream_ids:641           except (OSError, JSONDecodeError)  } D-137,
+#   foundry_spawn_teammate:1285       except JSONDecodeError             } casting
+#   _build_grind_cycle_context:1468   except (OSError, JSONDecodeError)  } 2's
+#   foundry_cast_wave:1575            except JSONDecodeError             } half
+#
+# Casting 2 closed the last five at ca00b75 by routing them through
+# foundry_state.read_json; this casting closed the first five by routing them
+# through foundry_state.read_text_file. The scan below is what makes that a
+# PROPERTY of the module rather than ten remembered edits: it walks every
+# read the file contains and there is no allow-list to enrol a new one in.
+#
+# WHAT COUNTS AS COVERAGE IS ASKED OF PYTHON. The previous shape of this rule
+# elsewhere in the suite compared handler SPELLINGS against a frozenset
+# somebody typed, and D-137's structural half is that the table admitted all
+# fourteen of its sites because it happened to contain "JSONDecodeError". A
+# guard whose own membership table is hand-kept is an instance of the class it
+# exists to close, and its failure mode is silent ACCEPTANCE. So handlers are
+# resolved to real exception classes through the module's own namespace and
+# asked `issubclass`; a spelling the resolver cannot see is REPORTED rather
+# than skipped.
+#
+# THE PLANTED BLOCK is the rule's own adjacent path: a fresh member in each of
+# the five shapes this module has actually worn, plus one written correctly.
+# `properly_guarded` is absent from the offender list on its own merits — the
+# thing it is guarded by is its own try/except, not an entry on a list.
+#
+# "2 file reads found" is not a shrinking scan; it is the two spawns.log
+# APPENDS, which are the only read_text/open calls left in the module now that
+# every read routes through the primitive. The assertion that the scan must
+# see something is what turns a future zero into a failure instead of a green
+# test asserting nothing.
+#
+
+SUBJECT   every read in foundry_spawn.py, located by the module's own import
+READS     2 file reads found
+OFFENDERS 0 not covered for the decode family
+UNRESOLVED handler spellings: none
+
+WHAT COUNTS AS COVERAGE — asked of Python, not of a list of names:
+  issubclass(UnicodeDecodeError, ValueError)           = True
+  issubclass(UnicodeDecodeError, OSError)              = False
+  issubclass(UnicodeDecodeError, json.JSONDecodeError) = False
+
+A FRESH MEMBER PLANTED IN EACH SHAPE THIS MODULE HAS WORN:
+  REPORTED  no_handler
+  REPORTED  only_oserror
+  REPORTED  only_json
+  REPORTED  path_open
+  REPORTED  read_in_the_handler
+  clean     properly_guarded
+  (properly_guarded is clean on its own merits — there is no list to join)
+.
+1 passed, 91 deselected in 0.06s

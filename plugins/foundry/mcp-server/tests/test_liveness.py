@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1649,3 +1650,277 @@ def test_a_well_formed_skip_list_still_reaches_the_roster(run_env) -> None:
 
     assert "trace" not in agents
     assert "prove" not in agents
+
+
+# --------------------------------------------------------------------------- #
+# D-138 — a run artifact whose BYTES will not decode
+# --------------------------------------------------------------------------- #
+#
+# THE HARM, driven at ab5a430: append one 0xe9 byte to spawns.log — a log
+# foundry itself writes, from this very module — and Foundry-Liveness raises
+#
+#   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 109
+#
+# straight across the MCP boundary. The read was `except OSError:` alone at
+# foundry_spawn.py:794, and `UnicodeDecodeError` is a `ValueError`, not an
+# `OSError`. Foundry-Liveness is CT-004 / AC-021 / OT-010's entire surface, so
+# one bad byte in an artifact nobody but foundry writes took the whole feature
+# down with a traceback naming no file — D-098 / D-129's harm re-created on a
+# file type nobody had enrolled.
+#
+# The other half matters as much: degrading SILENTLY would have been the same
+# defect wearing a fix. A roster that quietly stops showing dispatched
+# teammates because their log would not decode is the invisibility D-058 exists
+# to end. So the artifact is NAMED, every corrupt one of them, and the tool
+# refuses rather than reporting a roster it knows is incomplete.
+#
+# `test_spawn_progress.test_no_read_in_this_module_can_raise_a_decode_error`
+# is the derived half: this file drives the two artifacts the defect named,
+# that scan binds every read the module contains, including the ones nobody
+# has filed a defect about yet.
+
+#: A byte that is not valid UTF-8 in any position. `latin-1` text written by a
+#: tool that guessed the encoding is the realistic way this arrives.
+_BAD_BYTE = b"\xe9"
+
+
+def _corrupt(path: Path) -> None:
+    """Append one undecodable byte to an existing artifact."""
+    with path.open("ab") as handle:
+        handle.write(_BAD_BYTE + b"\n")
+
+
+def _healthy_run(fdir: Path) -> None:
+    """A run with one dispatched teammate and one ledger it is writing."""
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _dispatch(fdir, 4, seconds_ago=3600)
+    _write_ledger(fdir, "casting-4", [(120, "grind", "reading the defect")])
+
+
+def test_the_healthy_control_still_returns_per_agent_ages(run_env) -> None:
+    """The control the two corruption cases below are measured against.
+
+    Without it, "refuses when corrupt" is satisfied by a tool that refuses
+    always, and every assertion in this section would still pass.
+    """
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    assert "corrupt_artifacts" not in result
+    assert [r["agent"] for r in result["agents"]] == ["casting-4"]
+    assert result["agents"][0]["status"] == fs.STATUS_PROGRESSING
+    assert result["agents"][0]["last_progress_age_seconds"] >= 119
+
+
+def test_a_corrupt_spawns_log_refuses_by_name_instead_of_raising(run_env) -> None:
+    """The reported site: one bad byte in spawns.log took the whole tool down."""
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+    _corrupt(fdir / "spawns.log")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is False
+    assert "spawns.log" in result["error"]
+    assert "UnicodeDecodeError" in result["error"]
+    assert result["corrupt_artifacts"] == [
+        problem for problem in result["corrupt_artifacts"] if "spawns.log" in problem
+    ]
+
+
+def test_a_corrupt_progress_ledger_refuses_by_name_instead_of_raising(run_env) -> None:
+    """The ledger is a member too — the tool's own subject, not just its input.
+
+    The ledgers are written by AGENTS rather than by this module, which is
+    exactly why they were the likelier corruption and exactly why leaving them
+    out would have been binding the fix to the site that reported it.
+    """
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+    _corrupt(fdir / "progress" / "casting-4.jsonl")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is False
+    assert "casting-4.jsonl" in result["error"]
+    assert len(result["corrupt_artifacts"]) == 1
+
+
+def test_every_corrupt_artifact_is_named_not_just_the_first(run_env) -> None:
+    """A lead who repairs one file and re-runs, twice, is doing the tool's job.
+
+    Both artifacts corrupt at once is the case the defect names, and the case a
+    first-problem-wins guard gets wrong in the most expensive way available: it
+    is right every time and still costs a round trip per broken file.
+    """
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+    _write_ledger(fdir, "casting-9", [(60, "grind", "starting")])
+    _corrupt(fdir / "spawns.log")
+    _corrupt(fdir / "progress" / "casting-4.jsonl")
+    _corrupt(fdir / "progress" / "casting-9.jsonl")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is False
+    named = " ".join(result["corrupt_artifacts"])
+    assert "spawns.log" in named
+    assert "casting-4.jsonl" in named
+    assert "casting-9.jsonl" in named
+    assert len(result["corrupt_artifacts"]) == 3
+
+
+def test_the_decode_refusal_carries_the_house_shape(run_env) -> None:
+    """House rule 1: ``ok: False``, an error naming the fault, a hint naming
+    the action. Never a raise, never a bare boolean."""
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+    _corrupt(fdir / "spawns.log")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert set(result) == {"ok", "error", "hint", "corrupt_artifacts"}
+    assert result["ok"] is False
+    assert result["hint"].strip()
+    assert "Repair or delete" in result["hint"]
+    # The hint must not tell the operator to delete the one file whose deletion
+    # costs the run its dispatch history.
+    assert "prefer repairing that one" in result["hint"]
+
+
+def test_a_corrupt_spawns_log_is_reported_outside_the_dispatch_phases(run_env) -> None:
+    """The read happens before the phase gate, so the diagnosis is not phased.
+
+    ``TEAMMATE_DISPATCH_PHASES`` answers "are teammates in flight"; a corrupt
+    log is corrupt at every phase, and a lead diagnosing a run at F2 is exactly
+    as entitled to be told which file will not decode as one at F3. Guarding
+    the read behind the gate would have closed the defect only on the two
+    phases it happened to be filed from.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F4", minutes_ago=300)
+    (fdir / "spawns.log").write_text("", encoding="utf-8")
+    _corrupt(fdir / "spawns.log")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is False
+    assert "spawns.log" in result["error"]
+
+
+def test_a_torn_ledger_line_is_not_a_corrupt_ledger(run_env) -> None:
+    """A torn LINE and an unreadable FILE are different answers.
+
+    The ledger is a best-effort append that may be interrupted mid-line, so
+    treating a half-written line as corruption would refuse on the ordinary
+    state of a healthy, working agent — the false alarm that teaches a lead to
+    stop reading the tool. Only bytes that will not DECODE are the refusal.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=300)
+    _write_ledger(fdir, "casting-4", [(120, "grind", "reading the defect")])
+    with (fdir / "progress" / "casting-4.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write('{"timestamp": "2026-08-31T19:0')  # interrupted mid-append
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    assert [r["agent"] for r in result["agents"]] == ["casting-4"]
+    assert result["agents"][0]["lines"] == 1
+
+
+def test_an_undecodable_ledger_is_not_reported_as_an_unknown_agent(run_env) -> None:
+    """The adjacent path INSIDE the fix: the row that must NOT be produced.
+
+    ``_agent_liveness_record`` has a status for a ledger it cannot parse —
+    ``unknown``, "the file exists but holds no parseable line". Letting the
+    decode failure fall into that branch would satisfy "never raises" while
+    telling the lead the agent is illegible, when the truth is about the FILE.
+    That is the wrong sentence about the wrong subject, and it is why the read
+    moved out of that function rather than gaining a handler inside it.
+    """
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+    _corrupt(fdir / "progress" / "casting-4.jsonl")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is False
+    assert fs.STATUS_UNKNOWN not in json.dumps(result)
+
+
+def test_a_named_agent_query_refuses_on_a_corrupt_artifact_too(run_env) -> None:
+    """CT-004's other input form reaches the same guard.
+
+    The two query forms are two doors onto one roster, and a guard that covered
+    only the roster form would leave the lead's most targeted question — "is
+    casting-4 alive?" — as the one that still raises.
+    """
+    project_root, fdir = run_env
+    _healthy_run(fdir)
+    _corrupt(fdir / "progress" / "casting-4.jsonl")
+
+    result = fs.foundry_liveness(agent="casting-4", project_root=project_root)
+
+    assert result["ok"] is False
+    assert "casting-4.jsonl" in result["error"]
+
+
+def test_render_decode_refusal_matrix(run_env) -> None:
+    """Print what Foundry-Liveness does with each corruption of its own inputs."""
+    project_root, fdir = run_env
+
+    def rebuild() -> None:
+        shutil.rmtree(fdir / "progress", ignore_errors=True)
+        (fdir / "spawns.log").unlink(missing_ok=True)
+        _healthy_run(fdir)
+
+    def verdict(label: str, mutate) -> str:
+        rebuild()
+        mutate(fdir)
+        try:
+            result = fs.foundry_liveness(project_root=project_root)
+        except Exception as exc:  # pragma: no cover - the pre-fix behaviour
+            return f"{label:<34} RAISES {type(exc).__name__} across the MCP boundary"
+        if not result["ok"]:
+            named = sorted(p.split(" could not")[0] for p in result["corrupt_artifacts"])
+            return f"{label:<34} ok=False   names={named}"
+        row = result["agents"][0]
+        return (
+            f"{label:<34} ok=True    {row['agent']} {row['status']} "
+            f"progress_age={row['last_progress_age_seconds'] // 60}m"
+        )
+
+    def append_torn_line(f: Path) -> None:
+        with (f / "progress" / "casting-4.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write('{"timestamp": "2026-08-31T19:0')
+
+    print(
+        "\n".join(
+            [
+                "One dispatched teammate, one ledger it is writing, F3.",
+                "",
+                verdict("healthy control", lambda f: None),
+                verdict("spawns.log undecodable", lambda f: _corrupt(f / "spawns.log")),
+                verdict(
+                    "progress ledger undecodable",
+                    lambda f: _corrupt(f / "progress" / "casting-4.jsonl"),
+                ),
+                verdict(
+                    "both undecodable",
+                    lambda f: (
+                        _corrupt(f / "spawns.log"),
+                        _corrupt(f / "progress" / "casting-4.jsonl"),
+                    ),
+                ),
+                verdict("ledger torn MID-LINE (not corrupt)", append_torn_line),
+                "",
+                "Before the fix the second, third and fourth rows read",
+                "  RAISES UnicodeDecodeError across the MCP boundary",
+                "naming no file, from CT-004 / AC-021 / OT-010's entire surface.",
+            ]
+        )
+    )

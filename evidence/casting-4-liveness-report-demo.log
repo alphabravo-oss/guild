@@ -30,6 +30,7 @@
 # report itself is unchanged: none of those tests touches a progress ledger.
 #
 
+
 Foundry-Liveness — stall threshold 900s, progress cadence 300s
 
 agent           status         last_progress  last_line  dispatched  step
@@ -42,4 +43,4 @@ casting-gamma   stalled                 60m        60m           —  read floor
 needs_attention: ['casting-beta', 'casting-delta', 'casting-gamma']
 
 .
-1 passed, 83 deselected in 0.04s
+1 passed, 93 deselected in 0.12s

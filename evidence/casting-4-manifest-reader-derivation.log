@@ -1,0 +1,98 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_spawn_progress.py -q -s --no-header -p no:cacheprovider -k render_manifest
+# evidence-for: FR-008, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# D-134 — THE MANIFEST-SHAPE VALIDATOR'S MEMBERSHIP, DERIVED OVER THE PACKAGE.
+#
+# THIS IS A RED RULE AS SHIPPED, AND THAT IS THE DELIVERABLE. The six readers
+# named in the VERDICT block below are live instances of the escalated class;
+# the rule exists to make them visible and to stay red until they close.
+# `test_every_manifest_record_reader_in_the_package_establishes_the_shape` is
+# the assertion, and it is the single failing test in the suite at this commit.
+#
+# THE HARM, driven live against the real _DISPATCH with
+# castings/manifest.json = {"castings": "nope"} and {"castings": [1,2,3]}:
+#
+#   Foundry-Validate-Castings  AttributeError: 'str' object has no attribute 'get'
+#   Foundry-Next               the identical AttributeError, via
+#                              _compute_next_action -> _check_streams_complete
+#                              -> _check_sight_required
+#   Foundry-Gate               AttributeError: 'int'/'str' object has no attribute 'get'
+#   _trace_skip_check          AttributeError: 'int'/'str' object has no attribute 'get'
+#   _append_to_manifest_evidence_provenance
+#                              AttributeError: 'int' object has no attribute 'get'
+#
+# Foundry-Next is the mandatory handshake before EVERY phase transition, so
+# this is the most-travelled door in the tool surface, not an edge case.
+#
+# THE DEFECT NAMED TWO. THE SCAN FOUND SIX, and the four it added were all
+# driven and all raise. That is the argument for the scan: D-132's fix routed
+# foundry_spawn.py's four readers through one declaration and left every other
+# module's reader indexing records unguarded, which is the escalated class
+# recurring one door over — a hardening bound to the site that reported it.
+#
+# WHY THE PROPERTY IS NOT "IS THE KEY DECLARED". At D-132 both spawn doors DID
+# call the guard — at the top rung, and then indexed the records below it.
+# `_check_sight_required` indexes castings[].key_files, which _MANIFEST_SHAPE
+# declares perfectly well, and still raises, because it never asks the
+# validator anything. Presence of a declaration was never the property.
+# COVERAGE of the rung a reader indexes is.
+#
+# ALL THREE AXES ARE DERIVED, which is what the cycle-19 ruling requires of a
+# fix whose derivation itself has axes:
+#
+#   which files    rglob over BOTH shipped source trees, located from the
+#                  package's own __file__ and cross-checked against an
+#                  independent os.walk, so a root that moves fails loudly
+#                  instead of scanning nothing.
+#   which rungs    walked out of _MANIFEST_SHAPE. castings[].key_files and
+#                  waves[].casting_ids are lists of NON-records (element shape
+#                  None — the table's explicit statement that the reader below
+#                  is on its own), so they are correctly not rungs, and
+#                  stream_skips is excluded by that same rule rather than by an
+#                  exception written for it.
+#   which readers  taint from the "manifest.json" literal, propagated ACROSS
+#                  CALLS (foundry_validate.py#_fingerprint_inputs indexes a
+#                  document it never loaded) and through path-building helpers
+#                  (evidence.py#_resolve_manifest_path owns the literal and its
+#                  callers never see one). A scan following only the literal
+#                  reports both of those modules clean.
+#
+# THE ALLOW-LIST IS EMPTY. scripts/validate_intent_coverage.py's
+# load_manifest_casting_ids reads the same document and is not an offender
+# because it isinstance-guards the rung it indexes — recognised BY THE RULE,
+# and the function is not named anywhere in the test module. foundry_spawn.py
+# is clean because it routes through the validator, so the provider of the
+# shared validator is a member of its own rule rather than its exception.
+#
+
+AXIS 1 — WHICH FILES (rglob, both shipped source trees):
+  plugins/foundry/mcp-server/src/foundry_mcp
+  plugins/foundry/scripts
+  30 modules
+
+AXIS 2 — WHICH RUNGS (walked out of _MANIFEST_SHAPE, not typed):
+  ['castings[]', 'waves[]']
+  castings[].key_files and waves[].casting_ids are lists of
+  NON-records (element shape None), so they are correctly not rungs
+
+AXIS 3 — WHICH READERS (taint from the literal, across calls and
+         through path-building helpers; allow-list is EMPTY):
+  shared validators, read off foundry_spawn: ['_manifest_shape_error', '_manifest_shape_problem']
+
+VERDICT — reaches inside a manifest record with nobody having
+          established its shape:
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#_append_to_manifest_evidence_provenance
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_check_sight_required
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_trace_skip_check
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#foundry_gate
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#_fingerprint_inputs
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#foundry_validate_castings
+
+NOT LISTED, and not by exemption — these pass the same rule:
+  foundry_spawn.py                    (routes through the validator)
+  scripts/validate_intent_coverage.py (isinstance-guards the rung it indexes)
+.
+1 passed, 91 deselected in 0.56s

@@ -51,6 +51,7 @@
 # Still no new entry point. The public surface is the same three tools, and the
 # boundary this file records is unchanged.
 #
+
 _agent_id_for_casting
 _agent_liveness_record
 _build_grind_cycle_context
@@ -70,6 +71,7 @@ _shape_problem
 _skipped_stream_ids
 _step_key
 _teammate_model
+_unreadable_artifacts_refusal
 _with_dispatch
 foundry_cast_wave
 foundry_liveness

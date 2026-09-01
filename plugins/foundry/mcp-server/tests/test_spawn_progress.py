@@ -28,6 +28,8 @@ Run with the rest of the suite: ``uv run --with pytest pytest`` from
 from __future__ import annotations
 
 import ast
+import builtins
+import importlib
 import json
 import os
 import re
@@ -38,11 +40,18 @@ from pathlib import Path
 
 import pytest
 
+import foundry_mcp
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
 
 
 RUN_NAME = "c4-spawn-progress-run"
+
+# tests/test_spawn_progress.py -> parents:
+#   [0]=tests, [1]=mcp-server, [2]=foundry, [3]=plugins, [4]=repo-root.
+# Mirrors test_measure_run.py / test_intent_coverage.py precedent, and is what
+# lets an offender be cited as a full repo-relative `path#Symbol`.
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 # The file the fixture repo changes between the CAST baseline and HEAD, and
 # which the casting declares as a key_file — so a correct implementation files
@@ -952,8 +961,18 @@ def test_both_doors_refuse_a_wrong_typed_manifest_with_one_policy(run_env) -> No
 def test_a_torn_manifest_keeps_the_parse_error_it_already_had(run_env) -> None:
     """The path that was already correct must not be re-routed by the fix.
 
-    Text that is not JSON at all still reports a parse error naming the
-    syntax problem, which is strictly more useful than "not an object".
+    Text that is not JSON at all still reports the SYNTAX problem, naming the
+    position the decoder gave up at, which is strictly more useful than "not an
+    object" — a message that would send the operator looking for a type fault
+    in a file whose real fault is a missing brace.
+
+    Asserted on the decoder's own words rather than on the sentence wrapped
+    around them. That wrapper has legitimately changed twice as the read moved
+    behind one primitive (``manifest.json parse error: {e}`` became
+    ``manifest.json is not valid JSON ({e})``), and a test that pins the
+    wrapper goes red on a refactor while a test that pins the decoder's output
+    goes red only when the operator actually loses information — which is the
+    thing worth defending.
     """
     project_root, fdir = run_env
     _overwrite_manifest(fdir, "{truncated")
@@ -962,8 +981,15 @@ def test_a_torn_manifest_keeps_the_parse_error_it_already_had(run_env) -> None:
     bulk = fs.foundry_cast_wave(1, "cast", project_root)
 
     assert single["ok"] is False and bulk["ok"] is False
-    assert "parse error" in single["error"]
-    assert "parse error" in bulk["error"]
+    for door in (single, bulk):
+        assert "Expecting property name" in door["error"]
+        assert "column 2" in door["error"]
+        # A torn document is not a wrong-TYPED one. Reporting it through the
+        # shape validator would be the re-routing this test exists to catch.
+        assert "is not a JSON object" not in door["error"]
+    # D-132's property, which survives whichever rung produced the refusal.
+    assert single["error"] == bulk["error"]
+    assert single["hint"] == bulk["hint"]
 
 
 def test_a_well_formed_manifest_is_untouched_by_the_guard(run_env) -> None:
@@ -1259,18 +1285,26 @@ def test_the_grind_context_builder_degrades_on_every_nested_shape(grind_repo, bo
 # the answer is no for all seven, because there was no shape at all.
 
 
+#: The mapping accessors that reach a member off a loaded document. All three,
+#: because a reader that reaches a member by ``m["k"]`` or ``m.setdefault("k",
+#: [])`` is doing the same thing as one that reaches it by ``m.get("k")`` and
+#: must not escape the scan by choosing a different spelling. ``setdefault``
+#: earns its place on evidence rather than symmetry: ``evidence.py``'s manifest
+#: writers reach ``castings`` that way and are invisible to a scan that knows
+#: only the first two.
+_MEMBER_ACCESSORS = frozenset({"get", "setdefault"})  # 2 names
+
+
 def _indexed(node: ast.AST, tainted: dict[str, str]) -> tuple[str, str] | None:
     """``(base_path, key)`` when ``node`` indexes a manifest-derived name.
 
-    Both spellings, because a reader that reaches a member by ``m["k"]`` is
-    doing the same thing as one that reaches it by ``m.get("k")`` and must not
-    escape the scan by choosing the other syntax. Only ``Load`` subscripts:
+    Every spelling, per ``_MEMBER_ACCESSORS`` above. Only ``Load`` subscripts:
     ``entry["model"] = model`` builds a NEW document, it does not read this one.
     """
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
+        and node.func.attr in _MEMBER_ACCESSORS
         and node.args
         and isinstance(node.args[0], ast.Constant)
         and isinstance(node.args[0].value, str)
@@ -1317,49 +1351,119 @@ _CONTAINER_NODES = (
 )
 
 
-def _manifest_paths_in_function(fn: ast.AST) -> set[str]:
-    """Every manifest key path indexed inside one function.
+def _assigned_names(target: ast.AST) -> list[str]:
+    """The plain names one assignment target binds.
 
-    Taint starts at the ``"manifest.json"`` literal and propagates by
+    A TUPLE target binds all of them, and every element carries the taint. That
+    is deliberately conservative: ``manifest, problem = read_document(path)``
+    taints ``problem`` too, which is a string nobody ever indexes, so the
+    over-approximation costs nothing — while the alternative of taking element
+    0 only would encode an assumption about which slot the document sits in,
+    and be wrong the first time a primitive returns them the other way round.
+
+    The narrow ``ast.Name``-only rule this replaces is how the scan went blind:
+    the moment the manifest reads moved behind a ``(value, problem)`` primitive,
+    every taint chain in the module started at a tuple target, the scan found
+    NOTHING, and only the vacuity assertion below stood between that and a
+    green test asserting nothing at all.
+    """
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [n for element in target.elts for n in _assigned_names(element)]
+    return []
+
+
+def _returned_path(value: ast.AST, returning: dict[str, str] | None) -> str | None:
+    """The manifest path a direct call to a manifest-building function returns.
+
+    Deliberately narrow: only a call by bare name, and only to a function that
+    carries the ``"manifest.json"`` literal in its OWN body. Propagating
+    the return of any function whose parameters happen to be tainted would make
+    a shared loader poison every caller — ``_load_json(fdir / "state.json")``
+    would be read as a manifest the moment some other call site passed it the
+    real one. The literal is what makes the answer about this document rather
+    than about whatever the caller supplied.
+
+    Walked over the subtree rather than matched against a statement shape, for
+    the same reason ``_expr_path`` is: ``manifest_path = resolve(root)`` and
+    ``manifest = json.loads(resolve(root).read_text(...))`` are one reader
+    written two ways, and a rule that only recognises the first is a rule about
+    punctuation.
+    """
+    if not returning:
+        return None
+    for node in ast.walk(value):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            path = returning.get(node.func.id)
+            if path is not None:
+                return path
+    return None
+
+
+def _taint_map(
+    fn: ast.AST,
+    seed: dict[str, str] | None = None,
+    returning: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Name -> manifest key path, for every manifest-derived name in ``fn``.
+
+    Taint starts at the ``"manifest.json"`` literal — or at ``seed``, the
+    parameter taint a CALLER established (D-134) — and propagates by
     assignment, aliasing, iteration and comprehension to a fixed point, so the
     scan follows the module's real chain — ``manifest_path`` to ``manifest`` to
     ``castings`` to ``c`` — rather than only recognising reads written directly
     off the parsed document. D-132's own reads are three hops from the literal;
     a scan that stopped at one hop would have reported the module clean.
     """
-    tainted: dict[str, str] = {}
+    tainted: dict[str, str] = dict(seed or {})
     nodes = list(ast.walk(fn))
     for _ in range(len(nodes) or 1):
         before = dict(tainted)
         for node in nodes:
-            if (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-            ):
-                name = node.targets[0].id
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                names = _assigned_names(node.targets[0])
+                if not names:
+                    continue
                 if any(
                     isinstance(n, ast.Constant) and n.value == "manifest.json"
                     for n in ast.walk(node.value)
                 ):
-                    tainted[name] = ""
+                    for name in names:
+                        tainted[name] = ""
                     continue
                 if isinstance(node.value, _CONTAINER_NODES):
                     continue
+                # A callee that builds the manifest path ITSELF and hands it
+                # back, tried only after the direct chain fails. `evidence.py`
+                # reaches the manifest exactly this way — `_resolve_manifest_path`
+                # owns the literal and its callers never see one — so a scan
+                # that follows only the literal and the argument list reports
+                # that module clean while both of its manifest writers index
+                # records unguarded.
                 path = _expr_path(node.value, tainted)
+                if path is None:
+                    path = _returned_path(node.value, returning)
                 if path is not None:
-                    tainted.setdefault(name, path)
-            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(
-                node.target, ast.Name
-            ):
+                    for name in names:
+                        tainted.setdefault(name, path)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
                 path = _expr_path(node.iter, tainted)
                 if path is not None:
-                    tainted.setdefault(node.target.id, f"{path}[]")
+                    for name in _assigned_names(node.target):
+                        tainted.setdefault(name, f"{path}[]")
         if tainted == before:
             break
+    return tainted
 
+
+def _manifest_paths_in_function(
+    fn: ast.AST, seed: dict[str, str] | None = None
+) -> set[str]:
+    """Every manifest key path indexed inside one function."""
+    tainted = _taint_map(fn, seed)
     found: set[str] = set()
-    for node in nodes:
+    for node in ast.walk(fn):
         hit = _indexed(node, tainted)
         if hit is not None:
             base, key = hit
@@ -1481,3 +1585,1199 @@ def test_the_shape_table_states_the_two_keys_the_readers_address_records_by() ->
 
     assert castings_entry["id"] is fs._REQUIRED
     assert waves_entry["wave"] is fs._REQUIRED
+
+
+# --------------------------------------------------------------------------- #
+# D-138 — no read in this module can raise a decode error
+# --------------------------------------------------------------------------- #
+#
+# The escalated class, on the READ edge of this module. Five reads, guarded five
+# different ways, and not one of the five caught the same thing:
+#
+#   _read_progress_ledger        except OSError
+#   _latest_teammate_dispatches  except OSError            <- the reported site
+#   _build_grind_cycle_context   except OSError
+#   foundry_spawn_teammate       (the prompt read: no handler at all)
+#   foundry_cast_wave            (the prompt read: no handler at all)
+#
+# `UnicodeDecodeError` is a `ValueError`, so `except OSError` does not catch it
+# and neither does `except json.JSONDecodeError`. DRIVEN at ab5a430: one
+# 0xe9 byte in spawns.log -- a log foundry itself writes -- made
+# Foundry-Liveness raise `UnicodeDecodeError: 'utf-8' codec can't decode byte
+# 0xe9 in position 109` across the MCP boundary, naming no file, from
+# CT-004/AC-021/OT-010's entire surface.
+#
+# So the rule below is not "guard the spawns.log read". It is a property of
+# EVERY read the module contains, computed from each call site's own code, with
+# NO ALLOW-LIST: `read_text_file` passes it on its own merits because its body
+# carries the try/except, and a caller that routes through it has no `read_text`
+# for the scan to find. There is nothing to enrol and nothing a future edit can
+# quietly add itself to.
+
+#: What a TEXT read itself raises, as CLASSES. `json.JSONDecodeError` is not
+#: here: a JSONL ledger decodes each LINE, and a line is a string in memory, so
+#: that raise belongs to the parse and not to the read.
+#:
+#: Coverage is decided by asking Python, never by comparing names -- D-137's
+#: structural half, which this rule would otherwise repeat one rung over:
+#:
+#:   issubclass(UnicodeDecodeError, ValueError)            is True
+#:   issubclass(UnicodeDecodeError, OSError)               is False
+#:   issubclass(UnicodeDecodeError, json.JSONDecodeError)  is False
+#:
+#: So `except ValueError` covers this family and `except OSError` does not,
+#: because Python says so. A new exception spelling needs no edit here, and no
+#: spelling can be admitted by being added to a list. An UNRESOLVABLE handler
+#: name is REPORTED rather than silently skipped: it covers nothing (the
+#: conservative direction -- it can only over-report) and it is named in the
+#: failure, so a spelling this resolver cannot see announces itself instead of
+#: quietly widening the gap.
+_TEXT_READ_RAISES: tuple[type[BaseException], ...] = (OSError, UnicodeDecodeError)
+
+#: How bytes enter a module. `read_bytes` is not a member: bytes are never
+#: decoded, so no read of them can raise this family -- an exclusion by property
+#: rather than by name, which is why it is safe to state.
+_TEXT_READ_METHODS = frozenset({"read_text", "open"})  # 2 names
+
+
+def _reader_namespace(tree: ast.Module, module_obj=None) -> dict:
+    """The names a scanned module can see, for resolving exception spellings.
+
+    Derived in layers, none of them typed: builtins, the real module object
+    when there is one, and the modules the source's own ``import X [as Y]``
+    statements name -- which is what resolves the dotted
+    ``json.JSONDecodeError`` spelling in a planted source that is not
+    importable at all.
+    """
+    namespace = dict(builtins.__dict__)
+    if module_obj is not None:
+        namespace.update(vars(module_obj))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            try:
+                namespace.setdefault(
+                    alias.asname or alias.name.split(".")[0],
+                    importlib.import_module(alias.name),
+                )
+            except Exception:  # pragma: no cover - an unimportable alias
+                pass
+    return namespace
+
+
+def _handler_type_nodes(node: ast.AST) -> list[ast.AST]:
+    """The exception expressions an ``except`` clause names, and only those.
+
+    NOT ``ast.walk``: walking ``json.JSONDecodeError`` also yields the inner
+    ``json`` Name, which resolves to a module rather than an exception and
+    would be reported as unrecognised on a perfectly well-formed handler.
+    """
+    return list(node.elts) if isinstance(node, ast.Tuple) else [node]
+
+
+def _handler_classes(
+    handler: ast.ExceptHandler, namespace: dict
+) -> tuple[list[type[BaseException]], list[str]]:
+    """The exception CLASSES this ``except`` catches, and the names it could not."""
+    if handler.type is None:
+        return [BaseException], []  # bare `except:` catches everything
+
+    resolved: list[type[BaseException]] = []
+    unresolved: list[str] = []
+    for node in _handler_type_nodes(handler.type):
+        if isinstance(node, ast.Attribute):
+            owner_name = getattr(node.value, "id", "?")
+            spelling = f"{owner_name}.{node.attr}"
+            owner = namespace.get(owner_name)
+            obj = getattr(owner, node.attr, None) if owner is not None else None
+        elif isinstance(node, ast.Name):
+            spelling, obj = node.id, namespace.get(node.id)
+        else:
+            spelling, obj = ast.dump(node), None
+        if isinstance(obj, type) and issubclass(obj, BaseException):
+            resolved.append(obj)
+        else:
+            unresolved.append(spelling)
+    return resolved, unresolved
+
+
+def _handler_covers_text_decode(
+    handler: ast.ExceptHandler, namespace: dict, unresolved: list[str]
+) -> bool:
+    """True when this ``except`` catches everything a text read can raise."""
+    caught, missing = _handler_classes(handler, namespace)
+    unresolved.extend(missing)
+    return all(
+        any(issubclass(raised, caught_cls) for caught_cls in caught)
+        for raised in _TEXT_READ_RAISES
+    )
+
+
+def _is_text_read(node: ast.AST) -> bool:
+    """True for a call that reads or opens a file's text.
+
+    Both spellings of ``open`` -- the builtin and ``Path.open`` -- because a
+    reader must not escape the scan by choosing the other one.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _TEXT_READ_METHODS:
+        return True
+    return isinstance(node.func, ast.Name) and node.func.id == "open"
+
+
+def _walk_decode_guarded(
+    node: ast.AST, fn: str, guarded: bool, visit, namespace: dict, unresolved: list[str]
+) -> None:
+    """Depth-first walk carrying the enclosing function and decode coverage.
+
+    ``guarded`` is True inside the BODY of a ``try`` whose handlers catch the
+    decode family. It resets at every function boundary -- a function defined
+    inside a ``try`` is not protected at the point it is CALLED -- and it does
+    not extend into the handlers, ``else`` or ``finally``, where a second raise
+    would propagate. Mirrors ``test_orchestrator_gates._walk_guarded``, which
+    asks the same question about the JSON rung; kept as its own copy rather
+    than imported because that module belongs to a concurrent casting and a
+    test that imports a peer's test module fails for reasons about the peer.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        fn, guarded = node.name, False
+    elif isinstance(node, (ast.Try, ast.TryStar)):
+        # A `try` covers its body when ANY ONE handler catches the whole raise
+        # set; two handlers that each catch half do not compose, because the
+        # first matching one runs alone.
+        covered = guarded or any(
+            _handler_covers_text_decode(h, namespace, unresolved) for h in node.handlers
+        )
+        for stmt in node.body:
+            _walk_decode_guarded(stmt, fn, covered, visit, namespace, unresolved)
+        for part in (*node.handlers, *node.orelse, *node.finalbody):
+            _walk_decode_guarded(part, fn, guarded, visit, namespace, unresolved)
+        return
+    visit(node, fn, guarded)
+    for child in ast.iter_child_nodes(node):
+        _walk_decode_guarded(child, fn, guarded, visit, namespace, unresolved)
+
+
+def _text_reads(
+    source: str, module: str, module_obj=None
+) -> tuple[list[str], list[str], list[str]]:
+    """``(all_reads, unguarded_reads, unresolvable_handler_spellings)``."""
+    every: list[str] = []
+    offenders: list[str] = []
+    unresolved: list[str] = []
+    tree = ast.parse(source)
+
+    def visit(node: ast.AST, fn: str, guarded: bool) -> None:
+        if not _is_text_read(node):
+            return
+        site = f"{module}::{fn}:{node.lineno}"
+        every.append(site)
+        if not guarded:
+            offenders.append(site)
+
+    _walk_decode_guarded(
+        tree, "<module>", False, visit, _reader_namespace(tree, module_obj), unresolved
+    )
+    return sorted(set(every)), sorted(set(offenders)), sorted(set(unresolved))
+
+
+def test_no_read_in_this_module_can_raise_a_decode_error() -> None:
+    """D-138, as a property of the whole module rather than of one read.
+
+    The subject is located through the module's own import, so a rename or a
+    move cannot silently empty the scan.
+    """
+    source = Path(fs.__file__).read_text(encoding="utf-8")
+    every, offenders, unresolved = _text_reads(source, "foundry_spawn.py", fs)
+
+    assert not unresolved, (
+        f"{unresolved} name exceptions this resolver could not turn into "
+        f"classes, so it cannot say what they catch and has counted them as "
+        f"catching nothing. Fix the resolver rather than the handler."
+    )
+
+    # The scan must SEE something, or the assertion below passes vacuously --
+    # the failure mode of every derived-membership check, and the one that
+    # actually fired here when the manifest reads moved behind a primitive.
+    assert every, (
+        "the scan found no file read at all in foundry_spawn.py. Either every "
+        "read now routes through a primitive (in which case delete this "
+        "assertion deliberately, not by accident) or _is_text_read has stopped "
+        "recognising the module's spelling and is testing nothing."
+    )
+
+    assert not offenders, (
+        f"{offenders} read a file's text without handling the decode failure, "
+        f"so one non-UTF-8 byte in an artifact FOUNDRY ITSELF WROTE raises "
+        f"UnicodeDecodeError across the MCP boundary as a traceback naming no "
+        f"file. `except OSError` and `except json.JSONDecodeError` do not "
+        f"catch it -- UnicodeDecodeError is a ValueError. Route the read "
+        f"through foundry_state.read_text_file / read_json and return "
+        f"document_refusal (one file) or _unreadable_artifacts_refusal "
+        f"(several). There is no allow-list to add yourself to: the guarded "
+        f"primitive passes this rule on its own merits."
+    )
+
+
+def test_the_read_scan_catches_a_freshly_planted_unguarded_read() -> None:
+    """The detector's own adjacent path -- proof it is not vacuously passing.
+
+    Four shapes, because the four are how the module actually got here: no
+    handler at all, `except OSError`, `except json.JSONDecodeError`, and the
+    `Path.open` spelling. A scan that caught only the bare read would have
+    reported four of this module's five reads clean.
+    """
+    source = '''
+def no_handler(p):
+    return p.read_text(encoding="utf-8")
+
+def only_oserror(p):
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+def only_json(p):
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+def path_open(p):
+    with p.open("r", encoding="utf-8") as handle:
+        return handle.read()
+
+def properly_guarded(p):
+    try:
+        return p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+'''
+    _every, offenders, _unresolved = _text_reads(source, "planted.py")
+    assert [site.rsplit(":", 1)[0] for site in offenders] == [
+        "planted.py::no_handler",
+        "planted.py::only_json",
+        "planted.py::only_oserror",
+        "planted.py::path_open",
+    ]
+
+
+def test_the_read_scan_does_not_accept_a_guard_in_the_wrong_place() -> None:
+    """A handler is not a guard for code that runs outside the try's body.
+
+    Both shapes below LOOK guarded to a scan that only asks "does this function
+    contain a decode handler somewhere": the read in the ``except`` clause runs
+    while the first exception is propagating, and the nested ``def`` is called
+    later, from somewhere else entirely.
+    """
+    source = '''
+def read_in_the_handler(p, q):
+    try:
+        return p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return q.read_text(encoding="utf-8")
+
+def defines_a_reader_inside_a_try(p):
+    try:
+        def later(q):
+            return q.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        later = None
+    return later
+'''
+    _every, offenders, _unresolved = _text_reads(source, "planted.py")
+    assert [site.rsplit(":", 1)[0] for site in offenders] == [
+        "planted.py::later",
+        "planted.py::read_in_the_handler",
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# D-134 — the manifest-shape validator's membership, derived over the PACKAGE
+# --------------------------------------------------------------------------- #
+#
+# `test_every_manifest_key_the_module_indexes_is_declared` above binds ONE
+# module, and its own docstring named the residual: four other modules index
+# castings/manifest.json with their own top-rung-only guards. That residual is
+# D-134, and this is it closed.
+#
+# THE HARM, driven live at 9b12e0f against the real _DISPATCH with
+# castings/manifest.json = {"castings": "nope", "spec_type": "GREENFIELD"}:
+#   Foundry-Validate-Castings -> AttributeError: 'str' object has no attribute 'get'
+#   Foundry-Next              -> the identical AttributeError, via
+#                                _compute_next_action -> _check_streams_complete
+#                                -> _check_sight_required
+# Foundry-Next is the mandatory handshake before EVERY phase transition, so this
+# is the most-travelled door in the tool surface, not an edge case.
+#
+# WHY THE PROPERTY IS NOT "IS THE KEY DECLARED". At D-132 both spawn doors DID
+# call the guard -- at the top rung, and then indexed the records below it.
+# Presence of a declaration was never the property; COVERAGE of the rung a
+# reader indexes is. `_check_sight_required` indexes `castings[].key_files`,
+# which _MANIFEST_SHAPE declares perfectly well, and still raises, because that
+# function never asks the validator anything.
+#
+# So the rule below is: a reader that reaches INSIDE a manifest record must
+# first have ESTABLISHED that record's shape. Three axes, all derived:
+#
+#   which files    rglob over the installed package AND plugins/foundry/scripts,
+#                  both located from the package's own __file__.
+#   which rungs    walked out of _MANIFEST_SHAPE, so a rung added to the table
+#                  is policed the day it is declared and a rung the table
+#                  explicitly frees (element shape None) is not policed at all.
+#   which readers  taint from the "manifest.json" literal, propagated ACROSS
+#                  CALLS within a module, so a helper handed the parsed document
+#                  is a member exactly as its caller is.
+#
+# THE ALLOW-LIST IS EMPTY. `scripts/validate_intent_coverage.py`'s
+# `load_manifest_casting_ids` passes on its own merits -- it isinstance-guards
+# the rung it indexes -- and not because anyone enrolled it. That second route
+# is accepted because it satisfies the property, not because it is as good: one
+# shared validator gives the operator one message, and an inline isinstance is
+# a hand-applied copy of it. What the class forbids is indexing a rung whose
+# shape NOBODY established, and an inline guard is somebody.
+
+
+def _scanned_roots() -> list[Path]:
+    """The two source trees a manifest reader can live in.
+
+    Both derived from the installed package's own location rather than typed,
+    and both asserted to exist by the test below -- a scan whose root has moved
+    finds nothing and passes, which is the failure mode these rules exist to
+    avoid.
+
+    ``plugins/foundry/scripts`` is here because it is shipped source that reads
+    run artifacts (``measure-run.py``, ``migrate-archive.py``,
+    ``validate-intent-coverage.py``) and is NOT importable as part of the
+    package, so a package-only rglob would leave it permanently outside every
+    derived rule in the suite -- D-066's boundary mistake, one directory over.
+    """
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    # .../plugins/foundry/mcp-server/src/foundry_mcp -> .../plugins/foundry
+    return [pkg, pkg.parents[2] / "scripts"]
+
+
+def _scanned_modules() -> list[Path]:
+    """Every ``.py`` under either root, membership derived on both axes."""
+    return sorted(p for root in _scanned_roots() for p in root.rglob("*.py"))
+
+
+def _record_rungs(shape: object = None, path: str = "") -> set[str]:
+    """Every ``_MANIFEST_SHAPE`` path whose ELEMENTS a reader indexes as records.
+
+    Walked out of the shape table rather than listed beside it, so the rungs
+    this rule polices are exactly the rungs the validator checks. Today that is
+    ``castings[]`` and ``waves[]``; ``castings[].key_files`` and
+    ``waves[].casting_ids`` are lists of NON-records (element shape ``None`` --
+    the table's explicit statement that the reader below is on its own), so
+    they are correctly not rungs, and ``stream_skips`` is the same by the same
+    rule rather than by an exception written for it.
+    """
+    if shape is None and not path:
+        shape = fs._MANIFEST_SHAPE
+    rungs: set[str] = set()
+    if isinstance(shape, list) and shape:
+        element = shape[0]
+        if isinstance(element, dict):
+            rungs.add(f"{path}[]")
+        rungs |= _record_rungs(element, f"{path}[]")
+    elif isinstance(shape, dict):
+        for key, sub in shape.items():
+            rungs |= _record_rungs(sub, f"{path}.{key}" if path else key)
+    return rungs
+
+
+def _shape_validator_names() -> frozenset[str]:
+    """The shared validators, read off the provider module rather than typed.
+
+    D-134's contract LOCKS both names as exports of ``foundry_spawn.py`` so the
+    two consumer modules can import them. Deriving the set from that module
+    means a third validator is honoured the day it lands, and a rename shows up
+    as the empty-set assertion below rather than as every consumer silently
+    ceasing to count as guarded.
+    """
+    return frozenset(
+        name
+        for name in vars(fs)
+        if name.startswith("_manifest_shape_") and callable(getattr(fs, name))
+    )
+
+
+def _index_base(node: ast.AST) -> tuple[ast.AST, str] | None:
+    """``(base_node, key)`` for any member access, tainted or not."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _MEMBER_ACCESSORS
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return node.func.value, node.args[0].value
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.ctx, ast.Load)
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+    ):
+        return node.value, node.slice.value
+    return None
+
+
+def _functions_by_name(tree: ast.AST) -> dict[str, ast.AST]:
+    """Every function in a module, keyed by name (nested ones included)."""
+    return {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _has_literal_taint(fn: ast.AST) -> bool:
+    """True when the manifest enters this function through its own literal."""
+    return any(
+        isinstance(n, ast.Constant) and n.value == "manifest.json" for n in ast.walk(fn)
+    )
+
+
+def _returning_taint(funcs: dict[str, ast.AST]) -> dict[str, str]:
+    """Function name -> the manifest path it RETURNS, for path-building helpers.
+
+    One pass, not a fixed point, because the entry condition is the function's
+    own literal: a helper that resolves ``castings/manifest.json`` and returns
+    it does so without help from anybody.
+    """
+    returning: dict[str, str] = {}
+    for name, fn in funcs.items():
+        if not _has_literal_taint(fn):
+            continue
+        tainted = _taint_map(fn)
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            # `return root / "castings" / "manifest.json"` builds the path in
+            # the return expression itself and binds no name on the way, so the
+            # taint map has nothing to say about it. That is the shape
+            # `evidence.py#_resolve_manifest_path`'s last line takes.
+            if any(
+                isinstance(n, ast.Constant) and n.value == "manifest.json"
+                for n in ast.walk(node.value)
+            ):
+                returning.setdefault(name, "")
+                continue
+            path = _expr_path(node.value, tainted)
+            if path is not None:
+                returning.setdefault(name, path)
+    return returning
+
+
+def _param_taint(
+    funcs: dict[str, ast.AST], returning: dict[str, str] | None = None
+) -> tuple[dict[str, dict], dict[str, set]]:
+    """Propagate manifest taint across calls inside one module, to a fixed point.
+
+    ``_fingerprint_inputs(fdir, manifest)`` is why this exists: it indexes
+    ``castings[].id`` off a document it never loaded, so a scan that starts
+    taint only at the literal reports it clean while it raises on exactly the
+    input the defect names. The caller's taint is the callee's.
+
+    Returns ``(seed_by_function, callers_by_function)``. Keyed by NAME, so two
+    same-named functions in one module merge -- conservative, which is the safe
+    direction for a detector, and reported rather than assumed by the vacuity
+    assertions on each rule.
+    """
+    seeds: dict[str, dict[str, str]] = {}
+    callers: dict[str, set[str]] = {}
+    for _ in range(len(funcs) + 1):
+        grew = False
+        for caller_name, fn in funcs.items():
+            tainted = _taint_map(fn, seeds.get(caller_name), returning)
+            for node in ast.walk(fn):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                    continue
+                callee = funcs.get(node.func.id)
+                if callee is None:
+                    continue
+                params = [a.arg for a in callee.args.posonlyargs + callee.args.args]
+                for index, arg in enumerate(node.args):
+                    if index >= len(params):
+                        break
+                    path = _expr_path(arg, tainted)
+                    if path is None:
+                        continue
+                    seed = seeds.setdefault(node.func.id, {})
+                    if params[index] not in seed:
+                        seed[params[index]] = path
+                        grew = True
+                    if caller_name not in callers.setdefault(node.func.id, set()):
+                        callers[node.func.id].add(caller_name)
+                        grew = True
+        if not grew:
+            break
+    return seeds, callers
+
+
+def _unestablished_record_indexes(path: Path) -> list[str]:
+    """Every index of a manifest RECORD rung whose shape nobody established.
+
+    ``guarded`` here is not a name on a list; it is one of three facts about
+    the code: the function calls a shared validator, or it isinstance-guards
+    the very name it indexes, or every caller that handed it the document has
+    already done one of those.
+    """
+    source = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # pragma: no cover - a source file that will not parse
+        return []
+    funcs = _functions_by_name(tree)
+    if not funcs:
+        return []
+
+    rungs = _record_rungs()
+    validators = _shape_validator_names()
+    returning = _returning_taint(funcs)
+    seeds, callers = _param_taint(funcs, returning)
+
+    def calls_a_validator(fn: ast.AST) -> bool:
+        return any(
+            (node.attr if isinstance(node, ast.Attribute) else node.id) in validators
+            for node in ast.walk(fn)
+            if isinstance(node, (ast.Name, ast.Attribute))
+        )
+
+    established = {name for name, fn in funcs.items() if calls_a_validator(fn)}
+    for _ in range(len(funcs) + 1):
+        grew = False
+        for name, fn in funcs.items():
+            if name in established or name not in callers or _has_literal_taint(fn):
+                continue
+            if all(caller in established for caller in callers[name]):
+                established.add(name)
+                grew = True
+        if not grew:
+            break
+
+    sites: dict[str, list[int]] = {}
+    for name, fn in funcs.items():
+        tainted = _taint_map(fn, seeds.get(name), returning)
+        typed_names = {
+            call.args[0].id
+            for call in ast.walk(fn)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "isinstance"
+            and call.args
+            and isinstance(call.args[0], ast.Name)
+        }
+        for node in ast.walk(fn):
+            parts = _index_base(node)
+            if parts is None:
+                continue
+            base = parts[0]
+            if not isinstance(base, ast.Name) or tainted.get(base.id) not in rungs:
+                continue
+            if name in established or base.id in typed_names:
+                continue
+            sites.setdefault(name, []).append(node.lineno)
+
+    # Cited as `path#Symbol`, with no `:line` and no site count: both drift
+    # under any edit to the cited file, and a citation that changes when the
+    # file above it changes is a citation that goes stale on its own.
+    return [f"{_cite(path)}#{name}" for name in sorted(sites)]
+
+
+def _cite(path: Path) -> str:
+    """A repo-relative path, so an offender reads as a citation not a basename.
+
+    Falls back to the basename for a planted module under tmp_path, which is
+    outside the repo by construction.
+    """
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return path.name
+
+
+def _plant(tmp_path: Path, name: str, source: str) -> Path:
+    """Write a synthetic module and return its path."""
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return path
+
+
+def test_the_manifest_scan_looks_in_both_shipped_source_trees() -> None:
+    """Neither root may be missing, and neither may be silently empty.
+
+    Derived membership is worth nothing if the derivation runs over an empty
+    set, and a root that has MOVED produces exactly that: a scan that finds no
+    offenders and a test that passes for the wrong reason. ``os.walk`` is the
+    independent oracle rather than a second ``rglob``, so a future narrowing of
+    the discovery to a directory literal is caught by disagreement.
+    """
+    roots = _scanned_roots()
+    for root in roots:
+        assert root.is_dir(), (
+            f"{root} does not exist, so this rule is scanning nothing. The "
+            f"roots are derived from foundry_mcp.__file__; if the tree moved, "
+            f"fix _scanned_roots rather than deleting the root."
+        )
+
+    discovered = {p.resolve() for p in _scanned_modules()}
+    walked = {
+        Path(dirpath, filename).resolve()
+        for root in roots
+        for dirpath, _dirnames, filenames in os.walk(root)
+        for filename in filenames
+        if filename.endswith(".py")
+    }
+    assert discovered == walked, (
+        f"discovery disagrees with an independent walk of the same roots: "
+        f"{sorted(str(p) for p in walked ^ discovered)}"
+    )
+    assert len(discovered) > 20, f"only {len(discovered)} modules discovered"
+
+
+def test_the_record_rungs_come_out_of_the_shape_table() -> None:
+    """The rungs policed are the rungs the validator checks — not a typed list.
+
+    ``castings[].key_files`` and ``waves[].casting_ids`` are lists whose element
+    shape is ``None``: the table's explicit statement that the reader below is
+    on its own. They are therefore NOT rungs, and ``stream_skips`` is excluded
+    by that same rule rather than by an exception written for it. Add a list of
+    objects to ``_MANIFEST_SHAPE`` and this rule polices it the same day.
+    """
+    assert _record_rungs() == {"castings[]", "waves[]"}
+
+    grown = dict(fs._MANIFEST_SHAPE)
+    grown["teams"] = [{"lead": fs._REQUIRED}]
+    assert _record_rungs(grown) == {"castings[]", "waves[]", "teams[]"}
+
+    freed = {"castings": [None]}
+    assert _record_rungs(freed) == set()
+
+
+def test_the_locked_validator_names_are_still_the_ones_the_scan_looks_for() -> None:
+    """D-134's LOCKED contract, pinned where its loss would silently matter.
+
+    Two consumer modules import these two names. If either is renamed, the
+    imports break loudly — but the SCAN would quietly stop recognising the
+    validator route and report every correctly-guarded reader as an offender,
+    which is a worse failure than the import error because it looks like a
+    finding.
+    """
+    assert _shape_validator_names() == {
+        "_manifest_shape_problem",
+        "_manifest_shape_error",
+    }
+
+
+def test_every_manifest_record_reader_in_the_package_establishes_the_shape() -> None:
+    """D-134, as a property of every module that reads castings/manifest.json.
+
+    RED at 9b12e0f on SIX functions, not the two the report named — and the
+    four the hand search missed are the argument for the scan. Every one was
+    driven and every one raises ``AttributeError`` across the MCP boundary on
+    ``{"castings": [1,2,3]}`` or ``{"castings": "nope"}``:
+
+      foundry_orchestrator.py#_check_sight_required   Foundry-Next  (reported)
+      foundry_orchestrator.py#foundry_gate            Foundry-Gate  (found)
+      foundry_orchestrator.py#_trace_skip_check       Foundry-Next's TRACE-skip
+                                                                    (found)
+      foundry_validate.py#foundry_validate_castings   Foundry-Validate-Castings
+                                                                    (reported)
+      foundry_validate.py#_fingerprint_inputs         same door, one call deeper
+                                                                    (found)
+      evidence.py#_append_to_manifest_evidence_provenance
+                                                      evidence verification
+                                                                    (found)
+
+    ``scripts/validate_intent_coverage.py#load_manifest_casting_ids`` reads the
+    same document and is NOT here, because it isinstance-guards the rung it
+    indexes — recognised by the rule, not by an allow-list. There is no
+    allow-list to add anything to.
+    """
+    offenders = [o for p in _scanned_modules() for o in _unestablished_record_indexes(p)]
+
+    assert not offenders, (
+        "these reach INSIDE a castings/manifest.json record without "
+        "establishing its shape first, so a manifest whose `castings` or "
+        "`waves` is a string, a list of ints or a list of nulls meets `.get()` "
+        "and raises AttributeError across the MCP boundary — a traceback "
+        "naming no file, from doors whose whole error contract is a named "
+        "refusal:\n  " + "\n  ".join(offenders) + "\n"
+        "Call foundry_spawn's `_manifest_shape_error` (a refusing door) or "
+        "`_manifest_shape_problem` (a tolerant reader) before indexing, or "
+        "isinstance-guard the record you index. A caller that establishes the "
+        "shape covers the helpers it hands the document to, so guarding the "
+        "door usually clears everything below it. There is no allow-list here: "
+        "the guarded readers pass on their own merits."
+    )
+
+
+def test_the_manifest_scan_catches_a_reader_planted_in_a_new_module(tmp_path) -> None:
+    """The detector's own adjacent path — a NEW module, not the reported one.
+
+    Four shapes at once, because the four are how the package actually got
+    here: the top-rung `.get` guard that stops one rung short, the `_load_json`
+    route, the `["k"]` spelling, and the `setdefault` spelling that no earlier
+    scan in this suite recognised.
+    """
+    planted = _plant(
+        tmp_path,
+        "a_new_door.py",
+        '''
+def top_rung_only(fdir):
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    for c in manifest.get("castings", []):
+        for f in c.get("key_files", []):
+            print(f)
+
+def subscript_spelling(fdir):
+    manifest = json.loads((fdir / "castings" / "manifest.json").read_text())
+    for w in manifest["waves"]:
+        print(w["casting_ids"])
+
+def setdefault_spelling(fdir):
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    for c in manifest.setdefault("castings", []):
+        print(c.setdefault("id", None))
+''',
+    )
+    offenders = _unestablished_record_indexes(planted)
+
+    assert offenders == [
+        "a_new_door.py#setdefault_spelling",
+        "a_new_door.py#subscript_spelling",
+        "a_new_door.py#top_rung_only",
+    ]
+
+
+def test_a_planted_reader_is_cleared_by_either_route_and_by_neither_alone(
+    tmp_path,
+) -> None:
+    """Both establishment routes, and the proof each one is doing the work.
+
+    The isinstance route is the one ``load_manifest_casting_ids`` passes on, so
+    it is driven here on a planted reader too: with the guard the module is
+    clean, and with the guard deleted — everything else identical — it is not.
+    """
+    guarded_by_validator = '''
+def a_door(fdir):
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    if _manifest_shape_problem(manifest) is not None:
+        return None
+    for c in manifest.get("castings", []):
+        print(c.get("id"))
+'''
+    guarded_by_isinstance = '''
+def a_door(fdir):
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    for c in manifest.get("castings", []):
+        if not isinstance(c, dict):
+            continue
+        print(c.get("id"))
+'''
+    guarded_by_nothing = guarded_by_isinstance.replace(
+        "        if not isinstance(c, dict):\n            continue\n", ""
+    )
+
+    assert _unestablished_record_indexes(_plant(tmp_path, "v.py", guarded_by_validator)) == []
+    assert _unestablished_record_indexes(_plant(tmp_path, "i.py", guarded_by_isinstance)) == []
+    assert _unestablished_record_indexes(
+        _plant(tmp_path, "n.py", guarded_by_nothing)
+    ) == ["n.py#a_door"]
+
+
+def test_the_scan_follows_the_manifest_through_a_call(tmp_path) -> None:
+    """``_fingerprint_inputs``' axis: a helper handed the parsed document.
+
+    It indexes ``castings[].id`` off a manifest it never loaded, so a scan that
+    starts taint only at the literal calls it clean while it raises on exactly
+    the input the defect names. And when the CALLER establishes the shape, the
+    helper is covered — which is why guarding a door usually clears the
+    functions below it rather than requiring a guard in each.
+    """
+    unguarded_caller = '''
+def helper(fdir, manifest):
+    for c in manifest.get("castings", []):
+        print(c.get("id"))
+
+def a_door(fdir):
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    return helper(fdir, manifest)
+'''
+    assert _unestablished_record_indexes(
+        _plant(tmp_path, "u.py", unguarded_caller)
+    ) == ["u.py#helper"]
+
+    guarded_caller = unguarded_caller.replace(
+        "    return helper(fdir, manifest)",
+        "    if _manifest_shape_error(manifest, fdir):\n"
+        "        return None\n"
+        "    return helper(fdir, manifest)",
+    )
+    assert _unestablished_record_indexes(_plant(tmp_path, "g.py", guarded_caller)) == []
+
+
+def test_the_scan_follows_a_manifest_path_a_helper_built(tmp_path) -> None:
+    """``evidence.py``'s axis: the literal lives in a resolver, not the reader.
+
+    Both of that module's manifest writers reach the document this way, so a
+    scan following only the literal and the argument list reports the whole
+    module clean while ``[1,2,3]`` raises AttributeError out of it.
+
+    The propagation is narrow on purpose, and the second half proves it: a
+    helper WITHOUT the literal must not launder taint, or one tainted call to a
+    shared loader would make every other caller of it read as a manifest.
+    """
+    builds_the_path = '''
+def resolve(root):
+    return root / "castings" / "manifest.json"
+
+def a_writer(root):
+    manifest = json.loads(resolve(root).read_text(encoding="utf-8"))
+    for c in manifest.setdefault("castings", []):
+        print(c.get("id"))
+'''
+    assert _unestablished_record_indexes(
+        _plant(tmp_path, "r.py", builds_the_path)
+    ) == ["r.py#a_writer"]
+
+    generic_loader = '''
+def load(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+def reads_the_manifest(root):
+    manifest = load(root / "castings" / "manifest.json")
+    return len(manifest.get("castings", []))
+
+def reads_something_else(root):
+    other = load(root / "state.json")
+    for c in other.get("castings", []):
+        print(c.get("id"))
+'''
+    # `load` is tainted by the first caller. If its RETURN laundered that taint,
+    # `reads_something_else` — which reads a different file entirely — would be
+    # reported as an unguarded manifest reader.
+    assert _unestablished_record_indexes(_plant(tmp_path, "l.py", generic_loader)) == []
+
+
+def test_the_provider_module_passes_its_own_package_wide_rule() -> None:
+    """foundry_spawn.py is a member of the rule it provides the validator for.
+
+    D-132's fix routed all four of this module's manifest readers through one
+    declaration; this asserts that from OUTSIDE the module, under the package
+    rule, so the provider cannot quietly become the exception.
+    """
+    assert _unestablished_record_indexes(Path(fs.__file__)) == []
+
+
+def test_the_isinstance_route_clears_the_real_intent_coverage_reader() -> None:
+    """The lead's explicit check: guarded BY THE RULE, not by an allow-list.
+
+    TRACE ruled ``load_manifest_casting_ids`` out of D-134 because it carries
+    ``isinstance(manifest_data.get("castings"), list)`` plus a per-element
+    ``isinstance(c, dict)``. This asserts the scan reaches that same verdict on
+    the real file, and that the verdict is the rule's rather than a name
+    exemption — the function is not mentioned anywhere in this module.
+    """
+    module = Path(foundry_mcp.__file__).resolve().parent / "scripts" / "validate_intent_coverage.py"
+    assert module.is_file(), f"the reader D-134 clears has moved: {module}"
+
+    source = module.read_text(encoding="utf-8")
+    assert "def load_manifest_casting_ids" in source
+    assert "isinstance(c, dict)" in source
+
+    offenders = _unestablished_record_indexes(module)
+    assert not any("load_manifest_casting_ids" in o for o in offenders), offenders
+
+
+# --------------------------------------------------------------------------- #
+# D-138's ADJACENT PATH — the same decode family at the two spawn doors
+# --------------------------------------------------------------------------- #
+#
+# The defect was reported on Foundry-Liveness reading spawns.log. The doors
+# below are a DIFFERENT CALLER of the same class on a different artifact: the
+# pre-authored casting prompt, read with NO handler at all — not even the
+# `except OSError` the reported site had. One non-UTF-8 byte in a file F0.5
+# DECOMPOSE wrote raised UnicodeDecodeError out of Foundry-Spawn-Teammate and
+# Foundry-Cast-Wave, one line after each had honoured its named-refusal
+# contract twice for the manifest beside it.
+#
+# This is the half a fix bound to the reported site cannot reach, and the
+# reason the binding is the module-wide scan above rather than a guard at :794.
+
+
+def _corrupt_prompt(fdir: Path, casting_id: int) -> Path:
+    """Make one casting's prompt file undecodable, leaving the rest healthy."""
+    path = fdir / "castings" / f"casting-{casting_id}-prompt.md"
+    with path.open("ab") as handle:
+        handle.write(b"\xe9\n")
+    return path
+
+
+def test_the_single_door_refuses_an_undecodable_prompt(run_env) -> None:
+    """Foundry-Spawn-Teammate names the file instead of raising."""
+    project_root, fdir = run_env
+    path = _corrupt_prompt(fdir, 1)
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert result["ok"] is False
+    assert "casting-1-prompt.md" in result["error"]
+    assert str(path) in result["error"]
+    assert result["hint"].strip()
+
+
+def test_the_bulk_door_refuses_an_undecodable_prompt(run_env) -> None:
+    """The same input at the other door, with the same policy.
+
+    D-132's property one rung down: two hand-written guards would drift and the
+    lead would learn two different stories about one file.
+    """
+    project_root, fdir = run_env
+    _corrupt_prompt(fdir, 1)
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert bulk["ok"] is False
+    assert single["error"] == bulk["error"]
+    assert single["hint"] == bulk["hint"]
+
+
+def test_the_refused_casting_is_not_logged_as_dispatched(run_env) -> None:
+    """The refusing casting leaves no spawn record, because the read comes first.
+
+    That ordering is the whole of what this fix owes: a teammate whose prompt
+    could not be read must not appear in ``spawns.log``, because
+    ``foundry_liveness`` derives its roster from that log and would otherwise
+    report a teammate that was never dispatched as silent past the threshold —
+    a false alarm manufactured by the refusal itself.
+
+    NOT asserted here, and deliberately: the bulk loop logs each casting as it
+    goes, so castings EARLIER in the wave than the refusal are already logged
+    when it fires. That is pre-existing and shared with the
+    prompt-does-not-exist and prompt-is-empty branches beside this one — a
+    partial-dispatch record on any late refusal, not a decode problem — so
+    fixing it here would be remodelling during a bug fix. It is reported to the
+    lead rather than silently widened into this change.
+    """
+    project_root, fdir = run_env
+    _corrupt_prompt(fdir, 2)
+
+    result = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert result["ok"] is False
+    assert "casting-2-prompt.md" in result["error"]
+
+    logged = [
+        json.loads(line)["casting_id"]
+        for line in (fdir / "spawns.log").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert 2 not in logged, logged
+
+
+def test_a_healthy_prompt_is_untouched_by_the_prompt_guard(run_env) -> None:
+    """The control: the guard must cost the working path nothing."""
+    project_root, _fdir = run_env
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert single["ok"] is True and bulk["ok"] is True
+    assert single["prompt"].startswith("# Casting 1")
+    assert [c["casting_id"] for c in bulk["castings"]] == [1, 2]
+
+
+def test_an_undecodable_baseline_marker_still_never_fails_a_spawn(grind_repo) -> None:
+    """The tolerant member of the same family, driven.
+
+    ``_build_grind_cycle_context``'s contract is that it never fails a spawn,
+    so its answer to an unreadable ``.cast-baseline-sha`` is the same empty
+    string an absent one produces — but it must reach that answer through the
+    shared primitive rather than through its own ``except OSError``, which
+    caught the missing file and not the undecodable one.
+    """
+    project_root, fdir = grind_repo
+    with (fdir / ".cast-baseline-sha").open("wb") as handle:
+        handle.write(b"\xe9\n")
+
+    assert fs._build_grind_cycle_context(fdir, 1, project_root) == ""
+    result = fs.foundry_spawn_teammate(1, "grind", project_root)
+    assert result["ok"] is True
+    assert "grind_cycle_context" not in result
+
+
+def test_handler_coverage_is_decided_by_python_not_by_a_name_list() -> None:
+    """D-137's structural half, asserted so this rule cannot repeat it.
+
+    The previous shape of this scan compared handler SPELLINGS against a
+    frozenset someone typed. That table is the escalated class living inside
+    the guard written to make the class unrepresentable, and its failure mode
+    is silent ACCEPTANCE: a handler is admitted by being on the list, and the
+    fourteen sites D-137 found were all admitted that way.
+
+    Every row below is a fact about Python's exception hierarchy rather than
+    about this file, and each one is asserted twice — once as the hierarchy
+    fact, once as the scan's verdict — so the scan cannot drift away from the
+    language it claims to be asking.
+    """
+    cases = [
+        ("except OSError:", False),
+        ("except json.JSONDecodeError:", False),
+        ("except (OSError, json.JSONDecodeError):", False),
+        ("except UnicodeDecodeError:", False),  # covers the decode, not the OSError
+        ("except (OSError, UnicodeDecodeError):", True),
+        ("except (OSError, ValueError):", True),  # ValueError is the decode's parent
+        ("except Exception:", True),
+        ("except BaseException:", True),
+        ("except:", True),
+    ]
+    # The hierarchy the verdicts above are claims about.
+    assert issubclass(UnicodeDecodeError, ValueError)
+    assert not issubclass(UnicodeDecodeError, OSError)
+    assert not issubclass(UnicodeDecodeError, json.JSONDecodeError)
+
+    for clause, expected_guarded in cases:
+        source = f'''
+import json
+def a_reader(p):
+    try:
+        return p.read_text(encoding="utf-8")
+    {clause}
+        return ""
+'''
+        _every, offenders, unresolved = _text_reads(source, "planted.py")
+        assert not unresolved, (clause, unresolved)
+        assert (not offenders) is expected_guarded, (clause, offenders)
+
+
+def test_an_unresolvable_handler_name_is_reported_not_skipped() -> None:
+    """A spelling the resolver cannot see announces itself.
+
+    Silently treating it as "not covering" would be conservative and invisible;
+    silently treating it as covering would be D-137 again. It covers nothing
+    AND it is named, so the gap cannot widen without somebody being told.
+    """
+    source = '''
+def a_reader(p):
+    try:
+        return p.read_text(encoding="utf-8")
+    except SomeAliasNobodyImported:
+        return ""
+'''
+    _every, offenders, unresolved = _text_reads(source, "planted.py")
+
+    assert unresolved == ["SomeAliasNobodyImported"]
+    assert [site.rsplit(":", 1)[0] for site in offenders] == ["planted.py::a_reader"]
+
+
+# --------------------------------------------------------------------------- #
+# Rendered derivations (evidence bodies)
+# --------------------------------------------------------------------------- #
+
+
+def test_render_decode_read_derivation() -> None:
+    """Print the D-138 read rule's subject, verdict, and its own adjacent path."""
+    source = Path(fs.__file__).read_text(encoding="utf-8")
+    every, offenders, unresolved = _text_reads(source, "foundry_spawn.py", fs)
+
+    lines = [
+        "SUBJECT   every read in foundry_spawn.py, located by the module's own import",
+        f"READS     {len(every)} file reads found",
+        f"OFFENDERS {len(offenders)} not covered for the decode family",
+        f"UNRESOLVED handler spellings: {unresolved or 'none'}",
+        "",
+        "WHAT COUNTS AS COVERAGE — asked of Python, not of a list of names:",
+        f"  issubclass(UnicodeDecodeError, ValueError)           = "
+        f"{issubclass(UnicodeDecodeError, ValueError)}",
+        f"  issubclass(UnicodeDecodeError, OSError)              = "
+        f"{issubclass(UnicodeDecodeError, OSError)}",
+        f"  issubclass(UnicodeDecodeError, json.JSONDecodeError) = "
+        f"{issubclass(UnicodeDecodeError, json.JSONDecodeError)}",
+        "",
+        "A FRESH MEMBER PLANTED IN EACH SHAPE THIS MODULE HAS WORN:",
+    ]
+    planted = '''
+import json
+def no_handler(p):
+    return p.read_text(encoding="utf-8")
+def only_oserror(p):
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+def only_json(p):
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+def path_open(p):
+    with p.open("r", encoding="utf-8") as h:
+        return h.read()
+def read_in_the_handler(p, q):
+    try:
+        return p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return q.read_text(encoding="utf-8")
+def properly_guarded(p):
+    try:
+        return p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+'''
+    tree = ast.parse(planted)
+    planted_fns = [
+        n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+    ]
+    _e, planted_off, _u = _text_reads(planted, "planted.py")
+    reported = {site.rsplit(":", 1)[0].split("::")[1] for site in planted_off}
+    for name in planted_fns:
+        lines.append(f"  {'REPORTED' if name in reported else 'clean   '}  {name}")
+    lines.append(
+        "  (properly_guarded is clean on its own merits — there is no list to join)"
+    )
+
+    print("\n".join(lines))
+    assert not offenders and not unresolved
+
+
+def test_render_manifest_reader_derivation() -> None:
+    """Print the D-134 package rule's three derived axes and its verdict."""
+    roots = _scanned_roots()
+    modules = _scanned_modules()
+    offenders = [o for p in modules for o in _unestablished_record_indexes(p)]
+
+    print(
+        "\n".join(
+            [
+                "AXIS 1 — WHICH FILES (rglob, both shipped source trees):",
+                *(f"  {r.relative_to(REPO_ROOT)}" for r in roots),
+                f"  {len(modules)} modules",
+                "",
+                "AXIS 2 — WHICH RUNGS (walked out of _MANIFEST_SHAPE, not typed):",
+                f"  {sorted(_record_rungs())}",
+                "  castings[].key_files and waves[].casting_ids are lists of",
+                "  NON-records (element shape None), so they are correctly not rungs",
+                "",
+                "AXIS 3 — WHICH READERS (taint from the literal, across calls and",
+                "         through path-building helpers; allow-list is EMPTY):",
+                f"  shared validators, read off foundry_spawn: "
+                f"{sorted(_shape_validator_names())}",
+                "",
+                "VERDICT — reaches inside a manifest record with nobody having",
+                "          established its shape:",
+                *(f"  {o}" for o in offenders),
+                "",
+                "NOT LISTED, and not by exemption — these pass the same rule:",
+                "  foundry_spawn.py                    (routes through the validator)",
+                "  scripts/validate_intent_coverage.py "
+                "(isinstance-guards the rung it indexes)",
+            ]
+        )
+    )
