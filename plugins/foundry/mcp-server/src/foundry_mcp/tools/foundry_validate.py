@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
-from foundry_mcp.tools.foundry_state import get_run_dir
+from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 
 
 def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
@@ -56,10 +56,7 @@ def _load_validate_cache(fdir: Path) -> dict:
     cache_path = fdir / ".validate-cache.json"
     if not cache_path.exists():
         return {}
-    try:
-        return json.loads(cache_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
+    return read_document(cache_path)[0]
 
 
 def _save_validate_cache(fdir: Path, cache: dict) -> None:

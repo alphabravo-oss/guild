@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from foundry_mcp.tools.foundry_handoff import _hash_str
-from foundry_mcp.tools.foundry_state import get_run_dir
+from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
     _WORKTREE_LOCK,
@@ -1283,9 +1283,8 @@ def _append_to_manifest_stream_skips(
     """
     if not manifest_path.exists():
         return
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    manifest, problem = read_document(manifest_path)
+    if problem is not None:
         return
     skips = manifest.setdefault("stream_skips", [])
     if not isinstance(skips, list):
@@ -1313,9 +1312,8 @@ def _append_to_manifest_evidence_provenance(
     """
     if not manifest_path.exists():
         return
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    manifest, problem = read_document(manifest_path)
+    if problem is not None:
         return
     castings = manifest.setdefault("castings", [])
     if not isinstance(castings, list):

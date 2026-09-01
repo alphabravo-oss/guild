@@ -62,6 +62,8 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import builtins
+import importlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -3450,41 +3452,175 @@ def test_the_forgery_table_shows_the_forgery_and_the_refusal():
 # make it unrepresentable.
 #
 # WHAT THESE RULES DO NOT BIND, stated so a later reader does not mistake
-# silence for coverage. Both residuals are DIFFERENT classes, not this one
-# dodged, and both are logged in concerns.md with their exact sites:
-#   - `read_text(...)` raising UnicodeDecodeError before json.loads is ever
-#     reached. That is a property of the TEXT READ, not of the document load.
-#     foundry_spawn.py:1163,1448 catch `json.JSONDecodeError` alone.
-#   - a locked write primitive CALLED from outside its lock. Rule (b) binds a
-#     module that renames to owning a locking discipline; it does not prove
-#     every call reaches the writer through it. foundry.py::_save_json has six
-#     callers outside `ledger_transaction`.
+# silence for coverage.
+#
+#   - CLOSED (D-137). The first residual used to be declared out of scope here:
+#     "`read_text(...)` raising UnicodeDecodeError before json.loads is ever
+#     reached ... a property of the TEXT READ, not of the document load", naming
+#     foundry_spawn.py:1163,1448. That framing was wrong, and the scoping note
+#     is what made it durable: the read and the decode are ONE operation, and
+#     splitting them is exactly how fourteen sites across seven modules came to
+#     sit inside a gap this scan reported as clean. The rule below no longer
+#     matches handler NAMES; it resolves them to exception classes and asks
+#     `issubclass` against what the expression can actually raise. Both named
+#     sites, the twelve the note never found, and forge_spec.py:426 now route
+#     through `foundry_state.read_json` / `read_document` / `read_text_file`.
+#
+#   - OPEN, and a DIFFERENT class rather than this one dodged: a locked write
+#     primitive CALLED from outside its lock. Rule (b) binds a module that
+#     renames to owning a locking discipline; it does not prove every call
+#     reaches the writer through it. foundry.py::_save_json has six callers
+#     outside `ledger_transaction`. Logged in concerns.md with its exact sites;
+#     foundry.py is not this casting's to edit.
 # --------------------------------------------------------------------------- #
 
-# Exception names whose handler covers what `json.loads` itself raises. A
-# handler naming any of these keeps the decode failure off the MCP boundary,
-# which is the NFR-002 property -- "never raise across MCP" -- that D-130's
-# 18/18 raises violated. Attribute spellings are matched on the attribute name,
-# so `json.JSONDecodeError` and a bare `JSONDecodeError` import both count.
-_DECODE_HANDLER_NAMES = frozenset({
-    "ValueError", "JSONDecodeError", "Exception", "BaseException",
-})
+# D-137 — THE RULE'S OWN MEMBERSHIP TABLE WAS HAND-KEPT, AND THAT WAS THE
+# STRUCTURAL HALF OF THE DEFECT.
+#
+# This used to be `_DECODE_HANDLER_NAMES = {"ValueError", "JSONDecodeError",
+# "Exception", "BaseException"}` and a handler naming ANY of them was counted
+# as covering the site. So `json.loads(p.read_text(encoding="utf-8"))` under
+# `except json.JSONDecodeError` PASSED -- and it does not hold, because
+# `read_text` raises before `json.loads` is ever reached:
+#
+#     issubclass(UnicodeDecodeError, ValueError)          is True
+#     issubclass(UnicodeDecodeError, json.JSONDecodeError) is False
+#
+# Fourteen sites across seven modules sat inside that gap, two of them the
+# spawn doors the previous cycle had just hardened. A scan that judges
+# coverage by matching STRINGS against a set someone typed is the escalated
+# class living inside the guard written to make the escalated class
+# unrepresentable.
+#
+# So coverage is DERIVED, on both axes:
+#
+#   WHAT THE EXPRESSION RAISES  -- computed from the expression itself. A
+#       `json.load(s)` over a file read can raise OSError (absent mid-flight,
+#       a directory occupying the name, permissions), UnicodeDecodeError (the
+#       bytes are not UTF-8) and JSONDecodeError (the text is not JSON). Every
+#       one of those must be answered or the site is an offender.
+#
+#   WHAT A HANDLER CATCHES      -- resolved to a REAL exception class through
+#       the module's own namespace, then asked `issubclass`. Not a name
+#       comparison: `except ValueError` covers UnicodeDecodeError because
+#       Python says it does, and `except json.JSONDecodeError` does not,
+#       because Python says it does not. A new exception spelling needs no
+#       edit here, and no spelling can be admitted by being added to a list.
+#
+# An UNRESOLVABLE handler name is REPORTED, never silently skipped: it covers
+# nothing (the conservative direction -- it can only over-report) and it is
+# carried into the failure message so a name this resolver cannot see
+# announces itself instead of quietly widening the gap.
+_DOCUMENT_LOAD_RAISES: tuple[type[BaseException], ...] = (
+    OSError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+)
 
 # How a document reaches `json.loads`. A load over anything else -- a JSONL
 # line, a subprocess's stdout -- is not a DOCUMENT load and is not this class.
 _FILE_READ_METHODS = frozenset({"read_text", "read_bytes"})
 
 
-def _handler_covers_decode(handler: ast.ExceptHandler) -> bool:
-    """True when this ``except`` clause catches a JSON decode failure."""
+def _module_namespace(path: Path, tree: ast.Module) -> dict:
+    """The names ``path``'s own module can see, for resolving exceptions.
+
+    Three derived layers, no table:
+      * builtins -- ``OSError``, ``ValueError``, ``UnicodeDecodeError``, ...
+      * the real module object when it is importable, which is what resolves a
+        handler naming an exception the module DEFINES or imports by name
+        (``LedgerShapeError``)
+      * the modules the file's own ``import X [as Y]`` statements name, which
+        is what resolves the dotted ``json.JSONDecodeError`` spelling in a file
+        that is not itself importable
+
+    Every layer is read off the source or the package; none is typed here.
+    """
+    namespace = dict(vars(builtins))
+    try:
+        relative = path.resolve().relative_to(Path(foundry_mcp.__file__).resolve().parent)
+        dotted = "foundry_mcp." + ".".join(relative.with_suffix("").parts)
+        namespace.update(vars(importlib.import_module(dotted)))
+    except Exception:
+        pass
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            try:
+                namespace.setdefault(
+                    alias.asname or alias.name.split(".")[0],
+                    importlib.import_module(alias.name),
+                )
+            except Exception:
+                pass
+    return namespace
+
+
+def _handler_type_nodes(node: ast.AST) -> list[ast.AST]:
+    """The exception expressions an ``except`` clause names, and only those.
+
+    NOT ``ast.walk``: walking ``json.JSONDecodeError`` also yields the inner
+    ``json`` Name, which resolves to a module rather than an exception and
+    would be reported as an unrecognised handler name on a handler that is
+    perfectly well-formed. A tuple is unpacked one level; anything else is one
+    expression.
+    """
+    if isinstance(node, ast.Tuple):
+        return list(node.elts)
+    return [node]
+
+
+def _handler_classes(
+    handler: ast.ExceptHandler, namespace: dict
+) -> tuple[list[type[BaseException]], list[str]]:
+    """The exception CLASSES this ``except`` catches, and the names it could not.
+
+    ``json.JSONDecodeError`` and a bare ``JSONDecodeError`` both resolve, the
+    first through the module object the file imported, the second straight out
+    of the namespace.
+    """
     if handler.type is None:
-        return True  # bare `except:` catches everything
-    names = {
-        node.attr if isinstance(node, ast.Attribute) else node.id
-        for node in ast.walk(handler.type)
-        if isinstance(node, (ast.Name, ast.Attribute))
-    }
-    return bool(names & _DECODE_HANDLER_NAMES)
+        return [BaseException], []  # bare `except:` catches everything
+
+    resolved: list[type[BaseException]] = []
+    unresolved: list[str] = []
+    for node in _handler_type_nodes(handler.type):
+        if isinstance(node, ast.Attribute):
+            owner_name = getattr(node.value, "id", "?")
+            spelling = f"{owner_name}.{node.attr}"
+            owner = namespace.get(owner_name)
+            obj = getattr(owner, node.attr, None) if owner is not None else None
+        elif isinstance(node, ast.Name):
+            spelling, obj = node.id, namespace.get(node.id)
+        else:
+            spelling, obj = ast.dump(node), None
+        if isinstance(obj, type) and issubclass(obj, BaseException):
+            resolved.append(obj)
+        else:
+            unresolved.append(spelling)
+    return resolved, unresolved
+
+
+def _uncovered_by(
+    handlers: list[ast.ExceptHandler], namespace: dict
+) -> tuple[list[str], list[str]]:
+    """Which of a document load's raises these handlers leave uncaught.
+
+    Returns ``(uncovered exception names, unresolvable handler spellings)``.
+    """
+    caught: list[type[BaseException]] = []
+    unresolved: list[str] = []
+    for handler in handlers:
+        classes, missing = _handler_classes(handler, namespace)
+        caught.extend(classes)
+        unresolved.extend(missing)
+    uncovered = [
+        raised.__name__
+        for raised in _DOCUMENT_LOAD_RAISES
+        if not any(issubclass(raised, caught_cls) for caught_cls in caught)
+    ]
+    return uncovered, sorted(set(unresolved))
 
 
 def _reads_a_file(node: ast.AST) -> bool:
@@ -3514,47 +3650,63 @@ def _is_document_load(node: ast.AST) -> bool:
     return _reads_a_file(node)
 
 
-def _walk_guarded(node: ast.AST, fn: str, guarded: bool, visit) -> None:
-    """Depth-first walk carrying the enclosing function and decode coverage.
+def _walk_guarded(node: ast.AST, fn: str, handlers: tuple, visit) -> None:
+    """Depth-first walk carrying the enclosing function and its ``except`` clauses.
 
-    ``guarded`` is True inside the BODY of a ``try`` whose handlers catch the
-    decode family. It resets at every function boundary -- a function defined
-    inside a ``try`` is not protected at the point it is CALLED -- and it does
-    not extend into the handlers, ``else`` or ``finally``, where a second raise
-    would propagate.
+    ``handlers`` accumulates the handlers of every enclosing ``try`` whose BODY
+    this node sits in. It resets at every function boundary -- a function
+    defined inside a ``try`` is not protected at the point it is CALLED -- and
+    it does not extend into the handlers, ``else`` or ``finally``, where a
+    second raise would propagate.
+
+    D-137: this carried a BOOLEAN ("some enclosing handler named something from
+    a list") and that is precisely what could not tell `except
+    json.JSONDecodeError` from `except ValueError`. Carrying the handlers
+    themselves lets the caller ask what they actually catch.
     """
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        fn, guarded = node.name, False
+        fn, handlers = node.name, ()
     elif isinstance(node, (ast.Try, ast.TryStar)):
-        covered = guarded or any(_handler_covers_decode(h) for h in node.handlers)
+        inner = handlers + tuple(node.handlers)
         for stmt in node.body:
-            _walk_guarded(stmt, fn, covered, visit)
+            _walk_guarded(stmt, fn, inner, visit)
         for part in (*node.handlers, *node.orelse, *node.finalbody):
-            _walk_guarded(part, fn, guarded, visit)
+            _walk_guarded(part, fn, handlers, visit)
         return
-    visit(node, fn, guarded)
+    visit(node, fn, handlers)
     for child in ast.iter_child_nodes(node):
-        _walk_guarded(child, fn, guarded, visit)
+        _walk_guarded(child, fn, handlers, visit)
 
 
 def _unguarded_document_loads(path: Path) -> list[str]:
-    """Every document load that can raise a decode failure at its caller.
+    """Every document load that can raise at its caller, and what it leaks.
 
     D-130's shape, derived from the site rather than from a list of known
-    copies: `if not path.exists(): return {}` followed by
-    `json.loads(path.read_text(...))` with no try/except and no isinstance.
-    Route the read through the module's tolerant `_load_json` (which returns
-    {} for every malformed container) and report the file through
-    `_document_problem` / `_artifact_guard` when the operator must be told
-    WHICH file is broken.
+    copies: `json.loads(path.read_text(...))` whose enclosing handlers do not
+    answer every exception that expression can raise. Route the read through
+    the canonical `foundry_state.read_document` -- which closes OSError,
+    UnicodeDecodeError and JSONDecodeError in ONE call and NAMES THE FILE --
+    rather than re-deciding the raise set at each site.
+
+    Each offender carries the exceptions it leaks, so the report says what is
+    wrong rather than only where.
     """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     offenders: list[str] = []
+    namespace = _module_namespace(path, tree)
 
-    def visit(node: ast.AST, fn: str, guarded: bool) -> None:
-        if _is_document_load(node) and not guarded:
-            offenders.append(f"{path.name}::{fn}:{node.lineno}")
+    def visit(node: ast.AST, fn: str, handlers: tuple) -> None:
+        if not _is_document_load(node):
+            return
+        uncovered, unresolved = _uncovered_by(list(handlers), namespace)
+        if not uncovered:
+            return
+        note = f" [unresolved handler names: {unresolved}]" if unresolved else ""
+        offenders.append(
+            f"{path.name}::{fn}:{node.lineno} leaks {'+'.join(uncovered)}{note}"
+        )
 
-    _walk_guarded(ast.parse(path.read_text(encoding="utf-8")), "<module>", False, visit)
+    _walk_guarded(tree, "<module>", (), visit)
     return sorted(set(offenders))
 
 
@@ -3980,6 +4132,42 @@ _PLANTED_LEDGER_SCAN = (
     "        fixed = [d for d in records if d.get('status') == 'fixed']\n"
     "        return fixed\n"
 )
+# D-137's plant: the shape the OLD scan called guarded. A `JSONDecodeError`-only
+# handler over a `read_text` -- which is not a hypothetical, it is verbatim what
+# both spawn doors held while the scan reported the package clean.
+_PLANTED_DECODE_ONLY_LOADER = (
+    "import json\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    try:\n"
+    "        return json.loads(path.read_text(encoding='utf-8'))\n"
+    "    except json.JSONDecodeError:\n"
+    "        return {}\n"
+)
+# ...and the same shape with OSError added, which is the majority spelling: nine
+# of the fourteen sites read `except (OSError, json.JSONDecodeError)`. It closes
+# the open() failure and still leaks the undecodable bytes.
+_PLANTED_OSERROR_DECODE_LOADER = (
+    "import json\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    try:\n"
+    "        return json.loads(path.read_text(encoding='utf-8'))\n"
+    "    except (OSError, json.JSONDecodeError):\n"
+    "        return {}\n"
+)
+# The control: a handler that genuinely covers the whole raise set must NOT be
+# reported, or the rule is just "every document load is an offender" and it
+# would force the canonical primitive itself to be enrolled in an allow-list.
+_PLANTED_COVERED_LOADER = (
+    "import json\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    try:\n"
+    "        return json.loads(path.read_text(encoding='utf-8'))\n"
+    "    except (OSError, ValueError):\n"
+    "        return {}\n"
+)
 
 
 def _plant(tmp_path: Path, name: str, source: str) -> Path:
@@ -4018,6 +4206,11 @@ def render_derived_guard_table(tmp_path: Path) -> str:
         ("<pkg root>/regressed.py", _PLANTED_WRITER, _unlocked_artifact_renames),
         ("<pkg>/schemas/regressed.py", _PLANTED_WRITER, _unlocked_artifact_renames),
         ("<pkg root>/regressed.py", _PLANTED_LEDGER_SCAN, _raw_ledger_iterations),
+        # D-137 — the two spellings the OLD name-matching rule called guarded.
+        ("<pkg root>/decode_only.py", _PLANTED_DECODE_ONLY_LOADER,
+         _unguarded_document_loads),
+        ("<pkg>/schemas/oserror_decode.py", _PLANTED_OSERROR_DECODE_LOADER,
+         _unguarded_document_loads),
     ]
     for label, source, rule in plants:
         relative = label.replace("<pkg root>/", "").replace("<pkg>/", "")
@@ -4064,6 +4257,108 @@ def test_the_derived_guard_table_catches_a_fresh_copy_anywhere(tmp_path):
     assert table.count("none") == 3, table
 
 
+_D137_BAD_MANIFEST = (
+    b'{"castings": [{"id": 1, "key_files": ["a.py"], "note": "caf\xe9"}], '
+    b'"waves": [{"wave": 1, "casting_ids": [1]}]}'
+)
+_D137_GOOD_MANIFEST = _D137_BAD_MANIFEST.replace(b"caf\xe9", b"cafe")
+
+
+def _d137_run(tmp_root: Path, raw: bytes) -> str:
+    """A minimal run dir whose manifest carries ``raw`` verbatim."""
+    from foundry_mcp.tools import foundry_state as fst
+
+    fdir = tmp_root / "foundry-archive" / "d137"
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_bytes(raw)
+    (fdir / "castings" / "casting-1-prompt.md").write_text("# casting 1\n", encoding="utf-8")
+    (fdir / "state.json").write_text(json.dumps({"phase": "F1", "cycle": 0}), encoding="utf-8")
+    fst.set_active_run("d137")
+    return str(tmp_root)
+
+
+def render_guarded_read_table(tmp_path: Path) -> str:
+    """D-137 pre/post: one non-UTF-8 byte at the two spawn doors.
+
+    The PRE arm is the shape all fourteen sites held, reproduced verbatim
+    rather than described, so the log shows the raise instead of asserting it
+    happened once.
+    """
+    from foundry_mcp.tools import foundry_spawn as fs
+
+    def old_read(p: Path):
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    out = [
+        "== D-137: one non-UTF-8 byte in castings/manifest.json ==",
+        "",
+        "-- why `except json.JSONDecodeError` never covered this --",
+        f"   issubclass(UnicodeDecodeError, ValueError)           = "
+        f"{issubclass(UnicodeDecodeError, ValueError)}",
+        f"   issubclass(UnicodeDecodeError, json.JSONDecodeError) = "
+        f"{issubclass(UnicodeDecodeError, json.JSONDecodeError)}",
+    ]
+    root = _d137_run(tmp_path / "pre", _D137_BAD_MANIFEST)
+    manifest = Path(root) / "foundry-archive" / "d137" / "castings" / "manifest.json"
+    try:
+        old_read(manifest)
+        out.append("   the 14-site shape  : returned (no raise)")
+    except Exception as exc:
+        out.append(f"   the 14-site shape  : RAISES {type(exc).__name__}")
+
+    doors = (
+        ("Foundry-Spawn-Teammate", lambda r: fs.foundry_spawn_teammate(1, "cast", r)),
+        ("Foundry-Cast-Wave", lambda r: fs.foundry_cast_wave(1, "cast", r)),
+    )
+    out += ["", "-- the same byte through the shipped doors, post-fix --"]
+    refusals = []
+    for i, (label, call) in enumerate(doors):
+        root = _d137_run(tmp_path / f"bad{i}", _D137_BAD_MANIFEST)
+        try:
+            res = call(root)
+        except Exception as exc:
+            out.append(f"   {label:24s} RAISED {type(exc).__name__} across MCP")
+            continue
+        refusals.append((res.get("error", "").split(": /")[0], res.get("hint", "")))
+        out.append(
+            f"   {label:24s} ok={res.get('ok')}  names the file="
+            f"{'manifest.json' in res.get('error', '')}"
+        )
+        out.append(f"      {refusals[-1][0]}")
+    out.append(
+        f"   both doors tell ONE story about the file: "
+        f"{len(set(refusals)) == 1}"
+    )
+
+    out += ["", "-- control: the refusal is NARROW (same document, valid UTF-8) --"]
+    for i, (label, call) in enumerate(doors):
+        root = _d137_run(tmp_path / f"good{i}", _D137_GOOD_MANIFEST)
+        res = call(root)
+        out.append(
+            f"   {label:24s} ok={res.get('ok')}  read-fault reported="
+            f"{'could not be read' in res.get('error', '')}"
+        )
+    return "\n".join(out)
+
+
+def test_the_guarded_read_table_shows_the_raise_and_the_refusal(tmp_path):
+    """D-137's drive, ASSERTED so the log is a claim and not a picture."""
+    table = render_guarded_read_table(tmp_path)
+
+    # The pre arm really does raise, and for the reason the fix is built on.
+    assert "the 14-site shape  : RAISES UnicodeDecodeError" in table, table
+    assert "issubclass(UnicodeDecodeError, json.JSONDecodeError) = False" in table
+    # Neither door raises now, both name the file, and they agree on the text.
+    assert "RAISED" not in table, table
+    assert table.count("names the file=True") == 2, table
+    assert "both doors tell ONE story about the file: True" in table, table
+    # ...and the refusal did not swallow the working case.
+    assert table.count("ok=True  read-fault reported=False") == 2, table
+
+
 def test_the_planted_copies_are_the_shapes_the_prior_fixes_closed(tmp_path):
     """Guards the guard: a planted copy that no rule fires on would make the
     table above vacuous, so each shape is checked against its own rule."""
@@ -4071,7 +4366,9 @@ def test_the_planted_copies_are_the_shapes_the_prior_fixes_closed(tmp_path):
     writer = _plant(tmp_path, "b.py", _PLANTED_WRITER)
     scan = _plant(tmp_path, "c.py", _PLANTED_LEDGER_SCAN)
 
-    assert _unguarded_document_loads(loader) == ["a.py::_load_json:7"]
+    assert _unguarded_document_loads(loader) == [
+        "a.py::_load_json:7 leaks OSError+UnicodeDecodeError+JSONDecodeError"
+    ]
     assert _unlocked_artifact_renames(writer) == ["b.py::_save_json:6"]
     assert _raw_ledger_iterations(scan) == ["c.py::sync:3"]
     # ...and each rule is silent on the other two shapes: three rules, three
@@ -4079,3 +4376,66 @@ def test_the_planted_copies_are_the_shapes_the_prior_fixes_closed(tmp_path):
     assert _unguarded_document_loads(writer) == []
     assert _unlocked_artifact_renames(loader) == []
     assert _raw_ledger_iterations(loader) == []
+
+
+def test_a_jsondecodeerror_only_handler_over_a_read_is_an_offender(tmp_path):
+    """D-137's structural half, asserted directly.
+
+    The old rule matched handler NAMES against a frozenset holding
+    "JSONDecodeError", so both spellings below were counted as covered while
+    one non-UTF-8 byte raised straight across the MCP boundary from the two
+    spawn doors. The rule now asks the exception hierarchy instead, so what it
+    reports is what Python actually does:
+
+        issubclass(UnicodeDecodeError, ValueError)           -> True
+        issubclass(UnicodeDecodeError, json.JSONDecodeError) -> False
+
+    The third arm is the control that keeps the rule narrow. Without it the
+    rule would flag every document load, the canonical primitive included, and
+    the only way out would be the name allow-list this replaced.
+    """
+    # The hierarchy claim the rule rests on, asserted rather than assumed.
+    assert issubclass(UnicodeDecodeError, ValueError)
+    assert not issubclass(UnicodeDecodeError, json.JSONDecodeError)
+
+    decode_only = _plant(tmp_path, "d.py", _PLANTED_DECODE_ONLY_LOADER)
+    with_oserror = _plant(tmp_path, "e.py", _PLANTED_OSERROR_DECODE_LOADER)
+    covered = _plant(tmp_path, "f.py", _PLANTED_COVERED_LOADER)
+
+    assert _unguarded_document_loads(decode_only) == [
+        "d.py::_load_manifest:5 leaks OSError+UnicodeDecodeError"
+    ]
+    # Adding OSError closes the open() failure and leaves the bytes uncovered —
+    # which is the majority spelling among the fourteen sites, and exactly the
+    # residual a name-matching rule cannot see.
+    assert _unguarded_document_loads(with_oserror) == [
+        "e.py::_load_manifest:5 leaks UnicodeDecodeError"
+    ]
+    # ValueError IS UnicodeDecodeError's parent, so this one genuinely holds.
+    assert _unguarded_document_loads(covered) == []
+
+
+def test_the_decode_rule_resolves_handler_names_rather_than_matching_them(tmp_path):
+    """The axis that was hand-kept, asserted as derived.
+
+    A handler naming an exception this resolver cannot see must cover NOTHING
+    (the conservative direction — it can only over-report) and must SAY so, so
+    an unrecognised member announces itself instead of silently widening the
+    gap. That is the difference between this and the frozenset it replaces:
+    the old table's failure mode was silent acceptance.
+    """
+    exotic = _plant(
+        tmp_path,
+        "g.py",
+        "import json\n"
+        "\n"
+        "def _load(path):\n"
+        "    try:\n"
+        "        return json.loads(path.read_text(encoding='utf-8'))\n"
+        "    except SomeVendorError:\n"
+        "        return {}\n",
+    )
+    offenders = _unguarded_document_loads(exotic)
+    assert len(offenders) == 1, offenders
+    assert "leaks OSError+UnicodeDecodeError+JSONDecodeError" in offenders[0]
+    assert "unresolved handler names: ['SomeVendorError']" in offenders[0], offenders

@@ -83,7 +83,7 @@ import json
 from pathlib import Path
 
 from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path, _save_json
-from foundry_mcp.tools.foundry_state import get_run_dir
+from foundry_mcp.tools.foundry_state import get_run_dir, read_document, read_json
 
 
 def _save_json_atomic(path: Path, data: dict) -> None:
@@ -244,17 +244,21 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         }
     validator_exit, validator_stdout, validator_stderr = validator_result
 
-    try:
-        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    # D-137: `read_json`, not `read_document` — the rung below (is the parsed
+    # document the right SHAPE) is judged further down this function, which
+    # routes a top-level array to redecompose rather than to a re-emit. A
+    # wrong-typed document collapsed to `{}` here would lose that routing.
+    coverage_read = read_json(coverage_path)
+    if coverage_read[1] is not None:
         return {
             "passed": False,
             "action": "rerun_intent_carrier",
-            "reason": "intent-coverage.json malformed — agent must re-emit",
+            "reason": f"intent-coverage.json malformed — agent must re-emit ({coverage_read[1]})",
             "validator_stdout": validator_stdout,
             "validator_stderr": validator_stderr,
             "validator_exit": validator_exit,
         }
+    coverage = coverage_read[0]
 
     # D-020: the gate's own folds over the matrix (paraphrased answers,
     # propagated_count, cell_verdict_counts, redecompose_hints) must carry
@@ -396,14 +400,7 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
         }
         manifest_path = fdir / "castings" / "manifest.json"
         if manifest_path.exists():
-            try:
-                manifest = json.loads(
-                    manifest_path.read_text(encoding="utf-8")
-                )
-            except json.JSONDecodeError:
-                manifest = {}
-            if not isinstance(manifest, dict):
-                manifest = {}
+            manifest = read_document(manifest_path)[0]
             manifest["intent_coverage_summary"] = summary
             _save_json_atomic(manifest_path, manifest)
 

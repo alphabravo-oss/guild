@@ -58,15 +58,22 @@
 # remembered anywhere.
 #
 # WHAT THESE RULES DO NOT BIND, stated so silence is not mistaken for coverage.
-# Both residuals are DIFFERENT classes, not this one dodged, and both are in
-# concerns.md with their exact sites:
-#   - read_text() raising UnicodeDecodeError before json.loads is reached
-#     (foundry_spawn.py:1163,1448 catch json.JSONDecodeError alone) -- a
-#     property of the TEXT READ, not of the document load;
-#   - a locked write primitive CALLED from outside its lock (foundry.py's
-#     _save_json has six such callers) -- rule (b) binds a renaming module to
-#     owning a lock, not every call to reaching the writer through it.
-# Both live in files castings 3 and 4 own this cycle; neither is editable here.
+#
+#   - CLOSED (D-137, this cycle). This log used to declare the first residual
+#     out of scope: "read_text() raising UnicodeDecodeError before json.loads is
+#     reached (foundry_spawn.py:1163,1448 catch json.JSONDecodeError alone) -- a
+#     property of the TEXT READ, not of the document load". That framing was the
+#     defect. The read and the decode are ONE operation, and calling them two
+#     classes is how 14 sites across 7 modules sat inside a gap this very scan
+#     reported as clean. The rule now resolves handler names to exception
+#     classes and asks issubclass, so the two plants added below --
+#     decode_only.py and oserror_decode.py -- are named rather than accepted.
+#
+#   - OPEN, and genuinely a different class: a locked write primitive CALLED
+#     from outside its lock (foundry.py's _save_json has six such callers).
+#     Rule (b) binds a renaming module to owning a lock, not every call to
+#     reaching the writer through it. foundry.py is casting 3's this cycle.
+
 == the three rules over the installed package, after this casting's fixes ==
    unguarded document loads      : none
    unlocked artifact renames     : none
@@ -75,11 +82,13 @@
 == and a FRESH copy planted where a directory literal could not see it ==
    planted at                         what the derived scan reports
    ----------                         -----------------------------
-   <pkg root>/regressed.py            ['regressed.py::_load_json:7']
-   <pkg>/parsers/regressed.py         ['regressed.py::_load_json:7']
+   <pkg root>/regressed.py            ['regressed.py::_load_json:7 leaks OSError+UnicodeDecodeError+JSONDecodeError']
+   <pkg>/parsers/regressed.py         ['regressed.py::_load_json:7 leaks OSError+UnicodeDecodeError+JSONDecodeError']
    <pkg root>/regressed.py            ['regressed.py::_save_json:6']
    <pkg>/schemas/regressed.py         ['regressed.py::_save_json:6']
    <pkg root>/regressed.py            ['regressed.py::sync:3']
+   <pkg root>/decode_only.py          ['decode_only.py::_load_manifest:5 leaks OSError+UnicodeDecodeError']
+   <pkg>/schemas/oserror_decode.py    ['oserror_decode.py::_load_manifest:5 leaks UnicodeDecodeError']
 
 == the three package-wide assertions, driven ==
-5 passed, 203 deselected in 0.84s
+5 passed, 206 deselected in 0.93s

@@ -87,6 +87,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from foundry_mcp.tools.foundry_state import read_document
+
 
 # ---------------------------------------------------------------------------
 # Constants — closed vocabularies
@@ -365,9 +367,8 @@ def load_manifest_casting_ids(castings_dir: Path | None) -> set[str] | None:
     manifest_path = castings_dir / "manifest.json"
     if not manifest_path.is_file():
         return None
-    try:
-        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    manifest_data, manifest_problem = read_document(manifest_path)
+    if manifest_problem is not None:
         return None
     if isinstance(manifest_data, dict) and isinstance(
         manifest_data.get("castings"), list
@@ -612,15 +613,15 @@ def validate_intent_coverage(
     failures: list[str] = []
 
     # ----- Step 1: JSON parse -----
-    try:
-        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
-    except FileNotFoundError as e:
+    if not coverage_path.exists():
         print(
-            f"INTENT_COVERAGE_SCHEMA_INVALID: coverage file missing: {e}"
+            f"INTENT_COVERAGE_SCHEMA_INVALID: coverage file missing: "
+            f"{coverage_path}"
         )
         return 1
-    except json.JSONDecodeError as e:
-        print(f"INTENT_COVERAGE_SCHEMA_INVALID: malformed JSON: {e}")
+    coverage, coverage_problem = read_document(coverage_path)
+    if coverage_problem is not None:
+        print(f"INTENT_COVERAGE_SCHEMA_INVALID: malformed JSON: {coverage_problem}")
         return 1
     if not isinstance(coverage, dict):
         print(

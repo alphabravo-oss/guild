@@ -85,7 +85,13 @@ from pathlib import Path
 
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools.foundry_orchestrator import agent_model
-from foundry_mcp.tools.foundry_state import get_run_dir
+from foundry_mcp.tools.foundry_state import (
+    document_refusal,
+    get_run_dir,
+    read_document,
+    read_json,
+    read_text_file,
+)
 
 
 # Both spawn paths in this module dispatch the same agent, so the model the
@@ -612,11 +618,7 @@ def _load_run_state(fdir: Path) -> dict:
     state file must degrade it to "I cannot tell which phase this is", never
     fail the call.
     """
-    try:
-        data = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_document(fdir / "state.json")[0]
 
 
 def _skipped_stream_ids(fdir: Path) -> set[str]:
@@ -636,12 +638,10 @@ def _skipped_stream_ids(fdir: Path) -> set[str]:
     ``TypeError`` out of Foundry-Liveness — from the very reader the module's
     own prose held up as the one that had always guarded this (D-132).
     """
-    try:
-        manifest = json.loads(
-            (fdir / "castings" / "manifest.json").read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError):
+    read = read_json(fdir / "castings" / "manifest.json")
+    if read[1] is not None:
         return set()
+    manifest = read[0]
     if _manifest_shape_problem(manifest) is not None:
         return set()
 
@@ -1281,10 +1281,15 @@ def foundry_spawn_teammate(
     if not manifest_path.exists():
         return {"ok": False, "error": "No manifest.json", "hint": "Run F0.5 DECOMPOSE first"}
 
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        return {"ok": False, "error": f"manifest.json parse error: {e}"}
+    # D-137: ONE call closes the read's whole raise set (OSError,
+    # UnicodeDecodeError, JSONDecodeError). `read_json` and not `read_document`
+    # because the rung below belongs to `_manifest_shape_error`, which names
+    # WHICH key path does not hold — a wrong-typed manifest collapsed to `{}`
+    # here would be answered with a generic refusal instead of that one.
+    read = read_json(manifest_path)
+    if read[1] is not None:
+        return document_refusal(manifest_path, read[1])
+    manifest = read[0]
     shape_error = _manifest_shape_error(manifest, manifest_path)
     if shape_error:
         return shape_error
@@ -1464,10 +1469,7 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
         # Sharing the validator is what makes "unusable" mean one thing here
         # and at the doors, so the doors can never refuse a document this
         # accepts, nor accept one they refuse.
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            manifest = None
+        manifest = read_json(manifest_path)[0]
         if _manifest_shape_problem(manifest) is None:
             for c in manifest.get("castings") or []:
                 if str(c.get("id")) == str(casting_id):
@@ -1571,10 +1573,15 @@ def foundry_cast_wave(
     if not manifest_path.exists():
         return {"ok": False, "error": "No manifest.json", "hint": "Run F0.5 DECOMPOSE first"}
 
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        return {"ok": False, "error": f"manifest.json parse error: {e}"}
+    # D-137: ONE call closes the read's whole raise set (OSError,
+    # UnicodeDecodeError, JSONDecodeError). `read_json` and not `read_document`
+    # because the rung below belongs to `_manifest_shape_error`, which names
+    # WHICH key path does not hold — a wrong-typed manifest collapsed to `{}`
+    # here would be answered with a generic refusal instead of that one.
+    read = read_json(manifest_path)
+    if read[1] is not None:
+        return document_refusal(manifest_path, read[1])
+    manifest = read[0]
     shape_error = _manifest_shape_error(manifest, manifest_path)
     if shape_error:
         return shape_error

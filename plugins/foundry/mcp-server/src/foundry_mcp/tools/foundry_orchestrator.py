@@ -30,6 +30,8 @@ from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry_state import (
     clear_active_run,
     get_run_dir,
+    read_document,
+    read_text_file,
 )
 from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
 
@@ -199,29 +201,15 @@ _ARTIFACT_LOCK = threading.RLock()
 _ARTIFACT_TX = threading.local()
 
 
-def _read_document(path: Path) -> tuple[dict, str | None]:
-    """Read a JSON object. Returns ``(data, problem)``; never raises.
-
-    ``problem`` is a human-readable string NAMING THE FILE when the artifact
-    exists but is not a readable JSON object, else None. An absent file is not
-    a problem — a run legitimately has artifacts it has not written yet.
-    """
-    if not path.exists():
-        return {}, None
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return {}, f"{path.name} could not be read ({type(exc).__name__}: {exc})"
-    try:
-        data = json.loads(raw)
-    except ValueError as exc:
-        return {}, f"{path.name} is not valid JSON ({exc})"
-    if not isinstance(data, dict):
-        return {}, (
-            f"{path.name} is not a JSON object (found "
-            f"{type(data).__name__}) — every run artifact is a mapping"
-        )
-    return data, None
+#: D-137 — this module's ``_read_document`` was one of TWO byte-identical
+#: bodies, and the second copy is the shape four prior fixes in this file left
+#: behind every time. It is now the CANONICAL primitive in ``foundry_state``,
+#: the package's leaf module, imported here under the same private name so
+#: every existing caller and test keeps resolving. ``foundry.py`` keeps its own
+#: body because THIS module imports THAT one (reading back would close a cycle
+#: in the import graph) — and it passes the package-wide decode scan on its own
+#: merits, which is the only reason it is allowed to stay.
+_read_document = read_document
 
 
 def _document_problem(path: Path) -> str | None:
@@ -249,12 +237,7 @@ def _read_text(path: Path) -> str:
     non-UTF-8 byte in it raised UnicodeDecodeError straight out of
     ``_read_directives`` and therefore out of Foundry-Next.
     """
-    if not path.exists():
-        return ""
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ""
+    return read_text_file(path)[0]
 
 
 def _save_json(path: Path, data: dict) -> None:
@@ -331,17 +314,12 @@ def _text_problem(path: Path) -> str | None:
 
     The non-JSON rung of the same ladder ``_document_problem`` occupies. An
     absent file is not a problem; an undecodable one is, and it must be named.
+
+    Both rungs now share ONE read (D-137): ``read_document`` is
+    ``read_text_file`` plus the decode, so a text artifact and a JSON artifact
+    cannot disagree about whether the same file is readable.
     """
-    if not path.exists():
-        return None
-    try:
-        path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return (
-            f"{path.name} could not be read as UTF-8 text "
-            f"({type(exc).__name__}: {exc})"
-        )
-    return None
+    return read_text_file(path)[1]
 
 
 # How to tell whether an artifact of a given type is readable. The TABLE varies
@@ -1418,9 +1396,8 @@ def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     marker = fdir / ".trace-clean-at"
     if not marker.exists():
         return {"skip": False, "reason": "no prior clean TRACE to compare against"}
-    try:
-        marker_data = json.loads(marker.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    marker_data, marker_problem = read_document(marker)
+    if marker_problem is not None:
         return {"skip": False, "reason": "unreadable .trace-clean-at marker"}
     clean_sha = marker_data.get("head_sha", "")
     if not clean_sha:
@@ -4247,10 +4224,7 @@ def foundry_next_action(
         if expected_gate:
             gp_marker = fdir_stamp / ".gate-passed"
             if gp_marker.exists():
-                try:
-                    gp_data = json.loads(gp_marker.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    gp_data = {}
+                gp_data = read_document(gp_marker)[0]
                 if gp_data.get("phase") == expected_gate:
                     result["gate_advanced"] = {
                         "passed_gate": expected_gate,

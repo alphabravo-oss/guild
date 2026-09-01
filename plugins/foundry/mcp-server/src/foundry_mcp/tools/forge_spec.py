@@ -33,6 +33,7 @@ from foundry_mcp.tools.foundry_orchestrator import (
     _document_transaction,
     _load_json,
 )
+from foundry_mcp.tools.foundry_state import read_text_file
 
 PLANNING_DIR = "foundry-planning"
 
@@ -408,6 +409,7 @@ def _convert_to_foundry_format(
     nfr_counter = 1
     ac_counter = 1
     arch_sections = 0
+    unreadable: list[str] = []
 
     spec_lines: list[str] = [
         "# Requirements Specification",
@@ -423,7 +425,15 @@ def _convert_to_foundry_format(
     ]
 
     for spec_file in spec_files:
-        content = spec_file.read_text(encoding="utf-8")
+        # D-140's residual, swept with D-137: this was a bare `read_text`, so
+        # one non-UTF-8 byte in a splits/*.md raised UnicodeDecodeError out of
+        # Forge-Spec-Check[spec]. The unreadable split is REPORTED rather than
+        # skipped silently — a spec built from files it could not read is a
+        # worse outcome than one that names the file it could not read.
+        content, content_problem = read_text_file(spec_file)
+        if content_problem is not None:
+            unreadable.append(content_problem)
+            continue
         lines = content.split("\n")
         domain_name = spec_file.stem.replace("-", " ").replace("_", " ").title()
 
@@ -471,12 +481,15 @@ def _convert_to_foundry_format(
     plan_out.write_text("\n".join(plan_lines) + "\n", encoding="utf-8")
 
     total_reqs = (us_counter - 1) + (nfr_counter - 1)
-    return {
+    result = {
         "requirement_count": total_reqs,
         "nfr_count": nfr_counter - 1,
         "ac_count": ac_counter - 1,
         "arch_sections": arch_sections,
     }
+    if unreadable:
+        result["unreadable_splits"] = unreadable
+    return result
 
 
 def _flush_section(
