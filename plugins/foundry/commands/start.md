@@ -1,7 +1,7 @@
 ---
 description: "Start a foundry build-verify-fix loop"
 argument-hint: "<SCOPE> [--spec PATH] [--url URL] [--temper] [--nyquist] [--max-cycles N] [--no-ui] [--output-dir DIR]"
-allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
+allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
 disable-model-invocation: "true"
 ---
 
@@ -507,7 +507,7 @@ Call `Foundry-Gate(phase='cast')`.
 2. `TeamCreate("cast-{run}-wave-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug from `Foundry-Next`)
 3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns prompts for every casting in the wave. Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, `prompt=<that casting's prompt VERBATIM>`. No modification. **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured it names the model to pass on every teammate Agent call; when it is not, it tells you to pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself. Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
    - GRIND phase or single re-dispatch: fall back to per-casting `Foundry-Spawn-Teammate(casting_id=N, phase="cast"|"grind")`.
-4. Wait for teammates to finish their **work** (report "complete" or task list empty). Then send shutdown in ONE parallel SendMessage batch and **immediately** `TeamDelete` + `Foundry-Team-Down` — do NOT wait for shutdown_response/ack/idle confirmations. Idle panes are the signal; `TeamDelete` kills zombies.
+4. Wait for teammates to finish their **work** (report "complete" or task list empty). If the wave goes quiet longer than feels right, call `Foundry-Liveness` before concluding anything — see **Teammate liveness** below. Then send shutdown in ONE parallel SendMessage batch and **immediately** `TeamDelete` + `Foundry-Team-Down` — do NOT wait for shutdown_response/ack/idle confirmations. Idle panes are the signal; `TeamDelete` kills zombies.
 5. Build + test → commit → advance to next wave
 6. After all waves: review `concerns.md`. Any concern that relaxes the spec is a decompose failure — re-run F0.5.
 7. Call `Foundry-Gate(phase='inspect')`.
@@ -531,7 +531,7 @@ Call `Foundry-Gate(phase='cast')`.
 - **SIGHT** — lead runs Playwright directly (only exception to "lead never does work").
 - **TEST / PROBE** — inline test suite / API smoke.
 
-**Every INSPECT stream files comment-prose findings as observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word, an enumeration that no longer matches what it enumerates — that class goes to the run's `observations.json` ledger; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Everything else remains a defect on the standard the streams already hold. **The never-demote denylist is absolute:** a security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — an attempt to demote one is rejected and fires the audit tripwire. This split is written into each stream agent's own `## Rules` block, so it is in force on a fresh checkout: it needs no per-run configuration and no directive to enable it.
+**Every INSPECT stream files comment-prose findings as observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word, an enumeration that no longer matches what it enumerates — that class goes to the run's `observations.json` ledger; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Everything else remains a defect on the standard the streams already hold. **The never-demote denylist is absolute:** a security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — an attempt to demote one is rejected and fires the audit tripwire. This split is written into the `## Rules` block of each of the four streams that file into the defect ledger — `agents/assayer.md`, `agents/tracer.md`, `agents/flow-tracer.md`, `agents/research-auditor.md` — so it is in force on a fresh checkout: it needs no per-run configuration and no directive to enable it. The two remaining roster members do not carry the ruling in their own prose, and this roster entry is what binds them: `agents/spec-test-deriver.md` has no `## Rules` block at all and writes to the `test_observations` channel rather than the defect ledger, and `agents/coverage-diff.md` has a `## Rules` block that does not restate the split — its findings are 1:1 port-completeness gaps, which are never comment prose. Neither exemption is a licence: a comment-prose finding from ANY stream is an observation, and every denylist member is a defect from any stream.
 
 **Pass the Serena token to TRACE and FLOW_TRACE.** Both wiring streams run on the Serena LSP tools, and both fail open to `NOT_VERIFIED` when those tools are unavailable. When you spawn them, include the `FOUNDRY_SERENA_HEALTH` token you recorded at F0 (see **Serena preflight (F0)** above) in the agent prompt, under the name each agent declares: `FOUNDRY_SERENA_HEALTH` for TRACE (`agents/tracer.md`), `serena_health` for FLOW_TRACE (`agents/flow-tracer.md`). Passing it under the other name delivers nothing — the agent reads only its own field.
 
@@ -550,8 +550,10 @@ Same router principle as F1. Lead does NOT draft GRIND prompts.
 1. `Foundry-Tasks` — convert defects to per-casting task groups.
 2. `TeamCreate("grind-{run}-cycle-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug)
 3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent with the returned prompt verbatim, APPEND a separate `## Defects to fix this cycle:` block below (the ONLY thing lead may append). **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured the response also carries a `model` field and the clause names the model to pass on that Agent call; when it does not, pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself.
-4. Max 3 teammates per GRIND cycle.
-5. Shut down → build + test → commit → back to F2 INSPECT.
+4. Max 3 teammates per GRIND cycle. While they run, use `Foundry-Liveness` rather than guessing at silence (see **Teammate liveness** below).
+5. Shut down → build + test → commit → `Foundry-Phase(phase='inspect_start')` → back to F2 INSPECT.
+
+`Foundry-Phase(phase='inspect_start')` is the F3 → F2 boundary crossing, and crossing it is what advances the cycle counter. **The server derives the cycle; you never supply one.** Skipping this call does not merely omit a log line — it leaves every defect, roll-up and escalation count filed in the cycle that just ended, so a class that should escalate on its third cycle never reaches three.
 
 If a teammate says "this defect requires a spec change": halt, log `SPEC_CHANGE_REQUIRED` to concerns.md, return to F0.5 DECOMPOSE for the affected castings.
 
@@ -581,6 +583,23 @@ Shut down all teammates → generate report → `Foundry-Phase("done")`.
 
 **Evidence lifecycle (mandatory F6 step):** teammates commit `evidence/*.log` during the run because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted, the logs are consumed and inert. As part of F6 DONE — after the report, before `Foundry-Phase("done")` — remove them from git in one commit: `git rm -r evidence/ && git commit -m "chore(foundry): strip consumed run evidence"`. Do not leave evidence logs in the branch. They are commit-pinned run artifacts — the one class of file where a line hint is legitimate, precisely because it is frozen against a single commit — so they go stale the moment the tree moves past that commit, and they are never read again after acceptance.
 
+## TEAMMATE LIVENESS
+
+A long-running teammate is either working or wedged, and silence looks identical either way. **Never guess, and never shut a team down on a hunch — call `Foundry-Liveness`.** It reads the per-agent progress ledgers that spawned agents append to, and reports each agent's last-progress age against a stall threshold (900s default; pass `stall_seconds=` to override, `agent=` to ask about one agent instead of all).
+
+It answers "slow or dead" on two axes, which a bare heartbeat cannot:
+
+| Status | Meaning | What the lead does |
+|--------|---------|--------------------|
+| `progressing` | A line arrived inside the threshold, naming a step the agent was not already sitting on. | Nothing. Keep waiting. |
+| `no_progress` | Lines keep arriving, but `(phase, step)` has not moved for longer than the threshold. Alive, not advancing. | Look at it. A teammate stuck in a fix-recheck loop reports exactly this. |
+| `stalled` | No line at all inside the threshold. | Look at it. Assume dead, not slow. |
+| `unknown` | A ledger exists but holds no parseable line. | Look at it — the honest answer is that liveness cannot tell. |
+
+The response carries a `needs_attention` array — every agent whose status is not `progressing`. **`Foundry-Liveness` is diagnostic and never a gate:** it never halts the run, never kills an agent, and never substitutes for the shutdown sequence. Use it to decide whether waiting longer is worth anything before you send shutdown and `TeamDelete`.
+
+Call it when a CAST wave or GRIND cycle has been quiet longer than feels right, before concluding a teammate has finished, and before escalating a "hung" run to the user.
+
 ## CONTEXT MANAGEMENT
 
 Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `estimated_usage: "high"`: save state via `Foundry-Context`, suggest `/foundry:resume` (fresh context). Do NOT continue in degraded context — it causes more GRIND cycles than it saves.
@@ -607,6 +626,7 @@ Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `es
 | `Foundry-Verdict` | Record assay verdicts |
 | `Foundry-Coverage` | Traceability matrix |
 | `Foundry-Stream` | Mark verification stream complete |
+| `Foundry-Liveness` | F1/F3: is a quiet teammate progressing, stalled, or wedged (see **Teammate liveness**) |
 | `Foundry-Context` | Reload state after compaction |
 
 ## AGENT PROMPTS

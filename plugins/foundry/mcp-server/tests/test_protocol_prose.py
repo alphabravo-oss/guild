@@ -45,6 +45,7 @@ clauses that carry the *ruling*, never on a whole sentence.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,19 @@ def _read(path: Path) -> str:
 
 def _rel(path: Path) -> str:
     return str(path.relative_to(REPO_ROOT))
+
+
+def _flat(path: Path) -> str:
+    """Read a prose file with every run of whitespace collapsed to one space.
+
+    Markdown wraps a sentence across source lines wherever the author's column
+    limit fell, and where that break lands is not a property this module has
+    any business pinning. Matching a multi-word phrase against the raw text
+    makes the assertion fail on a reflow that changed no words -- a false
+    finding of exactly the kind FR-004 exists to stop. Phrase-level pins read
+    the flattened text; single-token and code-span pins can use ``_read``.
+    """
+    return " ".join(_read(path).split())
 
 
 # ---------------------------------------------------------------------------
@@ -554,4 +568,253 @@ def test_teammate_states_where_line_hints_are_still_permitted() -> None:
     )
     assert "a moved line alone produces no finding of any kind" in text, (
         "teammate.md no longer states that a moved line produces no finding."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 1 -- D-005, D-011, D-015, D-016, D-019, D-020, D-026, D-035
+# ---------------------------------------------------------------------------
+
+SKILLS = FOUNDRY_ROOT / "skills"
+
+# The three verification skills that emit code cites. sight/SKILL.md is
+# deliberately absent: it audits a running browser, so its evidence is
+# screenshots and console output, never a source location.
+CITE_EMITTING_SKILLS = (
+    SKILLS / "trace" / "SKILL.md",
+    SKILLS / "prove" / "SKILL.md",
+    SKILLS / "temper" / "SKILL.md",
+)
+
+# A cite carrying a line number, in any of the languages these files use for
+# worked examples. Built at import time so a new example in a new language is
+# still caught.
+_LINE_CITE_RE = re.compile(r"\.(?:go|ts|tsx|js|jsx|py|html|sh):\d+")
+
+
+def test_the_cite_emitting_skills_all_exist() -> None:
+    """Floor check: the D-015 assertions are vacuous if the corpus is empty."""
+    for path in CITE_EMITTING_SKILLS:
+        assert path.is_file(), f"missing pinned skill file: {_rel(path)}"
+
+
+@pytest.mark.parametrize("path", CITE_EMITTING_SKILLS, ids=lambda p: p.parent.name)
+def test_skills_mandate_the_symbol_cite_form(path: Path) -> None:
+    """D-015 / FR-004: the skills tree had a zero-line diff against FR-004."""
+    text = _read(path)
+    assert "`path#Symbol`" in text, (
+        f"{_rel(path)} no longer mandates the `path#Symbol` cite form. FR-004's "
+        f"scope is 'agents/skills' -- converting the agent files alone leaves "
+        f"the same loop open on every standalone skill invocation."
+    )
+    assert "file:line" not in text, (
+        f"{_rel(path)} still mandates a `file:line` cite somewhere. The whole "
+        f"point of FR-004 is that no verifier judges the line component."
+    )
+
+
+@pytest.mark.parametrize("path", CITE_EMITTING_SKILLS, ids=lambda p: p.parent.name)
+def test_skills_state_the_symbol_is_authoritative(path: Path) -> None:
+    """D-015: the validity rule, not just the placement rule."""
+    text = _flat(path)
+    assert "symbol is authoritative" in text, (
+        f"{_rel(path)} does not state that the symbol decides validity. Without "
+        f"it a drifted line reads as a broken cite and the skill files a finding."
+    )
+    assert "a moved line alone produces no finding of any kind" in text, (
+        f"{_rel(path)} lost the no-finding-for-a-moved-line rule (FR-004)."
+    )
+    assert "cite-refresh sweep" in text, (
+        f"{_rel(path)} no longer prohibits unprompted cite-refresh sweeps."
+    )
+    assert "commit-pinned run artifact" in text, (
+        f"{_rel(path)} does not say where a line hint IS still permitted, so "
+        f"the placement rule reads as a blanket ban."
+    )
+
+
+@pytest.mark.parametrize("path", CITE_EMITTING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_examples_carry_no_line_cites(path: Path) -> None:
+    """D-016's sibling: a worked example is what a reader actually copies."""
+    stale = _LINE_CITE_RE.findall(_read(path))
+    assert not stale, (
+        f"{_rel(path)} still shows line-numbered cite(s) {stale} in a worked "
+        f"example. Prose mandating `path#Symbol` beside an example emitting "
+        f"`path:line` is the contradiction D-016 was filed for -- the example wins."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_stream_agent_json_examples_carry_no_line_cites(path: Path) -> None:
+    """D-016: the normative JSON examples contradicted their own mandate."""
+    stale = _LINE_CITE_RE.findall(_read(path))
+    assert not stale, (
+        f"{_rel(path)}'s normative JSON example still emits {stale}. The file "
+        f"mandates `path#Symbol` in its Rules block, so a line-numbered example "
+        f"tells a stream to do the opposite of what the same file just required."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_stream_agents_resolve_the_example_carve_out_explicitly(path: Path) -> None:
+    """D-016: prose and examples must visibly agree, not merely not conflict."""
+    text = _read(path)
+    assert "Every cite in that shape is `path#Symbol`" in text, (
+        f"{_rel(path)} does not state that its own output examples follow the "
+        f"cite mandate. D-016 is a CONTRADICTION defect: resolving it requires "
+        f"the file to say which rule its examples obey."
+    )
+    assert "carve-out that permits a line hint does not reach" in text, (
+        f"{_rel(path)} no longer rules on whether a findings record qualifies "
+        f"for the commit-pinned run-artifact carve-out. Leaving it unstated is "
+        f"what let the examples and the mandate drift apart."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_instructs_the_class_declaration(path: Path) -> None:
+    """D-011 / FR-007: no producer existed for the defect `class` field."""
+    text = _read(path)
+    assert "share a root cause.**" in text, (
+        f"{_rel(path)} has no class-declaration instruction. Without a producer "
+        f"in every stream, escalation (ST-002) always falls back to the "
+        f"clustering heuristic and a declared class never exists."
+    )
+    assert "`class` field" in text, (
+        f"{_rel(path)} does not name the `class` field the record carries."
+    )
+    assert "`defect_class`" in text, (
+        f"{_rel(path)} does not name the `defect_class` parameter Foundry-Defect "
+        f"exposes, so a stream cannot carry the class it was told to declare."
+    )
+    assert "spelled identically" in text, (
+        f"{_rel(path)} does not require the class string to be spelled "
+        f"identically across instances. Escalation counts a class by exact "
+        f"string, so an unpinned spelling silently never reaches three cycles."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_json_shape_carries_the_class_key(path: Path) -> None:
+    """D-011: the instruction is inert if the output shape has no slot."""
+    text = _read(path)
+    assert '"class":' in text, (
+        f"{_rel(path)}'s findings JSON shape has no `class` key, so a stream "
+        f"told to declare a class has nowhere to put it (D-011)."
+    )
+
+
+def test_assayer_reconciles_its_every_verdict_absolute_with_the_split() -> None:
+    """D-026: an internal contradiction three lines wide."""
+    text = _read(ASSAYER)
+    assert "The observation split below removes nothing from that list" in text, (
+        "assayer.md's 'EVERY non-VERIFIED verdict is a defect' still carries no "
+        "reconciling carve-out for the observation split, unlike its three peer "
+        "files. The absolute and the split bullet three lines below read as a "
+        "contradiction, and a stream resolves contradictions in its own favour."
+    )
+    assert "is not a comment" in text, (
+        "assayer.md's reconciliation does not say WHY the split takes nothing "
+        "out of the verdict list -- because a requirement is not a comment."
+    )
+    # The reconciliation must not become a demotion route.
+    assert "**The never-demote denylist is absolute.**" in text, (
+        "assayer.md lost the never-demote denylist while reconciling D-026. The "
+        "carve-out must not weaken the standard it reconciles with."
+    )
+
+
+def test_start_md_f2_roster_scopes_the_split_claim_to_the_four_files() -> None:
+    """D-019: the roster claimed a split that two members do not carry."""
+    text = _read(START_MD)
+    assert "each stream agent's own `## Rules` block" not in text, (
+        "start.md's F2 roster still claims the split is in EVERY stream agent's "
+        "own Rules block. GI-001 names four files; spec-test-deriver.md has no "
+        "Rules block at all and coverage-diff.md's does not restate the split."
+    )
+    for named in (
+        "`agents/assayer.md`",
+        "`agents/tracer.md`",
+        "`agents/flow-tracer.md`",
+        "`agents/research-auditor.md`",
+    ):
+        assert named in text, (
+            f"start.md's F2 roster no longer names {named} as a file carrying "
+            f"the split. The scoped claim has to name its scope."
+        )
+    assert "`agents/spec-test-deriver.md`" in text and "`agents/coverage-diff.md`" in text, (
+        "start.md's F2 roster does not say how the two roster members WITHOUT "
+        "the split in their own prose are bound by it."
+    )
+
+
+def test_start_md_names_the_cycle_advancing_phase_token() -> None:
+    """D-005 / ST-001 / AC-008: the F3 exit is the cycle-counter boundary."""
+    text = _read(START_MD)
+    assert "inspect_start" in text, (
+        "start.md never names the `inspect_start` token. It is the F3 -> F2 "
+        "exit that advances the server-side cycle counter, and the sibling F2 "
+        "exit names its own tokens explicitly. The doc is the protocol of record."
+    )
+    assert "Foundry-Phase(phase='inspect_start')" in text, (
+        "start.md names the token but not the call that emits it."
+    )
+    assert "The server derives the cycle; you never supply one." in text, (
+        "start.md does not state that the cycle is server-derived (ST-001), so "
+        "a lead may still pass one."
+    )
+
+
+def test_start_md_documents_the_liveness_tool() -> None:
+    """D-020 / FR-015 / AC-021: a working tool with no documented caller."""
+    text = _read(START_MD)
+    assert "## TEAMMATE LIVENESS" in text, (
+        "start.md has no liveness section. Foundry-Liveness is a shipped tool "
+        "that no protocol prose told the lead to call."
+    )
+    assert "`Foundry-Liveness`" in text, "start.md never names the Foundry-Liveness tool"
+    # The two-axis answer is the whole point: a bare heartbeat cannot
+    # distinguish these, and A-025 names the distinction explicitly.
+    for status in ("`progressing`", "`no_progress`", "`stalled`", "`unknown`"):
+        assert status in text, (
+            f"start.md's liveness guidance does not document the {status} "
+            f"status. The closed vocabulary is the lead's decision surface."
+        )
+    assert "needs_attention" in text, (
+        "start.md does not mention the needs_attention array the tool returns."
+    )
+    assert "diagnostic and never a gate" in text, (
+        "start.md does not state that liveness never gates the run, which is "
+        "how a diagnostic turns into an unplanned halt."
+    )
+
+
+@pytest.mark.parametrize("path", (START_MD, RESUME_MD), ids=lambda p: p.name)
+def test_command_allow_lists_permit_the_archive_migration(path: Path) -> None:
+    """D-035 / FR-021 / AC-026: migrate-archive.py had no allow-list entry."""
+    text = _read(path)
+    assert "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)" in text, (
+        f"{_rel(path)} does not allow-list migrate-archive.py. The script is "
+        f"shipped but unrunnable from the command that needs it."
+    )
+
+
+def test_resume_md_tells_the_lead_to_migrate_an_old_archive() -> None:
+    """D-035: nothing told a run to invoke the migration it ships."""
+    text = _read(RESUME_MD)
+    assert "migrate-archive.py" in text, (
+        "resume.md never mentions migrate-archive.py, so a pre-4.9 archive is "
+        "resumed into with no migration and the tools read absent structures."
+    )
+    assert "${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py" in text, (
+        "resume.md must reference the script through ${CLAUDE_PLUGIN_ROOT} -- "
+        "the plugin cache is version-namespaced, so an absolute path rots."
+    )
+    assert "before" in text and "Foundry-Init" in text, (
+        "resume.md does not order the migration before Foundry-Init. Migrating "
+        "after the reload leaves the loaded state stale."
+    )
+    assert "idempotent" in text, (
+        "resume.md does not say the migration is idempotent, so a lead will try "
+        "to judge the archive's age by eye instead of just running it."
     )

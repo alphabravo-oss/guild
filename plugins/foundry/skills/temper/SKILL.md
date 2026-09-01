@@ -93,15 +93,15 @@ For each micro-domain:
 1. **Read the entry point file** — find the entry function
 2. **Run the Bug Hunter's Checklist** (see Verdicts and Bug Hunter's Checklist below) on every function body
 3. **Answer each probe question** with evidence:
-   - **YES** — cite file:line, quote relevant code
-   - **NO** — cite file:line or "not found", explain what's missing
+   - **YES** — cite `path#Symbol`, quote relevant code
+   - **NO** — cite `path#Symbol` or "not found", explain what's missing
    - **PARTIAL** — explain what works and what doesn't
    - **HOLLOW** — code exists but body doesn't do anything useful
 4. **Mental execution** — trace concrete data through the chain before rendering a verdict.
 5. **Render verdict** — SOLID, THIN, CRACKED, HOLLOW, or MISSING. SOLID means "I would bet money this works."
 6. **Generate findings** — for each NO/PARTIAL/HOLLOW probe:
    - ID: `T-{domain}-{probe_number}` (e.g., `T-login-3`)
-   - Description, file:line, fix direction
+   - Description, `path#Symbol`, fix direction
 
 ### Phase C3: SUGGESTIONS
 
@@ -120,7 +120,7 @@ Create `foundry-archive/{run}/temper/temper-{timestamp}.md`. Required sections:
 
 - **Summary** — counts: domains probed, SOLID/CRACKED/HOLLOW/MISSING/STUCK, findings, suggestions
 - **Domain results** — per-domain probe table with columns: #, Probe, Result, Evidence
-- **Findings** — each with `T-N` ID, description, file:line, fix direction
+- **Findings** — each with `T-N` ID, description, `path#Symbol`, fix direction
 - **Suggestions** — minor (implemented) and major (backlog)
 - **STUCK domains** — what couldn't be fixed and why
 
@@ -210,9 +210,15 @@ covered. Temper never declares itself done.
 ## Key Constraints
 
 - **Read-only during probe** — temper NEVER modifies code during C1–C4; fixes go through F3 GRIND
-- **Evidence-based** — every probe answer cites file:line with actual code behavior
+- **Evidence-based** — every probe answer cites `path#Symbol` with actual code behavior
+- **The symbol is authoritative** — a cite whose symbol resolves is valid however stale any
+  line hint beside it has become. No probe answer ever turns on the line component, a moved
+  line alone produces no finding of any kind, and cite-refresh sweeps happen only under an
+  explicit directive. Durable cites are symbol-only, optionally with a quoted snippet; a
+  line hint belongs only in a commit-pinned run artifact, where it is frozen against the one
+  commit it was written at.
 - **Exhaustive** — probe every domain, sweep every file; don't skip what "looks fine"
-- **No assumptions** — "the function exists" is not evidence; "the function does X at file:line" is
+- **No assumptions** — "the function exists" is not evidence; "`path#Symbol` does X" is
 - **Fix direction must be specific** — "fix saveCredentials" is useless; include what the function MUST do
 
 ## Effort Level

@@ -108,7 +108,7 @@ Output a single JSON result:
       "source": "foundry-archive/{run}/research/kubernetes-deployments.md",
       "recommendation": "Use client-go typed DeploymentsGetter",
       "verdict": "HONORED",
-      "evidence": "internal/status/collector.go:142 uses clientset.AppsV1().Deployments(ns).List(ctx, listOpts)"
+      "evidence": "internal/status/collector.go#Collector.collectDeployments uses clientset.AppsV1().Deployments(ns).List(ctx, listOpts)"
     }
   ],
   "defects": [
@@ -116,13 +116,18 @@ Output a single JSON result:
       "type": "RESEARCH_DEVIATION",
       "recommendation_id": "RA-7",
       "recommendation": "Use k8s.io/client-go/kubernetes/fake for tests",
-      "file": "internal/status/collector_test.go:23",
+      "file": "internal/status/collector_test.go#TestCollectDeployments",
+      "class": "hand-rolled-mocks-instead-of-the-fake-package",
       "description": "Test uses hand-rolled mock client struct; research explicitly says use fake package. The fake client supports the same interface and handles watch/list edge cases the mock doesn't.",
       "spec_ref": "research/kubernetes-deployments.md#testing"
     }
   ]
 }
 ```
+
+**Every cite in that shape is `path#Symbol`, exactly as the evidence rule below requires** — no `evidence` or `file` value carries a line number. The run-artifact carve-out that permits a line hint does not reach an audit record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false deviation while a symbol cite keeps resolving.
+
+`class` is optional and appears only where several deviations share one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GRIND.
 
@@ -132,6 +137,7 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 - **Every verdict needs evidence, cited by symbol.** HONORED requires a `path#Symbol` citation; IGNORED/CONFLICT requires one AND a clear statement of what was expected vs what was found. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is, no verdict ever turns on the line component, and cite-refresh sweeps happen only under an explicit directive.
 - **Grep before asserting.** Never claim "code uses X" without running a grep to verify.
 - **Check concerns.md for overrides.** A documented override flips IGNORED → HONORED_WITH_OVERRIDE.
+- **Name the class when deviations share a root cause.** Five files hand-rolling the same helper the research said to import are one class, not five unrelated deviations — carry it in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix rather than five repeated point fixes, and that only fires if you named it. Omit the field when a deviation stands alone.
 - **No severity classification.** All deviations are defects. The GRIND phase fixes them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not a research deviation. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Every real deviation from a recommendation stays a defect, and this rule gives you no discretion to call one "cosmetic."
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the research was only advisory."

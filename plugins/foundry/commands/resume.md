@@ -1,6 +1,6 @@
 ---
 description: "Resume an interrupted foundry run"
-allowed-tools: ["Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage", "Edit", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(make:*)", "Bash(curl:*)"]
+allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage", "Edit", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(make:*)", "Bash(curl:*)"]
 disable-model-invocation: "true"
 ---
 
@@ -44,7 +44,21 @@ Present the list using AskUserQuestion:
 - "bold-falcon (phase: INSPECT, cycle: 2, started: 2026-03-20)"
 - "swift-anvil (phase: CAST, cycle: 0, started: 2026-03-22)"
 
-## STEP 3: RESUME SELECTED RUN
+## STEP 3: MIGRATE THE ARCHIVE
+
+A run created before 4.9.0 predates the observations ledger, the defect `class` field, the per-cycle stream roll-up and the progress ledgers. Resuming into it without migrating means the tools read structures that are not there.
+
+Run the migration **before** `Foundry-Init`, so state is repaired before it is reloaded:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py" foundry-archive/<run-name>
+```
+
+It is idempotent — safe on an already-migrated or half-migrated archive, and it no-ops on a current one, so run it on every resume rather than trying to judge the archive's age by eye. Check `state.json`'s `archive_schema_version` marker if you want the answer first, and pass `--dry-run` to see what would change without writing. Archived history is preserved verbatim: defect `type` and `source` values outside the current vocabulary are migrated as-is, never normalized away.
+
+If it exits non-zero, stop and report — do NOT resume into an archive that failed to migrate.
+
+## STEP 4: RESUME SELECTED RUN
 
 1. Call `Foundry-Init` with `resume: "<run-name>"` to reload state
 2. Call `Foundry-Context` to get full state

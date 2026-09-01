@@ -185,9 +185,9 @@ If previous trace results are provided, compare:
   "results": [
     {
       "symbol": "CreateUser",
-      "file": "services/user.go:45",
+      "file": "services/user.go",
       "verdict": "WIRED",
-      "callers": ["handlers/user.go:23", "routes/api.go:15"],
+      "callers": ["handlers/user.go#RegisterUser", "routes/api.go#Routes"],
       "spec_ref": "US-3",
       "note": ""
     }
@@ -197,12 +197,17 @@ If previous trace results are provided, compare:
       "type": "MISSING",
       "symbol": "DeleteUser",
       "spec_ref": "US-7",
+      "class": "destructive-endpoints-never-implemented",
       "description": "No DeleteUser function found in any service file"
     }
   ],
   "regressions": []
 }
 ```
+
+**Every cite in that shape is `path#Symbol`, exactly as the cite rule below requires** — `file` is the bare path because `symbol` already carries the symbol, and no `callers` entry carries a line number. The run-artifact carve-out that permits a line hint does not reach a trace record: this JSON is re-read cycle after cycle as the tree moves underneath it, so a line hint here rots into a false finding while a symbol cite keeps resolving.
+
+`class` is optional and appears only on defects sharing a root cause with others in the same report. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 ## Rules
 
@@ -214,6 +219,7 @@ If previous trace results are provided, compare:
 - **Trace the FULL call chain**: entry point -> handler -> service -> storage.
 - **Be precise, cite by symbol**: every result carries a `path#Symbol` cite. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive.
 - **Flag regressions**: if a previously WIRED symbol is now broken, escalate it.
+- **Name the class when instances share a root cause.** Six UNWIRED symbols behind one router that was never registered are one class, not six independent defects — carry the shared cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix instead of six repeated point fixes, and that only fires if you named it. Omit the field when a symbol's defect stands alone; never group unrelated symbols to manufacture a class.
 - **EVERY non-WIRED verdict is a defect.** THIN, UNWIRED, MISSING, WRONG — all go in the `defects` array. No exceptions, no deferrals, no "out of scope."
 - **NEVER emit `WIRED` for a symbol you did not actually trace.** `WIRED` is a claim that you ran `find_symbol`, `find_referencing_symbols`, and the Level 4 placement check against real Serena responses and they all passed. If the tools never answered, you did not verify the symbol — the verdict is `NOT_VERIFIED`, never `WIRED`. No exceptions, no deferrals, no "it was almost certainly fine."
 - **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected symbol. It is never waived, never downgraded to a warning, never omitted because the code looked right. Its remedy is environmental — restore Serena and re-run TRACE — so state that in the description rather than describing a code edit.

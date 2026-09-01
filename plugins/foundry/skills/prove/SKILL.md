@@ -81,7 +81,7 @@ For EACH checklist item, in order:
 
 5. **Verdict** — one of (defined in `rules/audit-reference.md`):
    - **VERIFIED**: Code does what spec says. You traced the full chain with concrete
-     inputs. Cite file:line.
+     inputs. Cite `path#Symbol`.
    - **THIN**: Technically implemented but minimal. Observable truths from the queue
      item are unsatisfied. Feature "exists" but a real user would be disappointed.
    - **HOLLOW**: Code exists but doesn't do real work — empty body, stub, TODO,
@@ -95,7 +95,7 @@ For EACH checklist item, in order:
    - **WRONG**: Implementation actively contradicts the spec.
 
 6. **Evidence required for each verdict**: spec text (quoted), your pre-code
-   expectation, file:line, what the code actually does, the gap.
+   expectation, the `path#Symbol` cite, what the code actually does, the gap.
 
 Do not batch-verify. Each requirement gets individual verification with its own
 evidence. Do not stop or summarize early — verify EVERY item.
@@ -180,7 +180,7 @@ Read audit reports AFTER completing your own verification (fresh eyes first):
 When run standalone, write to `prove-reports/prove-{timestamp}.md`. When run from foundry, the assayer agent records verdicts via the `Foundry-Verdict` MCP tool. Required sections:
 
 - **Summary**: total items, count per verdict, systemic pattern count, % truly implemented
-- **Verification Checklist**: every VC-N with source, verdict, implementation file:line,
+- **Verification Checklist**: every VC-N with source, verdict, implementation `path#Symbol`,
   evidence. Do not truncate.
 - **Findings** (CR-N): each non-VERIFIED item consolidated — type, related VC items,
   spec text, what code does, user impact, files, fix direction
@@ -312,7 +312,7 @@ Every verdict MUST cite the exact spec section it verifies against. Use the form
 ```
 VC-7: "Users can filter credentials by type" [SPEC:US-3.AC-1]
 Expectation: GET /credentials?type=postgres returns filtered list
-Code: handler.go:52 — ListCredentials reads query param, passes to repo filter
+Code: handler.go#ListCredentials — reads query param, passes to repo filter
 Verdict: VERIFIED — filter works for valid types, returns empty array for unknown types
 ```
 
@@ -337,4 +337,10 @@ guarantee valid pointers into the provided document.
 - **Spec-anchored** — every finding references exact spec text with `[SPEC:...]` citations
 - **Fresh eyes** — read spec and code BEFORE any audit reports
 - **Exhaustive** — verify every item, no batching or skipping
-- **Evidence-based** — every verdict cites file:line and describes what the code does
+- **Evidence-based** — every verdict cites `path#Symbol` and describes what the code does
+- **The symbol is authoritative** — a cite whose symbol resolves is valid however stale any
+  line hint beside it has become. No verdict ever turns on the line component, a moved line
+  alone produces no finding of any kind, and cite-refresh sweeps happen only under an
+  explicit directive. Durable cites are symbol-only, optionally with a quoted snippet; a
+  line hint belongs only in a commit-pinned run artifact, where it is frozen against the
+  one commit it was written at.

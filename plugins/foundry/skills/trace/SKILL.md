@@ -150,11 +150,11 @@ For each user story, enumerate EVERY reasonable scenario:
 Example — spec says "users can manage credentials":
 | # | Scenario | Status | Evidence |
 |---|----------|--------|----------|
-| 1 | Create a credential | ✓ | handler.go:42 |
-| 2 | View list of credentials | ✓ | handler.go:15 |
+| 1 | Create a credential | ✓ | handler.go#CreateCredential |
+| 2 | View list of credentials | ✓ | handler.go#ListCredentials |
 | 3 | View single credential details | ✗ GAP | No GET /:id handler |
 | 4 | Edit a credential | ✗ GAP | No PUT handler |
-| 5 | Delete a credential | ✓ | handler.go:78 |
+| 5 | Delete a credential | ✓ | handler.go#DeleteCredential |
 | 6 | Search/filter credentials | ✗ GAP | No query params |
 | 7 | Validate input on create | ✓ THIN | Only checks name |
 | 8 | Handle duplicate names | ✗ GAP | No unique constraint |
@@ -212,7 +212,7 @@ In foundry TRACE mode, PL-N findings become defects alongside L-N and THIN-N fin
 
 ### Step 3: CLASSIFY — Number the Findings
 
-- **L-1, L-2...** — Gaps. Description, story ref, file:line, what's missing.
+- **L-1, L-2...** — Gaps. Description, story ref, `path#Symbol`, what's missing.
 - **THIN-1, THIN-2...** — Anemic features with unsatisfied observable truths. Story
   ref, which OTs are YES vs NO, what's missing. **THIN findings are just as important
   as GAP findings.**
@@ -227,7 +227,7 @@ When run standalone, write to `trace-reports/trace-{timestamp}.md`. When run fro
 - Story traces with function-level Q1+Q2 for every function in each chain
 - Scenario completeness tables per story
 - Error path traces (3+ per story)
-- All findings (L-N, THIN-N, SA-N, DEV-N) with file:line references
+- All findings (L-N, THIN-N, SA-N, DEV-N) with `path#Symbol` references
 - Cross-story analysis
 
 ### Step 5: DECIDE
@@ -322,6 +322,12 @@ This JSON format can be passed directly to the foundry defect sync tools.
 
 - **Read-only** — never modify code, only read and report
 - **Spec-anchored** — every finding references a spec requirement
+- **The symbol is authoritative** — cite `path#Symbol`, never `path:line`. A cite whose
+  symbol resolves is valid however stale any line hint beside it has become. No finding
+  ever turns on the line component, a moved line alone produces no finding of any kind,
+  and cite-refresh sweeps happen only under an explicit directive. Durable cites are
+  symbol-only, optionally with a quoted snippet; a line hint belongs only in a
+  commit-pinned run artifact, where it is frozen against the one commit it was written at.
 - **No AST tooling** — read code directly for semantic understanding
 - **Language-agnostic** — works with any language Claude can read
 - Do NOT trust tests as evidence — tests can pass with stubs

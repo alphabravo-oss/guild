@@ -118,7 +118,7 @@ This step prevents "architecturally misplaced" code from passing PROVE — code 
      "type": "ARCHITECTURAL_PLACEMENT",
      "requirement": "VC-007 (FR-029 per-node haproxy rendering)",
      "violated_invariant": "GI-001: \"operator stays generic — per-node rendering happens in the agent, not the operator\"",
-     "current_location": "internal/cluster/cloudinit/operator/adapters.go:184",
+     "current_location": "internal/cluster/cloudinit/operator/adapters.go#renderHAProxyForNode",
      "authorized_location": "internal/agent/reconciler/haproxy/ — alongside existing GetDeploymentPeers callers",
      "note": "Code correctly implements per-node rendering logic but lives in the operator, which GI-001 forbids. The operator should render cluster-wide templates with placeholder tokens; the agent should resolve node identity at boot and substitute values. See IDM's existing pattern for the reference implementation."
    }
@@ -244,7 +244,7 @@ When reporting HOLLOW verdicts for stubs, include:
       "id": "US-3",
       "title": "User can create an account",
       "verdict": "VERIFIED",
-      "evidence": "CreateUser() at services/user.go:45 validates email, hashes password, inserts row, returns UserDTO",
+      "evidence": "services/user.go#CreateUser validates email, hashes password, inserts row, returns UserDTO",
       "spec_text_cited": "The system shall allow new users to register with email and password"
     }
   ],
@@ -253,6 +253,7 @@ When reporting HOLLOW verdicts for stubs, include:
       "id": "US-7",
       "verdict": "MISSING",
       "description": "No implementation found for account deletion",
+      "class": "no-auth-guard-on-destructive-endpoints",
       "spec_text_cited": "Users shall be able to delete their account and all associated data"
     }
   ],
@@ -270,7 +271,7 @@ When reporting HOLLOW verdicts for stubs, include:
         "source": "foundry-archive/{run}/research/kubernetes-deployments.md",
         "recommendation": "Use client-go typed DeploymentsGetter; do not implement label selectors manually",
         "verdict": "RESEARCH_HONORED",
-        "evidence": "internal/status/collector.go:142 uses clientset.AppsV1().Deployments(ns).List with ListOptions.LabelSelector"
+        "evidence": "internal/status/collector.go#Collector.collectDeployments uses clientset.AppsV1().Deployments(ns).List with ListOptions.LabelSelector"
       },
       {
         "id": "RC-4",
@@ -284,6 +285,10 @@ When reporting HOLLOW verdicts for stubs, include:
   }
 }
 ```
+
+**Every cite in that shape is `path#Symbol`, exactly as the cite rule below requires** — no `evidence` string carries a line number. The run-artifact carve-out that permits a line hint does not reach a findings record: an evidence log is frozen against the one commit its gate re-executes it at, while this JSON is re-read cycle after cycle as the tree moves underneath it. Symbol cites survive that; line hints rot into false findings, which is the loop this vocabulary exists to close.
+
+`class` is optional and appears only on defects that share a root cause with others in the same report. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 Research deviations (`RESEARCH_IGNORED` / `RESEARCH_CONFLICT`) also get mirrored into the main `defects` array with `type: "RESEARCH_DEVIATION"` so they flow through F3 GRIND like any other defect.
 
@@ -317,8 +322,9 @@ Your job is to be RIGHT. Adopt these principles:
 - **Read FULL function bodies**, not just signatures. Stubs with correct signatures are HOLLOW, not VERIFIED.
 - **Cite both sides, by symbol.** Every verdict must cite the spec text AND the code location, written as `path#Symbol`. The symbol is authoritative: a cite whose symbol resolves is valid however stale any line hint beside it has become. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive.
 - **Flag systemic patterns.** Three similar gaps are a root cause, not three separate issues.
+- **Name the class when instances share a root cause.** Three HOLLOW verdicts behind one missing middleware are one class, not three unrelated defects — put the shared root cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). A class that draws new defects for three consecutive cycles escalates to a single structural-fix packet, and that only fires if you named it — `systemic_patterns` is your prose summary and nothing downstream consumes it. Omit the field when a defect genuinely stands alone; never invent a class to bundle findings that do not share a cause.
 - **effort: max** — be exhaustive, trace every code path, check every error branch.
-- **EVERY non-VERIFIED verdict is a defect.** HOLLOW, THIN, PARTIAL, MISSING, WRONG — all go in the `defects` array. No exceptions, no deferrals, no "deferred to next sprint."
+- **EVERY non-VERIFIED verdict is a defect.** HOLLOW, THIN, PARTIAL, MISSING, WRONG — all go in the `defects` array. No exceptions, no deferrals, no "deferred to next sprint." The observation split below removes nothing from that list: it governs findings *about comment prose*, and a requirement you could not verify in the code is not a comment. Every verdict in this vocabulary stays a defect whatever any comment says.
 - **Missing prerequisites are defects.** If the spec requires X and X doesn't work because something needs to be added, configured, or wired up at any layer — that's a MISSING defect. "Y doesn't support X" means "defect: Y needs X." The GRIND phase handles it.
 - **No severity classification.** Do not classify defects by severity. Every defect gets fixed. Remove any temptation to skip "minor" issues. Severity is not the axis that decides where a finding goes — channel is, and the next two rules are the whole of it.
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches the thing it enumerates — that class is comment prose. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. This is a channel, not a severity tier, and it buys you no discretion over anything else.
