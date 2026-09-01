@@ -2327,12 +2327,30 @@ def test_liveness_registration_reaches_the_handler_through_dispatch(run_env, tmp
 # now; see ``_package_modules``.
 # --------------------------------------------------------------------------- #
 
-# The only sanctioned readers of ``state.json["cycle"]``. Both are total.
-# ``foundry_orchestrator._current_cycle`` normalises to 0.
-# ``foundry._server_cycle`` returns None for a malformed value so its callers
-# can take ST-001's documented legacy-archive fallback; it is a deliberate
-# second copy because the orchestrator imports that module and reading back
-# would close a cycle in the import graph.
+# The only sanctioned readers of ``state.json["cycle"]``:
+#   plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle
+#   plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_current_cycle
+# Both are TOTAL, and they agree on the degraded case: a missing, absent, or
+# malformed counter resolves to 0 in BOTH, never to the caller's asserted value
+# — trusting the caller there is precisely what ST-001 exists to remove. The
+# claim is not discarded, only demoted: both filing doors persist what the
+# caller asserted beside the server's stamp as ``declared_cycle``, so a
+# divergence is auditable rather than silent.
+#
+# D-119 (6453159) is what made them agree. Before it ``_server_cycle`` returned
+# None on a malformed counter and a caller-side wrapper — ``_stamp_cycle``,
+# deleted in that commit and folded back into ``_server_cycle`` — read the None
+# as licence to stamp the number it had been handed, while ``_current_cycle``
+# resolved the identical input to 0. The same finding filed through the two
+# doors therefore landed in different cycles, and a class that recurred three
+# straight cycles evaded ST-002 escalation because mixed-door filing broke the
+# consecutive run. Do not restore a partial reader here: the allow-list is for
+# TOTAL readers only, and ``test_escalation``'s cross-door parity pins hold
+# both copies to this one contract.
+#
+# The second copy is deliberate, not drift — the orchestrator imports the
+# foundry module, so reading back the other way would close a cycle in the
+# import graph.
 GUARDED_CYCLE_READERS = frozenset({"_current_cycle", "_server_cycle"})  # 2 readers
 
 
