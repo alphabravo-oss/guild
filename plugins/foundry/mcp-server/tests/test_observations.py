@@ -1231,3 +1231,232 @@ def test_query_defects_still_reports_only_defects(run: Path, tmp_path: Path) -> 
     assert result["summary"]["total"] == 1
     assert result["summary"]["open"] == 1
     assert result["defects"][0]["description"] == "a real one"
+
+
+# --------------------------------------------------------------------------- #
+# D-095 / D-096 / D-097 / D-099 — the persistence layer under a malformed
+# ledger. One packet: the layer must not RAISE, must not LOSE data, and must
+# NAME the file at fault. Each property is separately load-bearing, and the
+# ones that matter most are the two negatives — a corrupt ledger is never
+# written over, and a good filing is never discarded.
+# --------------------------------------------------------------------------- #
+
+#: Every way a run artifact arrives broken in practice: a git merge conflict or
+#: a disk-full write truncates it, an editor writes a bare literal, a migration
+#: writes the wrong container type. Parameterised rather than spelled out per
+#: case so a new corruption shape is one line, not one test.
+_CORRUPT_DOCUMENTS = [
+    pytest.param('{"defects": [{"id": "D-00', id="truncated"),
+    pytest.param("[]", id="top-level-list"),
+    pytest.param("null", id="null"),
+    pytest.param("42", id="number"),
+    pytest.param('"a string"', id="string"),
+    pytest.param("<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> other\n", id="merge-conflict"),
+]
+
+
+def _write_defects(fdir: Path, raw: str) -> None:
+    (fdir / "defects.json").write_text(raw, encoding="utf-8")
+
+
+@pytest.mark.parametrize("raw", _CORRUPT_DOCUMENTS)
+def test_filing_a_defect_against_a_corrupt_ledger_is_a_named_refusal(
+    run: Path, tmp_path: Path, raw: str
+) -> None:
+    """D-095. The tool refuses, NAMES the file, and does not raise.
+
+    22 of 24 corruption x entry-point combinations used to raise straight
+    across the MCP boundary, and not one named the offending artifact — so the
+    operator was handed a traceback and no way to tell which of six JSON files
+    to repair.
+    """
+    _write_defects(run, raw)
+    result = foundry_add_defect(
+        cycle=1, source="trace", defect_type="WRONG",
+        description="a real behavioural defect", project_root=str(tmp_path),
+    )
+    assert "defects.json" in result["error"], result
+    assert result["corrupt_artifacts"], result
+    assert "defect_id" not in result
+
+
+@pytest.mark.parametrize("raw", _CORRUPT_DOCUMENTS)
+def test_querying_a_corrupt_ledger_is_a_named_refusal(
+    run: Path, tmp_path: Path, raw: str
+) -> None:
+    """D-095, the half that made the failure undiagnosable. The QUERY path was
+    holed identically, so the one tool an operator would reach for to inspect a
+    broken ledger raised on it too."""
+    _write_defects(run, raw)
+    result = foundry_query_defects(project_root=str(tmp_path))
+    assert "defects.json" in result["error"], result
+
+
+def test_a_corrupt_ledger_is_never_written_over(run: Path, tmp_path: Path) -> None:
+    """D-095 + D-096 together: refusing is only half the property. The bytes
+    that were on disk must still be on disk afterwards, because a ledger that
+    is merely unreadable can be repaired and one that has been overwritten
+    cannot."""
+    raw = '{"defects": [{"id": "D-00'
+    _write_defects(run, raw)
+    foundry_add_defect(
+        cycle=1, source="trace", defect_type="WRONG",
+        description="a real behavioural defect", project_root=str(tmp_path),
+    )
+    assert (run / "defects.json").read_text(encoding="utf-8") == raw
+
+
+def test_object_valued_defects_container_refuses_without_destroying(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-096, the worst of the group. Seeding ``defects.json`` with an
+    OBJECT-valued ``defects`` key made the filing path discard every record the
+    file held, re-mint ``D-001`` and return ``{"defect_id": "D-001",
+    "total_defects": 1}`` — success, over the top of the run's whole ledger. A
+    sibling key survived the write, which is what proved the write had
+    completed and only the records had been thrown away.
+
+    That is precisely the "the race lost a DEFECT, not just an id" failure the
+    transaction's own header comment says it exists to prevent, reached through
+    the container instead of through the race.
+    """
+    prior = {
+        "defects": {"D-001": {"id": "D-001", "status": "open"}},
+        "sibling": "must survive",
+    }
+    _write_defects(run, json.dumps(prior))
+
+    result = foundry_add_defect(
+        cycle=1, source="trace", defect_type="WRONG",
+        description="a real behavioural defect", project_root=str(tmp_path),
+    )
+
+    assert "defect_id" not in result, "the filing must NOT report success"
+    assert "defects.json" in result["error"]
+    assert "not a list" in result["error"]
+    assert json.loads((run / "defects.json").read_text(encoding="utf-8")) == prior
+
+
+def test_a_malformed_record_does_not_discard_the_new_filing(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-097. A non-dict record already in the list made the open-count scan
+    raise — and it raised AFTER ``defects.append()``, so the transaction
+    aborted, the newly filed defect was silently discarded, and the caller got
+    an exception rather than a refusal.
+
+    ``allocate_record_id`` four lines above already skipped such a record. The
+    fix is that the rest of the scan agrees with it, so one malformed
+    historical record cannot cost a good new filing.
+    """
+    _write_defects(run, json.dumps({
+        "defects": ["i am not a record", {"id": "D-002", "status": "open"}],
+    }))
+
+    result = foundry_add_defect(
+        cycle=1, source="trace", defect_type="PARTIAL",
+        description="a real behavioural defect", project_root=str(tmp_path),
+    )
+
+    assert result["defect_id"] == "D-003", result
+    stored = json.loads((run / "defects.json").read_text(encoding="utf-8"))["defects"]
+    ids = [d["id"] for d in stored if isinstance(d, dict)]
+    assert ids == ["D-002", "D-003"], "the new filing must survive"
+    assert "i am not a record" in stored, "and the junk record is left alone"
+
+
+def test_a_malformed_record_does_not_brick_the_queries(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-097 on the read side — the same skip, so a ledger carrying one bad
+    record can still be inspected."""
+    _write_defects(run, json.dumps({
+        "defects": [None, {"id": "D-001", "status": "open", "source": "trace"}],
+    }))
+    result = foundry_query_defects(project_root=str(tmp_path))
+    assert result["summary"]["total"] == 1
+    assert result["summary"]["open"] == 1
+
+
+def test_ledger_transaction_refuses_a_non_list_container(run: Path) -> None:
+    """D-096 at the primitive. The backstop for a caller that skips the guard:
+    it raises and writes NOTHING, rather than coercing the container to ``[]``
+    and reporting success. ``foundry_orchestrator``'s two ledger writers import
+    this primitive, so the refusal has to live here and not only at this
+    module's entry points."""
+    from foundry_mcp.tools.foundry import LedgerShapeError
+
+    path = run / "defects.json"
+    prior = {"defects": {"not": "a list"}}
+    path.write_text(json.dumps(prior), encoding="utf-8")
+
+    with pytest.raises(LedgerShapeError) as exc:
+        with ledger_transaction(path, "defects") as records:
+            records.append({"id": "D-001"})
+
+    assert "defects.json" in str(exc.value)
+    assert json.loads(path.read_text(encoding="utf-8")) == prior
+
+
+def test_ledger_transaction_nests_on_the_same_thread(run: Path) -> None:
+    """D-099. The docstring promised same-thread nesting was safe and it hung
+    forever: an ``fcntl`` lock is held per OPEN FILE DESCRIPTION, and the
+    transaction opens a fresh fd on each entry, so a nested acquire blocked on
+    a lock the same thread already held. The ``RLock`` covered threads and
+    hid nothing of this.
+
+    Driven on ONE path under TWO collection keys, which is the shape that
+    actually occurs — ``observations.json`` carries records under both
+    ``observations`` and ``tripwire`` — and the shape a naive path-keyed cache
+    would get wrong by yielding one list for both.
+
+    Run on a worker thread with a join timeout so that a regression FAILS the
+    suite instead of hanging it.
+    """
+    path = run / "observations.json"
+    finished: list[str] = []
+
+    def _nested() -> None:
+        with ledger_transaction(path, "observations") as observations:
+            observations.append({"id": "O-001"})
+            with ledger_transaction(path, "tripwire") as tripwire:
+                tripwire.append({"denylist_class": "SECURITY_PROPERTY"})
+        finished.append("ok")
+
+    worker = threading.Thread(target=_nested, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert finished == ["ok"], "nested ledger_transaction deadlocked"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert [o["id"] for o in stored["observations"]] == ["O-001"]
+    assert len(stored["tripwire"]) == 1, "the inner write must survive the outer"
+
+
+def test_nested_transaction_defers_to_one_write(run: Path) -> None:
+    """D-099's other half: nesting must produce ONE document and one write, not
+    two racing ones. An inner block that mutated a stale copy would lose the
+    outer block's append on the outer's exit."""
+    path = run / "observations.json"
+    with ledger_transaction(path, "observations") as outer:
+        outer.append({"id": "O-001"})
+        with ledger_transaction(path, "observations") as inner:
+            assert inner is outer, "nesting must yield the SAME list"
+            inner.append({"id": "O-002"})
+
+    stored = json.loads(path.read_text(encoding="utf-8"))["observations"]
+    assert [o["id"] for o in stored] == ["O-001", "O-002"]
+
+
+def test_resume_names_a_corrupt_state_file(tmp_path: Path) -> None:
+    """D-095 at the moment it costs most. Resuming is exactly what an operator
+    does after the crash that corrupted the run, and the resume path used to
+    raise on the file it was trying to help them recover."""
+    result = foundry_init(project_root=str(tmp_path))
+    fdir = Path(result["foundry_dir"])
+    run_name = result["run_name"]
+    (fdir / "state.json").write_text("{ truncated", encoding="utf-8")
+
+    resumed = foundry_init(resume=run_name, project_root=str(tmp_path))
+    assert "state.json" in resumed["error"], resumed
+    assert "resumed" not in resumed

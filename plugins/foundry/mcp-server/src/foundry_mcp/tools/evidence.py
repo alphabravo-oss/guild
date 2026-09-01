@@ -264,12 +264,91 @@ def _apply_volatile_redaction(text: str, volatile_patterns: list[str]) -> str:
             "<TIMING>" if VOLATILE_PLACEHOLDER in pat else VOLATILE_PLACEHOLDER
         )
         try:
-            redacted = re.sub(pat, replacement, redacted)
+            substituted = re.sub(pat, replacement, redacted)
         except re.error as exc:
             raise ValueError(
                 f"EVIDENCE_VOLATILE_MALFORMED: invalid regex {pat!r}: {exc}"
             ) from exc
+        if _pattern_redacts_everything(pat, replacement):
+            raise ValueError(
+                f"EVIDENCE_VOLATILE_MALFORMED: pattern {pat!r} redacts ALL "
+                f"content, not a varying field. Applied to both the committed "
+                f"log and the re-execution capture it collapses them to the "
+                f"same string, so any command's output would byte-match any "
+                f"log and the evidence gate would prove nothing. Narrow it to "
+                f"the field that actually varies between runs."
+            )
+        redacted = substituted
     return redacted
+
+
+#: Fixed samples used to ask a volatile pattern how much it matches. They share
+#: nothing with any real evidence output, so a pattern that erases one is a
+#: pattern that erases arbitrary content — precisely the property that makes a
+#: bypass work. Each is multi-line so a line-oriented pattern is exercised.
+#:
+#: The ``<VOLATILE>`` token appears in a DIFFERENT POSITION in each, because a
+#: level-1 pattern anchored to the placeholder erases only in the direction it
+#: reaches: ``[\s\S]*<VOLATILE>`` empties a log whose placeholder ends it,
+#: ``<VOLATILE>[\s\S]*`` one whose placeholder begins it. A single canary with
+#: the token in the middle leaves surviving text on whichever side the pattern
+#: does not reach, and passes both — which is how ``[\s\S]*<VOLATILE>`` slipped
+#: through the first cut of this guard. Three positions leave no direction
+#: unprobed.
+_REDACTION_CANARIES: tuple[str, ...] = (
+    "foundry-evidence-canary alpha 4f2a\n"
+    "completed in <VOLATILE> after bravo 91b7\n"
+    "charlie delta echo\n",
+    # placeholder last
+    "foundry-evidence-canary alpha 4f2a\ncharlie delta echo <VOLATILE>\n",
+    # placeholder first
+    "<VOLATILE> foundry-evidence-canary alpha 4f2a\ncharlie delta echo\n",
+)  # 3 probes
+
+
+def _pattern_redacts_everything(pattern: str, replacement: str) -> bool:
+    """True when ``pattern`` erases arbitrary content, not a varying field.
+
+    THE HOLE THIS CLOSES (D-109). ``_compare_byte_match`` applies the SAME
+    declared patterns to both the committed log and the re-execution capture,
+    so a pattern matching everything collapses both sides to one identical
+    string and the byte-match returns matched=True for ANY output. Driven end
+    to end, a fabricated log plus a real-but-unrelated command plus one
+    ``# evidence-volatile: [\\s\\S]*`` line produced ``ok=True`` and
+    ``evidence_verdict='accepted'`` while the two SHA256s plainly differed —
+    the whole EVID-01 mechanism defeated by a single header line. It also
+    neutralised the stub library, which reads the RAW log and so never saw the
+    collapse. The module header calls this a "closed escape-hatch: ONLY
+    declared volatility tolerated"; total redaction is where the hatch stops
+    being closed, because what is declared is no longer volatility — it is the
+    evidence.
+
+    THE TEST IS ON THE PATTERN, NOT ON THE LOG, and that distinction is the
+    whole design. Asking "did this substitution empty THIS text?" conflates two
+    different things: ``[\\s\\S]*`` empties every text and is a bypass, while
+    the legitimate ladder pattern ``completed in <VOLATILE>`` empties only a
+    log that happens to consist of nothing but that phrase. Probing a fixed
+    canary instead asks the question that actually separates them — does this
+    pattern consume content it has never seen? — so an over-broad pattern is
+    refused whatever the log contains, and a narrow one is accepted however
+    short the log is.
+
+    Both ladder levels are covered because the canaries carry a ``<VOLATILE>``
+    token: a level-1 pattern such as ``[\\s\\S]*<VOLATILE>`` erases the canary
+    whose placeholder sits last, where a canary of plain text would have let it
+    through. Erasing ANY probe is disqualifying — a pattern that empties one
+    shape of log and not another is still a pattern that empties a log.
+    """
+    for canary in _REDACTION_CANARIES:
+        try:
+            probed = re.sub(pattern, replacement, canary)
+        except re.error:
+            # Compilation is the caller's error to report, with its own message.
+            return False
+        residue = probed.replace(VOLATILE_PLACEHOLDER, "").replace("<TIMING>", "")
+        if not residue.strip():
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1292,7 +1371,17 @@ def _verify_evidence_v21_body(
 
     # Pitfall 1: clean up orphaned worktrees from prior crashes (idempotent
     # via _PRUNE_DONE_FOR module-level guard — once per session).
-    _prune_orphaned_worktrees(project_root)
+    #
+    # D-116: housekeeping, so its failure must never decide the verdict. The
+    # prune shells out to git with a timeout and sits OUTSIDE the try below, so
+    # a slow or missing git escaped the gate here before the run had even
+    # begun. Swallowed rather than translated, because a worktree that could
+    # not be pruned is not evidence of anything about the casting — if it
+    # matters, `_setup_worktree` fails next and is translated there.
+    try:
+        _prune_orphaned_worktrees(project_root)
+    except (subprocess.SubprocessError, OSError):
+        pass
 
     provenance_records: list[dict[str, Any]] = []
     overall_verdict = "accepted"
@@ -1310,6 +1399,32 @@ def _verify_evidence_v21_body(
                 "verdict": "rejected",
                 "failure_token": "EVIDENCE_COMMIT_MISSING",
                 "failure_detail": str(exc),
+                "provenance_records": [],
+                "manifest_updates": {},
+            }
+        except (subprocess.SubprocessError, OSError) as exc:
+            # D-116: `_setup_worktree` raises RuntimeError only for a non-zero
+            # `git worktree add`. Its `subprocess.run(..., timeout=30)` also
+            # raises TimeoutExpired, which is NOT a RuntimeError, and a missing
+            # git binary raises FileNotFoundError — neither was caught, so both
+            # escaped `verify_evidence` untranslated and the gate returned a
+            # traceback instead of a verdict. Driven with a slow git shim, the
+            # call escaped as TimeoutExpired after 30s.
+            #
+            # Translated onto EVIDENCE_COMMIT_MISSING rather than a new token:
+            # KNOWN_EVIDENCE_FAILURE_TOKENS is a closed vocabulary whose size is
+            # pinned by a test outside this casting, and this IS the existing
+            # token's meaning — the casting's commit could not be materialised.
+            # The detail names the real cause so the operator is not sent
+            # looking for a bad SHA when git is simply absent or hung.
+            return {
+                "verdict": "rejected",
+                "failure_token": "EVIDENCE_COMMIT_MISSING",
+                "failure_detail": (
+                    f"could not create the worktree for commit "
+                    f"{str(casting_commit)[:12]}: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
                 "provenance_records": [],
                 "manifest_updates": {},
             }
@@ -1358,8 +1473,19 @@ def _verify_evidence_v21_body(
     finally:
         # Pitfall 1: teardown ALWAYS runs — accepted, rejected, or
         # exception (try/finally guarantees the cleanup path).
+        #
+        # D-116: teardown makes three more timeout-bounded git calls, and it
+        # runs in a `finally`. An exception raised there REPLACES whatever the
+        # body was returning or raising, so a slow git during cleanup could
+        # discard a perfectly good verdict — the one place where a housekeeping
+        # failure can destroy a real result. Swallowed for that reason; the
+        # worst case is a stale worktree dir, which the next run's prune
+        # removes.
         if worktree_path is not None and worktree_path.exists():
-            _teardown_worktree(project_root, worktree_path)
+            try:
+                _teardown_worktree(project_root, worktree_path)
+            except (subprocess.SubprocessError, OSError):
+                pass
 
     return {
         "verdict": overall_verdict,

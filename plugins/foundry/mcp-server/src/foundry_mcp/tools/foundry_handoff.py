@@ -336,6 +336,18 @@ def foundry_accept_casting(
     # `citation.CITATION_PATTERN` so the gate and the resolution guard below
     # cannot drift apart; widening it here never narrows what was accepted
     # before, because the file:line alternative is carried through unchanged.
+    # THE WINDOW IS SYMMETRIC (D-118). It used to be
+    # `completion_report[start:start + 300]` — forward from the ID only — while
+    # agents/teammate.md tells every teammate the gate "verifies each
+    # requirement ID has a citation WITHIN 300 CHARACTERS OF the ID mention".
+    # So `src/mod.py#foo implements FR-001` satisfies the documented
+    # instruction and was rejected, costing a re-dispatch bounce on a report
+    # that was already correct. The failure was safe (over-strict, never
+    # over-permissive), which is why it survived — a gate that only ever
+    # refuses too much produces no bad acceptances to notice, just wasted
+    # cycles. Widening the code to match the prose is the fix; the prose is
+    # another casting's file and needs no change.
+    CITATION_WINDOW = 300
     req_id_pattern = r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b"
     casting_req_ids = sorted(set(re.findall(req_id_pattern, spec_block)))
     citation_pattern = CITATION_PATTERN
@@ -345,7 +357,9 @@ def foundry_accept_casting(
         found_citation = False
         for m in re.finditer(re.escape(rid), completion_report):
             start = m.start()
-            window = completion_report[start:start + 300]
+            window = completion_report[
+                max(0, start - CITATION_WINDOW):m.end() + CITATION_WINDOW
+            ]
             if citation_pattern.search(window):
                 found_citation = True
                 break

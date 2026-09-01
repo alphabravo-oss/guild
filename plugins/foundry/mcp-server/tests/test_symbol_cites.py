@@ -488,3 +488,287 @@ def test_gate_reports_a_missing_citation_when_no_cite_of_either_form(
     )
     assert result["missing_citations"] == ["AC-005"]
     assert result["ok"] is False
+
+
+# --------------------------------------------------------------------------- #
+# D-110 / D-112 / D-113 — the citation grammar is hardened. One packet: no
+# ReDoS, no silent truncation on a space, no silent truncation on a non-ASCII
+# separator. All three are the SAME failure class the module docstring says
+# must never recur — the guard answering about one symbol and reporting on
+# another — and all three fail PERMISSIVELY, which is AC-006's dangerous
+# direction.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_long_unbroken_line_does_not_hang_the_grammar() -> None:
+    """D-110. ``_PATH``'s run backtracked quadratically on a long run of path
+    characters that never reaches a valid extension, and
+    ``unresolved_symbol_cites`` runs the grammar over the WHOLE completion
+    report — so one base64 blob, minified dump or data URI on a single line
+    hung the acceptance gate. Measured before the bound: 7,750 B -> 292 ms,
+    31,000 B -> 4.6 s, 62,000 B -> 18.4 s, extrapolating to roughly two hours
+    on a 1 MB line. Size was never the trigger; LINE LENGTH was, because a
+    newline resets the run.
+
+    Pinned with a hard wall-clock ceiling rather than a ratio: the property is
+    "the gate still answers", and a threshold expressed against another
+    measurement can drift into a slow pass. 5 s is ~1/3600th of the
+    pre-fix time at this size and still ~20x the post-fix cost, so it fails
+    loudly on a reintroduced quadratic without flaking on a busy machine.
+    """
+    import time
+
+    blob = "a" * 62_000
+    start = time.perf_counter()
+    unresolved_symbol_cites(f"AC-006 {blob} tail\n", ".")
+    elapsed = time.perf_counter() - start
+    assert elapsed < 5.0, f"citation scan took {elapsed:.1f}s — quadratic again"
+
+
+def test_the_scan_stays_linear_as_the_line_grows() -> None:
+    """D-110's shape, not just its symptom. A quadratic scan quadruples when
+    the input doubles; a linear one roughly doubles. Asserting the SHAPE
+    catches a partial regression that a single wall-clock ceiling would let
+    through at small sizes."""
+    import time
+
+    def _scan(n: int) -> float:
+        text = "a" * n
+        start = time.perf_counter()
+        SYMBOL_CITE_PATTERN.findall(text)
+        return time.perf_counter() - start
+
+    _scan(4_000)  # warm up, so import/JIT costs land outside the measurement
+    small = _scan(20_000)
+    large = _scan(80_000)
+    # 4x the input. Linear predicts ~4x; quadratic predicts ~16x. The 8x
+    # allowance leaves generous room for timer noise on a loaded machine while
+    # still excluding the quadratic.
+    assert large < max(small * 8, 0.75), (
+        f"4x input took {large / max(small, 1e-9):.1f}x the time "
+        f"({small:.4f}s -> {large:.4f}s) — the scan is superlinear again"
+    )
+
+
+# --- D-112: a path containing a space ---------------------------------------
+def test_a_spaced_path_is_judged_against_the_file_the_author_named(
+    tree: Path,
+) -> None:
+    """D-112. ``_PATH`` admits no space, so ``docs/my file.py#RealSym`` matched
+    only the tail ``file.py#RealSym`` — and the guard then resolved THAT
+    against a root-level decoy the author never named, so a cite to a
+    non-existent path PASSED.
+
+    The decoy here is the exact reproduction: a root-level ``file.py`` that
+    does contain ``RealSym``. The cite must be judged against
+    ``docs/my file.py``, which does not exist, and must therefore be a finding.
+    """
+    (tree / "file.py").write_text("def RealSym():\n    return 1\n", encoding="utf-8")
+    (tree / "docs").mkdir()
+
+    report = "AC-006 implemented at docs/my file.py#RealSym\n"
+    cites = iter_symbol_cites(report)
+    assert [c["file"] for c in cites] == ["docs/my file.py"], (
+        "the cite must name the path the author wrote, not its post-space tail"
+    )
+    unresolved = unresolved_symbol_cites(report, str(tree))
+    assert [c["file"] for c in unresolved] == ["docs/my file.py"]
+
+
+def test_a_spaced_path_that_exists_resolves(tree: Path) -> None:
+    """The other direction of the same rule: when the author's spaced path is
+    real, the cite resolves against it. Refusing every spaced path would close
+    the hole by making the guard useless on them."""
+    docs = tree / "docs"
+    docs.mkdir()
+    (docs / "my file.py").write_text("def RealSym():\n    return 1\n", encoding="utf-8")
+
+    report = "AC-006 implemented at docs/my file.py#RealSym\n"
+    assert unresolved_symbol_cites(report, str(tree)) == []
+
+
+@pytest.mark.parametrize(
+    "report,expected",
+    [
+        # Ordinary prose lead-ins: the token left of the cite carries no `/`.
+        ("AC-006 see hooks/guard.sh#check-staged-only", ["hooks/guard.sh"]),
+        ("implemented in src/ledger.py#add_defect", ["src/ledger.py"]),
+        ("fixed at src/ledger.py#add_defect and shipped", ["src/ledger.py"]),
+        # A slash-bearing token further left must not reach across another word.
+        ("see hooks/guard.sh and src/ledger.py#add_defect", ["src/ledger.py"]),
+        # Two complete cites separated only by a space, or by a comma.
+        (
+            "src/ledger.py#add_defect hooks/guard.sh#check-staged-only",
+            ["src/ledger.py", "hooks/guard.sh"],
+        ),
+        (
+            "src/ledger.py#add_defect, hooks/guard.sh#check-staged-only",
+            ["src/ledger.py", "hooks/guard.sh"],
+        ),
+        # A bare path followed by a cite.
+        ("hooks/guard.sh src/ledger.py#add_defect", ["src/ledger.py"]),
+    ],
+)
+def test_spaced_path_recovery_does_not_fire_on_ordinary_prose(
+    tree: Path, report: str, expected: list[str]
+) -> None:
+    """The false-positive floor for D-112's rule, and the reason the lookback
+    is exactly ONE token wide.
+
+    ``docs/my file.py`` and ``see hooks/guard.sh`` are lexically identical
+    shapes, so the recovery cannot be decided from characters alone. The single
+    signal that separates them is the token IMMEDIATELY left of the match:
+    ``docs/my`` carries a ``/``, and the English words that precede a cite in
+    prose do not. Widening the lookback to two tokens would re-admit
+    ``see hooks/guard.sh and src/ledger.py#add_defect`` — which is in this
+    table precisely so a future widening fails here rather than in a run.
+    """
+    assert [c["file"] for c in iter_symbol_cites(report)] == expected
+    assert unresolved_symbol_cites(report, str(tree)) == []
+
+
+# --- D-113: non-ASCII separators --------------------------------------------
+@pytest.mark.parametrize(
+    "separator,name",
+    [
+        ("\U0001F600", "emoji"),
+        (" ", "no-break space"),
+        ("‑", "non-breaking hyphen"),
+        ("–", "en dash"),
+        ("—", "em dash"),
+        ("​", "zero-width space"),
+    ],
+)
+def test_a_non_ascii_separator_ends_the_symbol_as_a_refusal(
+    tree: Path, separator: str, name: str
+) -> None:
+    """D-113 — the D-054 kebab bug reintroduced for every non-ASCII look-alike
+    of a separator.
+
+    ``src/ledger.py`` contains a standalone ``add_defect``. A cite to
+    ``add_defect<sep>gone`` names a symbol the file does not contain, so it
+    must be REFUSED. Before the fix each separator ENDED the symbol, the guard
+    read only ``add_defect``, that resolved, and the bogus cite passed — the
+    guard answering about one symbol and reporting on another, which is exactly
+    the failure the module docstring says must never recur.
+    """
+    symbol = f"add_defect{separator}gone"
+    report = f"AC-006 implemented at src/ledger.py#{symbol}\n"
+
+    cites = iter_symbol_cites(report)
+    assert [c["symbol"] for c in cites] == [symbol], (
+        f"{name} truncated the symbol instead of being absorbed into it"
+    )
+    unresolved = unresolved_symbol_cites(report, str(tree))
+    assert [c["symbol"] for c in unresolved] == [symbol], (
+        f"a symbol containing a {name} resolved off its truncated stem"
+    )
+
+
+def test_a_symbol_starting_with_a_non_ascii_letter_is_visible(tree: Path) -> None:
+    """D-113's quieter half. ``[A-Za-z_]`` matched no non-ASCII letter, so a
+    cite whose symbol begins with one produced ZERO cites: the guard never
+    examined it. That fails closed when it is the only cite, but a bogus cite
+    ALONGSIDE a valid one was silently dropped — and a cite the guard cannot
+    see is a cite it cannot refuse.
+
+    ``Аdd`` here is Cyrillic А (U+0410), a homoglyph of the Latin A.
+    """
+    report = (
+        "AC-006 implemented at src/ledger.py#add_defect "
+        "and at src/ledger.py#Аdd\n"
+    )
+    symbols = [c["symbol"] for c in iter_symbol_cites(report)]
+    assert "Аdd" in symbols, "the non-ASCII-initial cite was invisible"
+    unresolved = unresolved_symbol_cites(report, str(tree))
+    assert [c["symbol"] for c in unresolved] == ["Аdd"]
+
+
+def test_the_resolver_and_the_grammar_agree_about_separators(tree: Path) -> None:
+    """The mirror of D-113, and the reason both sides read ONE character class.
+
+    If the grammar absorbs a separator into the symbol but the RESOLVER still
+    treats it as a word boundary, then ``#add_defect`` resolves off a file that
+    only contains ``add_defect😀gone`` — the same permissive answer, reached
+    from the other side. Both D-054 and D-113 were this pair drifting apart.
+    """
+    (tree / "src" / "uni.py").write_text(
+        "add_defect\U0001F600gone = 1\n", encoding="utf-8"
+    )
+    assert not symbol_cite_resolves("src/uni.py", "add_defect", str(tree)), (
+        "the resolver found a truncated stem the grammar would not have parsed"
+    )
+
+
+def test_ascii_symbol_spellings_are_unchanged(tree: Path) -> None:
+    """No-regression floor for the widened classes: every ASCII spelling the
+    grammar already locked still parses exactly as before."""
+    cases = {
+        "src/ledger.py#add_defect": "add_defect",
+        "src/ledger.py#LedgerWriter.flush": "LedgerWriter.flush",
+        "hooks/guard.sh#check-staged-only": "check-staged-only",
+        "hooks/guard.sh#check-": "check-",          # dangling hyphen KEPT
+        "src/ledger.py#add_defect.": "add_defect",  # sentence period DROPPED
+    }
+    for cite, expected in cases.items():
+        cites = iter_symbol_cites(cite)
+        assert [c["symbol"] for c in cites] == [expected], cite
+
+
+# --- D-118: the citation window is symmetric --------------------------------
+def test_a_citation_immediately_before_the_id_counts(tree: Path) -> None:
+    """D-118. The window was ``report[start:start + 300]`` — forward from the
+    ID only — while agents/teammate.md tells every teammate the gate "verifies
+    each requirement ID has a citation WITHIN 300 CHARACTERS OF the ID
+    mention". So a report writing the cite first satisfied the documented
+    instruction and was rejected, costing a re-dispatch bounce on work that was
+    already correct.
+
+    The failure was over-STRICT, never over-permissive, which is why it
+    survived: a gate that only refuses too much produces no bad acceptances to
+    notice, just wasted cycles.
+    """
+    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    result = foundry_accept_casting(
+        casting_id=1,
+        spec_hash=spec_hash,
+        prompt_hash=prompt_hash,
+        completion_report="src/ledger.py#add_defect implements AC-005\n",
+        project_root=str(tree),
+    )
+    assert result["missing_citations"] == [], result
+    assert result["ok"] is True, result["warning"]
+
+
+def test_a_citation_after_the_id_still_counts(tree: Path) -> None:
+    """The direction that already worked — pinned so widening the window did
+    not trade one side for the other."""
+    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    result = foundry_accept_casting(
+        casting_id=1,
+        spec_hash=spec_hash,
+        prompt_hash=prompt_hash,
+        completion_report="AC-005 implemented at src/ledger.py#add_defect\n",
+        project_root=str(tree),
+    )
+    assert result["missing_citations"] == []
+    assert result["ok"] is True, result["warning"]
+
+
+def test_a_citation_far_from_the_id_is_still_missing(tree: Path) -> None:
+    """The window is symmetric, not unbounded. A report whose only cite sits
+    well beyond 300 characters on EITHER side still reports the requirement as
+    uncited — otherwise widening the window would have quietly retired the
+    proof-of-coverage check it exists to enforce."""
+    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    filler = "x" * 400
+    result = foundry_accept_casting(
+        casting_id=1,
+        spec_hash=spec_hash,
+        prompt_hash=prompt_hash,
+        completion_report=(
+            f"src/ledger.py#add_defect\n{filler}\nAC-005 was implemented\n{filler}\n"
+        ),
+        project_root=str(tree),
+    )
+    assert result["missing_citations"] == ["AC-005"], result

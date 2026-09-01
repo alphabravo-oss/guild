@@ -53,6 +53,7 @@ RED-or-SKIP discipline:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -1190,3 +1191,260 @@ def test_every_committed_evidence_log_declares_a_command():
         if not (evidence._parse_evidence_header(p.read_text(encoding="utf-8")).get("cmd") or "").strip()
     ]
     assert undeclared == [], f"evidence logs with no `# evidence-cmd:`: {undeclared}"
+
+
+# ---------------------------------------------------------------------------
+# D-109 / D-116 — the evidence gate cannot be bypassed by a total-redaction
+# pattern, and a worktree failure becomes a named token instead of a traceback.
+#
+# SECURITY-RELEVANT (A-AUTO-005). The run's binding security constraint is
+# process-level: the verification loop's behavioural and security defect
+# standard must not be weakened. D-109 weakened it to nothing — one header line
+# made EVID-01 accept any output for any command — so these are the tests that
+# fail if the escape-hatch stops being closed.
+# ---------------------------------------------------------------------------
+
+#: Every shape of "matches everything" that defeats the byte-match. The last
+#: three are placeholder-anchored: they erase only in the direction they reach,
+#: so a guard probing a single sample with the placeholder in the middle passes
+#: them — which is how ``[\s\S]*<VOLATILE>`` slipped through the first cut.
+_TOTAL_REDACTION_PATTERNS = [
+    r"[\s\S]*",
+    r"[\s\S]+",
+    r"[\S\s]*?",
+    r"(?s).*",
+    r"(?s)^.*$",
+    r".*",
+    r"[\s\S]*<VOLATILE>",
+    r"<VOLATILE>[\s\S]*",
+    r"[\s\S]*<VOLATILE>[\s\S]*",
+]
+
+
+@pytest.mark.parametrize("pattern", _TOTAL_REDACTION_PATTERNS)
+def test_a_total_redaction_pattern_is_refused(pattern):
+    """D-109. ``_apply_volatile_redaction`` applies each declared pattern to
+    BOTH the committed log and the re-execution capture, so a pattern matching
+    everything collapses both sides to the same string and ``_compare_byte_match``
+    returns matched=True for ANY output.
+
+    The module header calls this a "closed escape-hatch: ONLY declared
+    volatility tolerated". Total redaction is where the hatch stops being
+    closed, because what is declared is no longer volatility — it is the
+    evidence.
+    """
+    with pytest.raises(ValueError) as exc:
+        evidence._apply_volatile_redaction(
+            "real output line one\nreal output line two\n", [pattern]
+        )
+    assert "EVIDENCE_VOLATILE_MALFORMED" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"\d+\.\d+s",
+        r"\b\d+ms\b",
+        r"pid=\d+",
+        r"20\d{2}-\d{2}-\d{2}T",
+        r"rootdir: \S+",
+        r"rootdir: .*",
+        r"cachedir: .*",
+        r"judged: \d+",
+        r"\d+ deselected",
+        r"Installed \d+ packages? in \d+(\.\d+)?ms",
+        r"platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+",
+        r"completed in <VOLATILE>",
+    ],
+)
+def test_narrow_volatile_patterns_are_still_accepted(pattern):
+    """The false-positive floor for D-109's guard, and the reason it probes the
+    PATTERN rather than the log.
+
+    Asking "did this substitution empty this text?" conflates two different
+    things: ``[\\s\\S]*`` empties every text and is a bypass, while the ladder
+    pattern ``completed in <VOLATILE>`` empties only a log that happens to
+    consist of nothing but that phrase. Every pattern here is one the shipped
+    corpus or agents/teammate.md actually declares; a guard that refused any of
+    them would break real evidence.
+    """
+    evidence._apply_volatile_redaction(
+        "completed in 42ms\nrootdir: /x\nreal content\n", [pattern]
+    )
+
+
+def test_every_pattern_the_committed_corpus_declares_is_accepted():
+    """The same floor, DERIVED from the corpus instead of typed beside it, so a
+    pattern added to a real evidence log is covered the day it is written."""
+    evidence_dir = REPO_ROOT / "evidence"
+    logs = sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {evidence_dir}")
+
+    refused = []
+    for log in logs:
+        header = evidence._parse_evidence_header(log.read_text(encoding="utf-8"))
+        for pattern in header.get("volatile", []):
+            replacement = (
+                "<TIMING>"
+                if evidence.VOLATILE_PLACEHOLDER in pattern
+                else evidence.VOLATILE_PLACEHOLDER
+            )
+            if evidence._pattern_redacts_everything(pattern, replacement):
+                refused.append(f"{log.name}: {pattern!r}")
+    assert refused == [], f"the guard refuses a pattern real evidence uses: {refused}"
+
+
+def test_a_fabricated_log_cannot_buy_a_pass_with_total_redaction(tmp_path):
+    """D-109 end to end, at the surface where it was exploitable.
+
+    A fabricated body, a real-but-unrelated command, and one
+    ``# evidence-volatile: [\\s\\S]*`` line used to produce
+    ``verdict='accepted'`` while ``log_sha256 != captured_sha256`` — the
+    redacted forms were equal because both had been erased. The stub library
+    could not save it either: TOO_SMALL reads the RAW log and VACUOUS_CMD saw a
+    real command.
+    """
+    worktree = tmp_path / "worktree"
+    (worktree / "evidence").mkdir(parents=True)
+    log = worktree / "evidence" / "casting-3-fabricated.log"
+    # A REAL command (python3, not a shell builtin) and a body long enough to
+    # clear the 128-byte floor, so neither VACUOUS_CMD nor TOO_SMALL can be
+    # what rejects this. The redaction guard has to be the thing that catches
+    # it, which is the whole claim.
+    log.write_text(
+        "# evidence-cmd: python3 -c \"print('genuine output from a real command')\"\n"
+        "# evidence-for: FR-017\n"
+        "# evidence-volatile: [\\s\\S]*\n"
+        "\n"
+        "this body was never produced by that command, and padding follows so "
+        "the stub library's 128-byte TOO_SMALL floor cannot be what rejects it\n",
+        encoding="utf-8",
+    )
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=worktree, casting_commit="0" * 40,
+    )
+
+    assert record["verdict"] == "rejected", record
+    assert record["failure_token"] == "EVIDENCE_VOLATILE_MALFORMED", record
+    assert record["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+
+
+def test_a_narrow_volatile_declaration_still_verifies(tmp_path):
+    """The counterpart: a log whose declared volatility is genuinely narrow
+    still byte-matches a clean re-execution. Without this, D-109's guard could
+    have been 'fixed' by refusing all volatility."""
+    worktree = tmp_path / "worktree"
+    (worktree / "evidence").mkdir(parents=True)
+    log = worktree / "evidence" / "casting-3-honest.log"
+    body = (
+        "verification complete for the honest case\n"
+        "elapsed 1.25s\n"
+        "every other line of this body is byte-stable across runs\n"
+    )
+    log.write_text(
+        "# evidence-cmd: python3 -c \"print('verification complete for the "
+        "honest case'); print('elapsed 1.25s'); print('every other line of "
+        "this body is byte-stable across runs')\"\n"
+        "# evidence-for: FR-017\n"
+        "# evidence-volatile: \\d+\\.\\d+s\n"
+        "\n" + body,
+        encoding="utf-8",
+    )
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=worktree, casting_commit="0" * 40,
+    )
+    assert record["verdict"] == "accepted", record
+
+
+# --- D-116: worktree failures are translated, never escaped ------------------
+def _git_shim(tmp_path, script: str) -> Path:
+    """A directory holding a fake ``git`` that behaves as ``script`` says."""
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    fake = shim / "git"
+    fake.write_text(script, encoding="utf-8")
+    fake.chmod(0o755)
+    return shim
+
+
+def test_a_hung_git_becomes_a_named_token_not_a_traceback(tmp_path, monkeypatch):
+    """D-116. ``_setup_worktree`` raises RuntimeError only for a non-zero ``git
+    worktree add``. Its ``subprocess.run(..., timeout=30)`` also raises
+    TimeoutExpired, which is NOT a RuntimeError, so it escaped
+    ``verify_evidence`` untranslated and the gate returned a traceback instead
+    of a verdict.
+
+    ``worktree_helpers.py`` is a read-only dependency, so the translation lands
+    at THIS module's call boundary.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    monkeypatch.setenv(
+        "PATH", f"{_git_shim(tmp_path, '#!/bin/sh\nsleep 60\n')}:{os.environ['PATH']}"
+    )
+
+    result = evidence._verify_evidence_v21_body(
+        casting_id=3, project_root=repo, casting_commit="a" * 40,
+        run_dir=repo / "run",
+    )
+
+    assert result["verdict"] == "rejected"
+    assert result["failure_token"] == "EVIDENCE_COMMIT_MISSING"
+    assert result["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    assert "TimeoutExpired" in result["failure_detail"], (
+        "the detail must name the REAL cause, or the operator hunts a bad SHA "
+        "when git is simply hung"
+    )
+
+
+def test_a_missing_git_becomes_a_named_token_not_a_traceback(tmp_path, monkeypatch):
+    """D-116's sibling hole: a missing git binary raises FileNotFoundError,
+    which is an OSError and equally not a RuntimeError."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+
+    result = evidence._verify_evidence_v21_body(
+        casting_id=3, project_root=repo, casting_commit="a" * 40,
+        run_dir=repo / "run",
+    )
+
+    assert result["verdict"] == "rejected"
+    assert result["failure_token"] == "EVIDENCE_COMMIT_MISSING"
+    assert "FileNotFoundError" in result["failure_detail"]
+
+
+def test_a_failing_teardown_does_not_destroy_the_verdict(tmp_path, monkeypatch):
+    """D-116's most damaging variant. Teardown makes three more timeout-bounded
+    git calls and runs in a ``finally``, where a raised exception REPLACES
+    whatever the body was returning — so a slow git during cleanup could
+    discard a verdict that had already been computed correctly.
+    """
+    import foundry_mcp.tools.evidence as ev
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    def _explode(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git worktree remove", timeout=30)
+
+    monkeypatch.setattr(ev, "_teardown_worktree", _explode)
+    monkeypatch.setattr(ev, "_setup_worktree", lambda *a, **k: tmp_path / "wt")
+    (tmp_path / "wt").mkdir()
+
+    result = ev._verify_evidence_v21_body(
+        casting_id=3, project_root=repo, casting_commit="a" * 40,
+        run_dir=repo / "run",
+    )
+
+    # No evidence files in the synthetic worktree, so the BODY's own verdict is
+    # EVIDENCE_COMMAND_MISSING. The point is that it survives teardown.
+    assert result["failure_token"] == "EVIDENCE_COMMAND_MISSING", result

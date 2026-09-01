@@ -156,10 +156,169 @@ def _format_init_display(run_name: str, temper: bool = False, nyquist: bool = Fa
     return "\n".join(lines)
 
 
-def _load_json(path: Path) -> dict:
+# ---------------------------------------------------------------------------
+# Run-artifact reads (D-095 / D-096).
+#
+# ``_load_json`` was ``json.loads(path.read_text())`` with no try/except and no
+# shape check. A git merge conflict, an editor-truncated save or a disk-full
+# write leaves a run artifact that raised straight across the MCP boundary: 22
+# of 24 corruption x entry-point combinations bricked a tool, and not one of
+# them NAMED the file at fault — so the operator could not even open the ledger
+# to find out which file to repair. The query path was holed identically, which
+# is what removed the last way to diagnose it.
+#
+# The split mirrors ``foundry_orchestrator``'s BY CONVENTION rather than by
+# import — same four names, same refusal shape, same tolerance contract — so
+# the two copies can later be folded into one shared loader mechanically. It is
+# not an import because that module imports THIS one, and reading back would
+# close a cycle in the import graph (the same reason ``_server_cycle`` is a
+# deliberate second copy).
+#
+#   ``_read_document``   — the tolerant core: (data, named problem).
+#   ``_document_problem``— the problem alone.
+#   ``_load_json``       — total. {} for missing / unreadable / malformed.
+#                          NEVER raises, so every reader in this module is safe
+#                          by construction rather than by remembered
+#                          try/excepts at 13 call sites.
+#   ``_artifact_guard``  — the named refusal, at the MCP entry points, which is
+#                          where a human is listening.
+#
+# Tolerance ALONE would have turned D-095 into D-096: a corrupt defects.json
+# reads as an empty one, and the next write then replaces the file and reports
+# success. The guard is the half that stops the write and names the file, and
+# neither half is sufficient without the other.
+# ---------------------------------------------------------------------------
+
+
+def _read_document(path: Path) -> tuple[dict, str | None]:
+    """Read a JSON object. Returns ``(data, problem)``; never raises.
+
+    ``problem`` is a human-readable string NAMING THE FILE when the artifact
+    exists but is not a readable JSON object, else None. An ABSENT file is not
+    a problem — a run legitimately has artifacts it has not written yet, and
+    conflating "absent" with "corrupt" is what would make a fresh run refuse to
+    start.
+    """
     if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+        return {}, None
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {}, f"{path.name} could not be read ({type(exc).__name__}: {exc})"
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        return {}, f"{path.name} is not valid JSON ({exc})"
+    if not isinstance(data, dict):
+        return {}, (
+            f"{path.name} is not a JSON object (found "
+            f"{type(data).__name__}) — every run artifact is a mapping"
+        )
+    return data, None
+
+
+def _document_problem(path: Path) -> str | None:
+    """The named reason ``path`` is not a readable JSON object, or None."""
+    return _read_document(path)[1]
+
+
+def _load_json(path: Path) -> dict:
+    """Total, tolerant read of a run artifact. Returns {} rather than raising.
+
+    Every malformed-container shape — truncated, ``[]``, ``null``, ``42``,
+    ``"a string"``, non-UTF-8 — reads as an empty document, so no reader in
+    this module can raise across the MCP boundary. A caller that must TELL the
+    operator which file is broken uses ``_artifact_guard`` /
+    ``_document_problem`` rather than inspecting this return value, which
+    cannot distinguish "absent" from "corrupt" by design.
+    """
+    return _read_document(path)[0]
+
+
+def ledger_shape_problem(path: Path, collection_key: str) -> str | None:
+    """Named reason ``path`` is unusable as a ledger of ``collection_key``.
+
+    One rung below ``_document_problem``: the document may be a perfectly good
+    JSON object whose RECORD CONTAINER is not a list. That is D-096 — seeding
+    ``defects.json`` with ``{"defects": {...}}`` made ``foundry_add_defect``
+    discard every record the file held, re-mint ``D-001`` and return success,
+    while a sibling key survived to prove the write had completed.
+
+    Exported because ``foundry_orchestrator``'s two ledger writers hold the
+    same shape assumption and their own ``_artifact_guard`` checks only the
+    top-level object. A caller running this before ``ledger_transaction`` turns
+    the backstop raise into a named refusal.
+    """
+    data, problem = _read_document(path)
+    if problem is not None:
+        return problem
+    records = data.get(collection_key)
+    if records is None or isinstance(records, list):
+        return None
+    return (
+        f"{path.name} has a {collection_key!r} key holding "
+        f"{type(records).__name__}, not a list — its records cannot be read, "
+        f"and writing over it would discard whatever it does hold"
+    )
+
+
+#: Which record container each ledger this module touches keeps its records in.
+#: Declared ONCE so a guard and a writer cannot disagree about the key, and so
+#: adding a ledger does not mean remembering a second list somewhere else.
+_LEDGER_KEYS: dict[str, tuple[str, ...]] = {
+    "defects.json": ("defects",),
+    "observations.json": ("observations", "tripwire"),
+    "verdicts.json": ("requirements",),
+    "state.json": (),
+}
+
+
+def _artifact_guard(fdir: Path, *names: str) -> dict | None:
+    """Named refusal when an artifact this tool must touch is unreadable.
+
+    The house refusal shape: ``error`` names the offending FILES and what is
+    wrong with each, ``hint`` names the action. Scoped to the artifacts the
+    calling tool actually reads or writes — a corrupt roll-up must not block a
+    defect filing that never opens it.
+    """
+    problems: list[str] = []
+    for name in names:
+        path = fdir / name
+        problem = _document_problem(path)
+        for key in _LEDGER_KEYS.get(name, ()):
+            if problem is not None:
+                break
+            problem = ledger_shape_problem(path, key)
+        if problem is not None:
+            problems.append(problem)
+    if not problems:
+        return None
+    return {
+        "error": (
+            "Run artifacts cannot be read: " + "; ".join(problems) + ". "
+            "This tool refuses rather than writing over a ledger whose "
+            "contents it could not read."
+        ),
+        "hint": (
+            "Repair or delete the named file(s) in the run directory, then "
+            "retry. A deleted ledger is re-created empty; a corrupt one is "
+            "never silently overwritten."
+        ),
+        "corrupt_artifacts": problems,
+    }
+
+
+def _dict_records(records: list) -> list[dict]:
+    """The mapping records in ``records``, skipping anything else (D-097).
+
+    ``allocate_record_id`` already skips a non-dict record; every OTHER scan
+    over the same list assumed dicts. So one malformed historical record made
+    ``d.get("status")`` raise — and it raised AFTER the new record had been
+    appended, so the transaction aborted, the good filing was silently
+    discarded, and the caller got a traceback instead of a refusal. Tolerating
+    it in ONE place is what keeps the two halves of the same scan consistent.
+    """
+    return [r for r in records if isinstance(r, dict)]
 
 
 def _save_json(path: Path, data: dict) -> None:
@@ -187,7 +346,28 @@ def _save_json(path: Path, data: dict) -> None:
 # threads; the flock covers a second server process on the same repo.
 _LEDGER_LOCK = threading.RLock()
 
+# path -> in-flight document, per thread (D-099). A nested transaction on a
+# path this thread already holds yields the SAME document and defers the write
+# to the outermost exit. Without it, nesting deadlocked against our OWN flock:
+# an flock is held per open file description, and the transaction opens a fresh
+# fd on every entry, so a second acquire from the same thread blocks forever
+# rather than succeeding the way the RLock does.
+_LEDGER_TX = threading.local()
+
 _RECORD_ID_RE = re.compile(r"\A([A-Za-z]+)-(\d+)\Z")
+
+
+class LedgerShapeError(RuntimeError):
+    """A ledger's record container is not a list.
+
+    Raised inside ``ledger_transaction`` rather than coerced away, because the
+    coercion IS D-096: replacing a non-list ``defects`` container with ``[]``
+    discarded every record the file held, re-minted ``D-001`` and reported
+    success. Every entry point in this module runs ``_artifact_guard`` first
+    and returns a named refusal, so no production path reaches this raise — it
+    is the backstop for a caller that forgets, and it fails CLOSED (nothing is
+    written) rather than open.
+    """
 
 
 def allocate_record_id(records: list, prefix: str = "D") -> str:
@@ -226,30 +406,77 @@ def ledger_transaction(path: Path, collection_key: str) -> Iterator[list]:
     propagates and NOTHING is written, so a failed classification cannot leave
     a half-updated ledger behind.
 
-    Held locks: the module ``threading.RLock`` (re-entrant, so nesting a
-    transaction inside another on the same thread is safe) and an ``fcntl``
-    exclusive lock on a ``{path}.lock`` sidecar. POSIX only, which matches the
+    Held locks: the module ``threading.RLock`` (threads inside one server
+    process) and an ``fcntl`` exclusive lock on a ``{path}.lock`` sidecar (a
+    second server process on the same repo). POSIX only, which matches the
     documented macOS/Linux runtime floor.
+
+    RE-ENTRANT PER PATH (D-099). A nested transaction on a path this thread
+    already holds yields the same in-flight document and defers the single
+    write to the outermost exit. The RLock alone did NOT make nesting safe, and
+    the docstring that promised it was wrong: an ``fcntl`` lock belongs to the
+    open file description, and this function opens a fresh fd on every entry,
+    so a same-thread re-acquire blocked forever on a lock the thread already
+    held. Keying the in-flight map on the PATH rather than on the collection
+    key is deliberate — ``observations.json`` has records under two keys
+    (``observations`` and ``tripwire``), and a nested pair on those two keys
+    must see one document and produce one write, not two racing ones.
+
+    A non-list record container raises ``LedgerShapeError`` and writes NOTHING
+    (D-096). It is not coerced to ``[]``, because that coercion is what
+    discarded a populated ledger and reported success.
 
     This is the write discipline every ledger writer must use — including
     ``foundry_orchestrator.foundry_sync_defects``, whose reopen-and-append pass
     mutates existing records and appends new ones in a single critical section.
     """
+    held = getattr(_LEDGER_TX, "docs", None)
+    if held is None:
+        held = _LEDGER_TX.docs = {}
+    tx_key = str(path)
+    if tx_key in held:
+        # Already open on this thread — same document, one write at the end.
+        yield _ledger_records(held[tx_key], path, collection_key)
+        return
+
     lock_path = path.with_name(path.name + ".lock")
     with _LEDGER_LOCK:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
+                # Read the SHAPE before the data: a corrupt document must abort
+                # here rather than read as {} and be written over. Both reads
+                # happen under the flock, so nothing can change between them.
+                problem = _document_problem(path)
+                if problem is not None:
+                    raise LedgerShapeError(problem)
                 data = _load_json(path)
-                records = data.get(collection_key)
-                if not isinstance(records, list):
-                    records = []
-                data[collection_key] = records
+                records = _ledger_records(data, path, collection_key)
+                held[tx_key] = data
                 yield records
                 _save_json(path, data)
             finally:
+                held.pop(tx_key, None)
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _ledger_records(data: dict, path: Path, collection_key: str) -> list:
+    """The record list under ``collection_key``, created if absent.
+
+    Refuses a container that exists and is not a list, rather than replacing
+    it. See ``LedgerShapeError``.
+    """
+    records = data.get(collection_key)
+    if records is None:
+        records = data[collection_key] = []
+    elif not isinstance(records, list):
+        raise LedgerShapeError(
+            f"{path.name} has a {collection_key!r} key holding "
+            f"{type(records).__name__}, not a list — its records cannot be "
+            f"read, and writing over it would discard whatever it does hold"
+        )
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +897,11 @@ def foundry_init(
         state_path = run_dir / "state.json"
         if not state_path.exists():
             return {"error": f"Run '{resume}' not found in {ARCHIVE_DIR}/"}
+        # D-095: a corrupt state.json used to raise here, and resuming is
+        # exactly when an operator is trying to recover from whatever corrupted
+        # it. Naming the file is the whole value of the call at that moment.
+        if (corrupt := _artifact_guard(run_dir, "state.json")):
+            return corrupt
         set_active_run(resume)
         state = _load_json(state_path)
         return {
@@ -878,6 +1110,14 @@ def foundry_add_defect(
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
 
+    # D-095 / D-096: refuse BEFORE the transaction when the ledger this call
+    # would write, or the counter it would stamp from, cannot be read. Without
+    # this the corrupt file read as an empty one and the write replaced it —
+    # the caller got `{"defect_id": "D-001", "total_defects": 1}` over the top
+    # of a ledger that had held everything the run had found so far.
+    if (corrupt := _artifact_guard(fdir, "defects.json", "state.json")):
+        return corrupt
+
     # Server-side vocabulary validation (CT-002). Only the client schema
     # guarded these before, and `foundry_sync_defects` silently rewrote an
     # unknown source to "trace" \u2014 so a finding could be attributed to a stream
@@ -970,7 +1210,14 @@ def foundry_add_defect(
         defect["id"] = defect_id
         defects.append(defect)
         total = len(defects)
-        open_count = sum(1 for d in defects if d.get("status") == "open")
+        # D-097: skip a non-dict historical record here exactly as
+        # `allocate_record_id` does four lines above. The raw `d.get(...)` used
+        # to raise on one, and it raised AFTER the append — so the transaction
+        # aborted and this filing was silently discarded, which is the one
+        # outcome the lock exists to prevent.
+        open_count = sum(
+            1 for d in _dict_records(defects) if d.get("status") == "open"
+        )
 
     _ledger_mirror(
         fdir,
@@ -1048,6 +1295,13 @@ def foundry_add_observation(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
+
+    # D-095 / D-096. Both containers, because this path writes `tripwire`
+    # (through `record_denylist_tripwire`) before it ever reaches
+    # `observations`, and a refusal after the audit signal has fired would
+    # leave the two halves of one decision in different states.
+    if (corrupt := _artifact_guard(fdir, "observations.json", "state.json")):
+        return corrupt
 
     if source not in DEFECT_SOURCE_IDS:
         return {
@@ -1184,8 +1438,15 @@ def foundry_query_observations(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
+    # D-095: the QUERY path was holed identically to the write path, so a
+    # corrupt ledger could not even be looked at to diagnose which file to
+    # repair. Guarded rather than merely tolerated, because a query that
+    # silently answers "no observations" about an unreadable ledger is worse
+    # than one that names the file.
+    if (corrupt := _artifact_guard(fdir, "observations.json")):
+        return corrupt
     data = _load_json(fdir / "observations.json")
-    all_observations = data.get("observations", [])
+    all_observations = _dict_records(data.get("observations", []))
     tripwire = data.get("tripwire", [])
 
     observations = all_observations
@@ -1229,8 +1490,11 @@ def foundry_query_defects(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
+    # D-095 — same reasoning as the observations query above.
+    if (corrupt := _artifact_guard(fdir, "defects.json")):
+        return corrupt
     data = _load_json(fdir / "defects.json")
-    defects = data.get("defects", [])
+    defects = _dict_records(data.get("defects", []))
 
     if status:
         defects = [d for d in defects if d.get("status") == status]
@@ -1241,7 +1505,7 @@ def foundry_query_defects(
     if spec_ref:
         defects = [d for d in defects if d.get("spec_ref") == spec_ref]
 
-    all_defects = data.get("defects", [])
+    all_defects = _dict_records(data.get("defects", []))
     by_source: dict[str, int] = {}
     by_type: dict[str, int] = {}
     for d in all_defects:
@@ -1283,9 +1547,13 @@ def foundry_add_verdict(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
+    # D-095 / D-096 — verdicts.json is a ledger too, and this writer is the one
+    # that reads it, mutates it and saves it as three separate steps.
+    if (corrupt := _artifact_guard(fdir, "verdicts.json", "state.json")):
+        return corrupt
     verdicts_path = fdir / "verdicts.json"
     data = _load_json(verdicts_path)
-    if "requirements" not in data:
+    if not isinstance(data.get("requirements"), list):
         data["requirements"] = []
 
     stamped_cycle = _stamp_cycle(fdir, cycle)
@@ -1301,7 +1569,8 @@ def foundry_add_verdict(
 
     replaced = False
     for i, req in enumerate(data["requirements"]):
-        if req.get("id") == requirement_id:
+        # D-097: a non-dict historical record is skipped, not raised on.
+        if isinstance(req, dict) and req.get("id") == requirement_id:
             data["requirements"][i] = entry
             replaced = True
             break
@@ -1311,7 +1580,11 @@ def foundry_add_verdict(
     data["cycle"] = stamped_cycle
     _save_json(verdicts_path, data)
 
-    verified = sum(1 for r in data["requirements"] if r.get("verdict") == "VERIFIED")
+    verified = sum(
+        1
+        for r in _dict_records(data["requirements"])
+        if r.get("verdict") == "VERIFIED"
+    )
     return {
         "requirement_id": requirement_id,
         "verdict": verdict,
@@ -1332,12 +1605,20 @@ def foundry_verify_coverage(
         return {"error": "No active foundry run. Call Foundry-Init."}
     root = Path(project_root)
 
+    # D-095 — this tool reads both ledgers and reports coverage over them; an
+    # unreadable one must be named, not silently counted as zero.
+    if (corrupt := _artifact_guard(fdir, "verdicts.json", "defects.json")):
+        return corrupt
+
     verdicts_data = _load_json(fdir / "verdicts.json")
-    requirements = verdicts_data.get("requirements", [])
-    verdict_map = {r["id"]: r for r in requirements}
+    requirements = _dict_records(verdicts_data.get("requirements", []))
+    # D-097: `r["id"]` raised on a record missing the key. A record with no id
+    # cannot be joined to a requirement at all, so it is skipped rather than
+    # allowed to brick the whole report.
+    verdict_map = {r["id"]: r for r in requirements if r.get("id")}
 
     defects_data = _load_json(fdir / "defects.json")
-    all_defects = defects_data.get("defects", [])
+    all_defects = _dict_records(defects_data.get("defects", []))
     open_defects = [d for d in all_defects if d.get("status") == "open"]
 
     defects_by_req: dict[str, list[dict]] = {}
@@ -1345,7 +1626,7 @@ def foundry_verify_coverage(
         ref = d.get("spec_ref", "")
         if ref:
             defects_by_req.setdefault(ref, []).append({
-                "id": d["id"],
+                "id": d.get("id", ""),
                 "type": d.get("type", ""),
                 "description": d.get("description", ""),
             })
@@ -1363,7 +1644,7 @@ def foundry_verify_coverage(
         spec_req_ids = list(dict.fromkeys(re.findall(r"\b(US-\d+|FR-\d+|NFR-\d+)\b", spec_text)))
 
     if not spec_req_ids:
-        spec_req_ids = [r["id"] for r in requirements]
+        spec_req_ids = [r["id"] for r in requirements if r.get("id")]
 
     traceability = []
     gaps = []

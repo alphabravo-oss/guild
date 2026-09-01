@@ -2,7 +2,7 @@
 # evidence-for: FR-017, AC-023
 # evidence-volatile: judged: \d+
 
-committed evidence logs judged: 29
+committed evidence logs judged: 45
 stub-pattern rejections: 0
 
 === the rule that replaced it judges the COMMAND, at every command position ===
