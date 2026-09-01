@@ -33,6 +33,27 @@ the whole point: every line names the ``step`` the agent has reached. A bare
 timestamp ping would prove the process is alive without proving it is getting
 anywhere, and "alive but not advancing" is the failure mode the lead actually
 needs to see (A-025: "Distinguishes no-heartbeat from heartbeat-but-no-progress").
+
+An agent's LAST line carries ``"done": true``. Without a terminal line an agent
+does not stop being watched when it finishes — it stops writing, crosses the
+stall threshold, and reports ``stalled`` for the remainder of the run, so every
+completed casting silts up ``needs_attention`` until the lead stops reading it.
+A watchlist that is mostly finished work is a watchlist nobody watches.
+
+WHO GETS A LEDGER
+-----------------
+Both spawn tools here serve TEAMMATES, but they are not the only agents a run
+spawns. The four INSPECT streams that file into the defect ledger — TRACE,
+FLOW_TRACE, PROVE, RESEARCH_AUDIT — are spawned by the lead from the F2 roster
+in ``commands/start.md`` against the ``agent_configs`` ``Foundry-Next``
+returns, never through this module, so nothing here can hand them the protocol
+at spawn time. ``foundry_liveness`` closes that half from the read side: while
+the run is in INSPECT it reports each expected stream agent that has written no
+ledger under the ``no_ledger`` status, carrying that agent's own
+``progress_protocol`` block for the lead to append. The durable placement for
+that text is each stream's own agent file (GI-001's shape); until it lands
+there, this is the channel that makes the four streams visible at all rather
+than silently absent from the roster.
 """
 
 from __future__ import annotations
@@ -42,6 +63,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.schemas import vocab
 from foundry_mcp.tools.foundry_orchestrator import agent_model
 from foundry_mcp.tools.foundry_state import get_run_dir
 
@@ -114,19 +136,78 @@ STALL_THRESHOLD_SECONDS = 900
 #                honest answer is that we cannot tell. Reported rather than
 #                folded into STALLED, because STALLED asserts a last-progress
 #                time and here there is none to assert.
+#
+# Two more that are about the ENDS of an agent's life rather than its middle:
+#   DONE         the last line carried `"done": true`. Terminal, and it
+#                outranks every age check — a finished agent is finished
+#                however long ago it finished. Without this status a completed
+#                casting simply stops writing, crosses the threshold, and
+#                reports STALLED forever, so `needs_attention` fills with
+#                finished work and stops being a watchlist.
+#   NO_LEDGER    the run expects this agent to be writing and no ledger file
+#                exists. Distinct from STALLED (which dates a real last line)
+#                and from UNKNOWN (which has a file to point at). This is the
+#                only status not derived from a ledger, and it is what makes
+#                an agent that never wrote one visible at all.
 STATUS_PROGRESSING = "progressing"
 STATUS_NO_PROGRESS = "no_progress"
 STATUS_STALLED = "stalled"
 STATUS_UNKNOWN = "unknown"
+STATUS_DONE = "done"
+STATUS_NO_LEDGER = "no_ledger"
 
 PROGRESS_STATUSES = frozenset(
-    {STATUS_PROGRESSING, STATUS_NO_PROGRESS, STATUS_STALLED, STATUS_UNKNOWN}
+    {
+        STATUS_PROGRESSING,
+        STATUS_NO_PROGRESS,
+        STATUS_STALLED,
+        STATUS_UNKNOWN,
+        STATUS_DONE,
+        STATUS_NO_LEDGER,
+    }
+)  # 6 items
+
+# Every status the lead should look at. PROGRESSING is working as intended and
+# DONE is finished work — neither is a call to action, and putting DONE here
+# would rebuild the exact silting-up this status exists to stop.
+NEEDS_ATTENTION_STATUSES = frozenset(
+    {STATUS_NO_PROGRESS, STATUS_STALLED, STATUS_UNKNOWN, STATUS_NO_LEDGER}
 )  # 4 items
 
-# Every status except PROGRESSING is something the lead should look at.
-NEEDS_ATTENTION_STATUSES = frozenset(
-    {STATUS_NO_PROGRESS, STATUS_STALLED, STATUS_UNKNOWN}
-)  # 3 items
+# The ledger field an agent sets on its final line to declare itself finished.
+# A dedicated boolean rather than a reserved `step` spelling: `step` is free
+# prose an agent writes in its own words, so any sentinel value there would
+# collide with a real step sooner or later.
+TERMINAL_FIELD = "done"
+
+# The four INSPECT stream agents that file into the defect ledger. Not a new
+# enum — these are the lowercase wire spellings `schemas/vocab.py` already
+# owns (the same ids `Foundry-Stream` takes and a defect's `source` persists),
+# so one agent carries one id across the whole protocol and its ledger
+# filename is that id. The import-time check below is what keeps that true.
+#
+# Why these four and not all nine wire ids: SIGHT and TEST/PROBE are the lead's
+# own work rather than spawned agents ("lead runs Playwright directly", "inline
+# test suite" — commands/start.md F2 roster), and COVERAGE_DIFF and TEST-01 are
+# conditional streams. These four are the roster GI-001 names, and they are the
+# four D-021 found invisible. Extend only via phase-level RFC.
+INSPECT_STREAM_AGENT_IDS = ("trace", "flow_trace", "prove", "research_audit")  # 4 items
+
+_unknown_stream_ids = set(INSPECT_STREAM_AGENT_IDS) - set(vocab.STREAM_WIRE_IDS)
+if _unknown_stream_ids:  # pragma: no cover - import-time contract guard
+    raise ImportError(
+        f"INSPECT_STREAM_AGENT_IDS drifted from vocab.STREAM_WIRE_IDS: "
+        f"{sorted(_unknown_stream_ids)} are not canonical wire ids. The stream "
+        f"roster is vocab.py's to own; fix the spelling here rather than "
+        f"re-declaring the vocabulary."
+    )
+del _unknown_stream_ids
+
+# The state.json phase during which the INSPECT streams are running and are
+# therefore expected to be writing ledgers. Outside it they are not late, they
+# are simply not spawned, and reporting them would be the false alarm that
+# teaches a lead to ignore the roster.
+INSPECT_PHASE = "F2"
 
 
 def _teammate_model() -> str:
@@ -149,16 +230,45 @@ def _agent_id_for_casting(casting_id: int | str) -> str:
     return f"casting-{casting_id}"
 
 
-def _progress_protocol_block(run_name: str, agent_id: str) -> str:
+# The two agent-shaped halves of the protocol block. Everything else in it —
+# the path, the field names, the cadence, the threshold, the terminal line — is
+# identical for every agent, because it is the half `foundry_liveness` parses.
+# Only the examples differ, and they have to: a teammate handed a block that
+# names INSPECT steps, or a stream agent told its phase is `cast`, would write
+# a truthful-looking ledger describing work it is not doing.
+TEAMMATE_PHASE_HINT = "the run phase you were spawned for (`cast` or `grind`)"
+TEAMMATE_STEP_EXAMPLES = (
+    "Read Floor done, Approach Deliberation written, each file edited, "
+    "self-check run, commit made"
+)
+
+STREAM_PHASE_HINT = "the run phase you were spawned for (`inspect`)"
+STREAM_STEP_EXAMPLES = (
+    "scope read, each casting or requirement swept, findings assembled, "
+    "Foundry-Sync called"
+)
+
+
+def _progress_protocol_block(
+    run_name: str,
+    agent_id: str,
+    phase_hint: str = TEAMMATE_PHASE_HINT,
+    step_examples: str = TEAMMATE_STEP_EXAMPLES,
+) -> str:
     """Return the progress-ledger protocol block for one spawned agent (FR-015).
 
-    The lead appends this BELOW the casting prompt, the same placement rule
+    The lead appends this BELOW the agent's prompt, the same placement rule
     ``grind_cycle_context`` already uses — the prompt itself stays verbatim.
 
-    The path and the three field names below are the write half of the loop
+    The path and the field names below are the write half of the loop
     ``foundry_liveness`` reads back; the cadence and threshold are
     interpolated from the module constants so the prose an agent obeys cannot
     drift from the numbers the tool judges it against.
+
+    ``phase_hint`` and ``step_examples`` are the only agent-shaped parts. They
+    default to the teammate wording, so the two spawn tools in this module call
+    this with an id and nothing else; ``STREAM_PHASE_HINT`` /
+    ``STREAM_STEP_EXAMPLES`` produce the INSPECT-stream variant.
     """
     ledger = f"foundry-archive/{run_name}/{PROGRESS_DIR_NAME}/{agent_id}.jsonl"
     cadence_min = PROGRESS_CADENCE_SECONDS // 60
@@ -176,12 +286,11 @@ def _progress_protocol_block(run_name: str, agent_id: str) -> str:
             "```",
             "",
             "- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.",
-            "- `phase` — the run phase you were spawned for (`cast` or `grind`).",
+            f"- `phase` — {phase_hint}.",
             "- `step` — where you have actually got to, in a few words.",
             "",
             "Write a line when you start, and again every time you reach a NEW step: "
-            "Read Floor done, Approach Deliberation written, each file edited, self-check "
-            f"run, commit made. Never let more than {cadence_min} minutes of work pass "
+            f"{step_examples}. Never let more than {cadence_min} minutes of work pass "
             "without a line.",
             "",
             f"`step` is the load-bearing field. The lead's `Foundry-Liveness` query reads "
@@ -190,6 +299,24 @@ def _progress_protocol_block(run_name: str, agent_id: str) -> str:
             f"while `step` stays identical for {stall_min} minutes — alive but not "
             "advancing, which is just as alarming to the lead as silence. So change "
             "`step` when the work moves, and do not pad the ledger with repeats to look busy.",
+            "",
+            "### Your LAST line declares you finished",
+            "",
+            f"When your work is done, append one final line carrying `\"{TERMINAL_FIELD}\": true` "
+            "alongside the usual three fields:",
+            "",
+            "```",
+            '{"timestamp": "2026-08-31T20:11:07+00:00", "phase": "cast", '
+            f'"step": "committed 9f21ac3", "{TERMINAL_FIELD}": true}}',
+            "```",
+            "",
+            "This is not bookkeeping. Finishing does not take you off the lead's watchlist "
+            "— it just stops your ledger, so without a terminal line you cross the "
+            f"{stall_min}-minute threshold and are reported as `{STATUS_STALLED}` for the "
+            f"rest of the run. Write it and you are reported as `{STATUS_DONE}` and drop "
+            "out of `needs_attention`, which is what keeps that list worth reading: a "
+            "roster where every finished agent looks stalled teaches the lead to ignore "
+            "the one that really is.",
             "",
             f"Create the `{PROGRESS_DIR_NAME}/` directory if it does not exist, and open the "
             "file in append mode — never rewrite it. A failed append must NEVER block your "
@@ -250,6 +377,15 @@ def _read_progress_ledger(path: Path) -> list[dict]:
             continue
         lines.append({"record": record, "moment": moment})
     return lines
+
+
+def _is_terminal(record: dict) -> bool:
+    """True when a ledger line declares the agent finished.
+
+    Strictly ``True``, never merely truthy: a ledger is hand-written prose from
+    a working agent, and ``"done": "not yet"`` must not retire it.
+    """
+    return record.get(TERMINAL_FIELD) is True
 
 
 def _step_key(record: dict) -> tuple[str, str]:
@@ -322,7 +458,12 @@ def _agent_liveness_record(
     last_line_age = (now - last["moment"]).total_seconds()
     last_progress_age = (now - progress_moment).total_seconds()
 
-    if last_line_age >= threshold:
+    # Terminal outranks every age check: a finished agent is finished however
+    # long ago it finished, and ageing it into STALLED is precisely the bug
+    # this branch exists to prevent.
+    if _is_terminal(last["record"]):
+        status = STATUS_DONE
+    elif last_line_age >= threshold:
         status = STATUS_STALLED
     elif last_progress_age >= threshold:
         status = STATUS_NO_PROGRESS
@@ -344,6 +485,152 @@ def _agent_liveness_record(
     }
 
 
+def _load_run_state(fdir: Path) -> dict:
+    """Return the run's ``state.json`` as a dict, or ``{}`` if unreadable.
+
+    Read-only and never-raising. Liveness is a diagnostic: a missing or torn
+    state file must degrade it to "I cannot tell which phase this is", never
+    fail the call.
+    """
+    try:
+        data = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _skipped_stream_ids(fdir: Path) -> set[str]:
+    """Return the wire ids of streams this run declared it would not spawn.
+
+    ``manifest.stream_skips`` is F0.5's predictive skip list (entries carry a
+    ``stream_id`` in the canonical UPPERCASE spelling plus a ``reason``); a
+    bare string entry is accepted too, so an older manifest still reads. The
+    canonical spelling is mapped back to its wire id through
+    ``vocab.WIRE_TO_CANONICAL`` rather than by lowercasing, because the two
+    spellings are not related by case alone (``TEST-01`` / ``test01``).
+    """
+    try:
+        manifest = json.loads(
+            (fdir / "castings" / "manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(manifest, dict):
+        return set()
+
+    canonical_to_wire = {
+        canonical: wire for wire, canonical in vocab.WIRE_TO_CANONICAL.items()
+    }
+    skipped: set[str] = set()
+    for entry in manifest.get("stream_skips") or []:
+        if isinstance(entry, dict):
+            raw = entry.get("stream_id") or entry.get("stream") or entry.get("id")
+        else:
+            raw = entry
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        token = raw.strip()
+        if token.lower() in vocab.STREAM_WIRE_IDS:
+            skipped.add(token.lower())
+        elif token.upper() in canonical_to_wire:
+            skipped.add(canonical_to_wire[token.upper()])
+    return skipped
+
+
+def _expected_inspect_stream_agents(fdir: Path) -> list[str]:
+    """Return the stream agents this run actually spawns at INSPECT (D-021).
+
+    Conditional by necessity. Reporting a stream the run was never going to
+    run is a permanent false alarm, and a ``needs_attention`` list that is
+    always wrong about the same agent is the same disease D-022 names: the
+    lead learns to skip it. So each of the three conditions below is the
+    stream's own documented spawn condition from the F2 roster:
+
+      * anything in ``manifest.stream_skips`` was predictively skipped at F0.5;
+      * FLOW_TRACE is "V3 only, when ``flow-delta.json`` exists";
+      * RESEARCH_AUDIT is skipped when the run gathered no research.
+    """
+    skipped = _skipped_stream_ids(fdir)
+    expected: list[str] = []
+    for wire_id in INSPECT_STREAM_AGENT_IDS:
+        if wire_id in skipped:
+            continue
+        if wire_id == "flow_trace" and not (fdir / "flow-delta.json").exists():
+            continue
+        if wire_id == "research_audit" and not (fdir / "research").is_dir():
+            continue
+        expected.append(wire_id)
+    return expected
+
+
+def _missing_stream_records(
+    fdir: Path,
+    now: datetime,
+    threshold: float,
+    run_rel: str,
+) -> list[dict]:
+    """Report expected INSPECT stream agents that have written no ledger (D-021).
+
+    The four defect-filing streams are spawned from the F2 roster, not from
+    either tool in this module, so nothing hands them the progress protocol at
+    spawn time and a glob over ``progress/`` cannot see them at all — the
+    roster simply has no row where they should be. These records are that row,
+    and each one carries the agent's own ``progress_protocol`` block so the
+    answer to "why is this stream invisible?" arrives with the thing that
+    fixes it.
+
+    Two gates keep this from crying wolf. The run must be IN ``INSPECT_PHASE``
+    — outside it the streams are not late, they are not spawned. And the phase
+    must have been running for longer than the stall threshold, so a stream
+    spawned twenty seconds ago is not reported for not having written yet;
+    below that bar the honest answer is "too early to say", which is silence.
+    """
+    state = _load_run_state(fdir)
+    if state.get("phase") != INSPECT_PHASE:
+        return []
+
+    phase_times = state.get("phase_times")
+    entered = None
+    if isinstance(phase_times, dict):
+        entry = phase_times.get(INSPECT_PHASE)
+        if isinstance(entry, dict):
+            entered = _parse_progress_timestamp(entry.get("started_at"))
+    if entered is None:
+        return []
+
+    expected_age = (now - entered).total_seconds()
+    if expected_age < threshold:
+        return []
+
+    run_name = fdir.name
+    return [
+        {
+            "agent": wire_id,
+            "status": STATUS_NO_LEDGER,
+            "last_progress_age_seconds": None,
+            "last_line_age_seconds": None,
+            "phase": "inspect",
+            "step": None,
+            "last_timestamp": None,
+            "progress_since": None,
+            "lines": 0,
+            "ledger": f"{run_rel}/{PROGRESS_DIR_NAME}/{wire_id}.jsonl",
+            "expected_since_seconds": int(expected_age),
+            "detail": (
+                f"No progress ledger exists for the {wire_id} stream agent, which this "
+                f"run has been expecting since it entered {INSPECT_PHASE}. Stream agents "
+                "are spawned from the F2 roster rather than from Foundry-Spawn-Teammate, "
+                "so nothing hands them the protocol automatically — append the "
+                "`progress_protocol` block on this record to the agent's prompt."
+            ),
+            "progress_protocol": _progress_protocol_block(
+                run_name, wire_id, STREAM_PHASE_HINT, STREAM_STEP_EXAMPLES
+            ),
+        }
+        for wire_id in _expected_inspect_stream_agents(fdir)
+    ]
+
+
 def foundry_liveness(
     agent: str | None = None,
     stall_seconds: int | float | None = None,
@@ -356,8 +643,9 @@ def foundry_liveness(
     to write.
 
     Args:
-        agent: A single agent id (a ledger filename stem, e.g.
-            ``"casting-4"``). Omitted / ``None`` reports every agent in the run.
+        agent: A single agent id — a ledger filename stem (``"casting-4"``) or
+            an expected INSPECT stream agent (``"trace"``, ``"prove"``).
+            Omitted / ``None`` reports every agent in the run.
         stall_seconds: Per-call override of ``STALL_THRESHOLD_SECONDS``.
         project_root: Repo root.
 
@@ -375,17 +663,25 @@ def foundry_liveness(
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
 
-    Roster policy: the roster is driven by which ledger FILES exist, never by
-    ``spawns.log``. A run where nothing has written a ledger yet reports an
-    empty roster with ``ok: True`` — an unstarted ledger is a normal early-run
-    state, not an error. Enumerating the roster from ``spawns.log`` instead
-    would surface the deadest case of all (spawned, never wrote a line), but
-    it would also make that same empty run report N phantom records, so the
-    ledger is the single source of the roster.
+    Roster policy: every ledger file in the run, plus — while the run is in
+    INSPECT — the stream agents it expects that have written no ledger (D-021).
+    A run where nothing has written a ledger and no stream is overdue reports
+    an empty roster with ``ok: True``: an unstarted ledger is a normal
+    early-run state, not an error.
 
-    An explicitly-named agent with no ledger IS a named refusal: the caller
-    asked about a specific worker and the honest answer is that no such
-    ledger exists, with the ones that do listed in the hint.
+    Nothing is enumerated from ``spawns.log``. It would surface the deadest
+    teammate case of all — spawned, never wrote a line — but the log records a
+    spawn REQUEST rather than a live worker, so a run's finished waves would
+    accumulate in the roster forever with no signal that says otherwise. The
+    INSPECT streams are added despite writing no spawn record because their
+    expectation window is bounded by a phase that ends, which is exactly the
+    property ``spawns.log`` lacks. A teammate that dies before its first line
+    is still invisible here; see ``concerns.md`` for that gap.
+
+    An explicitly-named agent with neither a ledger nor an expectation IS a
+    named refusal: the caller asked about a specific worker and the honest
+    answer is that no such agent is known to this run, with the ones that are
+    listed in the hint.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -412,17 +708,32 @@ def foundry_liveness(
     run_rel = f"foundry-archive/{fdir.name}"
     pdir = _progress_dir(fdir)
     ledgers = sorted(pdir.glob("*.jsonl")) if pdir.is_dir() else []
-    known = [p.stem for p in ledgers]
+    now = datetime.now(timezone.utc)
+
+    records = [_agent_liveness_record(p, now, threshold, run_rel) for p in ledgers]
+
+    # An expected stream agent that HAS written a ledger is reported from that
+    # ledger like anybody else; only the ones with nothing to read get a
+    # synthesized row, so a stream that is obeying the protocol never appears
+    # twice and never appears as no_ledger.
+    have_ledgers = {record["agent"] for record in records}
+    records.extend(
+        record
+        for record in _missing_stream_records(fdir, now, threshold, run_rel)
+        if record["agent"] not in have_ledgers
+    )
+    records.sort(key=lambda record: record["agent"])
+    known = [record["agent"] for record in records]
 
     if agent is not None:
         wanted = agent.strip()
-        match = next((p for p in ledgers if p.stem == wanted), None)
+        match = next((record for record in records if record["agent"] == wanted), None)
         if match is None:
             return {
                 "ok": False,
-                "error": f"No progress ledger for agent '{wanted}'",
+                "error": f"No agent '{wanted}' is known to this run",
                 "hint": (
-                    f"Agents with a ledger in this run: {known}"
+                    f"Agents this run knows about: {known}"
                     if known
                     else (
                         f"No agent in this run has written a progress ledger yet. Agents are "
@@ -431,10 +742,7 @@ def foundry_liveness(
                     )
                 ),
             }
-        ledgers = [match]
-
-    now = datetime.now(timezone.utc)
-    records = [_agent_liveness_record(p, now, threshold, run_rel) for p in ledgers]
+        records = [match]
 
     result: dict = {
         "ok": True,
@@ -447,6 +755,19 @@ def foundry_liveness(
             r["agent"] for r in records if r["status"] in NEEDS_ATTENTION_STATUSES
         ],
     }
+
+    missing = [r["agent"] for r in records if r["status"] == STATUS_NO_LEDGER]
+    if missing:
+        result["instructions"] = (
+            f"{len(missing)} INSPECT stream agent(s) have written no progress ledger and "
+            f"are therefore invisible to this tool: {', '.join(missing)}. The four "
+            "defect-filing stream agents are spawned from the F2 roster, not from "
+            "Foundry-Spawn-Teammate, so nothing hands them the progress protocol the way "
+            "a teammate spawn does. APPEND each one's `progress_protocol` block (carried "
+            "on its record above) BELOW that stream agent's prompt when you spawn it, "
+            "exactly as you already do for a teammate. Until then a stream that dies "
+            "early is indistinguishable from one still reading the spec."
+        )
 
     if not records and agent is None:
         result["note"] = (

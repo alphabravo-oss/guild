@@ -30,14 +30,18 @@
 # schemas/vocab.py). Evidence that AC-018/AC-019/AC-020 are SATISFIED belongs
 # to castings 2 and 3 under their own commits.
 #
-
 _agent_id_for_casting
 _agent_liveness_record
 _build_grind_cycle_context
+_expected_inspect_stream_agents
+_is_terminal
+_load_run_state
+_missing_stream_records
 _parse_progress_timestamp
 _progress_dir
 _progress_protocol_block
 _read_progress_ledger
+_skipped_stream_ids
 _step_key
 _teammate_model
 foundry_cast_wave

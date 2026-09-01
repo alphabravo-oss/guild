@@ -103,6 +103,48 @@ def _write_ledger(fdir: Path, agent: str, lines: list[tuple[float, str, str]]) -
     return path
 
 
+def _append_terminal_line(fdir: Path, agent: str, age_seconds: float, step: str) -> None:
+    """Append the ``"done": true`` line an agent writes when it finishes."""
+    path = fdir / "progress" / f"{agent}.jsonl"
+    moment = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": moment.isoformat(),
+                    "phase": "cast",
+                    "step": step,
+                    "done": True,
+                }
+            )
+            + "\n"
+        )
+
+
+def _enter_inspect(fdir: Path, minutes_ago: float, stream_skips=None) -> None:
+    """Put the run in F2 as of ``minutes_ago``, with an optional skip list.
+
+    Mirrors the two fields ``_missing_stream_records`` reads out of a real
+    ``state.json``: the current phase, and when that phase was entered.
+    """
+    entered = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "F2",
+                "phase_times": {"F2": {"started_at": entered.isoformat()}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    if stream_skips is not None:
+        castings = fdir / "castings"
+        castings.mkdir(parents=True, exist_ok=True)
+        (castings / "manifest.json").write_text(
+            json.dumps({"stream_skips": stream_skips}), encoding="utf-8"
+        )
+
+
 def _by_agent(result: dict) -> dict[str, dict]:
     return {record["agent"]: record for record in result["agents"]}
 
@@ -151,10 +193,39 @@ def test_status_vocabulary_is_closed_and_complete() -> None:
     """House rule 3 — a frozenset, and every status the code can emit is in it."""
     assert isinstance(fs.PROGRESS_STATUSES, frozenset)
     assert fs.PROGRESS_STATUSES == {
-        "progressing", "no_progress", "stalled", "unknown"
+        "progressing", "no_progress", "stalled", "unknown", "done", "no_ledger"
     }
     assert fs.NEEDS_ATTENTION_STATUSES < fs.PROGRESS_STATUSES
     assert fs.STATUS_PROGRESSING not in fs.NEEDS_ATTENTION_STATUSES
+
+
+def test_neither_healthy_status_calls_for_attention() -> None:
+    """D-022: DONE joins PROGRESSING as a status that is not a call to action.
+
+    Putting DONE in the attention set would rebuild the exact defect the
+    status was added to fix — a roster where finished work accumulates until
+    the lead stops reading it.
+    """
+    assert fs.STATUS_DONE not in fs.NEEDS_ATTENTION_STATUSES
+    assert fs.NEEDS_ATTENTION_STATUSES == {
+        "no_progress", "stalled", "unknown", "no_ledger"
+    }
+
+
+def test_the_inspect_stream_roster_is_derived_from_the_canonical_vocabulary() -> None:
+    """The stream ids are vocab.py's to own; this module selects, never re-declares.
+
+    A drifted spelling here would produce a ledger filename no stream agent
+    ever writes, so the roster would report four permanently-missing agents
+    that are in fact working.
+    """
+    from foundry_mcp.schemas import vocab
+
+    assert set(fs.INSPECT_STREAM_AGENT_IDS) <= set(vocab.STREAM_WIRE_IDS)
+    # GI-001's four defect-filing streams, and only those.
+    assert set(fs.INSPECT_STREAM_AGENT_IDS) == {
+        "trace", "flow_trace", "prove", "research_audit"
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -562,3 +633,295 @@ def test_the_record_names_the_ledger_it_was_read_from(run_env) -> None:
 
     assert record["ledger"] == "foundry-archive/c4-liveness-run/progress/casting-4.jsonl"
     assert (Path(project_root) / record["ledger"]).exists()
+
+
+# --------------------------------------------------------------------------- #
+# D-022 — a finished agent is DONE, not eternally STALLED
+# --------------------------------------------------------------------------- #
+
+
+def test_a_finished_agent_reports_done_however_long_ago_it_finished(run_env) -> None:
+    """D-022: the defect in one assertion.
+
+    Finishing does not take an agent off the watchlist — it just stops the
+    ledger. Without a terminal branch this agent's last line ages past the
+    threshold and it reports `stalled` for the rest of the run.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-4", [(9000, "cast", "self-check run")])
+    _append_terminal_line(fdir, "casting-4", 8700, "committed 9f21ac3")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["status"] == fs.STATUS_DONE
+    # The age is still reported — DONE says "finished", not "unknown".
+    assert record["last_progress_age_seconds"] > fs.STALL_THRESHOLD_SECONDS
+
+
+def test_a_finished_agent_does_not_fill_needs_attention(run_env) -> None:
+    """D-022's actual cost: the watchlist silting up with completed work."""
+    project_root, fdir = run_env
+    for casting in ("casting-1", "casting-2", "casting-3"):
+        _write_ledger(fdir, casting, [(9000, "cast", "self-check run")])
+        _append_terminal_line(fdir, casting, 8700, "committed")
+    _write_ledger(fdir, "casting-4", [(9000, "cast", "reading the spec")])
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    # Only the agent that really went silent is on the list.
+    assert result["needs_attention"] == ["casting-4"]
+    assert _by_agent(result)["casting-4"]["status"] == fs.STATUS_STALLED
+
+
+def test_done_outranks_every_age_check(run_env) -> None:
+    """Terminal is terminal — neither stall nor step-repeat can override it."""
+    project_root, fdir = run_env
+    # A ledger that would otherwise read no_progress: fresh lines, frozen step.
+    _write_ledger(
+        fdir,
+        "casting-4",
+        [(3000, "cast", "fixing D-021"), (60, "cast", "fixing D-021")],
+    )
+    _append_terminal_line(fdir, "casting-4", 30, "fixing D-021")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+    assert record["status"] == fs.STATUS_DONE
+
+
+def test_a_resumed_agent_leaves_done_behind(run_env) -> None:
+    """A casting re-dispatched for GRIND writes into the SAME ledger.
+
+    Terminal is a property of the LAST line, not a latch on the file, or a
+    teammate that finished CAST could never be watched again in GRIND.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-4", [(9000, "cast", "self-check run")])
+    _append_terminal_line(fdir, "casting-4", 8700, "committed 9f21ac3")
+    # Re-dispatched, and now silent again.
+    _append_line = fdir / "progress" / "casting-4.jsonl"
+    _append_line.write_text(
+        _append_line.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "timestamp": (
+                    datetime.now(timezone.utc) - timedelta(seconds=4000)
+                ).isoformat(),
+                "phase": "grind",
+                "step": "reading defect D-021",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+    assert record["status"] == fs.STATUS_STALLED
+    assert record["phase"] == "grind"
+
+
+def test_a_non_boolean_done_value_does_not_retire_an_agent(run_env) -> None:
+    """A ledger is hand-written prose; only a real ``true`` is terminal."""
+    project_root, fdir = run_env
+    path = fdir / "progress"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "casting-4.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": (
+                    datetime.now(timezone.utc) - timedelta(seconds=9000)
+                ).isoformat(),
+                "phase": "cast",
+                "step": "waiting on a build",
+                "done": "not yet",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+    assert record["status"] == fs.STATUS_STALLED
+
+
+def test_the_protocol_block_tells_agents_to_write_the_terminal_line() -> None:
+    """The write half of D-022 — the read half is worthless without it."""
+    block = fs._progress_protocol_block("some-run", "casting-4")
+    assert '"done": true' in block
+    assert fs.STATUS_DONE in block
+    # And it says WHY, because an agent that thinks this is bookkeeping skips it.
+    assert "needs_attention" in block
+    assert fs.STATUS_STALLED in block
+
+
+# --------------------------------------------------------------------------- #
+# D-021 — the INSPECT stream agents are visible to liveness
+# --------------------------------------------------------------------------- #
+
+
+def test_expected_stream_agents_with_no_ledger_are_reported(run_env) -> None:
+    """D-021: the four stream agents were absent from the roster entirely.
+
+    They are spawned from the F2 roster rather than from either tool in this
+    module, so nothing hands them the protocol and a glob over progress/ has
+    no row for them at all — silence indistinguishable from success.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    records = _by_agent(result)
+    assert records["trace"]["status"] == fs.STATUS_NO_LEDGER
+    assert records["prove"]["status"] == fs.STATUS_NO_LEDGER
+    assert "trace" in result["needs_attention"]
+    assert "prove" in result["needs_attention"]
+
+
+def test_a_missing_stream_record_carries_the_block_that_fixes_it(run_env) -> None:
+    """Reporting the gap is only half of it — the remedy travels with it."""
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["trace"]
+
+    block = record["progress_protocol"]
+    # The block names the exact path this tool reads back for that agent.
+    assert "foundry-archive/c4-liveness-run/progress/trace.jsonl" in block
+    assert record["ledger"].endswith("progress/trace.jsonl")
+    # And it is the STREAM variant, not the teammate one — a stream agent told
+    # its phase is `cast` writes a truthful-looking ledger about work it is
+    # not doing.
+    assert "`inspect`" in block
+    assert "Read Floor" not in block
+
+
+def test_the_response_tells_the_lead_what_to_do_about_a_missing_stream(run_env) -> None:
+    """The imperative channel this module already uses for spawn output."""
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert "progress_protocol" in result["instructions"]
+    assert "F2 roster" in result["instructions"]
+
+
+def test_a_stream_that_writes_a_ledger_is_read_from_it_like_anyone_else(run_env) -> None:
+    """No duplicate row, and no no_ledger for an agent that is obeying."""
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+    _write_ledger(fdir, "trace", [(60, "inspect", "sweeping casting 3")])
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    records = [r for r in result["agents"] if r["agent"] == "trace"]
+    assert len(records) == 1
+    assert records[0]["status"] == fs.STATUS_PROGRESSING
+    assert "trace" not in result["needs_attention"]
+
+
+def test_streams_are_not_expected_outside_inspect(run_env) -> None:
+    """Outside F2 they are not late, they are not spawned.
+
+    A permanent false alarm is the same disease D-022 names: a needs_attention
+    list that is always wrong about the same agent stops being read.
+    """
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "F3",
+                "phase_times": {
+                    "F2": {
+                        "started_at": (
+                            datetime.now(timezone.utc) - timedelta(hours=3)
+                        ).isoformat()
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = fs.foundry_liveness(project_root=project_root)
+    assert result["agents"] == []
+    assert "instructions" not in result
+
+
+def test_a_just_spawned_stream_is_not_yet_late(run_env) -> None:
+    """Below the threshold the honest answer is 'too early to say'."""
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=2)
+
+    result = fs.foundry_liveness(project_root=project_root)
+    assert result["agents"] == []
+
+
+def test_a_declared_stream_skip_is_honoured(run_env) -> None:
+    """manifest.stream_skips is the run's own statement of what it will spawn.
+
+    Entries carry the canonical UPPERCASE spelling while the ledger id is the
+    lowercase wire one, so this also pins the mapping rather than a lowercase().
+    """
+    project_root, fdir = run_env
+    _enter_inspect(
+        fdir,
+        minutes_ago=40,
+        stream_skips=[{"stream_id": "TRACE", "reason": "spec_format_version"}],
+    )
+
+    records = _by_agent(fs.foundry_liveness(project_root=project_root))
+    assert "trace" not in records
+    assert records["prove"]["status"] == fs.STATUS_NO_LEDGER
+
+
+def test_conditional_streams_are_only_expected_when_their_input_exists(run_env) -> None:
+    """FLOW_TRACE is V3-only; RESEARCH_AUDIT needs research to audit.
+
+    Reporting either on a run that never runs them would put a permanently
+    missing agent on every single liveness call.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+
+    without = _by_agent(fs.foundry_liveness(project_root=project_root))
+    assert "flow_trace" not in without
+    assert "research_audit" not in without
+
+    (fdir / "flow-delta.json").write_text("{}", encoding="utf-8")
+    (fdir / "research").mkdir()
+
+    with_inputs = _by_agent(fs.foundry_liveness(project_root=project_root))
+    assert with_inputs["flow_trace"]["status"] == fs.STATUS_NO_LEDGER
+    assert with_inputs["research_audit"]["status"] == fs.STATUS_NO_LEDGER
+
+
+def test_an_expected_stream_can_be_queried_by_identifier(run_env) -> None:
+    """CT-004's 'an agent identifier' form must reach the new rows too.
+
+    Otherwise the roster names an agent the lead cannot then ask about.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+
+    result = fs.foundry_liveness(agent="prove", project_root=project_root)
+
+    assert result["ok"] is True
+    assert [r["agent"] for r in result["agents"]] == ["prove"]
+    assert result["agents"][0]["status"] == fs.STATUS_NO_LEDGER
+
+
+def test_the_empty_roster_case_survives_the_expected_roster(run_env) -> None:
+    """Truth 2 is load-bearing and must not regress.
+
+    A run with no ledgers and no overdue stream still reports ok:True with an
+    empty roster, not an error and not four phantom rows.
+    """
+    project_root, fdir = run_env
+    assert not (fdir / "progress").exists()
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    assert result["agents"] == []
+    assert result["needs_attention"] == []

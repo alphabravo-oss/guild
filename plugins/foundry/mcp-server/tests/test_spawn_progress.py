@@ -32,7 +32,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -357,6 +357,161 @@ def test_the_agent_id_in_the_block_matches_the_one_liveness_reports(run_env) -> 
 
     assert single["ok"] is True
     assert single["agents"][0]["step"] == "casting 2 working"
+
+
+# --------------------------------------------------------------------------- #
+# D-022 — both spawn paths tell the agent how to declare itself finished
+# --------------------------------------------------------------------------- #
+
+
+def test_single_spawn_block_carries_the_terminal_line_instruction(run_env) -> None:
+    """The read-side DONE status is unreachable unless the prompt asks for it."""
+    project_root, _fdir = run_env
+    block = fs.foundry_spawn_teammate(1, "cast", project_root)["progress_protocol"]
+    assert '"done": true' in block
+    assert fs.STATUS_DONE in block
+
+
+def test_bulk_spawn_blocks_carry_the_terminal_line_instruction(run_env) -> None:
+    project_root, _fdir = run_env
+    result = fs.foundry_cast_wave(1, "cast", project_root)
+    for casting in result["castings"]:
+        assert '"done": true' in casting["progress_protocol"]
+
+
+def test_a_terminal_line_written_as_instructed_reports_done(run_env) -> None:
+    """The D-022 round trip, both halves, through the real spawn output.
+
+    The ledger path and the terminal field both come out of the emitted block
+    rather than out of literals, so a drift in either half fails here.
+    """
+    project_root, _fdir = run_env
+    block = fs.foundry_spawn_teammate(1, "cast", project_root)["progress_protocol"]
+
+    ledger = Path(project_root) / re.search(r"`([^`]+\.jsonl)`", block).group(1)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    long_ago = datetime.now(timezone.utc) - timedelta(
+        seconds=fs.STALL_THRESHOLD_SECONDS * 2
+    )
+    ledger.write_text(
+        json.dumps(
+            {"timestamp": long_ago.isoformat(), "phase": "cast", "step": "self-check"}
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "timestamp": long_ago.isoformat(),
+                "phase": "cast",
+                "step": "committed",
+                fs.TERMINAL_FIELD: True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["agents"][0]["status"] == fs.STATUS_DONE
+    assert result["needs_attention"] == []
+
+
+# --------------------------------------------------------------------------- #
+# D-021 — the block serves stream agents, not only teammates
+# --------------------------------------------------------------------------- #
+
+
+def test_the_teammate_variant_is_what_the_spawn_tools_still_emit(run_env) -> None:
+    """Generalizing the block must not change what a teammate receives."""
+    project_root, _fdir = run_env
+    block = fs.foundry_spawn_teammate(1, "cast", project_root)["progress_protocol"]
+    assert "`cast` or `grind`" in block
+    assert "Read Floor" in block
+
+
+def test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in() -> None:
+    """A stream agent handed the teammate wording writes a truthful-looking
+    ledger describing work it is not doing — `phase: cast` from an agent that
+    is running INSPECT is worse than no line at all."""
+    block = fs._progress_protocol_block(
+        "some-run", "trace", fs.STREAM_PHASE_HINT, fs.STREAM_STEP_EXAMPLES
+    )
+    assert "`inspect`" in block
+    assert "`cast` or `grind`" not in block
+    assert "Read Floor" not in block
+    assert "Foundry-Sync" in block
+
+
+def test_the_two_variants_share_every_machine_read_field() -> None:
+    """Only the examples may differ. The path, the field names, the cadence and
+    the terminal field are the half liveness parses, and a variant that drifted
+    on any of them would produce a ledger the tool cannot read."""
+    teammate = fs._progress_protocol_block("some-run", "casting-1")
+    stream = fs._progress_protocol_block(
+        "some-run", "trace", fs.STREAM_PHASE_HINT, fs.STREAM_STEP_EXAMPLES
+    )
+    for shared in (
+        "`timestamp`",
+        "`phase`",
+        "`step`",
+        '"done": true',
+        f"foundry-archive/some-run/{fs.PROGRESS_DIR_NAME}/",
+        str(fs.STALL_THRESHOLD_SECONDS // 60),
+        str(fs.PROGRESS_CADENCE_SECONDS // 60),
+    ):
+        assert shared in teammate, shared
+        assert shared in stream, shared
+
+
+def test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness(
+    run_env,
+) -> None:
+    """D-021 end to end: the gap is reported, the block that comes with the
+    report is obeyed, and the stream stops being invisible.
+
+    The ledger path is taken out of the block the tool itself handed over, so
+    this fails if the reported remedy names a file the reader does not read.
+    """
+    project_root, fdir = run_env
+    entered = datetime.now(timezone.utc) - timedelta(
+        seconds=fs.STALL_THRESHOLD_SECONDS * 2
+    )
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "F2",
+                "phase_times": {"F2": {"started_at": entered.isoformat()}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    before = fs.foundry_liveness(project_root=project_root)
+    trace = next(r for r in before["agents"] if r["agent"] == "trace")
+    assert trace["status"] == fs.STATUS_NO_LEDGER
+    assert "trace" in before["needs_attention"]
+
+    ledger = Path(project_root) / re.search(
+        r"`([^`]+\.jsonl)`", trace["progress_protocol"]
+    ).group(1)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "phase": "inspect",
+                "step": "sweeping casting 3",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    after = fs.foundry_liveness(project_root=project_root)
+    trace_after = next(r for r in after["agents"] if r["agent"] == "trace")
+    assert trace_after["status"] == fs.STATUS_PROGRESSING
+    assert trace_after["step"] == "sweeping casting 3"
+    assert "trace" not in after["needs_attention"]
 
 
 # --------------------------------------------------------------------------- #
