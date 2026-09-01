@@ -198,13 +198,13 @@ of them.
 
 ## Status
 
-Version 0.16.0.
+Version 0.17.0.
 
 ```
 cd plugins/webster && uvx pytest
 ```
 
-177 passing across nine modules. Every module but `tests/test_readme.py` drives a script the
+179 passing across nine modules. Every module but `tests/test_readme.py` drives a script the
 way a command does, through the one `run_script` helper as a subprocess, so nothing is imported
 and the file under test is the one a user actually invokes. Five of the eight scripts make an
 import the wrong way in: `drift.py`, `llmstxt.py`, `doctype.py`, `survey.py` and `slop.py` bind

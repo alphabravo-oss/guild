@@ -1178,3 +1178,41 @@ def test_the_bare_word_is_still_a_leak(run_script, docs_dir):
         f"Exempting the bare word because some product name contains it would retire the rule.\n"
         f"{outcome(result)}"
     )
+
+
+def test_an_anchor_is_not_read_as_prose(run_script, docs_dir):
+    """An HTML comment is not on the page (FR-017, house-rules §1).
+
+    Every anchor lives in one precisely so the reader never sees it, and the lens was reading
+    them: an anchor to `internal/api/systeminfo/handler.go:270` reported the page for naming
+    part of the architecture. The plugin's own convention tripped its own rule, and the fix a
+    writer would reach for is deleting the source.
+    """
+    write_page(docs_dir, "fips.md", "title: FIPS\ndoc_type: reference\naudience: operator",
+               "# FIPS\n\nFIPS mode is read at runtime rather than taken from the build.\n"
+               "<!-- internal/api/systeminfo/handler.go:270 -->\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "wrong-lens" not in result.stdout, (
+        f"The anchor is invisible to a reader and must be invisible to the lens.\n"
+        f"{outcome(result)}"
+    )
+
+
+def test_an_acronym_inside_an_anchor_is_not_jargon(run_script, docs_dir):
+    """Same rule for the jargon check (FR-017).
+
+    A path holding an uppercase run is not a term the page used on anybody.
+    """
+    write_page(docs_dir, "bundles.md",
+               "title: Bundles\ndoc_type: how-to\naudience: user",
+               "# Bundles\n\nA bundle lists what it carries.\n"
+               "<!-- internal/airgap/BOM/catalog.go:12 -->\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "'BOM'" not in result.stdout, (
+        f"An acronym that appears only inside an anchor was never shown to a reader.\n"
+        f"{outcome(result)}"
+    )

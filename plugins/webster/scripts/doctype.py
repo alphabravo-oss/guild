@@ -359,6 +359,11 @@ UNIVERSAL_ACRONYMS = {
 # directory. Auditing it as a page reports its own working notes as defects on a published page.
 NOT_A_PAGE = {"docs-plan.md", "llms.txt", "README.md"}
 SECOND_PERSON = re.compile(r"(?i)\byou\b|\byour\b|\byours\b")
+# An HTML comment is not on the page. house-rules §1 puts every anchor in one precisely so the
+# reader never sees it, and the lens was reading them: an anchor to `internal/api/.../handler.go`
+# reported the page for naming part of the architecture, so the plugin's own convention tripped
+# its own rule and the fix a writer would reach for is deleting the source.
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 # Products put their own labels in capitals, and quoting one is the opposite of jargon: it is
 # the page using the reader's own screen. "a group labeled HABITAT" is not an unexpanded acronym.
 # The cue has to be near the word it excuses. Applied to a whole line it suppressed every
@@ -758,7 +763,7 @@ def check_lens(rel, text, audience, dt, env_vars):
     entries_are_the_subject = dt in ("reference", "api-reference")
 
     named = []
-    for n, line in prose_lines(text):
+    for n, line in prose_lines(HTML_COMMENT.sub("", text)):
         if not entries_are_the_subject:
             for m in CODE_IDENT.finditer(line):
                 if m.group(1).lower() not in IDENT_ALLOW:
@@ -853,6 +858,7 @@ def check_jargon(rel, text, audience, known):
     terms cleared that way are counted and reported, so a set that passes on the glossary's word
     says so out loud instead of passing quietly."""
     findings, on_trust = [], set()
+    text = HTML_COMMENT.sub("", text)
     body = "\n".join(l for _, l in prose_lines(text))
     linked_glossary = "glossary" in text.lower()
     seen = set()
