@@ -19,6 +19,7 @@ what proves the mechanics it prescribes are real.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -599,6 +600,131 @@ def _hook_dir(repo: Path, env: dict[str, str]) -> Path:
     return path if path.is_absolute() else repo / path
 
 
+# The husky/lefthook layout: the hook body is a TRACKED file in the work tree
+# and the path git actually runs is a relative symlink pointing into it.
+PROJECT_HOOK_LINK = "../../scripts/my-hook.sh"
+PROJECT_HOOK_BODY = "#!/bin/sh\necho 'the project owns this hook'\n"
+
+
+def _symlinked_project_hook(repo: Path, env: dict[str, str]) -> tuple[Path, Path]:
+    """Give ``repo`` a version-controlled hook reached through a symlink.
+
+    Returns ``(link, script)`` — the path git runs, and the tracked file at the
+    far end of it. The script is committed, so any write that reaches it shows
+    up in ``git status`` and can be captured by the next pathspec commit.
+    """
+    script = _write(repo, "scripts/my-hook.sh", PROJECT_HOOK_BODY)
+    script.chmod(0o755)
+    _git(["add", "scripts/my-hook.sh"], cwd=repo, env=env)
+    _git(["commit", "-q", "-m", "project hook"], cwd=repo, env=env)
+
+    hooks = _hook_dir(repo, env)
+    hooks.mkdir(parents=True, exist_ok=True)
+    link = hooks / "pre-commit"
+    link.symlink_to(PROJECT_HOOK_LINK)
+    return link, script
+
+
+def test_installer_replaces_a_symlinked_hook_without_writing_through_it(
+    repo: Path, env: dict[str, str]
+):
+    """D-107: a symlinked hook is UNLINKED, never written through.
+
+    ``cp`` and ``chmod`` follow a symlink at the destination and act on the
+    file it points AT. Against the layout above, a bare
+    ``cp "$GUARD_SRC" "$HOOK_DEST"`` rewrote two lines of tracked repo source
+    into the whole guard, left ``pre-commit`` as the original link, and then
+    passed its own post-install check because ``-x`` and the marker grep
+    followed the link too — printing "Commit guard active" over the clobber.
+    start.md and resume.md run this installer against every target repo at the
+    top of every run, so that mutation landed before any casting began and the
+    next teammate's pathspec commit could capture it.
+    """
+    link, script = _symlinked_project_hook(repo, env)
+    before = script.read_bytes()
+
+    result = _run_installer(repo, env=env)
+
+    # The tracked file at the far end is untouched, byte for byte.
+    assert script.read_bytes() == before, (
+        "D-107: the installer wrote THROUGH the symlink and rewrote a tracked "
+        "file in the target repo's work tree"
+    )
+    assert _git(["status", "--porcelain"], cwd=repo, env=env).stdout == "", (
+        "D-107: installing the guard dirtied the target repo's working tree"
+    )
+
+    # The hook path itself is now a real, executable, marked file.
+    assert not link.is_symlink(), "the symlink was never replaced"
+    assert link.is_file() and os.access(link, os.X_OK)
+    assert link.read_bytes() == GUARD_SRC.read_bytes()
+
+    # A symlinked hook is a deliberate layout, so the operator is TOLD, and
+    # told about the real file rather than only the link.
+    assert "SYMLINK" in result.stdout, result.stdout
+    assert PROJECT_HOOK_LINK in result.stdout, (
+        "the report does not name the link it replaced"
+    )
+    resolved = [ln for ln in result.stdout.splitlines() if "resolving to:" in ln]
+    assert resolved, "the report never resolves the link to a real path"
+    reported = Path(resolved[0].split("resolving to:")[1].strip())
+    assert reported.resolve() == script.resolve(), (
+        f"the report points at {reported}, not the file the link led to"
+    )
+
+    # The backup preserves the LINK, so the restore command it prints actually
+    # restores a link. A dereferenced backup would put a copy of the script
+    # where the project deliberately keeps a pointer.
+    backups = [p for p in link.parent.iterdir() if ".foundry-backup." in p.name]
+    assert len(backups) == 1, [p.name for p in link.parent.iterdir()]
+    assert backups[0].is_symlink(), "the backup dereferenced the link"
+    assert os.readlink(backups[0]) == PROJECT_HOOK_LINK
+
+
+def test_installer_no_clobber_refuses_a_symlinked_hook(
+    repo: Path, env: dict[str, str]
+):
+    """--no-clobber over a symlink refuses and leaves BOTH ends alone."""
+    link, script = _symlinked_project_hook(repo, env)
+    before = script.read_bytes()
+
+    result = _run_installer(repo, "--no-clobber", env=env, check=False)
+
+    assert result.returncode != 0
+    assert "no-clobber" in result.stderr
+    assert "SYMLINK" in result.stderr, result.stderr
+    assert link.is_symlink(), "--no-clobber unlinked the hook anyway"
+    assert script.read_bytes() == before
+    assert _git(["status", "--porcelain"], cwd=repo, env=env).stdout == ""
+
+
+def test_installer_replaces_a_dangling_symlink(repo: Path, env: dict[str, str]):
+    """A dangling link is still a link, and ``-e`` cannot see that.
+
+    ``-e`` follows the link, so a ``pre-commit`` pointing at a path that does
+    not exist read as "nothing is here" and took the plain install branch —
+    where ``cp`` refuses to write through a dangling symlink on both GNU and
+    BSD, so ``set -e`` aborted the installer on a bare ``cp:`` error with no
+    named cause, in violation of its own exit contract, leaving the repo
+    unguarded. ``-L`` is true for live and dangling links alike, which is why
+    it is tested first.
+    """
+    hooks = _hook_dir(repo, env)
+    hooks.mkdir(parents=True, exist_ok=True)
+    link = hooks / "pre-commit"
+    link.symlink_to("../../absent-hook.sh")
+    victim = repo / "absent-hook.sh"
+
+    result = _run_installer(repo, env=env)
+
+    assert not victim.exists(), "the installer materialised the link's target"
+    assert _git(["status", "--porcelain"], cwd=repo, env=env).stdout == ""
+    assert not link.is_symlink()
+    assert link.read_bytes() == GUARD_SRC.read_bytes()
+    assert os.access(link, os.X_OK)
+    assert "dangling" in result.stdout, result.stdout
+
+
 def test_installer_is_idempotent(repo: Path, env: dict[str, str]):
     """Two runs leave exactly one working, executable guard, and say so."""
     first = _run_installer(repo, env=env)
@@ -816,6 +942,38 @@ def test_installer_never_stashes_or_reads_the_working_tree():
     code = "\n".join(_executable_lines(INSTALLER.read_text(encoding="utf-8")))
     assert "git stash" not in code
     assert "diff --name-only HEAD" not in code
+
+
+def test_installer_never_writes_content_through_the_hook_destination():
+    """Source-level lock on the D-107 root cause.
+
+    ``cp``, ``tee`` and shell redirection all FOLLOW a symlink at the
+    destination: they write the file it points at and leave the link standing.
+    The behavioural tests above catch that on the branches they exercise, but
+    a bare ``cp`` reintroduced in the plain-install branch would never meet a
+    symlink in those tests. This catches the SHAPE instead, so the hazard
+    cannot come back on a branch nobody parametrized. The guard is written to
+    a temp file and renamed, because rename(2) replaces the LINK ITSELF.
+    """
+    writers = ("cp", "install", "tee", "cat", "printf", "echo")
+    for line in _executable_lines(INSTALLER.read_text(encoding="utf-8")):
+        stripped = line.strip()
+        assert not re.search(r'>>?\s*"\$HOOK_DEST"', stripped), (
+            "the installer redirects output onto the hook destination:\n"
+            f"  {stripped}\n"
+            "Redirection follows a symlink and truncates its target, which in "
+            "a version-controlled hook layout is a TRACKED file. Write a temp "
+            "file in HOOKS_DIR and `mv` it into place."
+        )
+        if stripped.startswith(writers) and stripped.endswith('"$HOOK_DEST"'):
+            raise AssertionError(
+                "the installer copies onto the hook destination:\n"
+                f"  {stripped}\n"
+                "`cp` follows a symlink at the destination and writes the file "
+                "it points AT, leaving the hook unreplaced while a tracked "
+                "file in the target repo is silently rewritten (D-107). Write "
+                "a temp file in HOOKS_DIR and `mv` it into place."
+            )
 
 
 def test_installer_copies_rather_than_symlinks():
