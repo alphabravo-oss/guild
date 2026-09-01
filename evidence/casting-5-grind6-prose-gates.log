@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_protocol_prose.py -v -k "accept_casting_parameter or casting_commit or no_ledger or producing_phases or supersede or target_kind or statement_examples or single_caller or named_in_shipped_prose or required_argument or coverage_entry_shape or validator_enforcement"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_protocol_prose.py -v -k "accept_casting_parameter or casting_commit or no_ledger or producing_phases or supersede or target_kind or statement_examples or single_caller or named_in_shipped_prose or required_argument or coverage_entry_shape or validator_enforcement"
 # evidence-for: US-001, US-004, AC-001, AC-003, AC-014, FR-004, FR-009, FR-010
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: cachedir: .*

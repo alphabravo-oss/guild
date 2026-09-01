@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_protocol_prose.py -v -k "liveness or ledger or needs_attention or progress_protocol"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_protocol_prose.py -v -k "liveness or ledger or needs_attention or progress_protocol"
 # evidence-for: AC-003, FR-015
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: cachedir: .*
