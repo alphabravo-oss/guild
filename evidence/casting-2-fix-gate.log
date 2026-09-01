@@ -11,5 +11,17 @@
 # one is missing, supplying both persists the declarations on the record
 # (CT-001), and a statement that merely restates the defect's own symbol is
 # refused because an adjacent path is by definition a different one (AC-013).
-........................................                                 [100%]
-40 passed in 0.58s
+#
+# GRIND cycle 3, D-050: the ladder's remaining non-answers. Thirteen test
+# references PROVE drove and watched close a defect -- 'tests/', 'x.test',
+# 'a.spec', '.test', 'test.', './test', 'test/x', 'spec.', 't.test',
+# 'src/foo.py::test_', 'foo.test.bar', 'no.test.exists', 'manual-test/none' --
+# are refused by two new structural rules (no separator that delimits nothing;
+# the leaf must survive normalisation as a real name) plus a placeholder check,
+# and the STATEMENT side, untouched since cycle 2, gains its own ladder: 'x',
+# 'none', 'n/a', 'no adjacent paths', 'the same path', 'nothing', '-' and '0'
+# no longer satisfy a gate whose whole purpose is to make the fixer name an
+# adjacent path. Every cross-language reference shape still passes -- a rule
+# that refused a real fix would be a worse defect than the one it closes.
+...................................................................      [100%]
+67 passed in 0.92s

@@ -152,7 +152,15 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["phase"],
                 "properties": {
-                    "phase": {"type": "string", "enum": ["validate", "cast", "inspect", "grind", "assay", "temper", "nyquist", "done"]},
+                    # D-043 / AC-011 — "nyquist_done" is advertised here because
+                    # foundry_gate now has a branch for it. F6 has two doors and
+                    # only one was gateable: a lead following start.md's
+                    # Foundry-Gate("done") -> Foundry-Phase("nyquist_done")
+                    # sequence was gating a token other than the one it was
+                    # about to call, and no server-side gate existed for the one
+                    # it did call. Both terminal tokens resolve to the same
+                    # _done_preconditions evaluation.
+                    "phase": {"type": "string", "enum": ["validate", "cast", "inspect", "grind", "assay", "temper", "nyquist", "nyquist_done", "done"]},
                 },
             },
         ),
@@ -541,14 +549,27 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Accept-Casting",
+            # D-047 / FR-004 — this string is the cite policy a lead reads FIRST
+            # and most often: it is delivered verbatim into every lead's context
+            # with the tool list. It named only `file:line`, contradicting
+            # agents/teammate.md ("cite the exact path#Symbol ... the symbol,
+            # not a line range"), this tool's OWN return payload
+            # (foundry_handoff.py's must_verify), and tools/citation.py's
+            # grammar — one gate, three descriptions, and the protocol-level one
+            # never mentioned the durable form at all. The implementation always
+            # accepted both; this is the surface catching up, so path#Symbol
+            # leads and file:line is named as the accepted legacy form.
             description=(
                 "Gate acceptance of a completed casting. Requires fresh spec_hash and prompt_hash "
                 "(verifies re-reads happened), extracts the casting's acceptance criteria from the "
                 "<spec_requirements> block, checks the completion report for scope-flag phrases, "
                 "and mechanically verifies every requirement ID in the casting's spec slice "
-                "has a file:line citation in the completion report. Returns the AC list, requirement "
-                "IDs, and any missing citations. Blocks acceptance if the teammate reported scope "
-                "cuts OR any requirement has no citation."
+                "has a path#Symbol citation (the durable form) or a file:line citation (the legacy "
+                "form, still accepted) in the completion report. A path#Symbol cite must resolve in "
+                "the named file; a stale :line hint beside it is never a finding. Returns the AC "
+                "list, requirement IDs, any missing citations, and any unresolved symbol cites. "
+                "Blocks acceptance if the teammate reported scope cuts OR any requirement has no "
+                "citation."
             ),
             inputSchema={
                 "type": "object",

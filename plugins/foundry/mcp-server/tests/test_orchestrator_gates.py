@@ -1012,6 +1012,266 @@ def test_sync_will_not_demote_a_finding_that_declares_no_target_kind(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# D-049 / CT-002 / AC-019 — Sync must not absorb a new finding into an old one
+#
+# The regression matcher was `symbol == fixed.symbol OR description ==
+# fixed.description`; a hit reopened the old record, DISCARDED the incoming
+# finding and returned ok:true. CT-002 promises "records accepted and
+# attributed to their true source" and AC-019 "source attribution is preserved
+# verbatim" — neither can hold for a record that was never written. Sync is the
+# highest-volume filing path in the protocol (26% of grand-vulture's defects).
+# --------------------------------------------------------------------------- #
+
+
+def _fixed_record(**over) -> dict:
+    record = {
+        "id": "D-001",
+        "cycle": 0,
+        "source": "trace",
+        "type": "UNWIRED",
+        "description": "ORIGINAL: handler never calls the token store",
+        "spec_ref": "FR-001",
+        "symbol": "submit_form",
+        "file": "src/api/form.py",
+        "status": "fixed",
+        "fixed_in_cycle": 1,
+    }
+    record.update(over)
+    return record
+
+
+def _seed_fixed(fdir: Path, *records: dict) -> None:
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": list(records)}, indent=2), encoding="utf-8"
+    )
+    _write_state(fdir, phase="F2", cycle=2)
+
+
+def test_a_different_defect_on_the_same_symbol_is_filed_not_absorbed(run_env):
+    """D-049 drive G1, verbatim. A prove/MISSING/FR-003 finding on the symbol of
+    a fixed trace/UNWIRED/FR-001 record was reported as reopened=1, added=0 —
+    one record on disk, still carrying the OLD source, type, spec_ref and
+    description, and the caller told it succeeded."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record())
+
+    result = fo.foundry_sync_defects(
+        2,
+        [_finding(
+            source="prove",
+            type="MISSING",
+            spec_ref="FR-003",
+            symbol="submit_form",
+            file="src/api/form.py",
+            description="COMPLETELY DIFFERENT: no CSRF validation on the POST branch",
+        )],
+        project_root,
+    )
+
+    assert result["added"] == 1, result
+    assert result["reopened"] == 0
+    assert result["regressions"] == []
+
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(records) == 2
+    filed = records[1]
+    # AC-019: every content field of the incoming finding survived verbatim.
+    assert filed["source"] == "prove"
+    assert filed["type"] == "MISSING"
+    assert filed["spec_ref"] == "FR-003"
+    assert "COMPLETELY DIFFERENT" in filed["description"]
+    # And the old record was not disturbed.
+    assert records[0]["status"] == "fixed"
+    assert records[0]["source"] == "trace"
+
+
+def test_a_shared_description_alone_does_not_reopen_across_file_and_symbol(run_env):
+    """D-049 drive G1b: description equality ALONE reopened a fixed defect
+    across a different file AND a different symbol — added 0, one record, symbol
+    still the old one. Two records that merely read alike are two defects."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record(symbol="alpha", file="a.py", description="same text"))
+
+    result = fo.foundry_sync_defects(
+        2,
+        [_finding(symbol="omega", file="z.py", description="same text")],
+        project_root,
+    )
+
+    assert result["added"] == 1, result
+    assert result["reopened"] == 0
+
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [r["symbol"] for r in records] == ["alpha", "omega"]
+    assert [r["file"] for r in records] == ["a.py", "z.py"]
+
+
+def test_the_same_defect_recurring_is_still_a_regression(run_env):
+    """The behaviour that must NOT be lost: a fixed defect coming back — same
+    symbol, same file, same type, same spec_ref, same description — reopens
+    rather than being filed twice."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record())
+
+    result = fo.foundry_sync_defects(
+        2,
+        [_finding(
+            source="trace",
+            type="UNWIRED",
+            spec_ref="FR-001",
+            symbol="submit_form",
+            file="src/api/form.py",
+            description="ORIGINAL: handler never calls the token store",
+        )],
+        project_root,
+    )
+
+    assert result["reopened"] == 1, result
+    assert result["added"] == 0
+    assert result["regressions"] == ["D-001"]
+
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(records) == 1
+    assert records[0]["status"] == "open"
+    assert records[0]["regression"] is True
+    assert records[0]["reopened_in_cycle"] == 2
+
+
+def test_a_lone_agreement_is_never_enough_to_reopen(run_env):
+    """The rule stated directly: ONE matching field is a coincidence. Each case
+    below agrees with the fixed record on exactly one non-empty field and
+    conflicts on nothing else, because every other field is absent."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record(
+        symbol="submit_form", file="", spec_ref="", description="only the symbol",
+    ))
+
+    result = fo.foundry_sync_defects(
+        2,
+        [{"source": "prove", "type": "UNWIRED", "symbol": "submit_form",
+          "description": "a wholly unrelated observation about the same symbol"}],
+        project_root,
+    )
+
+    assert result["added"] == 1, result
+    assert result["reopened"] == 0
+
+
+def test_a_conflicting_field_blocks_a_reopen_however_much_else_agrees(run_env):
+    """Rule 1: no non-empty field may conflict. Symbol, file and description all
+    agree here; a different spec_ref alone means it is a different defect."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record())
+
+    result = fo.foundry_sync_defects(
+        2,
+        [_finding(
+            source="trace",
+            type="UNWIRED",
+            spec_ref="FR-999",
+            symbol="submit_form",
+            file="src/api/form.py",
+            description="ORIGINAL: handler never calls the token store",
+        )],
+        project_root,
+    )
+
+    assert result["added"] == 1, result
+    assert result["reopened"] == 0
+
+
+def test_the_type_comparison_reads_through_the_canonicaliser(run_env):
+    """MISPLACED and ARCHITECTURAL_PLACEMENT are one type under two spellings.
+    Comparing them raw would read a genuine regression as a conflict and file a
+    duplicate, so the incoming type is compared canonicalised — the same value
+    that would be stored."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record(type="ARCHITECTURAL_PLACEMENT"))
+
+    result = fo.foundry_sync_defects(
+        2,
+        [_finding(
+            source="trace",
+            type="MISPLACED",
+            spec_ref="FR-001",
+            symbol="submit_form",
+            file="src/api/form.py",
+            description="ORIGINAL: handler never calls the token store",
+        )],
+        project_root,
+    )
+
+    assert result["reopened"] == 1, result
+    assert result["added"] == 0
+
+
+def test_an_absent_field_on_both_sides_is_not_an_agreement(run_env):
+    """Two records that both OMIT `file` have not thereby agreed about
+    anything. If absence counted, two unrelated findings with empty symbol and
+    empty spec_ref would reach the two-agreement threshold on nothing at all."""
+    project_root, fdir = run_env
+    _seed_fixed(fdir, _fixed_record(
+        symbol="", file="", spec_ref="", description="first finding",
+    ))
+
+    result = fo.foundry_sync_defects(
+        2,
+        [{"source": "trace", "type": "UNWIRED", "description": "second finding"}],
+        project_root,
+    )
+
+    assert result["added"] == 1, result
+    assert result["reopened"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# D-047 / FR-004 — the MCP tool descriptions are a cite-policy surface
+#
+# server.py's Foundry-Accept-Casting description is delivered verbatim into
+# every lead's context with the tool list, and it named only `file:line` — while
+# agents/teammate.md asks for path#Symbol, the tool's OWN return payload names
+# both, and tools/citation.py accepts both with the line component never judged.
+# One gate, three descriptions, and the one a lead reads first and most often
+# never mentioned the durable form. No test asserted on any MCP description
+# string, which is why the D-040 cite-policy sweep did not reach this copy.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_accept_casting_description_leads_with_the_durable_cite_form():
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    accept = next(t for t in tools if t.name == "Foundry-Accept-Casting")
+
+    assert "path#Symbol" in accept.description
+    # And it leads: the durable form is named before the legacy one, so a lead
+    # skimming the sentence reads the form the protocol actually wants.
+    assert accept.description.index("path#Symbol") < accept.description.index("file:line")
+    # The legacy form is still named as accepted, because the implementation
+    # still accepts it — a description that dropped it would be the same defect
+    # pointing the other way.
+    assert "file:line" in accept.description
+    assert "legacy" in accept.description
+
+
+def test_the_accept_casting_description_agrees_with_the_handlers_own_payload():
+    """The three copies must say one thing. This pins the tool description
+    against the string the handler itself returns in ``must_verify``, so the two
+    cannot drift apart again without a test failing."""
+    from foundry_mcp import server as foundry_server
+
+    handoff_src = (
+        Path(fo.__file__).parent / "foundry_handoff.py"
+    ).read_text(encoding="utf-8")
+    assert "path#Symbol or file:line citation" in handoff_src
+
+    tools = asyncio.run(foundry_server.list_tools())
+    accept = next(t for t in tools if t.name == "Foundry-Accept-Casting")
+    for form in ("path#Symbol", "file:line"):
+        assert form in accept.description
+
+
+# --------------------------------------------------------------------------- #
 # FR-019 — the directive channel
 # --------------------------------------------------------------------------- #
 

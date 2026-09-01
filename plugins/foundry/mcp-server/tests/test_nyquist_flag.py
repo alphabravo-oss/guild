@@ -167,14 +167,21 @@ def test_phase_tool_advertises_both_nyquist_tokens(token: str) -> None:
 
 @pytest.mark.parametrize("token", ["nyquist", "nyquist_done"])
 def test_advertised_phase_tokens_are_not_rejected(run_env, token: str) -> None:
-    """Every advertised token resolves to a real branch, not the else-error."""
+    """Every advertised token resolves to a real branch, not the else-error.
+
+    The claim is about DISPATCH, so it is asserted against the else-branch
+    refusal specifically rather than against "no error at all". ``nyquist_done``
+    now consults ``_done_preconditions`` (AC-011 / D-043 / D-044), so a bare
+    fixture draws a legitimate precondition refusal from a branch that very much
+    exists — which is the opposite of the defect this test was written for.
+    """
     project_root, fdir = run_env
     _write_state(fdir, "F5" if token == "nyquist" else "F5.5", nyquist=True)
     _arm_ordering_token(fdir)
 
     result = foundry_mark_phase_complete(token, project_root=project_root)
 
-    assert "error" not in result, result
+    assert "Invalid phase" not in result.get("error", ""), result
 
 
 def test_dispatch_lambda_forwards_nyquist(tmp_path, monkeypatch) -> None:
@@ -301,12 +308,28 @@ def test_phase_nyquist_enters_f5_5(run_env) -> None:
 
 
 def test_phase_nyquist_done_leaves_for_f6(run_env) -> None:
+    """The F5.5 exit reaches F6 — once the run is actually finished.
+
+    The fixture used to be a bare state with no defects.json, no verdicts.json
+    and no spec, and this test passed anyway, because the branch consulted
+    nothing (D-043 / D-044). It is now the same DONE-satisfying fixture the
+    ``done`` transition requires: every requirement VERIFIED and no open
+    defects. F6 has two doors and they lead out of the same room, so they take
+    the same key. The refusal half is asserted in tests/test_escalation.py,
+    beside the ``done`` branch's, since AC-011 is what binds both.
+    """
     project_root, fdir = run_env
     _write_state(fdir, "F5.5", nyquist=True)
+    (fdir / "spec.md").write_text("- FR-001: the thing works\n", encoding="utf-8")
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": []}), encoding="utf-8"
+    )
+    _write_verdicts(fdir, ["VERIFIED"])
     _arm_ordering_token(fdir)
 
     result = foundry_mark_phase_complete("nyquist_done", project_root=project_root)
 
+    assert result.get("ok") is True, result
     assert result["phase"] == "F6"
     assert _read_state(fdir)["phase"] == "F6"
 

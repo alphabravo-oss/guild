@@ -515,6 +515,205 @@ def test_a_defect_with_no_symbol_only_gets_the_shape_rules(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# D-050 — the ladder's second half: the equivalents that still cleared it
+#
+# D-038's fix refused the values cycle 2 named ("n/a", "TODO", "tested it
+# manually", a test named for the defect's own symbol) and left a family of
+# equivalents standing. Every value below was DRIVEN through the gate after
+# that fix landed and ACCEPTED, against a defect on symbol=foundry_mark_stream:
+# each clears the locator rule on a separator that delimits nothing, or the
+# names-a-test rule on a bare "test" token, while referencing no test at all.
+# "tests/" is the exact failure the helper's own comment says it exists to
+# reject — "a string that references no test satisfies the gate's letter and
+# none of its purpose".
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        # A separator that delimits nothing: dangling, leading or doubled.
+        "tests/",
+        ".test",
+        "test.",
+        "./test",
+        "spec.",
+        # A test marker beside a name that names nothing.
+        "x.test",
+        "a.spec",
+        "t.test",
+        "test/x",
+        # Scaffolding with no test name attached — strips to empty.
+        "src/foo.py::test_",
+        # Well-formed shapes resolving to a placeholder or a negation.
+        "foo.test.bar",
+        "no.test.exists",
+        "manual-test/none",
+    ],
+)
+def test_the_accepted_equivalents_of_a_non_answer_are_refused(run_env, ref):
+    """D-050 stated as the drive log: these are the values PROVE ran through the
+    post-D-038 gate and watched close a defect."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="foundry_mark_stream")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ref,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (ref, result)
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    # The refusal quotes the value back, so the caller sees what was judged.
+    assert ref in result["error"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_a_defect_with_no_symbol_or_file_still_gets_the_full_shape_ladder(run_env):
+    """D-050: 'On a defect carrying neither symbol nor file both semantic rules
+    are skipped entirely and x.test closes it.' The two semantic rules do need a
+    symbol and a file, but the structural ones never did — the gate degrades to
+    its shape rules, it does not switch off."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="", file="")
+
+    for ref in ("x.test", "tests/", "src/foo.py::test_", "manual-test/none"):
+        result = foundry_mark_defect_fixed(
+            defect_id="D-001",
+            cycle=1,
+            adjacent_path_statement=ADJACENT_STATEMENT,
+            adjacent_path_test=ref,
+            project_root=project_root,
+        )
+        assert result.get("ok") is not True, (ref, result)
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+# --------------------------------------------------------------------------- #
+# D-050 — the STATEMENT side, unchanged from cycle 2 until now
+#
+# Its only check was exact equality against the defect's own symbol, so a
+# declaration that there IS no adjacent path satisfied a gate whose whole
+# purpose is to make the fixer name one. FR-009 asks the statement to name who
+# else calls this, what else transitions here, or what runs concurrently.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "x",
+        "none",
+        "n/a",
+        "no adjacent paths",
+        "the same path",
+        "nothing",
+        "-",
+        "0",
+    ],
+)
+def test_a_statement_that_names_no_adjacent_path_is_refused(run_env, statement):
+    """D-050's drive log for the statement field: every one of these closed a
+    defect after the test-reference half was fixed."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="foundry_mark_stream")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (statement, result)
+    assert result["missing_fields"] == ["adjacent_path_statement"]
+    assert "adjacent_path_statement" in result["error"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_a_wordy_denial_of_adjacency_is_refused_too(run_env):
+    """The word-count floor alone is gameable: a fluent sentence asserting that
+    no other path exists clears it and is still a refusal to answer. A fixer
+    with no adjacent path has no adjacent-path test to reference either, so the
+    gate is already unsatisfiable in that case — saying so plainly is better
+    than letting the statement through and refusing the reference."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="foundry_mark_stream")
+
+    for statement in (
+        "there are no other callers of this function anywhere in the tree",
+        "nothing else touches this code path at all",
+        "no adjacent callers exist for this helper",
+        "the same path the defect was found on, nothing further",
+    ):
+        result = foundry_mark_defect_fixed(
+            defect_id="D-001",
+            cycle=1,
+            adjacent_path_statement=statement,
+            adjacent_path_test=ADJACENT_TEST,
+            project_root=project_root,
+        )
+        assert result.get("ok") is not True, (statement, result)
+        assert result["missing_fields"] == ["adjacent_path_statement"]
+
+
+def test_the_statement_may_not_restate_the_defects_own_file_either(run_env):
+    """The pre-existing rule covered the symbol only. Naming the file the defect
+    was found in is the same non-answer in the other field."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement="src/auth/session.py",
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert "src/auth/session.py" in result["error"]
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A negation mid-sentence is not a denial of adjacency — the anchored
+        # patterns must not swallow a statement that names real paths.
+        "login_handler calls this too, and the sweeper does not hold the lock "
+        "while it runs concurrently",
+        "the retry worker and the admin backfill both reach this transition",
+        "session_gc runs concurrently with refresh_session on the same store",
+    ],
+)
+def test_a_real_statement_naming_other_paths_is_accepted(run_env, statement):
+    """The rules reject non-answers; a false refusal here blocks a real fix
+    behind a gate the teammate cannot satisfy, which is worse than the defect."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, (statement, result)
+
+
+# --------------------------------------------------------------------------- #
 # FR-005 / ST-001 — the SERVER counter stamps the fix, not the caller
 # --------------------------------------------------------------------------- #
 

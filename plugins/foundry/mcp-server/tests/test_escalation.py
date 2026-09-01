@@ -675,6 +675,155 @@ def test_the_done_transition_advances_once_the_gate_would_pass(run_env, monkeypa
     assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F6"
 
 
+# --------------------------------------------------------------------------- #
+# AC-011 — F6 has TWO doors and both are locked (D-043 / D-044)
+#
+# D-037 bound _done_preconditions to foundry_mark_phase_complete's `done`
+# branch and left the sibling terminal branch, `nyquist_done`, unbound: an
+# unconditional _update_phase("F6") + clear_active_run() under a comment
+# asserting "The DONE gate still runs first". Nothing in code enforced that.
+# commands/start.md:578 routes a --nyquist run through
+# Foundry-Gate("done") -> Foundry-Phase("nyquist_done"), so on the runs that
+# opt into F5.5 it was the door the run would actually use — and
+# foundry_gate had no `nyquist_done` case at all, so there was no server-side
+# gate a caller could invoke for the token either.
+#
+# AC-011's words are "the RUN cannot reach DONE while any escalated-class
+# defect remains open", with no exception for how F6 is entered.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_nyquist_done_transition_refuses_an_open_escalated_class(run_env):
+    """D-043 / D-044 stated as the state that was driven through it: six open
+    escalated-class defects and no verdicts at all reached F6 in one call."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F5.5", cycle=2, nyquist=True)
+    _write_defects(fdir, _recurring([0, 1, 2]))
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("nyquist_done", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "error" in result
+    assert result["hint"]
+    # The run did NOT advance, and the active run was NOT cleared.
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F5.5"
+    assert foundry_state.get_active_run() is not None
+
+    checks = {c["check"]: c for c in result["checklist"]}
+    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    assert checks[escalation_check]["ok"] is False
+    assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
+
+
+def test_both_doors_into_f6_enforce_the_same_preconditions(run_env):
+    """The property, rather than a re-listing of the checks: for one run state,
+    ``done`` and ``nyquist_done`` agree. Two terminal transitions with two
+    definitions of "finished" is the drift that produced D-043 — one branch was
+    fixed and its sibling was not, and the sibling was the live one."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F5.5", cycle=2, nyquist=True)
+    _write_defects(fdir, _recurring([0, 1, 2]))
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+
+    _arm(fdir)
+    done = foundry_mark_phase_complete("done", project_root)
+    _arm(fdir)
+    nyquist_done = foundry_mark_phase_complete("nyquist_done", project_root)
+
+    assert done.get("ok") is not True
+    assert nyquist_done.get("ok") is not True
+    # Same evaluation, so the same checklist and the same underlying reason —
+    # only the prefix naming which door was tried differs.
+    assert nyquist_done["checklist"] == done["checklist"]
+    shared_reason = (
+        "1 escalated defect class(es) still have open instances: "
+        "FALSE_DOCUMENTED_CONTRACT"
+    )
+    assert shared_reason in done["error"]
+    assert shared_reason in nyquist_done["error"]
+
+
+def test_the_nyquist_done_gate_is_a_real_branch_agreeing_with_its_transition(run_env):
+    """D-043's second half: ``foundry_gate`` had no ``nyquist_done`` case, so a
+    lead about to call that token could only gate a DIFFERENT one. The gate now
+    answers for the token being called, and answers the same as the call."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F5.5", cycle=2, nyquist=True)
+    _write_defects(fdir, _recurring([0, 1, 2]))
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+
+    _arm(fdir)
+    gate = foundry_gate("nyquist_done", project_root)
+    _arm(fdir)
+    transition = foundry_mark_phase_complete("nyquist_done", project_root)
+
+    assert "Unknown phase" not in gate.get("reason", "")
+    assert gate["passed"] is False
+    assert gate["reason"] in transition["error"]
+    assert transition["checklist"] == gate["checklist"]
+
+
+def test_the_advertised_gate_phases_all_resolve_to_a_real_branch(run_env):
+    """The recurrence guard for this defect class: an advertised token with no
+    branch behind it. It was the original ``nyquist`` bug and it was still true
+    of ``nyquist_done`` at the gate. Every value the Foundry-Gate schema offers
+    a lead must reach a branch, not the Unknown-phase fallback."""
+    import asyncio
+
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0", cycle=0)
+
+    tools = asyncio.run(foundry_server.list_tools())
+    gate_tool = next(t for t in tools if t.name == "Foundry-Gate")
+
+    for phase in gate_tool.inputSchema["properties"]["phase"]["enum"]:
+        _arm(fdir)
+        result = foundry_gate(phase, project_root)
+        assert "Unknown phase" not in result.get("reason", ""), phase
+
+
+def test_the_nyquist_done_transition_advances_once_the_gate_would_pass(run_env):
+    """Closure is the exit, not a waiver: the guard is a precondition, not a
+    phase the lead cannot leave. Every defect of the class closed and every
+    requirement VERIFIED, so the F5.5 exit archives the run as it always did."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F5.5", cycle=3, nyquist=True)
+
+    defects = _recurring([0, 1, 2])
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 3
+    _write_defects(fdir, defects)
+    (fdir / "spec.md").write_text("- FR-001: the thing works\n", encoding="utf-8")
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [
+            {"requirement_id": "FR-001", "verdict": "VERIFIED"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    _arm(fdir)
+    gate = foundry_gate("nyquist_done", project_root)
+    assert gate["passed"] is True, gate
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("nyquist_done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F6"
+
+
 def test_an_override_does_not_waive_closure_either(run_env):
     """De-escalating a class restores per-instance packets. It does not close
     anything: the DONE gate still refuses on the open defects themselves."""

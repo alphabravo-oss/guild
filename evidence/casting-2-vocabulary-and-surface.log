@@ -20,7 +20,25 @@
 # standing normal directive for the rest of the run -- and Foundry-Clear
 # preserves what it cleared instead of truncating the record.
 #
+# GRIND cycle 3, D-049: Foundry-Sync no longer absorbs a NEW finding into an
+# old record. The regression matcher was `symbol == fixed.symbol OR
+# description == fixed.description`, and a hit reopened the old record,
+# discarded the incoming one and returned ok:true -- so a prove/MISSING/FR-003
+# finding vanished into a fixed trace/UNWIRED/FR-001 record on the same symbol,
+# and description equality alone reopened across a different file AND symbol.
+# CT-002's "attributed to their true source" and AC-019's "preserved verbatim"
+# cannot hold for a record that was never written. Identity is now a
+# conjunction: no non-empty field may conflict and at least two must agree, so
+# the same defect recurring still reopens and everything else is filed.
+#
+# GRIND cycle 3, D-047: the Foundry-Accept-Casting tool description -- the
+# cite-policy surface a lead reads first and most often -- named only
+# file:line while teammate.md, the handler's own payload and citation.py all
+# name path#Symbol. It now leads with the durable form, and both it and the
+# handler's copy are pinned by tests.
+#
 # AC-023 / FR-017: casting_commit reaches foundry_accept_casting over MCP, so
 # the evidence re-execution path stops being dead on the MCP surface.
-..................................................................       [100%]
-66 passed in 0.31s
+........................................................................ [ 96%]
+...                                                                      [100%]
+75 passed in 0.58s

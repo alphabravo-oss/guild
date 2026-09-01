@@ -728,10 +728,18 @@ def foundry_gate(
             hint = "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done')."
         checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
 
-    elif phase == "done":
-        # Every check lives in _done_preconditions, which the transition that
-        # actually enters F6 calls too (AC-011 / D-037). This branch is the
-        # advisory half of one shared evaluation, not a second opinion.
+    elif phase in ("done", "nyquist_done"):
+        # Every check lives in _done_preconditions, which the transitions that
+        # actually enter F6 call too (AC-011 / D-037 / D-043 / D-044). This
+        # branch is the advisory half of one shared evaluation, not a second
+        # opinion.
+        #
+        # BOTH terminal tokens land here. F6 has two doors — Foundry-Phase
+        # "done" and, on a --nyquist run, "nyquist_done" — and only the first
+        # had a gate case at all, so a lead following start.md:578
+        # (Foundry-Gate("done") -> Foundry-Phase("nyquist_done")) was gating a
+        # token other than the one it was about to call. There is one
+        # definition of "the run may finish"; asking about either door asks it.
         outcome = _done_preconditions(fdir, project_root)
         passed = outcome["passed"]
         reason = outcome["reason"]
@@ -740,7 +748,8 @@ def foundry_gate(
 
     else:
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
-                "hint": "Valid phases: cast, inspect, grind, assay, temper, nyquist, done"}
+                "hint": ("Valid phases: validate, cast, inspect, grind, assay, "
+                         "temper, nyquist, nyquist_done, done")}
 
     result = {"phase": phase, "passed": passed, "checklist": checklist}
     if not passed:
@@ -1424,9 +1433,38 @@ def foundry_mark_phase_complete(
         # Leave F5.5 for F6. Distinct from the "temper" shape, which exits via
         # "done", because NYQUIST has its own completion semantics: auditors
         # can escalate ESCALATE_IMPL_BUG back into GRIND, so "the phase ran"
-        # and "the run is finished" are separate facts. The DONE gate still
-        # runs first — this token records the exit, it does not waive the
-        # verdict / open-defect preconditions.
+        # and "the run is finished" are separate facts.
+        #
+        # AC-011 / D-043 / D-044 — F6 HAS TWO DOORS AND BOTH ARE LOCKED.
+        #
+        # This comment used to assert "The DONE gate still runs first" while
+        # the branch below it was an unconditional _update_phase +
+        # clear_active_run consulting nothing: the claim rested entirely on the
+        # lead following guidance prose. D-037 bound _done_preconditions to the
+        # `done` branch and left this sibling terminal branch unbound, so the
+        # fix covered one door of two — and on a --nyquist run, which
+        # commands/start.md:578 routes through this token, it was the door the
+        # run would actually use. Driven at the MCP boundary: a state with six
+        # open escalated-class defects and no verdicts.json at all was refused
+        # by Foundry-Phase("done") and admitted by Foundry-Phase("nyquist_done")
+        # in the same breath.
+        #
+        # AC-011 constrains THE RUN — "the run cannot reach DONE while any
+        # escalated-class defect remains open" — with no exception for how F6
+        # is entered. So this calls the same _done_preconditions the `done`
+        # branch and the gate call, on the same terms. Not a copy of the
+        # checks: a second implementation of "done" is the drift that produced
+        # this defect, not a fix for it.
+        outcome = _done_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return {
+                "error": f"Cannot leave NYQUIST for DONE — {outcome['reason']}",
+                "hint": (
+                    outcome["hint"]
+                    or "Call Foundry-Gate(phase='nyquist_done') for the full checklist."
+                ),
+                "checklist": outcome["checklist"],
+            }
         _update_phase(fdir, "F6")
         clear_active_run()
         return {"ok": True, "phase": "F6",
@@ -2054,14 +2092,26 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
 # at least one adjacent path" — a string that references no test satisfies the
 # gate's letter and none of its purpose.
 #
-# Three structural rules, each decidable from the string alone, each killing one
-# value observed being accepted:
+# Structural rules, each decidable from the string alone, each killing values
+# observed being accepted:
 #
 #   1. A reference is a LOCATOR, not a sentence — no internal whitespace.
 #      Kills "tested it manually".
 #   2. It must carry a locator separator (:: / \ # or .). Kills "TODO".
 #   3. It must name a test — a "test" or "spec" token somewhere. Kills "n/a",
 #      which clears rule 2 on its slash while referencing nothing.
+#   4. Every locator segment must be non-empty — no leading separator, no
+#      trailing separator, no doubled separator. Kills "tests/", ".test",
+#      "test.", "./test" and "spec.", each of which clears rules 2 and 3 on a
+#      separator that delimits nothing (D-050).
+#   5. The LEAF must survive normalisation as a name. Take the last part after
+#      the qualified-name separators, drop one trailing file extension, strip
+#      test/spec scaffolding affixes, and what remains must be a name of at
+#      least _TEST_REF_MIN_NAME_CHARS characters that is not a placeholder
+#      token. Kills "src/foo.py::test_" (strips to nothing), "x.test",
+#      "a.spec", "t.test", "test/x" (one-character names), and
+#      "manual-test/none", "foo.test.bar", "no.test.exists" (placeholder and
+#      negation names) — all of which cleared rules 1-4 (D-050).
 #
 # Then one semantic rule, mirroring the statement check's existing philosophy
 # (exact equality is the one thing decidable here): the reference must not name
@@ -2075,14 +2125,71 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
 #
 # Kept deliberately language-agnostic: foundry runs against Go, JS and Rust
 # repos, so `path::name`, `path/to/file.ext`, `Class#method` and dotted module
-# paths all clear rules 1-3.
+# paths all clear every rule. Each rule was checked against the cross-language
+# accept fixture in tests/test_fix_gate.py before being added — a rule that
+# refuses `auth::sweeper::tests::evicts_stale_sessions` or
+# `src/auth/__tests__/sweeper.test.ts` is a worse defect than the one it fixes.
 _TEST_REF_LOCATOR_CHARS = ("::", "/", "\\", "#", ".")
 _TEST_REF_NAMES_A_TEST = re.compile(r"test|spec", re.IGNORECASE)
-# Scaffolding affixes stripped before comparing a test's NAME to the defect's
-# own symbol, so `test_refresh_session` is recognised as naming `refresh_session`.
+# The separators that split a QUALIFIED NAME into parts. `.` is excluded: it
+# separates a file extension and a dotted module path alike, so the leaf of
+# `src/auth/sweeper.spec.ts` is the whole `sweeper.spec.ts`, normalised below.
+_TEST_REF_PART_SEPARATORS = ("::", "#", "/", "\\")
+# Scaffolding affixes stripped before judging a test's NAME and before
+# comparing it to the defect's own symbol, so `test_refresh_session` is
+# recognised as naming `refresh_session` and `sweeper.test` as naming
+# `sweeper`. `.` joined `_` and `-` here for the dotted JS/TS convention.
 _TEST_NAME_AFFIX = re.compile(
-    r"^(?:tests?|specs?|it)[_\-]+|[_\-]+(?:tests?|specs?)$", re.IGNORECASE
+    r"^(?:tests?|specs?|it)[_\-.]+|[_\-.]+(?:tests?|specs?)$", re.IGNORECASE
 )
+# One trailing file extension, dropped before affix stripping: `.py`, `.go`,
+# `.ts`, `.rb`. Bounded at 6 characters so a dotted module path's final
+# component is not mistaken for an extension.
+_TEST_REF_EXTENSION = re.compile(r"\.[A-Za-z0-9]{1,6}$")
+_TEST_REF_MIN_NAME_CHARS = 2
+# Names that reference nothing. Every one of these was driven through the gate
+# and accepted (D-050): `manual-test/none`, `foo.test.bar`, `no.test.exists`.
+# Single characters are covered by _TEST_REF_MIN_NAME_CHARS and are not
+# repeated here.
+_PLACEHOLDER_NAMES = frozenset({
+    "aa", "xx", "xxx", "asdf", "blah",
+    "foo", "bar", "baz", "qux", "quux",
+    "na", "nil", "null", "none", "no", "not", "nope", "nothing", "nada",
+    "tbd", "todo", "fixme", "wip", "pending", "unknown", "unclear",
+    "manual", "manually", "dummy", "fake", "placeholder", "example",
+    "sample", "temp", "tmp",
+})  # 34 names
+
+
+def _locator_segments(ref: str) -> list[str]:
+    """Split ``ref`` on every locator separator, ``::`` counting as one."""
+    sentinel = "\x00"
+    normalized = ref.replace("::", sentinel)
+    for sep in ("/", "\\", "#", "."):
+        normalized = normalized.replace(sep, sentinel)
+    return normalized.split(sentinel)
+
+
+def _test_ref_name(ref: str) -> str:
+    """The bare NAME a reference resolves to, or "" if it names nothing.
+
+    Leaf of the qualified name, minus one trailing file extension, minus
+    test/spec scaffolding affixes. ``tests/test_auth.py`` -> ``auth``;
+    ``src/auth/sweeper.spec.ts`` -> ``sweeper``; ``src/foo.py::test_`` -> "".
+    """
+    leaf = ref
+    for sep in _TEST_REF_PART_SEPARATORS:
+        if sep in leaf:
+            leaf = leaf.rsplit(sep, 1)[1]
+    leaf = _TEST_REF_EXTENSION.sub("", leaf)
+    # Repeat to a fixed point so `sweeper.test` and `spec_helper_test` both
+    # reduce, and a doubly-affixed name does not keep half its scaffolding.
+    for _ in range(4):
+        stripped = _TEST_NAME_AFFIX.sub("", leaf)
+        if stripped == leaf:
+            break
+        leaf = stripped
+    return leaf
 
 
 def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
@@ -2106,6 +2213,12 @@ def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
             f"{ref!r} does not name a test. The reference must point at a test "
             "file or test function."
         )
+    if any(seg == "" for seg in _locator_segments(ref)):
+        return (
+            f"{ref!r} has a separator that delimits nothing — a dangling or "
+            "doubled '/', '.' or '::'. A reference names a test, not a "
+            "directory or an extension on its own."
+        )
 
     # The reference names ONLY the defect's own source file, with no test
     # within it singled out — that is the defect's own path restated.
@@ -2115,26 +2228,114 @@ def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
             "path through it."
         )
 
-    # Compare the reference's NAME part — the segment after the last locator
-    # separator — to the defect's own symbol. Exact equality only, so a test
-    # like test_refresh_session_from_login_handler (a genuinely adjacent
-    # caller) still passes while test_refresh_session does not.
-    if own_symbol:
-        tail = ref
-        for sep in ("::", "#", "/", "\\"):
-            if sep in tail:
-                tail = tail.rsplit(sep, 1)[1]
-        # Drop a file extension so `test_session.py` compares as `test_session`.
-        if "." in tail:
-            tail = tail.rsplit(".", 1)[0]
-        stripped = _TEST_NAME_AFFIX.sub("", tail)
-        if stripped.casefold() == own_symbol.strip().casefold():
+    name = _test_ref_name(ref)
+    if not name:
+        return (
+            f"{ref!r} is test scaffolding with no test name attached — it "
+            "strips to nothing. Name the test, not the prefix."
+        )
+    if len(name) < _TEST_REF_MIN_NAME_CHARS:
+        return (
+            f"{ref!r} resolves to {name!r}, which names nothing specific. The "
+            "reference must identify a test, not a single letter beside the "
+            "word 'test'."
+        )
+    if name.casefold() in _PLACEHOLDER_NAMES:
+        return (
+            f"{ref!r} resolves to the placeholder {name!r}, which references "
+            "no test. A-018 asks for a test that EXERCISES an adjacent path; "
+            "a well-formed string that points at nothing is the same "
+            "non-answer as 'n/a'."
+        )
+
+    # Compare the reference's NAME to the defect's own symbol. Exact equality
+    # only, so a test like test_refresh_session_from_login_handler (a genuinely
+    # adjacent caller) still passes while test_refresh_session does not.
+    if own_symbol and name.casefold() == own_symbol.strip().casefold():
+        return (
+            f"{ref!r} names a test for the defect's own symbol "
+            f"({own_symbol}). AC-013 requires a test driving a NAMED "
+            "adjacent path — a DIFFERENT caller, transition, or concurrent "
+            "interaction than the one the defect was found on."
+        )
+    return None
+
+
+# FR-009 / AC-013 — what makes an `adjacent_path_statement` a REAL answer.
+#
+# D-050: the test-reference ladder above was built and the statement side was
+# left exactly as cycle 2 found it — one check, exact equality against the
+# defect's own symbol. Driven and ACCEPTED after that fix landed: 'x', 'none',
+# 'n/a', 'no adjacent paths', 'the same path', 'nothing', '-', '0'. A
+# declaration that there IS no adjacent path satisfied a gate whose entire
+# purpose is to make the fixer name one.
+#
+# A-017 asks the statement to name "who else calls this / what else transitions
+# here / what runs concurrently". Three rules, in the order a caller most needs
+# to hear them:
+#
+#   1. It must not restate the defect's own path — its own symbol or its own
+#      file (the pre-existing rule, now covering both).
+#   2. It must not be a NEGATION. A statement asserting that no other path
+#      exists is a refusal to answer, not an answer; note the gate is already
+#      unsatisfiable in that case, because a fixer with no adjacent path has no
+#      adjacent-path test to reference either. Anchored patterns only, so
+#      `test_no_duplicate_ids` inside a longer statement is untouched.
+#   3. It must carry enough substance to have named something —
+#      _STATEMENT_MIN_WORDS words of at least two letters. Kills 'x', '-', '0',
+#      'none', 'n/a', 'nothing', 'no adjacent paths' and 'the same path' on
+#      length alone, and is the floor rule 2's anchored patterns sit on top of.
+#
+# Like the reference rules, these reject non-answers; they cannot certify that
+# the named path is real. That is the ceiling of what a string check can do,
+# and the run's own INSPECT streams are what verify the rest.
+_STATEMENT_MIN_WORDS = 4
+_STATEMENT_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]+")
+_STATEMENT_NON_ANSWERS = (
+    # Leading negation: "no other callers", "none", "nothing else touches it",
+    # "there are no adjacent paths", "not applicable".
+    re.compile(r"^(?:there\s+(?:are|is)\s+)?(?:no|none|not|nothing|never)\b", re.I),
+    # "the same path", "same as the defect".
+    re.compile(r"^(?:the\s+)?same\b", re.I),
+    # A negation of adjacency anywhere in the statement.
+    re.compile(r"\bno\s+(?:other|adjacent|additional|further)\b", re.I),
+    re.compile(r"\bnothing\s+else\b", re.I),
+    re.compile(r"^n\s*/?\s*a$", re.I),
+)
+
+
+def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | None:
+    """Name why ``statement`` is not a usable adjacent-path statement, else None."""
+    normalized = " ".join(statement.split())
+    folded = normalized.casefold()
+
+    if own_symbol and folded == own_symbol.strip().casefold():
+        return (
+            f"it just names the defect's own symbol ({own_symbol}). An "
+            "adjacent path is a DIFFERENT caller, transition, or "
+            "concurrent interaction than the one the defect was found on"
+        )
+    if own_file and folded == own_file.strip().casefold():
+        return (
+            f"it just names the defect's own file ({own_file}), which is the "
+            "path the defect was found on rather than one adjacent to it"
+        )
+    for pattern in _STATEMENT_NON_ANSWERS:
+        if pattern.search(normalized):
             return (
-                f"{ref!r} names a test for the defect's own symbol "
-                f"({own_symbol}). AC-013 requires a test driving a NAMED "
-                "adjacent path — a DIFFERENT caller, transition, or concurrent "
-                "interaction than the one the defect was found on."
+                f"{normalized!r} declares that there is no adjacent path. That "
+                "is a refusal to answer, not an answer — and a fix with no "
+                "adjacent path has no adjacent-path test to reference either. "
+                "Name who ELSE calls this, what else transitions here, or what "
+                "runs concurrently"
             )
+    if len(_STATEMENT_WORD.findall(normalized)) < _STATEMENT_MIN_WORDS:
+        return (
+            f"{normalized!r} is too thin to have named a path. State who else "
+            "calls this, what else transitions here, or what runs concurrently "
+            f"— at least {_STATEMENT_MIN_WORDS} words naming real callers, "
+            "transitions or concurrent work"
+        )
     return None
 
 
@@ -2222,19 +2423,19 @@ def foundry_mark_defect_fixed(
         # who supplied two non-answers should be told about both, not sent back
         # twice).
         invalid: list[dict] = []
-        if statement and own_symbol and statement.casefold() == own_symbol.casefold():
+        if statement:
             # ST-004 / AC-013: the declared path must be ADJACENT — distinct
-            # from the path the defect itself was found on. Restating the
-            # defect's own symbol is the exact non-answer the gate exists to
-            # reject.
-            invalid.append({
-                "field": "adjacent_path_statement",
-                "reason": (
-                    f"it just names the defect's own symbol ({own_symbol}). An "
-                    "adjacent path is a DIFFERENT caller, transition, or "
-                    "concurrent interaction than the one the defect was found on"
-                ),
-            })
+            # from the path the defect itself was found on — and it must
+            # actually be a declaration. The check here was exact equality
+            # against the defect's own symbol and nothing else, so 'x', 'none',
+            # 'no adjacent paths' and 'the same path' all closed defects
+            # (D-050). See `_statement_problem` for the ladder.
+            problem = _statement_problem(statement, own_symbol, own_file)
+            if problem is not None:
+                invalid.append({
+                    "field": "adjacent_path_statement",
+                    "reason": problem,
+                })
         if test_ref:
             problem = _test_ref_problem(test_ref, own_symbol, own_file)
             if problem is not None:
@@ -2367,6 +2568,85 @@ def _route_to_observations(
     )
 
 
+# D-049 / CT-002 / AC-019 — what makes an incoming finding the SAME defect
+# coming back.
+#
+# The matcher was `symbol == fixed.symbol OR description == fixed.description`,
+# and a hit reopened the old record, DISCARDED the incoming finding entirely,
+# and returned ok:true. Two drives at the MCP boundary:
+#
+#   - A prove/MISSING/FR-003 finding on symbol `submit_form` ("no CSRF
+#     validation on the POST branch") was absorbed into a fixed
+#     trace/UNWIRED/FR-001 record on the same symbol. added=0, reopened=1, one
+#     record on disk still carrying the OLD source, type, spec_ref and
+#     description. The new finding's four content fields were thrown away and
+#     the caller was told the call succeeded.
+#   - Description equality ALONE reopened a fixed defect across a different
+#     file AND a different symbol.
+#
+# CT-002's contract is "records accepted and attributed to their true source"
+# and AC-019's is "source attribution is preserved verbatim". Neither can hold
+# for a record that was never written — this is worse than the source coercion
+# the same function was fixed for, because coercion at least leaves a row.
+#
+# A regression is the same defect RECURRING, so identity is a conjunction:
+#
+#   1. No non-empty field may CONFLICT. A different symbol, file, type or
+#      spec_ref means a different defect however much else agrees — that is
+#      what killed the cross-file description match.
+#   2. At least _REGRESSION_MIN_AGREEMENTS non-empty fields must AGREE. One
+#      lone signal is a coincidence, not an identity — that is what killed the
+#      same-symbol-different-everything match.
+#
+# Empty on either side is neither agreement nor conflict: an absent field
+# carries no information and must not be allowed to manufacture either verdict
+# (two records that both omit `file` have not thereby agreed about anything).
+#
+# Deliberately conservative, and its failure direction is the safe one: a
+# genuine regression whose description was reworded between cycles is filed as
+# a NEW defect — a record that exists, correctly attributed, at the cost of a
+# `regressions` count that under-reports. The old failure direction was
+# silent data loss on the highest-volume filing path in the protocol.
+_REGRESSION_IDENTITY_FIELDS = ("symbol", "file", "type", "spec_ref", "description")
+_REGRESSION_MIN_AGREEMENTS = 2
+
+
+def _identity_value(raw) -> str:
+    """Normalise an identity field for comparison: whitespace-folded, casefolded."""
+    if not isinstance(raw, str):
+        raw = "" if raw is None else str(raw)
+    return " ".join(raw.split()).casefold()
+
+
+def _is_regression_of(finding: dict, norm: dict, fixed_record: dict) -> bool:
+    """Is ``finding`` the previously-fixed ``fixed_record`` recurring?
+
+    See the block comment above for why this is a conjunction rather than the
+    disjunction it replaces. ``norm`` carries the batch validator's canonical
+    defect type so the incoming type is compared on the same footing as the
+    stored one (MISPLACED and ARCHITECTURAL_PLACEMENT are one type under two
+    spellings, and comparing raw would read them as a conflict).
+    """
+    agreements = 0
+    for field in _REGRESSION_IDENTITY_FIELDS:
+        if field == "type":
+            incoming = _identity_value(norm.get("type"))
+            existing = _identity_value(
+                canonical_defect_type(fixed_record.get("type") or "") or ""
+            )
+        else:
+            incoming = _identity_value(finding.get(field))
+            existing = _identity_value(fixed_record.get(field))
+        if not incoming or not existing:
+            # Absent on either side: no information, so neither an agreement
+            # nor a conflict.
+            continue
+        if incoming != existing:
+            return False
+        agreements += 1
+    return agreements >= _REGRESSION_MIN_AGREEMENTS
+
+
 def foundry_sync_defects(
     cycle: int,
     findings: list[dict],
@@ -2482,12 +2762,7 @@ def foundry_sync_defects(
 
             match_id = None
             for fd in fixed:
-                fd_sym = fd.get("symbol", "")
-                fd_desc = fd.get("description", "")
-                if symbol and fd_sym and symbol == fd_sym:
-                    match_id = fd["id"]
-                    break
-                if desc and fd_desc and desc == fd_desc:
+                if _is_regression_of(finding, norm, fd):
                     match_id = fd["id"]
                     break
 
