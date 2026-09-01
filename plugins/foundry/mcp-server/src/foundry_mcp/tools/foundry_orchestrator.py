@@ -22,6 +22,7 @@ from foundry_mcp.schemas.vocab import (
     canonical_defect_type,
     observation_class,
 )
+from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry_state import (
     clear_active_run,
     get_run_dir,
@@ -2093,6 +2094,133 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
 # --- Defect lifecycle ---
 
 
+# FR-010 / AC-013 — ONE normalisation layer for "is this the defect's own path?"
+#
+# Both ladders below ask that question, and both used to answer it with raw
+# string equality against the two fields a defect record happens to carry. Two
+# defects came out of that in one cycle and they are the same shape twice: a
+# comparison site left on bytes while the protocol writes something richer.
+#
+#   D-088  `symbol` carries the durable `path#Symbol` cite form FR-004/AC-005
+#          mandate and the four stream agent files instruct — 26 of this run's
+#          own 87 records (30%) spell it that way. `_test_ref_name` reduces a
+#          reference to a BARE leaf, so the own-symbol rule compared a bare
+#          leaf to a path-qualified string and could NEVER be equal: AC-013's
+#          distinctness rule was dead for 30% of real filings, and honouring
+#          the cite policy was what disabled the fix gate. Driven as a matched
+#          pair (same defect, same reference, only the symbol's shape moved):
+#          `evict_stale` -> REFUSED, `src/auth/sweeper.py#evict_stale` ->
+#          ACCEPTED.
+#   D-089  a test INSIDE the defect's own file (`aaa/aaa.py::test_x`) cleared
+#          the own-file rule, which compared the WHOLE reference to the WHOLE
+#          path, so the `::test_x` suffix was enough to walk past it. And in
+#          the other direction `./adjaa/aaa.py::test_x` — a legitimate relative
+#          spelling of a genuinely adjacent path — was refused as "a separator
+#          that delimits nothing", identically to a reference that really did
+#          dangle. Normalisation therefore runs BEFORE the shape ladder, or the
+#          adjacent-path answer cannot be written in the form a teammate types.
+#
+# Every comparison site is bound to these helpers — the reference's file, the
+# reference's name, the statement's own-file and own-symbol restatements, and
+# the paths a statement names — so a future edit cannot leave one of them on
+# raw equality again. That binding is the point: this run's repeated failure is
+# never one bad rule, it is one rule fixed in a single copy.
+#
+# Lexical, never filesystem. `citation.symbol_cite_resolves` exists and is
+# deliberately NOT used here, for the same reason the reference ladder refuses
+# to stat anything (see its comment below): the run's tests live in a target
+# repo at paths this server cannot resolve, and a false refusal blocks a real
+# fix behind an unfalsifiable gate. Parsing is shared with the cite grammar
+# (`citation.iter_symbol_cites`) rather than re-typed, so `path#Symbol` means
+# one thing in this repo.
+_LINE_HINT_SUFFIX = re.compile(r":\d+(?:-\d+)?$")
+_LEADING_RELATIVE = re.compile(r"^(?:\.{1,2}[/\\])+")
+#: Trailing sentence punctuation on a path lifted out of prose — `tools/.` is
+#: the directory plus a full stop, not a path segment named ".".
+_PATH_TRAILING_PUNCT = ".,;:!?)'\""
+
+
+def _strip_line_hint(value: str) -> str:
+    """Drop a trailing ``:42`` / ``:42-68`` hint. AC-007: never compared."""
+    return _LINE_HINT_SUFFIX.sub("", value.strip())
+
+
+def _normalize_path(value: str) -> str:
+    """Fold a path to the single form every own-path comparison judges.
+
+    Drops a line hint and trailing sentence punctuation, folds ``\\`` to ``/``,
+    drops a leading ``./`` or ``../``, collapses doubled slashes, drops a
+    trailing slash, and casefolds. ``./src/Auth/Session.py:42`` and
+    ``src/auth/session.py`` are the same path to this gate, and D-089 is what
+    happens when they are not.
+    """
+    path = _strip_line_hint(value).rstrip(_PATH_TRAILING_PUNCT)
+    path = path.replace("\\", "/")
+    path = _LEADING_RELATIVE.sub("", path)
+    path = re.sub(r"/{2,}", "/", path)
+    return path.rstrip("/").casefold()
+
+
+def _own_symbol_name(own_symbol: str) -> str:
+    """The BARE symbol a ``symbol`` field names, whatever shape it was written in.
+
+    ``src/auth/sweeper.py#evict_stale`` -> ``evict_stale``; ``evict_stale`` ->
+    ``evict_stale``. D-088: the second spelling was judged and the first was
+    not, though FR-004 asks every stream to write the first.
+    """
+    raw = _strip_line_hint(own_symbol)
+    if not raw:
+        return ""
+    cites = iter_symbol_cites(raw)
+    if cites:
+        return cites[0]["symbol"]
+    # A cite whose extension the grammar does not whitelist still splits at the
+    # separator the protocol reserves for exactly this.
+    if "#" in raw:
+        raw = raw.rsplit("#", 1)[1]
+    return _strip_line_hint(raw)
+
+
+def _own_paths(own_file: str, own_symbol: str) -> set[str]:
+    """Every normalised path the defect's own location names.
+
+    The ``file`` field is one. A ``path#Symbol`` ``symbol`` field carries
+    another — and on the records where ``file`` was left empty it is the only
+    one there is, which is why both fields are read rather than just the
+    obvious one.
+    """
+    paths = {_normalize_path(own_file)} if own_file.strip() else set()
+    for cite in iter_symbol_cites(_strip_line_hint(own_symbol)):
+        paths.add(_normalize_path(cite["file"]))
+    paths.discard("")
+    return paths
+
+
+def _normalize_ref(ref: str) -> str:
+    """Strip a leading ``./`` / ``../`` from a reference before it is judged.
+
+    D-089's second half. The empty-segment rule reads a relative prefix as a
+    dangling separator, so ``./adjaa/aaa.py::test_x`` was refused identically
+    to ``./test`` — the relative spelling of a real adjacent path could not be
+    written at all. Only the leading prefix is touched: ``./test`` still fails,
+    now on the rule that actually applies to it (it names no location).
+    """
+    return _LEADING_RELATIVE.sub("", ref.strip())
+
+
+def _ref_file_component(ref: str) -> str:
+    """The FILE a reference names, or a bare qualified-name head.
+
+    ``aaa/aaa.py::test_x`` -> ``aaa/aaa.py``; ``src/auth/s.py#refresh`` ->
+    ``src/auth/s.py``; ``auth::sweeper::tests::x`` -> ``auth``, which is not a
+    file and simply matches no own path.
+    """
+    head = ref.split("::", 1)[0]
+    if "#" in head:
+        head = head.split("#", 1)[0]
+    return head
+
+
 # AC-013 / FR-010 — what makes an `adjacent_path_test` a REAL reference.
 #
 # The gate examined only the statement, by exact equality against the defect's
@@ -2202,43 +2330,193 @@ def _test_ref_name(ref: str) -> str:
     return leaf
 
 
-def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
+# FR-010's load-bearing word: the test must drive a NAMED adjacent path — one
+# the STATEMENT named. A-017 defines the statement as "who else calls this /
+# what else transitions here / what runs concurrently", so the two declarations
+# are a matched pair: the statement names the paths, the reference drives one
+# of them.
+#
+# D-092: that coupling did not exist. `_test_ref_problem` took (ref, own_symbol,
+# own_file) — the statement was not a parameter and was never read when judging
+# the reference — so `foundry_mark_defect_fixed` ran two INDEPENDENT checks and
+# never related them. Driven through server.py#_DISPATCH["Foundry-Fix"] against
+# a defect on `refresh_session`: statement "login_handler also calls this and
+# the sweeper runs concurrently", reference
+# "tests/test_billing.py::test_invoice_totals_round_half_up" -> ACCEPTED. The
+# statement named two adjacent paths and the referenced test drove neither.
+#
+# The rule is deliberately the weakest one that closes that: share ONE token
+# and the reference is accepted. Refusing a real answer is this gate's
+# characteristic failure — it is what D-076 and D-085 both were, and it fires
+# in GRIND where the teammate has no way around it — so every judgement call
+# here is resolved toward accepting:
+#
+#   * ANY overlap accepts. Not a majority, not the leading token, one token.
+#   * It is the LAST rung, reached only after the whole structural ladder and
+#     only when the statement itself cleared its own ladder (see the caller):
+#     relating a refused statement would report the reference as unlinked when
+#     the real problem is the statement the caller is already being told about.
+#   * It judges only a reference that names a test FUNCTION. A reference that
+#     names a whole test FILE names a container, and a container's name is not
+#     a claim about which path is driven — judging it would be asserting
+#     something the reference never said. That is the same ceiling the rules
+#     above keep ("these reject non-answers; they do not certify"), and it is
+#     why `tests/test_auth.py` stays acceptable against any statement.
+#
+# The tokens compared are the discriminating ones: locator scaffolding and the
+# filler that appears in a path and in a sentence without linking them is
+# dropped, because an overlap on "test" or "the" is not evidence of anything.
+_LINKAGE_MIN_TOKEN_CHARS = 3
+_LINKAGE_TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+_LINKAGE_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+# Words a locator and a sentence share without the sharing meaning anything:
+# test scaffolding, the conventional source directories, this gate's own
+# vocabulary (every statement says "calls"/"path"/"concurrently"), and ordinary
+# English filler. Dropping a word makes the rule STRICTER, so this set is kept
+# to words that genuinely carry no linkage rather than extended for tidiness.
+_LINKAGE_STOPWORDS = frozenset({
+    # locator scaffolding and conventional roots
+    "test", "tests", "testing", "spec", "specs", "src", "lib", "pkg",
+    "internal", "cmd", "app", "main", "index",
+    # this gate's own vocabulary — present in nearly every statement
+    "path", "paths", "adjacent", "defect", "defects", "call", "calls",
+    "called", "caller", "callers", "run", "runs", "running", "concurrent",
+    "concurrently", "transition", "transitions", "code", "file", "files",
+    "function", "functions", "method", "methods", "module", "modules",
+    "line", "lines", "name", "named", "names", "check", "checks", "fix",
+    "fixed", "branch", "case", "cases",
+    # ordinary English filler
+    "the", "and", "but", "for", "not", "are", "was", "were", "has", "have",
+    "had", "its", "this", "that", "these", "those", "there", "their", "they",
+    "them", "with", "from", "into", "onto", "also", "both", "all", "any",
+    "some", "more", "most", "only", "just", "then", "than", "when", "where",
+    "which", "while", "who", "what", "how", "why", "does", "did", "done",
+    "can", "will", "would", "should", "could", "been", "being", "one", "two",
+    "still", "same", "other", "others", "another", "each", "every", "via",
+    "per", "out", "off", "yet", "now", "new", "old", "use", "used", "uses",
+    "using", "here", "else", "way", "ways", "thing", "things",
+})  # 127 words
+
+
+def _content_tokens(text: str) -> set[str]:
+    """The discriminating word-parts of ``text``, casefolded.
+
+    Splits on every non-alphanumeric character and again at camelCase
+    boundaries, so ``TestSweeperEvictsStale`` and ``test_sweeper_evicts_stale``
+    yield the same set. Scaffolding, filler and anything under
+    ``_LINKAGE_MIN_TOKEN_CHARS`` characters is dropped.
+    """
+    parts: list[str] = []
+    for chunk in _LINKAGE_TOKEN_SPLIT.split(text):
+        if chunk:
+            parts.extend(_LINKAGE_CAMEL_BOUNDARY.split(chunk))
+    return {
+        folded
+        for folded in (part.casefold() for part in parts)
+        if len(folded) >= _LINKAGE_MIN_TOKEN_CHARS
+        and folded not in _LINKAGE_STOPWORDS
+    }
+
+
+def _ref_names_a_test_function(ref: str) -> bool:
+    """True when the reference singles out a test INSIDE a file.
+
+    The leaf of the qualified name carries no file extension:
+    ``tests/test_auth.py::test_sweeper`` and ``auth::sweeper::tests::evicts``
+    do, ``tests/test_auth.py`` and ``sweeper.spec.ts`` do not.
+    """
+    leaf = ref
+    for sep in _TEST_REF_PART_SEPARATORS:
+        if sep in leaf:
+            leaf = leaf.rsplit(sep, 1)[1]
+    return _TEST_REF_EXTENSION.search(leaf) is None
+
+
+def _linkage_problem(ref: str, statement: str) -> str | None:
+    """D-092: name why ``ref`` drives no path ``statement`` named, else None.
+
+    A pure string relation between two caller-supplied fields — no I/O, and no
+    claim that either names anything real. See the block above for why every
+    branch here resolves toward accepting.
+    """
+    if not statement or not _ref_names_a_test_function(ref):
+        return None
+    ref_tokens = _content_tokens(ref)
+    statement_tokens = _content_tokens(statement)
+    if not ref_tokens or not statement_tokens or (ref_tokens & statement_tokens):
+        return None
+    named = ", ".join(sorted(statement_tokens)[:8])
+    drives = ", ".join(sorted(ref_tokens)[:8])
+    return (
+        f"{ref!r} drives none of the paths the statement named. The statement "
+        f"names {named}; the reference names {drives}. FR-010 asks for a test "
+        "that drives a NAMED adjacent path — one the adjacent_path_statement "
+        "named — so reference the test that drives one of those, or name the "
+        "path this test actually drives in the statement"
+    )
+
+
+def _test_ref_problem(
+    ref: str,
+    own_symbol: str,
+    own_file: str,
+    statement: str = "",
+) -> str | None:
     """Name why ``ref`` is not a usable adjacent-path test reference, else None.
 
     Returns a reason string suitable for a named refusal. Never raises: every
-    branch is a pure string test over the caller's own input.
+    branch is a pure string test over the caller's own input. ``statement`` is
+    the caller's adjacent-path statement when it has already cleared its own
+    ladder, and enables the linkage rung (D-092); passing "" skips that rung.
+
+    The refusals quote the caller's OWN spelling. Normalisation (D-089) decides
+    the verdict and must never decide what the caller is shown, or a teammate
+    reads a refusal about a string they did not write.
     """
     if any(ch.isspace() for ch in ref):
         return (
             f"{ref!r} is prose, not a test reference. Give a locator such as "
             "tests/test_auth.py::test_sweeper_evicts_stale_sessions."
         )
-    if not any(sep in ref for sep in _TEST_REF_LOCATOR_CHARS):
+    # D-089: the relative prefix is dropped BEFORE the shape ladder, so
+    # `./adjaa/aaa.py::test_x` is judged as the locator it is. `./test` still
+    # fails — on the locator rule immediately below, which is the rule that
+    # actually applies to it.
+    normalized_ref = _normalize_ref(ref)
+    if not any(sep in normalized_ref for sep in _TEST_REF_LOCATOR_CHARS):
         return (
             f"{ref!r} names no location. A test reference carries a path or a "
             "qualified name (path/to/test_file.py::test_name)."
         )
-    if not _TEST_REF_NAMES_A_TEST.search(ref):
+    if not _TEST_REF_NAMES_A_TEST.search(normalized_ref):
         return (
             f"{ref!r} does not name a test. The reference must point at a test "
             "file or test function."
         )
-    if any(seg == "" for seg in _locator_segments(ref)):
+    if any(seg == "" for seg in _locator_segments(normalized_ref)):
         return (
             f"{ref!r} has a separator that delimits nothing — a dangling or "
             "doubled '/', '.' or '::'. A reference names a test, not a "
             "directory or an extension on its own."
         )
 
-    # The reference names ONLY the defect's own source file, with no test
-    # within it singled out — that is the defect's own path restated.
-    if own_file and ref.strip() == own_file.strip():
+    # The only FILE the reference names is the one the defect was found in —
+    # whether it stops there or singles out a test within it. D-089: this
+    # compared the whole reference to the whole path, so `aaa/aaa.py` was
+    # refused and `aaa/aaa.py::test_aaa_adjacent`, a test in the defect's own
+    # file, walked straight past on the strength of its suffix.
+    own_paths = _own_paths(own_file, own_symbol)
+    ref_file = _normalize_path(_ref_file_component(normalized_ref))
+    if own_paths and ref_file and ref_file in own_paths:
         return (
-            f"{ref!r} is the defect's own file, not a test that drives another "
-            "path through it."
+            f"{ref!r} names no file but the defect's own ({own_file or ref_file}), "
+            "so it drives no path adjacent to the one the defect was found on. "
+            "AC-013 asks for a test on a DIFFERENT caller, transition or "
+            "concurrent interaction — reference the test that drives it, or "
+            "name it as a qualified name rather than a path into this file."
         )
 
-    name = _test_ref_name(ref)
+    name = _test_ref_name(normalized_ref)
     if not name:
         return (
             f"{ref!r} is test scaffolding with no test name attached — it "
@@ -2261,14 +2539,24 @@ def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
     # Compare the reference's NAME to the defect's own symbol. Exact equality
     # only, so a test like test_refresh_session_from_login_handler (a genuinely
     # adjacent caller) still passes while test_refresh_session does not.
-    if own_symbol and name.casefold() == own_symbol.strip().casefold():
+    #
+    # D-088: both sides are normalised to a bare name first. `own_symbol` was
+    # compared verbatim, so a record spelling it as `path/f.py#evict_stale` —
+    # the durable form FR-004 mandates and 30% of this run's records use —
+    # could never equal a bare leaf, and this rule was inert for exactly the
+    # spelling the protocol asks for.
+    own_name = _own_symbol_name(own_symbol)
+    if own_name and name.casefold() == own_name.casefold():
         return (
             f"{ref!r} names a test for the defect's own symbol "
             f"({own_symbol}). AC-013 requires a test driving a NAMED "
             "adjacent path — a DIFFERENT caller, transition, or concurrent "
             "interaction than the one the defect was found on."
         )
-    return None
+
+    # Last rung (D-092): the reference must drive a path the STATEMENT named.
+    # Reached only for a statement that already cleared its own ladder.
+    return _linkage_problem(ref, statement)
 
 
 # FR-009 / AC-013 — what makes an `adjacent_path_statement` a REAL answer.
@@ -2389,21 +2677,45 @@ def _unbounded_denial(normalized: str) -> bool:
     return len(bounded) < _STATEMENT_MIN_WORDS
 
 
+# A path NAMED inside a statement: anything carrying a directory separator, or
+# a bare filename with an extension. Used only to ask D-089's question — "is
+# every path this statement names the defect's own?" — which is a property of
+# the WHOLE declaration and so cannot refuse a statement that also names
+# something else. A token this over-matches (`e.g`, `tools/.`) can only make
+# the rule fire LESS, which is the direction to be wrong in.
+_STATEMENT_NAMED_PATH = re.compile(
+    r"(?:[\w.\-]+[/\\])+[\w.\-]*"
+    r"|[\w\-]+\.[A-Za-z0-9]{1,6}\b"
+)
+
+
 def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | None:
     """Name why ``statement`` is not a usable adjacent-path statement, else None."""
     normalized = " ".join(statement.split())
     folded = normalized.casefold()
+    # D-088: both own-path comparisons read the normalised forms, so a record
+    # whose `symbol` is spelled `path/f.py#refresh_session` is judged the same
+    # as one spelled `refresh_session`. The statement side is normalised only
+    # when it is a single token — running the cite parser over prose would let
+    # a statement that MENTIONS a cite and then names a real adjacent caller
+    # compare equal to the defect's own symbol, which is a false refusal and
+    # the failure mode this gate has already had twice.
+    own_name = _own_symbol_name(own_symbol)
+    own_paths = _own_paths(own_file, own_symbol)
+    single_token = " " not in normalized
+    statement_name = _own_symbol_name(normalized) if single_token else normalized
 
-    if own_symbol and folded == own_symbol.strip().casefold():
+    if own_name and statement_name.casefold() == own_name.casefold():
         return (
             f"it just names the defect's own symbol ({own_symbol}). An "
             "adjacent path is a DIFFERENT caller, transition, or "
             "concurrent interaction than the one the defect was found on"
         )
-    if own_file and folded == own_file.strip().casefold():
+    if own_paths and single_token and _normalize_path(normalized) in own_paths:
         return (
-            f"it just names the defect's own file ({own_file}), which is the "
-            "path the defect was found on rather than one adjacent to it"
+            f"it just names the defect's own file ({own_file or normalized}), "
+            "which is the path the defect was found on rather than one "
+            "adjacent to it"
         )
     for pattern in _STATEMENT_NON_ANSWERS:
         if pattern.search(normalized):
@@ -2432,6 +2744,26 @@ def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | 
             "calls this, what else transitions here, or what runs concurrently "
             f"— at least {_STATEMENT_MIN_WORDS} words naming real callers, "
             "transitions or concurrent work"
+        )
+
+    # Last rung (D-089): every path the statement names is the defect's own, so
+    # however many words it spent, it named no path beside the one the defect
+    # was found on. Deliberately a SUBSET test over the whole declaration and
+    # not a search: a statement that names the own file alongside another path
+    # — "login_handler in src/auth/session.py also calls this" — names a real
+    # adjacent caller and is accepted. The lexical `same` pattern above is
+    # untouched; widening THAT is D-085, and this rule reaches the mid-sentence
+    # restatement it deliberately cannot without reading phrases.
+    named_paths = {
+        _normalize_path(match) for match in _STATEMENT_NAMED_PATH.findall(normalized)
+    }
+    named_paths.discard("")
+    if own_paths and named_paths and named_paths <= own_paths:
+        return (
+            f"the only path it names is the defect's own ({own_file or own_symbol}). "
+            "Name who ELSE calls this, what else transitions here, or what runs "
+            "concurrently — a path beside the one the defect was found on, not "
+            "the one it was found on restated"
         )
     return None
 
@@ -2520,6 +2852,7 @@ def foundry_mark_defect_fixed(
         # who supplied two non-answers should be told about both, not sent back
         # twice).
         invalid: list[dict] = []
+        statement_is_usable = False
         if statement:
             # ST-004 / AC-013: the declared path must be ADJACENT — distinct
             # from the path the defect itself was found on — and it must
@@ -2533,8 +2866,22 @@ def foundry_mark_defect_fixed(
                     "field": "adjacent_path_statement",
                     "reason": problem,
                 })
+            else:
+                statement_is_usable = True
         if test_ref:
-            problem = _test_ref_problem(test_ref, own_symbol, own_file)
+            # D-092: the two declarations are a matched PAIR — the statement
+            # names the adjacent paths, the reference drives one of them — so
+            # the statement is an INPUT to judging the reference, not a
+            # separate verdict beside it. It is withheld when it failed its own
+            # ladder: a caller told "your reference drives none of the paths
+            # your statement named" about a statement that named none would be
+            # sent after the wrong problem.
+            problem = _test_ref_problem(
+                test_ref,
+                own_symbol,
+                own_file,
+                statement=statement if statement_is_usable else "",
+            )
             if problem is not None:
                 invalid.append({"field": "adjacent_path_test", "reason": problem})
 

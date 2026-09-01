@@ -103,6 +103,19 @@ ADJACENT_STATEMENT = (
 )
 ADJACENT_TEST = "tests/test_auth.py::test_sweeper_does_not_evict_a_live_session"
 
+# The reference used where the STATEMENT is the thing under test. It names a
+# test FILE rather than a test function, so D-092's linkage rung — which
+# relates a named test to the paths the statement named — does not apply to it,
+# and each statement-ladder case stays about one rule.
+#
+# Pairing a statement-ladder case with ADJACENT_TEST asserts that an arbitrary
+# statement links to a canned sweeper test, and after D-092 the server refuses
+# exactly that pairing — correctly, because it IS the pairing D-092 was filed
+# on ("the statement names two adjacent paths; the referenced test drives
+# neither"). Nine such fixtures existed here, and the requirement they were
+# written for is the statement's, not the reference's.
+STATEMENT_LADDER_TEST = "tests/test_adjacent_paths.py"
+
 
 # --------------------------------------------------------------------------- #
 # AC-012 / OT-004 — refusal names each missing field
@@ -706,7 +719,7 @@ def test_a_real_statement_naming_other_paths_is_accepted(run_env, statement):
         defect_id="D-001",
         cycle=1,
         adjacent_path_statement=statement,
-        adjacent_path_test=ADJACENT_TEST,
+        adjacent_path_test=STATEMENT_LADDER_TEST,  # the statement is what is under test
         project_root=project_root,
     )
 
@@ -762,7 +775,7 @@ def test_a_statement_that_bounds_its_enumeration_is_accepted(run_env, statement)
         defect_id="D-001",
         cycle=1,
         adjacent_path_statement=statement,
-        adjacent_path_test=ADJACENT_TEST,
+        adjacent_path_test=STATEMENT_LADDER_TEST,  # the statement is what is under test
         project_root=project_root,
     )
 
@@ -920,7 +933,7 @@ def test_a_shared_resource_named_first_is_an_answer_not_a_restatement(run_env, s
         defect_id="D-001",
         cycle=1,
         adjacent_path_statement=statement,
-        adjacent_path_test=ADJACENT_TEST,
+        adjacent_path_test=STATEMENT_LADDER_TEST,  # the statement is what is under test
         project_root=project_root,
     )
 
@@ -1367,3 +1380,452 @@ def test_dispatch_threads_both_declarations_through(run_env):
     assert result["ok"] is True, result
     assert result["adjacent_path_statement"] == ADJACENT_STATEMENT
     assert result["adjacent_path_test"] == ADJACENT_TEST
+
+
+# --------------------------------------------------------------------------- #
+# D-088 / D-089 / D-092 — three holes in the same neighbourhood
+#
+# All three are the gate comparing strings where it needed to compare what the
+# strings NAME, and all three were driven through server.py's real dispatch
+# table rather than by importing the handler — so the pins drive it too.
+#
+#   D-088  the own-symbol rule compared a bare leaf to the durable `path#Symbol`
+#          cite form FR-004 mandates. Never equal, so AC-013's distinctness rule
+#          was inert for the 30% of this run's records that use that spelling:
+#          honouring the cite policy disabled the fix gate.
+#   D-089  a test INSIDE the defect's own file cleared the own-file rule on the
+#          strength of its `::test_x` suffix, while a legitimate `./relative`
+#          spelling of a genuinely adjacent path was refused as a dangling
+#          separator. Wrong in both directions at once.
+#   D-092  the statement and the reference were judged independently, so a test
+#          driving NONE of the paths the statement named closed the defect —
+#          which is the whole of FR-010's word "NAMED".
+# --------------------------------------------------------------------------- #
+
+
+def _drive_mcp(project_root: str, **args) -> dict:
+    """Drive Foundry-Fix through server.py's real ``_DISPATCH`` table.
+
+    The gate's callers reach it over MCP, never by importing the handler, and
+    all three defects here were found by driving this surface. A pin that
+    called the handler directly would not have seen D-088 at all: the shape
+    that defeated it is what a real record carries, not what a fixture does.
+    """
+    from foundry_mcp import server as foundry_server
+
+    previous = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        return foundry_server._DISPATCH["Foundry-Fix"](args)
+    finally:
+        foundry_server._project_root = previous
+
+
+# --------------------------------------------------------------------------- #
+# D-088 — the durable cite form of a symbol must be judged like the bare form
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "spelling, expected",
+    [
+        ("refresh_session", "refresh_session"),
+        ("src/auth/session.py#refresh_session", "refresh_session"),
+        ("src/auth/session.py:42#refresh_session", "refresh_session"),
+        ("src/auth/session.py#refresh_session:42", "refresh_session"),
+        # The real shape, lifted from this run's own defects.json.
+        (
+            "plugins/foundry/scripts/measure-run.py#_reconcile_cycle_count",
+            "_reconcile_cycle_count",
+        ),
+        # An extension the cite grammar does not whitelist still splits at the
+        # separator the protocol reserves for exactly this.
+        ("some/dir/file.xyz#Thing", "Thing"),
+        ("", ""),
+    ],
+)
+def test_a_symbol_reduces_to_one_name_however_it_was_spelled(spelling, expected):
+    """D-088's root cause as a unit. The parse is shared with the cite grammar
+    (``citation.iter_symbol_cites``) rather than re-typed, so ``path#Symbol``
+    means one thing in this repo and cannot drift between the two readers."""
+    assert fo._own_symbol_name(spelling) == expected
+
+
+def test_the_cite_form_of_a_symbol_does_not_disable_the_own_symbol_rule(run_env):
+    """D-088 driven as the matched pair that found it: same defect, same test
+    reference, ONLY the shape of the ``symbol`` field differs.
+
+    Before this, the bare spelling was REFUSED and the path-qualified one was
+    ACCEPTED — so a teammate closed a defect citing a test for the very symbol
+    the defect was found on, which is precisely what AC-013 forbids, and did it
+    by writing the cite form FR-004 and the four stream agent files instruct.
+    The two requirements actively fought; the gate lost.
+    """
+    project_root, fdir = run_env
+    statement = (
+        "login_handler and the nightly sweeper both reach the store, and the "
+        "sweeper runs concurrently with eviction."
+    )
+    own_symbol_test = "tests/test_sweeper.py::test_evict_stale"
+
+    for symbol, file_field in (
+        ("evict_stale", "src/auth/sweeper.py"),
+        ("src/auth/sweeper.py#evict_stale", ""),
+        ("src/auth/sweeper.py:88#evict_stale", "src/auth/sweeper.py"),
+    ):
+        _seed_defect(fdir, symbol=symbol, file=file_field)
+        result = _drive_mcp(
+            project_root,
+            defect_id="D-001",
+            cycle=1,
+            adjacent_path_statement=statement,
+            adjacent_path_test=own_symbol_test,
+        )
+        assert result.get("ok") is not True, (symbol, result)
+        assert result["missing_fields"] == ["adjacent_path_test"], (symbol, result)
+        assert "AC-013" in result["error"], (symbol, result)
+
+        record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+        assert record["defects"][0]["status"] == "open", symbol
+
+
+# --------------------------------------------------------------------------- #
+# D-089 — the own-file rule reads the path a reference NAMES, both directions
+# --------------------------------------------------------------------------- #
+
+
+def test_a_test_inside_the_defects_own_file_drives_no_adjacent_path(run_env):
+    """D-089. The own-file rule compared the WHOLE reference to the WHOLE path,
+    so the bare file was refused and the same file with a test singled out
+    inside it walked past on the strength of its suffix — closing the defect
+    with no adjacent path having been tested at all."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="src/auth/session.py::test_login_handler_refreshes",
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    assert "AC-013" in result["error"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_a_relative_spelling_of_an_adjacent_path_is_accepted(run_env):
+    """D-089's other direction, and the reason the fix normalises BEFORE the
+    shape ladder rather than after it.
+
+    ``./adjacent/file.py::test_x`` was refused for "a separator that delimits
+    nothing" — identically to a reference that really did dangle — so the
+    adjacent-path answer could not be written in the relative form a teammate
+    naturally types. Fixing only the own-file half would have left this
+    standing and the adjacent-path case broken.
+    """
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="./tests/test_sweeper.py::test_sweeper_evicts_stale",
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_a_relative_spelling_of_the_defects_own_file_is_still_refused(run_env):
+    """Normalisation must not become a bypass: the same relative spelling of
+    the defect's OWN file is refused, and refused for the right reason — the
+    path it names, not the separator it carries."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test="./src/auth/session.py::test_login_handler_refreshes",
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    assert "delimits nothing" not in result["error"], result
+
+
+def test_a_statement_whose_only_named_path_is_the_defects_own_is_refused(run_env):
+    """D-089's statement half. ``_statement_problem`` caught a statement that
+    IS the path verbatim and never one that names it inside a sentence, so a
+    self-referential declaration cleared the ladder on word count alone."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=(
+            "The write in src/auth/session.py is what the fix touches, and "
+            "that is the whole radius."
+        ),
+        adjacent_path_test=STATEMENT_LADDER_TEST,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_statement"]
+    assert "only path it names" in result["error"], result
+
+
+def test_naming_the_defects_own_file_beside_another_path_is_accepted(run_env):
+    """The subset test's whole point, and the D-085 lesson applied in advance:
+    an adjacent caller may perfectly well live in the defect's own file, so the
+    rule fires only when EVERY path the statement names is the defect's own. A
+    search for the own path anywhere in the sentence would refuse this."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=(
+            "The write in src/auth/session.py is mirrored by tools/audit.py, "
+            "which runs concurrently."
+        ),
+        adjacent_path_test="tests/test_audit.py::test_audit_mirror_ordering",
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_the_own_path_rule_landed_as_a_path_rule_not_a_widened_phrase(run_env):
+    """D-085's over-correction, guarded against in advance.
+
+    D-089 could have been "fixed" by widening the lexical ``same``/negation
+    patterns to read phrases like "the same file as the defect" — which is
+    exactly the move that produced D-085, and the standing instruction is not
+    to make it. This derives the claim from the compiled patterns: no member of
+    the whole-statement tuple may claim the self-referential statement above.
+    The refusal comes from the path rule or it comes from nowhere.
+    """
+    self_referential = (
+        "The write in src/auth/session.py is what the fix touches, and that "
+        "is the whole radius."
+    )
+    for pattern in fo._STATEMENT_NON_ANSWERS:
+        assert not pattern.search(self_referential), pattern.pattern
+    assert not fo._unbounded_denial(self_referential)
+    # ...and with no own path to compare against, the statement is fine.
+    assert fo._statement_problem(self_referential, "", "") is None
+    # It is the path rule, and only the path rule, that refuses it.
+    assert "only path it names" in fo._statement_problem(
+        self_referential, "refresh_session", "src/auth/session.py"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-092 — the reference must drive a path the STATEMENT named
+# --------------------------------------------------------------------------- #
+
+
+# The exact pair driven through _DISPATCH at HEAD dc225f8 and ACCEPTED. The
+# statement names two adjacent paths; the referenced test is a billing rounding
+# test that drives neither, and has no relationship to the defect at all.
+UNLINKED_STATEMENT = "login_handler also calls this and the sweeper runs concurrently."
+UNLINKED_TEST = "tests/test_billing.py::test_invoice_totals_round_half_up"
+
+
+def test_a_reference_driving_none_of_the_statements_paths_is_refused(run_env):
+    """D-092 as it was driven. FR-010's "NAMED" is load-bearing: A-017 defines
+    the statement as naming the adjacent paths, so the two declarations are a
+    matched pair and the reference must drive one of the paths the statement
+    named. The gate ran them as two independent checks and never related
+    them."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=UNLINKED_STATEMENT,
+        adjacent_path_test=UNLINKED_TEST,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    assert "FR-010" in result["error"]
+    # The refusal shows the caller both token sets, so the remedy is readable
+    # rather than guessable.
+    assert "login" in result["error"] and "invoice" in result["error"], result
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_the_same_reference_shape_naming_a_declared_path_is_accepted(run_env):
+    """The differential control for the test above: same defect, same statement,
+    same test FILE, same locator shape — only the test's NAME changes, from one
+    that drives none of the declared paths to one that drives login_handler.
+    The verdict must turn on the linkage and on nothing else."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=UNLINKED_STATEMENT,
+        adjacent_path_test="tests/test_billing.py::test_login_handler_still_refreshes",
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_one_shared_token_is_enough_to_link_the_two_declarations(run_env):
+    """The rule is deliberately the weakest one that closes D-092: ANY overlap
+    accepts. Refusing a real answer is this gate's characteristic failure — it
+    is what D-076 and D-085 both were — and it fires in GRIND where the
+    teammate has no way around it, so the threshold is one token, asserted
+    here as exactly one."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    statement = "The nightly reaper thread also touches the token store."
+    ref = "tests/test_reaper.py::test_reaper_ordering"
+    assert fo._content_tokens(ref) & fo._content_tokens(statement) == {"reaper"}
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ref,
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_linkage_is_withheld_when_the_statement_failed_its_own_ladder(run_env):
+    """The rung is reached only for a statement that cleared its own ladder.
+
+    Telling a caller "your reference drives none of the paths your statement
+    named" about a statement that named none sends them after the wrong
+    problem — and the caller is already being told about the statement in the
+    same refusal.
+    """
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement="none",
+        adjacent_path_test=UNLINKED_TEST,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["missing_fields"] == ["adjacent_path_statement"], result
+    assert "FR-010" not in result["error"], result
+
+
+def test_a_reference_naming_a_test_file_is_not_judged_for_linkage(run_env):
+    """The rule's stated ceiling, pinned so it is a decision rather than a gap.
+
+    A reference that names a whole test FILE names a container, and a
+    container's name is not a claim about which path is driven — judging it
+    would assert something the reference never said. That is the same ceiling
+    the rules above keep ("these reject non-answers; they do not certify"), and
+    it is what keeps `tests/test_auth.py` acceptable against any statement.
+    """
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
+
+    assert not fo._ref_names_a_test_function("tests/test_billing.py")
+    assert fo._ref_names_a_test_function(UNLINKED_TEST)
+
+    result = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=UNLINKED_STATEMENT,
+        adjacent_path_test="tests/test_billing.py",
+    )
+
+    assert result["ok"] is True, result
+
+
+# --------------------------------------------------------------------------- #
+# The binding itself — the property all three defects are instances of
+# --------------------------------------------------------------------------- #
+
+
+# One defect location, spelled every way a real record spells it. The `file`
+# field alone, the cite form in `symbol` with `file` left empty, a line hint on
+# either, a relative prefix. Under raw equality these are five different
+# defects; they are one.
+_SAME_LOCATION_SPELLINGS = [
+    {"file": "src/auth/session.py", "symbol": "refresh_session"},
+    {"file": "./src/auth/session.py", "symbol": "refresh_session"},
+    {"file": "src/auth/session.py:42", "symbol": "refresh_session"},
+    {"file": "", "symbol": "src/auth/session.py#refresh_session"},
+    {"file": "src/auth/session.py", "symbol": "src/auth/session.py:42#refresh_session"},
+]
+
+
+@pytest.mark.parametrize("location", _SAME_LOCATION_SPELLINGS)
+def test_every_spelling_of_the_defects_location_reaches_the_same_verdict(run_env, location):
+    """D-088, D-089 and D-092 are one property, asserted once.
+
+    Each was a comparison site left on raw string equality while the protocol
+    wrote something richer into the field being compared — and this run's
+    repeated failure is never one bad rule, it is one rule fixed in a single
+    copy. So the invariant is stated over the whole gate rather than per rule:
+    however the defect's own location is spelled, the same three references get
+    the same three verdicts. A future edit that normalises at one site and not
+    another fails here, on the spelling it forgot.
+    """
+    project_root, fdir = run_env
+    _seed_defect(fdir, **location)
+
+    own_file_ref = "src/auth/session.py::test_login_handler_refreshes"
+    own_symbol_ref = "tests/test_session.py::test_refresh_session"
+
+    refused_own_file = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=own_file_ref,
+    )
+    assert refused_own_file.get("ok") is not True, (location, refused_own_file)
+    assert refused_own_file["missing_fields"] == ["adjacent_path_test"]
+
+    refused_own_symbol = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=own_symbol_ref,
+    )
+    assert refused_own_symbol.get("ok") is not True, (location, refused_own_symbol)
+    assert refused_own_symbol["missing_fields"] == ["adjacent_path_test"]
+
+    accepted = _drive_mcp(
+        project_root,
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+    )
+    assert accepted["ok"] is True, (location, accepted)

@@ -1,0 +1,102 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, json, re, tempfile, pathlib; sys.path[:0]=["tests","src"]; from foundry_mcp import server as S; from foundry_mcp.tools import foundry_orchestrator as fo; from foundry_mcp.tools import foundry_state; R=pathlib.Path(tempfile.mkdtemp()); F=R/"foundry-archive"/"grind12"; F.joinpath("castings").mkdir(parents=True); fo._check_active_teams=lambda _p: {"active": False, "teams": [], "live_panes": []}; foundry_state.set_active_run("grind12"); setattr(S, "_project_root", str(R)); seed=lambda sym,fil: F.joinpath("defects.json").write_text(json.dumps({"defects": [{"id": "D-001", "cycle": 0, "source": "trace", "type": "UNWIRED", "description": "session refresh never calls the token store", "spec_ref": "FR-001", "symbol": sym, "file": fil, "status": "open", "fixed_in_cycle": None}]})); call=lambda sym,fil,st,ref: (seed(sym,fil), S._DISPATCH["Foundry-Fix"]({"defect_id": "D-001", "cycle": 1, "adjacent_path_statement": st, "adjacent_path_test": ref}))[1]; V=lambda a: ("ACCEPTED" if call(*a).get("ok") is True and json.loads(F.joinpath("defects.json").read_text())["defects"][0]["status"]=="fixed" else "REFUSED "); rows=lambda tag,cases: [print("   %s  %-8s %s" % (tag, V(a), lbl)) for lbl,a in cases]; note=lambda t: [print("   %s" % t), print()]; ADJ="login_handler and the background session-sweeper both call the token store; the sweeper runs concurrently with refresh."; AT="tests/test_auth.py::test_sweeper_does_not_evict_a_live_session"; SW="login_handler and the nightly sweeper both reach the store, and the sweeper runs concurrently with eviction."; UN="login_handler also calls this and the sweeper runs concurrently."; OWNF="src/auth/session.py::test_login_handler_refreshes"; block=lambda title,cases,name,pre,tail: [print(title), rows("post-fix", cases), setattr(fo, name, pre), rows("PRE-fix ", cases), setattr(fo, name, KEEP[name]), note(tail)]; KEEP={n: getattr(fo,n) for n in ("_own_symbol_name","_ref_file_component","_normalize_ref","_STATEMENT_NAMED_PATH","_linkage_problem")}; block("== D-088: one defect, one reference, only the SHAPE of the symbol field differs ==", [("symbol=evict_stale", ("evict_stale","src/auth/sweeper.py",SW,"tests/test_sweeper.py::test_evict_stale")), ("symbol=src/auth/sweeper.py#evict_stale", ("src/auth/sweeper.py#evict_stale","",SW,"tests/test_sweeper.py::test_evict_stale")), ("symbol=src/auth/sweeper.py:88#evict_stale", ("src/auth/sweeper.py:88#evict_stale","src/auth/sweeper.py",SW,"tests/test_sweeper.py::test_evict_stale"))], "_own_symbol_name", lambda s: s.strip(), "a bare leaf never equals a path-qualified string, so AC-013 distinctness was dead for the cite form FR-004 mandates -- 26 of this run 87 records."); block("== D-089a: a test INSIDE the defect own file ==", [(OWNF, ("refresh_session","src/auth/session.py",ADJ,OWNF))], "_ref_file_component", lambda ref: ref, "whole-reference equality refused the bare file and let the ::suffix walk past, so the defect closed with no adjacent path tested."); block("== D-089b: a ./relative spelling, of an adjacent path and of the own file ==", [("./tests/test_sweeper.py::test_sweeper_evicts_stale", ("refresh_session","src/auth/session.py",ADJ,"./tests/test_sweeper.py::test_sweeper_evicts_stale")), ("./"+OWNF+"   (the OWN file)", ("refresh_session","src/auth/session.py",ADJ,"./"+OWNF))], "_normalize_ref", lambda r: r.strip(), "the relative form was refused as a separator that delimits nothing, so the answer could not be written the way a teammate types it -- and normalising it does not become a bypass for the own file."); block("== D-089c: a statement whose ONLY named path is the defect own ==", [("names src/auth/session.py and nothing else", ("refresh_session","src/auth/session.py","The write in src/auth/session.py is what the fix touches, and that is the whole radius.","tests/test_adjacent_paths.py")), ("names src/auth/session.py AND tools/audit.py", ("refresh_session","src/auth/session.py","The write in src/auth/session.py is mirrored by tools/audit.py, which runs concurrently.","tests/test_audit.py::test_audit_mirror_ordering"))], "_STATEMENT_NAMED_PATH", re.compile(r"(?!)"), "a SUBSET test over the whole declaration, not a search: an adjacent caller may live in the defect own file, so naming it beside another path is still an answer. The lexical same pattern is untouched (D-085)."); block("== D-092: does the referenced test drive a path the STATEMENT named? ==", [("tests/test_billing.py::test_invoice_totals_round_half_up", ("refresh_session","src/auth/session.py",UN,"tests/test_billing.py::test_invoice_totals_round_half_up")), ("tests/test_billing.py::test_login_handler_still_refreshes", ("refresh_session","src/auth/session.py",UN,"tests/test_billing.py::test_login_handler_still_refreshes")), ("tests/test_billing.py                    (a test FILE -- not judged)", ("refresh_session","src/auth/session.py",UN,"tests/test_billing.py")), ("statement none -- linkage withheld, the statement is the problem", ("refresh_session","src/auth/session.py","none","tests/test_billing.py::test_invoice_totals_round_half_up"))], "_linkage_problem", lambda ref, statement: None, "same defect, same statement, same test FILE, same locator shape -- only the test NAME changes. ANY single shared token accepts: the rung is the weakest rule that closes D-092, because refusing a real answer in GRIND is what D-076 and D-085 both were."); print("== the binding: one location spelled five ways, one verdict each =="); print("   %-54s %-9s %-9s %s" % ("the defect own location, as a real record spells it", "own-file", "own-sym", "adjacent")); [print("   %-54s %-9s %-9s %s" % ("symbol=" + (sym or "(empty)") + " file=" + (fil or "(empty)"), V((sym,fil,ADJ,OWNF)), V((sym,fil,ADJ,"tests/test_session.py::test_refresh_session")), V((sym,fil,ADJ,AT)))) for sym,fil in [("refresh_session","src/auth/session.py"), ("refresh_session","./src/auth/session.py"), ("refresh_session","src/auth/session.py:42"), ("src/auth/session.py#refresh_session",""), ("src/auth/session.py:42#refresh_session","src/auth/session.py")]]; print("   under raw string equality these are five different defects; they are one.")'
+# evidence-for: AC-013, FR-009, FR-010, CT-001, ST-004, NFR-001
+# evidence-timeout: 300
+#
+# GRIND cycle 12 -- D-088, D-089 and D-092, driven through server.py's real
+# _DISPATCH table, which is the surface all three were found on.
+#
+# The three are ONE defect wearing three faces: the Foundry-Fix gate comparing
+# STRINGS where it had to compare what the strings NAME. Each block prints the
+# post-fix verdict and then the PRE-fix verdict, obtained by restoring that one
+# comparison's old semantics in process -- the mutation is what makes the drive
+# falsifiable, because a fix whose pins pass against the pre-fix code is not
+# pinning anything.
+#
+#   D-088  `symbol` carries the durable `path#Symbol` cite form FR-004/AC-005
+#          mandate and the four stream agent files instruct. The own-symbol
+#          rule compared that whole string against a BARE leaf, so it could
+#          never be equal and AC-013's distinctness rule was inert for the 26
+#          of this run's 87 records (30%) that use that spelling. Honouring the
+#          cite policy is what disabled the fix gate: the two requirements
+#          actively fought, and the gate lost.
+#   D-089  Wrong in both directions at once. A test INSIDE the defect's own
+#          file cleared the own-file rule on the strength of its `::test_x`
+#          suffix -- the defect closed with no adjacent path tested at all --
+#          while `./adjacent/file.py::test_x`, a legitimate relative spelling
+#          of a genuinely adjacent path, was refused as a dangling separator.
+#          Normalisation therefore runs BEFORE the shape ladder, and block b
+#          shows it did not become a bypass for the own file. Block c is the
+#          statement half: `_statement_problem` caught a statement that IS the
+#          path verbatim and never one naming it inside a sentence.
+#   D-092  The statement and the reference were judged INDEPENDENTLY -- the
+#          statement was not even a parameter of the reference check -- so a
+#          test driving none of the paths the statement named closed the
+#          defect. That is the whole of FR-010's word "NAMED": A-017 defines
+#          the statement as naming the adjacent paths, so the two declarations
+#          are a matched pair and the reference must drive one of them.
+#
+# Fixed as ONE normalisation layer with every comparison site bound to it, not
+# as three patches. This run's repeated failure is never one bad rule -- it is
+# one rule fixed in a single copy, which is D-038 -> D-050 -> D-076 -> D-085 ->
+# D-088 -- so the last block states the invariant over the whole gate rather
+# than per rule: however the defect's own location is spelled, the same three
+# references get the same three verdicts.
+#
+# The two judgement calls, both resolved toward ACCEPTING, because refusing a
+# real answer is this gate's characteristic failure and it fires in GRIND where
+# the teammate has no way around it (that is what D-076 and D-085 both were):
+# the statement's path rule is a SUBSET test over the whole declaration rather
+# than a search, so an adjacent caller living in the defect's own file is still
+# an answer; and the linkage rung accepts on ANY single shared token, is
+# withheld when the statement failed its own ladder, and does not judge a
+# reference that names a test FILE, because a container's name is not a claim
+# about which path is driven. The lexical `same` pattern that produced D-085 is
+# untouched -- verified from the compiled patterns in test_fix_gate.py's
+# test_the_own_path_rule_landed_as_a_path_rule_not_a_widened_phrase.
+== D-088: one defect, one reference, only the SHAPE of the symbol field differs ==
+   post-fix  REFUSED  symbol=evict_stale
+   post-fix  REFUSED  symbol=src/auth/sweeper.py#evict_stale
+   post-fix  REFUSED  symbol=src/auth/sweeper.py:88#evict_stale
+   PRE-fix   REFUSED  symbol=evict_stale
+   PRE-fix   ACCEPTED symbol=src/auth/sweeper.py#evict_stale
+   PRE-fix   ACCEPTED symbol=src/auth/sweeper.py:88#evict_stale
+   a bare leaf never equals a path-qualified string, so AC-013 distinctness was dead for the cite form FR-004 mandates -- 26 of this run 87 records.
+
+== D-089a: a test INSIDE the defect own file ==
+   post-fix  REFUSED  src/auth/session.py::test_login_handler_refreshes
+   PRE-fix   ACCEPTED src/auth/session.py::test_login_handler_refreshes
+   whole-reference equality refused the bare file and let the ::suffix walk past, so the defect closed with no adjacent path tested.
+
+== D-089b: a ./relative spelling, of an adjacent path and of the own file ==
+   post-fix  ACCEPTED ./tests/test_sweeper.py::test_sweeper_evicts_stale
+   post-fix  REFUSED  ./src/auth/session.py::test_login_handler_refreshes   (the OWN file)
+   PRE-fix   REFUSED  ./tests/test_sweeper.py::test_sweeper_evicts_stale
+   PRE-fix   REFUSED  ./src/auth/session.py::test_login_handler_refreshes   (the OWN file)
+   the relative form was refused as a separator that delimits nothing, so the answer could not be written the way a teammate types it -- and normalising it does not become a bypass for the own file.
+
+== D-089c: a statement whose ONLY named path is the defect own ==
+   post-fix  REFUSED  names src/auth/session.py and nothing else
+   post-fix  ACCEPTED names src/auth/session.py AND tools/audit.py
+   PRE-fix   ACCEPTED names src/auth/session.py and nothing else
+   PRE-fix   ACCEPTED names src/auth/session.py AND tools/audit.py
+   a SUBSET test over the whole declaration, not a search: an adjacent caller may live in the defect own file, so naming it beside another path is still an answer. The lexical same pattern is untouched (D-085).
+
+== D-092: does the referenced test drive a path the STATEMENT named? ==
+   post-fix  REFUSED  tests/test_billing.py::test_invoice_totals_round_half_up
+   post-fix  ACCEPTED tests/test_billing.py::test_login_handler_still_refreshes
+   post-fix  ACCEPTED tests/test_billing.py                    (a test FILE -- not judged)
+   post-fix  REFUSED  statement none -- linkage withheld, the statement is the problem
+   PRE-fix   ACCEPTED tests/test_billing.py::test_invoice_totals_round_half_up
+   PRE-fix   ACCEPTED tests/test_billing.py::test_login_handler_still_refreshes
+   PRE-fix   ACCEPTED tests/test_billing.py                    (a test FILE -- not judged)
+   PRE-fix   REFUSED  statement none -- linkage withheld, the statement is the problem
+   same defect, same statement, same test FILE, same locator shape -- only the test NAME changes. ANY single shared token accepts: the rung is the weakest rule that closes D-092, because refusing a real answer in GRIND is what D-076 and D-085 both were.
+
+== the binding: one location spelled five ways, one verdict each ==
+   the defect own location, as a real record spells it    own-file  own-sym   adjacent
+   symbol=refresh_session file=src/auth/session.py        REFUSED   REFUSED   ACCEPTED
+   symbol=refresh_session file=./src/auth/session.py      REFUSED   REFUSED   ACCEPTED
+   symbol=refresh_session file=src/auth/session.py:42     REFUSED   REFUSED   ACCEPTED
+   symbol=src/auth/session.py#refresh_session file=(empty) REFUSED   REFUSED   ACCEPTED
+   symbol=src/auth/session.py:42#refresh_session file=src/auth/session.py REFUSED   REFUSED   ACCEPTED
+   under raw string equality these are five different defects; they are one.
