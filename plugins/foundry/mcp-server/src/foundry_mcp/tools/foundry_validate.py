@@ -13,6 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
+# D-134: the SHARED nested-shape validator, so "unusable manifest" means one
+# thing in every module that reads castings/manifest.json. A module-top import
+# is safe here — validate -> spawn -> orchestrator has no cycle — unlike in
+# foundry_orchestrator, which foundry_spawn imports and which therefore reaches
+# the same validator through a lazy in-function import.
+from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 
 
@@ -39,6 +45,8 @@ def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
     ).hexdigest()[:16]
 
     castings_fp: dict[str, dict] = {}
+    if _manifest_shape_problem(manifest) is not None:
+        return {"spec_hash": spec_hash, "manifest_hash": manifest_hash, "castings": {}}
     for c in manifest.get("castings", []):
         cid = str(c.get("id"))
         prompt_path = fdir / "castings" / f"casting-{cid}-prompt.md"
@@ -107,6 +115,27 @@ def foundry_validate_castings(
     # raised out of Foundry-Validate-Castings instead of naming the file. The
     # guard above reports both by name; these loads are now total.
     manifest = _load_json(manifest_path)
+    # D-134: the RECORDS, not just the container. `_load_json` guards the
+    # document being a dict and `.get("castings", [])` guards the key being
+    # present — neither guards what the members inside are, so a manifest whose
+    # `castings` is a string reached `c.get(...)` below and raised
+    # AttributeError out of Foundry-Validate-Castings. The house refusal names
+    # the file and carries `corrupt_artifacts`, the way every other artifact
+    # refusal on this surface does.
+    if (records := _manifest_shape_problem(manifest)) is not None:
+        return {
+            "passed": False,
+            "error": (
+                f"Run artifacts cannot be read: {records}. This tool refuses "
+                f"rather than acting on a document it had to guess at."
+            ),
+            "hint": (
+                "Re-run F0.5 DECOMPOSE. The manifest is a JSON object whose "
+                "`castings` and `waves` are lists of objects — each casting "
+                "carrying an `id`, each wave a `wave` number."
+            ),
+            "corrupt_artifacts": [records],
+        }
     castings = manifest.get("castings", [])
     spec_type = (manifest.get("spec_type") or "GREENFIELD").upper()
 

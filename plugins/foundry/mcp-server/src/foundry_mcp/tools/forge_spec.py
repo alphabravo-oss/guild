@@ -55,16 +55,22 @@ def _planning_guard(proj_dir: Path) -> dict | None:
     directory -- so a forge-spec artifact added later is guarded the day it is
     written rather than the cycle someone remembers it. There is one such file
     today; naming it would be the defect this guard exists to close.
+
+    D-140: the ``if c.is_file()`` filter that used to sit here was a hole of
+    exactly the shape this guard exists to close. A DIRECTORY named
+    ``state.json`` is not a file, so the guard skipped it and reported the
+    project clean -- and then Check raised IsADirectoryError out of the write
+    while Start and Status returned ok over a fabricated all-default state:
+    three doors, three different stories about one broken path. A path
+    OCCUPYING an artifact's name is the guard's business whatever kind of
+    thing it is; ``_document_problem`` already names it, because the read
+    raises OSError and OSError is what it reports.
     """
     if not proj_dir.exists():
         return None
     problems = [
         p
-        for p in (
-            _document_problem(c)
-            for c in sorted(proj_dir.glob("*.json"))
-            if c.is_file()
-        )
+        for p in (_document_problem(c) for c in sorted(proj_dir.glob("*.json")))
         if p
     ]
     if not problems:

@@ -322,15 +322,159 @@ def _text_problem(path: Path) -> str | None:
     return read_text_file(path)[1]
 
 
-# How to tell whether an artifact of a given type is readable. The TABLE varies
-# by file type; MEMBERSHIP is derived by globbing the run directory, so a new
-# artifact of a known type is guarded the day it is written. A suffix with no
-# decoder is not checked — the table is the extension point, and it is the one
-# thing here a new artifact TYPE (not a new artifact) requires.
-_ARTIFACT_DECODERS = {
+# D-138 — A DERIVED GUARD IS ONLY AS TOTAL AS ITS LEAST-DERIVED AXIS.
+#
+# This table used to be `{".json": ..., ".md": ...}` and a suffix outside it was
+# skipped with a bare `continue`. That is the escalated class living inside the
+# fix written to make the escalated class unrepresentable: membership was
+# derived on the axis the defect was reported on (WHICH FILES in the top level)
+# and hand-bound on the two axes it was not (WHICH SUFFIXES decode, and WHICH
+# subdirectory files count — exactly one, appended by name).
+#
+# What that cost: `handoffs.jsonl` and `spawns.log` are artifacts foundry writes
+# ITSELF, both present in every live run dir, both outside the table. A run dir
+# holding a corrupt spawns.log returned NO problems, Foundry-Next named nothing,
+# and Foundry-Liveness raised UnicodeDecodeError across the MCP boundary — D-098
+# and D-129's harm re-created on an unenrolled file TYPE.
+#
+# All three axes are derived now:
+#
+#   WHICH FILES  — `rglob`, not `glob`. Every artifact under the run dir,
+#                  at any depth. `castings/manifest.json` is no longer appended
+#                  by name, and neither are traces/, proofs/, assay/, temper/
+#                  or test_observations/, which were not members at all.
+#
+#   WHICH TYPES  — derived from CONTENT, not from a suffix table. An unknown
+#                  suffix is no longer skipped: every artifact must at minimum
+#                  decode as UTF-8 unless its own bytes say it is binary. So
+#                  .jsonl, .log and the extensionless markers are covered the
+#                  day they are written, with nothing to enrol.
+#
+#   WHICH RUNGS  — `.json` keeps a STRICTER rung on top of the text floor (it
+#                  must also be a JSON mapping). That is the one remaining
+#                  suffix key, and it is not a membership gate: a suffix absent
+#                  from it falls THROUGH to the floor rather than out of the
+#                  scan. This is the property the old table lacked, and the
+#                  whole difference between an extension point and a hole.
+
+#: Suffixes carrying a rung ABOVE "must be readable UTF-8". Not a membership
+#: list — see the note above. Adding one TIGHTENS the check for that suffix;
+#: removing one leaves the artifact on the text floor, never unchecked.
+_STRICT_ARTIFACT_DECODERS = {
     ".json": _document_problem,
-    ".md": _text_problem,
 }
+
+#: Leading bytes of the binary artifact types a run directory legitimately
+#: holds — SIGHT screenshots, the odd PDF or archive.
+#:
+#: THE DIRECTION OF THIS TABLE IS THE WHOLE POINT. It is an EXEMPTION list, so
+#: an unrecognised type falls INTO the guard and is REPORTED, never out of it
+#: and skipped. That is the opposite of the suffix table it replaces, whose
+#: unrecognised members hit a bare `continue` — and it is what D-138 asks for
+#: in as many words: a new artifact type must announce itself rather than be
+#: passed over. Over-reporting is recoverable (the operator moves the file);
+#: under-reporting is D-098, D-129 and D-138.
+#:
+#: A CONTENT SNIFF WAS TRIED HERE FIRST AND IS WRONG. "A NUL byte in the first
+#: 8000 means binary" is git's heuristic, and it reads a text artifact whose
+#: CORRUPTION contains a NUL as a binary file to be skipped — silently losing
+#: exactly the artifact this guard exists to name. Driven: a `.trace-clean-at`
+#: overwritten with b"\xe9\x00..." came back clean.
+_BINARY_ARTIFACT_SIGNATURES = (
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF8",
+    b"BM",
+    b"RIFF",
+    b"%PDF-",
+    b"PK\x03\x04",
+    b"\x1f\x8b",
+)
+
+
+def _is_compiled_python(head: bytes) -> bool:
+    """True for a CPython ``.pyc`` header, of ANY interpreter version.
+
+    Not a prefix, so it cannot live in the signature tuple above. CPython's
+    magic is ``<2-byte version little-endian> + b"\\r\\n"``, an invariant across
+    versions (``importlib.util.MAGIC_NUMBER`` is this interpreter's value of
+    it) — which matters because a run directory holds ``.pyc`` written by
+    whatever interpreters have touched it: the live thunder-viper dir carries
+    cpython-311 and cpython-314 side by side.
+
+    Real run directories DO hold these. Measured before this was added: 13
+    reported artifacts in thunder-viper and 317 in grand-vulture, every one a
+    ``__pycache__`` entry — a guard that refuses on those does not harden
+    Foundry-Next, it bricks it.
+    """
+    return len(head) >= 4 and head[2:4] == b"\r\n"
+
+
+def _is_binary_artifact(path: Path) -> bool:
+    """True when ``path``'s header says it is a binary artifact, not text.
+
+    An unreadable file is NOT binary — it falls through to the text check,
+    which names it. Neither is a file of a binary type nobody enrolled: it is
+    reported, which is the direction this table is built to fail in.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(max(len(s) for s in _BINARY_ARTIFACT_SIGNATURES))
+    except OSError:
+        return False
+    return head.startswith(_BINARY_ARTIFACT_SIGNATURES) or _is_compiled_python(head)
+
+
+def _manifest_shape_problem_lazy(manifest: object) -> str | None:
+    """D-132's shared nested-shape validator, reached without an import cycle.
+
+    ``foundry_spawn`` imports THIS module at module top, so reading back at
+    module scope would close the graph. The lazy in-function import is the
+    house pattern already used by ``foundry_sync_defects`` for ``foundry.py``.
+
+    D-134: the validator's membership used to be derived over ``foundry_spawn``
+    's OWN functions rather than over every reader of castings/manifest.json in
+    the package — so the four doors in that module were guarded while
+    ``_check_sight_required``, ``_trace_skip_check``, ``foundry_gate`` and both
+    ``foundry_validate`` readers indexed the same records with a top-rung-only
+    guard. ``castings: "nope"`` met ``.get()`` and raised AttributeError out of
+    Foundry-Next, the mandatory handshake before EVERY phase transition.
+    """
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
+    return _manifest_shape_problem(manifest)
+
+
+#: The rung BELOW "is this a readable JSON object", for the artifacts that have
+#: one: keyed by path relative to the run dir, because that is what identifies
+#: an artifact rather than its type. Like ``_STRICT_ARTIFACT_DECODERS`` this
+#: TIGHTENS; an artifact absent from it still gets the full JSON-object and
+#: text floors, so it is an extension point and never a hole.
+#:
+#: This is what makes D-134's refusal reach the operator in the house shape:
+#: `_artifact_guard` runs at the top of every MCP entry point, so a manifest
+#: whose records are unusable is named in `corrupt_artifacts` at every door at
+#: once, rather than at each reader that happens to remember to look.
+_ARTIFACT_RECORD_RUNGS = {
+    ("castings", "manifest.json"): _manifest_shape_problem_lazy,
+}
+
+
+def _artifact_problem(path: Path, relative: tuple[str, ...] = ()) -> str | None:
+    """The named reason this artifact is unreadable, or None.
+
+    One decision per artifact, taken from the artifact rather than from a table
+    of the types someone remembered.
+    """
+    strict = _STRICT_ARTIFACT_DECODERS.get(path.suffix.lower())
+    if strict is not None:
+        if (problem := strict(path)):
+            return problem
+        rung = _ARTIFACT_RECORD_RUNGS.get(relative)
+        return rung(_load_json(path)) if rung is not None else None
+    if _is_binary_artifact(path):
+        return None
+    return _text_problem(path)
 
 
 # Artifacts whose corruption the guard reports. DERIVED, not a hand-kept list:
@@ -352,19 +496,22 @@ _ARTIFACT_DECODERS = {
 # escalated class, and the next non-JSON artifact would repeat it. The glob
 # derives the members; the decoder table says how to read each type.
 def _run_artifact_problems(fdir: Path) -> list[str]:
-    """Named problems for every unreadable run artifact, in stable order."""
+    """Named problems for every unreadable run artifact, in stable order.
+
+    Membership is the whole tree (``rglob``), not the top level plus one
+    hand-named manifest. A DIRECTORY is a container and is walked past — except
+    one occupying a name that carries a suffix, which is a directory sitting
+    where a reader will open a file (D-140: ``state.json`` as a directory
+    passed the old ``is_file()`` filter, so the guard saw nothing and the write
+    raised IsADirectoryError instead of refusing by name).
+    """
     if not fdir or not fdir.exists():
         return []
-    candidates = sorted(p for p in fdir.glob("*") if p.is_file())
-    manifest = fdir / "castings" / "manifest.json"
-    if manifest.is_file():
-        candidates.append(manifest)
     problems: list[str] = []
-    for candidate in candidates:
-        decoder = _ARTIFACT_DECODERS.get(candidate.suffix.lower())
-        if decoder is None:
+    for candidate in sorted(fdir.rglob("*")):
+        if candidate.is_dir() and not candidate.suffix:
             continue
-        if (problem := decoder(candidate)):
+        if (problem := _artifact_problem(candidate, candidate.relative_to(fdir).parts)):
             problems.append(problem)
     return problems
 
@@ -797,6 +944,10 @@ def foundry_gate(
     project_root: str = ".",
 ) -> dict:
     """Check if preconditions are met to enter a phase."""
+    # D-134: the shared nested-shape validator, lazily imported because
+    # foundry_spawn imports this module at module top.
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"phase": phase, "passed": False, "reason": "No active foundry run", "hint": "Call Foundry-Init first"}
@@ -834,6 +985,9 @@ def foundry_gate(
         if not manifest.exists():
             return {"phase": phase, "passed": False, "reason": "No manifest.json", "hint": "Run DECOMPOSE first to create castings"}
         data = _load_json(manifest)
+        if (records := _manifest_shape_problem(data)) is not None:
+            return {"phase": phase, "passed": False, "reason": records,
+                    "hint": "Re-run F0.5 DECOMPOSE — the manifest's records are unusable"}
         count = len(data.get("castings", []))
         checklist.append({"check": "manifest_exists", "ok": True})
         if count < 1:
@@ -845,6 +999,9 @@ def foundry_gate(
         if not manifest.exists():
             return {"phase": phase, "passed": False, "reason": "No manifest.json", "hint": "Run foundry_init and add castings"}
         data = _load_json(manifest)
+        if (records := _manifest_shape_problem(data)) is not None:
+            return {"phase": phase, "passed": False, "reason": records,
+                    "hint": "Re-run F0.5 DECOMPOSE — the manifest's records are unusable"}
         count = len(data.get("castings", []))
         checklist.append({"check": "manifest_exists", "ok": True})
         if count < 1:
@@ -1403,7 +1560,13 @@ def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     if not clean_sha:
         return {"skip": False, "reason": "no head_sha recorded"}
 
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
     manifest = _load_json(fdir / "castings" / "manifest.json")
+    # D-134: same shared validator as every other reader of this document, so
+    # "unusable" means one thing across the package.
+    if _manifest_shape_problem(manifest) is not None:
+        return {"skip": False, "reason": "castings/manifest.json records are unreadable"}
     key_files: set[str] = set()
     for c in manifest.get("castings", []):
         for f in (c.get("key_files") or []):
@@ -2177,7 +2340,15 @@ def _check_sight_required(project_root: str) -> dict:
     if not manifest.exists():
         return {"required": False}
 
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
     data = _load_json(manifest)
+    # D-134: the records, not just the container. `castings: "nope"` used to
+    # meet `.get()` two lines down and raise AttributeError out of Foundry-Next.
+    # The guard at every MCP door names the file; this keeps the reader itself
+    # total for the paths that reach it without one.
+    if _manifest_shape_problem(data) is not None:
+        return {"required": False, "reason": "castings/manifest.json records are unreadable"}
     ui_exts = {".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html", ".astro"}
 
     ui_files = []

@@ -4011,31 +4011,55 @@ def test_a_never_used_directives_file_still_clears_as_a_no_op(run_env):
     assert result["cleared_count"] == 0
 
 
-def test_every_decodable_artifact_type_the_run_dir_holds_is_guarded(run_env):
-    """DERIVED MEMBERSHIP, asserted as such — the escalated class's binding rule.
+def _seed_run_artifacts(project_root: str, fdir: Path) -> None:
+    """A run dir holding one artifact of every shape a live run really has.
 
-    Corrupt EVERY top-level artifact the run directory actually holds, one at a
-    time, and require a named refusal naming that file. Membership comes from
-    globbing the directory, so this test does not know -- and must not know --
-    that "directives.md" is one of them. Add a new artifact of a decodable type
-    tomorrow and it is covered here the same day, with no edit to this file.
-
-    This is the assertion that FAILS when a member is unbound: before the fix,
-    every ``.md`` member came back clean because the guard globbed ``*.json``.
+    Taken from what `foundry-archive/` actually contains: JSON and markdown at
+    the top level, the JSONL and .log files foundry writes ITSELF (D-138's
+    unenrolled types), an extensionless marker, and artifacts in SUBDIRECTORIES
+    — the whole class the old top-level glob could not see.
     """
-    project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=1)
     _seed_directive(project_root, _URGENT_DIRECTIVE)
     (fdir / "spec.md").write_text("# Spec\n\n- **US-001:** a thing\n", encoding="utf-8")
     (fdir / "defects.json").write_text(json.dumps({"defects": []}), encoding="utf-8")
-
-    members = sorted(
-        p for p in fdir.glob("*")
-        if p.is_file() and p.suffix.lower() in fo._ARTIFACT_DECODERS
+    (fdir / "handoffs.jsonl").write_text('{"event": "spawn"}\n', encoding="utf-8")
+    (fdir / "spawns.log").write_text("2026-01-01 spawned casting 1\n", encoding="utf-8")
+    (fdir / ".trace-clean-at").write_text(json.dumps({"cycle": 1}), encoding="utf-8")
+    (fdir / "castings").mkdir(exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": [], "waves": []}), encoding="utf-8"
     )
-    # The fixture must actually exercise BOTH decoders, or the derivation is
-    # being asserted against a set that cannot distinguish the fix.
-    assert {p.suffix for p in members} == {".json", ".md"}, members
+    (fdir / "castings" / "casting-1-prompt.md").write_text("# c1\n", encoding="utf-8")
+    (fdir / "traces").mkdir(exist_ok=True)
+    (fdir / "traces" / "TRACE-cycle-1.md").write_text("# trace\n", encoding="utf-8")
+
+
+def test_every_artifact_the_run_dir_holds_is_guarded_at_any_depth(run_env):
+    """DERIVED MEMBERSHIP ON ALL THREE AXES — the escalated class's binding rule.
+
+    Corrupt EVERY artifact the run directory actually holds, one at a time, at
+    ANY depth, and require the guard to name that file. Membership comes from
+    walking the directory, so this test does not know -- and must not know --
+    which files those are. Add a new artifact tomorrow, of a new TYPE, in a new
+    SUBDIRECTORY, and it is covered here the same day with no edit to this file.
+
+    D-138 is what this failed to assert before. It globbed the top level and
+    filtered on a two-entry suffix table, so `handoffs.jsonl` and `spawns.log`
+    -- artifacts foundry writes itself, present in every live run -- came back
+    clean when corrupted, as did everything under castings/, traces/, proofs/,
+    assay/ and temper/ bar one hand-named manifest.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+
+    members = sorted(p for p in fdir.rglob("*") if p.is_file())
+    # The fixture must exercise the types and depths the old rule could not
+    # see, or the derivation is asserted against a set that cannot tell the
+    # fix from the defect.
+    suffixes = {p.suffix for p in members}
+    assert {".json", ".md", ".jsonl", ".log"} <= suffixes, suffixes
+    assert any(p.parent != fdir for p in members), "no subdirectory artifact in the fixture"
 
     for member in members:
         original = member.read_bytes()
@@ -4044,9 +4068,9 @@ def test_every_decodable_artifact_type_the_run_dir_holds_is_guarded(run_env):
             problems = fo._run_artifact_problems(fdir)
             assert any(member.name in p for p in problems), (
                 f"{member.name} was corrupted and the guard reported {problems}. "
-                f"Membership must be DERIVED from what the run directory holds; "
-                f"a type with no decoder is a silent hole exactly like the "
-                f"`*.json` glob was."
+                f"Membership must be DERIVED on every axis -- which files, which "
+                f"types, which depth. A type with no decoder is a silent hole "
+                f"exactly like the `*.json` glob was."
             )
             guard = fo._artifact_guard(fdir)
             assert guard is not None and member.name in guard["error"]
@@ -4055,6 +4079,156 @@ def test_every_decodable_artifact_type_the_run_dir_holds_is_guarded(run_env):
 
     # ...and with everything restored the guard is silent again.
     assert fo._artifact_guard(fdir) is None
+
+
+def test_a_binary_artifact_is_not_reported_as_corrupt(run_env):
+    """The control that keeps the text floor from becoming a false alarm.
+
+    "Every unknown suffix must decode as UTF-8" would report a SIGHT screenshot
+    or a stray .pyc as a corrupt run artifact and brick Foundry-Next on a
+    healthy run. The type is decided by the artifact's own bytes, so binary
+    content is passed over for a reason derived from the file rather than from
+    a suffix someone remembered to exclude.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / "sight").mkdir(exist_ok=True)
+    (fdir / "sight" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xe9")
+
+    assert fo._run_artifact_problems(fdir) == []
+    assert fo._artifact_guard(fdir) is None
+
+
+#: The nested shapes D-132 was filed on: a manifest that is a perfectly good
+#: JSON object whose RECORD CONTAINER cannot be indexed. Kept here as data so
+#: each door below is driven against all of them rather than against the one
+#: the defect happened to quote.
+_UNUSABLE_MANIFEST_RECORDS = (
+    {"castings": "nope", "spec_type": "GREENFIELD"},
+    {"castings": [1, 2, 3]},
+    {"castings": [None]},
+    {"waves": "nope"},
+    {"waves": [1]},
+)
+
+
+@pytest.mark.parametrize("body", _UNUSABLE_MANIFEST_RECORDS)
+def test_no_manifest_reader_in_this_module_raises_on_unusable_records(run_env, body):
+    """D-134 — the doors in THIS module, driven against the nested shapes.
+
+    D-132's validator was bound inside foundry_spawn.py: its four readers were
+    guarded and its membership was derived over that module's own functions,
+    not over every reader of castings/manifest.json in the package. So
+    `_check_sight_required`, `_trace_skip_check` and `foundry_gate` indexed the
+    same records behind a top-rung-only guard, and `castings: "nope"` met
+    `.get()` and raised AttributeError.
+
+    Foundry-Next is the mandatory handshake before EVERY phase transition, so
+    this was reachable on the most-travelled door in the tool surface.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    (fdir / "castings").mkdir(exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(json.dumps(body), encoding="utf-8")
+
+    # Each reader answers rather than raising...
+    assert fo._check_sight_required(project_root).get("required") is False
+    assert fo._trace_skip_check(fdir, project_root)["skip"] is False
+    for phase in ("validate", "cast"):
+        assert fo.foundry_gate(phase, project_root)["passed"] is False
+
+    # ...and the handshake itself returns the HOUSE refusal, naming the file in
+    # `corrupt_artifacts` the way every other artifact refusal on this surface
+    # does, rather than a traceback that names nothing.
+    result = fo.foundry_next_action(project_root)
+    assert "error" in result, result
+    assert "manifest.json" in result["error"], result["error"]
+    assert any("manifest.json" in p for p in result["corrupt_artifacts"]), result
+
+
+def test_the_manifest_record_guard_is_the_shared_validator_not_a_local_copy():
+    """The binding rule: one validator, not a per-module isinstance chain.
+
+    A private `isinstance` check in each reader would pass the drive above and
+    still be the escalated class — five copies of one rule, free to disagree
+    about what "unusable" means. The readers here reach D-132's validator, so
+    a manifest this module refuses is one foundry_spawn refuses too.
+    """
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
+    for body in _UNUSABLE_MANIFEST_RECORDS:
+        assert _manifest_shape_problem(body) is not None, body
+    # ...and the validator is narrow: a healthy manifest is not refused.
+    assert _manifest_shape_problem(
+        {"castings": [{"id": 1, "key_files": ["a.py"]}], "waves": [{"wave": 1, "casting_ids": [1]}]}
+    ) is None
+
+
+def test_a_pycache_entry_does_not_brick_the_handshake(run_env):
+    """The false positive that a REPORTING default makes possible, pinned.
+
+    The exemption table fails toward reporting, which is the right direction —
+    but a rule that refuses on anything it does not recognise must still not
+    refuse on what real run directories actually hold. Measured on the live
+    archives before the ``.pyc`` header was recognised: 13 reported artifacts
+    in thunder-viper and 317 in grand-vulture, every one a __pycache__ entry.
+    Foundry-Next is the mandatory handshake before every phase transition, so
+    that is not a noisy warning, it is a dead run.
+
+    The magic is asserted from the interpreter rather than typed, and a SECOND
+    version's header is planted beside it, because a run directory carries
+    ``.pyc`` from whatever interpreters have touched it.
+    """
+    import importlib.util
+
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    cache = fdir / "harness" / "__pycache__"
+    cache.mkdir(parents=True)
+    live = importlib.util.MAGIC_NUMBER
+    assert live[2:4] == b"\r\n", live  # the invariant the check rests on
+    (cache / "h.cpython-current.pyc").write_bytes(live + b"\x00\x00\x00\x00\xa7\xe9")
+    (cache / "h.cpython-311.pyc").write_bytes(b"\xa7\r\r\n\x00\x00\x00\x00\xe9")
+
+    assert fo._run_artifact_problems(fdir) == []
+    assert fo._artifact_guard(fdir) is None
+
+
+def test_an_unrecognised_binary_type_is_reported_rather_than_skipped(run_env):
+    """The direction the exemption table is built to fail in (D-138).
+
+    The suffix table this replaced hit a bare ``continue`` on anything it did
+    not know, which is how a corrupt ``spawns.log`` came back clean. An
+    unrecognised non-decoding artifact is now NAMED — over-reporting is
+    recoverable, under-reporting is the defect.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / "mystery.dat").write_bytes(b"\x00\x01\x02\xe9 not a type anyone enrolled")
+
+    problems = fo._run_artifact_problems(fdir)
+    assert any("mystery.dat" in p for p in problems), problems
+
+
+def test_a_directory_occupying_an_artifact_name_is_refused_not_skipped(run_env):
+    """D-140's third residual, as a property of the run guard too.
+
+    A DIRECTORY named `state.json` is not a file, so an `is_file()` membership
+    filter skips it and the guard reports the run clean -- and then the writer
+    raises IsADirectoryError instead of refusing by name. A path OCCUPYING an
+    artifact's name is the guard's business whatever kind of thing it is.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / "state.json").unlink()
+    (fdir / "state.json").mkdir()
+
+    problems = fo._run_artifact_problems(fdir)
+    assert any("state.json" in p for p in problems), problems
+    guard = fo._artifact_guard(fdir)
+    assert guard is not None and "state.json" in guard["error"]
+    # ...and an ordinary container directory is still walked past in silence.
+    assert not any("castings" == p.split()[0] for p in problems), problems
 
 
 # --------------------------------------------------------------------------- #
@@ -4078,26 +4252,54 @@ def _prefix_run_artifact_problems(fdir: Path) -> list[str]:
     return [p for p in (fo._document_problem(c) for c in candidates) if p]
 
 
+def _d129_run_artifact_problems(fdir: Path) -> list[str]:
+    """``_run_artifact_problems`` verbatim as it stood at d3820c5.
+
+    The D-129 fix: top-level glob plus the hand-named castings manifest, with a
+    two-entry suffix table and a silent `continue` for everything else. Kept so
+    the evidence log can show one run directory judged by all three rules.
+    """
+    if not fdir or not fdir.exists():
+        return []
+    decoders = {".json": fo._document_problem, ".md": fo._text_problem}
+    candidates = sorted(p for p in fdir.glob("*") if p.is_file())
+    manifest = fdir / "castings" / "manifest.json"
+    if manifest.is_file():
+        candidates.append(manifest)
+    problems: list[str] = []
+    for candidate in candidates:
+        decoder = decoders.get(candidate.suffix.lower())
+        if decoder is None:
+            continue
+        if (problem := decoder(candidate)):
+            problems.append(problem)
+    return problems
+
+
 def render_artifact_guard_table(fdir: Path) -> str:
-    """D-129 pre/post: which corrupted artifacts each glob can SEE."""
-    members = sorted(
-        p for p in fdir.glob("*")
-        if p.is_file() and p.suffix.lower() in fo._ARTIFACT_DECODERS
-    )
+    """D-129 / D-138 pre/post: which corrupted artifacts each rule can SEE.
+
+    Members are every FILE the run dir holds at any depth, so the table's own
+    row set is derived rather than typed — which is what lets it show the rows
+    the two earlier rules could not see at all.
+    """
+    members = sorted(p for p in fdir.rglob("*") if p.is_file())
     out = [
-        "== D-129: corrupt one artifact at a time; who reports it by name? ==",
-        "   %-24s %-12s %s" % ("artifact", "PRE-fix", "post-fix"),
-        "   %-24s %-12s %s" % ("-" * 8, "-" * 7, "-" * 8),
+        "== corrupt one artifact at a time; which rule reports it by name? ==",
+        "   %-34s %-11s %-11s %s" % ("artifact", "*.json", "D-129", "D-138"),
+        "   %-34s %-11s %-11s %s" % ("-" * 8, "-" * 6, "-" * 5, "-" * 5),
     ]
     for member in members:
         original = member.read_bytes()
         try:
             member.write_bytes(b"\xe9\x00 not a readable artifact\n")
-            pre = any(member.name in p for p in _prefix_run_artifact_problems(fdir))
+            oldest = any(member.name in p for p in _prefix_run_artifact_problems(fdir))
+            d129 = any(member.name in p for p in _d129_run_artifact_problems(fdir))
             post = any(member.name in p for p in fo._run_artifact_problems(fdir))
-            out.append("   %-24s %-12s %s" % (
-                member.name,
-                "NAMED" if pre else "invisible",
+            out.append("   %-34s %-11s %-11s %s" % (
+                str(member.relative_to(fdir)),
+                "NAMED" if oldest else "invisible",
+                "NAMED" if d129 else "invisible",
                 "NAMED" if post else "invisible",
             ))
         finally:
@@ -4220,27 +4422,97 @@ def render_derived_guard_table(tmp_path: Path) -> str:
     return "\n".join(out)
 
 
+def _seeded_run_dir(tmp_path: Path, name: str) -> Path:
+    """A fresh run dir holding one artifact of every shape a live run has."""
+    from foundry_mcp.tools import foundry_state as fst
+
+    root = tmp_path / name
+    fdir = root / "foundry-archive" / name
+    fdir.mkdir(parents=True)
+    fst.set_active_run(name)
+    _write_state(fdir, phase="F2", cycle=1)
+    _seed_run_artifacts(str(root), fdir)
+    return fdir
+
+
+def render_artifact_exemption_table(tmp_path: Path) -> str:
+    """D-138: the exemption table's DIRECTION, driven.
+
+    The suffix table this replaces skipped what it did not recognise. This one
+    exempts what it DOES recognise and reports the rest, so the failure mode is
+    a false alarm rather than a silent hole — and the three rows below are the
+    two halves of that claim plus D-140's directory case.
+    """
+    import importlib.util
+
+    fdir = _seeded_run_dir(tmp_path, "exempt")
+    (fdir / "sight").mkdir()
+    (fdir / "sight" / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\xe9")
+    cache = fdir / "h" / "__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "h.cpython-311.pyc").write_bytes(b"\xa7\r\r\n\x00\x00\x00\x00\xe9")
+    (cache / "h.live.pyc").write_bytes(importlib.util.MAGIC_NUMBER + b"\x00\x00\x00\x00\xe9")
+
+    out = ["== the exemption table fails toward REPORTING, without false alarms =="]
+    out.append(
+        "   healthy run dir + png + two pyc versions -> problems=%d"
+        % len(fo._run_artifact_problems(fdir))
+    )
+    (fdir / "mystery.dat").write_bytes(b"\x00\x01\xe9 a type nobody enrolled")
+    out.append(
+        "   ...plus one unrecognised binary type      -> %s"
+        % [p.split(" could")[0] for p in fo._run_artifact_problems(fdir)]
+    )
+    (fdir / "mystery.dat").unlink()
+    (fdir / "state.json").unlink()
+    (fdir / "state.json").mkdir()
+    out.append(
+        "   ...state.json replaced by a DIRECTORY     -> %s"
+        % [p.split(" (")[0] for p in fo._run_artifact_problems(fdir)]
+    )
+    return "\n".join(out)
+
+
+def test_the_exemption_table_reports_what_it_does_not_recognise(tmp_path):
+    """Asserted, so the log above is a claim this suite holds."""
+    table = render_artifact_exemption_table(tmp_path)
+    assert "png + two pyc versions -> problems=0" in table, table
+    assert "unrecognised binary type      -> ['mystery.dat']" in table, table
+    assert "DIRECTORY     -> ['state.json could not be read']" in table, table
+
+
 def test_the_artifact_guard_table_shows_the_blind_spot_and_the_fix(run_env):
-    """Asserted: every JSON member was already NAMED (the fix narrows nothing),
-    and every non-JSON member was INVISIBLE and is NAMED now."""
+    """Asserted, per column, so each rule's reach is a claim and not a picture.
+
+    * every artifact is NAMED by the current rule (nothing is invisible now);
+    * NFR-002 — no top-level ``.json`` member regressed: what the oldest rule
+      already saw, both later rules still see;
+    * the D-129 rule really was blind to the types and depths D-138 names, or
+      this fix would be closing a hole that was not open.
+    """
     project_root, fdir = run_env
-    _seed_directive(project_root, _URGENT_DIRECTIVE)
-    (fdir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    (fdir / "defects.json").write_text(json.dumps({"defects": []}), encoding="utf-8")
+    _seed_run_artifacts(project_root, fdir)
 
     table = render_artifact_guard_table(fdir)
-    rows = [r for r in table.split("\n") if r.startswith("   ") and ".json" in r or
-            (r.startswith("   ") and ".md" in r)]
+    rows = [r.split() for r in table.split("\n")[3:] if r.startswith("   ")]
     assert rows, table
 
-    for row in rows:
-        name = row.split()[0]
-        pre, post = row.split()[1], row.split()[2]
-        assert post == "NAMED", f"{name} is still invisible to the guard: {row}"
-        if name.endswith(".json"):
-            assert pre == "NAMED", f"NFR-002: {name} must not have regressed: {row}"
-        else:
-            assert pre == "invisible", f"pre-fix arm is wrong for {name}: {row}"
+    for name, oldest, d129, post in rows:
+        assert post == "NAMED", f"{name} is still invisible to the guard"
+        if "/" not in name and name.endswith(".json"):
+            assert oldest == "NAMED", f"NFR-002: {name} regressed"
+            assert d129 == "NAMED", f"NFR-002: {name} regressed"
+
+    seen = {name: (oldest, d129) for name, oldest, d129, _ in rows}
+    # The unenrolled TYPES foundry writes itself: invisible to both earlier
+    # rules, which is D-138's consequence 1 driven rather than described.
+    for name in ("handoffs.jsonl", "spawns.log", ".trace-clean-at"):
+        assert seen[name] == ("invisible", "invisible"), (name, seen[name])
+    # ...and consequence 2: every subdirectory artifact bar the one hand-named
+    # manifest was not a member at all.
+    assert seen["traces/TRACE-cycle-1.md"] == ("invisible", "invisible")
+    assert seen["castings/casting-1-prompt.md"] == ("invisible", "invisible")
+    assert seen["castings/manifest.json"][1] == "NAMED", "the hand-named one"
 
 
 def test_the_derived_guard_table_catches_a_fresh_copy_anywhere(tmp_path):
