@@ -148,10 +148,9 @@ reader they actually have. `--user-audience` says who the end reader really is, 
 `--subject-audience` already made the same admission for the subject directories. The layout is
 Harvester's, and Harvester is infrastructure too.
 
-When a page
-turns out to be about something its reader cannot touch, **the fix is to move the page**. Editing
-the `audience:` field until the checker goes quiet is the way this rule is defeated, and it is
-worth naming because it is the cheapest thing to do and it is always wrong.
+When a page turns out to be about something its reader cannot touch, **the fix is to move the
+page**. Editing the `audience:` field until the checker goes quiet is the way this rule is
+defeated, and it is worth naming because it is the cheapest thing to do and it is always wrong.
 
 ### Naming the reader concretely
 
