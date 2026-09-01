@@ -686,11 +686,19 @@ def test_run_01_quantitative_gates() -> None:
             "--context-pct", str(ctx),
             "--regression-pct", str(reg),
         )
-        assert exit_code == 0, stderr
         payload = json.loads(stdout)
         assert payload["overall_verdict"] == expected, (
             f"case={cycles, yld, ctx, reg}: "
             f"expected {expected}, got {payload['overall_verdict']}"
+        )
+        # D-105: this path printed overall_verdict FAIL and then returned 0
+        # unconditionally, and this loop asserted that 0 on all eight cases —
+        # five of which it simultaneously asserted were FAIL. The verdict and
+        # the status must agree at every boundary, or the band constants below
+        # are documentation rather than gates.
+        assert exit_code == (1 if expected == "FAIL" else 0), (
+            f"case={cycles, yld, ctx, reg}: verdict {expected} "
+            f"but exit {exit_code}{stderr}"
         )
 
 
@@ -814,6 +822,12 @@ def test_legacy_stream_key_still_counted(
 ) -> None:
     """Test 17 — an archive written under the legacy ``stream`` key still
     counts, so the key repair loses no pre-existing data.
+
+    The claim under test is "no REJECTION", which is ``failure_tokens == []``
+    — a strictly sharper assertion than the exit code this used to read. A
+    one-record ledger puts 100% of the yield on a single stream, so post-D-105
+    the yield gate FAILs and the status is 1; that says nothing about the
+    legacy key, and asserting 0 here would have re-pinned the bug D-105 fixed.
     """
     run_dir = make_run_dir()
     (run_dir / "defects.json").write_text(
@@ -821,8 +835,16 @@ def test_legacy_stream_key_still_counted(
         encoding="utf-8",
     )
     exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
-    assert exit_code == 0, (stdout, stderr)
-    assert json.loads(stdout)["per_stream_defects"] == {"TRACE": 1}
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {"TRACE": 1}
+    assert payload["failure_tokens"] == [], (
+        "the legacy `stream` key is being rejected, not merely gated"
+    )
+    # The nonzero status is the yield band on a single-record ledger, and
+    # nothing else — every other gate is clean.
+    assert payload["gate_verdicts"]["defect_yield_per_stream"] == "FAIL"
+    assert payload["gate_verdicts"]["cycles"] == "PASS"
+    assert exit_code == 1, (stdout, stderr)
 
 
 def test_assay_and_temper_sourced_defects_are_counted_not_discarded(
@@ -1193,8 +1215,8 @@ def test_convergence_gate_threshold_counts_cycles_not_indices(
         "--evaluate-gates", "--cycles", "9",
         "--yield-pct", "25.0", "--context-pct", "42.0", "--regression-pct", "30.0",
     )
-    assert exit_code == 0
     assert json.loads(stdout)["gate_verdicts"]["cycles"] == "FAIL"
+    assert exit_code == 1, "a blown convergence gate is a nonzero status (D-105)"
 
 
 @pytest.mark.skipif(
@@ -1228,8 +1250,217 @@ def test_grand_vulture_reports_nfr_001s_two_baseline_numbers(tmp_path: Path) -> 
         "NFR-001 baseline: 168 defects"
     )
     # D-060's other half — the repaired archive must satisfy its own detector.
+    # This is the token half of the exit contract, and it stays clean: nothing
+    # about grand-vulture is malformed or unreadable.
     assert payload["failure_tokens"] == [], payload["failure_tokens"]
-    assert exit_code == 0, stderr
+
+    # D-105 — the gate half. Those same two numbers are BOTH out of band:
+    # 18 cycles against a convergence threshold of 8, and a defect yield
+    # concentrated past the 50% ceiling. That is the whole premise of NFR-001,
+    # which names grand-vulture as the baseline this effort must improve ON.
+    # The instrument therefore has to say so out loud. It previously printed
+    # both FAILs and exited 0 — the acceptance instrument certifying the very
+    # run whose gates it had just watched blow.
+    assert payload["gate_verdicts"]["cycles"] == "FAIL"
+    assert payload["gate_verdicts"]["defect_yield_per_stream"] == "FAIL"
+    assert exit_code == 1, (
+        "measure-run reports success on the baseline archive whose gates it "
+        f"just failed: {payload['gate_verdicts']} / {stderr}"
+    )
 
     # And the real archive was never touched.
     assert json.loads((GRAND_VULTURE / "state.json").read_text())["cycle"] == 0
+
+
+# ---------------------------------------------------------------------------
+# D-105 — a gate verdict must reach the exit status.
+#
+# All three gate-evaluating entry points derived their status from
+# failure_tokens alone, so a run could blow a gate, print the FAIL, and exit 0.
+# The calibration was exactly backwards: a purely informational token
+# (PHASE9_WALL_CLOCK_UNAVAILABLE, pinned by Test 4) exited 1 with every gate
+# PASSing, while a blown convergence gate exited 0. NFR-001 makes this the
+# effort's acceptance instrument; a gate whose verdict never reaches the exit
+# status is not a gate.
+# ---------------------------------------------------------------------------
+
+
+def test_a_blown_gate_alone_is_a_nonzero_status(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The per-run path, with a gate FAIL as the ONLY thing wrong.
+
+    ``--context-pct 50.0`` is the cleanest isolation available: it blows one
+    gate (the cap is a strict ``<``) while leaving failure_tokens empty, so the
+    status can come from nowhere else. 49.9 is the control — one tenth of a
+    point away, the same code path, exit 0. Together they also pin the band
+    boundary itself, which D-105 verified as consistent and must not move.
+    """
+    run_dir = make_run_dir()
+
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "50.0"
+    )
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == [], (
+        "isolation broken — the status could come from a token, not the gate"
+    )
+    assert payload["gate_verdicts"]["f2_context_pct"] == "FAIL"
+    assert exit_code == 1, (
+        f"gate FAIL printed but not routed to the exit status: {stderr}"
+    )
+
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "49.9"
+    )
+    payload = json.loads(stdout)
+    assert payload["gate_verdicts"]["f2_context_pct"] == "PASS"
+    assert exit_code == 0, (stdout, stderr)
+
+
+def test_a_missing_gate_is_honest_not_failed(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """MISSING maps to 0, and the mapping is deliberate.
+
+    Two of the four gates read measurements no archive holds, so MISSING is the
+    ordinary state of a run measured without ``--context-pct`` /
+    ``--baseline-seconds``. Folding MISSING into the nonzero status would fail
+    nearly every real run — the over-firing calibration D-034 already had to
+    undo. Only a gate that was measured AND blown is a 1.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct=None)
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == []
+    verdicts = payload["gate_verdicts"]
+    assert "MISSING" in verdicts.values(), verdicts
+    assert "FAIL" not in verdicts.values(), verdicts
+    assert exit_code == 0, (stdout, stderr)
+
+
+def test_matrix_gate_fail_reaches_the_exit_status(tmp_path: Path) -> None:
+    """The --matrix path, reproducing the exact row D-105 describes.
+
+    A row rendering ``gate_verdict_overall=FAIL`` beside an EMPTY
+    ``failure_tokens_csv`` was the visible shape of the bug: the aggregator
+    read only the tokens column it had just printed blank. One cohort is given
+    a single-record ledger, which puts 100% of the yield on one stream and
+    blows the band with no token attached.
+    """
+    runs = _populate_runs_dir(tmp_path)
+    (runs / "no_TYPE_01" / "defects.json").write_text(
+        json.dumps({"defects": [{"id": "D-001", "source": "prove"}]}),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(
+        "--matrix", str(runs), "--format", "csv"
+    )
+    rows = {r[0]: r for r in csv.reader(io.StringIO(stdout))}
+    header = list(csv.reader(io.StringIO(stdout)))[0]
+    row = rows["no_TYPE_01"]
+    assert row[header.index("gate_verdict_overall")] == "FAIL", row
+    assert row[header.index("failure_tokens_csv")] == "", (
+        "isolation broken — this row must fail on its VERDICT, not a token"
+    )
+    assert exit_code == 1, (
+        f"a FAIL row in the matrix left the exit status at 0: {stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-106 — --matrix over a directory holding no cohort arm.
+#
+# The roster comprehension dropped every non-cohort subdir with no token, no
+# warning and no count, so a directory matching NONE of the ten ids produced a
+# header row, zero data rows and exit 0. --matrix <a file> and --matrix
+# <nonexistent> were both correctly refused; the ordinary mistake (the archive
+# root instead of the runs dir, or arms named otherwise) was the single input
+# that reported success.
+# ---------------------------------------------------------------------------
+
+
+def test_matrix_over_a_directory_with_no_cohorts_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The refusal is named, counts what it ignored, and exits nonzero."""
+    runs = tmp_path / "archive-root"
+    runs.mkdir()
+    for name in ("grand-vulture", "thunder-viper", "process-fixes"):
+        (runs / name).mkdir()
+
+    exit_code, stdout, stderr = _invoke_measure_run("--matrix", str(runs))
+    assert exit_code == 1, (stdout, stderr)
+    assert "PHASE9_NO_COHORTS" in stderr, stderr
+    # The operator has to be able to see WHICH arms were ignored, or the
+    # refusal just relocates the guesswork.
+    assert "3 subdirectories ignored" in stderr, stderr
+    for name in ("grand-vulture", "thunder-viper", "process-fixes"):
+        assert name in stderr, stderr
+    # No table is printed for a directory that was never measured.
+    assert stdout.strip() == "", stdout
+
+    # --strict is not what makes this an error; it always was one.
+    strict_exit, _, strict_err = _invoke_measure_run(
+        "--matrix", str(runs), "--strict"
+    )
+    assert strict_exit == 1
+    assert "PHASE9_NO_COHORTS" in strict_err
+
+
+def test_matrix_over_an_empty_directory_is_refused(tmp_path: Path) -> None:
+    """A directory with nothing in it at all takes the same refusal."""
+    runs = tmp_path / "empty"
+    runs.mkdir()
+    exit_code, stdout, stderr = _invoke_measure_run("--matrix", str(runs))
+    assert exit_code == 1, (stdout, stderr)
+    assert "PHASE9_NO_COHORTS" in stderr, stderr
+    assert "0 subdirectories ignored" in stderr, stderr
+
+
+def test_matrix_reports_the_arms_it_ignored(tmp_path: Path) -> None:
+    """Partial recognition is the dangerous middle case.
+
+    Ten arms measured beside four that were dropped still exits on the gates
+    alone — ignoring a docs/ directory is ordinary and must not become a
+    refusal — but the operator is told what was left out, because "10 rows"
+    and "10 of your 14 arms" look identical in the table.
+    """
+    runs = _populate_runs_dir(tmp_path)
+    for name in ("docs", "no_TYPE_03", "v4_1_0_baseline", "scratch"):
+        (runs / name).mkdir()
+    # A stray file is not an ignored arm and must not be counted as one.
+    (runs / "README.md").write_text("notes", encoding="utf-8")
+
+    exit_code, stdout, stderr = _invoke_measure_run(
+        "--matrix", str(runs), "--format", "csv"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    assert "4 non-cohort subdirectories ignored" in stderr, stderr
+    for name in ("docs", "no_TYPE_03", "v4_1_0_baseline", "scratch"):
+        assert name in stderr, stderr
+    assert "README.md" not in stderr, stderr
+    # The advisory is not a refusal, so it must not wear a token's name.
+    assert "PHASE9_" not in stderr, stderr
+    # And the ten real arms are still measured.
+    rows = list(csv.reader(io.StringIO(stdout)))
+    assert len(rows) == 11, f"expected 1 header + 10 data rows, got {len(rows)}"
+    assert {r[0] for r in rows[1:]} == EXPECTED_KNOWN_PHASE9_COHORT_IDS
+
+
+def test_no_cohorts_token_joins_the_closed_vocabulary() -> None:
+    """D-106's token is a member of the frozenset, not a loose string.
+
+    The closed-vocabulary discipline is that a refusal is a NAMED member of
+    KNOWN_PHASE9_FAILURE_TOKENS — writing the string to stderr without
+    enrolling it would make the roster a partial inventory of the refusals the
+    script can actually emit, which is what the roster exists to prevent.
+    """
+    module = _load_measure_run_module()
+    assert "PHASE9_NO_COHORTS" in module.KNOWN_PHASE9_FAILURE_TOKENS
+    # The 8 locked per CONTEXT.md are still all present — extended, not
+    # rewritten.
+    assert EXPECTED_KNOWN_PHASE9_FAILURE_TOKENS.issubset(
+        module.KNOWN_PHASE9_FAILURE_TOKENS
+    )
+    assert len(module.KNOWN_PHASE9_FAILURE_TOKENS) == 9

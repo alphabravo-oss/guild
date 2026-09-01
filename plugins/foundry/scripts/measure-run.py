@@ -4,9 +4,14 @@
 Two-mode CLI: per-run JSON extractor + cohort --matrix aggregator. Mirrors
 Phase 4-8 closed-vocabulary discipline (stdlib only; no runtime deps).
 Three frozensets locked at module top: KNOWN_PHASE9_STREAM_IDS (15),
-KNOWN_PHASE9_FAILURE_TOKENS (8), KNOWN_PHASE9_COHORT_IDS (10). Wall-clock =
+KNOWN_PHASE9_FAILURE_TOKENS (9), KNOWN_PHASE9_COHORT_IDS (10). Wall-clock =
 first/last handoffs.jsonl timestamp delta (Pitfall 5 / 09-RESEARCH.md).
 Exit 0 OK; 1 on token rejection / gate FAIL; 2 on usage error.
+
+Both halves of that exit contract run through ``_exit_status`` — see its
+docstring for why a MISSING gate is a 0 and only a blown one is a 1. Every
+entry point that evaluates gates returns through it, so a verdict can never
+again be printed without reaching the process status (D-105).
 
 The stream roster is DERIVED from foundry_mcp.schemas.vocab (FR-013): this
 script was one of six independently re-typed copies of the same vocabulary.
@@ -59,7 +64,18 @@ KNOWN_PHASE9_FAILURE_TOKENS = frozenset({
     "PHASE9_CONTEXT_FILE_MISSING", "PHASE9_WALL_CLOCK_UNAVAILABLE",
     "PHASE9_CYCLE_COUNT_INVALID", "PHASE9_SCHEMA_INVALID",
     "PHASE9_DEFECTS_FILE_MALFORMED",
-})  # 8 tokens
+    # D-106 extends the vocabulary from the 8 tokens locked per CONTEXT.md to
+    # 9. --matrix over a real directory holding no cohort arm printed an empty
+    # table and exited 0, so the ORDINARY operator mistake — the archive root
+    # instead of the runs dir, or arms named other than the ten baked-in ids —
+    # was the one case that reported success. PHASE9_RUN_DIR_INVALID could not
+    # carry it: that token means "not a directory", and an operator who cannot
+    # tell "fix the path" from "fix the arm names" from the refusal is left
+    # with the same diagnosis problem. A distinct mistake earns a distinct
+    # name. (Extending a closed token vocabulary with provenance is the
+    # established shape here — cf. KNOWN_EVIDENCE_FAILURE_TOKENS, Phase 4.)
+    "PHASE9_NO_COHORTS",
+})  # 9 tokens
 
 KNOWN_PHASE9_COHORT_IDS = frozenset({
     "v4_2_0_baseline", "all_enabled_baseline",
@@ -400,6 +416,38 @@ def _overall_verdict(verdicts: dict[str, str]) -> str:
     return "PASS"
 
 
+def _exit_status(gate_verdicts: dict[str, str], failure_tokens: list[str]) -> int:
+    """The process status the module docstring's exit contract promises.
+
+    D-105: the contract names two halves — "1 on token rejection / gate FAIL" —
+    and only the first was implemented. Gate verdicts were computed, rolled up,
+    printed, and then dropped: _emit_per_run and _emit_matrix derived status
+    from failure_tokens alone and _emit_evaluate_gates returned 0
+    unconditionally, printing overall_verdict FAIL on its way out. On the
+    canonical baseline archive (grand-vulture, NFR-001's "18 cycles, 168
+    defects") two hard gates FAIL and the process exited 0.
+
+    The asymmetry is what made it decisive rather than cosmetic: the tool DID
+    exit 1 for a purely informational token — an archive with no handoffs.jsonl
+    emits PHASE9_WALL_CLOCK_UNAVAILABLE and exits 1 with every gate PASS. It
+    failed loud on "could not measure the wall clock" and stayed silent on "the
+    convergence gate FAILED". NFR-001 makes this the effort's acceptance
+    instrument, and a gate whose verdict never reaches its exit status is not a
+    gate.
+
+    MISSING maps to 0 deliberately: an unmeasured gate is honest, not failed.
+    Two of the four gates read measurements no archive holds (f2_context_pct,
+    wall_clock_regression_pct — see _read_context_pct), so MISSING is the
+    ordinary state of any run measured without --context-pct /
+    --baseline-seconds. Mapping it to 1 would fail nearly every real run, which
+    is the over-firing calibration D-034 already had to undo. Only FAIL — a
+    gate that WAS measured and was blown — is a nonzero status.
+    """
+    if failure_tokens:
+        return 1
+    return 1 if _overall_verdict(gate_verdicts) == "FAIL" else 0
+
+
 def _is_saturated(
     baseline_count: int, cohort_count: int,
     baseline_yield_pct: float, cohort_yield_pct: float,
@@ -473,7 +521,7 @@ def _emit_per_run(
         context_pct_override=context_pct_override,
     )
     sys.stdout.write(json.dumps(result.to_json_dict(), indent=2) + "\n")
-    return 1 if result.failure_tokens else 0
+    return _exit_status(result.gate_verdicts, result.failure_tokens)
 
 
 def _matrix_row(result: MeasureResult) -> list[str]:
@@ -491,7 +539,33 @@ def _matrix_row(result: MeasureResult) -> list[str]:
 def _emit_matrix(runs_dir: Path, strict: bool, fmt: str) -> int:
     if not runs_dir.exists() or not runs_dir.is_dir():
         sys.stderr.write(f"PHASE9_RUN_DIR_INVALID: {runs_dir} is not a directory\n"); return 1
-    cohorts = sorted(s.name for s in runs_dir.iterdir() if s.is_dir() and s.name in KNOWN_PHASE9_COHORT_IDS)
+    # D-106: the roster filter drops every subdir not named after one of the
+    # ten cohort ids. Dropping them SILENTLY meant a directory matching none of
+    # them produced an empty table and exit 0 — a clean bill of health for a
+    # completely unmeasured directory, and the ordinary mistake (archive root
+    # instead of runs dir, or arms named otherwise) was the only input that
+    # reported success while --matrix <a file> and --matrix <nonexistent> were
+    # both correctly refused. What is ignored is now counted and said aloud.
+    subdirs = sorted(s.name for s in runs_dir.iterdir() if s.is_dir())
+    cohorts = [name for name in subdirs if name in KNOWN_PHASE9_COHORT_IDS]
+    skipped = [name for name in subdirs if name not in KNOWN_PHASE9_COHORT_IDS]
+    if skipped:
+        # Advisory, NOT a PHASE9_* token: measuring ten arms beside a docs/
+        # directory is ordinary, so this must not become a refusal. In this
+        # file a token always IS a refusal that reaches the exit status; giving
+        # one a second, softer meaning here would break that. Lowercase note.
+        sys.stderr.write(
+            f"note: {len(skipped)} non-cohort subdirector"
+            f"{'y' if len(skipped) == 1 else 'ies'} ignored: {', '.join(skipped)}\n"
+        )
+    if not cohorts:
+        sys.stderr.write(
+            f"PHASE9_NO_COHORTS: {runs_dir} holds no cohort run directory "
+            f"({len(skipped)} subdirector"
+            f"{'y' if len(skipped) == 1 else 'ies'} ignored). Expected at least "
+            f"one of: {', '.join(sorted(KNOWN_PHASE9_COHORT_IDS))}\n"
+        )
+        return 1
     pre = {c: _extract_per_run(runs_dir / c, strict=strict) for c in cohorts}
     baseline = pre.get("v4_2_0_baseline")
     bsec = baseline.wall_clock_seconds if baseline else None
@@ -519,7 +593,10 @@ def _emit_matrix(runs_dir: Path, strict: bool, fmt: str) -> int:
         for row in rendered:
             out.write("| " + " | ".join(row) + " |\n")
     sys.stdout.write(out.getvalue())
-    return 1 if any(r.failure_tokens for r in results) else 0
+    # ``results`` is non-empty — the roster guard above returns before here —
+    # so max() needs no default. That default WAS the silent pass D-106 names:
+    # any(...) over an empty list is False, which read as "nothing failed".
+    return max(_exit_status(r.gate_verdicts, r.failure_tokens) for r in results)
 
 
 def _emit_compute_regression(baseline: float, cohort: float) -> int:
@@ -536,9 +613,13 @@ def _emit_evaluate_gates(cycles: int, yield_pct: float, context_pct: float, regr
         "f2_context_pct": "PASS" if context_pct < MAX_F2_CONTEXT_PCT else "FAIL",
         "wall_clock_regression_pct": "PASS" if regression_pct < MAX_WALL_CLOCK_REGRESSION_PCT else "FAIL",
     }
-    overall = "PASS" if all(v == "PASS" for v in verdicts.values()) else "FAIL"
+    # Reuses the shared rollup rather than re-deriving it. Every gate here is
+    # operator-supplied, so MISSING cannot arise and the two expressions were
+    # provably identical — but keeping a second copy of the policy beside the
+    # site that forgot to apply it is how D-105 happened in the first place.
+    overall = _overall_verdict(verdicts)
     sys.stdout.write(json.dumps({"overall_verdict": overall, "gate_verdicts": verdicts}) + "\n")
-    return 0
+    return _exit_status(verdicts, [])
 
 
 def _emit_evaluate_saturation(bc: int, cc: int, byp: float, cyp: float) -> int:
