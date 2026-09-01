@@ -55,6 +55,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1579,8 +1580,17 @@ def test_the_uncontended_path_keeps_the_plain_casting_name(tmp_path):
 
 def test_teardown_leaves_no_worktree_dir_behind(tmp_path):
     """Non-vacuous leak check. Serial setup/teardown of three castings must
-    leave ``worktrees/`` empty — the check the harness's ``worktree_torn_down``
-    flag can no longer make on its own once suffixed siblings are possible."""
+    leave no worktree DIRECTORY behind — the check the harness's
+    ``worktree_torn_down`` flag can no longer make on its own once suffixed
+    siblings are possible.
+
+    The empty ``{name}.lock`` claim sidecars (D-131) are the one thing that
+    does survive, and deliberately: unlinking a lock file is the classic race
+    — a peer that has already opened the same path would take its lock on an
+    unlinked inode and both would believe they held the tree. They are asserted
+    positively rather than merely tolerated, so a fix that silently stopped
+    taking claims at all could not pass this by leaving the directory tidy.
+    """
     from foundry_mcp.tools import worktree_helpers as wh
 
     repo, run_dir, head = _worktree_repo(tmp_path)
@@ -1591,7 +1601,17 @@ def test_teardown_leaves_no_worktree_dir_behind(tmp_path):
         wh._teardown_worktree(repo, path)
 
     leftovers = sorted(p.name for p in (run_dir / "worktrees").iterdir())
-    assert leftovers == [], f"worktree dirs leaked: {leftovers}"
+    dirs = sorted(p.name for p in (run_dir / "worktrees").iterdir() if p.is_dir())
+    assert dirs == [], f"worktree dirs leaked: {dirs}"
+    assert leftovers == ["casting-1.lock", "casting-2.lock", "casting-3.lock"], (
+        f"unexpected residue beside the worktrees: {leftovers}"
+    )
+    # And every claim is RELEASED, not merely file-shaped: a peer must be able
+    # to take each one back.
+    for name in leftovers:
+        reclaimed = wh._acquire_claim(run_dir / "worktrees" / name[: -len(".lock")])
+        assert reclaimed is not None, f"{name} is still held after teardown"
+        reclaimed.close()
 
 
 def test_a_crashed_runs_leftover_is_reclaimed_by_name(tmp_path):
@@ -1628,3 +1648,380 @@ def test_a_failed_setup_does_not_strand_the_casting_name(tmp_path):
     path = wh._setup_worktree(repo, 5, head, run_dir)
     assert path == run_dir / "worktrees" / "casting-5"
     wh._teardown_worktree(repo, path)
+
+
+# --------------------------------------------------------------------------- #
+# D-126 — the composed-redaction residue gate (FR-017 / AC-023 / OT-011).
+#
+# D-109 was closed with a per-pattern probe against three FIXED canary strings,
+# under a docstring that argued "THE TEST IS ON THE PATTERN, NOT ON THE LOG".
+# That argument was the hole. A probe that never meets the real text cannot see
+# a pattern anchored on a token the real text contains and the canaries do not,
+# and a probe that runs inside the per-pattern loop cannot see two patterns that
+# are harmless apart and annihilating together.
+#
+# Every bypass below was driven end to end through
+# ``_DISPATCH["Foundry-Accept-Casting"]`` with ``casting_commit`` set and came
+# back ``ok=True``, ``evidence_verdict='accepted'``, ``log_sha256 !=
+# captured_sha256`` — a fabricated log buying a pass with one header line.
+# --------------------------------------------------------------------------- #
+
+#: The five bypasses PROVE drove, each with the fabricated log and the real
+#: capture it was driven with. Every one carries the anchor it exploits, which
+#: is the point: the first three are invisible to a fixed canary because the
+#: canary does not contain their anchor, the fourth fingerprints the canary's
+#: own literal to match everything EXCEPT a canary, and the fifth is a PAIR
+#: whose halves each pass the per-pattern probe and compose to nothing.
+_DRIVEN_REDACTION_BYPASSES = [
+    pytest.param(
+        [r"== test session starts ==[\s\S]*"],
+        "== test session starts ==\n9999 passed\n",
+        "== test session starts ==\n1 failed, 2 passed\n",
+        id="anchored-on-a-token-no-canary-contains",
+    ),
+    pytest.param(
+        [r"(?s)(?<=\A.)[\s\S]*"],
+        "x9999 passed in 0.01s\nfabricated\n",
+        "x1 failed, 2 passed in 9.99s\nreal\n",
+        id="everything-after-the-first-character",
+    ),
+    pytest.param(
+        [r"__init__\.py[\s\S]*"],
+        "src/__init__.py\n9999 passed\nfabricated\n",
+        "src/__init__.py\n1 failed, 2 passed\nreal\n",
+        id="anchored-on-a-real-source-path",
+    ),
+    pytest.param(
+        [r"(?![\s\S]*4f2a)[\s\S]*"],
+        "9999 passed\nfabricated body\n",
+        "1 failed, 2 passed\nreal body\n",
+        id="fingerprints-the-canary-literal",
+    ),
+    pytest.param(
+        [r"\A[^\n]*", r"(?s)(?<=\n)[\s\S]*"],
+        "first line\n9999 passed\nfabricated\n",
+        "first line\n1 failed, 2 passed\nreal\n",
+        id="a-PAIR-that-only-annihilates-composed",
+    ),
+]
+
+
+@pytest.mark.parametrize("patterns,fabricated,real", _DRIVEN_REDACTION_BYPASSES)
+def test_a_driven_redaction_bypass_is_refused(patterns, fabricated, real):
+    """Each bypass must REJECT at the comparator, naming a closed-vocabulary
+    token — not quietly report ``matched=True`` for two texts that plainly
+    differ."""
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(fabricated, real, patterns)
+    assert "EVIDENCE_VOLATILE_MALFORMED" in str(exc.value)
+
+
+@pytest.mark.parametrize("patterns,fabricated,real", _DRIVEN_REDACTION_BYPASSES)
+def test_the_per_pattern_canary_probe_could_not_have_caught_these(
+    patterns, fabricated, real
+):
+    """The falsifier for "D-109 already covered this".
+
+    If any bypass here were refused by the old per-pattern probe, this file
+    would be re-asserting a guarantee that already held and the gate below
+    would be untested scaffolding. Every one passes the probe, which is why the
+    composed check had to exist.
+    """
+    for pattern in patterns:
+        replacement = (
+            evidence.TIMING_PLACEHOLDER
+            if evidence.VOLATILE_PLACEHOLDER in pattern
+            else evidence.VOLATILE_PLACEHOLDER
+        )
+        assert not evidence._pattern_redacts_everything(pattern, replacement), (
+            f"{pattern!r} is caught by the per-pattern probe, so it is not a "
+            f"witness for the hole the composed gate closes"
+        )
+
+
+@pytest.mark.parametrize("annihilated_side", ["committed", "captured"])
+def test_both_sides_of_the_comparison_are_guarded(annihilated_side):
+    """DERIVED MEMBERSHIP over the sides of the comparison.
+
+    The redaction runs on the committed log AND on the re-execution capture,
+    so "the guard is applied" is two claims, not one. A fix that guarded only
+    the side its defect report happened to name would leave the other open —
+    and an attacker picks the side. Parametrizing over the side is what makes
+    a half-bound guard a failing test rather than a passing one.
+
+    The annihilating pattern is anchored on a token present in ONE side only,
+    so exactly one side collapses and the other survives intact.
+    """
+    intact = "alpha bravo charlie delta echo foxtrot golf hotel india\n"
+    doomed = "ANCHOR\nzulu yankee xray whiskey victor uniform tango sierra\n"
+    pattern = r"ANCHOR[\s\S]*"
+    if annihilated_side == "committed":
+        committed, captured = doomed, intact
+    else:
+        committed, captured = intact, doomed
+
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(committed, captured, [pattern])
+    assert "EVIDENCE_VOLATILE_MALFORMED" in str(exc.value)
+    # And it names WHICH side collapsed, so the operator is not left diffing
+    # two logs to find out.
+    expected = "committed log" if annihilated_side == "committed" else "re-execution capture"
+    assert expected in str(exc.value)
+
+
+def test_a_bypass_cannot_buy_a_pass_through_the_whole_verifier():
+    """The bypass at the surface where it was exploitable, not at the helper.
+
+    A fabricated body, a REAL command whose output does not match it, and one
+    ``# evidence-volatile:`` line anchored on a token both bodies share. Before
+    the composed gate this produced ``verdict='accepted'`` with
+    ``log_sha256 != captured_sha256``. The stub library cannot be what saves
+    it: the command is real and the body clears the 128-byte floor.
+    """
+    import tempfile
+
+    workdir = Path(tempfile.mkdtemp())
+    (workdir / "evidence").mkdir()
+    log = workdir / "evidence" / "casting-3-fabricated.log"
+    log.write_text(
+        "# evidence-cmd: python3 -c \"print('ANCHOR'); print('1 failed, 2 passed')\"\n"
+        "# evidence-for: FR-017\n"
+        "# evidence-volatile: ANCHOR[\\s\\S]*\n"
+        "\n"
+        "ANCHOR\n"
+        "9999 passed and nothing failed, which this command never printed; "
+        "this padding exists so the stub library's 128-byte TOO_SMALL floor "
+        "cannot be what rejects the log\n",
+        encoding="utf-8",
+    )
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=workdir, casting_commit="0" * 40
+    )
+
+    assert record["verdict"] == "rejected", record
+    assert record["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    assert record["failure_token"] == "EVIDENCE_VOLATILE_MALFORMED", record
+
+
+def test_the_composed_gate_does_not_over_correct_on_the_real_corpus():
+    """The false-positive floor, DERIVED from the shipped corpus rather than
+    typed beside it, so a log added tomorrow is covered the day it lands.
+
+    D-126's fix changes what the gate ACCEPTS, and a residue floor set too high
+    would reject real evidence — which is the failure mode that would matter
+    most, because it would look like a behavioural regression in whatever the
+    log happened to prove. Every committed log's own declared patterns, applied
+    to its own body, must survive.
+    """
+    evidence_dir = REPO_ROOT / "evidence"
+    logs = sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {evidence_dir}")
+
+    refused = []
+    for log in logs:
+        text = log.read_text(encoding="utf-8")
+        header = evidence._parse_evidence_header(text)
+        body = evidence._strip_leading_header_block(text)
+        try:
+            evidence._compare_byte_match(body, body, header.get("volatile", []))
+        except ValueError as exc:  # noqa: PERF203
+            refused.append(f"{log.name}: {exc}")
+    assert refused == [], f"the residue gate refuses real evidence: {refused}"
+
+
+def test_a_silent_command_is_not_blamed_on_its_volatile_declaration():
+    """The other over-correction. A body with no content of its own has nothing
+    for the redaction to erase, so the emptiness is the command's and refusing
+    it would punish a correctly-quiet command for a declaration that never
+    fired."""
+    assert evidence._compare_byte_match("", "", [r"\d+\.\d+s"])[0] is True
+    assert evidence._compare_byte_match("\n\n", "\n\n", [r"\d+\.\d+s"])[0] is True
+
+
+def test_an_undeclared_redaction_never_reaches_the_gate():
+    """No declared patterns means the redaction is the identity function, so a
+    log that is genuinely mostly whitespace or genuinely short is compared, not
+    judged. The gate exists to police DECLARATIONS."""
+    assert evidence._compare_byte_match("x\n", "x\n", [])[0] is True
+    matched, diff, _, _ = evidence._compare_byte_match("x\n", "y\n", [])
+    assert matched is False and diff
+
+
+# --------------------------------------------------------------------------- #
+# D-131 — the worktree claim has to hold across OS PROCESSES (OT-011 / FR-017).
+#
+# D-111 closed the same-path collision with a module-level Python set, and a
+# set is invisible to another process. The module justified that by saying each
+# process "derives its worktrees under its own run dir"; ``run_dir`` is
+# ``{project_root}/foundry-archive/{run}`` (foundry_handoff.py:452), a function
+# of the RUN. A lead re-running Foundry-Accept-Casting while a teammate's
+# verification is in flight, or two INSPECT streams verifying one casting, land
+# on the same path from different processes — and process 1, finding it
+# unclaimed IN ITS OWN SET, tore down process 0's LIVE worktree and left it
+# with a spurious EVIDENCE_OUTPUT_MISMATCH.
+#
+# These drive two real subprocesses, which is the shape of the repro. Threads
+# cannot witness this defect: the old set was correct within one process, and
+# the four thread-driven tests above passed throughout.
+# --------------------------------------------------------------------------- #
+
+_WORKTREE_PEER_SCRIPT = '''
+import json, sys, time
+from pathlib import Path
+from foundry_mcp.tools import worktree_helpers as wh
+
+role, repo, run_dir, head, sync, out = sys.argv[1:7]
+repo, run_dir, sync, out = Path(repo), Path(run_dir), Path(sync), Path(out)
+
+
+def wait_for(marker, timeout=90.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if marker.exists():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+result = {"role": role}
+try:
+    if role == "holder":
+        path = wh._setup_worktree(repo, 1, head, run_dir)
+        result["path"] = str(path)
+        (path / "HOLDER_IS_LIVE").write_text("live", encoding="utf-8")
+        (sync / "holder-ready").write_text("", encoding="utf-8")
+        result["peer_finished"] = wait_for(sync / "peer-done")
+        # Measured HERE, inside the holder's own lifetime: it tears its tree
+        # down two lines below, so a check made after the process exits would
+        # report the holder's own cleanup as the peer's damage.
+        result["marker_survived"] = (path / "HOLDER_IS_LIVE").is_file()
+        result["checkout_survived"] = (path / "tracked.txt").is_file()
+        wh._teardown_worktree(repo, path)
+    else:
+        result["holder_ready"] = wait_for(sync / "holder-ready")
+        path = wh._setup_worktree(repo, 1, head, run_dir)
+        result["path"] = str(path)
+        wh._teardown_worktree(repo, path)
+finally:
+    if role != "holder":
+        (sync / "peer-done").write_text("", encoding="utf-8")
+    out.write_text(json.dumps(result), encoding="utf-8")
+'''
+
+
+def _run_worktree_peers(tmp_path: Path) -> tuple[dict, dict]:
+    """Drive the holder/peer pair as two real OS processes. Returns both reports."""
+    repo, run_dir, head = _worktree_repo(tmp_path)
+    sync = tmp_path / "sync"
+    sync.mkdir()
+    script = tmp_path / "peer.py"
+    script.write_text(_WORKTREE_PEER_SCRIPT, encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src")
+
+    procs = {}
+    for role in ("holder", "peer"):
+        procs[role] = subprocess.Popen(
+            [
+                sys.executable, str(script), role, str(repo), str(run_dir),
+                head, str(sync), str(tmp_path / f"{role}.json"),
+            ],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+    reports = {}
+    for role, proc in procs.items():
+        out, _ = proc.communicate(timeout=180)
+        report_path = tmp_path / f"{role}.json"
+        assert report_path.is_file(), f"{role} produced no report; output:\n{out}"
+        reports[role] = json.loads(report_path.read_text(encoding="utf-8"))
+    return reports["holder"], reports["peer"]
+
+
+def test_a_second_PROCESS_cannot_destroy_a_live_worktree(tmp_path):
+    """The D-131 repro, driven the way PROVE drove it.
+
+    Two OS processes, one casting id, one run dir. The claim has to be visible
+    to both or the peer computes the holder's path, judges it unclaimed, and
+    deletes a checkout that has commands running against it.
+    """
+    holder, peer = _run_worktree_peers(tmp_path)
+
+    assert "error" not in holder and "error" not in peer, (holder, peer)
+    assert holder["peer_finished"], "the peer never ran; the race was not driven"
+    assert peer["holder_ready"], "the holder never came up; the race was not driven"
+    assert holder["path"] != peer["path"], (
+        f"both processes claimed {holder['path']} — the claim is still invisible "
+        f"across the process boundary"
+    )
+    assert holder["marker_survived"], (
+        "the peer process destroyed the live worktree: the holder's marker was "
+        "written before the peer ran and was gone after"
+    )
+    assert holder["checkout_survived"], (
+        "the holder's checkout did not survive the peer's setup intact"
+    )
+
+
+def test_the_unsuffixed_name_goes_to_whichever_process_arrives_first(tmp_path):
+    """The claim is contention-only ACROSS processes too, not just within one.
+
+    One of the two must land on the plain ``worktrees/casting-1`` — the name
+    the evidence harness measures teardown against (conftest.py:690) — and the
+    other on a suffixed sibling. If both were uniquified the harness's teardown
+    assertion would pass without measuring anything.
+    """
+    holder, peer = _run_worktree_peers(tmp_path)
+    landed = {Path(holder["path"]).name, Path(peer["path"]).name}
+    assert "casting-1" in landed, f"nobody took the unsuffixed name: {landed}"
+    assert landed == {"casting-1", "casting-1-1"}, landed
+
+
+def test_the_claim_itself_is_refused_to_another_process(tmp_path):
+    """The mechanism under the repro, asserted directly.
+
+    ``_acquire_claim`` is what the two tests above exercise through four git
+    invocations; this one asks it the question straight, so a regression is
+    reported as "the claim stopped excluding" rather than as a worktree
+    mystery. A held path must be refused to a second process, and released the
+    moment the holder lets go.
+    """
+    from foundry_mcp.tools import worktree_helpers as wh
+
+    target = tmp_path / "worktrees" / "casting-9"
+    target.parent.mkdir(parents=True)
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from foundry_mcp.tools import worktree_helpers as wh\n"
+        "handle = wh._acquire_claim(Path(sys.argv[1]))\n"
+        "print('FREE' if handle is not None else 'HELD')\n",
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src")
+
+    def _probe() -> str:
+        return subprocess.run(
+            [sys.executable, str(probe), str(target)],
+            env=env, capture_output=True, text=True, timeout=60,
+        ).stdout.strip()
+
+    assert _probe() == "FREE", "an unclaimed path must be claimable"
+
+    held = wh._acquire_claim(target)
+    assert held is not None
+    wh._WORKTREE_CLAIMS[str(target)] = held
+    try:
+        assert _probe() == "HELD", (
+            "a second PROCESS took a claim this process holds — the exact "
+            "invisibility that let a peer delete a live worktree"
+        )
+    finally:
+        wh._release_claim(target)
+
+    assert _probe() == "FREE", "the claim outlived its holder's release"

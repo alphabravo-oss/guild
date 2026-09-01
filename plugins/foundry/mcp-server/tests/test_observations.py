@@ -1525,3 +1525,487 @@ def test_resume_names_a_corrupt_state_file(tmp_path: Path) -> None:
     resumed = foundry_init(resume=run_name, project_root=str(tmp_path))
     assert "state.json" in resumed["error"], resumed
     assert "resumed" not in resumed
+
+
+# --------------------------------------------------------------------------- #
+# D-125 / D-127 — the persistence layer's guards derive their own membership.
+#
+# The class these two belong to is "a hardening mechanism bound BY HAND to the
+# site where a defect was reported". D-096's container check and D-097's
+# record filter were both real fixes, applied at the doors that had been bitten;
+# the doors that had not been bitten stayed open, and D-127 is what came
+# through them. D-103 locked every ledger writer it could find by hand, and
+# D-125 is the writer it did not find.
+#
+# So the tests below do not enumerate doors. They derive the door set — from
+# the dispatch table, from the module's call graph, from the AST — and fail
+# when a member of the derived set is unbound.
+# --------------------------------------------------------------------------- #
+
+import ast  # noqa: E402
+import inspect  # noqa: E402
+
+import foundry_mcp.server as foundry_server  # noqa: E402
+from foundry_mcp.tools import foundry as foundry_module  # noqa: E402
+from foundry_mcp.tools.foundry import (  # noqa: E402
+    LedgerShapeError,
+    _dict_records,
+    _locked_document,
+    ledger_refusals,
+    write_document,
+)
+
+_FOUNDRY_SRC = Path(inspect.getsourcefile(foundry_module))
+_SERVER_SRC = Path(inspect.getsourcefile(foundry_server))
+
+#: The locked write primitives. Anything reaching one of these is a writer of a
+#: run artifact and inherits its lock; anything renaming a file into place
+#: WITHOUT reaching one has found its way around the lock.
+_LOCKED_PRIMITIVES = {"ledger_transaction", "_locked_document", "write_document"}
+
+
+def _module_functions(tree: ast.Module) -> dict:
+    return {
+        n.name: n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _callee_names(node: ast.AST) -> set:
+    """Every name this function calls, by simple name or attribute."""
+    names = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            if isinstance(sub.func, ast.Name):
+                names.add(sub.func.id)
+            elif isinstance(sub.func, ast.Attribute):
+                names.add(sub.func.attr)
+    return names
+
+
+def _enclosing_function(tree: ast.Module, target: ast.AST) -> str | None:
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if any(node is target for node in ast.walk(fn)):
+                return fn.name
+    return None
+
+
+def test_no_unlocked_run_artifact_write_path() -> None:
+    """D-125's structural half, DERIVED FROM THE AST rather than from a list.
+
+    ``foundry_add_verdict`` was an unlocked read-modify-write on verdicts.json
+    while the orchestrator wrote the same file under a lock, so whichever
+    ``.tmp`` renamed last silently discarded the other's row. Routing that one
+    function through the transaction closes the instance and leaves the shape:
+    the next writer added to this module reaches for the same bare atomic
+    write, because it is right there and it looks correct.
+
+    The rule is therefore about the MECHANISM, not the writer. Every
+    rename-into-place in this module must sit inside a function that takes the
+    ledger lock. The two sets are both derived here — write sites by walking
+    for ``.rename(``, lock holders by walking for ``fcntl.flock`` — so a new
+    unlocked writer is a failing test on the day it is written, and no list
+    anywhere has to be remembered.
+    """
+    tree = ast.parse(_FOUNDRY_SRC.read_text(encoding="utf-8"))
+
+    # Derived: which functions actually hold the lock.
+    lock_holders = {
+        name
+        for name, node in _module_functions(tree).items()
+        if "flock" in _callee_names(node)
+    }
+    assert lock_holders, "no function in foundry.py takes the ledger flock"
+
+    # Derived: every rename-into-place, and the function it sits in. Two
+    # signatures, because the idiom has two halves and either alone is the
+    # defect: the rename itself, and the ``.tmp`` scratch file that only ever
+    # exists to be renamed. Spelling the rename ``Path.replace`` instead of
+    # ``Path.rename`` would slip the first check and not the second — and a
+    # bare ``.replace`` cannot be matched on its own, because ``str.replace``
+    # is everywhere and the AST cannot tell them apart.
+    offenders = []
+
+    def _flag(node: ast.AST) -> None:
+        enclosing = _enclosing_function(tree, node)
+        # The atomic writer IS the tool the lock holders use; it is reached
+        # only from inside them, which the next assertion pins.
+        if enclosing in lock_holders or enclosing == "_atomic_rename_write":
+            return
+        offenders.append(f"{enclosing}:{node.lineno}")
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.args
+        ):
+            receiver = node.func.value
+            is_rename = node.func.attr == "rename"
+            is_os_move = isinstance(receiver, ast.Name) and (
+                (receiver.id == "os" and node.func.attr in {"replace", "rename"})
+                or (receiver.id == "shutil" and node.func.attr == "move")
+            )
+            if is_rename or is_os_move:
+                _flag(node)
+        elif isinstance(node, ast.Constant) and node.value == ".tmp":
+            _flag(node)
+    assert offenders == [], (
+        f"{offenders} rename a file into place outside the ledger lock. That is "
+        f"D-125's shape: a second writer of a run artifact racing the locked "
+        f"one, where whichever .tmp renames last discards the other's record "
+        f"while both report success. Route it through ledger_transaction or "
+        f"write_document."
+    )
+
+    # And the atomic writer itself is reachable ONLY from lock holders, so the
+    # exemption above cannot become the new back door.
+    callers = {
+        name
+        for name, node in _module_functions(tree).items()
+        if "_atomic_rename_write" in _callee_names(node)
+    }
+    assert callers and callers <= lock_holders, (
+        f"_atomic_rename_write is called from {sorted(callers - lock_holders)}, "
+        f"which do not hold the lock"
+    )
+
+
+def test_every_ledger_writing_door_answers_in_band() -> None:
+    """D-127's refusal-shape half, DERIVED FROM THE DISPATCH TABLE.
+
+    The house rule is that a tool returns ``{error, hint}`` and never raises
+    across the MCP boundary. A ledger whose container shape is wrong is
+    discovered inside the locked primitive, frames below the entry point, and
+    the old arrangement trusted each entry point to remember a pre-flight check
+    for it. D-127 is what that costs: this module's doors remembered,
+    ``foundry_orchestrator``'s did not, and Foundry-Sync and Foundry-Fix
+    surfaced ``call_tool``'s unhandled-error banner instead of a refusal.
+
+    The member set is not typed here. It is computed: the tools ``server.py``
+    actually dispatches to this module, crossed with this module's call graph
+    to find which of them reach a locked transaction. Add a ledger-writing tool
+    to ``_DISPATCH`` without ``@ledger_refusals`` and this fails, naming it.
+    """
+    server_tree = ast.parse(_SERVER_SRC.read_text(encoding="utf-8"))
+    imported = set()
+    for node in ast.walk(server_tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "foundry_mcp.tools.foundry":
+            imported |= {a.asname or a.name for a in node.names}
+    assert imported, "server.py imports nothing from tools.foundry"
+
+    dispatch = None
+    for node in ast.walk(server_tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_DISPATCH" for t in node.targets
+        ):
+            dispatch = node.value
+    assert isinstance(dispatch, ast.Dict), "server.py has no _DISPATCH dict"
+
+    doors: dict[str, str] = {}
+    for key, value in zip(dispatch.keys, dispatch.values):
+        for sub in ast.walk(value):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id in imported
+            ):
+                doors[sub.func.id] = key.value
+
+    foundry_tree = ast.parse(_FOUNDRY_SRC.read_text(encoding="utf-8"))
+    functions = _module_functions(foundry_tree)
+    edges = {name: _callee_names(node) for name, node in functions.items()}
+
+    def _reaches_a_transaction(name: str, seen: set | None = None) -> bool:
+        seen = seen if seen is not None else set()
+        if name in seen:
+            return False
+        seen.add(name)
+        callees = edges.get(name, set())
+        if callees & _LOCKED_PRIMITIVES:
+            return True
+        return any(_reaches_a_transaction(c, seen) for c in callees if c in edges)
+
+    writing_doors = {n: t for n, t in doors.items() if _reaches_a_transaction(n)}
+    assert writing_doors, (
+        "no dispatched tool in this module reaches a locked transaction — the "
+        "derivation is broken, not the code"
+    )
+
+    unbound = sorted(
+        f"{tool} -> {name}"
+        for name, tool in writing_doors.items()
+        if "ledger_refusals"
+        not in {d.id for d in functions[name].decorator_list if isinstance(d, ast.Name)}
+    )
+    assert unbound == [], (
+        f"{unbound} write a ledger but can raise LedgerShapeError across the "
+        f"MCP boundary, where call_tool turns it into an unhandled-error "
+        f"banner instead of the house refusal. Decorate with @ledger_refusals."
+    )
+
+
+def test_the_refusal_a_door_returns_is_the_one_the_guard_would_have_given(
+    run: Path, tmp_path: Path
+) -> None:
+    """The decorator is only worth having if what it returns is a REFUSAL.
+
+    Same file, same fault, reported two ways: the pre-flight guard names it
+    before the tool starts, the primitive names it once the lock is held. An
+    operator must not be able to tell which noticed.
+    """
+    from foundry_mcp.tools.foundry import _artifact_guard, ledger_shape_problem
+
+    path = run / "defects.json"
+    prior = {"defects": {"D-001": {"id": "D-001"}}, "sibling": "must survive"}
+    path.write_text(json.dumps(prior), encoding="utf-8")
+
+    pre_flight = _artifact_guard(run, "defects.json")
+    assert pre_flight is not None
+
+    raised = None
+    try:
+        with ledger_transaction(path, "defects") as records:
+            records.append({"id": "D-002"})
+    except LedgerShapeError as exc:
+        raised = exc
+    assert raised is not None, "the primitive must still fail CLOSED"
+    assert raised.refusal == pre_flight, (
+        f"the two refusals disagree:\n  guard:     {pre_flight}\n"
+        f"  primitive: {raised.refusal}"
+    )
+    assert "error" in raised.refusal and "hint" in raised.refusal
+    assert ledger_shape_problem(path, "defects") in raised.refusal["error"]
+    # Fails closed: the file is untouched.
+    assert json.loads(path.read_text(encoding="utf-8")) == prior
+
+
+def test_ledger_transaction_yields_only_mapping_records(run: Path) -> None:
+    """D-127 / D-097 at the primitive.
+
+    ``_dict_records`` used to be applied at the call sites that had been bitten
+    by a malformed record. ``foundry_sync_defects`` scans with a bare
+    ``d.get("status")`` and ``d["id"]`` and had not been, so one junk record
+    raised mid-transaction — after the append, so nothing was written and the
+    stream's filing was gone. A caller cannot be bitten by a record it is never
+    handed.
+    """
+    path = run / "defects.json"
+    path.write_text(
+        json.dumps({"defects": ["junk", {"id": "D-001"}, None, 42, {"id": "D-002"}]}),
+        encoding="utf-8",
+    )
+
+    with ledger_transaction(path, "defects") as records:
+        assert all(isinstance(r, dict) for r in records), records
+        # The scan shape foundry_sync_defects uses, which used to raise here.
+        assert [r.get("id") for r in records] == ["D-001", "D-002"]
+        records.append({"id": "D-003"})
+
+
+def test_the_dict_only_filter_loses_no_record_and_no_position(run: Path) -> None:
+    """NFR-002 against the fix itself.
+
+    A filter that DROPPED the records it hides would be a quieter D-096:
+    refusing to lose records to a bad container while losing them to a bad
+    record. They are set aside by index and re-inserted before the write, so
+    the ledger comes back off the lock byte-for-byte as it went in, plus the
+    append.
+    """
+    path = run / "defects.json"
+    original = ["junk-first", {"id": "D-001"}, None, {"id": "D-002"}, 42]
+    path.write_text(json.dumps({"defects": original, "sibling": "kept"}), encoding="utf-8")
+
+    with ledger_transaction(path, "defects") as records:
+        records.append({"id": "D-003"})
+
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["sibling"] == "kept"
+    assert stored["defects"] == [
+        "junk-first", {"id": "D-001"}, None, {"id": "D-002"}, 42, {"id": "D-003"},
+    ], stored["defects"]
+
+
+def test_the_filter_survives_a_nested_transaction(run: Path) -> None:
+    """D-099's nesting crossed with D-127's filter. The inner frame must see the
+    already-cleaned list and restore nothing, or the outer frame's set-aside
+    records would be re-inserted twice."""
+    path = run / "observations.json"
+    path.write_text(
+        json.dumps({"observations": ["junk", {"id": "O-001"}], "tripwire": []}),
+        encoding="utf-8",
+    )
+
+    with ledger_transaction(path, "observations") as outer:
+        assert all(isinstance(r, dict) for r in outer)
+        with ledger_transaction(path, "observations") as inner:
+            assert inner is outer
+            inner.append({"id": "O-002"})
+
+    stored = json.loads(path.read_text(encoding="utf-8"))["observations"]
+    assert stored == ["junk", {"id": "O-001"}, {"id": "O-002"}], stored
+
+
+def test_dict_records_stays_exported_for_out_of_module_scans() -> None:
+    """The primitive's filter is the ONE home of this tolerance, and callers
+    outside this module scan ledgers the primitive never handed them (roll-ups,
+    reconciliation passes). Renaming or privatising it would push each of them
+    back to an inline ``isinstance``, which is the copy-per-site this whole
+    class is made of."""
+    assert _dict_records([{"a": 1}, "junk", None, {"b": 2}]) == [{"a": 1}, {"b": 2}]
+    assert _dict_records([]) == []
+
+
+def test_concurrent_verdicts_all_survive(run: Path, tmp_path: Path) -> None:
+    """D-125 / AC-025 for verdicts.json, the last shared run artifact whose
+    read-modify-write window was still open.
+
+    ``foundry_add_verdict`` loaded, mutated and saved as three separate steps
+    with no lock at all, so two callers landing between one another's read and
+    write both wrote a full document and the second rename discarded the
+    first's row — while both returned success.
+    """
+    filings = 16
+    barrier = threading.Barrier(filings)
+    results: list[dict] = []
+    guard = threading.Lock()
+
+    def _record(n: int) -> None:
+        barrier.wait(timeout=30)
+        r = foundry_add_verdict(
+            requirement_id=f"FR-{n:03d}",
+            verdict="VERIFIED",
+            evidence=f"concurrent verdict {n}",
+            project_root=str(tmp_path),
+        )
+        with guard:
+            results.append(r)
+
+    threads = [threading.Thread(target=_record, args=(n,)) for n in range(filings)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert len(results) == filings
+    persisted = json.loads((run / "verdicts.json").read_text(encoding="utf-8"))
+    rows = persisted["requirements"]
+    assert len(rows) == filings, "a concurrent verdict was lost"
+    assert {r["id"] for r in rows} == {f"FR-{n:03d}" for n in range(filings)}
+    assert {r["evidence"] for r in rows} == {
+        f"concurrent verdict {n}" for n in range(filings)
+    }
+
+
+def test_a_verdict_and_a_peer_writer_do_not_discard_each_other(
+    run: Path, tmp_path: Path
+) -> None:
+    """The D-125 pairing exactly as it occurs in a run.
+
+    ``foundry_orchestrator._synthesize_clean_prove_verdicts`` writes
+    verdicts.json through the locked transaction; ``foundry_add_verdict`` did
+    not. One writer holding the lock is not a lock — it is a coincidence — so
+    an F4 auto-VERIFY synthesis interleaving with a real Foundry-Verdict call
+    lost whichever row renamed last. This drives both writers at once through
+    the surfaces they actually use.
+    """
+    verdicts_path = run / "verdicts.json"
+    rounds = 12
+    barrier = threading.Barrier(2 * rounds)
+
+    def _tool(n: int) -> None:
+        barrier.wait(timeout=30)
+        foundry_add_verdict(
+            requirement_id=f"AC-{n:03d}", verdict="VERIFIED",
+            evidence="filed through the tool", project_root=str(tmp_path),
+        )
+
+    def _synthesizer(n: int) -> None:
+        barrier.wait(timeout=30)
+        with ledger_transaction(verdicts_path, "requirements") as requirements:
+            requirements.append(
+                {"id": f"US-{n:03d}", "verdict": "VERIFIED",
+                 "evidence": "synthesized by the peer"}
+            )
+
+    threads = [threading.Thread(target=_tool, args=(n,)) for n in range(rounds)]
+    threads += [threading.Thread(target=_synthesizer, args=(n,)) for n in range(rounds)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    rows = json.loads(verdicts_path.read_text(encoding="utf-8"))["requirements"]
+    ids = {r["id"] for r in rows}
+    missing = (
+        {f"AC-{n:03d}" for n in range(rounds)} | {f"US-{n:03d}" for n in range(rounds)}
+    ) - ids
+    assert missing == set(), f"rows discarded by the peer's rename: {sorted(missing)}"
+
+
+def test_a_seeded_artifact_is_written_under_the_same_lock(run: Path) -> None:
+    """``write_document`` is the seeding counterpart, not an exemption.
+
+    ``foundry_init`` genuinely means "replace, whatever is there" — it is also
+    the repair path for a corrupt artifact, so it must NOT read first. What it
+    must still do is hold the lock, because "unlocked because this writer does
+    not read" is how a second writer ends up racing a first.
+    """
+    path = run / "verdicts.json"
+    write_document(path, {"cycle": 0, "requirements": [], "seeded": True})
+    assert json.loads(path.read_text(encoding="utf-8"))["seeded"] is True
+
+    # Re-entrant with an open transaction: one document, one write at the
+    # outermost exit, rather than a second write racing it.
+    with _locked_document(path) as document:
+        write_document(path, {"cycle": 7, "requirements": []})
+        assert document["cycle"] == 7
+    assert json.loads(path.read_text(encoding="utf-8"))["cycle"] == 7
+
+
+def test_seeding_re_writes_a_corrupt_artifact_the_transaction_would_refuse(
+    run: Path,
+) -> None:
+    """The reason seeding does not read, asserted as the contrast it exists for.
+
+    ``foundry_init`` is the repair path an operator reaches for when an
+    artifact is corrupt. Routing its writes through the READING primitive would
+    make a corrupt ledger refuse the one call that would have replaced it — the
+    way out, closed by the guard meant to protect them. So the same file, in
+    the same state, must refuse one primitive and accept the other.
+    """
+    path = run / "verdicts.json"
+    path.write_text("{ not json at all", encoding="utf-8")
+
+    with pytest.raises(LedgerShapeError):
+        with _locked_document(path):
+            pass  # pragma: no cover - the enter is what refuses
+
+    write_document(path, {"cycle": 0, "requirements": []})
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "cycle": 0, "requirements": [],
+    }
+    # And having been repaired, it is readable again.
+    with _locked_document(path) as document:
+        assert document["requirements"] == []
+
+
+def test_ledger_refusals_converts_only_the_shape_error() -> None:
+    """The decorator is a translation, not a swallow. Anything that is not a
+    ledger-shape refusal must still propagate, or a real bug would come back as
+    a tidy dict and be read as a refusal."""
+
+    @ledger_refusals
+    def _shape() -> dict:
+        raise LedgerShapeError("defects.json has a 'defects' key holding dict")
+
+    @ledger_refusals
+    def _bug() -> dict:
+        raise ZeroDivisionError("a real bug")
+
+    refusal = _shape()
+    assert "error" in refusal and "hint" in refusal
+    with pytest.raises(ZeroDivisionError):
+        _bug()

@@ -80,6 +80,26 @@ MIN_SPEC_FORMAT_VERSION_FOR_EVID_01: tuple[int, int] = (2, 1)
 # captured/log text during the redaction pipeline.
 VOLATILE_PLACEHOLDER: str = "<VOLATILE>"
 
+# The second-level placeholder of the redaction ladder (see
+# ``_apply_volatile_redaction``). Named here rather than spelled inline at each
+# use so the residue guard and the substituter cannot disagree about which
+# tokens are placeholders and which are content.
+TIMING_PLACEHOLDER: str = "<TIMING>"
+
+# D-126 — the composed-redaction residue floor.
+#
+# A declared volatile pattern is supposed to remove a FIELD: a duration, a pid,
+# a temp path. When the whole declared set, applied in its declared order to a
+# REAL log, leaves this share or less of that log's non-whitespace characters
+# standing, what it removed was not a varying field, it was the evidence.
+#
+# The value is measured, not guessed. Over the 47-log committed corpus the
+# lowest surviving share is 0.633 (casting-3-agent-prose.log, 31 of 49
+# non-whitespace characters); the most nearly-benign of the five bypasses PROVE
+# drove leaves 0.058, and the other four leave 0.000-0.020. 0.25 sits 2.5x below
+# every real log and 4.3x above the closest bypass.
+EVIDENCE_MIN_RESIDUE_RATIO: float = 0.25
+
 # Phase 5 grep contract: Phase 4 owns these directives only. Phase 5's
 # ``# evidence-for:`` joins this set without parser edits — the parser
 # silently ignores unknown directives so Phase 5 can introduce its directive
@@ -261,7 +281,8 @@ def _apply_volatile_redaction(text: str, volatile_patterns: list[str]) -> str:
         # Placeholder ladder: pattern referencing <VOLATILE> is level-1+,
         # substitutes with <TIMING>; otherwise level-0 → <VOLATILE>.
         replacement = (
-            "<TIMING>" if VOLATILE_PLACEHOLDER in pat else VOLATILE_PLACEHOLDER
+            TIMING_PLACEHOLDER if VOLATILE_PLACEHOLDER in pat
+            else VOLATILE_PLACEHOLDER
         )
         try:
             substituted = re.sub(pat, replacement, redacted)
@@ -307,31 +328,36 @@ _REDACTION_CANARIES: tuple[str, ...] = (
 
 
 def _pattern_redacts_everything(pattern: str, replacement: str) -> bool:
-    """True when ``pattern`` erases arbitrary content, not a varying field.
+    """True when ``pattern`` erases ONE FIXED CANARY, not a varying field.
 
-    THE HOLE THIS CLOSES (D-109). ``_compare_byte_match`` applies the SAME
-    declared patterns to both the committed log and the re-execution capture,
-    so a pattern matching everything collapses both sides to one identical
-    string and the byte-match returns matched=True for ANY output. Driven end
-    to end, a fabricated log plus a real-but-unrelated command plus one
-    ``# evidence-volatile: [\\s\\S]*`` line produced ``ok=True`` and
-    ``evidence_verdict='accepted'`` while the two SHA256s plainly differed —
-    the whole EVID-01 mechanism defeated by a single header line. It also
-    neutralised the stub library, which reads the RAW log and so never saw the
-    collapse. The module header calls this a "closed escape-hatch: ONLY
-    declared volatility tolerated"; total redaction is where the hatch stops
-    being closed, because what is declared is no longer volatility — it is the
-    evidence.
+    A FAST PRE-CHECK, NOT THE GATE (D-126). The gate is
+    ``_composed_redaction_problem``, applied by ``_compare_byte_match`` to the
+    composed residue of the real texts. This probe survives because it is cheap
+    and it names the offending pattern precisely — a caller who writes
+    ``[\\s\\S]*`` gets told which header line is wrong rather than being told
+    that the redaction as a whole annihilated the log. It must never again be
+    relied on as the only check.
 
-    THE TEST IS ON THE PATTERN, NOT ON THE LOG, and that distinction is the
-    whole design. Asking "did this substitution empty THIS text?" conflates two
-    different things: ``[\\s\\S]*`` empties every text and is a bypass, while
-    the legitimate ladder pattern ``completed in <VOLATILE>`` empties only a
-    log that happens to consist of nothing but that phrase. Probing a fixed
-    canary instead asks the question that actually separates them — does this
-    pattern consume content it has never seen? — so an over-broad pattern is
-    refused whatever the log contains, and a narrow one is accepted however
-    short the log is.
+    WHAT IT CANNOT SEE, and why D-109 stayed open behind it. This asks a
+    question about the PATTERN, against text the pattern has never met. Its own
+    docstring used to argue that was the design; it was the hole. Two whole
+    families escape it:
+
+      - A pattern anchored on a token that is present in a real log and absent
+        from the canaries. ``== test session starts ==[\\s\\S]*`` erases no
+        canary and erases every pytest log. So does ``__init__\\.py[\\s\\S]*``,
+        and so does ``(?![\\s\\S]*4f2a)[\\s\\S]*``, which fingerprints the
+        canary's own literal to match everything EXCEPT a canary.
+      - A pattern that is harmless alone and annihilating in company. This runs
+        per pattern, inside ``_apply_volatile_redaction``'s loop, so the PAIR
+        ``\\A[^\\n]*`` + ``(?s)(?<=\\n)[\\s\\S]*`` — first line, then everything
+        after the first newline — passes twice and composes to nothing.
+
+    Both families produced ``verdict='accepted'`` end to end with
+    ``log_sha256 != captured_sha256``, which is the entire EVID-01 mechanism
+    defeated by one header line. Only a check on the composed output of the
+    real text separates them, because only the real text knows which tokens it
+    contains and only the composition knows what the patterns do together.
 
     Both ladder levels are covered because the canaries carry a ``<VOLATILE>``
     token: a level-1 pattern such as ``[\\s\\S]*<VOLATILE>`` erases the canary
@@ -345,10 +371,93 @@ def _pattern_redacts_everything(pattern: str, replacement: str) -> bool:
         except re.error:
             # Compilation is the caller's error to report, with its own message.
             return False
-        residue = probed.replace(VOLATILE_PLACEHOLDER, "").replace("<TIMING>", "")
-        if not residue.strip():
+        if not _content_residue(probed):
             return True
     return False
+
+
+#: Whitespace is not evidence. A redaction that leaves only line breaks behind
+#: has left nothing to compare, so the residue measure counts non-whitespace
+#: characters and nothing else.
+_WHITESPACE_RE: re.Pattern[str] = re.compile(r"\s+")
+
+
+def _content_residue(text: str) -> str:
+    """``text`` reduced to the characters that could still discriminate.
+
+    Redaction placeholders are removed because they are what the redaction PUT
+    THERE — counting them as surviving content would let a pattern that erased
+    a whole log report a full-length residue of ``<VOLATILE>``. Whitespace is
+    removed because it survives every substitution and carries no signal.
+
+    Applied to BOTH the pre- and post-redaction text wherever the two are
+    compared, so a log that literally contains the placeholder token is
+    measured consistently on both sides rather than being scored as if the
+    redaction had eaten it.
+    """
+    without_placeholders = text.replace(VOLATILE_PLACEHOLDER, "").replace(
+        TIMING_PLACEHOLDER, ""
+    )
+    return _WHITESPACE_RE.sub("", without_placeholders)
+
+
+def _composed_redaction_problem(
+    label: str, original: str, redacted: str
+) -> str | None:
+    """Named reason the COMPOSED redaction of ``original`` proves nothing.
+
+    THE GATE D-109 NEEDED AND DID NOT GET (D-126). ``_compare_byte_match``
+    applies the same declared patterns to both the committed log and the
+    re-execution capture, so a redaction that annihilates them collapses both
+    to one identical string and the byte-match returns matched=True for ANY
+    output. The per-pattern canary probe cannot see that happen: it never meets
+    the real text, and it runs before the patterns have been composed.
+
+    This one measures the OUTCOME, on the real text, after the whole declared
+    set has been applied in order. That is what makes it total over the bypass
+    families rather than over a list of remembered bypasses — a pattern
+    anchored on any token, known or unknown to this module, is caught by what
+    it did, and a pair of patterns that only annihilate together is caught
+    because composition is the thing being measured.
+
+    Returns None when the redaction left enough of ``original`` standing to
+    still discriminate one command's output from another's, else a sentence
+    naming which side collapsed, by how much, and what to do — the house
+    refusal shape, raised by the caller under
+    ``EVIDENCE_VOLATILE_MALFORMED``.
+
+    A body with no non-whitespace content of its own passes: there was nothing
+    for the redaction to erase, so the emptiness is the command's, not the
+    declaration's, and blaming the volatile lines for it would refuse a
+    correctly-silent command.
+    """
+    before = _content_residue(original)
+    if not before:
+        return None
+    after = _content_residue(redacted)
+    if not after:
+        return (
+            f"the declared volatile patterns erase the ENTIRE {label} "
+            f"({len(before)} characters of content in, none out). Applied to "
+            f"both the committed log and the re-execution capture they collapse "
+            f"the two to the same string, so any command's output would "
+            f"byte-match any log and the evidence gate would prove nothing. "
+            f"Narrow each pattern to the field that actually varies between "
+            f"runs — a duration, a pid, a temp path — and re-run the sweep."
+        )
+    ratio = len(after) / len(before)
+    if ratio <= EVIDENCE_MIN_RESIDUE_RATIO:
+        return (
+            f"the declared volatile patterns leave only {ratio:.1%} of the "
+            f"{label} standing ({len(after)} of {len(before)} non-whitespace "
+            f"characters), at or below the {EVIDENCE_MIN_RESIDUE_RATIO:.0%} "
+            f"floor. A volatile pattern removes a varying FIELD; one that "
+            f"consumes this much of a real log is redacting the evidence, and "
+            f"what survives can no longer tell one command's output from "
+            f"another's. Narrow the patterns — or, if the output genuinely is "
+            f"almost entirely volatile, cite a command whose output is not."
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +479,14 @@ def _pattern_redacts_everything(pattern: str, replacement: str) -> bool:
 # Closed escape-hatch: ONLY declared volatility tolerated. The redaction
 # runs on BOTH committed log and re-execution capture in the same declared
 # order, then byte-compares. Any divergence is a failure.
+#
+# What CLOSES the hatch is the residue gate (D-126), not the per-pattern canary
+# probe that preceded it. Symmetric redaction is the mechanism's strength and
+# its one weakness: patterns applied identically to both sides cancel out of the
+# comparison, so a declaration broad enough to erase both sides makes every log
+# match every capture. The gate measures what the whole declared set actually
+# left of each real side, so "declared volatility" cannot quietly widen into
+# "declared evidence".
 #
 # Diff cap: 50 lines via ``_DIFF_CAP_LINES``. Larger diffs append a
 # truncation marker so the failure_detail stays scannable.
@@ -396,15 +513,41 @@ def _compare_byte_match(
         provenance fields without re-invoking the redaction.
 
     Raises:
-        ValueError prefixed ``EVIDENCE_VOLATILE_MALFORMED`` (propagated from
-        ``_apply_volatile_redaction``) when a pattern fails to compile.
+        ValueError prefixed ``EVIDENCE_VOLATILE_MALFORMED`` when a pattern
+        fails to compile (propagated from ``_apply_volatile_redaction``), or
+        when the composed redaction annihilates either side
+        (``_composed_redaction_problem`` — D-126).
 
     On mismatch the diff is unified-format via ``difflib.unified_diff``,
     capped at ``_DIFF_CAP_LINES`` lines; if truncated, a "... (N more
     diff lines truncated)" sentinel is appended.
     """
-    rc = _apply_volatile_redaction(committed, volatile_patterns)
-    rcc = _apply_volatile_redaction(captured, volatile_patterns)
+    # D-126. The two sides of the comparison are enumerated ONCE, here, and
+    # both loops below walk that one mapping. That is what makes the residue
+    # guard total rather than remembered: a side cannot be redacted and
+    # compared without also being guarded, because there is no second list of
+    # sides to forget to extend. The guard runs BEFORE the equality test, so a
+    # redaction that collapsed both sides to the same erased string is refused
+    # rather than reported as a match.
+    sides: dict[str, str] = {
+        "committed log": committed,
+        "re-execution capture": captured,
+    }
+    redacted: dict[str, str] = {
+        label: _apply_volatile_redaction(text, volatile_patterns)
+        for label, text in sides.items()
+    }
+    if volatile_patterns:
+        # No declared patterns means the redaction is the identity function,
+        # and an empty body is then the command's own doing. Guarding it would
+        # refuse a correctly-silent command for a declaration it never made.
+        for label, text in sides.items():
+            problem = _composed_redaction_problem(label, text, redacted[label])
+            if problem is not None:
+                raise ValueError(f"EVIDENCE_VOLATILE_MALFORMED: {problem}")
+
+    rc = redacted["committed log"]
+    rcc = redacted["re-execution capture"]
     if rc == rcc:
         return True, None, rc, rcc
     diff_lines = list(
