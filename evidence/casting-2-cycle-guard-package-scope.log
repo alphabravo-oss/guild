@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && SNAP=$(mktemp) && cp src/foundry_mcp/server.py "$SNAP" && printf '\n\ndef _sneaky_cycle_reader(project_root):\n    return json.loads((Path(project_root) / "state.json").read_text())["cycle"]\n' >> src/foundry_mcp/server.py && echo "== a raw cycle read now sits in server.py: the package ROOT, not tools/ ==" && uv run --quiet --with pytest python -c 'import sys; sys.path[:0] = ["tests", "src"]; from pathlib import Path; import test_orchestrator_gates as t, foundry_mcp; pkg = Path(foundry_mcp.__file__).resolve().parent; old = sorted(p for p in (pkg / "tools").glob("*.py") if p.name != "__init__.py"); scan = lambda ms: sorted(o for p in ms for o in t._raw_state_cycle_reads(p)); print("  tools/ directory literal (D-066) ->", scan(old)); print("  derived over the package     ->", scan(t._package_modules(pkg)))' && echo "== and the guard itself, on the same mutated tree ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k guarded_reader 2>&1 | grep -E "^E +assert not|failed|passed"; cp "$SNAP" src/foundry_mcp/server.py && rm -f "$SNAP" && echo "== server.py restored byte-identical (nothing printed by git status) ==" && git status --porcelain -- src/foundry_mcp/server.py && echo "== both tests green on the unmutated tree ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "guarded_reader or tools_subpackage" 2>&1 | grep -E "failed|passed"
+# evidence-cmd: cd plugins/foundry/mcp-server && SNAP=$(mktemp) && cp src/foundry_mcp/server.py "$SNAP" && printf '\n\ndef _sneaky_cycle_reader(project_root):\n    return json.loads((Path(project_root) / "state.json").read_text())["cycle"]\n' >> src/foundry_mcp/server.py && echo "== a raw cycle read now sits in server.py: the package ROOT, not tools/ ==" && uv run --quiet --with pytest python -c 'import sys; sys.path[:0] = ["tests", "src"]; from pathlib import Path; import test_orchestrator_gates as t, foundry_mcp; pkg = Path(foundry_mcp.__file__).resolve().parent; old = sorted(p for p in (pkg / "tools").glob("*.py") if p.name != "__init__.py"); scan = lambda ms: sorted(o for p in ms for o in t._raw_state_cycle_reads(p)); print("  tools/ directory literal (D-066) ->", scan(old)); print("  derived over the package     ->", scan(t._package_modules(pkg)))' && echo "== and the guard itself, on the same mutated tree ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k guarded_reader 2>&1 | grep -E "^E +assert not|failed|passed"; cp "$SNAP" src/foundry_mcp/server.py && cmp -s "$SNAP" src/foundry_mcp/server.py && ! grep -q _sneaky_cycle_reader src/foundry_mcp/server.py && rm -f "$SNAP" && echo "== server.py restored: byte-identical to the pre-mutation snapshot, appended reader gone ==" && echo "== both tests green on the unmutated tree ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "guarded_reader or tools_subpackage" 2>&1 | grep -E "failed|passed"
 # evidence-for: FR-005, AC-008, NFR-001
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: Installed \d+ packages in \d+ms
@@ -39,16 +39,33 @@
 # GUARDED_CYCLE_READERS is unchanged: widening the scan added no new reader to
 # sanction, only new places to look.
 #
-# The mutation is applied to a mktemp snapshot and restored in the same command;
-# the empty `git status --porcelain` line below is the proof the tree is left
-# byte-identical.
+# The mutation is applied against a mktemp snapshot and restored in the same
+# command. The restore is proved against THE SNAPSHOT -- `cmp` says the file is
+# byte-identical to how this command found it, and `grep` says the appended
+# reader is gone -- not against `git status` on the shared working tree.
+#
+# That distinction is D-121. This log previously proved the restore with
+# `git status --porcelain -- src/foundry_mcp/server.py`, whose output is
+# TRANSIENT working-tree state: captured while server.py happened to be dirty
+# it pinned a ` M ` line, casting 2's own commit then made the tree clean, and
+# cold re-execution printed nothing where the log claimed a line -- so the
+# committed output stopped matching and the shipped verify_evidence rejected
+# the log with EVIDENCE_OUTPUT_MISMATCH. The line could not be rescued with
+# `# evidence-volatile:` either: redaction SUBSTITUTES a matched span, it never
+# deletes a line, so a line present on one side and absent on the other stays a
+# mismatch however it is redacted. The durable fix is to stop reading transient
+# state at all. `git status` also proved something weaker than the prose above
+# claimed -- it compares the file to HEAD, which conflates "my mutation was
+# reverted" with "nobody else has uncommitted edits to this file", whereas the
+# snapshot IS the thing the claim is about. The replacement emits a fixed
+# string carrying no counts, hashes or line numbers, so it cannot go stale when
+# a later cycle edits server.py.
 == a raw cycle read now sits in server.py: the package ROOT, not tools/ ==
   tools/ directory literal (D-066) -> []
   derived over the package     -> ['server.py::_sneaky_cycle_reader:955']
 == and the guard itself, on the same mutated tree ==
 E       assert not ['server.py::_sneaky_cycle_reader:955']
-1 failed, 195 deselected in 0.24s
-== server.py restored byte-identical (nothing printed by git status) ==
- M plugins/foundry/mcp-server/src/foundry_mcp/server.py
+1 failed, 195 deselected in 0.39s
+== server.py restored: byte-identical to the pre-mutation snapshot, appended reader gone ==
 == both tests green on the unmutated tree ==
-2 passed, 194 deselected in 0.22s
+2 passed, 194 deselected in 0.23s
