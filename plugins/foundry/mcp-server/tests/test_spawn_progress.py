@@ -758,3 +758,147 @@ def test_an_agent_that_obeys_its_block_leaves_the_missing_roster(run_env) -> Non
     assert after["needs_attention"] == []
     assert [r["agent"] for r in after["agents"]] == ["casting-2"]
     assert after["agents"][0]["status"] == fs.STATUS_PROGRESSING
+
+
+# --------------------------------------------------------------------------- #
+# D-115 — a manifest that is valid JSON of the WRONG TYPE
+# --------------------------------------------------------------------------- #
+#
+# `json.JSONDecodeError` catches only text that is not JSON at all. `[1,2,3]`,
+# `null` and a bare string all parse cleanly and then meet `.get()`, which is
+# an AttributeError raised across the MCP boundary from a module whose whole
+# error contract is a named `{"ok": False, ...}` refusal. Both spawn doors read
+# the manifest, so both were affected, and both are pinned here.
+
+WRONG_TYPED_MANIFESTS = ["[1, 2, 3]", "null", '"a bare string"', "42"]
+
+
+def _overwrite_manifest(fdir: Path, body: str) -> None:
+    (fdir / "castings" / "manifest.json").write_text(body, encoding="utf-8")
+
+
+@pytest.mark.parametrize("body", WRONG_TYPED_MANIFESTS)
+def test_the_single_door_refuses_a_wrong_typed_manifest(run_env, body) -> None:
+    """A named refusal that says what was found and where, never a traceback."""
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, body)
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert result["ok"] is False
+    assert "manifest.json" in result["error"]
+    assert "DECOMPOSE" in result["hint"]
+
+
+@pytest.mark.parametrize("body", WRONG_TYPED_MANIFESTS)
+def test_the_bulk_door_refuses_a_wrong_typed_manifest(run_env, body) -> None:
+    """The same input at the other door — this one crashed on `null` first."""
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, body)
+
+    result = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert result["ok"] is False
+    assert "manifest.json" in result["error"]
+    assert "DECOMPOSE" in result["hint"]
+
+
+def test_the_refusal_names_the_type_it_actually_found(run_env) -> None:
+    """"Malformed" is not actionable; "parsed as list" tells the lead what to open.
+
+    The offending file is named too, because a run has more than one JSON
+    artifact and the lead should not have to guess which one to look at.
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, "[1, 2, 3]")
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert "list" in result["error"]
+    assert str(fdir / "castings" / "manifest.json") in result["error"]
+
+
+def test_both_doors_refuse_a_wrong_typed_manifest_with_one_policy(run_env) -> None:
+    """A manifest is malformed for the bulk path and the single path alike.
+
+    Two hand-written guards would drift — one gaining a hint, one gaining a
+    type name — and the lead would learn two different stories about the same
+    file. One helper produces both refusals, and this is what says so.
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, "null")
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert single["error"] == bulk["error"]
+    assert single["hint"] == bulk["hint"]
+
+
+def test_a_torn_manifest_keeps_the_parse_error_it_already_had(run_env) -> None:
+    """The path that was already correct must not be re-routed by the fix.
+
+    Text that is not JSON at all still reports a parse error naming the
+    syntax problem, which is strictly more useful than "not an object".
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, "{truncated")
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert single["ok"] is False and bulk["ok"] is False
+    assert "parse error" in single["error"]
+    assert "parse error" in bulk["error"]
+
+
+def test_a_well_formed_manifest_is_untouched_by_the_guard(run_env) -> None:
+    """The guard must cost the normal path nothing."""
+    project_root, _fdir = run_env
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert single["ok"] is True
+    assert bulk["ok"] is True
+    assert [c["casting_id"] for c in bulk["castings"]] == [1, 2]
+
+
+def test_the_grind_context_builder_survives_a_wrong_typed_manifest(grind_repo) -> None:
+    """The third manifest reader in the module, driven directly.
+
+    Both doors now refuse before they reach this builder, so the only way to
+    put a wrong-typed manifest in front of it is to call it as its callers do.
+    Its contract is that it never fails a spawn — it returns a string — so the
+    guard here degrades rather than refusing, producing exactly the unscoped
+    context an unparseable manifest already produces.
+    """
+    project_root, fdir = grind_repo
+
+    _overwrite_manifest(fdir, "{truncated")
+    torn = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    _overwrite_manifest(fdir, "[1, 2, 3]")
+    wrong_typed = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert isinstance(wrong_typed, str)
+    assert wrong_typed == torn
+
+
+def test_a_wrong_typed_manifest_cannot_reach_the_builder_through_a_door(
+    grind_repo,
+) -> None:
+    """The door's refusal comes first, so a GRIND spawn never half-succeeds.
+
+    Without the guard this call raised from inside the builder AFTER the tool
+    had already read the prompt and written its spawns.log record — a spawn
+    that is logged as dispatched and returns an exception.
+    """
+    project_root, fdir = grind_repo
+    _overwrite_manifest(fdir, "[1, 2, 3]")
+
+    result = fs.foundry_cast_wave(1, "grind", project_root)
+
+    assert result["ok"] is False
+    assert "manifest.json" in result["error"]
+    assert not (fdir / "spawns.log").exists()

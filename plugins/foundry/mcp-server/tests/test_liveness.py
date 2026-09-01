@@ -1318,3 +1318,263 @@ def test_no_spawn_log_at_all_is_an_empty_roster(run_env) -> None:
 
     assert result["ok"] is True
     assert result["agents"] == []
+
+
+# --------------------------------------------------------------------------- #
+# D-114 — a ledger dated in the FUTURE
+# --------------------------------------------------------------------------- #
+#
+# `_write_ledger` takes each line's AGE, so a NEGATIVE age is a line dated that
+# many seconds in the future. Nothing else about these fixtures is unusual:
+# every line below is a well-formed ledger line whose only fault is its clock.
+#
+# The defect: a future timestamp makes the ages negative, a negative age is
+# below every threshold, and the fall-through verdict was `progressing`. So a
+# clock-skewed agent read healthy for as long as the skew lasted — and the
+# further ahead the clock, the more certain the wrong answer.
+
+
+def test_a_future_dated_ledger_is_not_reported_as_progressing(run_env) -> None:
+    """D-114 in one assertion.
+
+    An hour into the future: `now - moment` is -3599, no comparison against a
+    positive threshold can fire, and the agent used to fall through to
+    `progressing` no matter how dead it was.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-4", [(-3600, "cast", "read floor")])
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["status"] != fs.STATUS_PROGRESSING
+    assert record["status"] == fs.STATUS_STALLED
+    # The ages stay negative because they are the evidence of the skew.
+    # Clamping them to zero would hide the very thing the row is reporting.
+    assert record["last_line_age_seconds"] < 0
+    assert record["last_progress_age_seconds"] < 0
+
+
+def test_a_future_dated_agent_reaches_the_lead_as_a_call_to_action(run_env) -> None:
+    """The defect's real cost: `needs_attention` is what the lead reads.
+
+    A status nobody looks at is not a report. `progressing` kept the skewed
+    agent off this list entirely, so the lead was told nothing was wrong.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-skewed", [(-3600, "cast", "read floor")])
+    _write_ledger(fdir, "casting-live", [(20, "cast", "writing tests")])
+
+    result = fs.foundry_liveness(project_root=project_root)
+    records = _by_agent(result)
+
+    assert result["needs_attention"] == ["casting-skewed"]
+    assert records["casting-skewed"]["status"] != records["casting-live"]["status"]
+    assert records["casting-live"]["status"] == fs.STATUS_PROGRESSING
+
+
+def test_the_size_of_the_skew_cannot_buy_a_healthy_verdict(run_env) -> None:
+    """A year ahead is the same anomaly as an hour ahead, not a better agent.
+
+    Pins the direction of the comparison: an implementation that tested the
+    skew against a tolerance, or that only caught small skews, would satisfy
+    the hour-ahead test above and fail here.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-4", [(-31_536_000, "cast", "read floor")])
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["status"] == fs.STATUS_STALLED
+    assert record["last_line_age_seconds"] <= -31_000_000
+
+
+def test_a_future_dated_row_says_why_it_was_flagged(run_env) -> None:
+    """`stalled` alone would send the lead hunting a live agent's pane.
+
+    The status is shared with genuine silence, so the row has to carry the
+    difference: this agent may be fine and its CLOCK is the problem.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-4", [(-3600, "cast", "read floor")])
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert "FUTURE" in record["detail"]
+    assert "progressing" in record["detail"]
+    # The remedy is the protocol block's own rule, so the lead can act on it.
+    assert "UTC" in record["detail"]
+
+
+def test_a_naive_local_timestamp_is_the_realistic_skew(run_env) -> None:
+    """Not an adversarial input — the parser's own documented leniency.
+
+    `_parse_progress_timestamp` reads a naive timestamp as UTC rather than
+    discarding the line, so an agent that wrote `datetime.now().isoformat()`
+    anywhere east of Greenwich future-dates EVERY line it will ever write.
+    Before the fix that agent was reported healthy for the whole run.
+    """
+    project_root, fdir = run_env
+    local_now_two_hours_east = (
+        datetime.now(timezone.utc) + timedelta(hours=2)
+    ).replace(tzinfo=None)
+    pdir = fdir / "progress"
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "casting-4.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": local_now_two_hours_east.isoformat(),
+                "phase": "cast",
+                "step": "read floor",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["lines"] == 1  # the line was parsed, not discarded
+    assert record["status"] == fs.STATUS_STALLED
+
+
+def test_a_future_progress_line_is_caught_behind_a_recent_last_line(run_env) -> None:
+    """Why the check is on BOTH ages rather than only the heartbeat.
+
+    Here the last line is a healthy 10 seconds old, but the line that dates
+    when the current step was first reached is 30 minutes in the future. The
+    heartbeat age alone is unremarkable; the progress age — the number AC-021
+    actually asks for — is negative and untrustworthy.
+    """
+    project_root, fdir = run_env
+    _write_ledger(
+        fdir,
+        "casting-4",
+        [(-1800, "grind", "fixing D-114"), (10, "grind", "fixing D-114")],
+    )
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert record["last_line_age_seconds"] >= 0
+    assert record["last_progress_age_seconds"] < 0
+    assert record["status"] == fs.STATUS_STALLED
+
+
+def test_a_terminal_line_still_outranks_a_future_timestamp(run_env) -> None:
+    """The precedence this fix deliberately did NOT change.
+
+    An agent that declared itself finished said so in words, not in a
+    timestamp, and a terminal line already outranks every age check including
+    a non-monotonic one. Moving the skew check above it would put every
+    finished agent with a fast clock back into `needs_attention` — rebuilding
+    D-022's silting, the disease `done` exists to cure.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-4", [(-3600, "cast", "writing the handler")])
+    _append_terminal_line(fdir, "casting-4", age_seconds=-3500, step="committed 9f21ac3")
+
+    result = fs.foundry_liveness(project_root=project_root)
+    record = _by_agent(result)["casting-4"]
+
+    assert record["status"] == fs.STATUS_DONE
+    assert "detail" not in record
+    assert result["needs_attention"] == []
+
+
+# --------------------------------------------------------------------------- #
+# D-117 — a non-finite threshold
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan")])
+def test_refuses_a_non_finite_threshold(run_env, bad) -> None:
+    """The two values that pass every other gate and are still not a threshold.
+
+    `inf > 0` holds and EVERY comparison against `nan` is False — including
+    `nan <= 0` — so neither is caught by the positivity gate. Left to run,
+    both make every agent read `progressing` (nothing is ever `>= inf`, or
+    `>= nan`) and then `int(threshold)` raises `cannot convert float infinity
+    to integer` across the MCP boundary, where this module owes a refusal.
+    """
+    project_root, _fdir = run_env
+    result = fs.foundry_liveness(stall_seconds=bad, project_root=project_root)
+    assert result["ok"] is False
+    assert "stall_seconds" in result["error"]
+    assert "finite" in result["error"]
+    assert str(fs.STALL_THRESHOLD_SECONDS) in result["hint"]
+
+
+def test_infinity_is_reachable_over_the_wire_as_valid_json(run_env) -> None:
+    """The reachability argument, driven rather than asserted in a comment.
+
+    `1e400` is strictly valid JSON that Python's own parser turns into `inf`,
+    so this arrives through the real SDK path from a client that never typed
+    the word "infinity". A gate that only refused a literal `float('inf')`
+    typed in a test would be guarding a door nobody uses.
+    """
+    project_root, _fdir = run_env
+    from_the_wire = json.loads('{"stall_seconds": 1e400}')["stall_seconds"]
+    assert from_the_wire == float("inf")
+
+    result = fs.foundry_liveness(stall_seconds=from_the_wire, project_root=project_root)
+
+    assert result["ok"] is False
+    assert "finite" in result["error"]
+
+
+def test_negative_infinity_keeps_the_refusal_it_already_had(run_env) -> None:
+    """A path that was already correct must not be re-routed by the fix.
+
+    `-inf <= 0` is True, so it is refused by the positivity gate and never
+    reaches the finiteness one. Both refusals are named and both are honest;
+    this pins which one answers, so the finiteness check cannot quietly
+    swallow the more specific message.
+    """
+    project_root, _fdir = run_env
+    result = fs.foundry_liveness(stall_seconds=float("-inf"), project_root=project_root)
+    assert result["ok"] is False
+    assert "greater than 0" in result["error"]
+
+
+def test_a_non_finite_threshold_is_refused_before_any_agent_is_judged(run_env) -> None:
+    """The refusal is a gate, not a late failure after a wrong report.
+
+    With `inf` accepted, no age is ever `>= threshold`, so a stalled agent and
+    a live one both read `progressing` — the report would be wrong before the
+    raise ever arrived.
+    """
+    project_root, fdir = run_env
+    _write_ledger(fdir, "casting-dead", [(9000, "cast", "read floor")])
+
+    result = fs.foundry_liveness(stall_seconds=float("inf"), project_root=project_root)
+
+    assert result["ok"] is False
+    assert "agents" not in result
+
+
+# --------------------------------------------------------------------------- #
+# D-115 adjacent path — the manifest reader liveness owns
+# --------------------------------------------------------------------------- #
+
+
+def test_a_wrong_typed_manifest_does_not_disturb_the_stream_roster(run_env) -> None:
+    """The THIRD caller of a manifest read in this module, driven end to end.
+
+    D-115 is about the two spawn doors, which `test_spawn_progress.py` covers.
+    `_skipped_stream_ids` is the reader that has always held this guard, and
+    it is reached from a different tool entirely — so this is the adjacent
+    path: a manifest that is valid JSON of the wrong type must degrade to "no
+    declared skips" and leave the expected-stream roster intact, never raise
+    out through `Foundry-Liveness`.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+    castings = fdir / "castings"
+    castings.mkdir(parents=True, exist_ok=True)
+    (castings / "manifest.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    # No skips could be read, so every unconditional stream is still expected.
+    assert {r["agent"] for r in result["agents"]} >= {"trace", "prove"}
+    assert all(r["status"] == fs.STATUS_NO_LEDGER for r in result["agents"])

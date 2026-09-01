@@ -79,6 +79,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -516,6 +517,34 @@ def _agent_liveness_record(
     last_line_age = (now - last["moment"]).total_seconds()
     last_progress_age = (now - progress_moment).total_seconds()
 
+    # A line dated in the FUTURE makes its age negative, and a negative age is
+    # below every threshold, so an unguarded fall-through reports the agent
+    # `progressing` — permanently, and the further ahead the clock the more
+    # confident the wrong answer. `progressing` is the one verdict this tool
+    # must never reach by default, because it is the verdict that ends the
+    # lead's investigation.
+    #
+    # Not an exotic input, either. `_parse_progress_timestamp` deliberately
+    # reads a naive timestamp as UTC rather than discarding the line, so an
+    # agent that wrote `datetime.now().isoformat()` anywhere east of Greenwich
+    # future-dates every line it will ever write, and the tool would call it
+    # healthy for the whole run.
+    #
+    # The posture is the one this module already holds for a non-monotonic
+    # ledger: a clock anomaly is worth SEEING. So it takes the existing
+    # `stalled` verdict and lands in `needs_attention` rather than earning a
+    # status of its own — the honest reading of "I cannot date this agent's
+    # last progress" is the same one as "this agent has not reported in", and
+    # the `detail` below says which of the two it is. Both ages stay negative
+    # in the record because they are the evidence; clamping them to zero would
+    # hide exactly what the detail is pointing at.
+    #
+    # `min` of the two, not just the last line's: a non-monotonic ledger can
+    # future-date the line that dates the CURRENT step while ending on a line
+    # that is merely old, and a negative progress age is as untrustworthy as a
+    # negative heartbeat age.
+    skewed = min(last_line_age, last_progress_age) < 0
+
     # A terminal line retires the work it was written about, not the agent
     # forever. When the run has dispatched this casting AGAIN since that line,
     # the agent owes lines it has not written, and reporting `done` would hide
@@ -527,6 +556,12 @@ def _agent_liveness_record(
 
     if _is_terminal(last["record"]) and not superseded:
         status = STATUS_DONE
+    elif skewed:
+        # Ahead of the two threshold branches because neither can fire on a
+        # negative age, and behind the terminal branch because an agent that
+        # declared itself finished said so in words, not in a timestamp — the
+        # same precedence a non-monotonic ledger already gets.
+        status = STATUS_STALLED
     elif last_line_age >= threshold:
         status = STATUS_STALLED
     elif last_progress_age >= threshold:
@@ -547,7 +582,20 @@ def _agent_liveness_record(
         "lines": len(lines),
         "ledger": ledger_path,
     }
-    if superseded and _is_terminal(last["record"]):
+    if skewed and status == STATUS_STALLED:
+        ahead = int(-min(last_line_age, last_progress_age))
+        record["detail"] = (
+            f"This ledger is dated up to {ahead}s in the FUTURE, so its ages are "
+            "negative and no threshold comparison can be trusted. Usually the agent "
+            "wrote a naive local timestamp that was read as UTC, or its clock is "
+            "skewed. Reported as an anomaly worth seeing rather than as progress: a "
+            "future-dated ledger clears every threshold by arithmetic, so left "
+            "unflagged this agent would read `progressing` for as long as the skew "
+            "lasts, however dead it is. Ask it for an ISO-8601 UTC timestamp WITH the "
+            "offset, as its progress_protocol block does, before reading anything else "
+            "on this row."
+        )
+    elif superseded and _is_terminal(last["record"]):
         record["detail"] = (
             "This ledger ends with a terminal line written BEFORE the agent's "
             "most recent dispatch, so it declares finished the work the run has "
@@ -904,6 +952,23 @@ def foundry_liveness(
                 "error": f"Invalid stall_seconds: {stall_seconds}. Must be greater than 0.",
                 "hint": f"Omit it to use the derived default of {STALL_THRESHOLD_SECONDS}s.",
             }
+        # The two values that pass every gate above and are still not a
+        # threshold. `1e400` is strictly valid JSON that Python parses to
+        # `inf`, so both are reachable over the wire through the real SDK
+        # path, and neither is caught by the comparison before it: `inf > 0`
+        # holds, and EVERY comparison against `nan` is False, including
+        # `nan <= 0`. Left to run, `inf` makes every agent read `progressing`
+        # (nothing is ever `>= inf`) and `nan` does the same, and then
+        # `int(threshold)` raises `cannot convert float infinity to integer`
+        # across the MCP boundary — an exception where this module owes a
+        # named refusal. `-inf` is already refused by the gate above and keeps
+        # that wording; this branch is what `+inf` and `nan` fall through to.
+        if not math.isfinite(stall_seconds):
+            return {
+                "ok": False,
+                "error": f"Invalid stall_seconds: {stall_seconds}. Must be a finite number of seconds.",
+                "hint": f"Omit it to use the derived default of {STALL_THRESHOLD_SECONDS}s.",
+            }
         threshold = float(stall_seconds)
 
     run_rel = f"foundry-archive/{fdir.name}"
@@ -1026,6 +1091,36 @@ def foundry_liveness(
     return result
 
 
+def _manifest_shape_error(manifest: object, manifest_path: Path) -> dict | None:
+    """Return a named refusal when a parsed manifest is not a JSON object.
+
+    ``json.JSONDecodeError`` catches only text that is not JSON at all. A
+    manifest that is valid JSON of the WRONG TYPE — ``[1,2,3]``, ``null``, a
+    bare string — parses cleanly and then meets ``.get()``, which is an
+    ``AttributeError`` raised across the MCP boundary where this module owes a
+    named refusal. ``_skipped_stream_ids`` has always guarded this; both spawn
+    doors now share one policy rather than each growing its own, because a
+    manifest is malformed for the bulk path and the single path in exactly the
+    same way and the two refusals must not drift apart.
+
+    Returns ``None`` when the shape is fine, so a caller reads
+    ``if error: return error``.
+    """
+    if isinstance(manifest, dict):
+        return None
+    return {
+        "ok": False,
+        "error": (
+            f"manifest.json is not a JSON object — parsed as {type(manifest).__name__}: "
+            f"{manifest_path}"
+        ),
+        "hint": (
+            "Re-run F0.5 DECOMPOSE. The manifest must be a JSON object carrying "
+            "`castings` and `waves`, not a bare list, string or null."
+        ),
+    }
+
+
 def foundry_spawn_teammate(
     casting_id: int | str,
     phase: str = "cast",
@@ -1067,6 +1162,9 @@ def foundry_spawn_teammate(
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         return {"ok": False, "error": f"manifest.json parse error: {e}"}
+    shape_error = _manifest_shape_error(manifest, manifest_path)
+    if shape_error:
+        return shape_error
 
     castings = manifest.get("castings", [])
     casting = None
@@ -1228,7 +1326,15 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            for c in manifest.get("castings", []):
+            # The third manifest reader in this module, and the one that must
+            # stay QUIET about a bad shape: a wrong-typed manifest produces the
+            # same unscoped context an unparseable one already produces, rather
+            # than a refusal. A wrong-typed manifest that reached
+            # `.get()` here would raise out through both spawn doors, past
+            # their own shape guards, from a helper whose contract is that it
+            # never fails a spawn.
+            castings = manifest.get("castings", []) if isinstance(manifest, dict) else []
+            for c in castings:
                 if str(c.get("id")) == str(casting_id):
                     for f in (c.get("key_files") or []):
                         if isinstance(f, str) and f.strip():
@@ -1312,6 +1418,9 @@ def foundry_cast_wave(
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         return {"ok": False, "error": f"manifest.json parse error: {e}"}
+    shape_error = _manifest_shape_error(manifest, manifest_path)
+    if shape_error:
+        return shape_error
 
     waves = manifest.get("waves") or []
     wave_entry = None
