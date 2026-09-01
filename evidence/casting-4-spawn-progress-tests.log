@@ -76,51 +76,82 @@
 #                                                   dispatch is recorded for a
 #                                                   spawn that then raised
 #
+# TEMPER cycle 17 added the D-120 section. FR-020's blindness survived one
+# branch in: a casting declaring no `key_files` got the header — "earlier
+# cycles modified the files listed below" — over an empty list, because the
+# whole diff went to `relevant`, whose guard also demanded that key_files
+# exist. The `### Files changed since CAST:` label written for exactly that
+# case was unreachable. Driven at HEAD, the with-key_files block was 478 chars
+# and named the changed file; the no-key_files block was 402 and named none.
+# After the fix: 478 (sha 3cce7e17d494f30a, byte-identical either side of the
+# change) and 465, both naming it.
+#   ..._the_header_is_never_emitted_without_the_files_it_promises  ONE property,
+#                                                   parametrized over both
+#                                                   branches — that is what
+#                                                   stops them disagreeing again
+#   ..._a_casting_with_no_key_files_gets_the_fallback_diff  the docstring's
+#                                                   fallback promise, kept, and
+#                                                   the dead label made live
+#   ..._the_key_files_branch_is_unmoved_by_the_fallback_repair  the branch that
+#                                                   already worked does not
+#                                                   shift while the other is
+#                                                   fixed
+#   ..._the_fallback_block_reaches_both_spawn_doors_alike  the builder's OTHER
+#                                                   caller on the repaired
+#                                                   branch: bulk == single, so
+#                                                   no door reads a re-derived
+#                                                   copy
+#
 ============================= test session starts ==============================
-collecting ... collected 43 items
+collecting ... collected 48 items
 
 tests/test_spawn_progress.py::test_single_spawn_returns_a_progress_protocol_block PASSED [  2%]
 tests/test_spawn_progress.py::test_the_block_names_the_exact_ledger_path_for_that_casting PASSED [  4%]
 tests/test_spawn_progress.py::test_the_block_names_the_three_required_line_fields PASSED [  6%]
-tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [  9%]
-tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [ 11%]
-tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [ 13%]
-tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [ 16%]
-tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [ 18%]
-tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [ 20%]
-tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [ 23%]
-tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [ 25%]
-tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 27%]
-tests/test_spawn_progress.py::test_single_spawn_block_carries_the_terminal_line_instruction PASSED [ 30%]
-tests/test_spawn_progress.py::test_bulk_spawn_blocks_carry_the_terminal_line_instruction PASSED [ 32%]
-tests/test_spawn_progress.py::test_a_terminal_line_written_as_instructed_reports_done PASSED [ 34%]
-tests/test_spawn_progress.py::test_the_teammate_variant_is_what_the_spawn_tools_still_emit PASSED [ 37%]
-tests/test_spawn_progress.py::test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in PASSED [ 39%]
-tests/test_spawn_progress.py::test_the_two_variants_share_every_machine_read_field PASSED [ 41%]
-tests/test_spawn_progress.py::test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness PASSED [ 44%]
-tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 46%]
-tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 48%]
-tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 51%]
-tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 53%]
-tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 55%]
-tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [ 58%]
-tests/test_spawn_progress.py::test_a_real_bulk_dispatch_becomes_a_liveness_row PASSED [ 60%]
-tests/test_spawn_progress.py::test_a_real_single_dispatch_becomes_a_liveness_row PASSED [ 62%]
-tests/test_spawn_progress.py::test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write PASSED [ 65%]
-tests/test_spawn_progress.py::test_an_agent_that_obeys_its_block_leaves_the_missing_roster PASSED [ 67%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 69%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[null] PASSED [ 72%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 74%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[42] PASSED [ 76%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 79%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[null] PASSED [ 81%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 83%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[42] PASSED [ 86%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_type_it_actually_found PASSED [ 88%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_wrong_typed_manifest_with_one_policy PASSED [ 90%]
+tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [  8%]
+tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [ 10%]
+tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [ 12%]
+tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [ 14%]
+tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [ 16%]
+tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [ 18%]
+tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [ 20%]
+tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [ 22%]
+tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 25%]
+tests/test_spawn_progress.py::test_single_spawn_block_carries_the_terminal_line_instruction PASSED [ 27%]
+tests/test_spawn_progress.py::test_bulk_spawn_blocks_carry_the_terminal_line_instruction PASSED [ 29%]
+tests/test_spawn_progress.py::test_a_terminal_line_written_as_instructed_reports_done PASSED [ 31%]
+tests/test_spawn_progress.py::test_the_teammate_variant_is_what_the_spawn_tools_still_emit PASSED [ 33%]
+tests/test_spawn_progress.py::test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in PASSED [ 35%]
+tests/test_spawn_progress.py::test_the_two_variants_share_every_machine_read_field PASSED [ 37%]
+tests/test_spawn_progress.py::test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness PASSED [ 39%]
+tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 41%]
+tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 43%]
+tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 45%]
+tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 47%]
+tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 50%]
+tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [ 52%]
+tests/test_spawn_progress.py::test_the_header_is_never_emitted_without_the_files_it_promises[True] PASSED [ 54%]
+tests/test_spawn_progress.py::test_the_header_is_never_emitted_without_the_files_it_promises[False] PASSED [ 56%]
+tests/test_spawn_progress.py::test_a_casting_with_no_key_files_gets_the_fallback_diff PASSED [ 58%]
+tests/test_spawn_progress.py::test_the_key_files_branch_is_unmoved_by_the_fallback_repair PASSED [ 60%]
+tests/test_spawn_progress.py::test_the_fallback_block_reaches_both_spawn_doors_alike PASSED [ 62%]
+tests/test_spawn_progress.py::test_a_real_bulk_dispatch_becomes_a_liveness_row PASSED [ 64%]
+tests/test_spawn_progress.py::test_a_real_single_dispatch_becomes_a_liveness_row PASSED [ 66%]
+tests/test_spawn_progress.py::test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write PASSED [ 68%]
+tests/test_spawn_progress.py::test_an_agent_that_obeys_its_block_leaves_the_missing_roster PASSED [ 70%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 72%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[null] PASSED [ 75%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 77%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[42] PASSED [ 79%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 81%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[null] PASSED [ 83%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 85%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[42] PASSED [ 87%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_type_it_actually_found PASSED [ 89%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_wrong_typed_manifest_with_one_policy PASSED [ 91%]
 tests/test_spawn_progress.py::test_a_torn_manifest_keeps_the_parse_error_it_already_had PASSED [ 93%]
 tests/test_spawn_progress.py::test_a_well_formed_manifest_is_untouched_by_the_guard PASSED [ 95%]
 tests/test_spawn_progress.py::test_the_grind_context_builder_survives_a_wrong_typed_manifest PASSED [ 97%]
 tests/test_spawn_progress.py::test_a_wrong_typed_manifest_cannot_reach_the_builder_through_a_door PASSED [100%]
 
-============================== 43 passed in 1.06s ==============================
+============================== 48 passed in 2.03s ==============================

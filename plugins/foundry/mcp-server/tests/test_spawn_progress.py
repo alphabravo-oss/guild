@@ -626,6 +626,119 @@ def test_bulk_grind_without_a_baseline_omits_the_context_quietly(run_env) -> Non
 
 
 # --------------------------------------------------------------------------- #
+# D-120 — the header and the file list leave the builder together or not at all
+# --------------------------------------------------------------------------- #
+#
+# FR-020's blindness survived one branch in. A casting that declares no
+# `key_files` was handed the header — "earlier cycles modified the files listed
+# below" — over an empty list, because the whole diff went to `relevant` whose
+# guard then demanded key_files exist. The `### Files changed since CAST:`
+# label written for exactly that case was unreachable. These tests pin the
+# repaired branch AND the one that already worked as one property, so a future
+# edit cannot fix either in a way that separates the prose from the filenames.
+
+CONTEXT_HEADER = "## Prior-cycle file changes (READ BEFORE ACTING ON DEFECTS)"
+
+
+def _strip_key_files(fdir: Path) -> None:
+    """Drop every casting's key_files, leaving the manifest otherwise intact.
+
+    A casting with no declared key_files is legal — nothing in the schema
+    requires them — and it is the state the builder's docstring has always
+    promised to handle by falling back to the unfiltered diff.
+    """
+    path = fdir / "castings" / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for casting in manifest["castings"]:
+        casting.pop("key_files", None)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _listed_files(block: str) -> list[str]:
+    """The filenames the block actually RENDERS, in order.
+
+    Read off the emitted text rather than from the inputs, because the whole
+    defect was a block whose inputs were computed and then never emitted.
+    """
+    return re.findall(r"^- `([^`]+)`$", block, flags=re.MULTILINE)
+
+
+@requires_git
+@pytest.mark.parametrize("declares_key_files", [True, False])
+def test_the_header_is_never_emitted_without_the_files_it_promises(
+    grind_repo, declares_key_files
+) -> None:
+    """One property, both branches — that is the point of parametrising it.
+
+    The header's own words are "the files listed below". Whichever branch
+    renders it must render them, and this is the assertion that says the two
+    cannot come apart again.
+    """
+    project_root, fdir = grind_repo
+    if not declares_key_files:
+        _strip_key_files(fdir)
+
+    block = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert (CONTEXT_HEADER in block) == bool(_listed_files(block))
+    # Not vacuously — this fixture's HEAD really did move past the baseline.
+    assert _listed_files(block) == [KEY_FILE]
+
+
+@requires_git
+def test_a_casting_with_no_key_files_gets_the_fallback_diff(grind_repo) -> None:
+    """The docstring's fallback promise, kept.
+
+    Before the fix this block was the header prose and nothing else, and the
+    label below was dead code: it needed `casting_keyfiles` to be falsy, which
+    was exactly when the list it labelled was empty.
+    """
+    project_root, fdir = grind_repo
+    _strip_key_files(fdir)
+
+    block = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert "### Files changed since CAST:" in block
+    assert "### Your casting's key_files that changed:" not in block
+    assert _listed_files(block) == [KEY_FILE]
+
+
+@requires_git
+def test_the_key_files_branch_is_unmoved_by_the_fallback_repair(grind_repo) -> None:
+    """The branch that already worked must not shift while the other is fixed."""
+    project_root, fdir = grind_repo
+
+    block = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert "### Your casting's key_files that changed:" in block
+    assert "### Files changed since CAST:" not in block
+    assert _listed_files(block) == [KEY_FILE]
+
+
+@requires_git
+def test_the_fallback_block_reaches_both_spawn_doors_alike(grind_repo) -> None:
+    """The builder's other caller, on the branch D-120 repaired.
+
+    ``test_bulk_grind_matches_the_single_spawn_path_it_was_missing`` pins the
+    with-key_files case across both doors; this pins the repaired one, so a
+    fix to the builder cannot land at one door and leave the other reading a
+    re-derived copy.
+    """
+    project_root, fdir = grind_repo
+    _strip_key_files(fdir)
+
+    bulk = fs.foundry_cast_wave(1, "grind", project_root)
+    single = fs.foundry_spawn_teammate(1, "grind", project_root)
+
+    bulk_context = next(
+        c["grind_cycle_context"] for c in bulk["castings"] if c["casting_id"] == 1
+    )
+    assert bulk_context == single["grind_cycle_context"]
+    assert "### Files changed since CAST:" in bulk_context
+    assert _listed_files(bulk_context) == [KEY_FILE]
+
+
+# --------------------------------------------------------------------------- #
 # D-058 adjacent path — the real spawn WRITERS feed the liveness READER
 # --------------------------------------------------------------------------- #
 #

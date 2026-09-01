@@ -1294,6 +1294,11 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     Empty list = cycle 1 pre-edit, so we return empty string (nothing to append).
     Filters to the casting's declared key_files when available, falling back
     to the full diff when key_files aren't declared.
+
+    The returned block either names files or is empty; the header is never
+    emitted alone. A teammate told that prior cycles changed "the files listed
+    below" and then shown nothing is the same blindness this block exists to
+    prevent, wearing the block's own authority.
     """
     baseline_file = fdir / ".cast-baseline-sha"
     if not baseline_file.exists():
@@ -1343,34 +1348,58 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
         except json.JSONDecodeError:
             pass
 
-    relevant = [f for f in changed if f in casting_keyfiles] if casting_keyfiles else changed
-    other = [f for f in changed if f not in casting_keyfiles] if casting_keyfiles else []
+    # Two partitions of `changed` under one rule: every changed file lands in
+    # exactly one of them. With key_files declared that is the mine/not-mine
+    # split; with none declared there is nothing to split on, so the whole diff
+    # goes to `other` and renders under the "Files changed since CAST" label
+    # written for precisely that case. The earlier spelling handed the
+    # no-key_files diff to `relevant`, whose guard then also demanded that
+    # key_files exist — so the block emitted its header over an empty list and
+    # that label was unreachable. Each list is now empty exactly when its
+    # section is absent, which is what lets the guards below be the list itself.
+    relevant = [f for f in changed if f in casting_keyfiles] if casting_keyfiles else []
+    other = [f for f in changed if f not in casting_keyfiles] if casting_keyfiles else changed
 
-    lines = [
-        "## Prior-cycle file changes (READ BEFORE ACTING ON DEFECTS)",
-        "",
-        "Earlier CAST or GRIND cycles modified the files listed below. Before assuming "
-        "anything about current code state, **read these files first**. Memory is a hint, "
-        "not ground truth — verify against the actual files. Skip redundant exploration: "
-        "if a defect mentions a symbol in one of these files, read the current version "
-        "before re-implementing.",
-        "",
-    ]
-    if casting_keyfiles and relevant:
-        lines.append("### Your casting's key_files that changed:")
+    sections: list[str] = []
+    if relevant:
+        sections.append("### Your casting's key_files that changed:")
         for f in relevant:
-            lines.append(f"- `{f}`")
-        lines.append("")
+            sections.append(f"- `{f}`")
+        sections.append("")
     if other:
-        label = "### Other files changed (may be upstream dependencies):" if casting_keyfiles else "### Files changed since CAST:"
-        lines.append(label)
+        label = (
+            "### Other files changed (may be upstream dependencies):"
+            if casting_keyfiles
+            else "### Files changed since CAST:"
+        )
+        sections.append(label)
         for f in other[:40]:  # cap at 40 to avoid prompt bloat
-            lines.append(f"- `{f}`")
+            sections.append(f"- `{f}`")
         if len(other) > 40:
-            lines.append(f"- ... ({len(other) - 40} more)")
-        lines.append("")
+            sections.append(f"- ... ({len(other) - 40} more)")
+        sections.append("")
 
-    return "\n".join(lines)
+    # The header's own words are "the files listed below", so it does not leave
+    # this function without them. Building the filenames first and gating the
+    # prose on them makes that one decision instead of an agreement between two
+    # guards — the agreement is what lapsed, and prose promising a list that
+    # isn't there is worse than no block, because it reads as authoritative.
+    if not sections:
+        return ""
+
+    return "\n".join(
+        [
+            "## Prior-cycle file changes (READ BEFORE ACTING ON DEFECTS)",
+            "",
+            "Earlier CAST or GRIND cycles modified the files listed below. Before assuming "
+            "anything about current code state, **read these files first**. Memory is a hint, "
+            "not ground truth — verify against the actual files. Skip redundant exploration: "
+            "if a defect mentions a symbol in one of these files, read the current version "
+            "before re-implementing.",
+            "",
+            *sections,
+        ]
+    )
 
 
 def foundry_cast_wave(
