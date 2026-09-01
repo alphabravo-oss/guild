@@ -1485,10 +1485,19 @@ def _worktree_repo(tmp_path: Path) -> tuple[Path, Path, str]:
     return repo, run_dir, head
 
 
-def test_a_same_casting_peer_cannot_destroy_a_live_worktree(tmp_path):
+@pytest.mark.parametrize("dir_prefix", ["casting-", "test-deriver-cycle-"])
+def test_a_same_casting_peer_cannot_destroy_a_live_worktree(tmp_path, dir_prefix):
     """The D-111 repro. Two threads, one casting id: the first thread's tree
     must still be intact — same path, same marker — after the second has set up
-    and torn down its own."""
+    and torn down its own.
+
+    Driven at the HELPER, over BOTH prefixes, because the helper is the whole
+    surface the two production callers share: ``verify_evidence`` passes the
+    default ``casting-`` and Phase 7's ``test_deriver.run_test_deriver`` passes
+    ``test-deriver-cycle-``, and the latter has no test module of its own — so
+    a guarantee pinned only through ``verify_evidence`` would leave the second
+    caller's collision unasserted.
+    """
     import threading
 
     from foundry_mcp.tools import worktree_helpers as wh
@@ -1503,7 +1512,7 @@ def test_a_same_casting_peer_cannot_destroy_a_live_worktree(tmp_path):
 
     def _thread_a() -> None:
         try:
-            path = wh._setup_worktree(repo, 1, head, run_dir)
+            path = wh._setup_worktree(repo, 1, head, run_dir, dir_prefix=dir_prefix)
             paths["a"] = path
             (path / "A_IS_LIVE").write_text("a", encoding="utf-8")
             a_ready.set()
@@ -1521,7 +1530,7 @@ def test_a_same_casting_peer_cannot_destroy_a_live_worktree(tmp_path):
     def _thread_b() -> None:
         try:
             a_ready.wait(timeout=60)
-            path = wh._setup_worktree(repo, 1, head, run_dir)
+            path = wh._setup_worktree(repo, 1, head, run_dir, dir_prefix=dir_prefix)
             paths["b"] = path
             wh._teardown_worktree(repo, path)
         except BaseException as exc:  # noqa: BLE001
