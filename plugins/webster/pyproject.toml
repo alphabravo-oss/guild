@@ -1,0 +1,9 @@
+# Pytest configuration only. There is no [project] table and no build-system:
+# webster ships as a Claude Code plugin of standalone scripts, not a package.
+# No ``pythonpath`` either — the scripts are driven by subprocess and are never
+# importable from a test (GI-004), so putting scripts/ on sys.path would only
+# make the forbidden import work.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
