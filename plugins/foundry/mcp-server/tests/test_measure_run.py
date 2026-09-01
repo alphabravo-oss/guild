@@ -59,6 +59,7 @@ import csv
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -952,7 +953,9 @@ def test_rollup_proving_a_higher_cycle_names_the_stale_counter(
     )
     exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
     payload = json.loads(stdout)
-    assert payload["cycles"] == 7, "must report the cycle the run reached"
+    # Index 7 is the EIGHTH cycle — the counter is 0-based (see
+    # _reconcile_final_cycle_index) and ``cycles`` publishes a COUNT.
+    assert payload["cycles"] == 8, "must report the cycles the run reached"
     assert "PHASE9_CYCLE_COUNT_INVALID" in payload["failure_tokens"]
     assert exit_code != 0
 
@@ -967,7 +970,7 @@ def test_rollup_agreeing_with_state_is_silent(
     exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
     assert exit_code == 0, (stdout, stderr)
     payload = json.loads(stdout)
-    assert payload["cycles"] == 3
+    assert payload["cycles"] == 4, "index 3 is the fourth cycle"
     assert payload["failure_tokens"] == []
 
 
@@ -1032,3 +1035,92 @@ def test_context_pct_override_wins_over_the_file(
     )
     assert exit_code == 0, (stdout, stderr)
     assert json.loads(stdout)["f2_context_pct"] == 13.5
+
+
+# ---------------------------------------------------------------------------
+# D-063 — ``cycles`` is a COUNT, and the convergence gate reads it as one.
+#
+# The server's counter is 0-based (Foundry-Init writes 0; the F1 -> F2 entry
+# from CAST is not a new cycle; only the F3 -> F2 boundary increments), so a run
+# that executed N cycles ends at index N-1. Publishing the raw index reported
+# every run one cycle short and let the convergence gate admit one cycle more
+# than MAX_CYCLES_FOR_CONVERGENCE names, at every threshold value.
+# ---------------------------------------------------------------------------
+
+
+MIGRATE_SCRIPT = REPO_ROOT / "plugins" / "foundry" / "scripts" / "migrate-archive.py"
+GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
+
+
+def test_convergence_gate_threshold_counts_cycles_not_indices(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The gate half of D-063.
+
+    A run at index 8 executed NINE cycles. The gate must FAIL it against a
+    threshold of 8, and the boundary case (index 7 = eight cycles) must PASS.
+    """
+    module = _load_measure_run_module()
+    assert module.MAX_CYCLES_FOR_CONVERGENCE == 8
+
+    over = make_run_dir(
+        rollup=_rollup_doc({"8": {"prove": _entry(10, 10, 0)}}),
+        cohort_id="no_TYPE_01",
+    )
+    payload = json.loads(_invoke_measure_run(str(over))[1])
+    assert payload["cycles"] == 9, "index 8 is the ninth cycle"
+    assert payload["gate_verdicts"]["cycles"] == "FAIL"
+
+    at_threshold = make_run_dir(
+        rollup=_rollup_doc({"7": {"prove": _entry(10, 10, 0)}}),
+        cohort_id="no_TYPE_02",
+    )
+    payload = json.loads(_invoke_measure_run(str(at_threshold))[1])
+    assert payload["cycles"] == 8
+    assert payload["gate_verdicts"]["cycles"] == "PASS"
+
+    # The operator-supplied path already spoke in COUNTS; both paths now agree.
+    exit_code, stdout, _ = _invoke_measure_run(
+        "--evaluate-gates", "--cycles", "9",
+        "--yield-pct", "25.0", "--context-pct", "42.0", "--regression-pct", "30.0",
+    )
+    assert exit_code == 0
+    assert json.loads(stdout)["gate_verdicts"]["cycles"] == "FAIL"
+
+
+@pytest.mark.skipif(
+    not GRAND_VULTURE.exists(),
+    reason=(
+        f"grand-vulture archive not present in this checkout: {GRAND_VULTURE} "
+        "(foundry-archive/ is git-ignored)"
+    ),
+)
+def test_grand_vulture_reports_nfr_001s_two_baseline_numbers(tmp_path: Path) -> None:
+    """NFR-001 writes its baseline as "18 cycles, 168 defects".
+
+    Both numbers are read from the SAME archive by the SAME command, so they
+    can never again disagree: the defect half already matched to the unit while
+    the cycle half was one short, which is what ruled out coincidence when
+    D-063 was filed. The archive is copied first — never opened for writing.
+    """
+    dest = tmp_path / "grand-vulture"
+    shutil.copytree(GRAND_VULTURE, dest)
+
+    migrate = subprocess.run(
+        [sys.executable, str(MIGRATE_SCRIPT), str(dest)],
+        capture_output=True, text=True,
+    )
+    assert migrate.returncode == 0, migrate.stderr
+
+    exit_code, stdout, stderr = _invoke_measure_run(str(dest))
+    payload = json.loads(stdout)
+    assert payload["cycles"] == 18, "NFR-001 baseline: 18 cycles"
+    assert sum(payload["per_stream_defects"].values()) == 168, (
+        "NFR-001 baseline: 168 defects"
+    )
+    # D-060's other half — the repaired archive must satisfy its own detector.
+    assert payload["failure_tokens"] == [], payload["failure_tokens"]
+    assert exit_code == 0, stderr
+
+    # And the real archive was never touched.
+    assert json.loads((GRAND_VULTURE / "state.json").read_text())["cycle"] == 0

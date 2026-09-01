@@ -7,9 +7,18 @@
 # archive: an empty map plus one PHASE9_DEFECTS_FILE_MALFORMED per record —
 # on grand-vulture that was 168 of them. The second block is the shipped
 # reader: real per-stream counts, keyed by canonical id, from the lowercase
-# `source` key every writer actually persists. The third shows the recorded
-# cycle count going 0 -> 6 once migrate-archive.py repairs it from the run's
-# own data, which is the other half of AC-024's "real cycle counts".
+# `source` key every writer actually persists. The third shows the cycle
+# count going 1 -> 7 once migrate-archive.py repairs it from the run's own
+# data, which is the other half of AC-024's "real cycle counts".
+#
+# `cycles` is a COUNT, and the server's counter is a 0-BASED INDEX
+# (Foundry-Init writes 0; only the F3 GRIND -> F2 INSPECT boundary
+# increments), so the count is index + 1 (D-063). The unrepaired archive
+# records index 0 — one cycle entered — and the repaired one records index 6,
+# the seventh cycle. Publishing the raw index reported every run one cycle
+# short: on grand-vulture it printed 17 against NFR-001's baseline sentence
+# "18 cycles, 168 defects", whose defect half the same command already read
+# as exactly 168.
 #
 # PHASE9_SCHEMA_INVALID no longer appears. The synthetic fixture is a run
 # archive, not a cohort experiment, so it carries no cohort.json — and a
@@ -25,10 +34,10 @@ failure_tokens: 6 x ['PHASE9_DEFECTS_FILE_MALFORMED']
 
 === what measure-run.py produces NOW (FR-018 / AC-024) ===
 per_stream_defects: {"PROVE": 3, "TEST-01": 1, "TRACE": 1}
-cycles: 0
+cycles: 1
 failure_tokens: ['PHASE9_WALL_CLOCK_UNAVAILABLE', 'PHASE9_UNKNOWN_STREAM:legacy_stream']
 
 === after migrate-archive.py repairs the recorded cycle ===
 per_stream_defects: {"PROVE": 3, "TEST-01": 1, "TRACE": 1}
-cycles: 6
+cycles: 7
 failure_tokens: ['PHASE9_WALL_CLOCK_UNAVAILABLE', 'PHASE9_UNKNOWN_STREAM:legacy_stream']

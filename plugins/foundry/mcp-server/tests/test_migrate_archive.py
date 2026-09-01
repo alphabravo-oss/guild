@@ -4,11 +4,16 @@ Subprocess-invokes ``plugins/foundry/scripts/migrate-archive.py`` the way
 test_measure_run.py invokes measure-run.py (``sys.executable`` + script path),
 so the tests exercise the real CLI contract including its exit codes.
 
-Two fixtures:
+Three fixtures:
 
   * a committed SYNTHETIC pre-change archive that exercises all six migration
     steps. Unconditional — migration correctness and idempotency are covered
     on any checkout.
+  * a committed CLEAN-LAST-CYCLE archive whose ``.{stream}-complete`` markers
+    record a cycle no defect record carries — the ORDINARY shape, because the
+    last INSPECT cycle's clean streams file no defects. Both the synthetic
+    fixture above and grand-vulture happen to have marker cycle == max defect
+    cycle, and that coincidence is what hid D-060.
   * the real grand-vulture archive, copied to tmp_path and migrated there.
     ``foundry-archive/`` is git-ignored, so that one test is skipif-guarded.
     The real archive is NEVER opened for writing.
@@ -29,8 +34,12 @@ import pytest
 # [3]=plugins, [4]=repo-root. Mirrors test_measure_run.py's precedent.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = REPO_ROOT / "plugins" / "foundry" / "scripts" / "migrate-archive.py"
+# D-060 is a disagreement BETWEEN the two shipped tools, so the migration's own
+# detector is invoked here rather than only in test_measure_run.py.
+MEASURE_SCRIPT = REPO_ROOT / "plugins" / "foundry" / "scripts" / "measure-run.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "migrate_archive"
 PRE_CHANGE = FIXTURES / "pre_change"
+CLEAN_LAST_CYCLE = FIXTURES / "clean_last_cycle"
 
 # The real pre-change archive named by AC-026 and OT-012. git-ignored, so it
 # is present in a working checkout and absent from a clean clone.
@@ -73,11 +82,29 @@ def _tree_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _measure(run_dir: Path) -> dict:
+    """Run the shipped detector over an archive and return its payload."""
+    proc = subprocess.run(
+        [sys.executable, str(MEASURE_SCRIPT), str(run_dir)],
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(proc.stdout)
+
+
 @pytest.fixture
 def archive(tmp_path: Path) -> Path:
     """A writable copy of the synthetic pre-change archive."""
     dest = tmp_path / "synthetic-run"
     shutil.copytree(PRE_CHANGE, dest)
+    return dest
+
+
+@pytest.fixture
+def clean_archive(tmp_path: Path) -> Path:
+    """A writable copy of the clean-last-cycle archive (D-060's shape)."""
+    dest = tmp_path / "clean-last-cycle-run"
+    shutil.copytree(CLEAN_LAST_CYCLE, dest)
     return dest
 
 
@@ -361,6 +388,142 @@ def test_each_step_is_individually_idempotent(archive: Path) -> None:
     assert outcomes["state_cycle"] == "no-op"
     # Only the stripped marker is rewritten.
     assert outcomes["archive_schema_version"] == "upgraded"
+
+
+# ---------------------------------------------------------------------------
+# D-060 — step 5 must consult the same evidence step 3 keys the roll-up on.
+#
+# The ORDINARY case: the last INSPECT cycle's streams come back clean, so their
+# ``.{stream}-complete`` markers record a cycle that no defect record carries.
+# Reading only defects.json left state.json BEHIND stream-rollup.json's highest
+# key, and measure-run fired PHASE9_CYCLE_COUNT_INVALID on the archive the
+# migration had just repaired — with re-running unable to heal it.
+# ---------------------------------------------------------------------------
+
+
+def test_clean_last_cycle_fixture_marker_exceeds_every_defect_cycle(
+    clean_archive: Path,
+) -> None:
+    """The precondition that makes this fixture a D-060 repro at all.
+
+    Both the synthetic pre_change fixture (marker 6 == max defect cycle 6) and
+    grand-vulture (all three markers at 17 == max defect cycle 17) agree by
+    coincidence. This one deliberately does not.
+    """
+    records = json.loads((clean_archive / "defects.json").read_text())["defects"]
+    max_defect_cycle = max(r["cycle"] for r in records)
+    assert max_defect_cycle == 2
+
+    marker = (clean_archive / ".prove-complete").read_text()
+    assert "cycle=3" in marker
+    assert "findings=0" in marker, "a clean final INSPECT files no defects"
+    assert json.loads((clean_archive / "state.json").read_text())["cycle"] == 0
+
+
+def test_step_5_consults_the_markers_step_3_keys_on(clean_archive: Path) -> None:
+    """D-060 — the repaired cycle must not sit behind the roll-up's own keys.
+
+    Step 3 keys entries by BOTH defect cycles and each marker's ``cycle=``;
+    step 5 read only defects.json, so it wrote 2 where the roll-up wrote 3.
+    """
+    summary = _migrate(clean_archive)
+    step = summary["steps"]["state_cycle"]
+    assert step["recorded"] == 0
+    assert step["observed"] == 3, "the marker's cycle is evidence too"
+    assert json.loads((clean_archive / "state.json").read_text())["cycle"] == 3
+
+    rollup = json.loads((clean_archive / "stream-rollup.json").read_text())
+    highest_rollup_key = max(int(k) for k in rollup["cycles"])
+    assert highest_rollup_key == 3
+    assert step["cycle"] >= highest_rollup_key, (
+        "state.json must never sit behind the roll-up written in the same run"
+    )
+
+
+def test_migrated_archive_passes_its_own_shipped_detector(
+    clean_archive: Path,
+) -> None:
+    """The cross-tool pin: migrate -> measure yields zero failure tokens.
+
+    Both halves landed in the same commit and read different evidence for the
+    same number, so the migration produced an archive its own detector called
+    stale. Nothing here may fire PHASE9_CYCLE_COUNT_INVALID.
+    """
+    _migrate(clean_archive)
+    after = _measure(clean_archive)
+    assert "PHASE9_CYCLE_COUNT_INVALID" not in after["failure_tokens"], (
+        after["failure_tokens"]
+    )
+
+    # Negative control — the detector is not merely silent. Wind state.json
+    # back to 2, the value the defects-only derivation produced, and it fires
+    # again against the very roll-up the migration wrote.
+    state_path = clean_archive / "state.json"
+    state = json.loads(state_path.read_text())
+    state["cycle"] = 2
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    assert "PHASE9_CYCLE_COUNT_INVALID" in _measure(clean_archive)["failure_tokens"]
+
+
+def test_second_migration_of_a_clean_last_cycle_archive_is_a_no_op(
+    clean_archive: Path,
+) -> None:
+    """The bug was permanent: re-running never healed it. Idempotency here is
+    the assertion that the FIRST run already left nothing to heal.
+    """
+    _migrate(clean_archive)
+    hash_after_first = _tree_hash(clean_archive)
+
+    summary = _migrate(clean_archive)
+    assert _tree_hash(clean_archive) == hash_after_first
+    assert set(_outcomes(summary).values()) == {"no-op"}
+
+
+def test_dry_run_reports_the_cycle_a_real_run_would_record(
+    clean_archive: Path, tmp_path: Path
+) -> None:
+    """--dry-run writes no roll-up, so step 5's evidence must be self-contained.
+
+    Reading the markers directly (rather than the roll-up step 3 would have
+    written) is what keeps the dry-run report honest.
+    """
+    dry = _migrate(clean_archive, "--dry-run")
+    assert dry["steps"]["state_cycle"]["cycle"] == 3
+    assert not (clean_archive / "stream-rollup.json").exists()
+
+    twin = tmp_path / "twin"
+    shutil.copytree(CLEAN_LAST_CYCLE, twin)
+    real = _migrate(twin)
+    assert real["steps"]["state_cycle"] == dry["steps"]["state_cycle"]
+
+
+def test_step_5_honours_a_server_written_rollups_own_keys(archive: Path) -> None:
+    """Step 3 leaves a live roll-up exactly as found, so step 5 reads its keys.
+
+    Without this the post-condition would hold only for roll-ups this tool
+    derived itself.
+    """
+    (archive / "stream-rollup.json").write_text(
+        json.dumps(
+            {
+                "cycles": {
+                    "11": {
+                        "prove": {
+                            "items_checked": 9,
+                            "items_total": 9,
+                            "findings": 0,
+                            "records": [{"recorded_at": "2026-08-30T04:34:50Z"}],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = _migrate(archive)
+    assert _outcomes(summary)["stream_rollup"] == "no-op", "live doc left as found"
+    assert summary["steps"]["state_cycle"]["observed"] == 11
+    assert json.loads((archive / "state.json").read_text())["cycle"] == 11
 
 
 # ---------------------------------------------------------------------------

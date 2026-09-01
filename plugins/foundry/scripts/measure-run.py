@@ -19,6 +19,11 @@ defects.json (what streams found), stream-rollup.json (what they checked, keyed
 by the server cycle counter), state.json (the recorded cycle), handoffs.jsonl
 (wall clock). cohort.json and context-at-f2.txt are cohort-study inputs no run
 writes; their absence is strict-gated, never a schema violation.
+
+``cycles`` in the payload is a COUNT. The server's counter is 0-based, so the
+count is the final index + 1 — the conversion happens exactly once, in
+_extract_per_run. NFR-001 states grand-vulture's baseline as "18 cycles, 168
+defects"; migrate-then-measure on a copy of that archive must print both.
 """
 from __future__ import annotations
 import argparse, csv, io, json, sys
@@ -56,6 +61,12 @@ KNOWN_PHASE9_COHORT_IDS = frozenset({
 })  # 10 cohorts
 
 # RUN-01 quantitative gate thresholds (locked per CONTEXT.md).
+#
+# MAX_CYCLES_FOR_CONVERGENCE is a COUNT of cycles, and both paths that evaluate
+# it now feed it one: the per-run extractor (which converts the server's 0-based
+# index once, in _extract_per_run) and the operator-supplied
+# ``--evaluate-gates --cycles N``. Feeding the raw index down the first path
+# admitted one cycle more than this number names, at every threshold value.
 MAX_CYCLES_FOR_CONVERGENCE = 8
 DEFECT_YIELD_PCT_MIN = 5.0
 DEFECT_YIELD_PCT_MAX = 50.0
@@ -76,6 +87,9 @@ CSV_COLUMNS = (
 @dataclass
 class MeasureResult:
     cohort_id: str = ""
+    # A COUNT of the cycles the run executed, not the server's 0-based index
+    # (see _reconcile_final_cycle_index). 0 means no measurement was possible —
+    # only an invalid run dir short-circuits before the count is computed.
     cycles: int = 0
     per_stream_defects: dict[str, int] = field(default_factory=dict)
     f2_context_pct: float | None = None
@@ -239,12 +253,21 @@ def _read_stream_rollup(
     return coverage, highest, fts
 
 
-def _reconcile_cycle_count(recorded: int, rollup_highest: int | None) -> tuple[int, list[str]]:
+def _reconcile_final_cycle_index(
+    recorded: int, rollup_highest: int | None
+) -> tuple[int, list[str]]:
     """Reconcile state.json's counter against the roll-up's own cycle keys.
 
-    This is NOT a second counter. The roll-up is keyed BY the server-side cycle
-    counter (FR-005 / ST-001), so its highest key is that counter's own value
-    as of the last stream record — read from the artifact rather than recomputed.
+    Returns the final cycle INDEX, not a count. The server's counter is
+    0-based: Foundry-Init writes 0, the F1 -> F2 entry from CAST is the run's
+    first INSPECT rather than a new cycle, and only the F3 GRIND -> F2 INSPECT
+    boundary increments (foundry_orchestrator.foundry_mark_phase_complete,
+    ``inspect_start``). So a run that executed N cycles ends at index N-1, and
+    the caller converts once — see ``_extract_per_run``.
+
+    This is NOT a second counter. The roll-up is keyed BY that same counter
+    (FR-005 / ST-001), so its highest key is the counter's own value as of the
+    last stream record — read from the artifact rather than recomputed.
 
     survey/data.md FI-1: ``state.json["cycle"]`` was written once as 0 and never
     incremented, so an unrepaired archive reports 0 cycles and the convergence
@@ -390,8 +413,16 @@ def _extract_per_run(
     r.per_cycle_coverage = coverage; failure_tokens.extend(rf)
     recorded, cycf = _read_state_cycle_count(run_dir)
     failure_tokens.extend(cycf)
-    cycles, recf = _reconcile_cycle_count(recorded, rollup_highest)
-    r.cycles = cycles; failure_tokens.extend(recf)
+    final_index, recf = _reconcile_final_cycle_index(recorded, rollup_highest)
+    # INDEX -> COUNT, converted exactly once. The server's counter is 0-based
+    # (see _reconcile_final_cycle_index), so a run that executed N cycles ends
+    # at index N-1. ``cycles`` is named as a COUNT and its gate reads as one,
+    # so publishing the raw index reported every run one cycle short: on
+    # grand-vulture — whose defects span 18 distinct cycles and whose defect
+    # total the same command reads as exactly 168 — it printed 17 against
+    # NFR-001's baseline sentence "18 cycles, 168 defects", and the convergence
+    # gate admitted one more cycle than MAX_CYCLES_FOR_CONVERGENCE names.
+    r.cycles = final_index + 1; failure_tokens.extend(recf)
     per_stream, df = _read_defects_per_stream(run_dir)
     r.per_stream_defects = per_stream; failure_tokens.extend(df)
     context_pct, ctxf = _read_context_pct(run_dir, strict, context_pct_override)
@@ -401,7 +432,7 @@ def _extract_per_run(
     elif baseline_wall_clock == 0:
         r.wall_clock_regression_pct = 0.0
     r.gate_verdicts = _compute_gate_verdicts(
-        cycles=cycles, per_stream_defects=per_stream,
+        cycles=r.cycles, per_stream_defects=per_stream,
         f2_context_pct=context_pct,
         wall_clock_regression_pct=r.wall_clock_regression_pct,
     )

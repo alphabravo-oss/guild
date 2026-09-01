@@ -13,6 +13,13 @@
 # PHASE9_UNKNOWN_STREAM:legacy_stream is the fixture working as intended:
 # a deliberately out-of-vocabulary source that migration preserves verbatim
 # (AC-026) and measure-run NAMES rather than coerces.
+#
+# `cycles` is a COUNT while the roll-up is keyed by the server's 0-BASED
+# INDEX, so stage 2's "cycles: 7" against roll-up keys 0..6 is the seventh
+# cycle, not a disagreement (D-063). Stage 3 winds state.json back to 0 and
+# the detector fires on exactly that gap — it stays strict; what D-060 fixed
+# is the migration no longer CREATING the gap by reading less evidence in
+# step 5 than it keys the roll-up on in step 3.
 
 === the archive a real run leaves behind ===
   absent:  cohort.json
@@ -23,7 +30,7 @@
 
 === 1. un-migrated: no roll-up to read yet ===
 exit: 1
-cycles: 0
+cycles: 1
 per_stream_defects: {"PROVE": 3, "TEST-01": 1, "TRACE": 1}
 per_cycle_coverage: {}
 failure_tokens: ["PHASE9_UNKNOWN_STREAM:legacy_stream"]
@@ -31,13 +38,13 @@ gate_verdicts: {"cycles": "PASS", "defect_yield_per_stream": "FAIL", "f2_context
 
 === 2. migrated: the roll-up is read, the recorded cycle is repaired ===
 exit: 1
-cycles: 6
+cycles: 7
 per_cycle_coverage: {"0": {"PROVE": {"findings": 1, "items_checked": 0, "items_total": 0}, "TRACE": {"findings": 3, "items_checked": 12, "items_total": 15}}, "2": {"PROVE": {"findings": 1, "items_checked": 0, "items_total": 0}, "TEST-01": {"findings": 1, "items_checked": 0, "items_total": 0}}, "5": {"PROVE": {"findings": 1, "items_checked": 0, "items_total": 0}}, "6": {"PROVE": {"findings": 0, "items_checked": 40, "items_total": 40}}}
 failure_tokens: ["PHASE9_UNKNOWN_STREAM:legacy_stream"]
 
 === 3. a STALE server cycle counter is named, not passed as fact (FI-1) ===
 exit: 1
-cycles: 6
+cycles: 7
 failure_tokens: ["PHASE9_CYCLE_COUNT_INVALID", "PHASE9_UNKNOWN_STREAM:legacy_stream"]
 
 === 4. all four gates real once the two measurements are supplied ===

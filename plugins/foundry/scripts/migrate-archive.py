@@ -15,7 +15,9 @@ idempotent (NFR-003) even against a hand-edited or half-migrated archive:
                         archive's own data in the shape its consumer reads
   4. progress/        — per-agent progress-ledger directory, created empty
   5. state.json       — ``cycle`` repaired from the run's own data when the
-                        recorded value is missing/invalid/too low
+                        recorded value is missing/invalid/too low. Reads the
+                        SAME evidence step 3 keys the roll-up on, so a
+                        migrated archive can never sit behind its own roll-up
   6. state.json       — ``archive_schema_version`` marker recorded
 
 ARCHIVED HISTORY IS NOT NORMALISED. Defect ``type`` and ``source`` values are
@@ -200,7 +202,14 @@ _MARKER_FIELDS = ("cycle", "items_checked", "items_total", "findings")  # 4 fiel
 
 
 def _new_rollup_entry() -> dict[str, Any]:
-    return {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
+    """A zero entry carrying exactly ROLLUP_ENTRY_KEYS, in that order.
+
+    Derived from the constant rather than re-typing the same four keys one
+    line below it, so the declared contract and the built object cannot drift.
+    """
+    entry: dict[str, Any] = dict.fromkeys(ROLLUP_ENTRY_KEYS, 0)
+    entry["records"] = []
+    return entry
 
 
 def _wire_stream_for(raw: str) -> str | None:
@@ -408,8 +417,68 @@ def _migrate_progress(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
+def _marker_max_cycle(run_dir: Path) -> int:
+    """Highest cycle any ``.{stream}-complete`` marker records.
+
+    Reads through the SAME parser and the SAME stream set step 3 keys the
+    roll-up on (_read_stream_marker over STREAM_WIRE_IDS), so the two steps
+    cannot read different evidence for the same number again (D-060).
+    """
+    highest = 0
+    for wire in sorted(STREAM_WIRE_IDS):
+        marker = _read_stream_marker(run_dir, wire)
+        if marker is not None and marker["cycle"] > highest:
+            highest = marker["cycle"]
+    return highest
+
+
+def _rollup_max_cycle(run_dir: Path) -> int:
+    """Highest cycle key in the roll-up ALREADY ON DISK.
+
+    Step 3 leaves a server-written document exactly as found, and that
+    document's keys are the server's own counter values. Reading them here
+    keeps the post-condition unconditional even for a roll-up this tool did
+    not derive.
+    """
+    data = _load_json(run_dir / "stream-rollup.json")
+    cycles = data.get("cycles") if isinstance(data, dict) else None
+    if not isinstance(cycles, dict):
+        return 0
+    highest = 0
+    for raw_cycle in cycles:
+        try:
+            cycle = int(raw_cycle)
+        except (TypeError, ValueError):
+            continue
+        if cycle > highest:
+            highest = cycle
+    return highest
+
+
 def _observed_max_cycle(run_dir: Path) -> int:
-    """Highest cycle the run's own data proves it reached."""
+    """Highest cycle the run's own data proves it reached.
+
+    MUST consult every source step 3 keys the roll-up on. Reading only
+    defects.json + verdicts.json left state.json BEHIND stream-rollup.json's
+    highest key in the ORDINARY case — the last INSPECT cycle's clean streams
+    file no defects, so their ``.{stream}-complete`` markers record a cycle no
+    defect record carries. measure-run._reconcile_final_cycle_index then fired
+    PHASE9_CYCLE_COUNT_INVALID on the archive this tool had just repaired, and
+    re-running never healed it because step 5 never consulted what step 3 wrote
+    (D-060). grand-vulture masked it by coincidence: all three of its markers
+    carry cycle=17, equal to its max defect cycle.
+
+    Four sources, none invented:
+
+      * defects.json — ``cycle`` / ``fixed_in_cycle`` / ``reopened_in_cycle``
+      * verdicts.json — ``cycle``
+      * each ``.{stream}-complete`` marker — the cycle it terminates
+      * the roll-up already on disk — a server-written document's own keys
+
+    The marker source is what makes the derivation self-contained under
+    ``--dry-run``, where step 3 writes nothing: the reported ``observed`` is
+    identical to the value a real run would record.
+    """
     observed = 0
     data = _load_json(run_dir / "defects.json")
     records = data.get("defects") if isinstance(data, dict) else None
@@ -426,7 +495,7 @@ def _observed_max_cycle(run_dir: Path) -> int:
         cycle = _as_cycle(verdicts.get("cycle"))
         if cycle is not None and cycle > observed:
             observed = cycle
-    return observed
+    return max(observed, _marker_max_cycle(run_dir), _rollup_max_cycle(run_dir))
 
 
 def _migrate_state(

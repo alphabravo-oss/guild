@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_vocab.py tests/test_migrate_archive.py tests/test_measure_run.py -q -p no:cacheprovider --deselect tests/test_migrate_archive.py::test_grand_vulture_migration
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_vocab.py tests/test_migrate_archive.py tests/test_measure_run.py -q -p no:cacheprovider --deselect tests/test_migrate_archive.py::test_grand_vulture_migration --deselect tests/test_measure_run.py::test_grand_vulture_reports_nfr_001s_two_baseline_numbers
 # evidence-for: US-006, US-007, FR-013, FR-016, FR-018, FR-021, NFR-003, AC-022, AC-024, AC-026
 # evidence-volatile: /[^ ]*/\.planning/[^ ]*
 # evidence-volatile: \d+\.\d+s
@@ -8,14 +8,16 @@
 # The wave-1 test surface: vocab module (FR-013), archive migration
 # (FR-021/NFR-003/AC-026), instrumentation repair (FR-018/AC-024) and the
 # bash-twin retirement (FR-016/AC-022, pinned by test_bash_twin_deleted).
-# test_grand_vulture_migration is DESELECTED here because it reads the
+# The two grand-vulture tests are DESELECTED here because they read the
 # git-ignored foundry-archive/grand-vulture, which is absent from an
-# isolated re-execution worktree; its passing output is recorded in the
-# casting completion report and its logic is covered unconditionally by the
-# committed synthetic fixture under tests/fixtures/migrate_archive/.
+# isolated re-execution worktree; their passing output is recorded in the
+# casting completion report and their logic is covered unconditionally by the
+# committed synthetic fixtures under tests/fixtures/migrate_archive/ —
+# pre_change for the six steps, clean_last_cycle for D-060's ordinary case
+# (a clean final INSPECT whose marker cycle exceeds every defect cycle).
 
-...................................................................s.... [ 83%]
-..............                                                           [100%]
+........................................................................ [ 77%]
+.s...................                                                    [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:592: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
-85 passed, 1 skipped, 1 deselected in 2.78s
+SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
+92 passed, 1 skipped, 2 deselected in 3.42s

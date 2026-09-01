@@ -1,0 +1,61 @@
+# evidence-cmd: sh -c 'D=$(mktemp -d); cp -R plugins/foundry/mcp-server/tests/fixtures/migrate_archive/clean_last_cycle "$D/run"; echo "=== the ORDINARY shape: the last INSPECT cycle came back clean ==="; python3 -c "import json,sys; r=json.load(open(sys.argv[1]))['"'"'defects'"'"']; print('"'"'max defect cycle:'"'"', max(d['"'"'cycle'"'"'] for d in r))" "$D/run/defects.json"; for m in "$D"/run/.*-complete; do echo "marker $(basename $m): $(head -1 $m | tr -s '"'"' '"'"' | cut -d'"'"' '"'"' -f2) findings=$(grep -o '"'"'findings=[0-9]*'"'"' $m | cut -d= -f2)"; done; echo; echo "=== the PRE-FIX step 5: defects.json + verdicts.json only ==="; python3 -c "import json,sys; r=json.load(open(sys.argv[1]))['"'"'defects'"'"']; c=[v for d in r for k in ('"'"'cycle'"'"','"'"'fixed_in_cycle'"'"','"'"'reopened_in_cycle'"'"') if isinstance(v:=d.get(k), int)]; print('"'"'observed (defects-only):'"'"', max(c))" "$D/run/defects.json"; echo; echo "=== step 5 now reads the evidence step 3 keys on (D-060) ==="; python3 plugins/foundry/scripts/migrate-archive.py "$D/run" | python3 -c "import json,sys; s=json.load(sys.stdin)['"'"'steps'"'"']; print('"'"'state_cycle:'"'"', json.dumps(s['"'"'state_cycle'"'"'], sort_keys=True))"; python3 -c "import json,sys; print('"'"'stream-rollup.json cycle keys:'"'"', sorted(json.load(open(sys.argv[1]))['"'"'cycles'"'"'], key=int))" "$D/run/stream-rollup.json"; echo; echo "=== the migrated archive satisfies its own shipped detector ==="; python3 plugins/foundry/scripts/measure-run.py "$D/run" > "$D/a.json"; echo "exit: $?"; python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('"'"'cycles:'"'"', d['"'"'cycles'"'"']); print('"'"'failure_tokens:'"'"', d['"'"'failure_tokens'"'"']); print('"'"'gate_verdicts.cycles:'"'"', d['"'"'gate_verdicts'"'"']['"'"'cycles'"'"'])" "$D/a.json"; echo; echo "=== negative control: wind state.json back to the defects-only value ==="; python3 -c "import json,sys,pathlib; p=pathlib.Path(sys.argv[1]); s=json.loads(p.read_text()); s['"'"'cycle'"'"']=2; p.write_text(json.dumps(s, indent=2))" "$D/run/state.json"; python3 plugins/foundry/scripts/measure-run.py "$D/run" | python3 -c "import json,sys; d=json.load(sys.stdin); print('"'"'cycles:'"'"', d['"'"'cycles'"'"']); print('"'"'failure_tokens:'"'"', d['"'"'failure_tokens'"'"'])"; echo; echo "=== re-migrating heals it, and a third run is a no-op (NFR-003) ==="; python3 plugins/foundry/scripts/migrate-archive.py "$D/run" | python3 -c "import json,sys; d=json.load(sys.stdin); print('"'"'migrated:'"'"', d['"'"'migrated'"'"']); print('"'"'state_cycle:'"'"', json.dumps(d['"'"'steps'"'"']['"'"'state_cycle'"'"'], sort_keys=True))"; python3 plugins/foundry/scripts/migrate-archive.py "$D/run" | python3 -c "import json,sys; d=json.load(sys.stdin); print('"'"'migrated:'"'"', d['"'"'migrated'"'"']); print('"'"'outcomes:'"'"', sorted(set(s['"'"'outcome'"'"'] for s in d['"'"'steps'"'"'].values())))"; python3 plugins/foundry/scripts/measure-run.py "$D/run" | python3 -c "import json,sys; d=json.load(sys.stdin); print('"'"'cycles:'"'"', d['"'"'cycles'"'"']); print('"'"'failure_tokens:'"'"', d['"'"'failure_tokens'"'"'])"; rm -rf "$D"'
+# evidence-for: FR-018, AC-024, FR-021, NFR-003, AC-026
+# evidence-timeout: 120
+#
+# D-060 + D-063 — the two shipped tools agreeing on one number.
+#
+# migrate-archive.py step 3 keys stream-rollup.json by BOTH the defect cycles
+# AND each .{stream}-complete marker's own cycle=. Step 5 read only
+# defects.json and verdicts.json, so whenever a marker recorded a later cycle
+# than any defect record — the ORDINARY case, because the last INSPECT cycle's
+# clean streams file no defects — the migration wrote state.json.cycle BEHIND
+# the roll-up it had just written, and measure-run._reconcile_final_cycle_index
+# immediately called the archive stale. Re-running never healed it: step 5
+# never consulted what step 3 wrote. grand-vulture masked the bug by
+# coincidence — all three of its markers carry cycle=17, equal to its max
+# defect cycle — and so does the pre_change fixture (marker 6, max defect 6).
+# The clean_last_cycle fixture below deliberately does not: max defect cycle 2,
+# markers at cycle 3 with findings=0.
+#
+# `cycles` is a COUNT and the server's counter is a 0-BASED INDEX
+# (Foundry-Init writes 0; only the F3 GRIND -> F2 INSPECT boundary
+# increments), so the count is index + 1 (D-063). Index 3 below is the fourth
+# cycle. Publishing the raw index reported every run one cycle short and let
+# the convergence gate admit one cycle more than MAX_CYCLES_FOR_CONVERGENCE
+# names.
+#
+# The negative control matters: the detector is not merely silent after
+# migration. Winding state.json back to the defects-only value fires
+# PHASE9_CYCLE_COUNT_INVALID against the very roll-up the migration wrote,
+# and re-migrating heals it. The fixture is committed, so this re-executes on
+# any checkout — foundry-archive/ is git-ignored and never read here.
+
+=== the ORDINARY shape: the last INSPECT cycle came back clean ===
+max defect cycle: 2
+marker .prove-complete: cycle=3 findings=0
+marker .trace-complete: cycle=3 findings=0
+
+=== the PRE-FIX step 5: defects.json + verdicts.json only ===
+observed (defects-only): 2
+
+=== step 5 now reads the evidence step 3 keys on (D-060) ===
+state_cycle: {"cycle": 3, "observed": 3, "outcome": "upgraded", "recorded": 0}
+stream-rollup.json cycle keys: ['1', '2', '3']
+
+=== the migrated archive satisfies its own shipped detector ===
+exit: 0
+cycles: 4
+failure_tokens: []
+gate_verdicts.cycles: PASS
+
+=== negative control: wind state.json back to the defects-only value ===
+cycles: 4
+failure_tokens: ['PHASE9_CYCLE_COUNT_INVALID']
+
+=== re-migrating heals it, and a third run is a no-op (NFR-003) ===
+migrated: True
+state_cycle: {"cycle": 3, "observed": 3, "outcome": "upgraded", "recorded": 2}
+migrated: False
+outcomes: ['no-op']
+cycles: 4
+failure_tokens: []
