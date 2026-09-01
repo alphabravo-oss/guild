@@ -580,14 +580,15 @@ grep -rn "<symbol>(" src/
 grep -rn "import.*<symbol>" src/
 ```
 
-**When callers are exhausted, the other two axes are not.** `Foundry-Fix` REFUSES a statement that denies adjacency — "nothing else calls it", "no other callers", "none", "n/a" — and it refuses it wherever the denial sits in the sentence, so appending the grep that proves the symbol has one caller does not rescue it. The refusal is not pedantry: a fix with no adjacent path has no adjacent-path test to reference either, so a denial makes the two required fields contradict each other and the call could never have succeeded. Callers are one axis of three. A single-caller symbol still has transitions that reach it and work that runs beside it — name those, and let the grep be evidence *inside* the statement rather than the statement itself.
+**When callers are exhausted, the other two axes are not.** `Foundry-Fix` REFUSES a statement that LEADS with a denial of adjacency — "nothing else calls it", "no other callers", "none", "n/a" — and appending the grep that proves the symbol has one caller does not rescue it, because the denial is still the first thing the statement says. A denial LATER in the sentence is judged differently, and the rule is positional: a bound comes after what it bounds. Once you have named real adjacent paths you may close the radius with a trailing "and no other module calls it" and the call lands; what the gate refuses is a denial that bounded nothing. The refusal is not pedantry: a fix with no adjacent path has no adjacent-path test to reference either, so an unbounded denial makes the two required fields contradict each other and the call could never have succeeded. Callers are one axis of three. A single-caller symbol still has transitions that reach it and work that runs beside it — name those, and let the grep be evidence *inside* the statement rather than the statement itself.
 
 ```text
 REFUSED: Nothing else calls it — grep -rn "_helper(" src/ returns only the one call site.
 ACCEPTED: Two transitions reach _helper besides the defect's — the retry branch in run_retry and the shutdown path in close_pool — and it writes the shared cache the reaper thread scans concurrently. grep -rn "_helper(" src/ shows one direct caller, so callers are the exhausted axis rather than the whole neighbourhood.
+ACCEPTED: _helper is reached by the retry branch in run_retry and the shutdown path in close_pool, and no other module calls it, so those two are the whole radius.
 ```
 
-Both lines above are driven through the shipped gate by `plugins/foundry/mcp-server/tests/test_protocol_prose.py`, so the REFUSED line stays refused and the ACCEPTED line stays accepted. Copy the second one's shape and your call lands.
+The third line is the enumerate-then-close form, and it carries the same denial the first line is refused for — the difference is that by the time it arrives, two real adjacent paths have been named for it to bound. Every line above is driven through the shipped gate by `plugins/foundry/mcp-server/tests/test_protocol_prose.py`, so the REFUSED line stays refused and both ACCEPTED lines stay accepted. Copy either accepted shape and your call lands.
 
 **The adjacent-path test reference.** Point at a test that drives a **NAMED** adjacent path — a different caller, a different transition, or a concurrent interaction than the one the defect was found on. Cite it as `path#Symbol` and name which adjacent path it exercises.
 
