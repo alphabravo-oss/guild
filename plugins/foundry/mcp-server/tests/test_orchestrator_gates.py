@@ -855,14 +855,30 @@ def test_sync_refusal_is_all_or_nothing(run_env):
 
 def test_sync_canonicalizes_the_misplaced_alias(run_env):
     """MISPLACED and ARCHITECTURAL_PLACEMENT are one type under two live
-    spellings; both are accepted and stored under the canonical one."""
+    spellings; both are accepted on input and land under ONE stored spelling.
+
+    Storing them as written would put a single class into the ledger under two
+    names — every by-type roll-up, every escalation cluster and every query
+    would then see two half-populated classes instead of one real one. Both
+    input spellings are asserted here because "both accepted" and "one stored"
+    are separate claims and only the pair is the contract."""
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    fo.foundry_sync_defects(0, [_finding(type="MISPLACED")], project_root)
+    fo.foundry_sync_defects(
+        0,
+        [
+            _finding(type="MISPLACED", symbol="a"),
+            _finding(type="ARCHITECTURAL_PLACEMENT", symbol="b"),
+        ],
+        project_root,
+    )
 
-    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
-    assert record["type"] == "ARCHITECTURAL_PLACEMENT"
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(records) == 2
+    assert {r["type"] for r in records} == {"ARCHITECTURAL_PLACEMENT"}
+    # And that stored spelling is the canonicaliser's answer, not a local one.
+    assert vocab.canonical_defect_type("MISPLACED") == "ARCHITECTURAL_PLACEMENT"
 
 
 def test_sync_defaults_an_absent_type_to_missing(run_env):
@@ -1079,14 +1095,12 @@ def test_clearing_appends_rather_than_replacing_earlier_records(run_env):
 # --------------------------------------------------------------------------- #
 
 
-def test_accept_casting_schema_and_dispatch_carry_casting_commit():
+def test_accept_casting_schema_carries_casting_commit():
     """AC-023 / FR-017: the handler has always accepted casting_commit and
     gates the whole evidence re-execution block on `is not None`, but the
     parameter had no schema property and no dispatch path — so over MCP it was
     ALWAYS None, nothing in tools/evidence.py ever ran from a real run, and
     manifest.evidence_provenance was never populated."""
-    import inspect
-
     from foundry_mcp import server as foundry_server
 
     tools = asyncio.run(foundry_server.list_tools())
@@ -1098,10 +1112,342 @@ def test_accept_casting_schema_and_dispatch_carry_casting_commit():
     # Optional, so existing four-argument calls keep working.
     assert "casting_commit" not in accept.inputSchema["required"]
 
-    # The dispatcher actually threads it through, rather than advertising a
-    # field the handler never sees.
-    src = inspect.getsource(foundry_server)
-    assert 'casting_commit=args.get("casting_commit")' in src
+
+def test_accept_casting_dispatch_delivers_casting_commit_to_the_handler(monkeypatch):
+    """The transport half of AC-023, asserted by DRIVING the dispatcher.
+
+    This claim used to be checked by grepping the dispatch lambda's source text
+    for an argument-passing expression, which proves nothing about where the
+    value ends up: the string can be present while the argument is dropped, and
+    absent while the wiring is correct. What matters is that a casting_commit
+    handed to the tool by name ARRIVES at the handler's parameter — and that
+    omitting it still yields None, which is the backwards-compatible path the
+    evidence block keys on.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools import foundry_handoff as handoff_module
+
+    seen: list[dict] = []
+
+    def _spy(**kwargs):
+        seen.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(foundry_server, "foundry_accept_casting", _spy)
+
+    base = {
+        "casting_id": 2,
+        "spec_hash": "abc",
+        "prompt_hash": "def",
+        "completion_report": "report",
+    }
+    foundry_server._DISPATCH["Foundry-Accept-Casting"]({**base, "casting_commit": "deadbeef"})
+    foundry_server._DISPATCH["Foundry-Accept-Casting"](dict(base))
+
+    assert seen[0]["casting_commit"] == "deadbeef"
+    assert seen[1]["casting_commit"] is None
+
+    # ...and the real handler genuinely has that parameter, so the transported
+    # value lands somewhere rather than being swallowed by **kwargs.
+    import inspect
+
+    params = inspect.signature(handoff_module.foundry_accept_casting).parameters
+    assert "casting_commit" in params
+    assert params["casting_commit"].default is None
+
+
+# --------------------------------------------------------------------------- #
+# D-006 / D-007 — the Foundry-Phase enum and the handler cannot drift
+# --------------------------------------------------------------------------- #
+
+
+def _handler_phase_tokens() -> set[str]:
+    """Every literal ``foundry_mark_phase_complete`` branches on.
+
+    Read out of the function's own AST rather than from a list maintained
+    beside it, so the guard below cannot be satisfied by updating a copy and
+    forgetting the branch.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo.foundry_mark_phase_complete)))
+    tokens: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not (isinstance(node.left, ast.Name) and node.left.id == "phase"):
+            continue
+        for op, comparator in zip(node.ops, node.comparators):
+            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    tokens.add(comparator.value)
+    return tokens
+
+
+def test_phase_schema_enum_equals_the_handler_branch_set():
+    """D-006 / D-007 / FR-005: the advertised enum and the implemented branches
+    are the same set.
+
+    The enum had drifted in BOTH directions at once. It omitted
+    ``inspect_start`` — the only token whose branch increments the cycle
+    counter — and the SDK validates arguments against the advertised enum
+    BEFORE dispatch, so over MCP the counter could never leave 0 however the
+    handler behaved. It also advertised research_done / decompose_done /
+    validate_done, for which there is no branch at all: three tokens a lead
+    could read off the tool list and never successfully call.
+    """
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    phase_tool = next(t for t in tools if t.name == "Foundry-Phase")
+    advertised = set(phase_tool.inputSchema["properties"]["phase"]["enum"])
+    implemented = _handler_phase_tokens()
+
+    assert advertised == implemented, {
+        "advertised_but_unimplemented": sorted(advertised - implemented),
+        "implemented_but_unadvertised": sorted(implemented - advertised),
+    }
+    # The handler's own declared roster is the third copy; it feeds the
+    # else-branch refusal, so a drift there misnames the legal set.
+    assert set(fo.PHASE_TOKENS) == implemented
+    assert len(fo.PHASE_TOKENS) == len(set(fo.PHASE_TOKENS))
+
+
+def test_the_cycle_advancing_token_is_reachable_over_mcp(run_env):
+    """D-006 stated as the behaviour it broke: ``inspect_start`` is advertised,
+    and driving it through the dispatcher advances the counter."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=4)
+    _arm_ordering_token(fdir)
+
+    tools = asyncio.run(foundry_server.list_tools())
+    phase_tool = next(t for t in tools if t.name == "Foundry-Phase")
+    assert "inspect_start" in phase_tool.inputSchema["properties"]["phase"]["enum"]
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Phase"]({"phase": "inspect_start"})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["cycle"] == 5, result
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["cycle"] == 5
+
+
+def test_no_advertised_phase_token_is_refused_by_the_handler(run_env):
+    """The other direction, driven rather than compared: every advertised token
+    resolves to a branch instead of the else-error."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+
+    tools = asyncio.run(foundry_server.list_tools())
+    phase_tool = next(t for t in tools if t.name == "Foundry-Phase")
+
+    for token in phase_tool.inputSchema["properties"]["phase"]["enum"]:
+        _write_state(fdir, phase="F2", cycle=0)
+        _arm_ordering_token(fdir)
+        foundry_state.set_active_run("c3-test-run")
+        result = fo.foundry_mark_phase_complete(token, project_root)
+        assert "Invalid phase" not in str(result.get("error", "")), (token, result)
+
+
+# --------------------------------------------------------------------------- #
+# D-017 — the verdict axis is derived, not hand-typed
+# --------------------------------------------------------------------------- #
+
+
+def test_verdict_enum_is_derived_and_admits_misplaced():
+    """D-017 / FR-013 / CT-002: the Foundry-Verdict enum was a hand-typed
+    baseline copy that rejected MISPLACED — a verdict agents/assayer.md
+    mandates and commands/start.md routes into this very tool, so the protocol
+    told an agent to emit a verdict the recording surface could not carry."""
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    verdict_tool = next(t for t in tools if t.name == "Foundry-Verdict")
+    advertised = set(verdict_tool.inputSchema["properties"]["verdict"]["enum"])
+
+    assert advertised == set(fo.VERDICT_VALUES)
+    # Derived from the canonical defect vocabulary plus the one verdict that is
+    # not a defect, so a defect type added to vocab.py is a verdict for free.
+    assert vocab.DEFECT_TYPES <= advertised
+    assert "VERIFIED" in advertised
+    assert "MISPLACED" in advertised
+    # NFR-002: every value the surface accepted before still validates.
+    assert {"VERIFIED", "HOLLOW", "THIN", "PARTIAL", "MISSING", "WRONG",
+            "COVERAGE_INCOMPLETE"} <= advertised
+
+
+# --------------------------------------------------------------------------- #
+# D-008 / D-009 — the observation channel and the defect-filing fields exist
+# over MCP, not only as Python functions
+# --------------------------------------------------------------------------- #
+
+
+def test_observation_tools_are_registered_and_reach_their_handlers(run_env):
+    """AC-001 / FR-001 / FR-023: ``foundry_add_observation`` and
+    ``foundry_query_observations`` existed with no Tool() declaration and no
+    dispatch entry, so no MCP path could record or read an observation — the
+    typed channel the defect/observation split routes to was unreachable from
+    a real run, which leaves a stream with nowhere to put a comment-prose
+    finding except the defect ledger."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=0)
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    assert "Foundry-Observation" in tools
+    assert "Foundry-Observations" in tools
+    assert set(tools["Foundry-Observation"].inputSchema["required"]) == {
+        "cycle", "source", "description",
+    }
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        filed = foundry_server._DISPATCH["Foundry-Observation"]({
+            "cycle": 0,
+            "source": "trace",
+            "description": (
+                "the comment above the loop says line 42 but the guard moved "
+                "and the line number is now stale"
+            ),
+            "target_kind": "comment",
+        })
+        assert "error" not in filed, filed
+        assert filed["observation_id"].startswith("O-")
+
+        queried = foundry_server._DISPATCH["Foundry-Observations"]({})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert [o["id"] for o in queried["observations"]] == [filed["observation_id"]]
+    # Observations are their own ledger and are NEVER mixed into defects.
+    assert not (fdir / "defects.json").exists()
+    assert (fdir / "observations.json").exists()
+
+
+def test_defect_dispatch_carries_target_kind_and_defect_class(run_env):
+    """D-009 / AC-001 / FR-007: Foundry-Defect's schema and dispatch lambda
+    omitted both optional params, so over MCP the comment-prose refusal and
+    class tagging were DEAD — proved live when a line-drift finding filed over
+    MCP was accepted as a defect. Asserted by driving the dispatcher: the
+    refusal engages, and a declared class reaches the record."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=0)
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    defect_props = tools["Foundry-Defect"].inputSchema["properties"]
+    assert "target_kind" in defect_props
+    assert "defect_class" in defect_props
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+
+        # target_kind="comment" is what makes the finding demotable at all —
+        # without it arriving, this line-drift prose lands as a defect.
+        refused = foundry_server._DISPATCH["Foundry-Defect"]({
+            "cycle": 0,
+            "source": "trace",
+            "defect_type": "WRONG",
+            "description": (
+                "the comment cites line 88 but the symbol moved and the line "
+                "number is stale"
+            ),
+            "target_kind": "comment",
+        })
+        assert "error" in refused, refused
+        assert refused["refused_class"] in vocab.OBSERVATION_CLASSES
+
+        tagged = foundry_server._DISPATCH["Foundry-Defect"]({
+            "cycle": 0,
+            "source": "trace",
+            "defect_type": "UNWIRED",
+            "description": "handler never calls the store",
+            "file_path": "src/api/a.py",
+            "defect_class": "FALSE_DOCUMENTED_CONTRACT",
+        })
+        assert "error" not in tagged, tagged
+    finally:
+        foundry_server._project_root = previous_root
+
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [r["id"] for r in records] == [tagged["defect_id"]]
+    # The class travels to the record under the key escalation reads.
+    assert records[0][fo.DEFECT_CLASS_FIELD] == "FALSE_DOCUMENTED_CONTRACT"
+    assert fo._defect_class(records[0]) == "FALSE_DOCUMENTED_CONTRACT"
+
+
+# --------------------------------------------------------------------------- #
+# D-033 — a spec that parses to zero requirements cannot reach DONE
+# --------------------------------------------------------------------------- #
+
+
+def test_done_gate_refuses_a_spec_that_parses_to_zero_requirements(run_env):
+    """FR-020 / AC-025: every other DONE check is vacuously satisfied by a spec
+    with no requirement IDs — no requirement can be non-VERIFIED, and the
+    verdict_coverage check guarded ITSELF with ``spec_count > 0`` and skipped.
+    So an unresolvable or untagged spec sailed through DONE having proved
+    nothing. The auto-VERIFY hole had moved, not closed."""
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_text("# Spec\nProse with no tagged IDs.\n", encoding="utf-8")
+    _write_state(fdir, phase="F4")
+    _write_verdicts(fdir, [])
+    _arm_ordering_token(fdir)
+
+    gate = foundry_gate("done", project_root)
+
+    assert gate["passed"] is False
+    assert "ZERO requirement IDs" in gate["reason"]
+    checks = {c["check"]: c["ok"] for c in gate["checklist"]}
+    parsed_check = next(k for k in checks if k.startswith("spec_requirements_parsed"))
+    assert checks[parsed_check] is False
+
+
+def test_done_gate_still_passes_on_a_real_spec(run_env):
+    """The guard is inert for every run that has requirements — it must not
+    make DONE unreachable, only non-vacuous."""
+    project_root, fdir = run_env
+    ids = ["FR-1", "AC-2"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4")
+    _write_verdicts(fdir, [{"id": r, "verdict": "VERIFIED"} for r in ids])
+    _arm_ordering_token(fdir)
+
+    gate = foundry_gate("done", project_root)
+
+    assert gate["passed"] is True, gate
+    checks = {c["check"]: c["ok"] for c in gate["checklist"]}
+    parsed_check = next(k for k in checks if k.startswith("spec_requirements_parsed"))
+    assert checks[parsed_check] is True
+
+
+def test_a_more_specific_done_failure_still_names_itself(run_env):
+    """The zero-requirement check runs FIRST so a run that is also blocked on
+    something concrete reports that instead — the reason a lead reads should be
+    the most actionable one, not whichever check happens to run last."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4")
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [{"id": "D-001", "status": "open"}]}), encoding="utf-8"
+    )
+    _write_verdicts(fdir, [])
+    _arm_ordering_token(fdir)
+
+    gate = foundry_gate("done", project_root)
+
+    assert gate["passed"] is False
+    assert "1 open defect(s) remain" in gate["reason"]
 
 
 def test_liveness_tool_is_registered_and_dispatched():

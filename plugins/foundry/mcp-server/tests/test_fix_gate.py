@@ -18,12 +18,21 @@ Acceptance covered here:
                    from the path the defect was found on.
   CT-001 / ST-004  supplying both persists the declarations and sets status to
                    fixed; the refusal names each missing field.
+
+Two further properties of the same call are pinned here because they are
+properties of the WRITE, not of the gate:
+
+  FR-005 / ST-001  ``fixed_in_cycle`` is stamped from the SERVER counter; the
+                   caller's ``cycle`` is retained only as a declaration.
+  FR-020 / AC-025  the read-modify-write is atomic under the shared ledger
+                   lock, so concurrent fixes cannot discard one another.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -57,6 +66,13 @@ def run_env(tmp_path, monkeypatch):
         yield str(project_root), fdir
     finally:
         foundry_state.clear_active_run()
+
+
+def _set_cycle(fdir: Path, cycle: int) -> None:
+    """Set the SERVER-side cycle counter — the only cycle the writer trusts."""
+    (fdir / "state.json").write_text(
+        json.dumps({"phase": "F3", "cycle": cycle}), encoding="utf-8"
+    )
 
 
 def _seed_defect(fdir: Path, defect_id: str = "D-001", **extra) -> None:
@@ -187,6 +203,7 @@ def test_refusal_carries_an_actionable_hint(run_env):
 def test_supplying_both_declarations_fixes_the_defect_and_persists_them(run_env):
     """CT-001: 'defect status set to fixed with the declarations persisted'."""
     project_root, fdir = run_env
+    _set_cycle(fdir, 2)
     _seed_defect(fdir)
 
     result = foundry_mark_defect_fixed(
@@ -299,6 +316,183 @@ def test_a_genuinely_adjacent_declaration_is_accepted(run_env):
     # ...and the test reference names one of them, not the defect's own symbol.
     assert "sweeper" in result["adjacent_path_test"]
     assert "refresh_session" not in result["adjacent_path_test"]
+
+
+# --------------------------------------------------------------------------- #
+# FR-005 / ST-001 — the SERVER counter stamps the fix, not the caller
+# --------------------------------------------------------------------------- #
+
+
+def test_fixed_in_cycle_comes_from_the_server_counter_not_the_caller(run_env):
+    """The lead's asserted cycle was persisted verbatim, so escalation — which
+    reads these numbers back — accumulated against lead-asserted cycles while
+    the server counter sat at 0. The server knows better, so the server wins."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 4)
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=17,  # the lead's assertion, and it is wrong
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["fixed_in_cycle"] == 4
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["fixed_in_cycle"] == 4
+
+    # The assertion is not discarded — it is demoted to a declaration, so a
+    # lead whose counter model has drifted is auditable after the fact.
+    assert result["declared_cycle"] == 17
+    assert record["declared_fixed_cycle"] == 17
+
+
+def test_an_absent_counter_stamps_zero_rather_than_the_caller_value(run_env):
+    """``_current_cycle`` is total: a run with no state.json reads 0. What must
+    NOT happen is falling back to the caller's number."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=9,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["fixed_in_cycle"] == 0
+
+
+def test_the_forge_log_mirror_records_the_server_cycle(run_env):
+    """The human record and the JSON ledger must not disagree about when a
+    defect closed."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 6)
+    _seed_defect(fdir)
+    (fdir / "forge-log.md").write_text("# Forge Log\n", encoding="utf-8")
+
+    foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=99,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    log = (fdir / "forge-log.md").read_text(encoding="utf-8")
+    assert "D-001 FIXED** in cycle 6" in log
+    assert "cycle 99" not in log
+
+
+# --------------------------------------------------------------------------- #
+# FR-020 / AC-025 — the write is atomic under the shared ledger lock
+# --------------------------------------------------------------------------- #
+
+
+def test_concurrent_fixes_all_persist(run_env, monkeypatch):
+    """Every other writer of defects.json holds ``ledger_transaction``; this
+    one did not, so it was an unlocked load / mutate / save. A fix landing
+    between a peer's read and write was discarded by the peer's ``.tmp``
+    rename: the call returned ok and the defect stayed OPEN. A GRIND wave
+    closes defects in parallel, so this is the normal case, not an edge one.
+
+    The read-modify-write window is widened deliberately (a sleep between the
+    ledger read and the write) so the outcome does not depend on how the
+    scheduler happens to interleave. Under the lock the sleep is simply held
+    inside the critical section; remove the lock and the losses are certain.
+    """
+    import time
+
+    from foundry_mcp.tools import foundry as foundry_tools
+
+    project_root, fdir = run_env
+    _set_cycle(fdir, 3)
+
+    count = 12
+    defects = [
+        {
+            "id": f"D-{i:03d}",
+            "cycle": 0,
+            "source": "trace",
+            "type": "UNWIRED",
+            "description": f"defect {i}",
+            "spec_ref": "FR-001",
+            "symbol": f"symbol_{i}",
+            "file": "src/auth/session.py",
+            "status": "open",
+            "fixed_in_cycle": None,
+        }
+        for i in range(1, count + 1)
+    ]
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": defects}, indent=2), encoding="utf-8"
+    )
+
+    real_load = foundry_tools._load_json
+
+    def _slow_load(path):
+        data = real_load(path)
+        if path.name == "defects.json":
+            time.sleep(0.02)
+        return data
+
+    monkeypatch.setattr(foundry_tools, "_load_json", _slow_load)
+
+    start = threading.Barrier(count)
+    results: dict[str, dict] = {}
+    lock = threading.Lock()
+
+    def _fix(defect_id: str) -> None:
+        start.wait()
+        outcome = foundry_mark_defect_fixed(
+            defect_id=defect_id,
+            cycle=3,
+            adjacent_path_statement=ADJACENT_STATEMENT,
+            adjacent_path_test=ADJACENT_TEST,
+            project_root=project_root,
+        )
+        with lock:
+            results[defect_id] = outcome
+
+    threads = [
+        threading.Thread(target=_fix, args=(f"D-{i:03d}",)) for i in range(1, count + 1)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert all(r.get("ok") for r in results.values()), results
+    assert len(results) == count
+
+    # The claim under test: every fix that returned ok is actually ON DISK.
+    # The old failure mode returned 12 oks and persisted 11 fixes.
+    persisted = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(persisted) == count
+    still_open = [d["id"] for d in persisted if d.get("status") != "fixed"]
+    assert still_open == []
+    assert all(d["fixed_in_cycle"] == 3 for d in persisted)
+
+
+def test_a_refused_fix_leaves_the_ledger_untouched(run_env):
+    """The refusal paths run inside the transaction too, so a rejected call
+    must not rewrite (or half-rewrite) the record it read."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+    before = (fdir / "defects.json").read_text(encoding="utf-8")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, project_root=project_root
+    )
+
+    assert "error" in result
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["status"] == "open"
+    assert "adjacent_path_statement" not in record
+    assert json.loads(before)["defects"][0] == record
 
 
 # --------------------------------------------------------------------------- #

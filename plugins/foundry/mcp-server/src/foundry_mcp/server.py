@@ -12,25 +12,40 @@ from mcp.types import TextContent, Tool
 
 from foundry_mcp import __version__
 
-# FR-013 / CT-002 — every closed vocabulary this file advertises is READ from
-# the canonical module. No enum literal is declared here: the AC-013 class of
-# defect was exactly this file's hand-typed enums drifting away from the
-# runtime guards, so the schema advertised streams the server rejected and
-# rejected defect types the agent contracts were told to emit.
+# FR-013 / CT-002 — the closed vocabularies this file advertises are READ, not
+# re-typed. The AC-013 class of defect was exactly this file's hand-typed enums
+# drifting away from the runtime guards, so the schema advertised streams the
+# server rejected and rejected defect types the agent contracts were told to
+# emit. Where each one comes from:
+#
+#   stream / source / defect_type   schemas/vocab.py — the wire vocabulary
+#   verdict                         foundry_orchestrator.VERDICT_VALUES, which
+#                                   derives from vocab's DEFECT_TYPES
+#   phase                           the ONE remaining literal, spelled out
+#                                   below with its own note on why, and pinned
+#                                   to the handler's branch set by a test
+#
+# That drift is not cosmetic on this surface. The MCP SDK validates arguments
+# against the advertised enum BEFORE dispatch, so a token missing from an enum
+# here is unreachable no matter what the handler accepts.
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
+    OBSERVATION_CLASSES,
     STREAM_WIRE_IDS,
 )
 from foundry_mcp.tools.citation import verify_citations
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
+    foundry_add_observation,
     foundry_add_verdict,
     foundry_init,
     foundry_query_defects,
+    foundry_query_observations,
     foundry_verify_coverage,
 )
 from foundry_mcp.tools.foundry_orchestrator import (
+    VERDICT_VALUES,
     foundry_clear_directives,
     foundry_defects_to_tasks,
     foundry_gate,
@@ -148,7 +163,27 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["phase"],
                 "properties": {
-                    "phase": {"type": "string", "enum": ["research_done", "decompose_done", "validate_done", "start_cast", "cast", "inspect_clean", "grind_start", "assay_fail", "temper", "nyquist", "nyquist_done", "done"]},
+                    # D-006 / D-007 — this enum is pinned to
+                    # foundry_mark_phase_complete's OWN branch set by the drift
+                    # guard in tests/test_orchestrator_gates.py, which reads the
+                    # handler's AST. It drifted in both directions at once: it
+                    # advertised research_done / decompose_done / validate_done,
+                    # which the handler has no branch for and refuses, while
+                    # OMITTING inspect_start — the only token whose branch
+                    # advances the cycle counter. The SDK validates against this
+                    # enum before dispatch, so that omission made the counter
+                    # unable to leave 0 over MCP however the handler behaved.
+                    # Spelled out rather than imported from
+                    # foundry_orchestrator.PHASE_TOKENS because tests assert
+                    # these tokens are READABLE in this file's own source; the
+                    # drift guard is what keeps the two copies honest. See the
+                    # concerns entry recommending both be collapsed once that
+                    # source-grep assertion is replaced.
+                    "phase": {"type": "string", "enum": [
+                        "start_cast", "cast", "inspect_start", "inspect_clean",
+                        "grind_start", "assay_fail", "temper", "nyquist",
+                        "nyquist_done", "done",
+                    ]},
                 },
             },
         ),
@@ -166,6 +201,86 @@ async def list_tools() -> list[Tool]:
                     "spec_ref": {"type": "string"},
                     "symbol": {"type": "string"},
                     "file_path": {"type": "string"},
+                    # FR-001 / FR-007 — the handler has accepted both since the
+                    # observations split landed, but neither had a schema
+                    # property or a dispatch path, so over MCP the comment-prose
+                    # refusal and class tagging were dead: a line-drift finding
+                    # filed over MCP was accepted as a defect because
+                    # target_kind never arrived to make it demotable.
+                    "target_kind": {
+                        "type": "string",
+                        "description": (
+                            "What the finding is ABOUT. Pass 'comment' when the "
+                            "subject is a code comment — that declaration is what "
+                            "lets the comment-prose refusal engage. Any other "
+                            "value pins the finding as a defect that can never be "
+                            "demoted to an observation."
+                        ),
+                    },
+                    "defect_class": {
+                        "type": "string",
+                        "description": (
+                            "Optional root-cause class shared by several "
+                            "instances, persisted as the record's 'class'. A "
+                            "class filed in 3 consecutive cycles escalates to "
+                            "one structural-fix packet."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Observation",
+            description=(
+                "Record a comment-prose finding in the run's observations "
+                "ledger — the non-blocking half of the observation/defect "
+                "split. Observations are typed, persisted per run, and NEVER "
+                "mixed into the defect ledger. The never-demote denylist is "
+                "absolute: a security-property claim, a spec-required-behaviour "
+                "claim, an unresolvable cite, or anything that is not a declared "
+                "comment is REFUSED here and the audit tripwire fires naming the "
+                "entry that matched. Citing a requirement in spec_ref is by "
+                "construction enough to keep a finding a defect."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["cycle", "source", "description"],
+                "properties": {
+                    "cycle": {"type": "integer"},
+                    "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
+                    "description": {"type": "string"},
+                    "classification": {
+                        "type": "string",
+                        "enum": sorted(OBSERVATION_CLASSES),
+                        "description": "Optional — derived from the description when omitted.",
+                    },
+                    "target_kind": {
+                        "type": "string",
+                        "default": "comment",
+                        "description": (
+                            "Must be 'comment': only comment prose is an "
+                            "observation. Any other value is refused."
+                        ),
+                    },
+                    "spec_ref": {"type": "string"},
+                    "symbol": {"type": "string"},
+                    "file_path": {"type": "string"},
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Observations",
+            description=(
+                "Query the observations ledger, with the denylist tripwire log "
+                "returned alongside so a validator never has to know the "
+                "ledger's file layout."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "cycle": {"type": "integer"},
+                    "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
+                    "classification": {"type": "string", "enum": sorted(OBSERVATION_CLASSES)},
                 },
             },
         ),
@@ -279,7 +394,12 @@ async def list_tools() -> list[Tool]:
                 "required": ["requirement_id", "verdict", "evidence"],
                 "properties": {
                     "requirement_id": {"type": "string"},
-                    "verdict": {"type": "string", "enum": ["VERIFIED", "HOLLOW", "THIN", "PARTIAL", "MISSING", "WRONG", "COVERAGE_INCOMPLETE"]},
+                    # Derived, not hand-typed: the baseline literal here rejected
+                    # MISPLACED, which agents/assayer.md mandates as a verdict
+                    # word and commands/start.md routes into this tool — the
+                    # protocol told an agent to emit a verdict the surface that
+                    # records it could not represent.
+                    "verdict": {"type": "string", "enum": sorted(VERDICT_VALUES)},
                     "evidence": {"type": "string"},
                     "spec_text_cited": {"type": "string"},
                     "code_location": {"type": "string"},
@@ -591,10 +711,21 @@ _DISPATCH = {
     "Foundry-Defect": lambda args: foundry_add_defect(
         cycle=args["cycle"], source=args["source"], defect_type=args["defect_type"],
         description=args["description"], spec_ref=args.get("spec_ref", ""),
-        symbol=args.get("symbol", ""), file_path=args.get("file_path", ""), project_root=_project_root),
+        symbol=args.get("symbol", ""), file_path=args.get("file_path", ""),
+        target_kind=args.get("target_kind", ""), defect_class=args.get("defect_class", ""),
+        project_root=_project_root),
     "Foundry-Defects": lambda args: foundry_query_defects(
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),
         spec_ref=args.get("spec_ref"), project_root=_project_root),
+    "Foundry-Observation": lambda args: foundry_add_observation(
+        cycle=args["cycle"], source=args["source"], description=args["description"],
+        classification=args.get("classification", ""),
+        target_kind=args.get("target_kind", "comment"),
+        spec_ref=args.get("spec_ref", ""), symbol=args.get("symbol", ""),
+        file_path=args.get("file_path", ""), project_root=_project_root),
+    "Foundry-Observations": lambda args: foundry_query_observations(
+        cycle=args.get("cycle"), source=args.get("source"),
+        classification=args.get("classification"), project_root=_project_root),
     "Foundry-Fix": lambda args: foundry_mark_defect_fixed(
         defect_id=args["defect_id"], cycle=args["cycle"],
         adjacent_path_statement=args.get("adjacent_path_statement", ""),

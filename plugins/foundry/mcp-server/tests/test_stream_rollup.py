@@ -271,6 +271,84 @@ def test_a_later_tranche_clears_the_shortfall_the_earlier_one_caused(run_env):
     assert streams["shortfalls"] == []
 
 
+def _write_legacy_marker(
+    fdir: Path, stream: str, items_checked: int, items_total: int, findings: int = 0
+) -> None:
+    """Write a ``.{stream}-complete`` marker with NO roll-up beside it.
+
+    The shape every archive written before the per-cycle roll-up existed has:
+    the marker carried the whole history, because it was the only artifact.
+    """
+    (fdir / f".{stream}-complete").write_text(
+        f"2020-01-01T00:00:00+00:00 cycle=0\n"
+        f"items_checked={items_checked}\n"
+        f"items_total={items_total}\n"
+        f"coverage=n/a\n"
+        f"findings={findings}\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_marker_only_archive_is_still_measured_against_the_threshold(run_env):
+    """D-030 / AC-020 / CT-003: coverage evaluation read the roll-up and treated
+    "no roll-up entry" as "no shortfall".
+
+    On a legacy or migrated archive — markers present, ``stream-rollup.json``
+    absent — the streams-complete check therefore counted the stream as PRESENT
+    while the >=95% threshold silently evaluated nothing, so 40% coverage
+    passed. "No numbers here" has to mean "read them from the marker", never
+    "assume the threshold is met".
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, 100)
+    _write_castings(fdir, ["src/api/login.py"])
+
+    _write_legacy_marker(fdir, "prove", items_checked=40, items_total=100)
+    _write_legacy_marker(fdir, "trace", items_checked=10, items_total=10)
+    _write_legacy_marker(fdir, "test", items_checked=10, items_total=10)
+    assert not (fdir / fo.ROLLUP_FILENAME).exists()
+
+    streams = _check_streams_complete(project_root)
+
+    assert streams["complete"] is False, streams
+    assert [s["stream"] for s in streams["shortfalls"]] == ["prove"]
+    assert streams["shortfalls"][0]["checked"] == 40
+    assert streams["shortfalls"][0]["required"] == 100
+
+
+def test_a_marker_only_archive_that_meets_the_threshold_still_passes(run_env):
+    """The fallback reads real numbers — it does not simply block every legacy
+    archive, which would be the same bug with the sign flipped."""
+    project_root, fdir = run_env
+    _write_spec(fdir, 100)
+    _write_castings(fdir, ["src/api/login.py"])
+
+    _write_legacy_marker(fdir, "prove", items_checked=100, items_total=100)
+    _write_legacy_marker(fdir, "trace", items_checked=10, items_total=10)
+    _write_legacy_marker(fdir, "test", items_checked=10, items_total=10)
+
+    streams = _check_streams_complete(project_root)
+
+    assert streams["complete"] is True, streams
+    assert streams["shortfalls"] == []
+
+
+def test_the_rollup_wins_over_the_marker_when_both_exist(run_env):
+    """The marker is a FALLBACK, not a second opinion: a current cycle's roll-up
+    is the authority even when a stale marker disagrees."""
+    project_root, fdir = run_env
+    _write_spec(fdir, 100)
+    _write_castings(fdir, ["src/api/login.py"])
+
+    foundry_mark_stream(
+        "prove", cycle=0, items_checked=100, items_total=100, project_root=project_root
+    )
+    # Overwrite the marker the record just wrote with a short one.
+    _write_legacy_marker(fdir, "prove", items_checked=5, items_total=100)
+
+    assert fo._coverage_shortfall(fdir, project_root, "prove", 0) is None
+
+
 def test_trace_ratio_threshold_also_moved_to_the_streams_complete_check(run_env):
     """The TRACE >=95%-of-declared-symbols ratio had the same record-time
     refusal and moves for the same reason."""

@@ -285,6 +285,18 @@ def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     return True
 
 
+# CLOSED VOCABULARY — the verdict axis (FR-013 / CT-002). A requirement's
+# verdict is either VERIFIED or one of the canonical defect types; that is the
+# whole set, and it is DERIVED from schemas/vocab.py rather than hand-typed.
+# server.py's Foundry-Verdict enum was a hand-typed baseline copy that rejected
+# MISPLACED — a verdict agents/assayer.md mandates and commands/start.md routes
+# into this very tool, so a verdict the protocol tells an agent to emit was
+# unrepresentable on the surface that records it. "VERIFIED" is the one member
+# that is not a defect type, which is why it is the one literal here.
+# Extend the defect half via schemas/vocab.py, never here.
+VERDICT_VALUES = frozenset({"VERIFIED"}) | DEFECT_TYPES
+
+
 def _synthesize_clean_prove_verdicts(
     fdir: Path, project_root: str, cycle: int = 0
 ) -> int:
@@ -602,6 +614,27 @@ def foundry_gate(
         defects = _load_json(fdir / "defects.json")
         open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
         teams_result = _check_active_teams(project_root)
+        spec_count = _count_spec_requirements(project_root)
+
+        # FR-020 / AC-025 — the auto-VERIFY hole, closed at the gate.
+        #
+        # Every other check below is vacuously satisfied by a spec that parses
+        # to ZERO requirements: no requirement can be non-VERIFIED, and the
+        # verdict_coverage check guarded itself with `spec_count > 0` and so
+        # skipped. A run whose spec is unresolvable or carries no tagged
+        # requirement IDs therefore sailed through DONE having proved nothing.
+        # Stated first so a more specific failure below still claims `reason`.
+        if spec_count <= 0:
+            passed = False
+            reason = (
+                "The spec parses to ZERO requirement IDs — nothing has been "
+                "verified, so DONE is vacuous."
+            )
+            hint = (
+                "Check that the run's spec resolves (foundry-archive/{run}/spec.md, "
+                "else state.json's spec_path) and that it carries tagged "
+                "requirement IDs (US-N / FR-N / NFR-N / AC-N / VC-N / IR-N / TR-N)."
+            )
 
         if non_verified > 0:
             passed = False
@@ -637,7 +670,6 @@ def foundry_gate(
             passed = False
             reason = f"Active teams: {', '.join(teams_result['teams'])}"
 
-        spec_count = _count_spec_requirements(project_root)
         verdict_count = len(verdict_list)
         verdicts_complete = True
         if spec_count > 0 and verdict_count < spec_count:
@@ -647,6 +679,10 @@ def foundry_gate(
             hint = "ASSAY must write ALL verdicts to verdicts.json \u2014 including THIN/PARTIAL, not just VERIFIED."
             verdicts_complete = False
 
+        checklist.append({
+            "check": f"spec_requirements_parsed (count={spec_count})",
+            "ok": spec_count > 0,
+        })
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
         checklist.append({"check": f"zero_defects (open={open_count})", "ok": open_count == 0})
         checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
@@ -788,8 +824,17 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
     streams-complete check is the single point where the whole cycle's records
     are in hand (CT-003). ``foundry_mark_stream`` deliberately does NOT
     evaluate it: a partial tranche must be stored, not refused.
+
+    Falls back to the marker's aggregate counts when this cycle has no roll-up
+    entry, exactly as ``_prove_is_clean`` does. Without the fallback an archive
+    written before the roll-up existed — or one whose roll-up was lost — had a
+    marker the streams-complete check counted as PRESENT while the threshold
+    silently evaluated nothing, so 40% coverage passed. "No numbers" must mean
+    "read them from the marker", never "assume the threshold is met".
     """
-    totals = _rollup_totals(fdir, cycle, stream)
+    totals = _rollup_totals(fdir, cycle, stream) or _marker_counts(
+        fdir / f".{stream}-complete"
+    )
     if totals is None:
         return None
     checked = totals["items_checked"]
@@ -1173,6 +1218,37 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
     (fdir / ".gate-passed").unlink(missing_ok=True)
 
 
+# CLOSED VOCABULARY — every phase token ``foundry_mark_phase_complete`` handles,
+# in lifecycle order. The handler is the authority for this one (unlike the wire
+# vocabularies, which come from schemas/vocab.py): a token means something only
+# because a branch below implements it.
+#
+# server.py's Foundry-Phase enum is the second copy, and it had drifted in BOTH
+# directions at once — advertising research_done / decompose_done /
+# validate_done, which this handler has no branch for and refuses, while
+# OMITTING inspect_start, the one token whose branch advances the cycle counter.
+# The MCP SDK validates arguments against the advertised enum BEFORE dispatch,
+# so that omission made the counter unable to leave 0 over MCP however this
+# handler behaved.
+#
+# Adding a token here without a branch below (or vice versa, or without the
+# schema entry) fails the drift guard in tests/test_orchestrator_gates.py, which
+# derives the accepted set from this function's own AST and asserts all three
+# copies are equal.
+PHASE_TOKENS = (
+    "start_cast",
+    "cast",
+    "inspect_start",
+    "inspect_clean",
+    "grind_start",
+    "assay_fail",
+    "temper",
+    "nyquist",
+    "nyquist_done",
+    "done",
+)
+
+
 def foundry_mark_phase_complete(
     phase: str,
     project_root: str = ".",
@@ -1313,7 +1389,7 @@ def foundry_mark_phase_complete(
         return {"ok": True, "phase": "F6", "message": "Phase is now F6 (DONE). Run archived. Start a new run with foundry_init."}
 
     else:
-        return {"error": f"Invalid phase: {phase}. Valid: start_cast, cast, inspect_start, inspect_clean, grind_start, assay_fail, temper, nyquist, nyquist_done, done"}
+        return {"error": f"Invalid phase: {phase}. Valid: {', '.join(PHASE_TOKENS)}"}
 
 
 # --- Team lifecycle ---
@@ -1920,83 +1996,111 @@ def foundry_mark_defect_fixed(
     in the same shape as the acceptance gate's rejections. The declarations are
     persisted on the defect record, so the blast radius a fix claimed to have
     considered is auditable after the fact.
+
+    The whole read-modify-write runs inside ``ledger_transaction`` (FR-020 /
+    AC-025). It used to be an UNLOCKED load / mutate / save while every other
+    writer of defects.json held that lock, so a fix landing between a peer's
+    read and write was silently discarded by the peer's ``.tmp`` rename — the
+    call returned ok and the defect stayed open. Concurrent fixes are the norm
+    in GRIND, not an edge case: a whole wave of teammates closes defects in
+    parallel against one ledger.
+
+    ``fixed_in_cycle`` is stamped from the SERVER counter (FR-005 / ST-001);
+    the caller's ``cycle`` is retained as ``declared_fixed_cycle`` for audit
+    only. Escalation reads these numbers back, and it accumulated against
+    lead-asserted cycles while the server counter sat at 0.
     """
+    from foundry_mcp.tools.foundry import ledger_transaction
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
     defects_path = fdir / "defects.json"
-    data = _load_json(defects_path)
-
-    target = None
-    for d in data.get("defects", []):
-        if d["id"] == defect_id:
-            target = d
-            break
-
-    if target is None:
-        return {"error": f"Defect {defect_id} not found"}
 
     statement = (adjacent_path_statement or "").strip()
     test_ref = (adjacent_path_test or "").strip()
+    server_cycle = _current_cycle(fdir)
 
-    missing = []
-    if not statement:
-        missing.append("adjacent_path_statement")
-    if not test_ref:
-        missing.append("adjacent_path_test")
-    if missing:
-        return {
-            "error": (
-                f"Cannot mark {defect_id} fixed — missing required field(s): "
-                f"{', '.join(missing)}. adjacent_path_statement must name who else "
-                "calls this, what else transitions here, or what runs concurrently. "
-                "adjacent_path_test must reference a test that drives at least one "
-                "of those adjacent paths."
-            ),
-            "missing_fields": missing,
-            "hint": (
-                "Write the adjacent-path test first, then re-call Foundry-Fix with "
-                "both declarations. A fix whose blast radius is undeclared is how a "
-                "defect closes and a regression opens in the same cycle."
-            ),
-        }
+    # Every branch runs INSIDE the transaction: the not-found and adjacency
+    # checks both read the target record, so evaluating them outside would
+    # re-open the same read-then-write window this lock exists to close. A
+    # refusal mutates nothing, and writing back an unmodified document is a
+    # no-op.
+    refusal: dict | None = None
+    open_count = 0
+    with ledger_transaction(defects_path, "defects") as records:
+        target = None
+        for d in records:
+            if isinstance(d, dict) and d.get("id") == defect_id:
+                target = d
+                break
 
-    # ST-004 / AC-013: the declared path must be ADJACENT — distinct from the
-    # path the defect itself was found on. Restating the defect's own symbol is
-    # the one case that is mechanically decidable here, and it is the exact
-    # non-answer the gate exists to reject.
-    own_symbol = (target.get("symbol") or "").strip()
-    if own_symbol and statement.casefold() == own_symbol.casefold():
-        return {
-            "error": (
-                f"Cannot mark {defect_id} fixed — adjacent_path_statement just names "
-                f"the defect's own symbol ({own_symbol}). An adjacent path is a "
-                "DIFFERENT caller, transition, or concurrent interaction than the one "
-                "the defect was found on."
-            ),
-            "missing_fields": ["adjacent_path_statement"],
-            "hint": "Name a second path that touches this code, then test that path.",
-        }
+        missing = []
+        if not statement:
+            missing.append("adjacent_path_statement")
+        if not test_ref:
+            missing.append("adjacent_path_test")
+        own_symbol = (target.get("symbol") or "").strip() if target else ""
 
-    target["status"] = "fixed"
-    target["fixed_in_cycle"] = cycle
-    target["adjacent_path_statement"] = statement
-    target["adjacent_path_test"] = test_ref
+        if target is None:
+            refusal = {"error": f"Defect {defect_id} not found"}
+        elif missing:
+            refusal = {
+                "error": (
+                    f"Cannot mark {defect_id} fixed — missing required field(s): "
+                    f"{', '.join(missing)}. adjacent_path_statement must name who else "
+                    "calls this, what else transitions here, or what runs concurrently. "
+                    "adjacent_path_test must reference a test that drives at least one "
+                    "of those adjacent paths."
+                ),
+                "missing_fields": missing,
+                "hint": (
+                    "Write the adjacent-path test first, then re-call Foundry-Fix with "
+                    "both declarations. A fix whose blast radius is undeclared is how a "
+                    "defect closes and a regression opens in the same cycle."
+                ),
+            }
+        # ST-004 / AC-013: the declared path must be ADJACENT — distinct from
+        # the path the defect itself was found on. Restating the defect's own
+        # symbol is the one case that is mechanically decidable here, and it is
+        # the exact non-answer the gate exists to reject.
+        elif own_symbol and statement.casefold() == own_symbol.casefold():
+            refusal = {
+                "error": (
+                    f"Cannot mark {defect_id} fixed — adjacent_path_statement just names "
+                    f"the defect's own symbol ({own_symbol}). An adjacent path is a "
+                    "DIFFERENT caller, transition, or concurrent interaction than the one "
+                    "the defect was found on."
+                ),
+                "missing_fields": ["adjacent_path_statement"],
+                "hint": "Name a second path that touches this code, then test that path.",
+            }
+        else:
+            target["status"] = "fixed"
+            target["fixed_in_cycle"] = server_cycle
+            target["declared_fixed_cycle"] = cycle
+            target["adjacent_path_statement"] = statement
+            target["adjacent_path_test"] = test_ref
 
-    _save_json(defects_path, data)
+        open_count = sum(
+            1 for d in records if isinstance(d, dict) and d.get("status") == "open"
+        )
+
+    if refusal is not None:
+        return refusal
 
     forge_log = fdir / "forge-log.md"
     if forge_log.exists():
         with open(forge_log, "a", encoding="utf-8") as f:
-            f.write(f"\n**{defect_id} FIXED** in cycle {cycle} ({_now()})\n")
+            f.write(f"\n**{defect_id} FIXED** in cycle {server_cycle} ({_now()})\n")
             f.write(f"- **Adjacent paths:** {statement}\n")
             f.write(f"- **Adjacent-path test:** {test_ref}\n\n")
 
-    open_count = sum(1 for d in data["defects"] if d.get("status") == "open")
     return {
         "ok": True,
         "defect_id": defect_id,
-        "fixed_in_cycle": cycle,
+        "fixed_in_cycle": server_cycle,
+        "declared_cycle": cycle,
         "adjacent_path_statement": statement,
         "adjacent_path_test": test_ref,
         "remaining_open": open_count,
