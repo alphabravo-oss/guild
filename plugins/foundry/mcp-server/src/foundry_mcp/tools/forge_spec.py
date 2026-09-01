@@ -73,6 +73,20 @@ def _planning_guard(proj_dir: Path) -> dict | None:
         for p in (_document_problem(c) for c in sorted(proj_dir.glob("*.json")))
         if p
     ]
+    return _planning_refusal(problems)
+
+
+def _planning_refusal(problems: list[str]) -> dict | None:
+    """The house refusal for an unusable planning artifact, shaped ONCE.
+
+    Two rungs return it — the document rung (``_planning_guard``: the file is
+    not a readable JSON object) and the record rung (``_state_shape_problem``:
+    it is a fine JSON object whose inner collection is the wrong type). Written
+    here rather than at each so the three doors cannot tell an operator two
+    different stories about one broken file, which is the property D-140 found
+    missing: Check raised, Start and Status returned ok over a fabricated
+    state.
+    """
     if not problems:
         return None
     return {
@@ -91,6 +105,79 @@ def _planning_guard(proj_dir: Path) -> dict | None:
     }
 
 
+def _wrong_type(present: object, expected: object) -> bool:
+    """True when ``present`` cannot stand in for a value shaped like ``expected``.
+
+    ``bool`` is checked in both directions because ``isinstance(True, int)`` is
+    True in Python, so a bare isinstance would accept ``foundry_ready: 1`` and,
+    worse, accept ``True`` where an int was meant.
+    """
+    if isinstance(present, bool) != isinstance(expected, bool):
+        return True
+    return not isinstance(present, type(expected))
+
+
+def _state_shape_problem(state: dict, project_name: str) -> str | None:
+    """Named reason a PRESENT key of state.json cannot be used, else None.
+
+    D-140 — THE RUNG BELOW THE CONTAINER, AGAIN, AND THE WORSE FAILURE MODE.
+    ``_sound_state`` REPAIRED a valid JSON object whose inner collection was
+    the wrong type, and Forge-Spec-Check returned a clean success dict with no
+    "error" key while rewriting the file. Driven with an operator's real state:
+
+        {"phase": "READY", "foundry_ready": true, "phases": "S0_understand", ...}
+
+    came back with "phases" replaced by four fresh {"status": "pending"}
+    defaults -- the record of which planning phases were completed GONE --
+    while "foundry_ready": true survived beside them, an internally
+    inconsistent state Forge-Spec-Status then reported as normal.
+    ``_document_problem`` cannot name it because the top-level object is a
+    perfectly good mapping. This is D-132's container-vs-records distinction in
+    a third module, with the failure mode INVERTED: not a raise but a silent
+    destructive repair reported as success, which is the worse of the two
+    because nothing tells the operator anything happened.
+
+    ABSENT is not WRONG, and that distinction is the whole function. A missing
+    key legitimately takes its default -- that is what lets a partial state
+    resume -- while a key that is PRESENT and of the wrong type is a record
+    someone wrote, and overwriting it destroys data. Only the second refuses.
+    """
+    default = _default_state(project_name)
+    for key, value in default.items():
+        present = state.get(key)
+        if present is None or not _wrong_type(present, value):
+            continue
+        return (
+            f"state.json's {key!r} holds {type(present).__name__}, not "
+            f"{type(value).__name__} — repairing it would discard whatever it "
+            f"does hold"
+        )
+
+    phases = state.get("phases")
+    if isinstance(phases, dict):
+        for key in default["phases"]:
+            sub = phases.get(key)
+            if sub is None or isinstance(sub, dict):
+                continue
+            return (
+                f"state.json's phases[{key!r}] holds {type(sub).__name__}, not "
+                f"a JSON object — repairing it would discard the record of "
+                f"whether that phase completed"
+            )
+    return None
+
+
+def _state_refusal(state: dict, project_name: str) -> dict | None:
+    """The named refusal for an unusable state document, or None.
+
+    Every door calls this on the same evidence, so a state one door refuses is
+    one all three refuse — D-140's "must refuse at all three doors
+    identically".
+    """
+    problem = _state_shape_problem(state, project_name)
+    return _planning_refusal([problem] if problem else [])
+
+
 def _sound_state(state: dict, project_name: str) -> dict:
     """Repair ``state`` in place to the shape every reader below assumes.
 
@@ -101,21 +188,30 @@ def _sound_state(state: dict, project_name: str) -> dict:
     a different route -- that is corruption shape 8 of the D-130 drive,
     `'list' object has no attribute 'get'`.
 
-    So the shape is repaired ONCE, here, rather than defended at each of the
-    three doors: a missing or wrong-typed key takes the default and every
-    usable value survives.
+    So the shape is completed ONCE, here, rather than defended at each of the
+    three doors: a MISSING key takes the default and every usable value
+    survives.
+
+    D-140: this used to repair a wrong-TYPED key too, which is not completion
+    but destruction — ``"phases": "S0_understand"`` became four fresh
+    ``{"status": "pending"}`` defaults and the record of which phases had
+    completed was gone, with ok returned and nothing said. Absent and
+    wrong-typed are now different things: this fills in the first, and
+    ``_state_shape_problem`` refuses the second BEFORE this is reached. So
+    everything below is a pure fill-in over keys nobody wrote, and it can no
+    longer overwrite a value someone did.
     """
     default = _default_state(project_name)
     for key, value in default.items():
         if key == "phases":
             continue
-        if not isinstance(state.get(key), type(value)):
+        if state.get(key) is None:
             state[key] = value
-    phases = state.get("phases")
-    if not isinstance(phases, dict):
-        phases = state["phases"] = {}
+    if state.get("phases") is None:
+        state["phases"] = {}
+    phases = state["phases"]
     for key, value in default["phases"].items():
-        if not isinstance(phases.get(key), dict):
+        if phases.get(key) is None:
             phases[key] = value
     return state
 
@@ -166,7 +262,10 @@ def forge_spec_start(project_name: str, project_root: str = ".") -> dict:
     # Resume if state already exists
     state_path = proj_dir / "state.json"
     if state_path.exists():
-        state = _sound_state(_load_json(state_path), project_name)
+        loaded = _load_json(state_path)
+        if (corrupt := _state_refusal(loaded, project_name)):
+            return corrupt
+        state = _sound_state(loaded, project_name)
         return {
             "project_name": project_name,
             "slug": slug,
@@ -332,6 +431,11 @@ def forge_spec_check(
     # result. The unknown-action branch mutates nothing, and a transaction that
     # mutates nothing writes nothing -- the file is left byte-identical.
     with _document_transaction(state_path) as state:
+        # D-140: inside the transaction, so the refusal is decided on the same
+        # document the write would have used — checking outside would leave a
+        # window where a peer's write turns a refused state into a repaired one.
+        if (corrupt := _state_refusal(state, project_name)):
+            return corrupt
         _sound_state(state, project_name)
         if action == "codebase":
             result = _check_codebase(proj_dir, state)
@@ -360,7 +464,10 @@ def forge_spec_status(project_name: str, project_root: str = ".") -> dict:
     # Status is a READ: the shape is repaired on the in-memory copy and the
     # file is not rewritten, so asking what state a project is in never
     # changes it.
-    state = _sound_state(_load_json(state_path), project_name)
+    loaded = _load_json(state_path)
+    if (corrupt := _state_refusal(loaded, project_name)):
+        return corrupt
+    state = _sound_state(loaded, project_name)
     phases = state["phases"]
 
     checklist = []

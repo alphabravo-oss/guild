@@ -3476,6 +3476,171 @@ def test_the_override_offer_never_interpolates_a_none(run_env):
         assert offer.startswith("Foundry-Directive("), (key, offer)
 
 
+# --------------------------------------------------------------------------- #
+# D-140 — the nested rung in the THIRD module, and the worse failure mode.
+#
+# D-115 guarded the container and stopped; D-132 found the records one module
+# over; this is the same distinction in forge_spec.py, inverted: not a raise
+# but a SILENT DESTRUCTIVE REPAIR reported as success, which is worse because
+# nothing tells the operator anything happened.
+# --------------------------------------------------------------------------- #
+
+#: An operator's real planning state, with the inner collection wrong-typed —
+#: shapes 8 and 9 of the D-130 corruption drive. The top-level object is a
+#: perfectly good mapping, so `_document_problem` cannot name it.
+_OPERATOR_STATE = {
+    "slug": "auth-rework",
+    "phase": "READY",
+    "foundry_ready": True,
+    "phases": "S0_understand",
+    "splits": ["auth.md"],
+    "requirements": ["FR-001", "FR-002"],
+}
+
+_FORGE_DOORS = ("check", "start", "status")
+
+
+def _forge_door(name: str, project_root: str):
+    from foundry_mcp.tools import forge_spec as fsp
+
+    return {
+        "check": lambda r: fsp.forge_spec_check("auth rework", "codebase", r),
+        "start": lambda r: fsp.forge_spec_start("auth rework", r),
+        "status": lambda r: fsp.forge_spec_status("auth rework", r),
+    }[name](project_root)
+
+
+def _seed_planning_state(tmp_path: Path, body, name: str) -> Path:
+    root = tmp_path / name
+    proj = root / "foundry-planning" / "auth-rework"
+    proj.mkdir(parents=True)
+    state = proj / "state.json"
+    if isinstance(body, dict):
+        state.write_text(json.dumps(body), encoding="utf-8")
+    else:
+        body(state)
+    return root
+
+
+@pytest.mark.parametrize("door", _FORGE_DOORS)
+def test_a_wrong_typed_inner_collection_is_refused_not_repaired(tmp_path, door):
+    """D-140 — the repair destroyed data and reported success.
+
+    Forge-Spec-Check returned a clean success dict with NO "error" key and
+    rewrote state.json so "phases" became four fresh {"status": "pending"}
+    defaults — the record of which planning phases completed GONE — while
+    "foundry_ready": true survived beside them, an internally inconsistent
+    state Forge-Spec-Status then reported as normal.
+    """
+    root = _seed_planning_state(tmp_path, _OPERATOR_STATE, f"wrong-{door}")
+    state = root / "foundry-planning" / "auth-rework" / "state.json"
+    before = state.read_bytes()
+
+    result = _forge_door(door, str(root))
+
+    assert "error" in result, result
+    assert "phases" in result["error"], result["error"]
+    assert result.get("corrupt_artifacts"), result
+    # Refuses AND destroys nothing: the operator's record is byte-identical.
+    assert state.read_bytes() == before
+
+
+def test_all_three_forge_doors_refuse_a_wrong_typed_state_identically(tmp_path):
+    """One file, one story. D-140's other half was that the doors DISAGREED:
+    Check raised IsADirectoryError while Start and Status returned ok over a
+    fabricated all-default state."""
+    seen = set()
+    for door in _FORGE_DOORS:
+        root = _seed_planning_state(tmp_path, _OPERATOR_STATE, f"same-{door}")
+        result = _forge_door(door, str(root))
+        seen.add((result["error"], result["hint"]))
+    assert len(seen) == 1, seen
+
+
+@pytest.mark.parametrize("door", _FORGE_DOORS)
+def test_a_state_json_directory_is_refused_at_every_door(tmp_path, door):
+    """D-140's third residual. A DIRECTORY named state.json passed
+    `_planning_guard`'s `if c.is_file()` filter, so Check raised
+    IsADirectoryError while Start and Status returned ok with a fabricated
+    all-default state."""
+    root = _seed_planning_state(tmp_path, lambda p: p.mkdir(), f"dir-{door}")
+
+    result = _forge_door(door, str(root))
+
+    assert "error" in result, result
+    assert "state.json" in result["error"], result["error"]
+
+
+def render_forge_state_table(tmp_path: Path) -> str:
+    """D-140 pre/post: what each door does with an operator's real state.
+
+    Rows are the corruption shapes, columns the three doors, so a door that
+    starts disagreeing with its peers shows up as a row that is not uniform.
+    """
+    shapes = (
+        ("phases: a bare string (shape 8)", dict(_OPERATOR_STATE)),
+        ("phases[S0]: a bare string (9)",
+         {**_OPERATOR_STATE, "phases": {"S0_understand": "complete"}}),
+        ("state.json is a DIRECTORY", (lambda p: p.mkdir())),
+        ("partial state (absent keys)", {"phase": "S1"}),
+    )
+    out = [
+        "== an operator's state.json at each door: refuse, or repair in silence? ==",
+        "   %-32s %-22s %-22s %s" % ("state.json holds", "Check", "Start", "Status"),
+        "   %-32s %-22s %-22s %s" % ("-" * 16, "-" * 5, "-" * 5, "-" * 6),
+    ]
+    for label, body in shapes:
+        cells = []
+        for door in _FORGE_DOORS:
+            root = _seed_planning_state(tmp_path, body, f"tbl-{door}-{len(out)}")
+            state = root / "foundry-planning" / "auth-rework" / "state.json"
+            before = state.read_bytes() if state.is_file() else None
+            result = _forge_door(door, str(root))
+            if "error" in result:
+                intact = before is None or state.read_bytes() == before
+                cells.append("REFUSES" + (", intact" if intact else ", DESTROYED"))
+            else:
+                changed = before is not None and state.read_bytes() != before
+                cells.append("ok" + (", REWROTE FILE" if changed else ""))
+        out.append("   %-32s %-22s %-22s %s" % (label, *cells))
+    return "\n".join(out)
+
+
+def test_the_forge_state_table_is_uniform_across_the_doors(tmp_path):
+    """Asserted: every corrupt shape refuses at ALL THREE doors with the
+    operator's file intact, and the partial state still resumes everywhere."""
+    table = render_forge_state_table(tmp_path)
+    rows = [
+        [c.strip() for c in re.split(r"\s{2,}", r.strip()) if c.strip()]
+        for r in table.split("\n")[3:]
+    ]
+    assert "DESTROYED" not in table, table
+    for label, *cells in rows[:3]:
+        assert cells == ["REFUSES, intact"] * 3, (label, cells)
+    # The partial state resumes at every door. Check REWRITES it, and that is
+    # the correct half of the old behaviour kept: Check is the mutating door,
+    # and filling in keys NOBODY WROTE destroys nothing. Start and Status only
+    # read, so they leave the file alone. Refusing this would have traded a
+    # silent destruction for a pipeline that cannot start.
+    assert rows[3][1:] == ["ok, REWROTE FILE", "ok", "ok"], rows[3]
+
+
+def test_an_absent_key_still_takes_its_default(tmp_path):
+    """The control, and the distinction the whole fix rests on.
+
+    ABSENT is not WRONG. A partial state must still resume — that is what the
+    completion step is for — or the refusal would have traded a silent
+    destruction for a planning pipeline that cannot start.
+    """
+    root = _seed_planning_state(tmp_path, {"phase": "S1"}, "partial")
+
+    result = _forge_door("status", str(root))
+
+    assert "error" not in result, result
+    assert result["phase"] == "S1"
+    assert [c["status"] for c in result["checklist"]] == ["pending"] * 4
+
+
 def test_the_forgery_table_shows_the_forgery_and_the_refusal():
     table = render_forgery_table()
     assert "urgent=1" in table  # the pre-fix arm really does forge urgency

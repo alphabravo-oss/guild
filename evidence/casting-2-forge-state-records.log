@@ -1,0 +1,75 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, tempfile; sys.path[:0]=["tests","src"]; from pathlib import Path; import test_orchestrator_gates as t; print(t.render_forge_state_table(Path(tempfile.mkdtemp())))' && echo "" && echo "== D-140 assertions, driven ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "forge or wrong_typed or state_json_directory or absent_key" 2>&1 | tail -2
+# evidence-for: NFR-002, FR-020, AC-025
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-140 — THE NESTED RUNG IN A THIRD MODULE, WITH THE FAILURE MODE INVERTED.
+#
+# D-115 guarded the container and stopped. D-132 found the records one module
+# over. This is the same container-vs-records distinction in forge_spec.py —
+# and the worse of the two failure modes, because it is not a raise:
+# Forge-Spec-Check SILENTLY OVERWROTE a corrupt-but-populated planning state
+# with defaults and reported SUCCESS, contradicting the module's own docstring
+# claim that "a corrupt one is not silently overwritten".
+#
+# DRIVEN with an operator's real state.json:
+#
+#   {"slug": "auth-rework", "phase": "READY", "foundry_ready": true,
+#    "phases": "S0_understand", "splits": ["auth.md"],
+#    "requirements": ["FR-001", "FR-002"]}
+#
+# Forge-Spec-Check returned a clean success dict with NO "error" key and
+# rewrote the file so "phases" became four fresh {"status": "pending"}
+# defaults. The record of which planning phases had been completed was GONE,
+# while "foundry_ready": true survived beside four pending phases — an
+# internally inconsistent state Forge-Spec-Status then reported as normal.
+# `_document_problem` cannot name it, because the top-level object is a
+# perfectly good mapping; `_sound_state` repaired the inner rung rather than
+# refusing it.
+#
+# THE DISTINCTION THE WHOLE FIX RESTS ON is ABSENT vs WRONG-TYPED, which
+# `_sound_state` conflated: `if not isinstance(state.get(key), type(value))`
+# is True both for a key nobody wrote and for a key someone wrote badly.
+# Filling in the first destroys nothing and is what lets a partial state
+# resume; overwriting the second destroys a record. They are now different
+# code paths — `_state_shape_problem` refuses the second BEFORE `_sound_state`
+# is reached, so the completion step is a pure fill-in over keys nobody wrote
+# and can no longer overwrite a value someone did.
+#
+# The table's last row is that control, and it is the reason the refusal is not
+# simply "reject anything unexpected": a partial state still resumes at every
+# door. Check REWRITES it, which is correct — Check is the mutating door and
+# filling in absent keys is its job. Refusing there would have traded a silent
+# destruction for a planning pipeline that cannot start.
+#
+# THE THIRD RESIDUAL, same module: `state.json` as a DIRECTORY passed
+# `_planning_guard`'s `if c.is_file()` filter, so the guard saw nothing and
+# Check then raised IsADirectoryError while Start and Status returned ok over a
+# fabricated all-default state — three doors, three different stories about one
+# broken path. The filter is gone (a path OCCUPYING an artifact's name is the
+# guard's business whatever kind of thing it is), and the same filter was
+# removed from `_run_artifact_problems` under D-138.
+#
+# Every column of every corrupt row now reads REFUSES, intact: the doors agree,
+# and the operator's file is byte-identical afterward. Uniformity is asserted
+# rather than eyeballed, so a door that starts disagreeing with its peers is a
+# failing test.
+#
+# The module's other residual, `forge_spec.py:426`'s unguarded `read_text` over
+# a splits/*.md, was swept with D-137 in ca00b75 — an unreadable split is now
+# REPORTED as `unreadable_splits` rather than raising UnicodeDecodeError out of
+# Forge-Spec-Check[spec]. It was named neither in the prior fix's test comment
+# nor in concerns.md, which is how it survived.
+
+== an operator's state.json at each door: refuse, or repair in silence? ==
+   state.json holds                 Check                  Start                  Status
+   ----------------                 -----                  -----                  ------
+   phases: a bare string (shape 8)  REFUSES, intact        REFUSES, intact        REFUSES, intact
+   phases[S0]: a bare string (9)    REFUSES, intact        REFUSES, intact        REFUSES, intact
+   state.json is a DIRECTORY        REFUSES, intact        REFUSES, intact        REFUSES, intact
+   partial state (absent keys)      ok, REWROTE FILE       ok                     ok
+
+== D-140 assertions, driven ==
+................                                                         [100%]
+16 passed, 225 deselected in 0.28s
