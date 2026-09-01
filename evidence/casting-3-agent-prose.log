@@ -1,13 +1,16 @@
-# evidence-cmd: grep -c 'observations.json' plugins/foundry/agents/assayer.md plugins/foundry/agents/tracer.md plugins/foundry/agents/flow-tracer.md plugins/foundry/agents/research-auditor.md plugins/foundry/commands/start.md | sort; grep -c 'never-demote denylist is absolute' plugins/foundry/agents/assayer.md plugins/foundry/agents/tracer.md plugins/foundry/agents/flow-tracer.md plugins/foundry/agents/research-auditor.md plugins/foundry/commands/start.md | sort
+# evidence-cmd: test -d plugins/foundry/mcp-server && cd plugins/foundry/mcp-server && uv run -q --with pytest pytest tests/test_protocol_prose.py -rN -p no:cacheprovider
 # evidence-for: AC-003
+# evidence-volatile: rootdir: \S+
+# evidence-volatile: \d+\.\d+s
 
-plugins/foundry/agents/assayer.md:1
-plugins/foundry/agents/flow-tracer.md:1
-plugins/foundry/agents/research-auditor.md:1
-plugins/foundry/agents/tracer.md:1
-plugins/foundry/commands/start.md:1
-plugins/foundry/agents/assayer.md:1
-plugins/foundry/agents/flow-tracer.md:1
-plugins/foundry/agents/research-auditor.md:1
-plugins/foundry/agents/tracer.md:1
-plugins/foundry/commands/start.md:1
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/b593f94e-e88b-444d-bfde-c9e6fb4f6ce0/scratchpad/iso-c3/plugins/foundry/mcp-server
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collected 44 items
+
+tests/test_protocol_prose.py ........................................... [ 97%]
+.                                                                        [100%]
+
+============================== 44 passed in 0.02s ==============================
