@@ -48,7 +48,8 @@ intra-spec contradictions; you catch transcript-to-casting drop-out.
 1. `foundry-archive/{run}/spec.md` — read the FULL file. The user's
    answer set lives inside the spec under the
    `## Appendix: Interview Transcript` heading (per the Forge R3
-   finalization rule #18 in `setup-forge.sh:1226-1291`). The appendix
+   finalization rule #18, in the spec-prompt heredoc at
+   `plugins/forge/scripts/setup-forge.sh#SPEC_PROMPT_EOF`). The appendix
    contains every `## A-NNN [tags…]` block (Locked answers) and every
    `## A-AUTO-NNN [CATEGORY]` block (R1.75 IMPLICIT-FACT extraction).
 2. `foundry-archive/{run}/castings/manifest.json` — read
@@ -209,7 +210,7 @@ excluded, per the anchor-scope rule above.)
 Naïve substring lookup (`answer_id in prompt_body`) confuses `A-1`
 with `A-12` (both substrings of `A-12`). The validator's
 `ANSWER_REF_RE` constant uses the same word-boundary shape (mirror of
-`validate-spec.py:85`). Your matrix is rejected by the validator's
+`plugins/forge/scripts/validate-spec.py#ANSWER_REF_RE`). Your matrix is rejected by the validator's
 re-derivation step if your verdicts disagree with word-boundary anchored
 re-derivation.
 

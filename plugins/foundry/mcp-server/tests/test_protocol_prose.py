@@ -45,10 +45,26 @@ clauses that carry the *ruling*, never on a whole sentence.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
+
+from foundry_mcp.schemas import vocab
+
+# D-048: the vocabulary assertions below READ the real enum rather than
+# re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
+# vocabulary -- it passes while vocab.py grows a member the markdown never
+# learns, and it passes while the markdown advertises a value the server
+# refuses. D-045 (skills/temper/SKILL.md shipping `source: "temper-sweep"`,
+# hard-refused at the MCP boundary and dropped before reaching the ledger) is
+# what that hole already cost. Importing is what makes drift on EITHER side
+# fail here.
+#
+# ``pythonpath = ["src"]`` in pyproject.toml puts the package on sys.path at
+# pytest startup, so this import needs no path surgery; test_vocab.py imports
+# the same module the same way.
 
 # tests -> mcp-server -> foundry -> plugins -> repo root.
 # Mirrors test_agent_frontmatter_parse.py:48 rather than hardcoding an absolute
@@ -518,7 +534,39 @@ def test_lead_discipline_keeps_the_no_worktrees_rule() -> None:
 # Every verifier that emits a cite must state that the symbol decides validity.
 # Without this, a drifted line number reads as a broken cite and the stream
 # files a defect for it -- the loop this effort exists to close.
-SYMBOL_AUTHORITATIVE_SITES = (ASSAYER, TRACER, RESEARCH_AUDITOR, TEAMMATE)
+#
+# D-046: FLOW_TRACER was the one STREAM_AGENTS member missing from this tuple,
+# with no comment explaining the omission -- so when GRIND-1 converted the
+# other three stream agents, nothing failed to report that flow-tracer.md had
+# been skipped. It is a live F2 roster member that files into the `defects`
+# array and feeds Foundry-Sync, so the cite-refresh prohibition was unenforced
+# on a defect-filing stream. The containment test below is what stops a
+# future fifth stream agent from slipping through the same gap.
+SYMBOL_AUTHORITATIVE_SITES = (
+    ASSAYER,
+    TRACER,
+    FLOW_TRACER,
+    RESEARCH_AUDITOR,
+    TEAMMATE,
+)
+
+
+def test_every_defect_filing_stream_states_the_cite_policy() -> None:
+    """D-046's root cause: the tuple above was hand-maintained.
+
+    A stream agent that files defects but never learned the symbol-authoritative
+    rule will file a drifted line number as a defect, which is precisely the
+    loop FR-004 exists to close. Membership is therefore not a judgement call:
+    every STREAM_AGENTS member is a cite site, and this asserts the two lists
+    cannot drift apart again.
+    """
+    missing = sorted(_rel(p) for p in set(STREAM_AGENTS) - set(SYMBOL_AUTHORITATIVE_SITES))
+    assert not missing, (
+        f"{missing} file into the defect ledger but are absent from "
+        f"SYMBOL_AUTHORITATIVE_SITES, so nothing checks that they state the "
+        f"symbol-authoritative cite rule. Add them to the tuple and give each "
+        f"one the rule in its own voice -- do not shrink this assertion."
+    )
 
 
 @pytest.mark.parametrize("path", SYMBOL_AUTHORITATIVE_SITES, ids=lambda p: p.name)
@@ -1030,20 +1078,112 @@ def test_skill_schemas_carry_no_severity_axis(path: Path) -> None:
     )
 
 
+#: The property names in a skill's findings schema that are ALLOWED to carry a
+#: closed enum, mapped to the vocab.py export each must equal. Any other
+#: enum-bearing key is a graded axis smuggled back in under a new name -- a
+#: `"priority": ["P0", "P1", "P2"]` property passes every substring check ever
+#: written for `"severity"` while reinstating exactly the tier D-041 removed.
+#: `verdict` is a roll-up of the findings, not a grade on any one of them, so
+#: it is enumerated here rather than derived from vocab.
+_ALLOWED_ENUM_KEYS = frozenset({"classification", "type", "verdict"})
+
+#: The alias members of DEFECT_TYPES -- spellings that fold onto another
+#: member. Derived from the module rather than re-typed, so adding a second
+#: alias needs no edit here.
+_DEFECT_TYPE_ALIASES = frozenset(
+    t for t in vocab.DEFECT_TYPES if vocab.canonical_defect_type(t) != t
+)
+
+#: What a skill's `type` enum must equal: every DEFECT_TYPES member a stream
+#: may put on the wire, with the alias spellings folded away. The skills
+#: document MISPLACED in prose (it is accepted) but do not list it, because an
+#: enum offering two spellings of one value invites streams to split on it.
+_EXPECTED_TYPE_ENUM = frozenset(vocab.DEFECT_TYPES) - _DEFECT_TYPE_ALIASES
+
+
+def _findings_schema(path: Path) -> dict:
+    """Parse the single ```json findings schema out of a skill file.
+
+    The skills say their output "can be passed directly to the foundry defect
+    sync tools", which makes this block normative: it outranks the prose beside
+    it. Parsing it (rather than grepping it) is what lets the assertions below
+    compare SETS -- a substring check cannot tell a missing member from a
+    present one, and cannot see a new key at all.
+    """
+    blocks = re.findall(r"```json\n(.*?)\n```", _read(path), re.S)
+    assert len(blocks) == 1, (
+        f"{_rel(path)} has {len(blocks)} ```json blocks, expected exactly 1. "
+        f"These assertions target the findings schema; if the file gained a "
+        f"second schema, select the right one rather than dropping the checks."
+    )
+    try:
+        return json.loads(blocks[0])
+    except json.JSONDecodeError as exc:  # pragma: no cover - fails loudly
+        raise AssertionError(
+            f"{_rel(path)}'s findings schema is not valid JSON ({exc}). The "
+            f"file states it can be passed directly to the defect sync tools, "
+            f"so a schema that does not parse is a broken contract."
+        ) from exc
+
+
+def _iter_enums(node: object, key: str | None = None) -> list[tuple[str, frozenset]]:
+    """Every ``enum`` in a JSON-schema tree, paired with the property it sits on."""
+    found: list[tuple[str, frozenset]] = []
+    if isinstance(node, dict):
+        if isinstance(node.get("enum"), list) and key is not None:
+            found.append((key, frozenset(node["enum"])))
+        for child_key, child in node.items():
+            # Recurse under the child's own name, except through the JSON-Schema
+            # keywords that merely wrap a subtree -- otherwise every property
+            # would be reported as "properties" or "items".
+            next_key = key if child_key in {"properties", "items"} else child_key
+            found.extend(_iter_enums(child, next_key))
+    elif isinstance(node, list):
+        for child in node:
+            found.extend(_iter_enums(child, key))
+    return found
+
+
 @pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
 def test_skill_schemas_use_the_reconciled_vocabulary(path: Path) -> None:
-    """D-041: classification is DEFECT/OBSERVATION; type is a DEFECT_TYPES member."""
-    text = _read(path)
-    assert '"classification": {"type": "string", "enum": ["DEFECT", "OBSERVATION"]' in text, (
-        f"{_rel(path)}'s schema has no classification enum. The channel a "
-        f"finding goes down is the field that replaced severity, and it must "
-        f"be closed over exactly the two FINDING_CLASSES members."
+    """D-048: the enum is compared against vocab.py, not against a re-typed tuple.
+
+    The assertion this replaces was a CONTAINS check over five hard-coded
+    strings. Four drift scenarios passed it unchanged: vocab.py gaining a
+    member the skill never learns; the skill advertising a value the server
+    rejects; the skill dropping a member outside the five; and the severity
+    axis returning under a new key. All four now fail.
+    """
+    schema = _findings_schema(path)
+    enums = dict(_iter_enums(schema))
+
+    assert enums.get("classification") == frozenset(vocab.FINDING_CLASSES), (
+        f"{_rel(path)}'s classification enum is {sorted(enums.get('classification') or [])}, "
+        f"but vocab.FINDING_CLASSES is {sorted(vocab.FINDING_CLASSES)}. The channel "
+        f"a finding goes down must be closed over exactly the FINDING_CLASSES "
+        f"members -- no more (a third channel nothing reads) and no fewer (a "
+        f"stream with nowhere to file comment prose files it as a defect)."
     )
-    for defect_type in ("MISSING", "WRONG", "THIN", "HOLLOW", "PARTIAL"):
-        assert f'"{defect_type}"' in text, (
-            f"{_rel(path)}'s type enum omits {defect_type}, so a stream "
-            f"emitting it writes a value the schema rejects."
-        )
+
+    actual_types = enums.get("type")
+    assert actual_types is not None, (
+        f"{_rel(path)}'s findings schema has no `type` enum at all, so a stream "
+        f"may put any string on the wire and have it refused at the boundary."
+    )
+    assert actual_types == _EXPECTED_TYPE_ENUM, {
+        "file": _rel(path),
+        "advertised_but_not_a_vocab_member": sorted(actual_types - frozenset(vocab.DEFECT_TYPES)),
+        "vocab_member_the_skill_never_learned": sorted(_EXPECTED_TYPE_ENUM - actual_types),
+        "why": (
+            "The skill's type enum must equal vocab.DEFECT_TYPES minus the "
+            "alias spellings. A value the skill advertises but vocab rejects "
+            "is dropped at the MCP boundary before it reaches the ledger "
+            "(this is D-045's failure mode); a vocab member the skill omits "
+            "is a verdict the stream has no legal way to file."
+        ),
+    }
+
+    text = _read(path)
     assert "ARCHITECTURAL_PLACEMENT" in text and "MISPLACED" in text, (
         f"{_rel(path)} does not record that MISPLACED folds onto "
         f"ARCHITECTURAL_PLACEMENT. Both spellings are live in agent contracts."
@@ -1051,6 +1191,32 @@ def test_skill_schemas_use_the_reconciled_vocabulary(path: Path) -> None:
     assert "schemas/vocab.py#DEFECT_TYPES" in text, (
         f"{_rel(path)} does not cite the vocabulary module as the source of "
         f"truth, so this enum becomes a seventh copy free to drift."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schemas_carry_no_enum_outside_the_allowed_axes(path: Path) -> None:
+    """D-048: the positive half -- no key other than the allowed three grades.
+
+    ``test_skill_schemas_carry_no_severity_axis`` greps for the literal
+    ``"severity"``. That catches the field coming back under its old name and
+    nothing else. This catches it coming back under ANY name, which is the
+    form a future author is far likelier to reach for.
+    """
+    schema = _findings_schema(path)
+    unexpected = {
+        key: sorted(members)
+        for key, members in _iter_enums(schema)
+        if key not in _ALLOWED_ENUM_KEYS
+    }
+    assert not unexpected, (
+        f"{_rel(path)}'s findings schema declares enum-bearing propert(ies) "
+        f"{unexpected} outside the allowed axes {sorted(_ALLOWED_ENUM_KEYS)}. "
+        f"Every defect gets fixed, so a graded axis has nothing left to "
+        f"decide -- and a tier reintroduced under a new key ('priority', "
+        f"'impact', 'tier') is the same abolished axis wearing a different "
+        f"name. If a genuinely new closed vocabulary is needed, add it to "
+        f"schemas/vocab.py first and widen _ALLOWED_ENUM_KEYS deliberately."
     )
 
 
@@ -1185,4 +1351,147 @@ def test_start_md_evidence_strip_is_pathspec_scoped() -> None:
         "start.md does not state that a pathspec still commits the `git rm` "
         "deletions. Without that, a lead reads the pathspec as a risk to the "
         "removal and drops it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 3 -- D-045, D-046, D-051: the hand-maintained-list class
+# ---------------------------------------------------------------------------
+#
+# D-046 and D-051 are the same miss twice: a file that needed the FR-004 cite
+# treatment was absent from a hand-written tuple, so converting its peers
+# reported success while it kept its line cites. The tuples above are the
+# lists that were wrong. The two sweeps below are DERIVED from the directory,
+# so a file cannot be missing from them -- a new agent is covered the moment
+# it lands, without anyone remembering to add it.
+
+#: The one agent file permitted to carry `file:line` cites, and the reason.
+#: PATTERNS.md is a commit-pinned run artifact: pattern-mapper writes it at
+#: F0.6 against one tree state and F0.5 pastes its excerpts verbatim into
+#: casting prompts before any casting has committed a line. The line range is
+#: the LOCATOR for an excerpt whose body travels with it, and the body is what
+#: a teammate mirrors -- so the range is verified by matching the quoted body,
+#: never by reading the number. pattern-mapper.md rules on this explicitly in
+#: its own Critical rules block; this exclusion mirrors that ruling rather
+#: than inventing a second one.
+LINE_CITE_EXEMPT_AGENTS = frozenset({"pattern-mapper.md"})
+
+
+def test_the_line_cite_exemption_still_documents_itself() -> None:
+    """An exemption nobody justifies is an exemption nobody can review."""
+    text = _read(PATTERN_MAPPER)
+    assert "PATTERNS.md is a commit-pinned run artifact" in text, (
+        "pattern-mapper.md no longer justifies its own line-cite exemption. "
+        "LINE_CITE_EXEMPT_AGENTS points at that ruling; if the ruling is gone "
+        "the exemption has no basis and the file should be swept like every "
+        "other agent."
+    )
+    assert "a drifted range is still never a finding" in text.lower(), (
+        "pattern-mapper.md lost the rule that its own drifted ranges never "
+        "produce a finding. Without it the exemption becomes a licence to "
+        "file exactly the findings FR-004 abolished."
+    )
+
+
+def test_no_unexempted_agent_file_carries_a_line_cite() -> None:
+    """D-051: intent-carrier.md was in NO tuple, so its cite rotted unseen.
+
+    ``agents/intent-carrier.md`` cited a Forge finalization rule by line range.
+    The range had ALREADY drifted -- it pointed at a markdown coverage table,
+    not at the rule -- making it a live instance of the exact failure FR-004
+    exists to prevent, inside the plugin that ships the rule. Nothing caught
+    it because every line-cite assertion in this module ran over a hand-listed
+    tuple that did not include the file.
+
+    This sweep is derived from the directory. It cannot omit a file.
+    """
+    offenders = {
+        path.name: _LINE_CITE_RE.findall(_read(path))
+        for path in sorted(AGENTS.glob("*.md"))
+        if path.name not in LINE_CITE_EXEMPT_AGENTS
+        and _LINE_CITE_RE.search(_read(path))
+    }
+    assert not offenders, (
+        f"agent file(s) carry line-numbered cite(s): {offenders}. A committed "
+        f"agent .md is not a commit-pinned run artifact -- it is re-read for "
+        f"the life of the plugin while the tree moves under it, so a line hint "
+        f"there rots into a false finding. Cite `path#Symbol` instead. If a "
+        f"file genuinely qualifies for the run-artifact carve-out, add it to "
+        f"LINE_CITE_EXEMPT_AGENTS *with* a stated justification in the file."
+    )
+
+
+def test_the_agent_sweep_actually_reads_files() -> None:
+    """Floor check: a glob that matches nothing asserts nothing."""
+    swept = [p for p in AGENTS.glob("*.md") if p.name not in LINE_CITE_EXEMPT_AGENTS]
+    assert len(swept) >= 10, (
+        f"the agent line-cite sweep found only {len(swept)} files. It is "
+        f"supposed to cover the whole agents/ directory; if the layout moved, "
+        f"repoint the glob rather than letting the assertion go vacuous."
+    )
+    assert any(p.name == "intent-carrier.md" for p in swept), (
+        "intent-carrier.md is not in the swept set -- it is the file D-051 was "
+        "filed against, so it must be covered."
+    )
+
+
+# A `source:` value being handed to Foundry-Defect in agent/skill/command
+# prose. Anchored on the key so prose merely DISCUSSING the vocabulary is not
+# a hit; the value is captured for membership testing.
+_WIRE_SOURCE_RE = re.compile(r"source:\s*`?\"([a-z0-9_-]+)\"")
+
+# Every markdown surface that instructs an agent to file a defect.
+_DEFECT_FILING_PROSE = (
+    sorted(AGENTS.glob("*.md"))
+    + sorted(FOUNDRY_ROOT.glob("skills/*/SKILL.md"))
+    + sorted(COMMANDS.glob("*.md"))
+)
+
+
+def test_every_instructed_defect_source_is_a_vocab_member() -> None:
+    """D-045: temper/SKILL.md instructed a `source` the server hard-refuses.
+
+    ``skills/temper/SKILL.md`` told its sweep pass to file findings with
+    ``source: "temper-sweep"``. That value is not a DEFECT_SOURCE_IDS member,
+    so it was refused twice over -- once by the MCP input schema, which builds
+    its enum from ``sorted(DEFECT_SOURCE_IDS)``, and once server-side. Every
+    finding a TEMPER sweep filed as instructed was dropped before reaching the
+    ledger, and the same file used the legal ``"temper"`` two screens earlier,
+    so it was one drifted spelling rather than a design disagreement.
+
+    Nothing connected the markdown to the vocabulary, so nothing failed. This
+    is that connection, and it is derived over every file that instructs a
+    filing rather than over a list someone has to maintain.
+    """
+    illegal: dict[str, list[str]] = {}
+    for path in _DEFECT_FILING_PROSE:
+        bad = sorted(
+            {
+                value
+                for value in _WIRE_SOURCE_RE.findall(_read(path))
+                if value not in vocab.DEFECT_SOURCE_IDS
+            }
+        )
+        if bad:
+            illegal[_rel(path)] = bad
+    assert not illegal, (
+        f"prose instructs Foundry-Defect `source` value(s) the server refuses: "
+        f"{illegal}. Legal values are {sorted(vocab.DEFECT_SOURCE_IDS)}. A "
+        f"refused source is not a soft failure -- the finding never reaches "
+        f"the ledger, so the stream reports work it did not persist. Fix the "
+        f"spelling in the prose; do not widen the vocabulary to match a typo."
+    )
+
+
+def test_the_source_sweep_finds_the_known_call_sites() -> None:
+    """Floor check: the regex must actually match the prose it guards."""
+    found = {
+        value
+        for path in _DEFECT_FILING_PROSE
+        for value in _WIRE_SOURCE_RE.findall(_read(path))
+    }
+    assert "temper" in found, (
+        "the `source:` sweep matched no `temper` instruction. skills/temper/"
+        "SKILL.md routes its findings that way, so a miss means the regex no "
+        "longer matches the prose shape and the guard has gone vacuous."
     )

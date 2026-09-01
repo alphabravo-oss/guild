@@ -194,7 +194,7 @@ Runs when `--url <url>` was passed to `/foundry:start`. Exploratory, not spec-ba
 
 ### Findings routing
 
-After each sweep pass, sync findings via `Foundry-Defect` with `source: "temper-sweep"`
+After each sweep pass, sync findings via `Foundry-Defect` with `source: "temper"`
 and `TS-` IDs. F3 GRIND fixes them. Then start the next sweep pass focusing on
 changed files.
 
