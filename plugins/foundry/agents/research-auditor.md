@@ -72,8 +72,8 @@ For each RA-N item:
 | N/A                  | Recommendation doesn't apply to any in-scope files                   |
 | HONORED_WITH_OVERRIDE | Deviation exists but concerns.md documents a justified override     |
 
-5. **Record evidence.** Every HONORED verdict needs a file:line citation. Every IGNORED/CONFLICT needs:
-   - The file:line where the deviation occurs
+5. **Record evidence.** Every HONORED verdict needs a `path#Symbol` citation. Every IGNORED/CONFLICT needs:
+   - The `path#Symbol` where the deviation occurs
    - The specific code that violates the recommendation
    - What the research said should happen instead
 
@@ -129,10 +129,12 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 ## Rules
 
 - **NEVER modify code.** You are read-only verification.
-- **Every verdict needs evidence.** HONORED requires a file:line citation. IGNORED/CONFLICT requires a file:line citation AND a clear statement of what was expected vs what was found.
+- **Every verdict needs evidence, cited by symbol.** HONORED requires a `path#Symbol` citation; IGNORED/CONFLICT requires one AND a clear statement of what was expected vs what was found. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is, no verdict ever turns on the line component, and cite-refresh sweeps happen only under an explicit directive.
 - **Grep before asserting.** Never claim "code uses X" without running a grep to verify.
 - **Check concerns.md for overrides.** A documented override flips IGNORED → HONORED_WITH_OVERRIDE.
-- **No severity classification.** All deviations are defects. The GRIND phase fixes them.
+- **No severity classification.** All deviations are defects. The GRIND phase fixes them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
+- **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not a research deviation. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Every real deviation from a recommendation stays a defect, and this rule gives you no discretion to call one "cosmetic."
+- **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the research was only advisory."
 - **If there's no research (no files in `research/` and no Informational items in spec), return immediately with empty findings and a note**: "No research recommendations to audit." Don't make up checks.
 - **Run in parallel with other INSPECT streams.** Don't wait for TRACE/PROVE/SIGHT/TEST. Return your findings independently.
 - **Regression check.** If a previous cycle's research audit had HONORED items that are now IGNORED, flag as regression.

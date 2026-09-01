@@ -1,7 +1,7 @@
 ---
 description: "Start a foundry build-verify-fix loop"
 argument-hint: "<SCOPE> [--spec PATH] [--url URL] [--temper] [--nyquist] [--max-cycles N] [--no-ui] [--output-dir DIR]"
-allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/foundry.sh:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
+allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
 disable-model-invocation: "true"
 ---
 
@@ -12,6 +12,14 @@ Execute the setup script:
 ```!
 "${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh" $ARGUMENTS
 ```
+
+Install the pre-commit guard into the target repo:
+
+```!
+"${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh"
+```
+
+The installer places `${CLAUDE_PLUGIN_ROOT}/hooks/pre-commit-guard.sh` on the target repo's hook path, so every repo a run touches gets the guard and no run depends on a hand-installed copy. The guard judges the index only — `git diff --cached` — which is what makes it safe in the shared working tree teammates commit from: a peer's unstaged work can never make it fire, and a correctly pathspec-scoped commit (see `agents/teammate.md` COMMIT PROTOCOL) passes it.
 
 You are the **Foundry Lead**. Follow `Foundry-Next` literally at every step. It tells you the exact next tool call. Do NOT deliberate between tool calls — if you catch yourself thinking, call `Foundry-Next` and execute whatever it says.
 
@@ -523,6 +531,8 @@ Call `Foundry-Gate(phase='cast')`.
 - **SIGHT** — lead runs Playwright directly (only exception to "lead never does work").
 - **TEST / PROBE** — inline test suite / API smoke.
 
+**Every INSPECT stream files comment-prose findings as observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word, an enumeration that no longer matches what it enumerates — that class goes to the run's `observations.json` ledger; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Everything else remains a defect on the standard the streams already hold. **The never-demote denylist is absolute:** a security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — an attempt to demote one is rejected and fires the audit tripwire. This split is written into each stream agent's own `## Rules` block, so it is in force on a fresh checkout: it needs no per-run configuration and no directive to enable it.
+
 **Pass the Serena token to TRACE and FLOW_TRACE.** Both wiring streams run on the Serena LSP tools, and both fail open to `NOT_VERIFIED` when those tools are unavailable. When you spawn them, include the `FOUNDRY_SERENA_HEALTH` token you recorded at F0 (see **Serena preflight (F0)** above) in the agent prompt, under the name each agent declares: `FOUNDRY_SERENA_HEALTH` for TRACE (`agents/tracer.md`), `serena_health` for FLOW_TRACE (`agents/flow-tracer.md`). Passing it under the other name delivers nothing — the agent reads only its own field.
 
 The token is diagnostic, never a gate. It lets a `NOT_VERIFIED` record name *which* state the daemon was in (`NOT_INSTALLED`, `INSTALLED_BUT_STOPPED`, `RUNNING_BUT_UNHEALTHY`, `DRIFTED`, `UNKNOWN`) instead of reporting an unattributed failure. **It NEVER gates the spawn, NEVER skips a stream, and NEVER halts the run.** Spawn both streams normally for every token, including `HEALTHY`, and let each agent's own Step 0 gate decide its verdicts — an unhealthy daemon changes what the streams can *verify*, never whether they *run*. If no token was recorded, spawn anyway and omit the field.
@@ -569,7 +579,7 @@ Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")`
 
 Shut down all teammates → generate report → `Foundry-Phase("done")`.
 
-**Evidence lifecycle (mandatory F6 step):** teammates commit `evidence/*.log` during the run because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted, the logs are consumed and inert. As part of F6 DONE — after the report, before `Foundry-Phase("done")` — remove them from git in one commit: `git rm -r evidence/ && git commit -m "chore(foundry): strip consumed run evidence"`. Do not leave evidence logs in the branch; they rot (they pin file contents and line numbers at one commit) and are never read again after acceptance.
+**Evidence lifecycle (mandatory F6 step):** teammates commit `evidence/*.log` during the run because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted, the logs are consumed and inert. As part of F6 DONE — after the report, before `Foundry-Phase("done")` — remove them from git in one commit: `git rm -r evidence/ && git commit -m "chore(foundry): strip consumed run evidence"`. Do not leave evidence logs in the branch. They are commit-pinned run artifacts — the one class of file where a line hint is legitimate, precisely because it is frozen against a single commit — so they go stale the moment the tree moves past that commit, and they are never read again after acceptance.
 
 ## CONTEXT MANAGEMENT
 

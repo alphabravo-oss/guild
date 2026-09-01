@@ -1,0 +1,61 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_protocol_prose.py -v
+# evidence-for: US-001, US-002, US-004, US-005, US-007, AC-001, AC-002, AC-003, AC-004, AC-014, AC-015, AC-016, AC-017, FR-003, FR-004, FR-009, FR-010, FR-011, FR-016, FR-026
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: cachedir: .*
+# evidence-volatile: rootdir: .*
+# evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+
+
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpuU1y3Q/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collecting ... collected 44 items
+
+tests/test_protocol_prose.py::test_the_pinned_prose_files_all_exist PASSED [  2%]
+tests/test_protocol_prose.py::test_each_stream_agent_routes_comment_prose_to_observations[assayer.md] PASSED [  4%]
+tests/test_protocol_prose.py::test_each_stream_agent_routes_comment_prose_to_observations[tracer.md] PASSED [  6%]
+tests/test_protocol_prose.py::test_each_stream_agent_routes_comment_prose_to_observations[flow-tracer.md] PASSED [  9%]
+tests/test_protocol_prose.py::test_each_stream_agent_routes_comment_prose_to_observations[research-auditor.md] PASSED [ 11%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_refusal_is_server_side[assayer.md] PASSED [ 13%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_refusal_is_server_side[tracer.md] PASSED [ 15%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_refusal_is_server_side[flow-tracer.md] PASSED [ 18%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_refusal_is_server_side[research-auditor.md] PASSED [ 20%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_never_demote_denylist_absolutely[assayer.md] PASSED [ 22%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_never_demote_denylist_absolutely[tracer.md] PASSED [ 25%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_never_demote_denylist_absolutely[flow-tracer.md] PASSED [ 27%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_never_demote_denylist_absolutely[research-auditor.md] PASSED [ 29%]
+tests/test_protocol_prose.py::test_the_split_did_not_soften_any_existing_absolute[assayer.md] PASSED [ 31%]
+tests/test_protocol_prose.py::test_the_split_did_not_soften_any_existing_absolute[tracer.md] PASSED [ 34%]
+tests/test_protocol_prose.py::test_the_split_did_not_soften_any_existing_absolute[flow-tracer.md] PASSED [ 36%]
+tests/test_protocol_prose.py::test_the_split_did_not_soften_any_existing_absolute[research-auditor.md] PASSED [ 38%]
+tests/test_protocol_prose.py::test_start_md_f2_roster_carries_the_split PASSED [ 40%]
+tests/test_protocol_prose.py::test_teammate_commit_protocol_mandates_a_pathspec PASSED [ 43%]
+tests/test_protocol_prose.py::test_teammate_commit_protocol_forbids_the_bare_commit PASSED [ 45%]
+tests/test_protocol_prose.py::test_teammate_commit_protocol_covers_new_files_deletes_and_renames PASSED [ 47%]
+tests/test_protocol_prose.py::test_teammate_commit_protocol_codifies_the_no_stash_rule PASSED [ 50%]
+tests/test_protocol_prose.py::test_teammate_protocol_offers_no_hook_bypass_anywhere PASSED [ 52%]
+tests/test_protocol_prose.py::test_teammate_still_forbids_git_add_dot PASSED [ 54%]
+tests/test_protocol_prose.py::test_teammate_grind_protocol_has_the_adjacent_path_step PASSED [ 56%]
+tests/test_protocol_prose.py::test_teammate_adjacent_path_statement_names_all_three_axes PASSED [ 59%]
+tests/test_protocol_prose.py::test_teammate_adjacent_path_test_must_drive_a_different_path PASSED [ 61%]
+tests/test_protocol_prose.py::test_teammate_states_foundry_fix_refuses_without_the_declarations PASSED [ 63%]
+tests/test_protocol_prose.py::test_command_allow_lists_no_longer_permit_the_bash_twin[start.md] PASSED [ 65%]
+tests/test_protocol_prose.py::test_command_allow_lists_no_longer_permit_the_bash_twin[resume.md] PASSED [ 68%]
+tests/test_protocol_prose.py::test_start_md_installs_the_commit_guard PASSED [ 70%]
+tests/test_protocol_prose.py::test_start_md_references_the_installer_through_the_plugin_root PASSED [ 72%]
+tests/test_protocol_prose.py::test_lead_discipline_explains_pathspec_commits PASSED [ 75%]
+tests/test_protocol_prose.py::test_lead_discipline_keeps_the_no_worktrees_rule PASSED [ 77%]
+tests/test_protocol_prose.py::test_cite_sites_use_the_symbol_form[assayer.md] PASSED [ 79%]
+tests/test_protocol_prose.py::test_cite_sites_use_the_symbol_form[tracer.md] PASSED [ 81%]
+tests/test_protocol_prose.py::test_cite_sites_use_the_symbol_form[research-auditor.md] PASSED [ 84%]
+tests/test_protocol_prose.py::test_cite_sites_use_the_symbol_form[teammate.md] PASSED [ 86%]
+tests/test_protocol_prose.py::test_cite_sites_state_the_symbol_is_authoritative[assayer.md] PASSED [ 88%]
+tests/test_protocol_prose.py::test_cite_sites_state_the_symbol_is_authoritative[tracer.md] PASSED [ 90%]
+tests/test_protocol_prose.py::test_cite_sites_state_the_symbol_is_authoritative[research-auditor.md] PASSED [ 93%]
+tests/test_protocol_prose.py::test_cite_sites_state_the_symbol_is_authoritative[teammate.md] PASSED [ 95%]
+tests/test_protocol_prose.py::test_teammate_citation_template_cites_symbols_not_line_ranges PASSED [ 97%]
+tests/test_protocol_prose.py::test_teammate_states_where_line_hints_are_still_permitted PASSED [100%]
+
+============================== 44 passed in 0.02s ==============================

@@ -158,7 +158,7 @@ The spec wasn't written in a vacuum. The research files in `foundry-archive/{run
 
 | Verdict           | Meaning                                                        |
 |-------------------|----------------------------------------------------------------|
-| RESEARCH_HONORED  | Code follows the recommendation; cite the file:line proof      |
+| RESEARCH_HONORED  | Code follows the recommendation; cite the `path#Symbol` proof  |
 | RESEARCH_IGNORED  | Recommendation was actionable but the code does not follow it  |
 | RESEARCH_CONFLICT | Code actively contradicts the recommendation (stronger than ignored — the code does the opposite) |
 | RESEARCH_N/A      | Recommendation doesn't apply to any code in scope              |
@@ -228,7 +228,7 @@ If ANY stub pattern is detected, the verdict is **HOLLOW** (not VERIFIED), even 
 
 When reporting HOLLOW verdicts for stubs, include:
 - The exact stub pattern found
-- The file and line number
+- The file and symbol, cited as `path#Symbol`
 - What the stub SHOULD be doing based on the spec
 
 ## Output Format
@@ -315,12 +315,14 @@ Your job is to be RIGHT. Adopt these principles:
 - **NEVER rationalize.** If the code doesn't match your expectation from the spec, it's a defect. Do not explain away gaps.
 - **NEVER accept "close enough".** Either it implements the requirement or it doesn't.
 - **Read FULL function bodies**, not just signatures. Stubs with correct signatures are HOLLOW, not VERIFIED.
-- **Cite both sides.** Every verdict must cite the spec text AND the code location.
+- **Cite both sides, by symbol.** Every verdict must cite the spec text AND the code location, written as `path#Symbol`. The symbol is authoritative: a cite whose symbol resolves is valid however stale any line hint beside it has become. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive.
 - **Flag systemic patterns.** Three similar gaps are a root cause, not three separate issues.
 - **effort: max** — be exhaustive, trace every code path, check every error branch.
 - **EVERY non-VERIFIED verdict is a defect.** HOLLOW, THIN, PARTIAL, MISSING, WRONG — all go in the `defects` array. No exceptions, no deferrals, no "deferred to next sprint."
 - **Missing prerequisites are defects.** If the spec requires X and X doesn't work because something needs to be added, configured, or wired up at any layer — that's a MISSING defect. "Y doesn't support X" means "defect: Y needs X." The GRIND phase handles it.
-- **No severity classification.** Do not classify defects by severity. Every defect gets fixed. Remove any temptation to skip "minor" issues.
+- **No severity classification.** Do not classify defects by severity. Every defect gets fixed. Remove any temptation to skip "minor" issues. Severity is not the axis that decides where a finding goes — channel is, and the next two rules are the whole of it.
+- **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches the thing it enumerates — that class is comment prose. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. This is a channel, not a severity tier, and it buys you no discretion over anything else.
+- **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "it was only a comment."
 - **No "deferred" or "out of scope" verdicts.** If the spec says it, the code must do it. Period.
 - **Displacement check.** After verifying spec requirements, scan for code that exists WITHOUT spec justification. Report as DX-N findings. New features that pile on top of old code without removing the old code are leaving a mess.
 - **Research compliance is non-optional.** Research recommendations are not suggestions. If research says "use X library", the code must use X. A casting that implements the spec perfectly while ignoring research is a defective casting — log every deviation to the `defects` array with `type: "RESEARCH_DEVIATION"`. The only escape is a documented override in `concerns.md` with a justified reason.

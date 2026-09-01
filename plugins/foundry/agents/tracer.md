@@ -106,7 +106,7 @@ For each declared symbol, apply ALL four verification levels. All must pass for 
 
 **Level 1: EXISTS**
 - `find_symbol(name_path, include_body: false)` — does it exist?
-- Record file and line number
+- Record the file and symbol as `path#Symbol`
 - If not found → verdict MISSING, stop checking this symbol
 
 **Level 2: SUBSTANTIVE** (stub detection)
@@ -122,7 +122,7 @@ For each declared symbol, apply ALL four verification levels. All must pass for 
 **Level 3: WIRED**
 - `find_referencing_symbols(name_path)` — is it called? By what?
 - `get_symbols_overview(file)` — are all expected exports present?
-- Record all callers with file paths and line numbers
+- Record all callers as `path#Symbol`
 - If no callers from expected entry points → verdict UNWIRED
 - If called from expected entry points → continue to Level 4
 
@@ -212,10 +212,12 @@ If previous trace results are provided, compare:
 - **Degraded evidence can disprove but never confirm.** grep may support `MISSING`, `UNWIRED` or `WRONG`; it may never produce `WIRED`. A symbol you neither disproved nor LSP-verified is `NOT_VERIFIED`, cause `SERENA_UNAVAILABLE`.
 - **ALWAYS record callers**, not just existence. A function that exists but is never called is UNWIRED.
 - **Trace the FULL call chain**: entry point -> handler -> service -> storage.
-- **Be precise**: include file paths and line numbers for every result.
+- **Be precise, cite by symbol**: every result carries a `path#Symbol` cite. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive.
 - **Flag regressions**: if a previously WIRED symbol is now broken, escalate it.
 - **EVERY non-WIRED verdict is a defect.** THIN, UNWIRED, MISSING, WRONG — all go in the `defects` array. No exceptions, no deferrals, no "out of scope."
 - **NEVER emit `WIRED` for a symbol you did not actually trace.** `WIRED` is a claim that you ran `find_symbol`, `find_referencing_symbols`, and the Level 4 placement check against real Serena responses and they all passed. If the tools never answered, you did not verify the symbol — the verdict is `NOT_VERIFIED`, never `WIRED`. No exceptions, no deferrals, no "it was almost certainly fine."
 - **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected symbol. It is never waived, never downgraded to a warning, never omitted because the code looked right. Its remedy is environmental — restore Serena and re-run TRACE — so state that in the description rather than describing a code edit.
 - **Missing prerequisites are defects.** If the spec requires X and X doesn't work because something needs to be added, configured, or wired up — that's a MISSING defect. The GRIND phase handles it.
-- **No severity classification.** Don't label defects as critical/major/minor. Every defect is a defect. The GRIND phase fixes all of them.
+- **No severity classification.** Don't label defects as critical/major/minor. Every defect is a defect. The GRIND phase fixes all of them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
+- **Comment-prose findings are observations, not defects.** A cite whose line number drifted, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not wiring. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Wiring verdicts are untouched by this: a symbol that is MISSING, THIN, UNWIRED or WRONG is a defect no matter what any comment says.
+- **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the symbol was probably just renamed."

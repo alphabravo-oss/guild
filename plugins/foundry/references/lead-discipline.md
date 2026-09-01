@@ -28,6 +28,18 @@ If you find yourself wanting to "just add a note" or "clarify scope" in a teamma
 
 Teammates work in the main directory, no `isolation: "worktree"` when spawning agents. Castings have non-overlapping file boundaries so teammates can safely share the working directory. Worktree lifecycle + merge-back adds complexity with no benefit when file ownership is already disjoint.
 
+## Why commits are pathspec-scoped
+
+**The gap in "file ownership is already disjoint."** Disjoint ownership makes the *working tree* safe to share — two teammates never edit the same file. It does not make the *index* safe to share, and the index is shared too. A `git commit` with no pathspec commits the entire index by git's documented default. So a teammate who stages three files of their own and then runs a bare `git commit` publishes every path any peer has staged at that moment, under their own message. Disjoint file ownership does not prevent this; it is orthogonal to it. The commit boundary and the ownership boundary are different boundaries, and only one of them was ever being enforced.
+
+**The fix.** `agents/teammate.md`'s COMMIT PROTOCOL mandates `git commit -m '...' -- <key_files>`. Naming the paths makes the commit boundary equal to the ownership boundary, which is what everyone already assumed it was. Paths not named stay staged and stay their owner's to commit.
+
+**Why not stash.** The obvious alternative — stash the peers' work, commit clean, restore — is worse than the problem. Stash operates on the whole working tree, so it takes peers' uncommitted work with it, and the `--keep-index` variant silently drops the unstaged half of a partially-staged file on restore. The no-stash rule is codified in the teammate protocol for that reason.
+
+**Why the guard judges the index.** The shipped pre-commit guard inspects `git diff --cached`, never the working tree. A working-tree guard (`git diff HEAD`) would fire on a peer's unstaged edits — work the committing teammate cannot fix and did not cause — and the only way past it would be a bypass flag, which would then be used routinely and the guard would stop meaning anything. Judging the index keeps the guard's blame surface identical to the committer's responsibility surface, so no protocol path ever needs a bypass.
+
+This file is rationale. The mechanical steps — staging, the pathspec form, deletes and renames, the no-stash rule — live in `agents/teammate.md`.
+
 ## Why teams are ephemeral
 
 Teams are created per phase, destroyed after. One team at a time — register/unregister via foundry MCP tools. Ephemeral teams prevent stale teammate context from bleeding across phases.
