@@ -57,11 +57,13 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import foundry_mcp
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
@@ -2050,6 +2052,12 @@ def test_liveness_registration_reaches_the_handler_through_dispatch(run_env, tmp
 # cite prose, D-048 the vocabulary, D-056 the liveness tuple, and this). A
 # hand-maintained list of call sites is the same shape of defect one level up,
 # so membership is DERIVED from the source instead.
+#
+# D-066 made it six, and inside this very guard: membership over FILES was
+# derived, membership over DIRECTORIES was typed (``tools/`` as a literal), so
+# the one module most on the MCP request path -- server.py, which owns
+# _DISPATCH -- was the one module the scan could not see. Both axes are derived
+# now; see ``_package_modules``.
 # --------------------------------------------------------------------------- #
 
 # The only sanctioned readers of ``state.json["cycle"]``. Both are total.
@@ -2071,6 +2079,18 @@ def _mentions_state_json(node: ast.AST) -> bool:
     return any(
         isinstance(n, ast.Constant) and n.value == "state.json" for n in ast.walk(node)
     )
+
+
+def _package_modules(root: Path) -> list[Path]:
+    """Every source module in the package tree rooted at ``root``.
+
+    Membership is derived on BOTH axes -- the files in a directory and the
+    directories in the package -- so neither a new module nor a new
+    subpackage has to be remembered anywhere. ``__init__.py`` is included
+    for the same reason: excluding it by name would be one more typed
+    exclusion, and an empty file costs nothing to parse.
+    """
+    return sorted(root.rglob("*.py"))
 
 
 def _raw_state_cycle_reads(path: Path) -> list[str]:
@@ -2126,25 +2146,57 @@ def _raw_state_cycle_reads(path: Path) -> list[str]:
 
 
 def test_every_state_cycle_read_goes_through_a_guarded_reader():
-    """D-059's root cause, asserted as a property of the whole tools package.
+    """D-059's root cause, asserted as a property of the whole installed package.
 
     Before the fix this reported exactly the four sites PROVE named:
     foundry_next_action:3225, _format_status_display:3413,
     _compute_next_action:3814, foundry_get_context:4084.
 
-    Scope is the tools package because that is the MCP request path, where a
-    raise wedges a live run. The two offline scripts that also read the
-    counter are deliberately outside it, not overlooked: scripts/measure-run.py
-    (_read_state_cycle_count) and scripts/migrate-archive.py (_as_cycle) each
-    already carry their OWN total reader with the same bool/int/negative guard,
+    THE BOUNDARY, and why it is the package: every module under
+    ``foundry_mcp`` -- the package root and every subpackage, anchored on the
+    package's own ``__init__`` rather than on a module that happens to sit one
+    level down. D-066: this scan read ``Path(fo.__file__).parent.glob("*.py")``,
+    which derived its members WITHIN tools/ but typed the directory, so the
+    module MOST on the MCP request path was the one it could not see --
+    server.py owns ``_DISPATCH`` and the ``list_tools``/``call_tool`` handlers,
+    and it carries zero total cycle readers of its own. The old scope note
+    offered three reasons for stopping at tools/ and none of them reached
+    server.py: it is inside the request path, it holds no reader of its own to
+    allow-list, and it is a file this casting already owns. Schemas/ and
+    parsers/ hold only pure-data modules today, but the boundary is drawn at
+    the package anyway: "derived over the directories" closes the
+    directory-membership class exactly as "derived over the files" closed the
+    file-membership class, and a scan that is right only for today's directory
+    layout is the same defect waiting on the next subpackage.
+
+    The two offline readers stay outside, now for a structural reason rather
+    than a judgement call: plugins/foundry/scripts/measure-run.py
+    (_read_state_cycle_count) and plugins/foundry/scripts/migrate-archive.py
+    (_as_cycle) are not in this package, and not in the wheel, at all. Each
+    already carries its OWN total reader with the same bool/int/negative guard,
     and neither runs inside a tool call. If either ever grows a raw read, it
-    needs its own guard next to it -- widening this one across module
-    boundaries would mean allow-listing three more reader names here and
-    coupling this casting's test to files it does not own.
+    needs its own guard next to it.
     """
-    tools_dir = Path(fo.__file__).resolve().parent
-    modules = sorted(p for p in tools_dir.glob("*.py") if p.name != "__init__.py")
-    assert modules, f"no tool modules discovered under {tools_dir}"
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    modules = _package_modules(pkg)
+    assert modules, f"no modules discovered under {pkg}"
+
+    # D-066's own regression assertion. Derived independently of the scan
+    # (os.walk, not rglob) so a future narrowing to a directory literal --
+    # `[*pkg.glob("*.py"), *(pkg / "tools").glob("*.py")]`, say -- fails here
+    # by name instead of silently shrinking what the guard below can see.
+    walked = {
+        Path(dirpath).resolve()
+        for dirpath, _dirs, files in os.walk(pkg)
+        if any(f.endswith(".py") for f in files)
+    }
+    assert {p.parent for p in modules} == walked, (
+        f"the scan covers {sorted(str(d.relative_to(pkg)) for d in {p.parent for p in modules})} "
+        f"but the package holds source in "
+        f"{sorted(str(d.relative_to(pkg)) for d in walked)}. Membership must be "
+        f"DERIVED over directories as well as over files -- naming the "
+        f"directories is D-066, the same defect one level up."
+    )
 
     offenders = sorted(o for p in modules for o in _raw_state_cycle_reads(p))
     assert not offenders, (
@@ -2156,6 +2208,54 @@ def test_every_state_cycle_read_goes_through_a_guarded_reader():
         f"_current_cycle -- do not shrink this assertion or add to the "
         f"allow-list, which exists for TOTAL readers only."
     )
+
+
+def test_guard_catches_raw_reads_outside_the_tools_subpackage(tmp_path):
+    """D-066 adjacent-path test (AC-013).
+
+    The path the defect was found on is "a raw read in a module under
+    tools/" -- the only path the old directory literal could reach. The
+    ADJACENT path this drives is the two positions that literal excluded: a
+    module at the PACKAGE ROOT (server.py's position, which owns _DISPATCH)
+    and a module in a NON-tools subpackage. Both carry the exact shape the
+    detector exists to catch -- a raw read that never touches _load_json --
+    and both must be discovered and named.
+
+    Hermetic on purpose: it runs the guard's own two helpers over a synthetic
+    package under tmp_path, so it proves the mechanism without mutating the
+    real tree the way the defect's driving evidence had to.
+    """
+    raw_reader = (
+        "import json\n"
+        "from pathlib import Path\n"
+        "\n"
+        "\n"
+        "def _sneaky_cycle_reader(fdir):\n"
+        "    return json.loads((Path(fdir) / 'state.json').read_text())['cycle']\n"
+    )
+    pkg = tmp_path / "fake_pkg"
+    (pkg / "sub").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "at_package_root.py").write_text(raw_reader, encoding="utf-8")
+    (pkg / "sub" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "sub" / "in_a_subpackage.py").write_text(raw_reader, encoding="utf-8")
+
+    # Both axes of membership: the root module and the nested one are found,
+    # and __init__.py is not excluded by name.
+    modules = _package_modules(pkg)
+    assert sorted(p.relative_to(pkg).as_posix() for p in modules) == [
+        "__init__.py",
+        "at_package_root.py",
+        "sub/__init__.py",
+        "sub/in_a_subpackage.py",
+    ]
+
+    # ...and the detector names both, at the line the read is on.
+    offenders = sorted(o for p in modules for o in _raw_state_cycle_reads(p))
+    assert offenders == [
+        "at_package_root.py::_sneaky_cycle_reader:6",
+        "in_a_subpackage.py::_sneaky_cycle_reader:6",
+    ]
 
 
 @pytest.mark.parametrize(

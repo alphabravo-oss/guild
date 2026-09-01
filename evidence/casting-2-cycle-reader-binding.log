@@ -22,10 +22,17 @@
 #
 # The four sites now route through _current_cycle. The first test below is
 # what closes the CLASS rather than the four instances: it AST-scans every
-# module in foundry_mcp/tools for a read of the state file's "cycle" outside
-# the two total readers (_current_cycle, _server_cycle) and asserts the set is
-# empty, deriving membership from the source instead of a hand-kept list. Run
-# against the pre-fix tree it reports exactly the four sites PROVE named.
+# module in the foundry_mcp package -- the root and every subpackage -- for a
+# read of the state file's "cycle" outside the two total readers
+# (_current_cycle, _server_cycle) and asserts the set is empty, deriving
+# membership from the source instead of a hand-kept list. Run against the
+# pre-fix tree it reports exactly the four sites PROVE named.
+#
+# That scan read foundry_mcp/tools only until D-066, which found the guard
+# deriving its members within a directory while typing the directory -- and
+# omitting server.py, the module that owns _DISPATCH. Membership is derived on
+# both axes now; the mutation that drove it is in
+# evidence/casting-2-cycle-guard-package-scope.log.
 #
 # The last four cases are the adjacent path: a DIFFERENT caller and a
 # DIFFERENT transition (F4 clean-PROVE auto-pass), where the consequence is a
@@ -49,4 +56,4 @@ tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synth
 tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synthesized_verdicts[float] PASSED [ 92%]
 tests/test_orchestrator_gates.py::test_valid_state_cycle_is_stamped_on_synthesized_verdicts PASSED [100%]
 
-====================== 13 passed, 75 deselected in 0.64s =======================
+====================== 13 passed, 76 deselected in 0.33s =======================

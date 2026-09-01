@@ -39,6 +39,7 @@
 #
 # AC-023 / FR-017: casting_commit reaches foundry_accept_casting over MCP, so
 # the evidence re-execution path stops being dead on the MCP surface.
-........................................................................ [ 96%]
-...                                                                      [100%]
-75 passed in 0.58s
+
+........................................................................ [ 80%]
+.................                                                        [100%]
+89 passed in 0.47s
