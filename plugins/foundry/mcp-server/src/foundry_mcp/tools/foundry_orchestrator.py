@@ -15,6 +15,14 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.schemas.vocab import (
+    DEFECT_SOURCE_IDS,
+    DEFECT_TYPES,
+    STREAM_WIRE_IDS,
+    canonical_defect_type,
+    never_demote_class,
+    observation_class,
+)
 from foundry_mcp.tools.foundry_state import (
     clear_active_run,
     get_run_dir,
@@ -140,6 +148,35 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# --------------------------------------------------------------------------- #
+# Server-owned cycle counter (FR-005 / ST-001 / AC-008).
+#
+# Before this, ``state.json["cycle"]`` was written once as 0 by foundry_init and
+# never incremented by any code path, so every cycle number in the data model
+# was an integer the LEAD asserted as a tool argument. grand-vulture's state.json
+# reads "cycle": 0 while its defects.json spans caller-asserted cycles 0-17.
+#
+# The counter now advances as an effect of handling the F3 GRIND -> F2 INSPECT
+# boundary in ``foundry_mark_phase_complete`` (the ``inspect_start`` token). It
+# is the key for the per-cycle stream roll-up (FR-014) and for the per-class
+# consecutive-cycle escalation count (FR-006), both of which are meaningless
+# against a caller-asserted number. Tools that used to trust a caller-supplied
+# ``cycle`` for persistence now stamp this value instead.
+# --------------------------------------------------------------------------- #
+
+
+def _current_cycle(fdir: Path) -> int:
+    """Return the server-owned cycle counter. Never caller-supplied.
+
+    Returns 0 for a missing, absent, or malformed value so every reader gets a
+    usable integer rather than having to guard the state file's shape.
+    """
+    value = _load_json(fdir / "state.json").get("cycle", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
 # Single compiled source of truth for the requirement-ID grammar. Used by
 # BOTH the requirement count and the requirement-ID list so the P3 verdict
 # synthesis writes exactly one row per ID the DONE gate's verdict_coverage
@@ -192,39 +229,58 @@ def _count_spec_requirements(project_root: str) -> int:
     return len(_spec_requirement_ids(project_root))
 
 
+def _marker_counts(marker: Path) -> dict | None:
+    """Parse a ``.{stream}-complete`` marker's ``key=value`` body.
+
+    Returns ``{"items_checked", "items_total", "findings"}`` with ``findings``
+    possibly None (the key absent), or None when the marker cannot be read.
+    Kept as the load path for archives written before the per-cycle roll-up
+    existed — those runs have markers and no ``stream-rollup.json``.
+    """
+    if not marker.exists():
+        return None
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    counts: dict = {"items_checked": 0, "items_total": 0, "findings": None}
+    for line in text.splitlines():
+        for key in ("items_checked", "items_total", "findings"):
+            if line.startswith(f"{key}="):
+                try:
+                    counts[key] = int(line.split("=", 1)[1].strip())
+                except (ValueError, IndexError):
+                    pass
+    return counts
+
+
 def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     """True when the recorded PROVE stream is clean: 0 findings AND >=95%
-    requirement coverage.
+    requirement coverage across THIS cycle's records.
 
-    Reads the aggregate counts ``foundry_mark_stream`` stamps into
-    ``.prove-complete`` (which stores ONLY aggregate counts, not
-    per-requirement verdicts — the reason P3 must synthesize). Mirrors the
-    >=95% coverage threshold enforced at stream-mark time.
+    Coverage is read from the per-cycle roll-up (FR-014) so a PROVE run
+    delivered as several partial tranches is judged on its cycle TOTAL rather
+    than on whichever tranche happened to be written last. Archives predating
+    the roll-up fall back to the marker's aggregate counts.
+
+    A spec that parses to ZERO requirements is never clean (FR-020 / AC-025).
+    Previously the >=95% check was skipped when ``spec_count == 0``, so any
+    ``.prove-complete`` with ``findings=0`` on an unresolvable or unparseable
+    spec drove the F4 auto-VERIFY path — manufacturing a passing run out of a
+    spec nothing had actually been proved against.
     """
     marker = fdir / ".prove-complete"
     if not marker.exists():
         return False
-    try:
-        text = marker.read_text(encoding="utf-8")
-    except OSError:
+    totals = _rollup_totals(fdir, _current_cycle(fdir), "prove") or _marker_counts(marker)
+    if totals is None:
         return False
-    items_checked = 0
-    findings: int | None = None
-    for line in text.splitlines():
-        if line.startswith("items_checked="):
-            try:
-                items_checked = int(line.split("=", 1)[1].strip())
-            except (ValueError, IndexError):
-                pass
-        elif line.startswith("findings="):
-            try:
-                findings = int(line.split("=", 1)[1].strip())
-            except (ValueError, IndexError):
-                pass
-    if findings is None or findings != 0:
+    if totals.get("findings") is None or totals["findings"] != 0:
         return False
     spec_count = _count_spec_requirements(project_root)
-    if spec_count > 0 and items_checked < spec_count * 0.95:
+    if spec_count <= 0:
+        return False
+    if totals["items_checked"] < spec_count * 0.95:
         return False
     return True
 
@@ -554,6 +610,29 @@ def foundry_gate(
         if open_count > 0:
             passed = False
             reason = f"{open_count} open defect(s) remain"
+
+        # AC-011 / ST-003: escalation NEVER waives closure. Swapping N
+        # per-instance packets for one structural packet changes the shape of
+        # the work, not whether every instance must reach fixed. Stated as its
+        # own named check so the guarantee is visible in the checklist rather
+        # than merely implied by the open-defect count above.
+        escalated_open = _escalated_classes(fdir, project_root)
+        if escalated_open:
+            passed = False
+            reason = (
+                f"{len(escalated_open)} escalated defect class(es) still have open "
+                f"instances: {', '.join(sorted(escalated_open))}"
+            )
+            hint = (
+                "A structural fix must still close every defect of the class. "
+                "Escalation is not a waiver."
+            )
+        checklist.append({
+            "check": f"escalated_classes_closed (open classes={len(escalated_open)})",
+            "ok": not escalated_open,
+            "classes": sorted(escalated_open),
+        })
+
         if teams_result["active"]:
             passed = False
             reason = f"Active teams: {', '.join(teams_result['teams'])}"
@@ -598,31 +677,153 @@ def foundry_gate(
 
 # --- Stream markers ---
 
-# CLOSED VOCABULARY — verification streams recordable via Foundry-Stream.
-# Single source of truth for the runtime guard AND the MCP tool's JSON-Schema
-# enum (server.py derives its enum from this set), so the two sites cannot
-# drift — the AC-013 defect was exactly that drift: the schema advertised
-# streams the runtime rejected. coverage_diff joined per D-008: the phase
-# guide (plugins/foundry/commands/start.md, F2 INSPECT stream roster)
-# defines COVERAGE_DIFF as an F2 INSPECT stream for MIGRATION runs, and the
-# agent contract (plugins/foundry/agents/coverage-diff.md) emits
-# "stream": "coverage_diff" — rejecting a name an agent contract declares
-# was the same validator/contract disagreement (GI-003) this vocabulary
-# repairs. Recordable is NOT required: the required-stream computation
-# in _check_streams_complete is intentionally independent.
-# Extend only via phase-level RFC.
-VALID_STREAMS = frozenset(
-    {
-        "trace",
-        "prove",
-        "sight",
-        "test",
-        "probe",
-        "research_audit",
-        "flow_trace",
-        "coverage_diff",
+# Verification streams recordable via Foundry-Stream.
+#
+# FR-013 / CT-002: this is no longer a declaration, it is a READ of the one
+# canonical vocabulary module. The set used to be re-typed here, in server.py's
+# JSON-Schema enum, in foundry_sync_defects' local `valid_sources`, in two
+# display loops and in the marker-clear lists — six copies that drifted
+# independently (the schema advertised streams the runtime rejected; the sync
+# coercion set disagreed with both). Every one of those sites now reads
+# schemas/vocab.py.
+#
+# The name is retained as an alias because it is part of this module's public
+# surface. Recordable is NOT required: the required-stream computation in
+# _check_streams_complete is intentionally independent.
+VALID_STREAMS = STREAM_WIRE_IDS
+
+
+# --------------------------------------------------------------------------- #
+# Per-cycle stream roll-up (FR-014 / CT-003 / AC-020 / OT-009).
+#
+# The `.{stream}-complete` marker is a single file OVERWRITTEN on every record,
+# so it can only ever carry the last write. That is why the old drop-warning
+# compared against "the previous write of this file" rather than against cycle
+# N-1, and why a PROVE run delivered as two partial tranches lost the first one.
+#
+# The roll-up is the accumulation surface the marker cannot be: records are
+# appended under the SERVER cycle counter, partial records are accepted and
+# stored as they arrive, coverage thresholds are evaluated exactly once per
+# cycle at the streams-complete check (where the full picture exists), and drop
+# warnings compare cycle N's total against cycle N-1's total.
+#
+# Accumulation rule across the records of one cycle:
+#   items_checked, findings -> SUM  (each record covers a disjoint tranche)
+#   items_total             -> MAX  (every tranche reports the same population
+#                                    denominator; summing would multiply it)
+# --------------------------------------------------------------------------- #
+
+ROLLUP_FILENAME = "stream-rollup.json"
+
+
+def _rollup_totals(fdir: Path, cycle: int, stream: str) -> dict | None:
+    """Return this cycle's accumulated totals for one stream, or None.
+
+    None means the cycle has no record for that stream at all \u2014 distinct from
+    a recorded zero, which callers must be able to tell apart.
+    """
+    data = _load_json(fdir / ROLLUP_FILENAME)
+    entry = data.get("cycles", {}).get(str(cycle), {}).get(stream)
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "items_checked": entry.get("items_checked", 0),
+        "items_total": entry.get("items_total", 0),
+        "findings": entry.get("findings", 0),
+        "records": len(entry.get("records", [])),
     }
-)
+
+
+def _record_stream_rollup(
+    fdir: Path,
+    cycle: int,
+    stream: str,
+    items_checked: int,
+    items_total: int,
+    findings_count: int,
+    declared_cycle: int,
+) -> dict:
+    """Append one (possibly partial) stream record to the cycle's roll-up.
+
+    ``declared_cycle`` is what the caller asserted; it is retained per record
+    for audit but is NEVER the key \u2014 the key is the server counter (FR-005).
+    Returns the cycle's totals AFTER this record.
+    """
+    path = fdir / ROLLUP_FILENAME
+    data = _load_json(path)
+    cycles = data.setdefault("cycles", {})
+    bucket = cycles.setdefault(str(cycle), {})
+    entry = bucket.setdefault(
+        stream, {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
+    )
+
+    entry["records"].append(
+        {
+            "recorded_at": _now(),
+            "items_checked": items_checked,
+            "items_total": items_total,
+            "findings": findings_count,
+            "declared_cycle": declared_cycle,
+        }
+    )
+    entry["items_checked"] = entry.get("items_checked", 0) + items_checked
+    entry["items_total"] = max(entry.get("items_total", 0), items_total)
+    entry["findings"] = entry.get("findings", 0) + findings_count
+
+    data["updated_at"] = _now()
+    _save_json(path, data)
+    return {
+        "items_checked": entry["items_checked"],
+        "items_total": entry["items_total"],
+        "findings": entry["findings"],
+        "records": len(entry["records"]),
+    }
+
+
+def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) -> dict | None:
+    """Evaluate this stream's per-cycle coverage threshold, once, on the total.
+
+    Returns a named shortfall dict, or None when the stream either has no
+    threshold or clears it. Called from ``_check_streams_complete`` \u2014 the
+    streams-complete check is the single point where the whole cycle's records
+    are in hand (CT-003). ``foundry_mark_stream`` deliberately does NOT
+    evaluate it: a partial tranche must be stored, not refused.
+    """
+    totals = _rollup_totals(fdir, cycle, stream)
+    if totals is None:
+        return None
+    checked = totals["items_checked"]
+
+    if stream == "prove":
+        spec_count = _count_spec_requirements(project_root)
+        if spec_count > 0 and checked < spec_count * 0.95:
+            return {
+                "stream": "prove",
+                "checked": checked,
+                "required": spec_count,
+                "coverage": f"{checked / spec_count * 100:.0f}%",
+                "reason": (
+                    f"PROVE checked {checked} requirements across cycle {cycle} but the "
+                    f"spec has {spec_count}. Coverage is {checked / spec_count * 100:.0f}% "
+                    "\u2014 must be \u226595%."
+                ),
+            }
+        return None
+
+    if stream == "trace":
+        declared = totals["items_total"]
+        if declared > 0 and checked < declared * 0.95:
+            return {
+                "stream": "trace",
+                "checked": checked,
+                "required": declared,
+                "coverage": f"{checked / declared * 100:.0f}%",
+                "reason": (
+                    f"TRACE checked {checked}/{declared} symbols across cycle {cycle} "
+                    f"({checked / declared * 100:.0f}%). Must check \u226595% of declared symbols."
+                ),
+            }
+    return None
 
 
 def foundry_mark_stream(
@@ -633,9 +834,16 @@ def foundry_mark_stream(
     findings_count: int = 0,
     project_root: str = ".",
 ) -> dict:
-    """Mark a verification stream as complete for this cycle."""
-    if stream not in VALID_STREAMS:
-        return {"error": f"Invalid stream: {stream}. Must be one of: {', '.join(sorted(VALID_STREAMS))}"}
+    """Record a verification stream's coverage for this cycle.
+
+    Partial records are ACCEPTED and stored (CT-003 / AC-020). The >=95%
+    coverage thresholds are no longer enforced here \u2014 enforcing them at record
+    time discarded the tranche entirely, so a PROVE run split across two calls
+    lost its first half. They are evaluated once per cycle in
+    ``_check_streams_complete`` against the cycle TOTAL instead.
+    """
+    if stream not in STREAM_WIRE_IDS:
+        return {"error": f"Invalid stream: {stream}. Must be one of: {', '.join(sorted(STREAM_WIRE_IDS))}"}
 
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
@@ -649,52 +857,44 @@ def foundry_mark_stream(
                      "sight: pages/elements exercised. test: tests run. "
                      "probe: endpoints hit. research_audit: recommendations audited. "
                      "flow_trace: flow-delta packets verified. "
-                     "coverage_diff: coverage_list source items diffed.",
+                     "coverage_diff: coverage_list source items diffed. "
+                     "test01: derived spec-test hypotheses executed.",
             "hint": "If the stream genuinely checked 0 items, the scope may be wrong.",
         }
 
-    if stream == "prove" and items_total > 0:
-        spec_count = _count_spec_requirements(project_root)
-        if spec_count > 0 and items_checked < spec_count * 0.95:
-            return {
-                "error": f"PROVE checked {items_checked} requirements but spec has {spec_count}. "
-                         f"Coverage is {items_checked/spec_count*100:.0f}% \u2014 must be \u226595%.",
-                "hint": "Re-run PROVE and check ALL requirements in the spec. No skipping.",
-                "spec_requirements": spec_count,
-                "checked": items_checked,
-            }
+    # The roll-up is keyed by the SERVER counter, never by the caller's `cycle`
+    # (FR-005). The caller's value is kept on the record for audit only.
+    server_cycle = _current_cycle(fdir)
+    prev_totals = _rollup_totals(fdir, server_cycle - 1, stream) if server_cycle > 0 else None
+    totals = _record_stream_rollup(
+        fdir, server_cycle, stream, items_checked, items_total, findings_count, cycle
+    )
 
-    if stream == "trace" and items_total > 0 and items_checked < items_total * 0.95:
-        return {
-            "error": f"TRACE checked {items_checked}/{items_total} symbols ({items_checked/items_total*100:.0f}%). "
-                     "Must check \u226595% of declared symbols.",
-            "hint": "Re-run TRACE on unchecked symbols.",
-        }
+    # Drop warning: cycle N's TOTAL against cycle N-1's TOTAL (CT-003). The
+    # old comparison read the previous write of this same marker file, which
+    # made a second partial tranche in the SAME cycle look like a collapse.
+    coverage_warning = ""
+    if prev_totals is not None and prev_totals["items_checked"] > 0:
+        if totals["items_checked"] < prev_totals["items_checked"] * 0.7:
+            coverage_warning = (
+                f"Coverage dropped: {stream} checked {totals['items_checked']} items in "
+                f"cycle {server_cycle} vs {prev_totals['items_checked']} in cycle "
+                f"{server_cycle - 1}. Are you rushing?"
+            )
 
-    coverage_pct = f"{items_checked / items_total * 100:.0f}%" if items_total > 0 else "N/A"
+    coverage_pct = (
+        f"{totals['items_checked'] / totals['items_total'] * 100:.0f}%"
+        if totals["items_total"] > 0
+        else "N/A"
+    )
 
     marker = fdir / f".{stream}-complete"
-    coverage_warning = ""
-    if marker.exists():
-        prev_text = marker.read_text(encoding="utf-8")
-        for line in prev_text.split("\n"):
-            if line.startswith("items_checked="):
-                try:
-                    prev_checked = int(line.split("=")[1])
-                    if items_checked < prev_checked * 0.7:
-                        coverage_warning = (
-                            f"Coverage dropped: checked {items_checked} items vs "
-                            f"{prev_checked} in previous cycle. Are you rushing?"
-                        )
-                except (ValueError, IndexError):
-                    pass
-
     marker.write_text(
-        f"{_now()} cycle={cycle}\n"
-        f"items_checked={items_checked}\n"
-        f"items_total={items_total}\n"
+        f"{_now()} cycle={server_cycle}\n"
+        f"items_checked={totals['items_checked']}\n"
+        f"items_total={totals['items_total']}\n"
         f"coverage={coverage_pct}\n"
-        f"findings={findings_count}\n",
+        f"findings={totals['findings']}\n",
         encoding="utf-8",
     )
 
@@ -702,7 +902,7 @@ def foundry_mark_stream(
     # current HEAD SHA. Future F2 entries can compare HEAD vs this SHA
     # restricted to manifest key_files — if no overlap, skip TRACE.
     # Deterministic, verbatim the same as re-running LSP: topology unchanged.
-    if stream == "trace" and findings_count == 0:
+    if stream == "trace" and totals["findings"] == 0:
         import subprocess
         try:
             rev = subprocess.run(
@@ -715,8 +915,8 @@ def foundry_mark_stream(
                     _json.dumps({
                         "head_sha": rev.stdout.strip(),
                         "stamped_at": _now(),
-                        "cycle": cycle,
-                        "items_checked": items_checked,
+                        "cycle": server_cycle,
+                        "items_checked": totals["items_checked"],
                     }),
                     encoding="utf-8",
                 )
@@ -726,14 +926,29 @@ def foundry_mark_stream(
     result: dict = {
         "ok": True,
         "stream": stream,
-        "cycle": cycle,
-        "items_checked": items_checked,
-        "items_total": items_total,
+        "cycle": server_cycle,
+        "declared_cycle": cycle,
+        "items_checked": totals["items_checked"],
+        "items_total": totals["items_total"],
         "coverage": coverage_pct,
-        "findings": findings_count,
+        "findings": totals["findings"],
+        "records_this_cycle": totals["records"],
+        "recorded": {
+            "items_checked": items_checked,
+            "items_total": items_total,
+            "findings": findings_count,
+        },
     }
-    if coverage_warning:
-        result["warning"] = coverage_warning
+
+    # A shortfall is REPORTED here so the lead sees it immediately, but it does
+    # not refuse the record — the threshold is enforced once per cycle at the
+    # streams-complete check (CT-003), where a later tranche can still clear it.
+    shortfall = _coverage_shortfall(fdir, project_root, stream, server_cycle)
+    warnings = [w for w in (coverage_warning, shortfall["reason"] if shortfall else "") if w]
+    if shortfall:
+        result["coverage_shortfall"] = shortfall
+    if warnings:
+        result["warning"] = " | ".join(warnings)
 
     return result
 
@@ -832,34 +1047,63 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
 
 
 def _check_streams_complete(project_root: str) -> dict:
-    """Check if all required verification streams have completed."""
+    """Check if all required verification streams have completed for this cycle.
+
+    Two behaviours land here.
+
+    SIGHT (FR-020 / AC-025). ``sight`` used to be appended UNCONDITIONALLY
+    whenever ``manifest.no_ui`` was false — which is the default — so a run with
+    zero frontend files in scope still had to produce a sight marker it had no
+    way to earn. That is the grand-vulture deadlock: a fully clean cycle-17
+    INSPECT blocked on ``sight``. The requirement is now driven by the same
+    ``_check_sight_required`` evidence the inspect gate already uses (do any
+    casting key_files actually carry a UI extension?), which also collapses the
+    ``no_ui`` divergence between state.json and castings/manifest.json — the
+    flag is read from the manifest here and from state.json elsewhere, and
+    foundry_init writes both. A UI run is unaffected: frontend files in scope
+    still make sight required, and still make it BLOCKED when no url is set.
+
+    COVERAGE (FR-014 / CT-003 / AC-020). The >=95% PROVE and TRACE thresholds
+    are evaluated HERE, once per cycle, against the cycle's roll-up total —
+    the one point where every tranche of a partially-delivered stream is in
+    hand. A stream that recorded but fell short is reported in ``missing`` (so
+    every existing caller keeps blocking on it) and detailed in ``shortfalls``.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
-        return {"complete": False, "missing": "all", "required": []}
+        return {"complete": False, "missing": "all", "required": [], "shortfalls": []}
     manifest = fdir / "castings" / "manifest.json"
 
     required = ["trace", "prove", "test"]
 
-    no_ui = False
     url = ""
     if manifest.exists():
-        mdata = _load_json(manifest)
-        no_ui = mdata.get("no_ui", False)
-        url = mdata.get("target_url", "")
+        url = _load_json(manifest).get("target_url", "")
 
-    if not no_ui:
+    if _check_sight_required(project_root).get("required"):
         required.append("sight")
-    else:
-        sight = _check_sight_required(project_root)
-        if sight.get("required"):
-            required.append("sight")
 
     if url:
         required.append("probe")
 
     missing = [s for s in required if not (fdir / f".{s}-complete").exists()]
 
-    return {"complete": len(missing) == 0, "missing": " ".join(missing), "required": required}
+    cycle = _current_cycle(fdir)
+    shortfalls = []
+    for s in required:
+        if s in missing:
+            continue
+        shortfall = _coverage_shortfall(fdir, project_root, s, cycle)
+        if shortfall:
+            shortfalls.append(shortfall)
+            missing.append(s)
+
+    return {
+        "complete": len(missing) == 0,
+        "missing": " ".join(missing),
+        "required": required,
+        "shortfalls": shortfalls,
+    }
 
 
 # --- Phase lifecycle markers ---
@@ -988,9 +1232,41 @@ def foundry_mark_phase_complete(
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
 
+    elif phase == "inspect_start":
+        # ST-001 / FR-005 / AC-008 — the GRIND -> INSPECT boundary.
+        #
+        # This token did not exist. The guidance engine told the lead to
+        # "update state to F2" with no tool that does it, so a run looping
+        # GRIND -> INSPECT never left F3 in state.json and the cycle counter
+        # never moved: grand-vulture recorded "cycle": 0 across 18 cycles while
+        # its defects carried lead-asserted cycles 0-17.
+        #
+        # The increment is an EFFECT of handling the boundary crossing, not a
+        # value any caller supplies: this handler takes no cycle argument and
+        # consults none. Only F3 -> F2 advances it — the F1 -> F2 entry from
+        # CAST is the run's first INSPECT, not a new cycle.
+        state_path = fdir / "state.json"
+        prev_phase = _load_json(state_path).get("phase", "")
+        _update_phase(fdir, "F2")
+        if prev_phase == "F3":
+            state = _load_json(state_path)
+            state["cycle"] = _current_cycle(fdir) + 1
+            state["updated_at"] = _now()
+            _save_json(state_path, state)
+        cycle = _current_cycle(fdir)
+        return {
+            "ok": True,
+            "phase": "F2",
+            "cycle": cycle,
+            "message": (
+                f"GRIND complete → phase is now F2 (INSPECT), cycle {cycle}. "
+                "Run the FULL stream set again — no spot checking."
+            ),
+        }
+
     elif phase == "grind_start":
-        # Every recordable stream marker is cleared (derived from
-        # VALID_STREAMS so new streams cannot go stale across GRIND cycles),
+        # Every recordable stream marker is cleared (derived from the canonical
+        # stream vocabulary so new streams cannot go stale across GRIND cycles),
         # not just the required subset — completion state must stay honest.
         stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
         for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
@@ -1037,7 +1313,7 @@ def foundry_mark_phase_complete(
         return {"ok": True, "phase": "F6", "message": "Phase is now F6 (DONE). Run archived. Start a new run with foundry_init."}
 
     else:
-        return {"error": f"Invalid phase: {phase}. Valid: cast, inspect_clean, grind_start, assay_fail, temper, nyquist, nyquist_done, done"}
+        return {"error": f"Invalid phase: {phase}. Valid: start_cast, cast, inspect_start, inspect_clean, grind_start, assay_fail, temper, nyquist, nyquist_done, done"}
 
 
 # --- Team lifecycle ---
@@ -1387,41 +1663,402 @@ def _check_sight_required(project_root: str) -> dict:
     return {"required": True, "blocked": False, "url": url, "ui_files": len(ui_files)}
 
 
+# --------------------------------------------------------------------------- #
+# Recurring-class escalation (FR-006 / FR-007 / FR-008 / FR-024,
+# ST-002 / ST-003, AC-009 / AC-010 / AC-011, OT-003).
+#
+# grand-vulture ran FALSE_DOCUMENTED_CONTRACT for eight consecutive cycles
+# (9-16), 42 defects, because foundry_defects_to_tasks groups by LOCATION
+# (file or symbol) rather than by cause: one systemic class spread over 11
+# files became 11 unrelated packets, each fixed per-instance, the class itself
+# never addressed. The three-cycle rule would have caught it at cycle 11.
+#
+# The consecutive-cycle count is DERIVED from defects.json rather than kept as
+# an incremental counter. Every defect record already carries its filing cycle
+# and (optionally) its class, so the derivation covers defects filed through
+# EVERY path — Foundry-Sync, Foundry-Defect, and migrated archives alike —
+# without a counter that can desync from the ledger it describes. Only the
+# operator-supplied parts (the recorded structural proposal) are persisted.
+# --------------------------------------------------------------------------- #
+
+ESCALATION_FILENAME = "escalation.json"
+
+# ST-002 / FR-006 / A-012: escalation fires on the THIRD consecutive cycle in
+# which new defects of a class are filed. Two consecutive cycles do not fire it.
+ESCALATION_CYCLES = 3
+
+# FR-007 / A-013: the optional stream-declared field on a defect record. Stream
+# agents already emit systemic_patterns[] that nothing consumed; this is the
+# key they write when instances share a root cause.
+DEFECT_CLASS_FIELD = "class"
+
+# FR-024 (Flexible — implementer-tunable): the fallback used when a stream
+# declares no class. A-013/A-033 specify "type + file-cluster", and either the
+# declared class or this fallback can accumulate the three-cycle count.
+#
+# THE TUNING KNOB IS THIS CONSTANT: the number of leading path segments that
+# define one file cluster. The choice is a balance:
+#   depth 0  = type only        -> over-clusters; unrelated subsystems merge
+#   depth 2  = "src/api", ...   -> a class spread across sibling modules of one
+#                                  subsystem still clusters, while frontend and
+#                                  backend defects of the same type stay apart
+#   full dir = "src/api/auth"   -> under-clusters; the grand-vulture failure
+#                                  mode, where every file is its own class and
+#                                  escalation can never accumulate
+# 2 is the middle that groups a subsystem. Raise it for a deep monorepo, lower
+# it for a flat one.
+FALLBACK_CLUSTER_DEPTH = 2
+
+# AC-010 / FR-008 / ST-003: the explicit directive that restores per-instance
+# packets. Bare token overrides every class; "escalation-override: <class>"
+# overrides exactly that class.
+ESCALATION_OVERRIDE_TOKEN = "escalation-override"
+_OVERRIDE_SCOPED_RE = re.compile(
+    rf"{ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)", re.IGNORECASE
+)
+
+
+def _defect_class(defect: dict) -> str:
+    """Return the class key a defect belongs to.
+
+    The stream-declared ``class`` field when present (FR-007), otherwise the
+    tunable ``type + file-cluster`` fallback (FR-024). Either can accumulate
+    the three-cycle count (ST-002 / A-033).
+    """
+    declared = defect.get(DEFECT_CLASS_FIELD)
+    if isinstance(declared, str) and declared.strip():
+        return declared.strip()
+
+    dtype = canonical_defect_type(defect.get("type", "")) or defect.get("type") or "UNTYPED"
+    path = defect.get("file") or ""
+    segments = [p for p in str(path).replace("\\", "/").split("/") if p][:-1]
+    cluster = "/".join(segments[:FALLBACK_CLUSTER_DEPTH]) if segments else ""
+    return f"{dtype}@{cluster or '-'}"
+
+
+def _class_declared(defect: dict) -> bool:
+    declared = defect.get(DEFECT_CLASS_FIELD)
+    return isinstance(declared, str) and bool(declared.strip())
+
+
+def _consecutive_run(cycles: set[int]) -> tuple[int, int | None]:
+    """Longest run of consecutive cycles, and the cycle that run ends on."""
+    if not cycles:
+        return 0, None
+    best_len, best_end = 0, None
+    run_len, prev = 0, None
+    for c in sorted(cycles):
+        run_len = run_len + 1 if prev is not None and c == prev + 1 else 1
+        prev = c
+        if run_len > best_len:
+            best_len, best_end = run_len, c
+    return best_len, best_end
+
+
+def _escalation_overrides(project_root: str) -> set[str]:
+    """Class keys the human has explicitly de-escalated, or {"*"} for all."""
+    directives = _read_directives(project_root)
+    text = "\n".join(directives.get("urgent", []) + directives.get("normal", []))
+    if ESCALATION_OVERRIDE_TOKEN not in text.lower():
+        return set()
+    scoped = {
+        m.group(1).strip(" .,;:'\"`") for m in _OVERRIDE_SCOPED_RE.finditer(text)
+    }
+    scoped = {s for s in scoped if s}
+    return scoped or {"*"}
+
+
+def _escalated_classes(fdir: Path, project_root: str) -> dict[str, dict]:
+    """Classes that have recurred for ESCALATION_CYCLES consecutive cycles.
+
+    A class qualifies while it still has OPEN defects: once every defect of the
+    class closes, the class is cleared (ST-003) and stops producing a
+    structural packet. Escalation therefore never waives closure — it changes
+    the SHAPE of the work, not whether it must be done (AC-011).
+    """
+    defects = _load_json(fdir / "defects.json").get("defects", [])
+    overrides = _escalation_overrides(project_root)
+    recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+
+    buckets: dict[str, dict] = {}
+    for d in defects:
+        if not isinstance(d, dict):
+            continue
+        key = _defect_class(d)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "class": key,
+                "cycles": set(),
+                "declared": False,
+                "open": [],
+                "total": 0,
+                "files": set(),
+                "symbols": set(),
+                "spec_refs": set(),
+                "sources": set(),
+            },
+        )
+        bucket["total"] += 1
+        bucket["declared"] = bucket["declared"] or _class_declared(d)
+        # A filing cycle and a regression-reopen cycle both count: a class
+        # reopening IS the class recurring, which is what escalation exists to
+        # catch. Non-integer values are ignored rather than guessed at.
+        for field in ("cycle", "reopened_in_cycle"):
+            value = d.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                bucket["cycles"].add(value)
+        if d.get("file"):
+            bucket["files"].add(d["file"])
+        if d.get("symbol"):
+            bucket["symbols"].add(d["symbol"])
+        if d.get("spec_ref"):
+            bucket["spec_refs"].add(d["spec_ref"])
+        if d.get("source"):
+            bucket["sources"].add(d["source"])
+        if d.get("status") == "open":
+            bucket["open"].append(d)
+
+    escalated: dict[str, dict] = {}
+    for key, bucket in buckets.items():
+        if not bucket["open"]:
+            continue
+        if "*" in overrides or key in overrides:
+            continue
+        run_len, run_end = _consecutive_run(bucket["cycles"])
+        if run_len < ESCALATION_CYCLES:
+            continue
+        escalated[key] = {
+            "class": key,
+            "declared": bucket["declared"],
+            "cycles": sorted(bucket["cycles"]),
+            "consecutive_cycles": run_len,
+            "escalated_at_cycle": run_end,
+            "defect_ids": [d["id"] for d in bucket["open"]],
+            "open_count": len(bucket["open"]),
+            "total_count": bucket["total"],
+            "files": sorted(bucket["files"]),
+            "symbols": sorted(bucket["symbols"]),
+            "spec_refs": sorted(bucket["spec_refs"]),
+            "sources": sorted(bucket["sources"]),
+            "proposal": (recorded.get(key) or {}).get("proposal", ""),
+        }
+    return escalated
+
+
+def _structural_proposal(info: dict) -> str:
+    """Compose the structural-fix proposal recorded on the class's packet.
+
+    FR-008 / ST-003: an escalated class gets ONE packet carrying a recorded
+    proposal, not N per-instance packets. The proposal states the evidence that
+    made this systemic — which cycles it recurred in, how wide it spreads — and
+    names the obligation that every instance still closes (AC-011).
+    """
+    origin = "stream-declared" if info["declared"] else "clustered by type + file"
+    spread = f"{len(info['files'])} file(s)" if info["files"] else "no file attribution"
+    if info["symbols"]:
+        spread += f", {len(info['symbols'])} symbol(s)"
+    cycles = ", ".join(str(c) for c in info["cycles"])
+    return (
+        f"STRUCTURAL FIX REQUIRED — defect class '{info['class']}' ({origin}) has "
+        f"recurred for {info['consecutive_cycles']} consecutive cycles "
+        f"(cycles seen: {cycles}) and still has {info['open_count']} open "
+        f"instance(s) across {spread}. Per-instance fixes have not held. Find the "
+        f"single root cause these instances share and fix it there, then confirm "
+        f"every listed defect closes as a consequence. Closure is NOT waived: all "
+        f"of {', '.join(info['defect_ids'])} must reach fixed. If this class is "
+        f"genuinely not systemic, the lead can restore per-instance packets with "
+        f"Foundry-Directive('{ESCALATION_OVERRIDE_TOKEN}: {info['class']}')."
+    )
+
+
+def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None:
+    """Persist each escalated class's proposal so it survives the tool call.
+
+    ST-003 requires the proposal to be RECORDED on the class's single packet;
+    keeping it only in the returned task list would lose it the moment the lead
+    moved on.
+    """
+    path = fdir / ESCALATION_FILENAME
+    data = _load_json(path)
+    classes = data.setdefault("classes", {})
+    for key, info in escalated.items():
+        entry = classes.setdefault(key, {})
+        entry["proposal"] = info["proposal"]
+        entry["escalated_at_cycle"] = info["escalated_at_cycle"]
+        entry["consecutive_cycles"] = info["consecutive_cycles"]
+        entry["defect_ids"] = info["defect_ids"]
+        entry["recorded_at"] = _now()
+    data["updated_at"] = _now()
+    _save_json(path, data)
+
+
 # --- Defect lifecycle ---
 
 
 def foundry_mark_defect_fixed(
     defect_id: str,
     cycle: int,
+    adjacent_path_statement: str = "",
+    adjacent_path_test: str = "",
     project_root: str = ".",
 ) -> dict:
-    """Mark a defect as fixed in this cycle."""
+    """Mark a defect as fixed, declaring the fix's blast radius.
+
+    FR-009 / CT-001 / ST-004. This call validated NOTHING before — it matched
+    the first id and flipped status, which is how fixes kept opening
+    regressions their own tests could not see. Two declarations are now
+    preconditions of the transition:
+
+      adjacent_path_statement — who ELSE calls this, what else transitions
+          here, what runs concurrently (A-017).
+      adjacent_path_test — a reference to a test that drives at least one
+          NAMED adjacent path: a different caller, transition, or concurrent
+          interaction than the path the defect was found on (A-018 / FR-010).
+
+    A call missing either is refused with a message naming each missing field,
+    in the same shape as the acceptance gate's rejections. The declarations are
+    persisted on the defect record, so the blast radius a fix claimed to have
+    considered is auditable after the fact.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
     defects_path = fdir / "defects.json"
     data = _load_json(defects_path)
 
-    found = False
+    target = None
     for d in data.get("defects", []):
         if d["id"] == defect_id:
-            d["status"] = "fixed"
-            d["fixed_in_cycle"] = cycle
-            found = True
+            target = d
             break
 
-    if not found:
+    if target is None:
         return {"error": f"Defect {defect_id} not found"}
+
+    statement = (adjacent_path_statement or "").strip()
+    test_ref = (adjacent_path_test or "").strip()
+
+    missing = []
+    if not statement:
+        missing.append("adjacent_path_statement")
+    if not test_ref:
+        missing.append("adjacent_path_test")
+    if missing:
+        return {
+            "error": (
+                f"Cannot mark {defect_id} fixed — missing required field(s): "
+                f"{', '.join(missing)}. adjacent_path_statement must name who else "
+                "calls this, what else transitions here, or what runs concurrently. "
+                "adjacent_path_test must reference a test that drives at least one "
+                "of those adjacent paths."
+            ),
+            "missing_fields": missing,
+            "hint": (
+                "Write the adjacent-path test first, then re-call Foundry-Fix with "
+                "both declarations. A fix whose blast radius is undeclared is how a "
+                "defect closes and a regression opens in the same cycle."
+            ),
+        }
+
+    # ST-004 / AC-013: the declared path must be ADJACENT — distinct from the
+    # path the defect itself was found on. Restating the defect's own symbol is
+    # the one case that is mechanically decidable here, and it is the exact
+    # non-answer the gate exists to reject.
+    own_symbol = (target.get("symbol") or "").strip()
+    if own_symbol and statement.casefold() == own_symbol.casefold():
+        return {
+            "error": (
+                f"Cannot mark {defect_id} fixed — adjacent_path_statement just names "
+                f"the defect's own symbol ({own_symbol}). An adjacent path is a "
+                "DIFFERENT caller, transition, or concurrent interaction than the one "
+                "the defect was found on."
+            ),
+            "missing_fields": ["adjacent_path_statement"],
+            "hint": "Name a second path that touches this code, then test that path.",
+        }
+
+    target["status"] = "fixed"
+    target["fixed_in_cycle"] = cycle
+    target["adjacent_path_statement"] = statement
+    target["adjacent_path_test"] = test_ref
 
     _save_json(defects_path, data)
 
     forge_log = fdir / "forge-log.md"
     if forge_log.exists():
         with open(forge_log, "a", encoding="utf-8") as f:
-            f.write(f"\n**{defect_id} FIXED** in cycle {cycle} ({_now()})\n\n")
+            f.write(f"\n**{defect_id} FIXED** in cycle {cycle} ({_now()})\n")
+            f.write(f"- **Adjacent paths:** {statement}\n")
+            f.write(f"- **Adjacent-path test:** {test_ref}\n\n")
 
     open_count = sum(1 for d in data["defects"] if d.get("status") == "open")
-    return {"ok": True, "defect_id": defect_id, "fixed_in_cycle": cycle, "remaining_open": open_count}
+    return {
+        "ok": True,
+        "defect_id": defect_id,
+        "fixed_in_cycle": cycle,
+        "adjacent_path_statement": statement,
+        "adjacent_path_test": test_ref,
+        "remaining_open": open_count,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Cross-casting seam: the two helpers tools/foundry.py owns.
+#
+# Both are imported LAZILY and deliberately unguarded. Importing them at module
+# top would make `import foundry_mcp.server` fail outright while the sibling
+# casting that owns tools/foundry.py is still in flight, taking every other
+# tool in this server down with it; swallowing the ImportError would instead
+# hide a real wiring break behind a silent fallback. A lazy import fails loudly
+# at exactly the one call site that needs the symbol, naming it.
+#
+# There must be ONE writer for each of these. Do not add a local ledger writer
+# or a local ID mint here \u2014 that duplication is what FR-013 and FR-020 exist to
+# remove.
+# --------------------------------------------------------------------------- #
+
+
+def _mint_defect_id(records: list) -> str:
+    """Allocate a defect ID that is unique under concurrent filing (FR-020).
+
+    Replaces the positional ``D-{len(defects) + 1:03d}`` mint, which hands the
+    SAME id to two streams that read the same ledger snapshot, re-issues a live
+    id whenever a record is removed, and wraps silently past D-999 \u2014 the AC-025
+    race. ``allocate_record_id`` takes the highest existing suffix instead, and
+    its uniqueness comes from the surrounding ``ledger_transaction`` lock, which
+    is why every call below sits inside one.
+    """
+    from foundry_mcp.tools.foundry import allocate_record_id
+
+    return allocate_record_id(records, prefix="D")
+
+
+def _route_to_observations(
+    finding: dict, cycle: int, klass: str, project_root: str
+) -> dict:
+    """Record a refused comment-prose finding in the observations ledger.
+
+    ``observations.json`` and its writer are owned by tools/foundry.py \u2014 there
+    is one ledger writer, not one per filing path \u2014 and observations are NEVER
+    mixed into defects.json. The writer re-runs the never-demote denylist
+    itself and can refuse; the caller must honour that refusal by keeping the
+    finding a defect (AC-002 is a never-weaken guarantee, so the fail-safe
+    direction is always "stays a defect").
+    """
+    from foundry_mcp.tools.foundry import foundry_add_observation
+
+    return foundry_add_observation(
+        cycle=cycle,
+        source=finding.get("source", ""),
+        description=finding.get("description", ""),
+        classification=klass,
+        target_kind=(finding.get("target_kind") or "comment"),
+        spec_ref=finding.get("spec_ref", ""),
+        symbol=finding.get("symbol", ""),
+        file_path=finding.get("file", ""),
+        project_root=project_root,
+    )
 
 
 def foundry_sync_defects(
@@ -1429,57 +2066,185 @@ def foundry_sync_defects(
     findings: list[dict],
     project_root: str = ".",
 ) -> dict:
-    """Sync new findings against existing defects. Detects regressions."""
+    """Sync new findings against existing defects. Detects regressions.
+
+    FR-013 / CT-002 / NFR-002. This was the unvalidated door into the ledger:
+    43 of grand-vulture's 168 defects (26%) entered through it. ``source`` was
+    matched against a local set that agreed with neither the tool schema nor
+    the stream vocabulary, and anything outside it was silently rewritten to
+    "trace" \u2014 so a research_audit or coverage_diff finding was persisted as if
+    TRACE had found it, and the run's evidence pointed at the wrong stream.
+    ``type`` was written straight through with no validation at all.
+
+    Both fields are now checked against the canonical vocabulary and the
+    recorded source survives verbatim. Per A-035 the coercion was a bug, not a
+    contract: values the old code accepted only by rewriting them are refused
+    with a named error. NFR-002's no-narrowing guarantee covers calls that are
+    valid under the reconciled vocabulary, and every such call still works.
+
+    Validation is ALL-OR-NOTHING. A batch with one bad finding is refused whole
+    rather than partly applied, so the caller never has to guess which of its
+    findings landed.
+    """
+    from foundry_mcp.tools.foundry import ledger_transaction
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
     defects_path = fdir / "defects.json"
-    data = _load_json(defects_path)
-    if "defects" not in data:
-        data["defects"] = []
 
-    fixed = [d for d in data["defects"] if d.get("status") == "fixed"]
+    # --- Validate the whole batch before writing anything ------------------
+    refusals: list[dict] = []
+    normalized: list[dict] = []
+    for i, finding in enumerate(findings):
+        source = finding.get("source", "")
+        if not isinstance(source, str) or not source.strip():
+            refusals.append({
+                "index": i,
+                "field": "source",
+                "value": source,
+                "reason": (
+                    "source is required \u2014 an unattributed finding used to be "
+                    "recorded as 'trace', which is the mis-attribution this "
+                    "check exists to stop. Must be one of: "
+                    f"{', '.join(sorted(DEFECT_SOURCE_IDS))}"
+                ),
+            })
+        elif source.strip() not in DEFECT_SOURCE_IDS:
+            refusals.append({
+                "index": i,
+                "field": "source",
+                "value": source,
+                "reason": (
+                    f"Unknown source: {source}. Must be one of: "
+                    f"{', '.join(sorted(DEFECT_SOURCE_IDS))}"
+                ),
+            })
+
+        raw_type = finding.get("type") or "MISSING"
+        canonical = canonical_defect_type(raw_type)
+        if canonical is None:
+            refusals.append({
+                "index": i,
+                "field": "type",
+                "value": raw_type,
+                "reason": (
+                    f"Unknown defect_type: {raw_type}. Must be one of: "
+                    f"{', '.join(sorted(DEFECT_TYPES))}"
+                ),
+            })
+
+        normalized.append({"source": source.strip() if isinstance(source, str) else source,
+                           "type": canonical})
+
+    if refusals:
+        return {
+            "error": (
+                f"Refused {len(refusals)} finding(s) \u2014 no findings were recorded. "
+                + "; ".join(f"findings[{r['index']}].{r['field']}: {r['reason']}" for r in refusals)
+            ),
+            "refusals": refusals,
+            "hint": (
+                "Fix the named fields and re-send the whole batch. Values are "
+                "never coerced onto a known member \u2014 a finding attributed to the "
+                "wrong stream is worse than a finding refused."
+            ),
+        }
+
+    # The cycle a defect is stamped with is the SERVER's (FR-005). A
+    # caller-asserted cycle cannot be trusted for persistence: the whole
+    # three-cycle escalation rule reads these numbers back.
+    server_cycle = _current_cycle(fdir)
+
     reopened = 0
     added = 0
+    observations = 0
     regressions: list[str] = []
+    observed: list[dict] = []
+    tripwires: list[dict] = []
 
-    for finding in findings:
-        symbol = finding.get("symbol", "")
-        desc = finding.get("description", "")
+    # One exclusive critical section over defects.json for the whole batch.
+    # AC-025's uniqueness guarantee comes from THIS lock: allocate_record_id is
+    # pure, so minting inside the transaction is what stops two concurrent
+    # filers reading the same snapshot and claiming the same id.
+    with ledger_transaction(defects_path, "defects") as records:
+        fixed = [d for d in records if d.get("status") == "fixed"]
 
-        match_id = None
-        for fd in fixed:
-            fd_sym = fd.get("symbol", "")
-            fd_desc = fd.get("description", "")
-            if symbol and fd_sym and symbol == fd_sym:
-                match_id = fd["id"]
-                break
-            if desc and fd_desc and desc == fd_desc:
-                match_id = fd["id"]
-                break
+        for finding, norm in zip(findings, normalized):
+            symbol = finding.get("symbol", "")
+            desc = finding.get("description", "")
 
-        if match_id:
-            for d in data["defects"]:
-                if d["id"] == match_id:
-                    d["status"] = "open"
-                    d["regression"] = True
-                    d["reopened_in_cycle"] = cycle
-                    d["fixed_in_cycle"] = None
+            match_id = None
+            for fd in fixed:
+                fd_sym = fd.get("symbol", "")
+                fd_desc = fd.get("description", "")
+                if symbol and fd_sym and symbol == fd_sym:
+                    match_id = fd["id"]
                     break
-            reopened += 1
-            regressions.append(match_id)
-        else:
-            defect_id = f"D-{len(data['defects']) + 1:03d}"
-            source = finding.get("source", "inspect")
-            valid_sources = {"trace", "prove", "sight", "test", "assay", "temper"}
-            if source not in valid_sources:
-                source = "trace"
+                if desc and fd_desc and desc == fd_desc:
+                    match_id = fd["id"]
+                    break
+
+            if match_id:
+                for d in records:
+                    if d["id"] == match_id:
+                        d["status"] = "open"
+                        d["regression"] = True
+                        d["reopened_in_cycle"] = server_cycle
+                        d["fixed_in_cycle"] = None
+                        break
+                reopened += 1
+                regressions.append(match_id)
+                continue
+
+            # Comment-prose findings are OBSERVATIONS, not defects, and are
+            # refused from this ledger. Three rules apply, in this order, and
+            # they are the SAME rules the Foundry-Defect filing path applies —
+            # two filing paths that disagree about what a defect is would be a
+            # worse bug than the one being fixed:
+            #
+            #   1. The subject must be a DECLARED comment. An absent
+            #      target_kind does not license a demotion: vocab's
+            #      is_non_comment only matches a target_kind that is present
+            #      and non-"comment", so absence has to be handled here or the
+            #      NON_COMMENT denylist entry silently never fires.
+            #   2. A denylist match OUTRANKS an observation match (vocab's
+            #      precedence rule) — a security claim, a spec-required-
+            #      behaviour claim or an unresolvable cite stays a defect even
+            #      when its prose reads like drift.
+            #   3. Only then does the observation class decide.
+            #
+            # If the ledger writer refuses the demotion anyway, its refusal
+            # wins and the finding stays a defect too: AC-002 is a never-weaken
+            # guarantee, so every branch fails safe toward "defect".
+            declared_comment = (
+                isinstance(finding.get("target_kind"), str)
+                and finding["target_kind"].strip().lower() == "comment"
+            )
+            if declared_comment and never_demote_class(finding) is None:
+                klass = observation_class(finding)
+                if klass is not None:
+                    outcome = _route_to_observations(
+                        finding, server_cycle, klass, project_root
+                    )
+                    if not outcome.get("error"):
+                        observations += 1
+                        observed.append(
+                            {"classification": klass, "description": desc[:120]}
+                        )
+                        continue
+                    tripwires.append({
+                        "description": desc[:120],
+                        "attempted_class": klass,
+                        "refusal": outcome.get("error", ""),
+                        "tripwire": outcome.get("tripwire", ""),
+                    })
 
             defect = {
-                "id": defect_id,
-                "cycle": cycle,
-                "source": source,
-                "type": finding.get("type", "MISSING"),
+                "id": _mint_defect_id(records),
+                "cycle": server_cycle,
+                "source": norm["source"],
+                "type": norm["type"],
                 "description": desc,
                 "spec_ref": finding.get("spec_ref", ""),
                 "symbol": symbol,
@@ -1488,34 +2253,54 @@ def foundry_sync_defects(
                 "fixed_in_cycle": None,
                 "created_at": _now(),
             }
-            data["defects"].append(defect)
+            # FR-007: the optional stream-declared class travels with the
+            # record; escalation keys on it when present.
+            declared_class = finding.get(DEFECT_CLASS_FIELD)
+            if isinstance(declared_class, str) and declared_class.strip():
+                defect[DEFECT_CLASS_FIELD] = declared_class.strip()
+            records.append(defect)
             added += 1
 
-    _save_json(defects_path, data)
+        total_open = sum(1 for d in records if d.get("status") == "open")
 
     if regressions:
         forge_log = fdir / "forge-log.md"
         if forge_log.exists():
             with open(forge_log, "a", encoding="utf-8") as f:
-                f.write(f"\n### REGRESSIONS in cycle {cycle}\n")
+                f.write(f"\n### REGRESSIONS in cycle {server_cycle}\n")
                 for r in regressions:
                     f.write(f"- **{r}** reopened \u2014 fix was fragile\n")
                 f.write("\n")
 
-    return {
+    result = {
         "ok": True,
-        "cycle": cycle,
+        "cycle": server_cycle,
+        "declared_cycle": cycle,
         "added": added,
         "reopened": reopened,
+        "observations": observations,
+        "observed": observed,
         "regressions": regressions,
-        "total_open": sum(1 for d in data["defects"] if d.get("status") == "open"),
+        "total_open": total_open,
     }
+    if tripwires:
+        result["denylist_tripwires"] = tripwires
+    return result
 
 
 def foundry_defects_to_tasks(
     project_root: str = ".",
 ) -> dict:
-    """Convert ALL open defects to grouped task descriptions for GRIND."""
+    """Convert ALL open defects to grouped task descriptions for GRIND.
+
+    FR-008 / ST-003 / AC-010. Defects of an ESCALATED class are lifted out of
+    the location grouping and emitted as exactly ONE structural-fix packet per
+    class, carrying a recorded proposal. Every other defect groups by location
+    exactly as before — escalation changes the shape of one class's work and
+    nothing else. An explicit ``escalation-override`` directive de-escalates a
+    class, at which point its defects fall straight back into the per-instance
+    grouping (AC-010).
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
@@ -1523,19 +2308,56 @@ def foundry_defects_to_tasks(
     open_defects = [d for d in data.get("defects", []) if d.get("status") == "open"]
 
     if not open_defects:
-        return {"ok": True, "tasks": [], "count": 0}
+        return {"ok": True, "tasks": [], "count": 0, "escalated_classes": []}
+
+    escalated = _escalated_classes(fdir, project_root)
+    for key, info in escalated.items():
+        info["proposal"] = info.get("proposal") or _structural_proposal(info)
+    if escalated:
+        _record_escalation_proposals(fdir, escalated)
+
+    escalated_ids = {did for info in escalated.values() for did in info["defect_ids"]}
+
+    tasks = []
+
+    # One packet per escalated class, emitted first so it leads the GRIND wave.
+    for key in sorted(escalated):
+        info = escalated[key]
+        members = [d for d in open_defects if d["id"] in set(info["defect_ids"])]
+        tasks.append({
+            "structural": True,
+            "defect_class": key,
+            "class_declared": info["declared"],
+            "consecutive_cycles": info["consecutive_cycles"],
+            "cycles_seen": info["cycles"],
+            "proposal": info["proposal"],
+            "defect_ids": info["defect_ids"],
+            "description": info["proposal"],
+            "instances": [
+                {"id": d["id"], "description": d.get("description", ""),
+                 "file": d.get("file", ""), "symbol": d.get("symbol", "")}
+                for d in members
+            ],
+            "files": info["files"],
+            "symbols": info["symbols"],
+            "spec_refs": info["spec_refs"],
+            "regression": any(d.get("regression") for d in members),
+            "source": info["sources"][0] if info["sources"] else "unknown",
+        })
 
     MAX_PER_GROUP = 3
     groups: dict[str, list[dict]] = {}
     for d in open_defects:
+        if d["id"] in escalated_ids:
+            continue
         key = d.get("file") or d.get("symbol") or d["id"]
         groups.setdefault(key, []).append(d)
 
-    tasks = []
     for key, defects in groups.items():
         for i in range(0, len(defects), MAX_PER_GROUP):
             chunk = defects[i:i + MAX_PER_GROUP]
             task = {
+                "structural": False,
                 "defect_ids": [d["id"] for d in chunk],
                 "description": "; ".join(d["description"] for d in chunk),
                 "files": list({d["file"] for d in chunk if d.get("file")}),
@@ -1548,7 +2370,13 @@ def foundry_defects_to_tasks(
 
     (fdir / ".tasks-generated").write_text(f"{_now()} count={len(tasks)}\n", encoding="utf-8")
 
-    return {"ok": True, "tasks": tasks, "count": len(tasks)}
+    return {
+        "ok": True,
+        "tasks": tasks,
+        "count": len(tasks),
+        "escalated_classes": sorted(escalated),
+        "structural_tasks": sum(1 for t in tasks if t["structural"]),
+    }
 
 
 # --- The big one: next action ---
@@ -1713,12 +2541,25 @@ def foundry_next_action(
             "urgent": directives["urgent"],
             "normal": directives["normal"],
         }
+        # FR-019: urgent and normal directives are BOTH rendered. This used to
+        # be `if urgent ... elif normal ...`, so a single urgent directive
+        # suppressed every standing normal directive for the rest of the run \u2014
+        # the human's steering silently stopped reaching the lead. Priority
+        # still orders the block; it no longer discards.
+        blocks = []
         if directives["urgent"]:
             urgent_text = " | ".join(directives["urgent"])
-            directive_block = f"\n\nHUMAN DIRECTIVE (urgent): {urgent_text}\n\nIncorporate the above into your current action."
-        elif directives["normal"]:
+            blocks.append(
+                f"HUMAN DIRECTIVE (urgent): {urgent_text}\n\n"
+                "Incorporate the above into your current action."
+            )
+        if directives["normal"]:
             normal_text = " | ".join(directives["normal"])
-            directive_block = f"\n\nHUMAN DIRECTIVE: {normal_text} \u2014 incorporate into your approach."
+            blocks.append(
+                f"HUMAN DIRECTIVE: {normal_text} \u2014 incorporate into your approach."
+            )
+        if blocks:
+            directive_block = "\n\n" + "\n\n".join(blocks)
 
     critical_rules = (
         "\n\nCRITICAL RULES:"
@@ -1860,7 +2701,15 @@ _ACTION_IMPERATIVES = {
         "  - IF teammates are currently running: WAIT for all to complete, then TeamDelete + Foundry-Team-Down + "
         "Foundry-Phase(phase='cast'). Do NOT call Foundry-Next while waiting \u2014 it will re-emit this action."
     ),
-    "transition_to_inspect": "YOUR NEXT CALL: Foundry-Gate(phase='inspect')",
+    "transition_to_inspect": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Gate(phase='inspect')\n"
+        "  (2) Foundry-Phase(phase='inspect_start') — crossing GRIND → INSPECT is "
+        "what advances the server-side cycle counter. Every stream record, defect "
+        "and roll-up entry after this point is stamped with the NEW cycle, so "
+        "skipping this call silently files the next cycle's evidence under the "
+        "last one and the recurring-class escalation never accumulates."
+    ),
     "run_streams": (
         "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel message. Stream-specific rules:\n"
         "All four streams spawn as BACKGROUND Agents (run_in_background=true) so SIGHT can run "
@@ -1897,7 +2746,7 @@ _ACTION_IMPERATIVES = {
         "YOUR NEXT ACTION depends on GRIND state:\n"
         "  - IF no GRIND team registered yet: follow the transition_to_grind sequence.\n"
         "  - IF teammates are running: WAIT. When all report complete, TeamDelete + Foundry-Team-Down + "
-        "update state to F2 + re-run INSPECT."
+        "Foundry-Phase(phase='inspect_start') + re-run INSPECT."
     ),
     "transition_to_assay": (
         "YOUR NEXT CALLS (in order):\n"
@@ -2035,7 +2884,10 @@ def _format_status_display(project_root: str) -> str:
         req_streams = streams.get("required", [])
         missing_s = streams.get("missing", "").split()
         stream_icons = []
-        for s in ["trace", "prove", "sight", "test", "probe"]:
+        # FR-013: the rendered order comes from the canonical vocabulary, not
+        # from a sixth hand-typed copy of the stream names that silently hid
+        # any stream someone forgot to add here.
+        for s in sorted(STREAM_WIRE_IDS):
             if s in req_streams:
                 if s not in missing_s:
                     stream_icons.append(f"[{_GREEN}\u2713{_RESET}]{s}")
@@ -2055,6 +2907,29 @@ def _format_status_display(project_root: str) -> str:
     lines.append(FOUNDRY_SEP)
 
     return "\n".join(lines)
+
+
+def _escalation_notice(fdir: Path, project_root: str) -> str:
+    """One sentence naming any escalated class, for the guidance instructions.
+
+    FR-008 / AC-010: the lead has to know a class escalated BEFORE it dispatches
+    the GRIND wave, because the packet shape it is about to hand out changed.
+    Empty string when nothing is escalated, so the surrounding instructions read
+    identically on a normal cycle.
+    """
+    escalated = _escalated_classes(fdir, project_root)
+    if not escalated:
+        return ""
+    names = ", ".join(sorted(escalated))
+    return (
+        f" ESCALATED: {len(escalated)} defect class(es) have recurred for "
+        f"{ESCALATION_CYCLES}+ consecutive cycles ({names}). Foundry-Tasks will "
+        "emit ONE structural-fix packet per escalated class instead of "
+        "per-instance packets — dispatch that packet as a single task and do not "
+        "split it back apart. Every listed defect must still close. To restore "
+        f"per-instance packets, inject Foundry-Directive('{ESCALATION_OVERRIDE_TOKEN}: "
+        "<class>')."
+    )
 
 
 def _compute_next_action(project_root: str) -> dict:
@@ -2227,13 +3102,18 @@ def _compute_next_action(project_root: str) -> dict:
                 "phase": "F2",
                 "action": "transition_to_grind",
                 "instructions": (
-                    f"INSPECT complete: {open_count} open defect(s) found. "
-                    "Call Foundry-Tasks to generate task list, "
+                    f"INSPECT complete: {open_count} open defect(s) found."
+                    + _escalation_notice(fdir, project_root)
+                    + " Call Foundry-Tasks to generate task list, "
                     "then Foundry-Gate(phase='grind'), then update state to F3. "
                     "Call Foundry-Phase(phase='grind_start') to clear markers. "
                     "Create grind team, assign tasks."
                 ),
-                "details": {"open_defects": open_count, "agent_config": GRIND_AGENT_CONFIG},
+                "details": {
+                    "open_defects": open_count,
+                    "agent_config": GRIND_AGENT_CONFIG,
+                    "escalation": _escalated_classes(fdir, project_root),
+                },
             }
 
         return {
@@ -2255,8 +3135,11 @@ def _compute_next_action(project_root: str) -> dict:
                 "instructions": (
                     f"GRIND phase: {open_count} defect(s) to fix. "
                     "Teammates are fixing. Wait for completion. "
-                    "After each fix, call Foundry-Fix(defect_id, cycle). "
-                    "When all done: shut down team, update state to F2, run full INSPECT again."
+                    "After each fix, call Foundry-Fix(defect_id, cycle, "
+                    "adjacent_path_statement, adjacent_path_test) — the two "
+                    "declarations are required and the call is refused without them. "
+                    "When all done: shut down team, Foundry-Phase(phase='inspect_start'), "
+                    "run full INSPECT again."
                 ),
                 "details": {"open_defects": open_count, "agent_config": GRIND_AGENT_CONFIG},
             }
@@ -2265,8 +3148,11 @@ def _compute_next_action(project_root: str) -> dict:
             "action": "transition_to_inspect",
             "instructions": (
                 "GRIND complete: all defects fixed. Shut down grind team, "
-                "Foundry-Team-Down, update state to F2. "
-                "Run FULL INSPECT again (all streams). No spot checking."
+                "Foundry-Team-Down, then Foundry-Phase(phase='inspect_start') to "
+                "cross back into F2 — that call is what advances the run's cycle "
+                "counter, so skipping it leaves every subsequent record stamped "
+                "with the previous cycle. Run FULL INSPECT again (all streams). "
+                "No spot checking."
             ),
             "details": {
                 "agent_configs": {
@@ -2435,20 +3321,64 @@ def foundry_inject_directive(
     return {"ok": True, "priority": priority, "message": "Directive injected \u2014 lead will read it at next phase transition"}
 
 
+DIRECTIVES_CLEARED_FILENAME = "directives-cleared.md"
+
+
 def foundry_clear_directives(
     project_root: str = ".",
 ) -> dict:
-    """Clear all directives after they've been addressed."""
+    """Clear active directives, preserving a record of what was cleared.
+
+    FR-019. This used to truncate directives.md outright, leaving no record of
+    what the human had asked for or whether it was ever honoured \u2014 the run's
+    steering history was destroyed by the act of acknowledging it. The cleared
+    text is now appended to ``directives-cleared.md`` first, so the audit trail
+    survives and a later reader can check a directive against the work.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
     directives_path = fdir / "directives.md"
+
+    active = _read_directives(project_root)
+    urgent = active.get("urgent", [])
+    normal = active.get("normal", [])
+    cleared_count = len(urgent) + len(normal)
+
+    if cleared_count:
+        archive = fdir / DIRECTIVES_CLEARED_FILENAME
+        if not archive.exists():
+            archive.write_text(
+                "# Cleared Directives\n\nEvery directive Foundry-Clear has retired, "
+                "with the time it was cleared. Nothing here is deleted.\n",
+                encoding="utf-8",
+            )
+        with open(archive, "a", encoding="utf-8") as f:
+            f.write(f"\n## Cleared {_now()}\n\n")
+            for text in urgent:
+                f.write(f"- **[URGENT]** {text}\n")
+            for text in normal:
+                f.write(f"- **[DIRECTIVE]** {text}\n")
+
     if directives_path.exists():
         directives_path.write_text(
             "# Foundry Directives\n\nHuman steering inputs \u2014 read at every phase transition.\n\n",
             encoding="utf-8",
         )
-    return {"ok": True, "message": "Directives cleared"}
+
+    return {
+        "ok": True,
+        "cleared_count": cleared_count,
+        "urgent_cleared": len(urgent),
+        "normal_cleared": len(normal),
+        "record": str(fdir / DIRECTIVES_CLEARED_FILENAME) if cleared_count else "",
+        "message": (
+            f"{cleared_count} directive(s) cleared \u2014 recorded in "
+            f"{DIRECTIVES_CLEARED_FILENAME}"
+            if cleared_count
+            else "No active directives to clear"
+        ),
+    }
 
 
 def _read_directives(project_root: str) -> dict:

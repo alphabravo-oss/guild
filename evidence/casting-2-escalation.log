@@ -1,0 +1,17 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_escalation.py -q -p no:cacheprovider
+# evidence-for: US-003, FR-005, FR-006, FR-007, FR-008, FR-024, AC-008, AC-009, AC-010, AC-011, NFR-001
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# The server-owned cycle counter and the recurring-class escalation.
+# NFR-001 names the synthetic three-cycle escalation fixture as a deliverable
+# of this casting, not an afterthought: escalation fires on the third
+# consecutive cycle (AC-009) and not on the second, one structural-fix packet
+# replaces the per-instance packets for that class while every other defect's
+# packet is untouched (AC-010), an explicit directive override restores them,
+# and the DONE gate still refuses while any escalated-class defect is open
+# (AC-011). The counter is the prerequisite: AC-008's increment happens as an
+# effect of crossing the F3 -> F2 boundary, with no caller-supplied value.
+................................                                         [100%]
+32 passed in 0.23s

@@ -22,10 +22,31 @@ US-004 (AC-013 / AC-014, + D-008) — every INSPECT stream is recordable:
   (AC-013), and ``coverage_diff`` joins per the D-008 lead ruling ("all
   streams the phase guide defines" — coverage_diff is the MIGRATION-run F2
   stream the orchestrator's own next-action guidance names). All are
-  recordable, NOT required. The invalid-stream error lists all eight names
-  sorted, the MCP tool's JSON-Schema enum and the runtime guard agree exactly,
-  and state written by the old five-name build still loads and gates
-  identically.
+  recordable, NOT required. The MCP tool's JSON-Schema enum and the runtime
+  guard agree exactly, and markers written by the old build still load.
+
+US-006 (FR-013 / CT-002 / AC-018 / AC-019 / OT-007 / NFR-002) — the MCP surface
+  accepts what the protocol produces: the stream, source and defect_type
+  vocabularies are READ from schemas/vocab.py at every site rather than
+  re-typed, ``test01`` joins the recordable set, ``foundry_sync_defects``
+  validates source and type and preserves the recorded source verbatim instead
+  of silently coercing it to "trace", and unknown values are refused with a
+  named error.
+
+FR-019 — the directive channel: urgent and normal directives are BOTH rendered
+  (the ``elif`` suppressed every standing normal directive after the first
+  urgent one), and Foundry-Clear preserves what it cleared.
+
+AC-023 / CT-004 — the registration halves this casting owns: ``casting_commit``
+  reaches ``foundry_accept_casting`` over MCP, and ``Foundry-Liveness`` is
+  declared and dispatched.
+
+Two claims from earlier versions of this file moved on purpose, both because
+the behaviour they pinned is what FR-014 / FR-020 deliberately change:
+  - the marker-write coverage-drop comparison → test_stream_rollup.py, now
+    cycle N vs cycle N-1;
+  - ``sight`` being required whenever ``no_ui`` is false → now driven by
+    whether any casting key_file actually carries a UI extension (AC-025).
 
 All tests are hermetic: ``_check_active_teams`` is monkeypatched inactive so
 no test depends on the ambient tmux session or ~/.claude/teams state.
@@ -40,6 +61,7 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.foundry_orchestrator import (
@@ -115,6 +137,25 @@ def _write_verdicts(fdir: Path, rows: list[dict]) -> None:
 def _arm_ordering_token(fdir: Path) -> None:
     """Simulate a preceding Foundry-Next so a gate's ordering check passes."""
     (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+
+
+def _write_manifest_with_castings(
+    fdir: Path, key_files: list[str], target_url: str = "", no_ui: bool = False
+) -> None:
+    """Write a castings manifest whose key_files decide whether SIGHT applies.
+
+    ``_check_sight_required`` reads key_files for UI extensions, which is what
+    drives the required-stream set after FR-020 / AC-025.
+    """
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "target_url": target_url,
+            "no_ui": no_ui,
+            "castings": [{"id": 1, "title": "t", "key_files": key_files}],
+        }),
+        encoding="utf-8",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -417,11 +458,19 @@ def test_synthesis_is_noop_when_verdicts_already_complete(run_env):
 # US-004 — every INSPECT stream is recordable (AC-013 / AC-014)
 # --------------------------------------------------------------------------- #
 
-# The closed eight-name vocabulary: AC-013's two additions plus coverage_diff
-# per the D-008 lead ruling (US-004's "all streams the phase guide defines"
-# governs; the phase guide defines COVERAGE_DIFF as the MIGRATION-run F2
-# stream, and foundry_next_action's own guidance tells the lead to record it).
-EXPECTED_STREAMS = {
+# The closed stream vocabulary. AC-013's two additions plus coverage_diff per
+# the D-008 lead ruling, and `test01` added by FR-013 / AC-018 (the canonical
+# 15-id roster names TEST-01 as an F2 stream; its wire spelling was the ninth
+# name the old hand-typed set was missing).
+#
+# Read from vocab rather than re-typed: this set IS the thing under test, and a
+# test carrying its own copy of a vocabulary is the seventh drifting copy
+# FR-013 exists to delete. The assertions below pin the MEMBERSHIP claims that
+# matter (the old eight are all present, nothing was dropped) against the
+# canonical module.
+EXPECTED_STREAMS = set(vocab.STREAM_WIRE_IDS)
+
+PRE_FR013_EIGHT = {
     "trace", "prove", "sight", "test", "probe", "research_audit", "flow_trace",
     "coverage_diff",
 }
@@ -440,10 +489,18 @@ def _old_marker_body(items_checked: int = 10, items_total: int = 10) -> str:
     )
 
 
-def test_valid_streams_vocabulary_is_exactly_eight():
-    """AC-013 + D-008 (closed vocabulary): the valid set is exactly the eight
-    names — the old five, AC-013's two, and coverage_diff. No ninth."""
-    assert set(fo.VALID_STREAMS) == EXPECTED_STREAMS
+def test_valid_streams_reads_the_canonical_vocabulary():
+    """AC-013 + D-008 + FR-013: the orchestrator's valid set is no longer a
+    declaration, it IS the canonical vocabulary — so the two cannot drift.
+
+    NFR-002: nothing the pre-FR-013 build accepted was dropped, and `test01`
+    (AC-018) is the addition.
+    """
+    assert fo.VALID_STREAMS is vocab.STREAM_WIRE_IDS
+    assert PRE_FR013_EIGHT <= set(fo.VALID_STREAMS), (
+        f"narrowed: {PRE_FR013_EIGHT - set(fo.VALID_STREAMS)}"
+    )
+    assert "test01" in fo.VALID_STREAMS
 
 
 def test_research_audit_stream_recordable(run_env):
@@ -484,9 +541,10 @@ def test_coverage_diff_stream_recordable_writes_marker(run_env):
     assert "items_checked=9" in marker.read_text(encoding="utf-8")
 
 
-def test_all_eight_streams_recordable(run_env):
-    """AC-013 + AC-014 + D-008: every name in the valid set records ok, and
-    the five pre-existing names produce byte-identical marker filenames."""
+def test_every_stream_in_the_vocabulary_is_recordable(run_env):
+    """AC-013 + AC-014 + D-008 + AC-018: every name in the valid set records
+    ok, and the five pre-existing names produce byte-identical marker
+    filenames."""
     project_root, fdir = run_env
     for stream in sorted(fo.VALID_STREAMS):
         result = foundry_mark_stream(
@@ -498,22 +556,20 @@ def test_all_eight_streams_recordable(run_env):
         assert (fdir / f".{old}-complete").exists()
 
 
-def test_invalid_stream_error_lists_all_eight_sorted(run_env):
-    """AC-013 + D-008: an unknown stream errors with the sorted eight-name
-    list, derived from the guard's own set."""
+def test_invalid_stream_error_lists_the_whole_sorted_vocabulary(run_env):
+    """AC-013 + D-008 + AC-018: an unknown stream errors with the sorted list
+    of every legal name, derived from the guard's own set — never coerced onto
+    a known stream."""
     project_root, _fdir = run_env
     result = foundry_mark_stream(
         "bogus", cycle=1, items_checked=1, project_root=project_root
     )
     assert "error" in result
-    assert (
-        "coverage_diff, flow_trace, probe, prove, research_audit, sight, "
-        "test, trace"
-        in result["error"]
-    )
+    assert ", ".join(sorted(vocab.STREAM_WIRE_IDS)) in result["error"]
+    assert "test01" in result["error"]
 
 
-def test_zero_items_hint_enumerates_all_eight_streams(run_env):
+def test_zero_items_hint_enumerates_every_stream(run_env):
     """key_link 5: the items_checked<=0 hint prose names a counting unit for
     every stream in the enum it sits beside — including all three new names."""
     project_root, _fdir = run_env
@@ -525,33 +581,88 @@ def test_zero_items_hint_enumerates_all_eight_streams(run_env):
         assert f"{stream}:" in result["error"], f"hint missing unit for {stream}"
 
 
-def test_old_five_name_state_still_loads_and_gates_identically(run_env):
-    """AC-014: markers written by the old five-name build still load (the
-    coverage-drop parse works) and _check_streams_complete gates identically —
-    required stays [trace, prove, test, sight] with no manifest, and the two
-    new names are recordable, never required."""
+def test_old_marker_state_still_loads_and_gates(run_env):
+    """AC-014: markers written by the pre-FR-013 build still load and
+    _check_streams_complete still gates on them, and the streams added since
+    are recordable but never required.
+
+    Two claims from the original version of this test moved on purpose:
+
+    - ``sight`` is no longer in ``required`` here. FR-020 / AC-025: sight used
+      to be appended whenever ``manifest.no_ui`` was false — the default — so a
+      run with no frontend files in scope deadlocked on a marker it could never
+      earn. It is now driven by whether any casting key_file actually carries a
+      UI extension, and this fixture declares no castings at all. The UI case is
+      covered by ``test_sight_still_required_when_ui_files_are_in_scope``.
+    - the coverage-drop assertion moved to test_stream_rollup.py. FR-014 / CT-003
+      re-points that warning at cycle N vs cycle N-1 in the roll-up; comparing
+      against "the previous write of this same marker file" is the behaviour
+      being removed, because it fires on a second partial tranche of the SAME
+      cycle.
+    """
     project_root, fdir = run_env
     # A run directory left behind by the old build: old-format markers only.
-    for old in ["trace", "prove", "test", "sight"]:
+    for old in ["trace", "prove", "test"]:
         (fdir / f".{old}-complete").write_text(
             _old_marker_body(items_checked=10), encoding="utf-8"
         )
 
     streams = fo._check_streams_complete(project_root)
     assert streams["complete"] is True, streams
-    assert streams["required"] == ["trace", "prove", "test", "sight"]
-    assert "research_audit" not in streams["required"]
-    assert "flow_trace" not in streams["required"]
-    assert "coverage_diff" not in streams["required"]
+    assert streams["required"] == ["trace", "prove", "test"]
+    for recordable in ("research_audit", "flow_trace", "coverage_diff", "test01"):
+        assert recordable not in streams["required"]
 
-    # Re-recording over an old-format marker parses its items_checked= line:
-    # 3 < 10 * 0.7 triggers the coverage-drop warning (proof the old body
-    # loaded). items_total=0 keeps the trace 95% guard out of the way.
+    # An old-format marker body still parses.
+    counts = fo._marker_counts(fdir / ".trace-complete")
+    assert counts == {"items_checked": 10, "items_total": 10, "findings": 0}
+
+    # Re-recording over an old-format marker still succeeds.
     result = foundry_mark_stream(
         "trace", cycle=2, items_checked=3, items_total=0, project_root=project_root
     )
     assert result.get("ok") is True, result
-    assert "Coverage dropped" in result.get("warning", "")
+
+
+def test_sight_still_required_when_ui_files_are_in_scope(run_env):
+    """FR-020 / AC-025 does NOT weaken SIGHT: a run whose castings carry
+    frontend files still requires the sight stream, and the inspect gate still
+    blocks when no target_url is set for it."""
+    project_root, fdir = run_env
+    _write_manifest_with_castings(
+        fdir, key_files=["src/App.tsx"], target_url="http://localhost:3000"
+    )
+    streams = fo._check_streams_complete(project_root)
+    assert "sight" in streams["required"]
+    assert "sight" in streams["missing"]
+
+    sight = fo._check_sight_required(project_root)
+    assert sight["required"] is True
+    assert sight["blocked"] is False
+
+
+def test_sight_not_required_on_a_clean_non_ui_run(run_env):
+    """FR-020 / AC-025 (the grand-vulture deadlock): a run with real castings
+    and zero frontend files passes the streams-complete check without ever
+    producing a sight marker.
+
+    Before this, ``sight`` was appended whenever manifest.no_ui was false, and
+    no_ui defaults to false — so a fully clean cycle-17 INSPECT blocked forever
+    on a stream that had nothing to look at.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(
+        fdir, key_files=["src/api/login.py", "src/api/session.py"]
+    )
+    _write_spec(fdir, ["FR-001"])
+    for s in ("trace", "prove", "test"):
+        foundry_mark_stream(
+            s, cycle=0, items_checked=5, items_total=5, project_root=project_root
+        )
+
+    streams = fo._check_streams_complete(project_root)
+    assert "sight" not in streams["required"], streams
+    assert streams["complete"] is True, streams
 
 
 def test_new_streams_recordable_but_not_required(run_env):
@@ -567,7 +678,7 @@ def test_new_streams_recordable_but_not_required(run_env):
 
     streams = fo._check_streams_complete(project_root)
     assert streams["complete"] is False
-    assert streams["required"] == ["trace", "prove", "test", "sight"]
+    assert streams["required"] == ["trace", "prove", "test"]
 
 
 def test_tool_schema_enum_matches_runtime_valid_set():
@@ -584,7 +695,7 @@ def test_tool_schema_enum_matches_runtime_valid_set():
     assert enum == sorted(fo.VALID_STREAMS)
 
 
-def test_grind_start_clears_all_eight_stream_markers(run_env):
+def test_grind_start_clears_every_stream_marker(run_env):
     """Honest completion state across GRIND cycles: grind_start clears every
     recordable stream's marker — including all three new names — so no stale
     'complete' survives into the next INSPECT. Required set is untouched."""
@@ -601,3 +712,487 @@ def test_grind_start_clears_all_eight_stream_markers(run_env):
     assert result.get("ok") is True, result
     for stream in fo.VALID_STREAMS:
         assert not (fdir / f".{stream}-complete").exists(), stream
+
+
+# --------------------------------------------------------------------------- #
+# US-006 — the MCP surface accepts what the protocol produces
+# (FR-013 / CT-002 / AC-018 / AC-019 / OT-007 / NFR-002)
+#
+# foundry_sync_defects was the unvalidated door into the ledger: 43 of
+# grand-vulture's 168 defects (26%) entered through it. `source` was matched
+# against a LOCAL set that agreed with neither the tool schema nor the stream
+# vocabulary, and anything outside it was silently rewritten to "trace" — so a
+# research_audit finding was persisted as if TRACE had found it. `type` was
+# written through with no validation at all.
+# --------------------------------------------------------------------------- #
+
+
+def _sync_env(fdir: Path) -> None:
+    (fdir / "defects.json").write_text(json.dumps({"defects": []}), encoding="utf-8")
+    _write_state(fdir, phase="F2", cycle=0)
+
+
+def _finding(**over) -> dict:
+    f = {"description": "handler never calls the store", "source": "trace",
+         "type": "UNWIRED", "symbol": "handle", "file": "src/api/a.py"}
+    f.update(over)
+    return f
+
+
+def test_every_roster_stream_is_recordable_including_test01(run_env):
+    """AC-018: 'Recording a research_audit, coverage_diff, flow_trace, or
+    test01 stream via Foundry-Stream succeeds.'"""
+    project_root, fdir = run_env
+    for stream in ("research_audit", "coverage_diff", "flow_trace", "test01"):
+        result = foundry_mark_stream(
+            stream, cycle=0, items_checked=3, project_root=project_root
+        )
+        assert result.get("ok") is True, (stream, result)
+        assert (fdir / f".{stream}-complete").exists()
+
+
+def test_unknown_stream_is_rejected_server_side_not_coerced(run_env):
+    """AC-018's second half: 'an unknown value is rejected server-side rather
+    than coerced.'"""
+    project_root, fdir = run_env
+    result = foundry_mark_stream(
+        "trace_but_typoed", cycle=0, items_checked=3, project_root=project_root
+    )
+    assert "error" in result
+    assert not list(fdir.glob(".*-complete"))
+
+
+def test_sync_accepts_the_partial_defect_type(run_env):
+    """AC-019: 'Filing a defect with type PARTIAL succeeds via ... Foundry-Sync'
+    — PARTIAL is one of the values agents were already told to emit while the
+    surface rejected it."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(0, [_finding(type="PARTIAL")], project_root)
+
+    assert result.get("ok") is True, result
+    assert result["added"] == 1
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["type"] == "PARTIAL"
+
+
+def test_sync_preserves_source_verbatim(run_env):
+    """OT-007 / AC-019: 'the recorded source survives Foundry-Sync unchanged'.
+    research_audit used to be rewritten to trace, pointing the run's evidence
+    at the wrong stream."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    fo.foundry_sync_defects(
+        0,
+        [_finding(source=s, description=f"finding from {s}", symbol=s)
+         for s in ("research_audit", "coverage_diff", "flow_trace", "test01", "temper")],
+        project_root,
+    )
+
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [r["source"] for r in records] == [
+        "research_audit", "coverage_diff", "flow_trace", "test01", "temper"
+    ]
+
+
+def test_sync_refuses_an_unknown_source_instead_of_coercing_it(run_env):
+    """NFR-002 / A-035: 'Previously-coerced unknown sources are henceforth
+    rejected with a named error — a deliberate behaviour change.'"""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(0, [_finding(source="linter")], project_root)
+
+    assert "error" in result
+    assert result["refusals"][0]["field"] == "source"
+    assert "linter" in result["error"]
+    assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
+
+
+def test_sync_refuses_a_finding_with_no_source_at_all(run_env):
+    """The default was "inspect", which was not a legal source and so became
+    "trace" — the mis-attribution path. An unattributed finding is refused."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(0, [_finding(source="")], project_root)
+
+    assert "error" in result
+    assert result["refusals"][0]["field"] == "source"
+
+
+def test_sync_refuses_an_unknown_defect_type(run_env):
+    """CT-002: `type` had no validation whatsoever and was written straight
+    through, so the ledger could carry types nothing downstream understood."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(0, [_finding(type="SORT_OF_BROKEN")], project_root)
+
+    assert "error" in result
+    assert result["refusals"][0]["field"] == "type"
+    assert "SORT_OF_BROKEN" in result["error"]
+
+
+def test_sync_refusal_is_all_or_nothing(run_env):
+    """One bad finding refuses the whole batch, so the caller never has to
+    guess which of its findings landed."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        0,
+        [_finding(symbol="good"), _finding(symbol="bad", source="nope")],
+        project_root,
+    )
+
+    assert "error" in result
+    assert "no findings were recorded" in result["error"]
+    assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
+
+
+def test_sync_canonicalizes_the_misplaced_alias(run_env):
+    """MISPLACED and ARCHITECTURAL_PLACEMENT are one type under two live
+    spellings; both are accepted and stored under the canonical one."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    fo.foundry_sync_defects(0, [_finding(type="MISPLACED")], project_root)
+
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["type"] == "ARCHITECTURAL_PLACEMENT"
+
+
+def test_sync_defaults_an_absent_type_to_missing(run_env):
+    """NFR-002: the pre-existing default is a legal member and keeps working."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    f = _finding()
+    del f["type"]
+    fo.foundry_sync_defects(0, [f], project_root)
+
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["type"] == "MISSING"
+
+
+def test_sync_stamps_the_server_cycle_not_the_caller_value(run_env):
+    """FR-005: 'tools stop trusting caller-supplied cycle where the server
+    knows better'. The three-cycle escalation rule reads these numbers back, so
+    a lead asserting cycle=0 forever would mean escalation never accumulates."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    _write_state(fdir, phase="F2", cycle=5)
+
+    result = fo.foundry_sync_defects(99, [_finding()], project_root)
+
+    assert result["cycle"] == 5
+    assert result["declared_cycle"] == 99
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["cycle"] == 5
+
+
+def test_sync_mints_ids_from_the_shared_allocator(run_env):
+    """AC-025 / FR-020: the positional D-{len+1} mint re-issued a live id
+    whenever a record had been removed. The shared allocator takes the highest
+    existing suffix, and the surrounding ledger transaction is what makes it
+    safe under concurrent filing."""
+    project_root, fdir = run_env
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [
+            {"id": "D-001", "status": "fixed", "description": "x", "symbol": "x"},
+            {"id": "D-007", "status": "fixed", "description": "y", "symbol": "y"},
+        ]}),
+        encoding="utf-8",
+    )
+    _write_state(fdir, phase="F2", cycle=0)
+
+    fo.foundry_sync_defects(0, [_finding(symbol="fresh", description="fresh")], project_root)
+
+    ids = [d["id"] for d in json.loads(
+        (fdir / "defects.json").read_text(encoding="utf-8"))["defects"]]
+    assert ids == ["D-001", "D-007", "D-008"]
+    assert len(ids) == len(set(ids))
+
+
+def test_sync_carries_a_stream_declared_class_onto_the_record(run_env):
+    """FR-007: the optional class field travels with the record so escalation
+    can key on it."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    fo.foundry_sync_defects(
+        0, [_finding(**{"class": "FALSE_DOCUMENTED_CONTRACT"})], project_root
+    )
+
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["class"] == "FALSE_DOCUMENTED_CONTRACT"
+    assert fo._defect_class(record) == "FALSE_DOCUMENTED_CONTRACT"
+
+
+def test_sync_routes_a_declared_comment_prose_finding_to_observations(run_env):
+    """FR-001 routing half: a comment-prose finding is refused from the defect
+    ledger and recorded in observations.json instead — through the one ledger
+    writer, never a second one here."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        0,
+        [_finding(
+            description="the comment says line 42 but the symbol moved — stale line hint",
+            target_kind="comment",
+            symbol="",
+        )],
+        project_root,
+    )
+
+    assert result.get("ok") is True, result
+    assert result["added"] == 0
+    assert result["observations"] == 1
+    assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
+    assert (fdir / "observations.json").exists()
+
+
+def test_sync_keeps_a_denylisted_finding_as_a_defect(run_env):
+    """AC-002 precedence, applied at this filing path too: a security-property
+    claim stays a DEFECT even when its prose reads like comment drift."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        0,
+        [_finding(
+            description=(
+                "the comment says the csrf token is validated but that line is "
+                "stale — no such check exists"
+            ),
+            target_kind="comment",
+        )],
+        project_root,
+    )
+
+    assert result["added"] == 1
+    assert result["observations"] == 0
+
+
+def test_sync_will_not_demote_a_finding_that_declares_no_target_kind(run_env):
+    """casting-1's AC-002 concern, handled at the call site: an ABSENT
+    target_kind does not license a demotion, because vocab's is_non_comment
+    only matches a target_kind that is present and non-"comment"."""
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        0,
+        [_finding(description="the comment's line hint is stale and no longer matches")],
+        project_root,
+    )
+
+    assert result["added"] == 1
+    assert result["observations"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# FR-019 — the directive channel
+# --------------------------------------------------------------------------- #
+
+
+def test_a_normal_directive_survives_alongside_an_urgent_one(run_env):
+    """FR-019: the rendering was `if urgent ... elif normal ...`, so ONE urgent
+    directive suppressed every standing normal directive for the rest of the
+    run — the human's steering silently stopped reaching the lead."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+    fo.foundry_inject_directive("prefer the existing helper", project_root=project_root)
+    fo.foundry_inject_directive("stop touching the schema", priority="urgent",
+                                project_root=project_root)
+
+    result = fo.foundry_next_action(project_root)
+
+    assert "stop touching the schema" in result["instructions"]
+    assert "prefer the existing helper" in result["instructions"]
+    assert result["directives"]["urgent"] and result["directives"]["normal"]
+
+
+def test_a_normal_directive_alone_still_renders(run_env):
+    """No regression on the common case."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+    fo.foundry_inject_directive("prefer the existing helper", project_root=project_root)
+
+    result = fo.foundry_next_action(project_root)
+
+    assert "prefer the existing helper" in result["instructions"]
+
+
+def test_clearing_directives_preserves_a_record_of_them(run_env):
+    """FR-019: Foundry-Clear used to truncate directives.md outright, so the
+    run's steering history was destroyed by the act of acknowledging it."""
+    project_root, fdir = run_env
+    fo.foundry_inject_directive("prefer the existing helper", project_root=project_root)
+    fo.foundry_inject_directive("stop touching the schema", priority="urgent",
+                                project_root=project_root)
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert result["cleared_count"] == 2
+    assert result["urgent_cleared"] == 1
+    assert result["normal_cleared"] == 1
+
+    record = (fdir / "directives-cleared.md").read_text(encoding="utf-8")
+    assert "prefer the existing helper" in record
+    assert "stop touching the schema" in record
+    assert "[URGENT]" in record
+
+    # ...and the active channel really is cleared.
+    assert fo._read_directives(project_root)["has_directives"] is False
+
+
+def test_clearing_an_empty_channel_writes_no_record(run_env):
+    """Nothing cleared, nothing recorded — the archive stays meaningful."""
+    project_root, fdir = run_env
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert result["cleared_count"] == 0
+    assert not (fdir / "directives-cleared.md").exists()
+
+
+def test_clearing_appends_rather_than_replacing_earlier_records(run_env):
+    """A second clear must not erase the first one's record."""
+    project_root, fdir = run_env
+    fo.foundry_inject_directive("first", project_root=project_root)
+    fo.foundry_clear_directives(project_root)
+    fo.foundry_inject_directive("second", project_root=project_root)
+    fo.foundry_clear_directives(project_root)
+
+    record = (fdir / "directives-cleared.md").read_text(encoding="utf-8")
+    assert "first" in record
+    assert "second" in record
+
+
+# --------------------------------------------------------------------------- #
+# Registration halves owned by this casting (AC-023 / CT-004)
+# --------------------------------------------------------------------------- #
+
+
+def test_accept_casting_schema_and_dispatch_carry_casting_commit():
+    """AC-023 / FR-017: the handler has always accepted casting_commit and
+    gates the whole evidence re-execution block on `is not None`, but the
+    parameter had no schema property and no dispatch path — so over MCP it was
+    ALWAYS None, nothing in tools/evidence.py ever ran from a real run, and
+    manifest.evidence_provenance was never populated."""
+    import inspect
+
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    accept = next(t for t in tools if t.name == "Foundry-Accept-Casting")
+
+    props = accept.inputSchema["properties"]
+    assert "casting_commit" in props
+    assert props["casting_commit"]["type"] == "string"
+    # Optional, so existing four-argument calls keep working.
+    assert "casting_commit" not in accept.inputSchema["required"]
+
+    # The dispatcher actually threads it through, rather than advertising a
+    # field the handler never sees.
+    src = inspect.getsource(foundry_server)
+    assert 'casting_commit=args.get("casting_commit")' in src
+
+
+def test_liveness_tool_is_registered_and_dispatched():
+    """CT-004 registration half: the tool is declared with the optional agent
+    identifier and dispatched by name to its handler."""
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    liveness = next(t for t in tools if t.name == "Foundry-Liveness")
+
+    # "none, or an agent identifier" — the empty-input case is binding.
+    assert liveness.inputSchema.get("required", []) == []
+    assert "agent" in liveness.inputSchema["properties"]
+    assert "Foundry-Liveness" in foundry_server._DISPATCH
+
+
+def test_no_enum_literal_is_re_declared_in_the_server_schemas():
+    """FR-013 / key_link: server.py must READ the vocabularies, never re-type
+    them. The AC-013 class of defect was exactly this file's hand-typed enums
+    drifting from the runtime guards."""
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    by_name = {t.name: t for t in tools}
+
+    assert by_name["Foundry-Stream"].inputSchema["properties"]["stream"]["enum"] == sorted(
+        vocab.STREAM_WIRE_IDS
+    )
+    defect_props = by_name["Foundry-Defect"].inputSchema["properties"]
+    assert defect_props["source"]["enum"] == sorted(vocab.DEFECT_SOURCE_IDS)
+    assert defect_props["defect_type"]["enum"] == sorted(vocab.DEFECT_TYPES)
+    sync_props = by_name["Foundry-Sync"].inputSchema["properties"]["findings"]["items"]["properties"]
+    assert sync_props["source"]["enum"] == sorted(vocab.DEFECT_SOURCE_IDS)
+    assert sync_props["type"]["enum"] == sorted(vocab.DEFECT_TYPES)
+
+
+def test_liveness_registration_reaches_the_handler_through_dispatch(run_env, tmp_path):
+    """AC-021 through the surface this casting owns.
+
+    The Tool declaration and the _DISPATCH entry are casting 2's; the
+    ``foundry_liveness`` handler is another casting's. What is verified here is
+    that the registration actually REACHES it — the lead drives the tool by
+    name, with and without the optional agent identifier, and gets per-agent
+    last-progress ages back with a stalled agent flagged distinctly from one
+    that is progressing.
+
+    The identifier is dispatched POSITIONALLY on purpose, so this registration
+    does not depend on the handler's parameter name.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    pdir = fdir / "progress"
+    pdir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+
+    def _line(minutes_ago: int, phase: str, step: str) -> str:
+        ts = (now - timedelta(minutes=minutes_ago)).isoformat()
+        return json.dumps({"timestamp": ts, "phase": phase, "step": step}) + "\n"
+
+    # One agent advancing a minute ago; one silent for 40 minutes.
+    (pdir / "casting-7.jsonl").write_text(
+        _line(6, "CAST", "read floor") + _line(1, "CAST", "writing code"),
+        encoding="utf-8",
+    )
+    (pdir / "casting-9.jsonl").write_text(
+        _line(45, "CAST", "read floor") + _line(40, "CAST", "read floor"),
+        encoding="utf-8",
+    )
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+
+        # CT-004's "none" input: the whole roster.
+        roster = foundry_server._DISPATCH["Foundry-Liveness"]({})
+        assert roster["ok"] is True, roster
+        by_agent = {a["agent"]: a for a in roster["agents"]}
+        assert set(by_agent) == {"casting-7", "casting-9"}
+
+        # Per-agent last-progress AGE is what comes back...
+        assert by_agent["casting-7"]["last_progress_age_seconds"] < 120
+        assert by_agent["casting-9"]["last_progress_age_seconds"] > 2000
+
+        # ...and the stalled agent is flagged distinctly from the progressing one.
+        assert by_agent["casting-7"]["status"] != by_agent["casting-9"]["status"]
+        assert "casting-9" in roster["needs_attention"]
+        assert "casting-7" not in roster["needs_attention"]
+
+        # CT-004's "an agent identifier" input, threaded through the lambda.
+        one = foundry_server._DISPATCH["Foundry-Liveness"]({"agent": "casting-9"})
+        assert [a["agent"] for a in one["agents"]] == ["casting-9"]
+    finally:
+        foundry_server._project_root = previous_root

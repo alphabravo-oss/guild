@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 
+from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+
 
 def _short_path(p: str) -> str:
     """Shorten an absolute path to be relative to cwd or home."""
@@ -497,11 +499,22 @@ def _fmt_foundry_defects_to_tasks(r: dict) -> str:
     lines = []
     for i, t in enumerate(tasks, 1):
         ids = ", ".join(t.get("defect_ids", []))
-        if t.get("regression"):
+        if t.get("structural"):
+            # An escalated class is ONE packet, not N \u2014 make that visible, since
+            # the lead's dispatch shape changes because of it.
+            marker = f"{_BRED}\u25c9{_RESET}"
+        elif t.get("regression"):
             marker = f"{_BRED}\u25b2{_RESET}"
         else:
             marker = f"{_CYAN}\u25b6{_RESET}"
-        lines.append(f"  {marker} {_BWHITE}{i}.{_RESET} [{ids}] {t.get('description', '?')[:40]}")
+        if t.get("structural"):
+            lines.append(
+                f"  {marker} {_BWHITE}{i}.{_RESET} {_BRED}STRUCTURAL{_RESET} "
+                f"'{t.get('defect_class', '?')}' \u2014 {t.get('consecutive_cycles', '?')} "
+                f"consecutive cycles, {len(t.get('defect_ids', []))} open [{ids}]"
+            )
+        else:
+            lines.append(f"  {marker} {_BWHITE}{i}.{_RESET} [{ids}] {t.get('description', '?')[:40]}")
         files = t.get("files", [])
         if files:
             lines.append(f"     {_DIM}Files: {', '.join(files[:3])}{_RESET}")
@@ -569,7 +582,11 @@ def _fmt_foundry_get_context(r: dict) -> str:
         missing = streams.get("missing", "").split()
         if req:
             icons = []
-            for s in ["trace", "prove", "sight", "test", "probe"]:
+            # FR-013: rendered from the canonical stream vocabulary rather than
+            # from a local copy of the names. The hardcoded five silently hid
+            # every stream added since — a required stream this list did not
+            # mention simply never appeared in the status line.
+            for s in sorted(STREAM_WIRE_IDS):
                 if s in req:
                     if s not in missing:
                         icons.append(f"[{_GREEN}\u2713{_RESET}]{s}")
@@ -598,9 +615,22 @@ def _fmt_foundry_inject_directive(r: dict) -> str:
 
 
 def _fmt_foundry_clear_directives(r: dict) -> str:
-    return _foundry_display("F O U N D R Y  Directives Cleared", [
-        f"  {r.get('message', 'All directives cleared.')}",
-    ])
+    if r.get("error"):
+        return _foundry_display(f"F O U N D R Y  {_BRED}Error{_RESET}", [
+            f"  {_RED}{r['error']}{_RESET}",
+        ])
+    cleared = r.get("cleared_count", 0)
+    lines = [f"  {_BWHITE}Cleared:{_RESET}  {cleared}"]
+    if cleared:
+        lines.append(
+            f"  {_BWHITE}Urgent:{_RESET}   {r.get('urgent_cleared', 0)}"
+            f"   {_BWHITE}Normal:{_RESET} {r.get('normal_cleared', 0)}"
+        )
+        # FR-019: clearing a directive must not destroy the record of it.
+        lines.append(f"  {_BWHITE}Record:{_RESET}   {_short_path(r.get('record', ''))}")
+    else:
+        lines.append(f"  {_DIM}{r.get('message', 'No active directives to clear')}{_RESET}")
+    return _foundry_display("F O U N D R Y  Directives Cleared", lines)
 
 
 # ── Forge-Spec formatters ────────────────────────────────────────────────────

@@ -1,0 +1,26 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider
+# evidence-for: US-001, US-006, US-007, FR-013, FR-017, FR-019, AC-018, AC-019, AC-021, AC-023, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# The reconciled vocabulary, the directive channel and the two registration
+# halves this casting owns.
+#
+# FR-013 / CT-002: the stream, source and defect_type vocabularies are READ
+# from schemas/vocab.py at every site that used to re-type them -- server.py's
+# three inputSchemas, the orchestrator's VALID_STREAMS, both display loops and
+# the marker-clear lists. test01 joins the recordable set (AC-018), PARTIAL
+# files successfully (AC-019), the recorded source survives verbatim instead of
+# being silently coerced to "trace" (OT-007), and unknown values are refused
+# server-side with a named error rather than rewritten (NFR-002 / A-035).
+#
+# FR-019: urgent and normal directives are BOTH rendered -- the old
+# `if urgent ... elif normal` meant one urgent directive suppressed every
+# standing normal directive for the rest of the run -- and Foundry-Clear
+# preserves what it cleared instead of truncating the record.
+#
+# AC-023 / FR-017: casting_commit reaches foundry_accept_casting over MCP, so
+# the evidence re-execution path stops being dead on the MCP surface.
+...................................................                      [100%]
+51 passed in 0.30s

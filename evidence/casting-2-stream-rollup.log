@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_stream_rollup.py -q -p no:cacheprovider
+# evidence-for: FR-014, FR-020, AC-020, AC-025
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# The per-cycle stream roll-up. A single overwritten marker file cannot
+# accumulate, which is why a partial PROVE tranche used to be refused outright
+# and why the coverage-drop warning compared "the previous write of this file"
+# rather than cycle N-1. Partial records are now accepted and stored, both
+# tranches of a two-part PROVE survive (AC-020 / OT-009), the >=95% thresholds
+# are evaluated once per cycle at the streams-complete check against the cycle
+# total, and drop warnings compare cycle N to cycle N-1 -- so a second tranche
+# of the SAME cycle is no longer a false alarm.
+#
+# Also FR-020 / AC-025's auto-VERIFY hole, which lives in the same
+# _prove_is_clean read path: a spec parsing to ZERO requirements used to skip
+# the coverage check entirely, so any clean .prove-complete drove the F4
+# auto-pass on a spec nothing had been proved against.
+...................                                                      [100%]
+19 passed in 0.16s

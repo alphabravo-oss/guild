@@ -12,6 +12,16 @@ from mcp.types import TextContent, Tool
 
 from foundry_mcp import __version__
 
+# FR-013 / CT-002 — every closed vocabulary this file advertises is READ from
+# the canonical module. No enum literal is declared here: the AC-013 class of
+# defect was exactly this file's hand-typed enums drifting away from the
+# runtime guards, so the schema advertised streams the server rejected and
+# rejected defect types the agent contracts were told to emit.
+from foundry_mcp.schemas.vocab import (
+    DEFECT_SOURCE_IDS,
+    DEFECT_TYPES,
+    STREAM_WIRE_IDS,
+)
 from foundry_mcp.tools.citation import verify_citations
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
@@ -21,7 +31,6 @@ from foundry_mcp.tools.foundry import (
     foundry_verify_coverage,
 )
 from foundry_mcp.tools.foundry_orchestrator import (
-    VALID_STREAMS,
     foundry_clear_directives,
     foundry_defects_to_tasks,
     foundry_gate,
@@ -151,8 +160,8 @@ async def list_tools() -> list[Tool]:
                 "required": ["cycle", "source", "defect_type", "description"],
                 "properties": {
                     "cycle": {"type": "integer"},
-                    "source": {"type": "string", "enum": ["trace", "prove", "research_audit", "coverage_diff", "sight", "test", "assay", "temper"]},
-                    "defect_type": {"type": "string", "enum": ["MISSING", "WRONG", "THIN", "HOLLOW", "UNWIRED", "BROKEN", "FAIL", "RESEARCH_DEVIATION", "COVERAGE_INCOMPLETE", "THIN_MIGRATION"]},
+                    "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
+                    "defect_type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
                     "description": {"type": "string"},
                     "spec_ref": {"type": "string"},
                     "symbol": {"type": "string"},
@@ -175,19 +184,47 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Fix",
-            description="Mark a defect as fixed in this cycle.",
+            description=(
+                "Mark a defect as fixed in this cycle. Requires an adjacent-path "
+                "statement (who else calls this, what else transitions here, what "
+                "runs concurrently) and a reference to a test that drives at least "
+                "one of those adjacent paths. The call is REFUSED without both, "
+                "naming each missing field — a fix whose blast radius is undeclared "
+                "is how a defect closes and a regression opens in the same cycle."
+            ),
             inputSchema={
                 "type": "object",
-                "required": ["defect_id", "cycle"],
+                "required": ["defect_id", "cycle", "adjacent_path_statement", "adjacent_path_test"],
                 "properties": {
                     "defect_id": {"type": "string"},
                     "cycle": {"type": "integer"},
+                    "adjacent_path_statement": {
+                        "type": "string",
+                        "description": (
+                            "Who ELSE calls this, what else transitions here, what runs "
+                            "concurrently. Must name a path other than the one the defect "
+                            "was found on."
+                        ),
+                    },
+                    "adjacent_path_test": {
+                        "type": "string",
+                        "description": (
+                            "Reference to a test exercising at least one NAMED adjacent "
+                            "path (e.g. tests/test_auth.py::test_refresh_reuses_session)."
+                        ),
+                    },
                 },
             },
         ),
         Tool(
             name="Foundry-Sync",
-            description="Sync new findings against existing defects. Detects regressions automatically.",
+            description=(
+                "Sync new findings against existing defects. Detects regressions "
+                "automatically. source and type are validated against the canonical "
+                "vocabulary and never coerced: an unknown or absent source is refused "
+                "rather than silently recorded as 'trace'. The whole batch is refused "
+                "if any finding is invalid, so nothing lands half-applied."
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["cycle", "findings"],
@@ -197,14 +234,32 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["description"],
+                            "required": ["description", "source"],
                             "properties": {
                                 "description": {"type": "string"},
-                                "source": {"type": "string"},
+                                "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
                                 "symbol": {"type": "string"},
                                 "file": {"type": "string"},
                                 "spec_ref": {"type": "string"},
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
+                                "class": {
+                                    "type": "string",
+                                    "description": (
+                                        "Optional root-cause class shared by several "
+                                        "instances. A class filed in 3 consecutive "
+                                        "cycles escalates to one structural-fix packet."
+                                    ),
+                                },
+                                "target_kind": {
+                                    "type": "string",
+                                    "description": (
+                                        "What the finding is ABOUT — 'comment' when the "
+                                        "subject is a code comment, otherwise the kind of "
+                                        "artifact. Populate it: any value other than "
+                                        "'comment' pins the finding as a defect that can "
+                                        "never be demoted to an observation."
+                                    ),
+                                },
                             },
                         },
                     },
@@ -249,7 +304,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["stream", "cycle", "items_checked"],
                 "properties": {
-                    "stream": {"type": "string", "enum": sorted(VALID_STREAMS)},
+                    "stream": {"type": "string", "enum": sorted(STREAM_WIRE_IDS)},
                     "cycle": {"type": "integer"},
                     "items_checked": {"type": "integer"},
                     "items_total": {"type": "integer"},
@@ -366,6 +421,42 @@ async def list_tools() -> list[Tool]:
                     "spec_hash": {"type": "string", "description": "Fresh hash from Foundry-Spec-Hash."},
                     "prompt_hash": {"type": "string", "description": "Hash from Foundry-Spawn-Teammate."},
                     "completion_report": {"type": "string", "description": "The teammate's completion report text."},
+                    # FR-017 / AC-023 — the evidence gate's reachable half. The
+                    # handler has always accepted casting_commit and gates the
+                    # whole evidence re-execution block on `is not None`, but the
+                    # parameter had no schema property and no dispatch path, so
+                    # over MCP it was ALWAYS None: nothing in tools/evidence.py
+                    # ever ran from a real run and manifest.evidence_provenance
+                    # was never populated. Optional, so existing four-argument
+                    # calls keep working.
+                    "casting_commit": {
+                        "type": "string",
+                        "description": (
+                            "The casting's commit SHA. Supplying it runs evidence "
+                            "re-execution for that commit in an isolated worktree "
+                            "and binds each requirement ID to committed evidence."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Liveness",
+            description=(
+                "Report each spawned agent's last-progress age from the run's "
+                "progress ledger, compared against a stall threshold, so a slow "
+                "agent can be told from a dead one. Called with no argument it "
+                "returns every agent in the run; with an agent identifier it "
+                "returns only that agent. A run with no progress ledger returns an "
+                "empty roster, not an error."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent": {
+                        "type": "string",
+                        "description": "Optional agent identifier. Omit for the whole roster.",
+                    },
                 },
             },
         ),
@@ -389,7 +480,13 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Directive",
-            description="Inject a non-blocking directive. Lead reads it at every phase transition.",
+            description=(
+                "Inject a non-blocking directive. Lead reads it at every phase "
+                "transition; urgent and normal directives are BOTH shown. "
+                "Recognized control directive: 'escalation-override: <class>' "
+                "de-escalates one recurring defect class back to per-instance "
+                "packets (bare 'escalation-override' de-escalates every class)."
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["directive"],
@@ -401,7 +498,10 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Clear",
-            description="Clear all directives after they've been addressed.",
+            description=(
+                "Clear active directives after they've been addressed. The cleared "
+                "text is preserved in directives-cleared.md — nothing is destroyed."
+            ),
             inputSchema={"type": "object", "properties": {}},
         ),
         # ── Forge-Spec ─────────────────────────────────────────────
@@ -456,6 +556,22 @@ async def list_tools() -> list[Tool]:
 
 # ── Tool name -> function dispatch ───────────────────────────────────────────
 
+
+def _dispatch_liveness(args: dict) -> dict:
+    """Dispatch Foundry-Liveness to its handler in tools/foundry_spawn.py.
+
+    Imported lazily and unguarded: a module-top import would take the ENTIRE
+    server down while the casting that owns foundry_spawn.py is still landing
+    this handler, and swallowing the ImportError would hide a real wiring break
+    behind a silent no-op. Failing here fails one tool, loudly, naming the
+    symbol. The agent identifier is passed positionally so this registration
+    does not depend on the handler's parameter NAME.
+    """
+    from foundry_mcp.tools.foundry_spawn import foundry_liveness
+
+    return foundry_liveness(args.get("agent"), project_root=_project_root)
+
+
 _DISPATCH = {
     "Validate-Report": lambda args: validate_report(
         report_path=args["report_path"], schema_name=args.get("schema_name", "trace"),
@@ -480,7 +596,10 @@ _DISPATCH = {
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),
         spec_ref=args.get("spec_ref"), project_root=_project_root),
     "Foundry-Fix": lambda args: foundry_mark_defect_fixed(
-        defect_id=args["defect_id"], cycle=args["cycle"], project_root=_project_root),
+        defect_id=args["defect_id"], cycle=args["cycle"],
+        adjacent_path_statement=args.get("adjacent_path_statement", ""),
+        adjacent_path_test=args.get("adjacent_path_test", ""),
+        project_root=_project_root),
     "Foundry-Sync": lambda args: foundry_sync_defects(
         cycle=args["cycle"], findings=args["findings"], project_root=_project_root),
     "Foundry-Tasks": lambda args: foundry_defects_to_tasks(project_root=_project_root),
@@ -508,7 +627,9 @@ _DISPATCH = {
     "Foundry-Accept-Casting": lambda args: foundry_accept_casting(
         casting_id=args["casting_id"], spec_hash=args["spec_hash"],
         prompt_hash=args["prompt_hash"], completion_report=args["completion_report"],
+        casting_commit=args.get("casting_commit"),
         project_root=_project_root),
+    "Foundry-Liveness": lambda args: _dispatch_liveness(args),
     "Foundry-Team-Up": lambda args: foundry_register_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Team-Down": lambda args: foundry_unregister_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Directive": lambda args: foundry_inject_directive(

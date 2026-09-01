@@ -1,0 +1,389 @@
+"""Foundry-Fix blast-radius gate — FR-009 / CT-001 / ST-004.
+
+A-017: "Foundry-Fix gains required fields: an adjacent-path statement (who else
+calls this / what else transitions here / what runs concurrently) and a
+reference to a test exercising at least one adjacent path; the server refuses to
+mark fixed without them, naming what is missing."
+
+Before this, ``foundry_mark_defect_fixed`` validated nothing and could not
+reject: it matched the first id, flipped ``status`` to fixed and returned ok.
+That is the mechanism behind the run-shape this effort exists to fix — a defect
+closes, the fix's blast radius is never considered, and the regression it opened
+surfaces two cycles later as a fresh defect nobody connects to it.
+
+Acceptance covered here:
+  AC-012 / OT-004  a call carrying only defect_id and cycle is refused with a
+                   message naming BOTH missing fields.
+  AC-013           the referenced test drives a NAMED adjacent path distinct
+                   from the path the defect was found on.
+  CT-001 / ST-004  supplying both persists the declarations and sets status to
+                   fixed; the refusal names each missing field.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
+
+from foundry_mcp.tools import foundry_orchestrator as fo
+from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools.foundry_orchestrator import foundry_mark_defect_fixed
+
+
+# --------------------------------------------------------------------------- #
+# Fixtures
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def run_env(tmp_path, monkeypatch):
+    """Activate a foundry run under tmp_path; yield (project_root, fdir)."""
+    project_root = tmp_path
+    run_name = "fix-gate-run"
+    fdir = project_root / "foundry-archive" / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        fo,
+        "_check_active_teams",
+        lambda _pr: {"active": False, "teams": [], "live_panes": []},
+    )
+
+    foundry_state.set_active_run(run_name)
+    try:
+        yield str(project_root), fdir
+    finally:
+        foundry_state.clear_active_run()
+
+
+def _seed_defect(fdir: Path, defect_id: str = "D-001", **extra) -> None:
+    defect = {
+        "id": defect_id,
+        "cycle": 0,
+        "source": "trace",
+        "type": "UNWIRED",
+        "description": "session refresh never calls the token store",
+        "spec_ref": "FR-001",
+        "symbol": "refresh_session",
+        "file": "src/auth/session.py",
+        "status": "open",
+        "fixed_in_cycle": None,
+    }
+    defect.update(extra)
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [defect]}, indent=2), encoding="utf-8"
+    )
+
+
+# A statement and a test reference that name a genuinely ADJACENT path: the
+# defect was found on `refresh_session`, and the declaration names a DIFFERENT
+# caller and a test that drives that other caller (AC-013 / A-018).
+ADJACENT_STATEMENT = (
+    "login_handler and the background session-sweeper both call the token "
+    "store; the sweeper runs concurrently with refresh."
+)
+ADJACENT_TEST = "tests/test_auth.py::test_sweeper_does_not_evict_a_live_session"
+
+
+# --------------------------------------------------------------------------- #
+# AC-012 / OT-004 — refusal names each missing field
+# --------------------------------------------------------------------------- #
+
+
+def test_fix_with_only_defect_id_and_cycle_is_refused_naming_both_fields(run_env):
+    """OT-004 verbatim: a Foundry-Fix call with only defect_id and cycle is
+    refused with a message naming the adjacent-path statement and the test
+    reference as missing."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, project_root=project_root
+    )
+
+    assert "error" in result, result
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == [
+        "adjacent_path_statement",
+        "adjacent_path_test",
+    ]
+    assert "adjacent_path_statement" in result["error"]
+    assert "adjacent_path_test" in result["error"]
+
+    # The refusal is a REFUSAL: the ledger is untouched.
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+    assert data["defects"][0]["fixed_in_cycle"] is None
+
+
+def test_refusal_names_only_the_field_that_is_actually_missing(run_env):
+    """AC-012: 'naming each missing field' means each — a call supplying the
+    statement but no test reference is told exactly that, not both."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        project_root=project_root,
+    )
+
+    assert result["missing_fields"] == ["adjacent_path_test"]
+    assert "adjacent_path_test" in result["error"]
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["missing_fields"] == ["adjacent_path_statement"]
+
+
+def test_whitespace_only_declarations_do_not_satisfy_the_gate(run_env):
+    """A blank declaration is an absent declaration. Accepting '   ' would make
+    the gate a formality the first hurried teammate routes around."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement="   ",
+        adjacent_path_test="\t\n",
+        project_root=project_root,
+    )
+
+    assert result["missing_fields"] == [
+        "adjacent_path_statement",
+        "adjacent_path_test",
+    ]
+
+
+def test_refusal_carries_an_actionable_hint(run_env):
+    """Shared 'named-refusal error dict' pattern: the error names the offending
+    items, the hint names the action."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, project_root=project_root
+    )
+
+    assert result["hint"]
+    assert "test" in result["hint"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# CT-001 / ST-004 — the accepted transition persists the declarations
+# --------------------------------------------------------------------------- #
+
+
+def test_supplying_both_declarations_fixes_the_defect_and_persists_them(run_env):
+    """CT-001: 'defect status set to fixed with the declarations persisted'."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=2,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    assert result["fixed_in_cycle"] == 2
+    assert result["remaining_open"] == 0
+
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["status"] == "fixed"
+    assert record["fixed_in_cycle"] == 2
+    assert record["adjacent_path_statement"] == ADJACENT_STATEMENT
+    assert record["adjacent_path_test"] == ADJACENT_TEST
+
+
+def test_declarations_are_mirrored_into_the_forge_log(run_env):
+    """Shared 'ledger write mirrored to forge-log.md' pattern: the blast radius
+    a fix claimed to have considered is readable in the human record too, not
+    only in JSON."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+    (fdir / "forge-log.md").write_text("# Forge Log\n", encoding="utf-8")
+
+    foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=2,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    log = (fdir / "forge-log.md").read_text(encoding="utf-8")
+    assert "D-001 FIXED" in log
+    assert ADJACENT_STATEMENT in log
+    assert ADJACENT_TEST in log
+
+
+def test_a_missing_forge_log_never_fails_the_write(run_env):
+    """The mirror is guarded: a run without forge-log.md still records the fix."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+    assert not (fdir / "forge-log.md").exists()
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+
+
+# --------------------------------------------------------------------------- #
+# AC-013 — the adjacent path must be DISTINCT from the defect's own path
+# --------------------------------------------------------------------------- #
+
+
+def test_declared_path_must_differ_from_the_path_the_defect_was_found_on(run_env):
+    """AC-013 / FR-010: 'the test drives a NAMED adjacent path distinct from the
+    path the defect was found on'. Restating the defect's own symbol is the
+    non-answer this gate exists to reject, and it is the one case the server can
+    decide mechanically."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement="refresh_session",
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert "error" in result, result
+    assert "refresh_session" in result["error"]
+    assert "adjacent_path_statement" in result["missing_fields"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_a_genuinely_adjacent_declaration_is_accepted(run_env):
+    """AC-013's positive half: the accepted declaration names paths OTHER than
+    the defect's own symbol, and the test reference names a test that drives one
+    of them."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    # The declared paths are genuinely other paths...
+    assert "login_handler" in result["adjacent_path_statement"]
+    assert "sweeper" in result["adjacent_path_statement"]
+    assert "refresh_session" != result["adjacent_path_statement"]
+    # ...and the test reference names one of them, not the defect's own symbol.
+    assert "sweeper" in result["adjacent_path_test"]
+    assert "refresh_session" not in result["adjacent_path_test"]
+
+
+# --------------------------------------------------------------------------- #
+# Preserved behaviour
+# --------------------------------------------------------------------------- #
+
+
+def test_unknown_defect_id_still_errors(run_env):
+    """The pre-existing not-found refusal is unchanged, and is reported BEFORE
+    the declaration check — the caller's first problem is the id."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-404", cycle=1, project_root=project_root
+    )
+
+    assert result["error"] == "Defect D-404 not found"
+
+
+def test_no_active_run_is_refused(run_env):
+    """Shared run-directory guard: every entry point opens with it."""
+    _project_root, _fdir = run_env
+    foundry_state.clear_active_run()
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=".",
+    )
+
+    assert result["error"] == "No active foundry run."
+
+
+# --------------------------------------------------------------------------- #
+# The MCP surface agrees with the runtime gate
+# --------------------------------------------------------------------------- #
+
+
+def test_tool_schema_requires_both_declarations():
+    """CT-001: the widened Foundry-Fix inputSchema makes both declarations
+    required, so the client blocks the incomplete call before it is sent — the
+    schema and the runtime guard state the same contract."""
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    fix = next(t for t in tools if t.name == "Foundry-Fix")
+
+    assert set(fix.inputSchema["required"]) == {
+        "defect_id",
+        "cycle",
+        "adjacent_path_statement",
+        "adjacent_path_test",
+    }
+    props = fix.inputSchema["properties"]
+    assert "adjacent_path_statement" in props
+    assert "adjacent_path_test" in props
+    # The descriptions carry the semantics A-017 / A-018 specify.
+    assert "concurrently" in props["adjacent_path_statement"]["description"]
+    assert "adjacent" in props["adjacent_path_test"]["description"].lower()
+
+
+def test_dispatch_threads_both_declarations_through(run_env):
+    """The registration half: server.py's Foundry-Fix lambda must actually pass
+    the two new arguments, or the schema would advertise fields the handler
+    never sees."""
+    project_root, fdir = run_env
+    _seed_defect(fdir)
+
+    from foundry_mcp import server as foundry_server
+
+    monkey_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Fix"]({
+            "defect_id": "D-001",
+            "cycle": 3,
+            "adjacent_path_statement": ADJACENT_STATEMENT,
+            "adjacent_path_test": ADJACENT_TEST,
+        })
+    finally:
+        foundry_server._project_root = monkey_root
+
+    assert result["ok"] is True, result
+    assert result["adjacent_path_statement"] == ADJACENT_STATEMENT
+    assert result["adjacent_path_test"] == ADJACENT_TEST

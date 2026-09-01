@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_fix_gate.py -q -p no:cacheprovider
+# evidence-for: US-004, FR-009, AC-012, AC-013, NFR-001
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# Foundry-Fix's blast-radius gate. foundry_mark_defect_fixed validated nothing
+# and could not reject: it matched the first id and flipped status. A call
+# carrying only defect_id and cycle is now refused with a message naming BOTH
+# missing fields (AC-012 / OT-004), a call supplying one is told exactly which
+# one is missing, supplying both persists the declarations on the record
+# (CT-001), and a statement that merely restates the defect's own symbol is
+# refused because an adjacent path is by definition a different one (AC-013).
+.............                                                            [100%]
+13 passed in 0.43s
