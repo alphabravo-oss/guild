@@ -51,6 +51,7 @@ RED-or-SKIP discipline:
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -411,8 +412,19 @@ def test_worktree_torn_down_on_success_and_failure(
 def test_orphan_worktree_pruned_on_startup(run_accept_casting_with_evidence):
     """Orphaned worktree from a prior crashed run is pruned at startup.
 
-    Plan 04-04 harness can pre-seed an orphan worktree dir before invoking
-    ``foundry_accept_casting`` to exercise the pruning code path.
+    The harness pre-seeds a real orphan (worktree dir deleted, ``.git/worktrees``
+    metadata left dangling) before invoking verification.
+
+    ``orphan_worktrees_pruned`` is a real measurement — the harness counts
+    ``.git/worktrees`` metadata dirs before and after and reports the drop — so
+    a non-zero value means production's ``_prune_orphaned_worktrees`` actually
+    removed the dangling entry.
+
+    What it does NOT establish on its own is that pruning left the run it was
+    pruning for intact, so the production outputs are asserted alongside it: a
+    real provenance record for the real commit, and the run's own worktree torn
+    down afterwards. A prune that also ate the live worktree would satisfy the
+    count and fail these.
     """
     result = run_accept_casting_with_evidence(
         "evidence/evidence_log_clean.log",
@@ -420,7 +432,17 @@ def test_orphan_worktree_pruned_on_startup(run_accept_casting_with_evidence):
         seed_orphan_worktree=True,  # harness kwarg: pre-seeds an orphan
     )
     assert result["verdict"] == "accepted"
-    assert result["manifest"].get("orphan_worktrees_pruned", 0) >= 1
+    assert result["manifest"]["orphan_worktrees_pruned"] >= 1
+
+    prov = result["provenance"]
+    assert prov is not None
+    assert prov["verdict"] == "accepted"
+    assert prov["failure_token"] is None
+    # Re-execution really happened against the casting commit: the committed
+    # log and the captured output hashed to the same bytes.
+    assert prov["exit_code"] == 0
+    assert prov["redacted_log_sha256"] == prov["redacted_captured_sha256"]
+    assert result["manifest"]["worktree_torn_down"] is True
 
 
 def test_non_utf8_output_handled(run_accept_casting_with_evidence):
@@ -439,21 +461,38 @@ def test_non_utf8_output_handled(run_accept_casting_with_evidence):
 
 
 def test_concurrent_verify_evidence_serializes(run_accept_casting_with_evidence):
-    """Two concurrent verify-evidence calls on the same project_root
-    serialize via per-project lock — neither corrupts the other's worktree.
+    """Two concurrent verify-evidence calls on the same project_root serialize
+    via the worktree lock — neither corrupts the other's worktree, and BOTH
+    complete their manifest write.
 
-    Plan 04-04 harness spawns two concurrent invocations and asserts both
-    complete with consistent verdicts.
+    The old assertion read ``manifest['concurrent_serialized']``, which the
+    harness sets to ``concurrent_invocations > 1`` — it restated the test's own
+    input and would have passed against a build with no locking at all.
+
+    The evidence of real serialization is in the persisted manifest: each
+    thread verifies a different casting id and appends its own provenance
+    record. Two populated ``evidence_provenance`` arrays mean both threads got
+    a worktree, re-executed, and completed a read-modify-write of the same
+    manifest file without either clobbering the other.
     """
     result = run_accept_casting_with_evidence(
         "evidence/evidence_log_clean.log",
         spec_format_version="v2.1",
         concurrent_invocations=2,  # harness kwarg: spawn N concurrent calls
     )
-    # All concurrent calls observe the same outcome; manifest records
-    # serialization metadata.
     assert result["verdict"] == "accepted"
-    assert result["manifest"].get("concurrent_serialized") is True
+
+    castings = {str(c.get("id")): c for c in result["manifest"]["castings"]}
+    assert set(castings) == {"1", "2"}, (
+        f"both concurrent castings must reach the manifest; got {sorted(castings)}"
+    )
+    for cid, entry in castings.items():
+        records = entry.get("evidence_provenance", [])
+        assert len(records) == 1, (
+            f"casting {cid} wrote {len(records)} provenance records — a lost "
+            f"write means the concurrent manifest updates raced"
+        )
+        assert records[0]["verdict"] == "accepted"
 
 
 # ---------------------------------------------------------------------------
@@ -547,10 +586,19 @@ def test_v21_engages_evidence_verification(run_accept_casting_with_evidence):
     assert len(evid01_skips) == 0
 
 
-def test_f09_subcheck_7k_catches_missing_evid01(run_accept_casting_with_evidence):
-    """F0.9 sub-check 7k: when v2.1 spec lacks an evidence record where
-    one was required, F0.9 flags it as a structural defect (parallel to
-    Phase 3's F0.9 7k for stream_skips on legacy specs).
+def test_missing_evidence_on_a_v21_spec_is_rejected(run_accept_casting_with_evidence):
+    """A v2.1 casting that commits no evidence file at all is REJECTED, with the
+    closed-vocabulary token that names why.
+
+    The old assertion searched ``manifest['f09_diagnostics']`` for "7k" or
+    "EVID-01" — a string the harness itself composes whenever
+    ``omit_required_evidence`` is set. It asserted the harness's own input back
+    at itself and could not fail for any behaviour of the code under test.
+
+    The real signal is the one F0.9's 7k re-derivation actually consumes:
+    verification engaged (so this is not a v2.0 skip), produced no provenance
+    record, and rejected with EVIDENCE_COMMAND_MISSING naming the expected
+    filename glob.
     """
     result = run_accept_casting_with_evidence(
         "evidence/evidence_log_clean.log",
@@ -558,8 +606,16 @@ def test_f09_subcheck_7k_catches_missing_evid01(run_accept_casting_with_evidence
         omit_required_evidence=True,  # harness kwarg: drops evidence file
     )
     assert result["verdict"] == "rejected"
-    f09 = result["manifest"].get("f09_diagnostics", "")
-    assert "7k" in f09 or "EVID-01" in f09
+    assert result["failure_token"] == "EVIDENCE_COMMAND_MISSING"
+    assert "evidence/casting-1-*.log" in result["failure_detail"]
+    # Engaged, not skipped: no EVID-01 stream-skip record was written, so the
+    # absence of a provenance record is a defect rather than a legacy bypass.
+    assert result["all_provenance"] == []
+    skips = [
+        s for s in result["manifest"]["stream_skips"]
+        if s.get("stream_id") == "EVID-01"
+    ]
+    assert skips == []
 
 
 # ===========================================================================
@@ -699,6 +755,12 @@ def _build_divergent_spec_repo(tmp_path: Path, *, replay_body_only: bool = False
         "prompt_hash": _hash_str(prompt_text),
         "run_spec": run_spec,
         "stale_spec": stale_spec,
+        "fdir": fdir,
+        # The two manifests that must not be confused: the RUN's, which
+        # foundry_init created and every reader loads, and the project-root
+        # decoy the evidence writers used to build.
+        "run_manifest": fdir / "castings" / "manifest.json",
+        "stale_manifest": project_root / "castings" / "manifest.json",
     }
 
 
@@ -735,6 +797,184 @@ def test_accept_casting_resolves_the_runs_actual_spec_path(tmp_path):
     assert len(result["evidence_provenance"]) == 1
     assert result["evidence_provenance"][0]["verdict"] == "accepted"
     assert result["ok"] is True, result["warning"]
+
+
+def test_evidence_provenance_is_written_to_the_RUN_manifest(tmp_path):
+    """FR-017 / AC-023 — the provenance record lands in the manifest the run
+    actually keeps, at ``foundry-archive/{run}/castings/manifest.json``.
+
+    Both manifest writers built ``<project_root>/castings/manifest.json``, a
+    path no real run has. The append hit the "manifest is missing" guard and
+    silently no-op'd, so the live run finished with ``evidence_provenance: []``
+    on every casting while verification was in fact running and accepting —
+    the exact hole wiring the casting-commit path was meant to close.
+
+    The repo below has BOTH files, so the assertion is directional rather than
+    existential: provenance must appear in the run's manifest and must NOT
+    appear in the project-root decoy. Against the old path the two assertions
+    swap, so this cannot pass by accident either way."""
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    # Precondition: the run's manifest exists (foundry_init wrote it) and holds
+    # no provenance yet.
+    run_manifest = json.loads(env["run_manifest"].read_text(encoding="utf-8"))
+    assert run_manifest["castings"] == []
+
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report="AC-023 implemented at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+    finally:
+        clear_active_run()
+
+    assert result["evidence_verdict"] == "accepted", result
+
+    written = json.loads(env["run_manifest"].read_text(encoding="utf-8"))
+    castings = {str(c.get("id")): c for c in written["castings"]}
+    assert "1" in castings, (
+        f"provenance never reached the run manifest: {written}"
+    )
+    records = castings["1"]["evidence_provenance"]
+    assert len(records) == 1, records
+    assert records[0]["verdict"] == "accepted"
+    assert records[0]["casting_commit"] == env["casting_commit"]
+    assert records[0]["evidence_for"] == ["AC-023"]
+
+    # The project-root decoy is untouched — a writer that still hits it would
+    # leave the run's own manifest empty, which is the bug.
+    stale = json.loads(env["stale_manifest"].read_text(encoding="utf-8"))
+    assert stale["castings"][0]["evidence_provenance"] == [], (
+        "provenance was written to <project_root>/castings/manifest.json, "
+        "which no run reads"
+    )
+
+
+def test_malformed_spec_format_version_is_refused_not_downgraded(tmp_path):
+    """D-028 — a DECLARED but unparseable ``spec_format_version`` is an error,
+    never a silent read as v2.0.
+
+    Reading it as v2.0 routed the run to the stream-skip branch and returned
+    ``ok: true`` with zero evidence re-executed: a one-character frontmatter
+    typo bought a green gate. Absence still defaults to v2.0 — only an
+    unintelligible declaration is refused."""
+    from foundry_mcp.tools.evidence import verify_evidence
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    env["run_spec"].write_text(
+        "---\nspec_format_version: 2.1\n---\n# Run spec\n", encoding="utf-8"
+    )
+    from foundry_mcp.tools.foundry_handoff import foundry_spec_hash
+
+    fresh_hash = foundry_spec_hash(project_root=str(env["project_root"]))["spec_hash"]
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=fresh_hash,
+            prompt_hash=env["prompt_hash"],
+            completion_report="AC-023 implemented at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+        assert result["ok"] is False, result
+        assert result["error"] == "malformed_spec_format_version"
+        assert result["declared_spec_format_version"] == "2.1"
+        # The hint names the offending value AND the action, per the
+        # named-refusal house rule.
+        assert "2.1" in result["hint"] and "v2.1" in result["hint"]
+
+        # verify_evidence refuses on its own too — the gate is not the only
+        # caller, and a direct caller must not get the silent downgrade either.
+        set_active_run(env["fdir"].name)
+        direct = verify_evidence(
+            casting_id=1,
+            project_root=env["project_root"],
+            casting_commit=env["casting_commit"],
+            spec_path=env["run_spec"],
+            run_dir=env["fdir"],
+        )
+    finally:
+        clear_active_run()
+
+    assert direct["verdict"] == "rejected", direct
+    assert direct["spec_format_version"] == "2.1"
+    assert direct["provenance_records"] == []
+    # Emphatically not the v2.0 skip branch: no EVID-01 skip record was
+    # written, because nothing was legitimately skipped.
+    assert direct["manifest_updates"] == {}
+
+
+def test_absent_spec_format_version_still_defaults_to_v20(tmp_path):
+    """The other half of D-028's distinction, pinned so the refusal above does
+    not creep into specs that simply predate the key. A spec with no version
+    declared is a legacy spec, and legacy specs stream-skip as before."""
+    from foundry_mcp.tools.evidence import verify_evidence
+    from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    env["run_spec"].write_text("# Run spec, no frontmatter\n", encoding="utf-8")
+    set_active_run(env["fdir"].name)
+    try:
+        result = verify_evidence(
+            casting_id=1,
+            project_root=env["project_root"],
+            casting_commit=env["casting_commit"],
+            spec_path=env["run_spec"],
+            run_dir=env["fdir"],
+        )
+    finally:
+        clear_active_run()
+
+    assert result["verdict"] == "skipped"
+    assert result["spec_format_version"] == "v2.0"
+    # And the skip record is PERSISTED where the run can see it (D-028's
+    # visibility clause) — the same manifest-path fix as the provenance write.
+    assert result["manifest_path"] == str(env["run_manifest"])
+    written = json.loads(env["run_manifest"].read_text(encoding="utf-8"))
+    evid01 = [s for s in written["stream_skips"] if s["stream_id"] == "EVID-01"]
+    assert len(evid01) == 1, written
+    assert evid01[0]["spec_version"] == "v2.0"
+
+
+def test_accept_casting_surfaces_a_v20_stream_skip_to_the_lead(tmp_path):
+    """D-028's visibility clause at the surface the lead actually reads.
+
+    A v2.0 skip means evidence verification was structurally bypassed for this
+    casting. It is persisted in the manifest, but acceptance still returns
+    ``ok: true`` — so the skip record is surfaced in the return as well, rather
+    than being discoverable only by whoever later opens the manifest."""
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting, foundry_spec_hash
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    env["run_spec"].write_text(
+        "---\nspec_format_version: v2.0\n---\n# Legacy run spec\n", encoding="utf-8"
+    )
+    fresh_hash = foundry_spec_hash(project_root=str(env["project_root"]))["spec_hash"]
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=fresh_hash,
+            prompt_hash=env["prompt_hash"],
+            completion_report="AC-023 implemented at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+    finally:
+        clear_active_run()
+
+    assert result["evidence_verdict"] == "skipped"
+    assert len(result["evidence_stream_skips"]) == 1
+    assert result["evidence_stream_skips"][0]["stream_id"] == "EVID-01"
+    assert result["evidence_stream_skips"][0]["reason"] == "spec_format_version"
 
 
 def test_accept_casting_without_a_commit_reports_no_spec_path(tmp_path):

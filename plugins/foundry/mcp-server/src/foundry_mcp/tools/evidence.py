@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from foundry_mcp.tools.foundry_handoff import _hash_str
+from foundry_mcp.tools.foundry_state import get_run_dir
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
     _WORKTREE_LOCK,
@@ -825,48 +826,95 @@ _SPEC_VERSION_RE = re.compile(
 )
 
 
-def _read_spec_format_version(spec_path: Path) -> tuple[int, int]:
-    """Return parsed ``(major, minor)`` tuple, defaulting to ``(2, 0)`` on
-    absence or any parse failure.
+def _declared_spec_format_version(spec_path: Path) -> str | None:
+    """Return the RAW ``spec_format_version`` value declared in frontmatter.
 
-    Mirrors Phase 3's ``extract_frontmatter`` shape; duplicated here because
-    hyphen-named ``validate-spec.py`` cannot be imported. Permissive defaults
-    — ``validate-spec.py`` is the script that hard-fails on unknown versions
-    at SPEC FORGED time. Plan 04-04 just needs a routing decision: v2.0 →
-    stream-skip; v2.1+ → engage re-execution.
+    ``None`` means the spec declares no version at all — an unreadable file,
+    no frontmatter block, or no ``spec_format_version`` key. A non-None result
+    is whatever the author actually wrote, unparsed, so a caller can name it
+    back in an error message.
     """
     if not spec_path.exists():
-        return (2, 0)
+        return None
     try:
         text = spec_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return (2, 0)
+        return None
     m = _FRONTMATTER_RE.match(text)
     if not m:
-        return (2, 0)
-    block = m.group(1)
-    kv = _SPEC_VERSION_RE.search(block)
+        return None
+    kv = _SPEC_VERSION_RE.search(m.group(1))
     if not kv:
+        return None
+    return (kv.group(1) or kv.group(2) or kv.group(3) or "").strip()
+
+
+def _read_spec_format_version(spec_path: Path) -> tuple[int, int] | None:
+    """Return the parsed ``(major, minor)`` version, or ``None`` if malformed.
+
+    Two failure modes that used to collapse into one are now distinct, because
+    they call for opposite handling:
+
+      * **Absent** — no file, no frontmatter, no key. Returns ``(2, 0)``. This
+        permissive default is deliberate and unchanged: pre-v2.1 specs simply
+        predate the key, and ``validate-spec.py`` is the hard-fail authority at
+        SPEC FORGED time.
+      * **Declared but unparseable** — the key is present and its value is not
+        ``vN.N``. Returns ``None``. Silently reading this as v2.0 downgraded the
+        run to the stream-skip branch, so a typo in one frontmatter line bought
+        a green ``ok: true`` with zero evidence re-executed. An author who wrote
+        the key meant to say something; the only safe reading of an unintelligible
+        version is to refuse, not to guess the lowest one.
+
+    Mirrors Phase 3's ``extract_frontmatter`` shape; duplicated here because
+    hyphen-named ``validate-spec.py`` cannot be imported.
+    """
+    raw = _declared_spec_format_version(spec_path)
+    if raw is None:
         return (2, 0)
-    val = (kv.group(1) or kv.group(2) or kv.group(3) or "").strip()
-    vm = re.match(r"^v(\d+)\.(\d+)$", val)
+    vm = re.match(r"^v(\d+)\.(\d+)$", raw)
     if not vm:
-        return (2, 0)
+        return None
     return (int(vm.group(1)), int(vm.group(2)))
 
 
+def _resolve_manifest_path(project_root: Path, run_dir: Path | None) -> Path:
+    """Resolve the castings manifest THIS RUN actually keeps.
+
+    The manifest a run reads and writes is
+    ``foundry-archive/{run}/castings/manifest.json`` — ``foundry_init`` creates
+    it there and every manifest reader loads it from there. Both writers below
+    built ``<project_root>/castings/manifest.json``, a path no real run has, so
+    every append silently no-op'd against the "manifest is missing" guard: the
+    live run's castings all carried ``evidence_provenance: []`` while evidence
+    verification was in fact running and accepting. The tests missed it because
+    the harness synthesizes a manifest at exactly the wrong path.
+
+    Resolution mirrors the spec path's rather than inventing a third rule: the
+    run dir the caller already holds, then the session's active run, and only
+    then the project-root form — which survives for callers that have no active
+    run at all (direct ``verify_evidence`` invocations, fixtures).
+    """
+    for candidate in (run_dir, get_run_dir(str(project_root))):
+        if candidate is None:
+            continue
+        manifest = candidate / "castings" / "manifest.json"
+        if manifest.exists():
+            return manifest
+    return project_root / "castings" / "manifest.json"
+
+
 def _append_to_manifest_stream_skips(
-    project_root: Path,
+    manifest_path: Path,
     skip_record: dict[str, Any],
 ) -> None:
     """Append ``skip_record`` to ``manifest.stream_skips`` (Phase 3 schema).
 
-    Initializes the array if absent; preserves existing entries. Silently
-    no-ops when ``castings/manifest.json`` is absent (test harnesses that
-    don't synthesize a manifest still function — provenance lives only in
-    the returned dict).
+    Initializes the array if absent; preserves existing entries. Takes the
+    resolved manifest path rather than re-deriving one from ``project_root``:
+    two independent derivations of the same path is what let this writer and
+    its readers disagree in the first place.
     """
-    manifest_path = project_root / "castings" / "manifest.json"
     if not manifest_path.exists():
         return
     try:
@@ -885,7 +933,7 @@ def _append_to_manifest_stream_skips(
 
 
 def _append_to_manifest_evidence_provenance(
-    project_root: Path,
+    manifest_path: Path,
     casting_id: int | str,
     record: dict[str, Any],
 ) -> None:
@@ -893,10 +941,10 @@ def _append_to_manifest_evidence_provenance(
 
     Locates the casting by string-equal id match against ``castings[*].id``;
     synthesizes a minimal entry if absent (Plan 04-04 author's discretion;
-    upgrade to error if abuse surfaces). Silently no-ops when manifest is
-    missing — same discipline as ``_append_to_manifest_stream_skips``.
+    upgrade to error if abuse surfaces). Takes the resolved manifest path and
+    silently no-ops when it is missing — same discipline as
+    ``_append_to_manifest_stream_skips``.
     """
-    manifest_path = project_root / "castings" / "manifest.json"
     if not manifest_path.exists():
         return
     try:
@@ -956,11 +1004,14 @@ def verify_evidence(
         spec_path: optional explicit spec.md path. When absent, defaults to
             ``project_root / 'specs' / 'spec.md'``. Read for
             ``spec_format_version`` to decide v2.0 stream-skip vs v2.1+
-            engagement. Missing/unparseable → v2.0 (permissive default;
-            validate-spec.py is the hard-fail authority).
+            engagement. An ABSENT version → v2.0 (permissive default;
+            validate-spec.py is the hard-fail authority). A version that is
+            DECLARED but unparseable → ``verdict='rejected'``, never a
+            silent downgrade.
         run_dir: parent directory under which the worktree is created at
             ``run_dir / 'worktrees' / 'casting-{id}'``. REQUIRED on the
-            v2.1+ engagement path; not consumed on the v2.0 skip path.
+            v2.1+ engagement path; not consumed on the v2.0 skip path. Also
+            the FIRST candidate for locating the run's castings manifest.
 
     Returns:
         ``{
@@ -970,12 +1021,20 @@ def verify_evidence(
             'provenance_records': list[dict],
             'manifest_updates': dict,
             'spec_path': str,
-            'spec_format_version': 'vN.N',
+            'spec_format_version': 'vN.N' | str | None,
+            'manifest_path': str,
         }``
 
     ``spec_path`` / ``spec_format_version`` report the spec this call actually
-    read and the version it parsed out of it, on BOTH branches — the audit
-    trail for the routing decision.
+    read and the version it parsed out of it, on every branch — the audit
+    trail for the routing decision. On the malformed-version branch
+    ``spec_format_version`` carries the raw declared string rather than a
+    parsed ``vN.N``, which is the point: it names what was unreadable.
+
+    ``manifest_path`` reports the castings manifest this call actually wrote,
+    resolved by ``_resolve_manifest_path``. It is the second half of the same
+    audit trail — a provenance append that lands nowhere is indistinguishable
+    from one that never happened unless the destination is reported.
 
     On the v2.0 skip path ``manifest_updates['stream_skips']`` carries the
     appended record so callers (e.g. ``foundry_accept_casting``) can audit
@@ -988,7 +1047,37 @@ def verify_evidence(
         spec_path if spec_path is not None
         else project_root / "specs" / "spec.md"
     )
+    manifest_path = _resolve_manifest_path(project_root, run_dir)
     spec_version = _read_spec_format_version(effective_spec_path)
+
+    # A DECLARED but unparseable version is refused, never downgraded. Reading
+    # it as v2.0 is what made a one-character frontmatter typo return
+    # `ok: true` with `verdict: "skipped"` and zero evidence re-executed — the
+    # loudest possible failure dressed as a pass. Absence still defaults to
+    # v2.0 (see `_read_spec_format_version`); only an unintelligible
+    # declaration lands here.
+    if spec_version is None:
+        declared = _declared_spec_format_version(effective_spec_path)
+        return {
+            "verdict": "rejected",
+            # Deliberately no closed-vocabulary token: this is a spec-authoring
+            # error, not an evidence failure, and KNOWN_EVIDENCE_FAILURE_TOKENS
+            # names only the latter. The named refusal a lead actually sees is
+            # raised one rung earlier, on foundry_accept_casting's precondition
+            # ladder, which uses the {ok, error, hint} shape instead.
+            "failure_token": None,
+            "failure_detail": (
+                f"{effective_spec_path} declares spec_format_version "
+                f"{declared!r}, which is not a vN.N version. Evidence "
+                f"verification refuses to guess a version: fix the spec's "
+                f"frontmatter."
+            ),
+            "provenance_records": [],
+            "manifest_updates": {},
+            "spec_path": str(effective_spec_path),
+            "spec_format_version": declared,
+        }
+
     if spec_version < MIN_SPEC_FORMAT_VERSION_FOR_EVID_01:
         skip_record = {
             "stream_id": "EVID-01",
@@ -1000,7 +1089,7 @@ def verify_evidence(
             ),
             "agent_path": None,  # virtual stream — owned by foundry_accept_casting
         }
-        _append_to_manifest_stream_skips(project_root, skip_record)
+        _append_to_manifest_stream_skips(manifest_path, skip_record)
         return {
             "verdict": "skipped",
             "failure_token": None,
@@ -1009,6 +1098,7 @@ def verify_evidence(
             "manifest_updates": {"stream_skips": [skip_record]},
             "spec_path": str(effective_spec_path),
             "spec_format_version": f"v{spec_version[0]}.{spec_version[1]}",
+            "manifest_path": str(manifest_path),
         }
 
     # v2.1+ engagement path delegates to the Plan 04-03 body, then persists
@@ -1020,7 +1110,8 @@ def verify_evidence(
         run_dir=run_dir,
     )
     for record in result.get("provenance_records", []):
-        _append_to_manifest_evidence_provenance(project_root, casting_id, record)
+        _append_to_manifest_evidence_provenance(manifest_path, casting_id, record)
+    result["manifest_path"] = str(manifest_path)
     # Report WHICH spec drove the routing decision on both branches. A caller
     # that hands over the wrong path gets a silent v2.0 downgrade otherwise —
     # `_read_spec_format_version` defaults to (2, 0) on a missing file — so

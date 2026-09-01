@@ -44,10 +44,12 @@ from foundry_mcp.tools.foundry import (
     allocate_record_id,
     foundry_add_defect,
     foundry_add_observation,
+    foundry_add_verdict,
     foundry_init,
     foundry_query_defects,
     foundry_query_observations,
     ledger_transaction,
+    record_denylist_tripwire,
 )
 from foundry_mcp.tools.foundry_state import clear_active_run
 
@@ -88,6 +90,23 @@ def _observations(fdir: Path) -> dict:
     return json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
 
 
+def _set_server_cycle(fdir: Path, cycle: int) -> None:
+    """Advance the server-owned cycle counter the way the GRIND -> INSPECT
+    boundary handler does, without importing the orchestrator."""
+    state_path = fdir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["cycle"] = cycle
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def _drop_server_cycle(fdir: Path) -> None:
+    """Make the run look like a legacy archive: a state.json with no counter."""
+    state_path = fdir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("cycle", None)
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
 # --- AC-001 / OT-001 --------------------------------------------------------
 @pytest.mark.parametrize(
     "description,expected_class",
@@ -118,8 +137,14 @@ def test_comment_prose_filed_as_defect_is_refused(
     # The legal set is named, per the named-refusal house rule.
     for name in OBSERVATION_CLASSES:
         assert name in result["error"], f"{name} missing from legal set"
-    # The hint names the action.
-    assert "observations ledger" in result["hint"]
+    # The hint names the ACTION, and names it as a tool the caller can invoke
+    # rather than as a ledger it would have to find. "Foundry-Observation" is
+    # the registered MCP tool name; the handler is named too, so the hint is
+    # actionable from either side of the boundary.
+    assert "Foundry-Observation" in result["hint"]
+    assert "foundry_add_observation" in result["hint"]
+    # And it forecloses the wrong fix: re-wording prose to slip past the gate.
+    assert "Do NOT re-word" in result["hint"]
     # OT-001 — it never reaches defects.json.
     assert _defects(run) == []
 
@@ -129,6 +154,7 @@ def test_refused_finding_is_accepted_as_an_observation(
 ) -> None:
     """AC-001 — the SAME finding the defect ledger refused is recordable in the
     observations ledger, and lands there with its class."""
+    _set_server_cycle(run, 2)
     refusal = foundry_add_defect(
         cycle=2,
         source="prove",
@@ -348,23 +374,41 @@ def test_partial_defect_type_is_accepted_and_stored_verbatim(
     assert record["source"] == "flow_trace"
 
 
-def test_architectural_placement_type_is_stored_verbatim(
+def test_both_placement_spellings_persist_as_one_canonical_type(
     run: Path, tmp_path: Path
 ) -> None:
-    """Both live spellings are members and neither is folded onto the other —
-    folding would be a coercion, which CT-002 forbids on this surface."""
+    """MISPLACED and ARCHITECTURAL_PLACEMENT are ONE type under two live agent
+    spellings. Both are ACCEPTED on input — neither contract may break — and
+    both PERSIST as the canonical spelling.
+
+    Storing the raw value made the same finding two different types depending
+    on which door it came through: `foundry_sync_defects` already folds via
+    `vocab.canonical_defect_type`, so a MISPLACED filed through Foundry-Defect
+    could never cluster with one filed through Foundry-Sync, and the escalation
+    counter that keys on type saw two half-populated classes instead of one.
+
+    This is normalisation, not the coercion CT-002 forbids: that rule governs
+    UNKNOWN values, which the membership check rejects by name."""
     for i, spelling in enumerate(("MISPLACED", "ARCHITECTURAL_PLACEMENT")):
-        foundry_add_defect(
+        result = foundry_add_defect(
             cycle=1,
             source="trace",
             defect_type=spelling,
             description=f"placement finding {i}",
             project_root=str(tmp_path),
         )
+        assert "error" not in result, result
+        # The caller is told what was actually stored, not what it sent.
+        assert result["type"] == "ARCHITECTURAL_PLACEMENT"
+
     assert [d["type"] for d in _defects(run)] == [
-        "MISPLACED",
+        "ARCHITECTURAL_PLACEMENT",
         "ARCHITECTURAL_PLACEMENT",
     ]
+    # The forge-log mirror agrees with the ledger — a reader must not see one
+    # spelling in the JSON and another in the markdown.
+    log = (run / "forge-log.md").read_text(encoding="utf-8")
+    assert "MISPLACED" not in log
 
 
 def test_unknown_source_is_rejected_without_coercion(
@@ -608,8 +652,15 @@ def test_query_observations_filters_and_summarizes(
     }
     assert everything["summary"]["by_source"] == {"trace": 1, "prove": 2}
 
-    by_cycle = foundry_query_observations(cycle=2, project_root=str(tmp_path))
-    assert len(by_cycle["observations"]) == 2
+    # Every record above was stamped with the SERVER's cycle (0 on a fresh
+    # run), whatever the caller asserted — so the cycle filter selects all
+    # three, not the two whose argument said 2. That is the point of ST-001:
+    # the filter and the stamp read the same counter.
+    by_cycle = foundry_query_observations(cycle=0, project_root=str(tmp_path))
+    assert len(by_cycle["observations"]) == 3
+    assert foundry_query_observations(
+        cycle=2, project_root=str(tmp_path)
+    )["observations"] == []
     by_class = foundry_query_observations(
         classification="PROSE_COUNT", project_root=str(tmp_path)
     )
@@ -618,6 +669,200 @@ def test_query_observations_filters_and_summarizes(
         source="trace", project_root=str(tmp_path)
     )
     assert len(by_source["observations"]) == 1
+
+
+# --- ST-001 — the server owns the cycle number ------------------------------
+def test_defect_is_stamped_with_the_server_cycle_not_the_callers(
+    run: Path, tmp_path: Path
+) -> None:
+    """ST-001 — where a server-side counter exists it is the authority, and a
+    caller-supplied cycle is not trusted against it.
+
+    grand-vulture's state.json read `"cycle": 0` for its entire life while its
+    defects carried lead-asserted cycles 0-17, because every cycle number in
+    the data model was an argument rather than a fact. Escalation counts
+    consecutive cycles per class and the roll-up is keyed by cycle: both are
+    meaningless against a number the caller picked."""
+    _set_server_cycle(run, 7)
+    result = foundry_add_defect(
+        cycle=99,  # the lead's assertion — wrong, and ignored
+        source="trace",
+        defect_type="WRONG",
+        description="Handler returns 200 on a validation failure.",
+        project_root=str(tmp_path),
+    )
+    assert result["cycle"] == 7, result
+    assert _defects(run)[0]["cycle"] == 7
+    # The human-readable mirror must not disagree with the ledger.
+    assert "Cycle 7" in (run / "forge-log.md").read_text(encoding="utf-8")
+
+
+def test_observation_is_stamped_with_the_server_cycle(
+    run: Path, tmp_path: Path
+) -> None:
+    """Both ledgers read the same counter, or the per-cycle roll-up cannot join
+    an observation to the defects filed beside it."""
+    _set_server_cycle(run, 4)
+    result = foundry_add_observation(
+        cycle=99,
+        source="prove",
+        description=DRIFT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert result["cycle"] == 4, result
+    assert _observations(run)["observations"][0]["cycle"] == 4
+
+
+def test_verdict_is_stamped_with_the_server_cycle(
+    run: Path, tmp_path: Path
+) -> None:
+    """The third cycle-stamped record type. A verdict recorded under a
+    lead-asserted number cannot be joined against the cycle's defects."""
+    _set_server_cycle(run, 5)
+    result = foundry_add_verdict(
+        requirement_id="AC-025",
+        verdict="VERIFIED",
+        evidence="tests/test_observations.py",
+        cycle=99,
+        project_root=str(tmp_path),
+    )
+    assert result["cycle"] == 5, result
+    verdicts = json.loads((run / "verdicts.json").read_text(encoding="utf-8"))
+    assert verdicts["cycle"] == 5
+    assert verdicts["requirements"][0]["cycle"] == 5
+
+
+def test_caller_cycle_survives_only_when_there_is_no_server_counter(
+    run: Path, tmp_path: Path
+) -> None:
+    """The legacy-archive fallback. A run whose state.json predates the counter
+    has no better answer than the caller's, so the caller's is kept — the rule
+    is "the server wins where it knows", not "the caller is always wrong"."""
+    _drop_server_cycle(run)
+    result = foundry_add_defect(
+        cycle=12,
+        source="trace",
+        defect_type="WRONG",
+        description="Legacy archive finding.",
+        project_root=str(tmp_path),
+    )
+    assert result["cycle"] == 12, result
+    assert _defects(run)[0]["cycle"] == 12
+
+
+@pytest.mark.parametrize("bogus", [None, "3", -1, True, 1.5])
+def test_malformed_server_counter_falls_back_to_the_caller(
+    run: Path, tmp_path: Path, bogus: object
+) -> None:
+    """A non-integer, negative, or boolean counter is not a counter. Reading
+    one as a cycle number would be worse than trusting the caller, so it is
+    treated as absent — `True` included, since bool is an int subclass and
+    would otherwise stamp cycle 1."""
+    state_path = run / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["cycle"] = bogus
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    result = foundry_add_defect(
+        cycle=8,
+        source="trace",
+        defect_type="WRONG",
+        description="Finding filed against a corrupt state file.",
+        project_root=str(tmp_path),
+    )
+    assert result["cycle"] == 8, result
+
+
+# --- AC-002 — the tripwire is reachable, not just present -------------------
+def test_tripwire_fires_through_the_public_observation_surface(
+    run: Path, tmp_path: Path
+) -> None:
+    """AC-002 — a denylisted finding arriving through the Foundry-Observation
+    surface is rejected AND drives the tripwire non-empty.
+
+    The tripwire existed but no MCP path could reach it: every production
+    caller pre-filtered on the denylist before calling the writer, so the
+    writer's inner check could not fire and `observations.json.tripwire` stayed
+    `[]` across every denylist scenario. This drives it through the handler the
+    server registers as `Foundry-Observation`."""
+    ledger = _observations(run)
+    assert ledger["tripwire"] == [], "precondition: tripwire starts empty"
+
+    result = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=SECURITY,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    assert "error" in result, result
+    assert result["denylist_class"] == "SECURITY_PROPERTY_CLAIM"
+    fired = _observations(run)["tripwire"]
+    assert len(fired) == 1, "the tripwire must be reachable from a public path"
+    assert fired[0]["denylist_class"] == "SECURITY_PROPERTY_CLAIM"
+    assert fired[0]["source"] == "prove"
+    assert fired[0]["description"] == SECURITY
+    assert fired[0]["fired_at"]
+    # Durable in BOTH channels — a lead reads the log, a validator reads JSON.
+    assert "TRIPWIRE" in (run / "forge-log.md").read_text(encoding="utf-8")
+    # Fail-safe: the finding did NOT become an observation.
+    assert _observations(run)["observations"] == []
+
+
+def test_tripwire_recorder_is_callable_by_a_prefiltering_caller(
+    run: Path, tmp_path: Path
+) -> None:
+    """The decision and the audit signal are ONE exported call, so a caller
+    that evaluates the denylist itself still fires the tripwire.
+
+    This is the shape `foundry_sync_defects`'s auto-demotion branch needs: it
+    computes `never_demote_class` before deciding whether to route a finding
+    out of the defect ledger, and that pre-filter is exactly what made the
+    signal unreachable while it lived inside the writer's body."""
+    finding = {
+        "description": SECURITY,
+        "spec_ref": "",
+        "target_kind": "comment",
+        "symbol": "validate_request",
+        "file": "src/api/auth.py",
+    }
+    record = record_denylist_tripwire(run, finding, cycle=3, source="assay")
+
+    assert record is not None, "a denylisted finding must fire the tripwire"
+    assert record["denylist_class"] == "SECURITY_PROPERTY_CLAIM"
+    assert record["symbol"] == "validate_request"
+    assert record["file"] == "src/api/auth.py"
+    assert _observations(run)["tripwire"] == [record]
+
+    # And it stays silent on a legitimate demotion, so the signal keeps meaning
+    # something: a tripwire that fired on correct behaviour would be noise.
+    assert record_denylist_tripwire(
+        run,
+        {"description": DRIFT, "spec_ref": "", "target_kind": "comment"},
+        cycle=3,
+        source="assay",
+    ) is None
+    assert len(_observations(run)["tripwire"]) == 1
+
+
+def test_undeclared_subject_fires_the_tripwire_as_non_comment(
+    run: Path, tmp_path: Path
+) -> None:
+    """"Anything non-comment" can never be an observation, and an UNDECLARED
+    subject cannot be shown to be a comment. Absence is not a licence to
+    demote in either direction — here it is refused and audited."""
+    result = foundry_add_observation(
+        cycle=1,
+        source="trace",
+        description=DRIFT,
+        target_kind="",  # nothing declared
+        project_root=str(tmp_path),
+    )
+    assert result["denylist_class"] == "NON_COMMENT"
+    assert _observations(run)["tripwire"][0]["denylist_class"] == "NON_COMMENT"
+    assert _observations(run)["observations"] == []
 
 
 def test_query_observations_surfaces_the_tripwire(

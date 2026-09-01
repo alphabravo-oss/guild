@@ -381,8 +381,13 @@ def foundry_accept_casting(
     evidence_verdict = None
     evidence_provenance: list[dict] = []
     evidence_spec_path: Path | None = None
+    evidence_stream_skips: list[dict] = []
     if casting_commit is not None:
-        from foundry_mcp.tools.evidence import verify_evidence
+        from foundry_mcp.tools.evidence import (
+            _declared_spec_format_version,
+            _read_spec_format_version,
+            verify_evidence,
+        )
         from foundry_mcp.tools.foundry_state import get_run_dir as _get_run_dir
 
         # Resolve run_dir for worktree storage. fdir is the active foundry
@@ -399,6 +404,32 @@ def foundry_accept_casting(
         # wrong path silently downgraded every v2.1 run to the stream-skip
         # branch and no evidence was ever re-executed.
         evidence_spec_path = Path(spec_result["spec_path"])
+
+        # A DECLARED but unparseable spec_format_version is a precondition
+        # failure, and it is refused HERE, in the same {ok, error, hint} shape
+        # as every other rung of this ladder. It is not an evidence failure —
+        # nothing was re-executed and no evidence file is at fault — so it
+        # carries no KNOWN_EVIDENCE_FAILURE_TOKENS name. What it must not do is
+        # what it used to: parse as v2.0, skip re-execution, and return
+        # `ok: true`. A typo in one frontmatter line bought a green gate.
+        if _read_spec_format_version(evidence_spec_path) is None:
+            declared = _declared_spec_format_version(evidence_spec_path)
+            return {
+                "ok": False,
+                "casting_id": casting_id,
+                "error": "malformed_spec_format_version",
+                "evidence_spec_path": str(evidence_spec_path),
+                "declared_spec_format_version": declared,
+                "hint": (
+                    f"{evidence_spec_path} declares spec_format_version "
+                    f"{declared!r}, which is not a vN.N version. Evidence "
+                    f"verification will not guess a version and will not "
+                    f"silently downgrade the run to v2.0. Fix the spec's "
+                    f"frontmatter to a real version (e.g. `spec_format_version: "
+                    f"v2.1`) and re-run acceptance."
+                ),
+            }
+
         evidence_result = verify_evidence(
             casting_id=casting_id,
             project_root=Path(project_root),
@@ -408,6 +439,14 @@ def foundry_accept_casting(
         )
         evidence_verdict = evidence_result["verdict"]
         evidence_provenance = list(evidence_result.get("provenance_records", []))
+        # A v2.0 stream-skip means evidence verification was structurally
+        # bypassed for this casting. It is persisted in the run's manifest, but
+        # the lead reads THIS return — surfacing the record here is what makes
+        # the bypass visible at the moment it happens rather than only to
+        # whoever later opens the manifest.
+        evidence_stream_skips = list(
+            evidence_result.get("manifest_updates", {}).get("stream_skips", [])
+        )
 
         # Audit-log per evidence file (two-channel audit: manifest +
         # handoffs.jsonl). Mirrors Phase 1/2/3 dual-channel pattern.
@@ -603,6 +642,7 @@ def foundry_accept_casting(
         "warning": warning,
         "evidence_verdict": evidence_verdict,
         "evidence_provenance": evidence_provenance,
+        "evidence_stream_skips": evidence_stream_skips,
         "evidence_spec_path": (
             str(evidence_spec_path) if evidence_spec_path is not None else None
         ),

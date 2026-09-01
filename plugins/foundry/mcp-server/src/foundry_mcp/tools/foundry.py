@@ -26,8 +26,24 @@ direction:
     matches OR when the subject was not declared to be a comment, and fires the
     audit tripwire on the attempt (AC-002).
 
+That second decision is EXPORTED as ``record_denylist_tripwire`` rather than
+buried in the writer's body, because a caller that pre-filters on the denylist
+before calling the writer silently bypasses the audit signal — which is exactly
+what ``foundry_sync_defects`` did, leaving the tripwire empty across every
+denylist scenario. Any path about to route a finding out of the defect ledger
+calls it first. See its docstring.
+
 Vocabulary — every class name, stream id and defect type — comes from
-``schemas/vocab.py`` and is never re-declared here.
+``schemas/vocab.py`` and is never re-declared here. Alias folding
+(``MISPLACED`` -> ``ARCHITECTURAL_PLACEMENT``) uses vocab's
+``canonical_defect_type`` so both filing paths persist one spelling.
+
+CYCLE STAMPING (ST-001)
+-----------------------
+Records are stamped with the SERVER's cycle counter (``state.json['cycle']``,
+advanced by the GRIND -> INSPECT boundary handler), not the caller's argument.
+The caller's value survives only as the fallback for a legacy archive that has
+no counter. See ``_server_cycle`` / ``_stamp_cycle``.
 
 CONCURRENCY (FR-020 / AC-025)
 -----------------------------
@@ -57,6 +73,7 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_TYPES,
     NEVER_DEMOTE_CLASSES,
     OBSERVATION_CLASSES,
+    canonical_defect_type,
     never_demote_class,
     observation_class,
 )
@@ -232,12 +249,23 @@ def _finding_mapping(
     description: str,
     spec_ref: str = "",
     target_kind: str = "",
+    *,
+    symbol: str = "",
+    file_path: str = "",
 ) -> dict:
-    """Build the mapping vocab's predicates read (see its module docstring)."""
+    """Build the mapping vocab's predicates read (see its module docstring).
+
+    ``symbol`` and ``file`` are inert to every predicate but carried anyway, so
+    that one mapping is both what the predicates judge AND what an audit record
+    quotes back. Key names match the shape ``foundry_sync_defects`` already
+    passes around, so the same mapping crosses both filing paths unchanged.
+    """
     return {
         "description": description,
         "spec_ref": spec_ref,
         "target_kind": target_kind,
+        "symbol": symbol,
+        "file": file_path,
     }
 
 
@@ -270,6 +298,124 @@ def _ledger_mirror(fdir: Path, heading: str, fields: list[tuple[str, str]]) -> N
             if value:
                 f.write(f"- **{label}:** {value}\n")
         f.write("\n")
+
+
+def record_denylist_tripwire(
+    fdir: Path,
+    finding: dict,
+    *,
+    cycle: int,
+    source: str,
+) -> dict | None:
+    """Fire and persist the never-demote audit tripwire, iff it applies.
+
+    Returns the tripwire record when ``finding`` may NEVER be recorded as an
+    observation — a denylist entry matched, or its subject was not declared to
+    be a comment — and ``None`` when demotion is legitimate. A non-None result
+    means the caller must keep the finding a DEFECT; the audit signal has
+    already been written by the time it returns.
+
+    WHY THIS IS EXPORTED (FR-002 / AC-002)
+    --------------------------------------
+    The tripwire used to live inside ``foundry_add_observation``'s body, which
+    made it reachable only by a caller that actually attempted the write. Every
+    production caller pre-filtered instead: ``foundry_sync_defects`` calls the
+    observation writer only once ``never_demote_class`` has already returned
+    None, so the writer's inner denylist branch could not fire by construction
+    and ``observations.json.tripwire`` stayed empty across every denylist
+    scenario. An audit signal that only fires for callers who did not need
+    auditing is not a control.
+
+    So the decision and the signal are one exported call, and any path that is
+    about to route a finding away from the defect ledger makes it FIRST —
+    ``foundry_add_observation`` below, and ``foundry_sync_defects``'s
+    auto-demotion branch in ``foundry_orchestrator.py``. Both attempts are
+    audited by the same code, which is also what keeps the two filing paths
+    from drifting apart about what a demotion is.
+
+    Takes ``fdir`` rather than ``project_root`` because both callers already
+    hold the resolved run dir; re-resolving it here would be a third derivation
+    of a path the caller has.
+    """
+    denied = never_demote_class(finding)
+    if denied is None and not _subject_is_declared_comment(finding):
+        # An undeclared subject cannot be SHOWN to be a comment, and "anything
+        # non-comment" can never be an observation. Reported under the existing
+        # NON_COMMENT entry rather than inventing a class name.
+        denied = "NON_COMMENT"
+    if denied is None:
+        return None
+
+    target_kind = finding.get("target_kind")
+    detail = (
+        f"target_kind={target_kind!r} is not a declared comment"
+        if denied == "NON_COMMENT"
+        else f"the finding matches the {denied} denylist entry"
+    )
+    tripwire = {
+        "cycle": cycle,
+        "source": source,
+        "denylist_class": denied,
+        "detail": detail,
+        "description": finding.get("description", ""),
+        "spec_ref": finding.get("spec_ref", ""),
+        "symbol": finding.get("symbol", ""),
+        "file": finding.get("file", ""),
+        "fired_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    with ledger_transaction(fdir / "observations.json", "tripwire") as fired:
+        fired.append(tripwire)
+    _ledger_mirror(
+        fdir,
+        f"TRIPWIRE cycle {cycle} — {source}: {denied}",
+        [
+            ("Denylist class", denied),
+            ("Detail", detail),
+            ("Description", tripwire["description"]),
+            ("Spec ref", tripwire["spec_ref"]),
+            ("Symbol", tripwire["symbol"]),
+            ("File", tripwire["file"]),
+        ],
+    )
+    return tripwire
+
+
+def _server_cycle(fdir: Path) -> int | None:
+    """Return the server-owned cycle counter, or None when there isn't one.
+
+    ``state.json['cycle']`` is maintained by the F3 GRIND -> F2 INSPECT
+    boundary handler (``foundry_orchestrator.foundry_mark_phase_complete``,
+    the ``inspect_start`` token). Per ST-001 it is the authority wherever it
+    exists, and a caller-supplied ``cycle`` is not trusted against it: every
+    cycle number in grand-vulture's data model was an integer the lead
+    asserted, which is why its defects span cycles 0-17 while its state.json
+    reads 0.
+
+    ``None`` means no server counter exists — a legacy archive whose state.json
+    predates the counter, or is missing, or holds a non-integer. Only then may
+    a caller fall back to the value it was handed.
+
+    Read directly rather than through the orchestrator's private
+    ``_current_cycle``: the orchestrator imports THIS module, so importing back
+    would close a cycle in the import graph.
+    """
+    value = _load_json(fdir / "state.json").get("cycle")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _stamp_cycle(fdir: Path, caller_cycle: int) -> int:
+    """Return the cycle number to PERSIST on a record.
+
+    The server counter wherever one exists; the caller's value only as the
+    legacy-archive fallback. Every writer of a cycle-stamped record goes
+    through this, so "which cycle was this?" has one answer per run instead of
+    one per caller.
+    """
+    server = _server_cycle(fdir)
+    return caller_cycle if server is None else server
 
 
 _ADJECTIVES = [
@@ -563,9 +709,15 @@ def foundry_add_defect(
             an unknown value is refused by name, never coerced onto "trace"
             (CT-002 / AC-019).
         defect_type: a member of ``vocab.DEFECT_TYPES``, which includes
-            PARTIAL and both MISPLACED and ARCHITECTURAL_PLACEMENT. Stored
-            verbatim; the alias is NOT folded, because folding is a coercion
-            and CT-002 forbids coercing on this surface.
+            PARTIAL and both MISPLACED and ARCHITECTURAL_PLACEMENT. BOTH
+            spellings of the alias pair are accepted on input and persisted
+            under the canonical one (``vocab.canonical_defect_type``), so this
+            path and ``foundry_sync_defects`` store the same type for the same
+            finding. An UNKNOWN value is still refused by name rather than
+            coerced onto a known one (CT-002).
+        cycle: the caller's assertion, honoured only when the run has no
+            server-side cycle counter (legacy archives). Where ``state.json``
+            carries one, THAT is what is persisted — see ``_stamp_cycle``.
         target_kind: what the finding is ABOUT. Pass "comment" when the
             subject is a code comment \u2014 that declaration is what allows the
             comment-prose refusal of AC-001 to engage. Any other value, or
@@ -613,7 +765,9 @@ def foundry_add_defect(
     # Comment-prose refusal (AC-001). Engages only when the caller declared
     # the subject is a comment and no denylist entry outranks the class \u2014 see
     # the module docstring for why an undeclared subject is never refused.
-    finding = _finding_mapping(description, spec_ref, target_kind)
+    finding = _finding_mapping(
+        description, spec_ref, target_kind, symbol=symbol, file_path=file_path
+    )
     refused_class = _observation_refusal(finding)
     if refused_class is not None:
         return {
@@ -623,23 +777,36 @@ def foundry_add_defect(
                 f"{', '.join(sorted(OBSERVATION_CLASSES))}."
             ),
             "hint": (
-                "Record it in the observations ledger instead \u2014 same fields, "
-                "via Foundry-Observation / foundry_add_observation. Comment "
-                "prose does not block the run. If this finding actually "
-                "asserts a security property, a spec-required behaviour, or "
-                "an unresolvable cite, it is a defect: say so in the "
-                "description or cite the requirement in spec_ref and re-file."
+                "Re-file the SAME fields through Foundry-Observation (handler "
+                "foundry_add_observation): nothing about the finding changes "
+                "but the ledger it lands in, and comment prose does not block "
+                "the run. Do NOT re-word the description to get past this "
+                "refusal. If the finding actually asserts a security property, "
+                "a spec-required behaviour, or an unresolvable cite, then it "
+                "is a defect and belongs here \u2014 cite the requirement in "
+                "spec_ref, or drop target_kind if the subject is not a "
+                "comment, and re-file."
             ),
             "refused_class": refused_class,
             "observation_classes": sorted(OBSERVATION_CLASSES),
         }
 
+    # Canonical spelling, not the caller's (FR-013 / D-018). MISPLACED and
+    # ARCHITECTURAL_PLACEMENT are ONE type under two live spellings \u2014 agent
+    # contracts use both \u2014 and `foundry_sync_defects` already folds them, so
+    # persisting the raw value here meant the same defect was two different
+    # types depending on which door it came through. Folding a KNOWN alias onto
+    # its canonical form is normalisation; CT-002's no-coercion rule is about
+    # UNKNOWN values, which the membership check above has already refused.
+    canonical_type = canonical_defect_type(defect_type) or defect_type
+
     now = datetime.now(timezone.utc).isoformat()
     defect = {
         "id": "",  # assigned inside the transaction
-        "cycle": cycle,
+        # ST-001: the server's counter is the authority wherever it exists.
+        "cycle": _stamp_cycle(fdir, cycle),
         "source": source,
-        "type": defect_type,
+        "type": canonical_type,
         "description": description,
         "spec_ref": spec_ref,
         "symbol": symbol,
@@ -663,9 +830,9 @@ def foundry_add_defect(
 
     _ledger_mirror(
         fdir,
-        f"Cycle {cycle} \u2014 {source}: {defect_id}",
+        f"Cycle {defect['cycle']} \u2014 {source}: {defect_id}",
         [
-            ("Type", defect_type),
+            ("Type", canonical_type),
             ("Class", defect_class),
             ("Description", description),
             ("Spec ref", spec_ref),
@@ -676,6 +843,8 @@ def foundry_add_defect(
 
     return {
         "defect_id": defect_id,
+        "cycle": defect["cycle"],
+        "type": canonical_type,
         "total_defects": total,
         "open_defects": open_count,
     }
@@ -730,53 +899,24 @@ def foundry_add_observation(
             ),
         }
 
-    finding = _finding_mapping(description, spec_ref, target_kind)
+    finding = _finding_mapping(
+        description, spec_ref, target_kind, symbol=symbol, file_path=file_path
+    )
 
     # Denylist first \u2014 vocab's precedence rule. A finding matching both a
     # denylist entry and an observation class is a DEFECT, and the denylist
-    # match is what the tripwire names.
-    denied = never_demote_class(finding)
-    if denied is None and not _subject_is_declared_comment(finding):
-        # An undeclared subject cannot be shown to be a comment, and "anything
-        # non-comment" can never be an observation. Reported under the
-        # existing NON_COMMENT entry rather than a new class name.
-        denied = "NON_COMMENT"
-    if denied is not None:
-        detail = (
-            f"target_kind={target_kind!r} is not a declared comment"
-            if denied == "NON_COMMENT"
-            else f"the finding matches the {denied} denylist entry"
-        )
-        tripwire = {
-            "cycle": cycle,
-            "source": source,
-            "denylist_class": denied,
-            "detail": detail,
-            "description": description,
-            "spec_ref": spec_ref,
-            "symbol": symbol,
-            "file": file_path,
-            "fired_at": datetime.now(timezone.utc).isoformat(),
-        }
-        observations_path = fdir / "observations.json"
-        with ledger_transaction(observations_path, "tripwire") as fired:
-            fired.append(tripwire)
-        _ledger_mirror(
-            fdir,
-            f"TRIPWIRE cycle {cycle} \u2014 {source}: {denied}",
-            [
-                ("Denylist class", denied),
-                ("Detail", detail),
-                ("Description", description),
-                ("Spec ref", spec_ref),
-                ("Symbol", symbol),
-                ("File", file_path),
-            ],
-        )
+    # match is what the tripwire names. The decision and the audit signal are
+    # one exported call so that every path into this ledger is audited by the
+    # same code \u2014 see `record_denylist_tripwire`.
+    tripwire = record_denylist_tripwire(
+        fdir, finding, cycle=_stamp_cycle(fdir, cycle), source=source
+    )
+    if tripwire is not None:
+        denied = tripwire["denylist_class"]
         return {
             "error": (
                 f"Refused: {denied} can NEVER be recorded as an observation \u2014 "
-                f"{detail}. The never-demote denylist is "
+                f"{tripwire['detail']}. The never-demote denylist is "
                 f"{', '.join(sorted(NEVER_DEMOTE_CLASSES))}."
             ),
             "hint": (
@@ -815,7 +955,9 @@ def foundry_add_observation(
 
     observation = {
         "id": "",  # assigned inside the transaction
-        "cycle": cycle,
+        # Same authority as a defect's — the two ledgers must agree about which
+        # cycle a finding belongs to or the per-cycle roll-up cannot join them.
+        "cycle": _stamp_cycle(fdir, cycle),
         "source": source,
         "classification": resolved,
         "description": description,
@@ -835,7 +977,7 @@ def foundry_add_observation(
 
     _ledger_mirror(
         fdir,
-        f"Cycle {cycle} \u2014 {source}: {observation_id} (observation)",
+        f"Cycle {observation['cycle']} \u2014 {source}: {observation_id} (observation)",
         [
             ("Classification", resolved),
             ("Description", description),
@@ -846,6 +988,7 @@ def foundry_add_observation(
 
     return {
         "observation_id": observation_id,
+        "cycle": observation["cycle"],
         "classification": resolved,
         "total_observations": total,
     }
@@ -953,7 +1096,15 @@ def foundry_add_verdict(
     cycle: int = 0,
     project_root: str = ".",
 ) -> dict:
-    """Record a verdict for a requirement with spec citation and code evidence."""
+    """Record a verdict for a requirement with spec citation and code evidence.
+
+    Args:
+        cycle: the caller's assertion, honoured only when the run has no
+            server-side cycle counter. ST-001 makes the server's counter the
+            authority wherever it exists — a verdict stamped with a
+            lead-asserted number cannot be joined against the defects filed in
+            the same cycle, which is the whole point of stamping it.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
@@ -962,13 +1113,14 @@ def foundry_add_verdict(
     if "requirements" not in data:
         data["requirements"] = []
 
+    stamped_cycle = _stamp_cycle(fdir, cycle)
     entry = {
         "id": requirement_id,
         "verdict": verdict,
         "evidence": evidence,
         "spec_text_cited": spec_text_cited,
         "code_location": code_location,
-        "cycle": cycle,
+        "cycle": stamped_cycle,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -981,13 +1133,14 @@ def foundry_add_verdict(
     if not replaced:
         data["requirements"].append(entry)
 
-    data["cycle"] = cycle
+    data["cycle"] = stamped_cycle
     _save_json(verdicts_path, data)
 
     verified = sum(1 for r in data["requirements"] if r.get("verdict") == "VERIFIED")
     return {
         "requirement_id": requirement_id,
         "verdict": verdict,
+        "cycle": stamped_cycle,
         "replaced_existing": replaced,
         "total_requirements": len(data["requirements"]),
         "verified_count": verified,
