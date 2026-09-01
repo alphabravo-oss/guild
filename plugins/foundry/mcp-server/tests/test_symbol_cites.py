@@ -16,6 +16,7 @@ produced the cite-refresh loops this casting exists to end.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,30 @@ class LedgerWriter:
         return None
 '''
 
+# A shell guard with kebab-case function names — the NORMAL identifier
+# spelling in every extension `_PATH` admits beyond Python. `check` appears
+# both as a kebab fragment (`check-staged-only`) and as a symbol in its own
+# right, which is what makes it the exact D-054/D-057 repro: a cite truncated
+# at the first hyphen lands on a prefix that resolves anyway.
+SHELL_SOURCE = '''#!/usr/bin/env bash
+
+check-staged-only() {
+    git diff --cached --name-only
+}
+
+check() {
+    check-staged-only
+}
+'''
+
+# A second guard where `verify` exists ONLY as a kebab fragment.
+KEBAB_ONLY_SOURCE = '''#!/usr/bin/env bash
+
+verify-index-only() {
+    return 0
+}
+'''
+
 
 @pytest.fixture(autouse=True)
 def _isolate_active_run():
@@ -54,10 +79,19 @@ def _isolate_active_run():
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
-    """A project root containing one real source file."""
+    """A project root containing real source files.
+
+    Two of them are shell, because the durable-cite grammar is not
+    Python-only: `_PATH` admits .sh/.yaml/.css/.md, where kebab-case is the
+    normal way symbols are spelled.
+    """
     src = tmp_path / "src"
     src.mkdir()
     (src / "ledger.py").write_text(SOURCE, encoding="utf-8")
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "guard.sh").write_text(SHELL_SOURCE, encoding="utf-8")
+    (hooks / "kebab.sh").write_text(KEBAB_ONLY_SOURCE, encoding="utf-8")
     return tmp_path
 
 
@@ -110,6 +144,136 @@ def test_iter_symbol_cites_deduplicates_and_keeps_order() -> None:
     )
     cites = iter_symbol_cites(text)
     assert [c["symbol"] for c in cites] == ["add_defect", "LedgerWriter"]
+
+
+# --- AC-006: a symbol is judged AS WRITTEN, never truncated (D-054/D-057) ---
+@pytest.mark.parametrize(
+    ("cite", "symbol"),
+    [
+        # The two live reproductions from the defect reports, verbatim.
+        (
+            "plugins/forge/scripts/setup-forge.sh#R3-finalization-rule-18",
+            "R3-finalization-rule-18",
+        ),
+        (
+            "hooks/pre-commit-guard.sh#check-totally-nonexistent-thing",
+            "check-totally-nonexistent-thing",
+        ),
+        # Kebab-case in the other extensions `_PATH` admits.
+        ("config/app.yaml#database-connection-pool", "database-connection-pool"),
+        ("site/main.css#nav-bar-item", "nav-bar-item"),
+        # Mixed spellings, and a dangling hyphen that must stay in the symbol
+        # rather than be shortened away.
+        ("src/ledger.py#Writer.flush-all", "Writer.flush-all"),
+        ("hooks/guard.sh#check-", "check-"),
+        ("hooks/guard.sh#check--staged", "check--staged"),
+    ],
+)
+def test_kebab_symbol_parses_whole(cite: str, symbol: str) -> None:
+    """AC-006 — the grammar must not stop at the first hyphen. Before the fix
+    the first case parsed as `R3` and the second as `check`, discarding the
+    rest as non-cite text."""
+    cites = iter_symbol_cites(cite)
+    assert [c["symbol"] for c in cites] == [symbol]
+    assert cites[0]["cite"] == cite
+
+
+@pytest.mark.parametrize(
+    "cite",
+    [
+        "hooks/guard.sh#check-staged-only",
+        "src/ledger.py#add_defect",
+        "src/ledger.py#LedgerWriter.flush",
+        "hooks/guard.sh#check-",
+        "src/ledger.py#a..b",
+    ],
+)
+def test_symbol_never_ends_before_a_symbol_character(cite: str) -> None:
+    """The structural invariant behind D-054/D-057: silent truncation is
+    impossible. Whatever the guard ends up checking, the parse may never stop
+    with another symbol character still sitting next to it — that is the state
+    in which the guard answers about one symbol and reports on another."""
+    cites = iter_symbol_cites(cite)
+    assert cites, f"grammar dropped {cite!r} entirely"
+    matched = cites[0]["cite"]
+    assert cite.startswith(matched)
+    remainder = cite[len(matched):]
+    assert not re.match(r"[\w\-]", remainder), (
+        f"{cite!r} was truncated to {matched!r}, leaving {remainder!r}"
+    )
+
+
+def test_trailing_period_after_a_cite_is_not_part_of_the_symbol(
+    tree: Path,
+) -> None:
+    """No-regression — a cite ending a sentence still parses as the symbol
+    alone, so ordinary prose does not manufacture an unresolvable cite."""
+    cites = iter_symbol_cites("Implemented at src/ledger.py#add_defect.")
+    assert [c["symbol"] for c in cites] == ["add_defect"]
+    assert unresolved_symbol_cites(
+        "AC-006 src/ledger.py#add_defect.", str(tree)
+    ) == []
+
+
+def test_kebab_symbol_resolves_as_written(tree: Path) -> None:
+    """AC-006 — a hyphenated symbol that really is in the file resolves. A
+    fix that merely refused hyphens would fail here, and shell functions, rule
+    names, doc anchors and CLI flags would have no durable cite at all."""
+    assert symbol_cite_resolves("hooks/guard.sh", "check-staged-only", str(tree))
+    assert unresolved_symbol_cites(
+        "AC-006 hooks/guard.sh#check-staged-only", str(tree)
+    ) == []
+
+
+def test_kebab_symbol_that_does_not_resolve_is_flagged(tree: Path) -> None:
+    """AC-006 — and one that is NOT in the file is a defect, reported under
+    the name the author actually wrote."""
+    assert not symbol_cite_resolves("hooks/guard.sh", "check-unstaged", str(tree))
+    unresolved = unresolved_symbol_cites(
+        "AC-006 hooks/guard.sh#check-unstaged", str(tree)
+    )
+    assert [c["symbol"] for c in unresolved] == ["check-unstaged"]
+
+
+def test_truncation_cannot_hide_a_nonresolving_symbol(tree: Path) -> None:
+    """D-054 / D-057 regression, in the exact shape both streams filed.
+
+    `hooks/guard.sh` contains a `check` function, so the truncated prefix
+    resolves on its own. Before the fix the guard therefore reported this cite
+    clean — it had answered about `check` while reporting on
+    `check-totally-nonexistent-thing`. The failure was one-directional and
+    always permissive, which is AC-006's failure direction exactly."""
+    assert symbol_cite_resolves("hooks/guard.sh", "check", str(tree)), (
+        "fixture precondition: the truncated prefix must resolve, or this "
+        "test cannot detect truncation"
+    )
+    unresolved = unresolved_symbol_cites(
+        "AC-006 hooks/guard.sh#check-totally-nonexistent-thing", str(tree)
+    )
+    assert [c["symbol"] for c in unresolved] == ["check-totally-nonexistent-thing"]
+
+
+def test_bare_prefix_does_not_resolve_off_a_kebab_fragment(tree: Path) -> None:
+    """The resolver half of the same root cause: `\\b` treats a hyphen as a
+    word boundary, so `verify` used to resolve off `verify-index-only`. A
+    hyphen-joined fragment is no more the cited symbol than `add` is
+    `add_defect`."""
+    assert not symbol_cite_resolves("hooks/kebab.sh", "verify", str(tree))
+    assert not symbol_cite_resolves("hooks/kebab.sh", "index", str(tree))
+    assert symbol_cite_resolves("hooks/kebab.sh", "verify-index-only", str(tree))
+
+
+def test_trailing_hyphen_is_not_silently_dropped(tree: Path) -> None:
+    """A dangling hyphen is malformed spelling. It must fail resolution as
+    written rather than be shortened into `check`, which resolves."""
+    unresolved = unresolved_symbol_cites("AC-006 hooks/guard.sh#check-", str(tree))
+    assert [c["symbol"] for c in unresolved] == ["check-"]
+
+
+def test_malformed_dotted_symbol_does_not_resolve(tree: Path) -> None:
+    """An empty dotted component cannot be searched for — an empty pattern
+    matches everywhere — so it must resolve nowhere rather than trivially."""
+    assert not symbol_cite_resolves("src/ledger.py", "add_defect..flush", str(tree))
 
 
 # --- AC-006: the mechanical resolution guard --------------------------------
@@ -252,6 +416,61 @@ def test_gate_flags_an_unresolvable_symbol_cite(tree: Path) -> None:
     # AC-007 — the rejection must steer AWAY from a cite-refresh sweep.
     assert "do not" in result["warning"].lower()
     assert "cite-refresh" in result["warning"]
+
+
+def test_kebab_cite_still_counts_as_a_citation() -> None:
+    """ADJACENT PATH — `CITATION_PATTERN` is the OTHER consumer of the symbol
+    grammar: the gate's missing-citation check (foundry_handoff.py) asks only
+    whether a cite is present near a requirement ID, and never resolves
+    anything. Widening the symbol is a strict superset, so presence can only
+    widen — a kebab cite counted as a citation before (as its truncated
+    prefix) and must still count now (whole)."""
+    m = CITATION_PATTERN.search("AC-006 see hooks/guard.sh#check-staged-only here")
+    assert m is not None
+    assert m.group(0) == "hooks/guard.sh#check-staged-only"
+    # ...with a stale hint on either side, still one cite (AC-005/AC-007).
+    m = CITATION_PATTERN.search("hooks/guard.sh:9999#check-staged-only")
+    assert m.group(0) == "hooks/guard.sh:9999#check-staged-only"
+
+
+def test_gate_accepts_a_resolvable_kebab_symbol_cite(tree: Path) -> None:
+    """ADJACENT PATH — the acceptance gate end to end. A real kebab-case
+    symbol must not become a false block: the fix has to make the guard
+    honest, not merely stricter."""
+    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-006**: symbol cites")
+    result = foundry_accept_casting(
+        casting_id=1,
+        spec_hash=spec_hash,
+        prompt_hash=prompt_hash,
+        completion_report=(
+            "AC-006: implemented at hooks/guard.sh:9999#check-staged-only\n"
+        ),
+        project_root=str(tree),
+    )
+    assert result["missing_citations"] == [], result
+    assert result["unresolved_symbol_cites"] == []
+    assert result["ok"] is True, result["warning"]
+
+
+def test_gate_flags_a_truncation_hidden_unresolvable_cite(tree: Path) -> None:
+    """ADJACENT PATH — D-054/D-057 at the gate. This report used to be
+    accepted, because the guard resolved the `check` prefix. The rejection
+    must name the symbol as written."""
+    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-006**: symbol cites")
+    result = foundry_accept_casting(
+        casting_id=1,
+        spec_hash=spec_hash,
+        prompt_hash=prompt_hash,
+        completion_report=(
+            "AC-006: implemented at hooks/guard.sh#check-totally-nonexistent\n"
+        ),
+        project_root=str(tree),
+    )
+    assert result["ok"] is False
+    assert [c["symbol"] for c in result["unresolved_symbol_cites"]] == [
+        "check-totally-nonexistent"
+    ]
+    assert "hooks/guard.sh#check-totally-nonexistent" in result["warning"]
 
 
 def test_gate_reports_a_missing_citation_when_no_cite_of_either_form(

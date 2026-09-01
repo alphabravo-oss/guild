@@ -21,6 +21,26 @@ without an explicit directive (AC-007).
 A ``#Symbol`` whose symbol resolves nowhere is a DEFECT (AC-006), reported by
 ``unresolved_symbol_cites``.
 
+THE SYMBOL IS JUDGED AS WRITTEN — NEVER TRUNCATED
+-------------------------------------------------
+A symbol may be dotted (``Class.method``) or kebab-case
+(``check-staged-only``), because ``_PATH``'s own extension whitelist admits
+``.sh``, ``.yaml``, ``.css``, ``.md`` and friends, where kebab-case is the
+NORMAL spelling for shell functions, rule names, doc anchors, CSS classes and
+CLI flags. Both spellings parse whole, and the guard reports on the whole
+symbol the author wrote.
+
+That is a correctness property, not a convenience. When ``_SYMBOL`` stopped at
+the first hyphen, ``guard.sh#check-totally-nonexistent-thing`` parsed as the
+symbol ``check``, the trailing ``-totally-nonexistent-thing`` was discarded as
+non-cite text, and ``check`` resolved on its own — so the guard answered about
+one symbol and reported on another, and a cite that resolves nowhere passed.
+The failure was one-directional and always permissive, which is exactly
+AC-006's failure direction. Any future change here must keep silent
+truncation impossible: a symbol ends only where no symbol character follows,
+and a trailing separator stays IN the symbol so a malformed cite fails
+resolution loudly instead of being quietly shortened into a resolvable one.
+
 RESOLUTION IS MECHANICAL, NOT SEMANTIC
 --------------------------------------
 ``symbol_cite_resolves`` is a whole-word search over the cited file, with a
@@ -29,6 +49,11 @@ is deliberately language-agnostic and deliberately biased toward resolving:
 an unresolvable verdict blocks a casting, so a false negative is the
 expensive direction and a false positive costs only a cite that a human
 reader would have caught anyway.
+
+"Whole word" counts the hyphen as part of a word, for the same reason the
+grammar does: ``#check`` must not resolve off a ``check-args`` occurrence any
+more than ``#add`` resolves off ``add_defect``. Both are the guard answering
+about a symbol the file does not contain.
 """
 
 from __future__ import annotations
@@ -55,7 +80,16 @@ _PATH = (
 # An UNVALIDATED hint. Present in the grammar so a cite carrying one still
 # parses; never compared against anything (AC-007).
 _LINE_HINT = r":\d+(?:-\d+)?"
-_SYMBOL = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+# A symbol starts with an identifier character and runs to the last character
+# that could still belong to a symbol. Dots and hyphens are INTERIOR
+# characters, so `Class.method` and `check-staged-only` each parse whole; a
+# trailing `.` does not (sentence punctuation after a cite is not part of it),
+# while a trailing `-` does, because a dangling hyphen is malformed spelling
+# and must fail resolution as written rather than be silently shortened into a
+# symbol that resolves. The tail is one greedy run with a single anchoring
+# character class rather than a repeated group, so no input can make it
+# backtrack super-linearly.
+_SYMBOL = r"[A-Za-z_](?:[\w.\-]*[\w\-])?"
 
 #: ``path/to/file.ext:123`` or ``:123-145`` — the legacy form (AC-005).
 FILE_LINE_CITE_PATTERN = re.compile(_PATH + _LINE_HINT, re.IGNORECASE)
@@ -106,7 +140,19 @@ def symbol_cite_resolves(
     A dotted symbol (``Class.method``) resolves only when EVERY component is
     present. A missing or unreadable file never resolves. The line component
     of a cite is not an input here and is never consulted (AC-007).
+
+    The word boundary is hyphen-aware: a component resolves only where it is
+    flanked by neither a word character nor a hyphen. ``\b`` is not adequate
+    here — it treats a hyphen as a boundary, so ``check`` would resolve off
+    ``check-args`` and ``foo-`` off ``foo-bar``, which is the guard reporting
+    on a symbol the file does not contain.
     """
+    parts = symbol.split(".")
+    if any(not part for part in parts):
+        # An empty component means a malformed symbol (`a..b`). It cannot be
+        # searched for — an empty pattern matches everywhere — so it resolves
+        # nowhere rather than resolving trivially.
+        return False
     target = Path(file_path)
     if not target.is_absolute():
         target = Path(project_root) / file_path
@@ -117,8 +163,8 @@ def symbol_cite_resolves(
     except OSError:
         return False
     return all(
-        re.search(rf"\b{re.escape(part)}\b", text)
-        for part in symbol.split(".")
+        re.search(rf"(?<![\w\-]){re.escape(part)}(?![\w\-])", text)
+        for part in parts
     )
 
 
