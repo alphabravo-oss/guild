@@ -91,6 +91,31 @@ START_MD = COMMANDS / "start.md"
 RESUME_MD = COMMANDS / "resume.md"
 LEAD_DISCIPLINE = REFERENCES / "lead-discipline.md"
 
+# The command files that CREATE or RELOAD a run, derived rather than typed out.
+#
+# D-086: the guard-install pins were written against start.md alone, so when
+# GI-002 said "every target repo a run touches", only one of the two doors into
+# the loop actually installed the guard -- /foundry:resume walked straight into
+# CAST/GRIND with whatever hook the repo happened to have, which for the
+# pre-4.9.0 archives STEP 3 exists to serve is none at all. A hardcoded
+# ``(START_MD, RESUME_MD)`` tuple would fix today's two files and leave the next
+# entrypoint free to repeat the same omission, so the roster is DERIVED.
+#
+# ``Foundry-Init`` is the membership test because it is the tool that creates or
+# reloads run state: a command that calls it is, by definition, a command after
+# which teammates commit into the target repo, which is exactly the population
+# GI-002 names. Commands that only describe the loop (help.md mentions
+# ``Foundry-Next``) or that never enter it (setup/status/stop/update) do not
+# call it and are correctly excluded. ``test_run_entry_roster_is_not_vacuous``
+# below is the floor check -- a derived roster that silently empties out would
+# make every pin that sweeps it vacuously green.
+RUN_ENTRY_COMMANDS = tuple(
+    sorted(
+        (p for p in COMMANDS.glob("*.md") if "Foundry-Init" in p.read_text(encoding="utf-8")),
+        key=lambda p: p.name,
+    )
+)
+
 # The four F2 INSPECT streams that file findings into the defect ledger. The
 # split is a property of all four together: a stream still filing comment prose
 # as a defect re-opens the loop this effort exists to close.
@@ -467,33 +492,91 @@ def test_command_allow_lists_no_longer_permit_the_bash_twin(path: Path) -> None:
     )
 
 
-def test_start_md_installs_the_commit_guard() -> None:
-    """GI-002: every target repo a run touches gets the shipped guard."""
-    text = _read(START_MD)
+def test_run_entry_roster_is_not_vacuous() -> None:
+    """Floor check for the derived RUN_ENTRY_COMMANDS roster.
+
+    Every guard pin below sweeps a roster computed by globbing ``commands/``
+    and grepping for ``Foundry-Init``. If that derivation ever returns an empty
+    or truncated set -- the directory moves, the tool is renamed, the glob stops
+    matching -- the parametrised tests below do not fail, they simply stop
+    running, and GI-002 goes unpinned while the suite stays green. This test is
+    what makes that failure loud.
+
+    The two named members are asserted by name because they are the two doors
+    into the foundry loop that exist today and both are known to need the
+    guard; extra members are welcome (a future entrypoint joining the roster is
+    the point of deriving it) and are deliberately not forbidden here.
+    """
+    assert RUN_ENTRY_COMMANDS, (
+        "RUN_ENTRY_COMMANDS derived an EMPTY roster from "
+        f"{_rel(COMMANDS)}/*.md. Every guard pin that sweeps it is now "
+        "vacuously green. Either the commands directory moved, or Foundry-Init "
+        "was renamed -- fix the derivation, do not delete the pins."
+    )
+    for expected in (START_MD, RESUME_MD):
+        assert expected in RUN_ENTRY_COMMANDS, (
+            f"{_rel(expected)} is no longer in the derived run-entry roster, so "
+            f"nothing below checks that it installs the commit guard. It calls "
+            f"Foundry-Init (or it did) and is therefore a command after which "
+            f"teammates commit into the target repo -- exactly the population "
+            f"GI-002 covers."
+        )
+
+
+@pytest.mark.parametrize("path", RUN_ENTRY_COMMANDS, ids=lambda p: p.name)
+def test_run_entry_command_allow_lists_the_guard_installer(path: Path) -> None:
+    """GI-002 / D-086: an install step the allow-list refuses is not a step.
+
+    resume.md shipped 4.9.0 with neither the entry nor the step; the entry is
+    pinned separately from the invocation because the two fail independently --
+    a command can name the installer in its prose and still be unable to run
+    it, which reads as installed and is not.
+    """
+    text = _read(path)
+    assert "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)" in text, (
+        f"{_rel(path)} does not allow-list install-commit-guard.sh. The lead "
+        f"cannot invoke the installer from this command even when the prose "
+        f"tells it to, so the target repo silently stays unguarded."
+    )
+
+
+@pytest.mark.parametrize("path", RUN_ENTRY_COMMANDS, ids=lambda p: p.name)
+def test_run_entry_command_installs_the_commit_guard(path: Path) -> None:
+    """GI-002: EVERY target repo a run touches gets the shipped guard.
+
+    Swept over both doors into the loop, not just start.md: D-086 was exactly
+    this pin holding on one file while /foundry:resume walked into CAST/GRIND
+    with no guard at all.
+    """
+    text = _read(path)
     assert '"${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh"' in text, (
-        "start.md no longer invokes the commit-guard installer (GI-002). "
-        "Without the install step the guard ships but is never installed, so "
-        "target repos keep whatever hook they had."
+        f"{_rel(path)} no longer invokes the commit-guard installer (GI-002). "
+        f"Without the install step the guard ships but is never installed, so "
+        f"target repos keep whatever hook they had."
     )
     assert "${CLAUDE_PLUGIN_ROOT}/hooks/pre-commit-guard.sh" in text, (
-        "start.md no longer names the guard asset the installer places."
+        f"{_rel(path)} no longer names the guard asset the installer places."
     )
     assert "`git diff --cached`" in text, (
-        "start.md no longer states that the guard judges the index only. A "
-        "working-tree guard (`git diff HEAD`) fires on a peer's unstaged WIP, "
-        "which is the GI-002 violation."
+        f"{_rel(path)} no longer states that the guard judges the index only. A "
+        f"working-tree guard (`git diff HEAD`) fires on a peer's unstaged WIP, "
+        f"which is the GI-002 violation."
     )
 
 
-def test_start_md_references_the_installer_through_the_plugin_root() -> None:
+@pytest.mark.parametrize("path", RUN_ENTRY_COMMANDS, ids=lambda p: p.name)
+def test_run_entry_command_references_the_installer_through_the_plugin_root(
+    path: Path,
+) -> None:
     """Convention: a shipped asset is referenced through ${CLAUDE_PLUGIN_ROOT},
     never an absolute path -- the plugin cache is version-namespaced, so an
     absolute path pins one installed version and breaks on upgrade."""
-    text = _read(START_MD)
+    text = _read(path)
     for line in text.splitlines():
         if "install-commit-guard.sh" in line or "pre-commit-guard.sh" in line:
             assert "${CLAUDE_PLUGIN_ROOT}" in line, (
-                f"guard asset referenced without ${{CLAUDE_PLUGIN_ROOT}}: {line!r}"
+                f"{_rel(path)}: guard asset referenced without "
+                f"${{CLAUDE_PLUGIN_ROOT}}: {line!r}"
             )
 
 
