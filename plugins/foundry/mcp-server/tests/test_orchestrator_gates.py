@@ -66,6 +66,7 @@ import builtins
 import importlib
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -3402,6 +3403,79 @@ def render_forgery_table() -> str:
     return "\n".join(out)
 
 
+#: Class keys whose bare spelling IS the every-class marker. D-139's whole
+#: subject: quoting one must name the class, not the wildcard.
+_WILDCARD_SPELLINGS = ("all", "any", "every", "*")
+
+
+def render_override_roundtrip_table() -> str:
+    """D-139: round-trip every rendered instruction back through the reader.
+
+    Keys are DERIVED from `_OVERRIDE_ALL_VALUES` rather than typed, so a
+    spelling added to the reader is a row here the same day.
+    """
+    keys = [
+        "hand bound hardening",
+        "AUTH_CONTRACT",
+        "a.b,c",
+        *sorted(fo._OVERRIDE_ALL_VALUES),
+    ]
+    out = [
+        "== render an override instruction, then read it back ==",
+        "   %-24s %-42s %s" % ("class key", "rendered", "reads back as"),
+        "   %-24s %-42s %s" % ("-" * 9, "-" * 8, "-" * 13),
+    ]
+    for key in keys:
+        rendered = fo._override_instruction(key)
+        if rendered is None:
+            out.append("   %-24s %-42s %s" % (repr(key), "(no marker can name it)", "-"))
+            continue
+        back = fo._override_markers(rendered)["overrides"]
+        verdict = "OK" if back == {key} else f"MISMATCH -> {sorted(back)}"
+        out.append("   %-24s %-42s %s" % (repr(key), repr(rendered), verdict))
+    return "\n".join(out)
+
+
+def test_every_rendered_override_instruction_round_trips():
+    """The tool cannot print a marker it will not honour — ALL branches.
+
+    D-133 verified only the BARE branch and returned the quoted fallback
+    unverified. For the four keys spelled like a wildcard that fallback did not
+    merely fail, it read back as the WILDCARD: `escalation-override: "all"`
+    returned {'*'}, because `_override_value` stripped the quotes BEFORE the
+    value was tested against `_OVERRIDE_ALL_VALUES`. Quoting could not protect
+    a class key spelled like a wildcard, which is the one thing quoting is for.
+    """
+    table = render_override_roundtrip_table()
+    assert "MISMATCH" not in table, table
+    assert "(no marker can name it)" not in table, table
+    # The wildcard spellings must be in the table, or it proves nothing.
+    for spelling in _WILDCARD_SPELLINGS:
+        assert repr(spelling) in table, (spelling, table)
+
+
+@pytest.mark.parametrize("key", _WILDCARD_SPELLINGS)
+def test_a_quoted_wildcard_spelling_names_the_class_not_every_class(key):
+    """The mis-read was not a no-op, it was an over-broad WILDCARD."""
+    quoted = f'{fo.ESCALATION_OVERRIDE_TOKEN}: "{key}"'
+    assert fo._override_markers(quoted)["overrides"] == {key}
+
+    # ...and the BARE form still means every class, which is the behaviour
+    # NFR-002 says must not narrow.
+    bare = f"{fo.ESCALATION_OVERRIDE_TOKEN}: {key}"
+    assert fo._override_markers(bare)["overrides"] == {"*"}
+
+
+def test_the_override_offer_never_interpolates_a_none(run_env):
+    """Both places that offer a restore go through one renderer, so a class key
+    no marker can name says so instead of printing the string "None"."""
+    project_root, fdir = run_env
+    for key in ("AUTH_CONTRACT", *_WILDCARD_SPELLINGS):
+        offer = fo._override_offer(key)
+        assert "None" not in offer, (key, offer)
+        assert offer.startswith("Foundry-Directive("), (key, offer)
+
+
 def test_the_forgery_table_shows_the_forgery_and_the_refusal():
     table = render_forgery_table()
     assert "urgent=1" in table  # the pre-fix arm really does forge urgency
@@ -3997,6 +4071,163 @@ def test_foundry_clear_refuses_a_broken_header_grammar_rather_than_truncating(ru
     assert result["cleared_count"] == 0
     assert _URGENT_DIRECTIVE in directives.read_text(encoding="utf-8")
     assert directives.read_text(encoding="utf-8") == before
+
+
+_NORMAL_DIRECTIVE = "prefer the smaller diff when two fixes are equivalent"
+
+
+def _break_one_header(fdir: Path, marker: str = "### [URGENT]") -> bytes:
+    """Hand-edit ONE header the way an operator does, and return the bytes."""
+    directives = fdir / "directives.md"
+    directives.write_text(
+        directives.read_text(encoding="utf-8").replace(marker, marker[1:], 1),
+        encoding="utf-8",
+    )
+    return directives.read_bytes()
+
+
+def test_foundry_clear_conserves_a_broken_directive_beside_a_healthy_one(run_env):
+    """D-136 — the case the one-directive fixture cannot distinguish.
+
+    The conservation check compared HEADER COUNT to parsed-directive count, so
+    it was blind to text the parser drops before the first recognised header.
+    With a second, well-formed directive present the counts reconcile, the
+    check passes, and Foundry-Clear DESTROYS the broken one while reporting
+    success -- D-129's filed harm surviving the fix meant to end it.
+
+    Driven exactly as a live run hits it: one urgent + one normal, then the
+    same `###` -> `##` hand-edit the shipped one-directive test already
+    exercises. The old rule saw headers=1 and parsed=1 and cleared.
+    """
+    project_root, fdir = run_env
+    _seed_directive(project_root, _URGENT_DIRECTIVE, "urgent")
+    _seed_directive(project_root, _NORMAL_DIRECTIVE, "normal")
+    before_parse = fo._read_directives(project_root)
+    assert before_parse["urgent"] == [_URGENT_DIRECTIVE]
+    assert before_parse["normal"] == [_NORMAL_DIRECTIVE]
+
+    before = _break_one_header(fdir)
+    directives = fdir / "directives.md"
+
+    # The counts the OLD rule compared now reconcile — one header the parser
+    # can see, one directive parsed — which is precisely why it passed.
+    broken_text = directives.read_text(encoding="utf-8")
+    parsed = fo._read_directives(project_root)
+    assert fo._directive_header_count(broken_text) == 1
+    assert len(parsed["urgent"]) + len(parsed["normal"]) == 1
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert "error" in result, result
+    assert result["cleared_count"] == 0
+    # The urgent directive is still there, byte for byte, and no archive record
+    # was invented for the half that did parse.
+    assert directives.read_bytes() == before
+    assert _URGENT_DIRECTIVE in directives.read_text(encoding="utf-8")
+    assert not (fdir / fo.DIRECTIVES_CLEARED_FILENAME).exists()
+
+
+def test_the_conservation_check_is_narrow_with_two_healthy_directives(run_env):
+    """The control. A refusal that fires on two INTACT directives would trade
+    D-136 for a tool that can never clear anything."""
+    project_root, fdir = run_env
+    _seed_directive(project_root, _URGENT_DIRECTIVE, "urgent")
+    _seed_directive(project_root, _NORMAL_DIRECTIVE, "normal")
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert result["ok"] is True, result
+    assert result["cleared_count"] == 2
+    assert result["urgent_cleared"] == 1 and result["normal_cleared"] == 1
+    archive = (fdir / fo.DIRECTIVES_CLEARED_FILENAME).read_text(encoding="utf-8")
+    assert _URGENT_DIRECTIVE in archive and _NORMAL_DIRECTIVE in archive
+
+
+def test_a_directive_that_is_a_substring_of_another_still_clears(run_env):
+    """Subtraction has an ordering trap the counting rule did not.
+
+    Removing a short body first can consume text belonging to the long one and
+    leave a mangled remainder, refusing a perfectly healthy file. Bodies are
+    subtracted longest-first for exactly this case.
+    """
+    project_root, fdir = run_env
+    _seed_directive(project_root, "rebuild the index", "normal")
+    _seed_directive(project_root, "rebuild the index and re-run TRACE", "normal")
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert result["ok"] is True, result
+    assert result["cleared_count"] == 2
+
+
+def _count_headers_rule(text: str, parsed: dict) -> bool:
+    """``_unaccounted_directive_text``'s rule verbatim as it stood at d3820c5.
+
+    Header COUNT against parsed-directive count. Kept so the evidence log can
+    show one file judged by both rules; returns True when the rule ACCOUNTS for
+    the file (i.e. lets Foundry-Clear proceed).
+    """
+    headers = fo._directive_header_count(text)
+    if headers == 0:
+        body = text.strip()
+        return not (body and body != fo._DIRECTIVES_PREAMBLE.strip())
+    return headers == len(parsed.get("urgent", [])) + len(parsed.get("normal", []))
+
+
+def render_directive_conservation_table(tmp_path: Path) -> str:
+    """D-136 pre/post: which rule notices that text would be destroyed?"""
+    from foundry_mcp.tools import foundry_state as fst
+
+    out = [
+        "== hand-edit one '###' to '##'; does Foundry-Clear notice? ==",
+        "   %-34s %-13s %-13s %s" % ("file holds", "counts rule", "chars rule", "urgent text after"),
+        "   %-34s %-13s %-13s %s" % ("-" * 10, "-" * 11, "-" * 10, "-" * 17),
+    ]
+    for label, extra in (
+        ("1 urgent (broken)", []),
+        ("1 urgent (broken) + 1 normal", [(_NORMAL_DIRECTIVE, "normal")]),
+    ):
+        name = "d136-" + str(len(extra))
+        root = tmp_path / name
+        fdir = root / "foundry-archive" / name
+        fdir.mkdir(parents=True)
+        fst.set_active_run(name)
+        _write_state(fdir, phase="F2", cycle=1)
+        _seed_directive(str(root), _URGENT_DIRECTIVE, "urgent")
+        for text, priority in extra:
+            _seed_directive(str(root), text, priority)
+        _break_one_header(fdir)
+
+        directives = fdir / "directives.md"
+        text = directives.read_text(encoding="utf-8")
+        parsed = fo._read_directives(str(root))
+        counts_ok = _count_headers_rule(text, parsed)
+        chars_ok = fo._unaccounted_directive_text(directives, parsed) is None
+        fo.foundry_clear_directives(str(root))
+        survived = _URGENT_DIRECTIVE in directives.read_text(encoding="utf-8")
+        out.append("   %-34s %-13s %-13s %s" % (
+            label,
+            "REFUSES" if not counts_ok else "clears",
+            "REFUSES" if not chars_ok else "clears",
+            "kept" if survived else "DESTROYED",
+        ))
+    return "\n".join(out)
+
+
+def test_the_conservation_table_shows_the_surviving_harm(tmp_path):
+    """Asserted: the counts rule refuses the one-directive fixture and CLEARS
+    the two-directive one, which is D-136 exactly — the shipped test passed
+    only because its fixture held a single directive."""
+    table = render_directive_conservation_table(tmp_path)
+    rows = [
+        [c.strip() for c in re.split(r"\s{2,}", r.strip()) if c.strip()]
+        for r in table.split("\n")[3:]
+    ]
+    one, two = rows
+    assert one[1:] == ["REFUSES", "REFUSES", "kept"], one
+    # THE ROW THAT IS D-136: the counts rule CLEARS a file holding a broken
+    # directive, because the healthy one beside it reconciles the counts.
+    assert two[1:] == ["clears", "REFUSES", "kept"], two
 
 
 def test_a_never_used_directives_file_still_clears_as_a_no_op(run_env):

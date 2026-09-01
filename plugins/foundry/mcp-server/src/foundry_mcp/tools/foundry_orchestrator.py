@@ -2491,11 +2491,30 @@ _OVERRIDE_QUOTES = ('"', "'", "`")
 
 def _override_value(raw: str) -> str:
     """The class key a scoped marker names, unwrapped and trimmed."""
+    return _override_value_quoting(raw)[0]
+
+
+def _override_value_quoting(raw: str) -> tuple[str, bool]:
+    """The class key a scoped marker names, and whether it was QUOTE-WRAPPED.
+
+    D-139: the two halves used to be one function that returned only the value,
+    so the wildcard test ran on the ALREADY-UNWRAPPED string and quoting could
+    not protect a class key spelled like a wildcard. ``escalation-override:
+    "all"`` read back as ``{"*"}`` — every escalated class — when the operator
+    had named the single class ``all``. Driven end to end with two escalated
+    classes, ``AUTH_CONTRACT`` and ``all``: sending the tool's own rendered
+    instruction de-escalated BOTH.
+
+    Whether the key was quoted is what distinguishes "this value IS the
+    wildcard spelling" from "this value is a class key that LOOKS like one",
+    and it is only knowable before the quotes come off. That is what quoting a
+    key is FOR.
+    """
     value = raw.strip()
     for quote in _OVERRIDE_QUOTES:
         if len(value) >= 2 and value.startswith(quote) and value.endswith(quote):
-            return value[1:-1].strip()
-    return value.strip(" .,;:'\"`")
+            return value[1:-1].strip(), True
+    return value.strip(" .,;:'\"`"), False
 
 
 def _fallback_class(defect: dict) -> str:
@@ -2610,10 +2629,13 @@ def _override_markers(text: str) -> dict:
     scoped: list[str] = []
     override_all = False
     for match in _OVERRIDE_SCOPED_RE.finditer(text):
-        value = _override_value(match.group(1))
+        value, was_quoted = _override_value_quoting(match.group(1))
         if not value:
             continue
-        if value.lower() in _OVERRIDE_ALL_VALUES:
+        # D-139: the wildcard test runs on the RAW quoting, before the quotes
+        # come off. A bare `all` is the every-class spelling; a quoted `"all"`
+        # names the class whose key is the word "all".
+        if not was_quoted and value.lower() in _OVERRIDE_ALL_VALUES:
             override_all = True
         else:
             scoped.append(value)
@@ -2737,14 +2759,50 @@ def _override_instruction(class_key: str) -> str:
     RENDERED and verified against the reader, never typed beside it. D-133's
     first hole was `_structural_proposal` interpolating a class key into an
     instruction the grammar could not parse back — the tool telling the
-    operator to send a string that could not work. A key whose bare form does
-    not survive `_override_markers` is emitted quoted, so what this returns is
-    always something `_escalation_overrides` will read as that class.
+    operator to send a string that could not work.
+
+    D-139: it then verified ONLY THE BARE BRANCH and returned the quoted
+    fallback unverified — so for the class keys spelled like a wildcard (`all`,
+    `any`, `every`) the tool printed a restore marker it would not honour, and
+    the mis-read was not a no-op but an over-broad WILDCARD: following the
+    tool's own printed instruction to restore per-instance packets for the
+    single class named `all` de-escalated EVERY escalated class. Broader than
+    AC-010 licenses, which is "restores per-instance packets" for the class
+    NAMED.
+
+    Every branch is verified now, and the candidates are DERIVED from the quote
+    characters the reader itself recognises rather than typed here — a quote
+    style the reader learns to accept becomes a candidate the same day. A key
+    that survives none of them returns None, because a caller that prints
+    nothing is strictly better than one that prints an instruction the reader
+    will act on differently.
     """
-    bare = f"{ESCALATION_OVERRIDE_TOKEN}: {class_key}"
-    if _override_markers(bare)["overrides"] == {class_key}:
-        return bare
-    return f'{ESCALATION_OVERRIDE_TOKEN}: "{class_key}"'
+    candidates = [f"{ESCALATION_OVERRIDE_TOKEN}: {class_key}"]
+    candidates += [
+        f"{ESCALATION_OVERRIDE_TOKEN}: {q}{class_key}{q}" for q in _OVERRIDE_QUOTES
+    ]
+    for candidate in candidates:
+        if _override_markers(candidate)["overrides"] == {class_key}:
+            return candidate
+    return None
+
+
+def _override_offer(class_key: str) -> str:
+    """The restore offer to print for ``class_key``, or why there is none.
+
+    Both places that offer the operator a way back to per-instance packets go
+    through here, so neither can print an unverified marker — and a class key
+    no marker can name says so, rather than being handed an instruction that
+    would act on something else (D-139).
+    """
+    instruction = _override_instruction(class_key)
+    if instruction is None:
+        return (
+            f"no override marker can name the class {class_key!r} — the "
+            f"directive grammar cannot read that spelling back as this class, "
+            f"so the class needs renaming before it can be overridden"
+        )
+    return f"Foundry-Directive('{instruction}')"
 
 
 def _override_report(fdir: Path, project_root: str) -> dict:
@@ -2834,7 +2892,7 @@ def _structural_proposal(info: dict) -> str:
         f"every listed defect closes as a consequence. Closure is NOT waived: all "
         f"of {', '.join(info['defect_ids'])} must reach fixed. If this class is "
         f"genuinely not systemic, the lead can restore per-instance packets with "
-        f"Foundry-Directive('{_override_instruction(info['class'])}')."
+        f"{_override_offer(info['class'])}."
     )
 
 
@@ -4859,7 +4917,7 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
     # (D-133), rather than offering a "<class>" placeholder the operator has to
     # fill in with a key the grammar may not read back.
     restores = "; ".join(
-        f"Foundry-Directive('{_override_instruction(key)}')"
+        _override_offer(key)
         for key in sorted(escalated)
     )
     return (
@@ -5297,25 +5355,55 @@ def _unaccounted_directive_text(path: Path, parsed: dict) -> str | None:
 
     Returns the unaccounted text (for the refusal to quote), or None when the
     file is fully accounted for.
+
+    D-136 — CONSERVE CHARACTERS, NOT HEADERS. This compared the header COUNT to
+    the parsed-directive count, which is blind to text the parser drops BEFORE
+    the first recognised header: with a second, well-formed directive present
+    the two counts reconcile and the check passes. Driven on the ordinary
+    live-run case (one urgent + one normal, then the same `### [URGENT]` ->
+    `## [URGENT]` hand-edit the shipped test itself exercises): Foundry-Clear
+    returned ok with cleared_count=1, the urgent directive was GONE from
+    directives.md, and directives-cleared.md recorded only the normal one. That
+    is D-129's filed harm word for word -- "reports success, truncates the
+    file, writes no archive record" -- surviving the fix meant to end it,
+    because the conservation check was bound to the fixture the defect was
+    reported on (ONE directive) instead of derived from what the file holds.
+    A one-directive fixture cannot distinguish the two rules; the two-directive
+    fixture is the regression test.
+
+    The rule now subtracts, rather than counts. Everything the archive WILL
+    carry is removed from the file's text once each -- the preamble, every line
+    the parser reads as STRUCTURE, and every directive body it actually parsed.
+    Whatever is still standing is text no archive record would carry, whatever
+    else in the file parsed cleanly.
     """
     if not path.exists():
         return None
     text = _read_text(path)
-    headers = _directive_header_count(text)
-    if headers == 0:
-        body = text.strip()
-        if body and body != _DIRECTIVES_PREAMBLE.strip():
-            return body
-        return None
-    if headers != len(parsed.get("urgent", [])) + len(parsed.get("normal", [])):
-        lines = text.split("\n")
-        first = next(
-            i
-            for i, line in enumerate(lines)
-            if any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
-        )
-        return "\n".join(lines[first:]).strip()
-    return None
+
+    remainder = text
+    if remainder.startswith(_DIRECTIVES_PREAMBLE):
+        remainder = remainder[len(_DIRECTIVES_PREAMBLE):]
+
+    # Structure, not content: a line the parser reads as a priority header is
+    # consumed by the parse and is not part of any directive's body.
+    remainder = "\n".join(
+        line
+        for line in remainder.split("\n")
+        if not any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+    )
+
+    # Longest first, so a directive that is a SUBSTRING of another cannot
+    # consume the other's text and leave a mangled remainder behind.
+    bodies = sorted(
+        (b for b in (*parsed.get("urgent", []), *parsed.get("normal", [])) if b),
+        key=len,
+        reverse=True,
+    )
+    for body in bodies:
+        remainder = remainder.replace(body, "", 1)
+
+    return remainder.strip() or None
 
 
 def _forged_header_lines(directive: str) -> list[str]:
