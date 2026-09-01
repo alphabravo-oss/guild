@@ -1,0 +1,44 @@
+# evidence-cmd: sh -c 'D=$(mktemp -d); cp -R plugins/foundry/mcp-server/tests/fixtures/migrate_archive/pre_change "$D/run"; echo "=== what the PRE-FIX reader produced: d.get(\"stream\") vs an UPPERCASE roster ==="; python3 -c "
+import json,sys
+recs=json.load(open(sys.argv[1]))[\"defects\"]
+roster={\"TRACE\",\"FLOW_TRACE\",\"PROVE\",\"RESEARCH_AUDIT\",\"COVERAGE_DIFF\",\"TEST-01\",\"SIGHT\",\"TEST\",\"EVID-01\",\"EVID-02\",\"INTV-01\",\"TYPE-01\",\"TYPE-02\",\"PROBE-01\",\"INTENT-01\"}
+counts={}; tokens=[]
+for d in recs:
+    s=d.get(\"stream\")
+    if not isinstance(s,str): tokens.append(\"PHASE9_DEFECTS_FILE_MALFORMED\"); continue
+    if s not in roster: tokens.append(\"PHASE9_UNKNOWN_STREAM:\"+s); continue
+    counts[s]=counts.get(s,0)+1
+print(\"per_stream_defects:\", counts)
+print(\"failure_tokens:\", len(tokens), \"x\", sorted(set(tokens)))
+" "$D/run/defects.json"; echo; echo "=== what measure-run.py produces NOW (FR-018 / AC-024) ==="; python3 plugins/foundry/scripts/measure-run.py "$D/run" | python3 -c "import json,sys; p=json.load(sys.stdin); print(\"per_stream_defects:\", json.dumps(p[\"per_stream_defects\"], sort_keys=True)); print(\"cycles:\", p[\"cycles\"]); print(\"failure_tokens:\", p[\"failure_tokens\"])"; echo; echo "=== after migrate-archive.py repairs the recorded cycle ==="; python3 plugins/foundry/scripts/migrate-archive.py "$D/run" > /dev/null; python3 plugins/foundry/scripts/measure-run.py "$D/run" | python3 -c "import json,sys; p=json.load(sys.stdin); print(\"per_stream_defects:\", json.dumps(p[\"per_stream_defects\"], sort_keys=True)); print(\"cycles:\", p[\"cycles\"]); print(\"failure_tokens:\", p[\"failure_tokens\"])"; rm -rf "$D"'
+# evidence-for: FR-018, AC-024
+# evidence-timeout: 120
+#
+# FR-018 has two halves and this shows both. The first block replays the
+# PRE-FIX reader (d.get("stream") against the UPPERCASE roster) on the same
+# archive: an empty map plus one PHASE9_DEFECTS_FILE_MALFORMED per record —
+# on grand-vulture that was 168 of them. The second block is the shipped
+# reader: real per-stream counts, keyed by canonical id, from the lowercase
+# `source` key every writer actually persists. The third shows the recorded
+# cycle count going 0 -> 6 once migrate-archive.py repairs it from the run's
+# own data, which is the other half of AC-024's "real cycle counts".
+#
+# PHASE9_SCHEMA_INVALID and PHASE9_WALL_CLOCK_UNAVAILABLE are expected: the
+# synthetic fixture is a run archive, not a cohort experiment, so it carries
+# no cohort.json and no handoffs.jsonl. PHASE9_UNKNOWN_STREAM:legacy_stream
+# is the fixture's deliberate out-of-vocabulary source, named rather than
+# coerced onto a known stream (CT-002).
+
+=== what the PRE-FIX reader produced: d.get("stream") vs an UPPERCASE roster ===
+per_stream_defects: {}
+failure_tokens: 6 x ['PHASE9_DEFECTS_FILE_MALFORMED']
+
+=== what measure-run.py produces NOW (FR-018 / AC-024) ===
+per_stream_defects: {"PROVE": 3, "TEST-01": 1, "TRACE": 1}
+cycles: 0
+failure_tokens: ['PHASE9_SCHEMA_INVALID', 'PHASE9_WALL_CLOCK_UNAVAILABLE', 'PHASE9_UNKNOWN_STREAM:legacy_stream']
+
+=== after migrate-archive.py repairs the recorded cycle ===
+per_stream_defects: {"PROVE": 3, "TEST-01": 1, "TRACE": 1}
+cycles: 6
+failure_tokens: ['PHASE9_SCHEMA_INVALID', 'PHASE9_WALL_CLOCK_UNAVAILABLE', 'PHASE9_UNKNOWN_STREAM:legacy_stream']

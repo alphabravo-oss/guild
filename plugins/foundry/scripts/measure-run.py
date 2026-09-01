@@ -7,6 +7,11 @@ Three frozensets locked at module top: KNOWN_PHASE9_STREAM_IDS (15),
 KNOWN_PHASE9_FAILURE_TOKENS (8), KNOWN_PHASE9_COHORT_IDS (10). Wall-clock =
 first/last handoffs.jsonl timestamp delta (Pitfall 5 / 09-RESEARCH.md).
 Exit 0 OK; 1 on token rejection / gate FAIL; 2 on usage error.
+
+The stream roster is DERIVED from foundry_mcp.schemas.vocab (FR-013): this
+script was one of six independently re-typed copies of the same vocabulary.
+vocab is stdlib-only and imports nothing from foundry_mcp.tools, so this
+script keeps its "stdlib only; no runtime deps" contract.
 """
 from __future__ import annotations
 import argparse, csv, io, json, sys
@@ -15,14 +20,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:  # Installed (uvx/pip) case — package is already importable.
+    from foundry_mcp.schemas.vocab import CANONICAL_STREAM_IDS, canonical_stream_id
+except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
+    _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
+    if _SRC.is_dir() and str(_SRC) not in sys.path:
+        sys.path.insert(0, str(_SRC))
+    from foundry_mcp.schemas.vocab import CANONICAL_STREAM_IDS, canonical_stream_id
 
-KNOWN_PHASE9_STREAM_IDS = frozenset({
-    "TRACE", "FLOW_TRACE", "PROVE", "RESEARCH_AUDIT", "COVERAGE_DIFF",
-    "TEST-01", "SIGHT", "TEST",
-    "EVID-01", "EVID-02",
-    "INTV-01", "TYPE-01", "TYPE-02",
-    "PROBE-01", "INTENT-01",
-})  # 15 streams
+
+# Derived, never re-typed — foundry_mcp.schemas.vocab is the single source of
+# truth for the canonical roster. The name is retained because the anti-drift
+# cross-grep in tests/test_measure_run.py pins it.
+KNOWN_PHASE9_STREAM_IDS = CANONICAL_STREAM_IDS  # 15 streams
 
 KNOWN_PHASE9_FAILURE_TOKENS = frozenset({
     "PHASE9_UNKNOWN_STREAM", "PHASE9_UNKNOWN_COHORT", "PHASE9_RUN_DIR_INVALID",
@@ -166,11 +176,22 @@ def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
     for d in data["defects"]:
         if not isinstance(d, dict):
             fts.append("PHASE9_DEFECTS_FILE_MALFORMED"); continue
-        stream = d.get("stream")
-        if not isinstance(stream, str):
+        # Every writer of defects.json persists the filing stream as
+        # `source`, lowercase (tools/foundry.py foundry_add_defect,
+        # tools/foundry_orchestrator.py foundry_sync_defects). Reading
+        # `stream` matched nothing on a real archive — that was FR-018's
+        # key half. `stream` is kept as a legacy fallback so an archive
+        # written under either shape still counts and nothing is lost.
+        raw = d.get("source")
+        if raw is None:
+            raw = d.get("stream")
+        if not isinstance(raw, str):
             fts.append("PHASE9_DEFECTS_FILE_MALFORMED"); continue
-        if stream not in KNOWN_PHASE9_STREAM_IDS:
-            fts.append(f"PHASE9_UNKNOWN_STREAM:{stream}"); continue
+        # Case half of FR-018: persisted values are lowercase wire ids,
+        # the roster is UPPERCASE. Accumulate under the canonical id.
+        stream = canonical_stream_id(raw)
+        if stream is None:
+            fts.append(f"PHASE9_UNKNOWN_STREAM:{raw}"); continue
         counts[stream] = counts.get(stream, 0) + 1
     return counts, fts
 

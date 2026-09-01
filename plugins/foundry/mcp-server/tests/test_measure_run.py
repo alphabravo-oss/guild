@@ -85,6 +85,12 @@ EVIDENCE_PY = (
     REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
     / "tools" / "evidence.py"
 )
+# FR-013: the canonical vocabulary module measure-run.py now derives its
+# stream roster from. This is where the roster literals live post-FR-013.
+VOCAB_PY = (
+    REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
+    / "schemas" / "vocab.py"
+)
 
 
 # Closed-vocabulary frozensets — locked per CONTEXT.md + 09-RESEARCH.md. The
@@ -537,17 +543,22 @@ def test_known_phase9_stream_ids_matches_authoritative_sources() -> None:
     for sid in ("INTENT-01", "TEST-01", "PROBE-01", "EVID-01"):
         assert sid in start_text, f"start.md missing {sid}"
 
-    # Plan 09-02 territory: import KNOWN_PHASE9_STREAM_IDS from measure-run.py
-    # and assert byte-equivalence with EXPECTED_KNOWN_PHASE9_STREAM_IDS.
-    # Until then we exercise the disk-side cross-grep above; the script-side
-    # check fires once measure-run.py ships.
+    # Script side: measure-run.py still exposes KNOWN_PHASE9_STREAM_IDS, but
+    # per FR-013 it DERIVES it from foundry_mcp.schemas.vocab rather than
+    # re-typing the roster. The literal cross-grep therefore runs against
+    # vocab.py, the roster's single source of truth — same anti-drift check,
+    # pointed at the copy that is now authoritative.
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert "KNOWN_PHASE9_STREAM_IDS" in script_text, (
         "measure-run.py must export KNOWN_PHASE9_STREAM_IDS frozenset"
     )
+    assert "CANONICAL_STREAM_IDS" in script_text, (
+        "measure-run.py must derive its roster from vocab.CANONICAL_STREAM_IDS"
+    )
+    vocab_text = VOCAB_PY.read_text(encoding="utf-8")
     for sid in EXPECTED_KNOWN_PHASE9_STREAM_IDS:
-        assert sid in script_text, (
-            f"measure-run.py KNOWN_PHASE9_STREAM_IDS missing {sid}"
+        assert sid in vocab_text, (
+            f"vocab.py CANONICAL_STREAM_IDS missing {sid}"
         )
 
 
@@ -702,3 +713,96 @@ def test_saturation_threshold_dual_criterion() -> None:
             f"bl_yld={bl_yld}, co_yld={co_yld}): "
             f"expected {expected}, got {payload['saturated']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# FR-013 / FR-018 — vocabulary derivation + the real-archive key/case repair.
+# ---------------------------------------------------------------------------
+
+
+def _load_measure_run_module():
+    """Import the dash-named measure-run.py as a module object.
+
+    Loading the real file (rather than grepping its text) is what proves the
+    roster is DERIVED at import time and not merely mentioned in a comment.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_measure_run_under_test", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # measure-run.py defines a @dataclass, whose annotation resolution looks
+    # the defining module up in sys.modules — register before exec_module.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_known_phase9_stream_ids_is_derived_from_vocab() -> None:
+    """Test 15 — the ``measure-run.py roster <- vocab.py`` key link (FR-013).
+
+    KNOWN_PHASE9_STREAM_IDS must not be a re-typed copy: it must BE
+    vocab.CANONICAL_STREAM_IDS. Identity (``is``) is asserted, not just
+    equality, so a future hand-typed duplicate that happens to match today
+    still fails this test.
+    """
+    from foundry_mcp.schemas import vocab
+
+    module = _load_measure_run_module()
+    assert module.KNOWN_PHASE9_STREAM_IDS is vocab.CANONICAL_STREAM_IDS, (
+        "measure-run.py must derive its roster from vocab, not re-type it"
+    )
+    assert module.KNOWN_PHASE9_STREAM_IDS == EXPECTED_KNOWN_PHASE9_STREAM_IDS
+    assert len(module.KNOWN_PHASE9_STREAM_IDS) == 15
+
+
+def test_lowercase_source_counted_under_canonical_stream_id(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 16 — FR-018 / AC-024 regression.
+
+    Every writer of defects.json persists the filing stream as ``source``,
+    lowercase (tools/foundry.py, tools/foundry_orchestrator.py). measure-run
+    read ``d.get("stream")`` against an UPPERCASE roster, so per_stream_defects
+    was ALWAYS empty and every record emitted PHASE9_DEFECTS_FILE_MALFORMED.
+    This pins both halves of that repair: the key and the case.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps(
+            {
+                "defects": [
+                    {"id": "D-001", "source": "prove", "type": "THIN"},
+                    {"id": "D-002", "source": "prove", "type": "WRONG"},
+                    {"id": "D-003", "source": "trace", "type": "MISSING"},
+                    {"id": "D-004", "source": "test01", "type": "FAIL"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {
+        "PROVE": 2,
+        "TRACE": 1,
+        "TEST-01": 1,
+    }, payload["per_stream_defects"]
+    assert "PHASE9_DEFECTS_FILE_MALFORMED" not in payload["failure_tokens"]
+
+
+def test_legacy_stream_key_still_counted(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 17 — an archive written under the legacy ``stream`` key still
+    counts, so the key repair loses no pre-existing data.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps({"defects": [{"id": "D-001", "stream": "TRACE"}]}),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    assert json.loads(stdout)["per_stream_defects"] == {"TRACE": 1}

@@ -1,0 +1,23 @@
+# evidence-cmd: sh -c 'if [ -e plugins/foundry/scripts/foundry.sh ]; then echo "PRESENT (AC-022 FAIL): plugins/foundry/scripts/foundry.sh"; else echo "ABSENT (AC-022 file half): plugins/foundry/scripts/foundry.sh"; fi; echo "tracked-by-git: $(git ls-files plugins/foundry/scripts/foundry.sh | wc -l | tr -d " ")"; echo "=== invocations across the shipped executable surface ==="; if grep -rn "scripts/foundry.sh" plugins/foundry/scripts plugins/foundry/hooks plugins/foundry/mcp-server/src 2>/dev/null; then echo "(live callers above)"; else echo "NONE — the MCP server is the single implementation (GI-003)"; fi; echo "=== allow-list entries (casting 5 owns this half of AC-022) ==="; echo "start.md:  $(grep -c "scripts/foundry.sh" plugins/foundry/commands/start.md)"; echo "resume.md: $(grep -c "scripts/foundry.sh" plugins/foundry/commands/resume.md)"'
+# evidence-for: FR-016, AC-022
+# evidence-timeout: 120
+#
+# GI-003 / FR-016 / AC-022. The 1293-line bash twin is deleted and untracked,
+# and nothing in the shipped executable surface (scripts/, hooks/, the MCP
+# server source) invokes it. The scan is deliberately scoped to that surface:
+# forge-specs/ and survey/ prose DISCUSS the retired file by name, and the
+# provenance docstring citations of the form "foundry.sh:176" in
+# tools/foundry.py, tests/test_foundry_init.py and tests/test_nyquist_flag.py
+# are historical references, not invocations — those files belong to other
+# castings and were deliberately left alone.
+#
+# The allow-list counts are casting 5's half of AC-022, shown here for
+# completeness; both read 0.
+
+ABSENT (AC-022 file half): plugins/foundry/scripts/foundry.sh
+tracked-by-git: 0
+=== invocations across the shipped executable surface ===
+NONE — the MCP server is the single implementation (GI-003)
+=== allow-list entries (casting 5 owns this half of AC-022) ===
+start.md:  0
+resume.md: 0

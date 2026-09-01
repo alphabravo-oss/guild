@@ -1,0 +1,9 @@
+{
+  "phase": "F6",
+  "cycle": 0,
+  "spec_path": "forge-specs/synthetic/spec.md",
+  "temper": true,
+  "nyquist": false,
+  "no_ui": true,
+  "started_at": "2026-08-28T19:06:32.879321+00:00"
+}

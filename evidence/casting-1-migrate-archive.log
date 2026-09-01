@@ -1,0 +1,114 @@
+# evidence-cmd: sh -c 'D=$(mktemp -d); cp -R plugins/foundry/mcp-server/tests/fixtures/migrate_archive/pre_change "$D/run"; echo "=== RUN 1 (migrating a pre-change archive) ==="; python3 plugins/foundry/scripts/migrate-archive.py "$D/run" | sed "s#$D#<TMP>#g"; echo "=== RUN 2 (idempotency: NFR-003 / OT-012) ==="; python3 plugins/foundry/scripts/migrate-archive.py "$D/run" | sed "s#$D#<TMP>#g"; echo "=== derived stream-rollup.json ==="; cat "$D/run/stream-rollup.json"; echo "=== state.json cycle + marker ==="; python3 -c "import json,sys; s=json.load(open(sys.argv[1])); print(\"cycle:\", s[\"cycle\"]); print(\"archive_schema_version:\", s[\"archive_schema_version\"])" "$D/run/state.json"; rm -rf "$D"'
+# evidence-for: FR-021, NFR-003, AC-026
+# evidence-timeout: 120
+#
+# All six migration steps against the committed synthetic pre-change
+# archive, then the same command again. Run 2 reports every step "no-op"
+# and "migrated": false — NFR-003 idempotency / OT-012's second half.
+# The temp dir is redacted to <TMP> so the log is byte-reproducible.
+
+=== RUN 1 (migrating a pre-change archive) ===
+{
+  "run_dir": "<TMP>/run",
+  "dry_run": false,
+  "archive_schema_version": 1,
+  "migrated": true,
+  "steps": {
+    "defects": {
+      "outcome": "upgraded",
+      "records": 6,
+      "upgraded": 6
+    },
+    "observations": {
+      "outcome": "created",
+      "observations": 0
+    },
+    "stream_rollup": {
+      "outcome": "created",
+      "cycles": 3,
+      "streams": 3
+    },
+    "progress": {
+      "outcome": "created",
+      "path": "progress/"
+    },
+    "state_cycle": {
+      "outcome": "upgraded",
+      "recorded": 0,
+      "observed": 6,
+      "cycle": 6
+    },
+    "archive_schema_version": {
+      "outcome": "upgraded",
+      "from": null,
+      "to": 1
+    }
+  },
+  "failure_tokens": []
+}
+=== RUN 2 (idempotency: NFR-003 / OT-012) ===
+{
+  "run_dir": "<TMP>/run",
+  "dry_run": false,
+  "archive_schema_version": 1,
+  "migrated": false,
+  "steps": {
+    "defects": {
+      "outcome": "no-op",
+      "records": 6,
+      "upgraded": 0
+    },
+    "observations": {
+      "outcome": "no-op",
+      "reason": "observations.json already present"
+    },
+    "stream_rollup": {
+      "outcome": "no-op",
+      "reason": "stream-rollup.json already present"
+    },
+    "progress": {
+      "outcome": "no-op",
+      "reason": "progress/ already present"
+    },
+    "state_cycle": {
+      "outcome": "no-op",
+      "recorded": 6,
+      "observed": 6,
+      "cycle": 6
+    },
+    "archive_schema_version": {
+      "outcome": "no-op",
+      "from": 1,
+      "to": 1
+    }
+  },
+  "failure_tokens": []
+}
+=== derived stream-rollup.json ===
+{
+  "schema_version": 1,
+  "cycles": {
+    "0": {
+      "PROVE": 1,
+      "TRACE": 1
+    },
+    "2": {
+      "PROVE": 1,
+      "TEST-01": 1
+    },
+    "5": {
+      "PROVE": 1
+    }
+  },
+  "totals": {
+    "PROVE": 3,
+    "TEST-01": 1,
+    "TRACE": 1
+  },
+  "unresolved_sources": {
+    "legacy_stream": 1
+  }
+}
+=== state.json cycle + marker ===
+cycle: 6
+archive_schema_version: 1
