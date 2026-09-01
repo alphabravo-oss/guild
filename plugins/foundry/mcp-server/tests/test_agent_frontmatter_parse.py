@@ -259,15 +259,22 @@ def test_every_agent_declares_a_model_within_the_accepted_set() -> None:
 # The parser bites -- D-014 regression
 # --------------------------------------------------------------------------
 
-# The exact scalars that shipped inert, recovered from a902388^. Both are
-# `description` values whose unquoted text carries a ": " sequence.
+# Both entries are `description` values whose unquoted text carries a
+# ": " sequence — the exact D-014 defect shape. The first tracks the
+# LIVE spec-test-deriver.md description (AC-006 source-blind reframe;
+# frontmatter and this pin move together — update both in the same
+# commit). The second is the historical intent-carrier scalar that
+# shipped inert, recovered from a902388^.
 D014_UNQUOTED_SCALARS = [
     pytest.param(
-        "F2 INSPECT 8th stream. Code-blind: reads spec only. Derives "
-        "hypothesis-jsonschema strategies from TYPE-01 contracts table, "
-        "generates and runs failing tests, emits findings to test_observations "
-        "channel for ASSAY mediation.",
-        id="spec-test-deriver-code-blind",
+        "F2 INSPECT 8th stream. Source-blind: reads spec only, never "
+        "implementation source; executing surfaces the spec's Contracts "
+        "table names is sanctioned. Derives hypothesis-jsonschema "
+        "strategies from TYPE-01 contracts table, generates and runs "
+        "falsifiable tests against documented surfaces (SKIP with a "
+        "reason when the spec names none), emits findings to "
+        "test_observations channel for ASSAY mediation.",
+        id="spec-test-deriver-source-blind",
     ),
     pytest.param(
         "F0.7 phase. Reads spec.md's <Appendix: Interview Transcript> block "

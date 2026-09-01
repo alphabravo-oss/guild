@@ -18,7 +18,21 @@ VALIDATE (the deterministic Verbatim-Fidelity Gate). Your single output
 is `foundry-archive/{run}/intent-coverage.json` — an A-NNN × casting_id
 matrix with closed-vocabulary verdicts. The MCP gate
 (`Foundry-Intent-Coverage`) runs `validate-intent-coverage.py` over your
-matrix; on any DROPPED, control routes BACK to F0.5 DECOMPOSE with the
+matrix and applies the per-answer aggregation rule (stated word-for-word
+in the validator's docstring — GI-003 mirroring): An answer_id
+is DROPPED (gate-blocking) only when
+every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+in any casting keeps the gate open for that answer, and per-cell DROPPED
+verdicts remain recorded in the matrix without blocking. The validator
+also enforces spec→matrix completeness (same words as its docstring —
+GI-003 mirroring): A spec
+appendix answer_id with no matrix cell at all is zero-coverage: the
+validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+answer_id, and the omitted answer blocks the gate exactly like an answer
+whose every casting's cell is DROPPED. You therefore MUST emit a cell for
+every (answer_id, casting_id) pair — never silently omit an answer you
+could not anchor; record its cells as DROPPED instead. On any such
+zero-coverage answer, control routes BACK to F0.5 DECOMPOSE with the
 missing A-NNN list as additional citation anchors. Control NEVER routes
 to in-place casting-prompt amendment — that is REQUIREMENTS.md "Out of
 Scope: Auto-inject constraints (INTENT-01)" structurally.
@@ -76,6 +90,17 @@ semantic comparison, NEVER by Jaccard / token-overlap, NEVER by embedding.
 None of the three → **DROPPED**. Citation chain: `["A-NNN"]` (singleton —
 the missing answer ID).
 
+Anchor-scope rule (stated word-for-word in the validator —
+GI-003 mirroring): Anchors
+1 and 2 search the prompt BODY only — the prompt text with the three
+typed-table blocks (<invariants> / <state_transitions> / <contracts>)
+excluded — so a typed-row [from A-NNN] citation can never fire
+PROPAGATED; when the body lacks the literal but a typed row inside
+one of those blocks cites [from A-NNN], the verdict is PARAPHRASED.
+The validator's re-derivation applies the same scoping, so a matrix
+that labels typed-row-carried answers PROPAGATED is rejected with
+`INTENT_COVERAGE_VERDICT_MISMATCH`.
+
 PROHIBITED tools: NEVER call any of the following (defense-in-depth; the
 Foundry-Intent-Coverage validator runs a post-hoc audit on the tool-call
 log and rejects with `INTENT_COVERAGE_AGENT_USED_EMBEDDING` /
@@ -101,10 +126,16 @@ Three values, no severity tiers:
   indirection (typed-table row's `[from A-NNN]` citation inside
   `<invariants>` / `<state_transitions>` / `<contracts>`). First-class
   PASS — the typed-row IS a deliberate paraphrase, not a defect.
-- `DROPPED` — A-NNN absent from both anchors. **DEFECT.** Routes to
-  F0.5 re-decompose. NEVER auto-resolved, NEVER routed to in-place
-  casting-prompt amendment (REQUIREMENTS.md "Out of Scope: Auto-inject
-  constraints (INTENT-01)").
+- `DROPPED` — A-NNN absent from both anchors in THIS casting's prompt
+  (per-cell verdict — still recorded and reported). Gate aggregation is
+  per-answer: An answer_id
+  is DROPPED (gate-blocking) only when
+  every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+  in any casting keeps the gate open for that answer, and per-cell DROPPED
+  verdicts remain recorded in the matrix without blocking. **A
+  zero-coverage answer is a DEFECT.** It routes to F0.5 re-decompose.
+  NEVER auto-resolved, NEVER routed to in-place casting-prompt amendment
+  (REQUIREMENTS.md "Out of Scope: Auto-inject constraints (INTENT-01)").
 
 PARAPHRASED is NOT a severity-tier weaker than PROPAGATED. PARAPHRASED is
 NOT an "advisory" tier. The closed vocabulary is enforced by the
@@ -169,10 +200,13 @@ Per-cell keys allowed: `answer_id`, `casting_id`, `verdict`,
 A-NNN literal lookup MUST be word-boundary anchored. The contract is:
 
 ```python
-re.search(r'\b' + re.escape(answer_id) + r'\b', prompt_text)
+re.search(r'\b' + re.escape(answer_id) + r'\b', prompt_body)
 ```
 
-Naïve substring lookup (`answer_id in prompt_text`) confuses `A-1`
+(`prompt_body` is the prompt text with the three typed-table blocks
+excluded, per the anchor-scope rule above.)
+
+Naïve substring lookup (`answer_id in prompt_body`) confuses `A-1`
 with `A-12` (both substrings of `A-12`). The validator's
 `ANSWER_REF_RE` constant uses the same word-boundary shape (mirror of
 `validate-spec.py:85`). Your matrix is rejected by the validator's
@@ -196,7 +230,7 @@ them by claiming a vacuously-clean coverage.
 
 ## Failure Routing
 
-On any DROPPED verdict, you emit the matrix to `intent-coverage.json`
+Whatever the verdicts, you emit the matrix to `intent-coverage.json`
 and EXIT. You do NOT:
 
 - Call F0.5 DECOMPOSE yourself (you have no `Task` tool).
@@ -206,7 +240,27 @@ and EXIT. You do NOT:
 - Run any Bash subprocess (no `Bash`).
 
 The Foundry-Intent-Coverage MCP gate reads your matrix, runs the
-deterministic validator, and on any DROPPED returns
+deterministic validator, and applies the per-answer aggregation rule:
+An answer_id
+is DROPPED (gate-blocking) only when
+every casting's cell for it is DROPPED; a PROPAGATED or PARAPHRASED cell
+in any casting keeps the gate open for that answer, and per-cell DROPPED
+verdicts remain recorded in the matrix without blocking. Omission is
+caught the same way: A spec
+appendix answer_id with no matrix cell at all is zero-coverage: the
+validator emits INTENT_COVERAGE_MATRIX_INCOMPLETE naming each missing
+answer_id, and the omitted answer blocks the gate exactly like an answer
+whose every casting's cell is DROPPED. Unverifiable cells cannot keep
+the gate open either (cell-verifiability rule — same words as the
+validator docstring, GI-003 mirroring): A matrix
+cell that cannot be verified cannot contribute coverage: a cell missing
+answer_id, casting_id, or verdict, a cell citing a casting_id absent from
+castings/manifest.json, and a cell citing a manifest-declared casting
+whose prompt file is missing or unreadable all count as DROPPED in the
+per-answer aggregation, so an answer whose only non-DROPPED cells are
+such cells blocks as zero-coverage. Emit every cell with all four
+schema keys, and cite only casting_ids the manifest declares. On any
+zero-coverage answer the gate returns
 `{action: 'redecompose', dropped_answers, redecompose_hints}` to the
 foundry orchestrator — which routes the lead BACK to F0.5 with the
 missing A-NNN list as additional citation anchors. This re-runs F0.5
@@ -227,7 +281,9 @@ from `spec.md` with extra context, NOT from the existing prompts.
    (`<invariants>`, `<state_transitions>`, `<contracts>`) in memory.
 5. **For each (answer_id, casting_id) pair**, run the three-anchor
    lookup in order:
-   a. word-boundary `\b<answer_id>\b` in prompt body? → PROPAGATED.
+   a. word-boundary `\b<answer_id>\b` in prompt body — the prompt text
+      with the three typed-table blocks excluded, per the anchor-scope
+      rule above? → PROPAGATED.
    b. `[from <answer_id>]` inside one of the three typed-table blocks?
       → PARAPHRASED, citation_chain includes the block name.
    c. neither → DROPPED.
@@ -253,8 +309,9 @@ from `spec.md` with extra context, NOT from the existing prompts.
 **Example 2 — PARAPHRASED via typed-row indirection:**
 
 - Appendix has `## A-005 [Locked]\nDeployment runs in k8s manifest.\n[from Q-005]`.
-- `tests/fixtures/casting_prompts/casting-1-prompt-paraphrased.md`
-  body does NOT contain the literal `A-005` token.
+- The casting prompt's body — the prompt text outside the three
+  typed-table blocks, per the anchor-scope rule — does NOT contain the
+  literal `A-005` token.
 - The same prompt's `<contracts>` block contains a row:
   `| CT-001 | POST /deploy | manifest.yaml | 4xx on bad spec | [from A-005] |`.
 - → cell `(A-005, casting-1)` verdict = `PARAPHRASED`,

@@ -7,7 +7,7 @@
   "wall_clock_seconds": 12.4,
   "answer_count": 8,
   "casting_count": 2,
-  "summary": {"PROPAGATED": 11, "PARAPHRASED": 0, "DROPPED": 1},
+  "summary": {"PROPAGATED": 15, "PARAPHRASED": 0, "DROPPED": 1},
   "matrix": [
     {"answer_id": "A-001", "casting_id": "1", "verdict": "PROPAGATED", "citation_chain": ["A-001"]},
     {"answer_id": "A-002", "casting_id": "1", "verdict": "PROPAGATED", "citation_chain": ["A-002"]},
@@ -20,6 +20,10 @@
     {"answer_id": "A-003", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-003"]},
     {"answer_id": "A-004", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-004"]},
     {"answer_id": "A-005", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-005"]},
-    {"answer_id": "A-006", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-006"]}
+    {"answer_id": "A-006", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-006"]},
+    {"answer_id": "A-AUTO-001", "casting_id": "1", "verdict": "PROPAGATED", "citation_chain": ["A-AUTO-001"]},
+    {"answer_id": "A-AUTO-002", "casting_id": "1", "verdict": "PROPAGATED", "citation_chain": ["A-AUTO-002"]},
+    {"answer_id": "A-AUTO-001", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-AUTO-001"]},
+    {"answer_id": "A-AUTO-002", "casting_id": "2", "verdict": "PROPAGATED", "citation_chain": ["A-AUTO-002"]}
   ]
 }

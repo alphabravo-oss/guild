@@ -123,7 +123,9 @@
 </tr>
 </table>
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.7.3-F57C00?style=flat-square" alt="foundry 4.7.3"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-00897B?style=flat-square" alt="webster 0.11.0"/></sub>
+
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.8.0-F57C00?style=flat-square" alt="foundry 4.8.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/></sub>
+
 
 </div>
 
@@ -146,8 +148,16 @@ for p in forge foundry adhoc tldr; do claude plugin install "$p@guild"; done
 ```
 
 > [!NOTE]
-> `adhoc` and `tldr` need no setup — they are live on your next session. `foundry` needs its MCP server:
-> `claude mcp add foundry -- uvx --from "git+https://github.com/alphabravo-oss/guild#subdirectory=plugins/foundry/mcp-server" foundry-mcp --project-root .`
+> `adhoc` and `tldr` need no setup — they are live on your next session. `foundry` bundles its own MCP server since 4.7.0 — installing the plugin is all the wiring there is. If you ever registered the old standalone entry, remove it (`claude mcp remove foundry`): it starts a second server that silently defeats the `model` option.
+
+> [!TIP]
+> Forge and foundry each declare a `model` option that moves their config-steerable agents onto a different model — per session:
+>
+> ```bash
+> claude --settings '{"pluginConfigs": {"foundry@guild": {"options": {"model": "fable"}}, "forge@guild": {"options": {"model": "fable"}}}}'
+> ```
+>
+> or persistently via the same `pluginConfigs` block in `~/.claude/settings.json`. Which agents each option reaches is in the plugin READMEs under **Model selection**.
 
 <details>
 <summary><b>Install the other nine</b></summary>

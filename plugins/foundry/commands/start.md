@@ -407,14 +407,20 @@ no-op; orchestrator transitions directly to F0.9 VALIDATE.
    `validate-intent-coverage.py intent-coverage.json --spec spec.md
    [--tool-call-log <agent-log>]` (advisory tool-call-log shape per Phase 7
    precedent — only passed when orchestrator has a captured log).
-4. **On exit 0 (zero DROPPED):** tool stamps `.f07-intent-clean` marker;
-   appends `manifest.intent_coverage_summary` field; orchestrator transitions
-   to F0.9 VALIDATE.
-5. **On any DROPPED:** tool returns `{action: "redecompose", dropped_answers:
-   [...], redecompose_hints: [{answer_id, suggested_casting, citation_chain}]}`;
-   orchestrator routes lead BACK to F0.5 DECOMPOSE with the missing A-NNN list
-   as re-decompose guidance. NEVER amends casting prompts in place. Loop until
-   intent-coverage clears.
+4. **On pass (exit 0 — no zero-coverage answer):** tool stamps
+   `.f07-intent-clean` marker; appends `manifest.intent_coverage_summary`
+   field (per-cell verdict counts included); orchestrator transitions to
+   F0.9 VALIDATE. Per-answer aggregation rule (word-for-word with the
+   validator docstring and intent-carrier.md): An answer_id is DROPPED
+   (gate-blocking) only when every casting's cell for it is DROPPED; a
+   PROPAGATED or PARAPHRASED cell in any casting keeps the gate open for
+   that answer, and per-cell DROPPED verdicts remain recorded in the
+   matrix without blocking.
+5. **On any zero-coverage answer:** tool returns `{action: "redecompose",
+   dropped_answers: [...], redecompose_hints: [{answer_id, suggested_casting,
+   citation_chain}]}`; orchestrator routes lead BACK to F0.5 DECOMPOSE with the
+   missing A-NNN list as re-decompose guidance. NEVER amends casting prompts in
+   place. Loop until intent-coverage clears.
 
 Call `Foundry-Gate(phase='intent_coverage')` to enter F0.7. Call
 `Foundry-Intent-Coverage` to run the gate. Call `Foundry-Gate(phase='validate')`
