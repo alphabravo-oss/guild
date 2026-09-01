@@ -2285,7 +2285,24 @@ def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
 # to hear them:
 #
 #   1. It must not restate the defect's own path — its own symbol or its own
-#      file (the pre-existing rule, now covering both).
+#      file (the pre-existing rule, now covering both), nor say so in words:
+#      "the same path", "same as the defect".
+#   1b. D-085 is that literal rule's own over-correction, and it is D-076 one
+#      pattern over. The literal form matched on "same" ALONE, so a statement
+#      whose SUBJECT is a shared resource —
+#
+#          "The same index.lock is taken by the pathspec commit path and by
+#           foundry_validate's git query, which is the concurrent interaction."
+#
+#      — was told it "declares that there is no adjacent path", which is the
+#      opposite of what it says. Two distinct real paths meeting at one lock,
+#      one file or one record is "what runs concurrently" answered exactly:
+#      sharing the resource IS the adjacency. Moving the resource off the front
+#      of the sentence was always accepted ("The pathspec commit path and
+#      foundry_validate's git query both take index.lock…"), and that is what
+#      proved the rule lexical rather than semantic — same two paths, same
+#      claim, only the first word moved. The NOUN AFTER "same" is what carries
+#      the restatement, so that is what the pattern reads.
 #   2. It must not LEAD with a negation. A statement that opens by asserting no
 #      other path exists is a refusal to answer, not an answer; note the gate is
 #      already unsatisfiable in that case, because a fixer with no adjacent path
@@ -2318,15 +2335,23 @@ def _test_ref_problem(ref: str, own_symbol: str, own_file: str) -> str | None:
 #
 # Like the reference rules, these reject non-answers; they cannot certify that
 # the named path is real. That is the ceiling of what a string check can do,
-# and the run's own INSPECT streams are what verify the rest.
+# and the run's own INSPECT streams are what verify the rest. Rule 1's literal
+# form shows the ceiling plainly: it catches the restatement that OPENS on
+# those two nouns and never caught one buried mid-sentence ("It is the same
+# file as the defect" is accepted here, at HEAD and before it). Widening it
+# back toward that case is what refuses real answers, which is D-085, so the
+# missed non-answer is the side to err on.
 _STATEMENT_MIN_WORDS = 4
 _STATEMENT_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]+")
 _STATEMENT_NON_ANSWERS = (
     # Leading negation: "no other callers", "none", "nothing else touches it",
     # "there are no adjacent paths", "not applicable".
     re.compile(r"^(?:there\s+(?:are|is)\s+)?(?:no|none|not|nothing|never)\b", re.I),
-    # "the same path", "same as the defect".
-    re.compile(r"^(?:the\s+)?same\b", re.I),
+    # Rule 1's literal form: "the same path", "same as the defect". Narrowed
+    # from `^(?:the\s+)?same\b` by D-085 — see rule 1b above. It sits in this
+    # tuple for the anchoring it needs, not because it is a negation; the two
+    # nouns are what restate the defect's own path.
+    re.compile(r"^(?:the\s+)?same\s+(?:path|as)\b", re.I),
     re.compile(r"^n\s*/?\s*a$", re.I),
 )
 # Rule 2b (D-076). A negation of adjacency ANYWHERE in the statement. These are

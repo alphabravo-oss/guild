@@ -878,6 +878,150 @@ def test_the_whole_statement_patterns_really_are_all_anchored():
 
 
 # --------------------------------------------------------------------------- #
+# D-085 — D-076's sibling, one pattern over: the shared resource as SUBJECT
+#
+# D-076 fixed the two unanchored adjacency patterns. The leading `same` rule was
+# not in scope and carried the same over-refusal for the same reason: it read a
+# phrase rather than a position. `^(?:the\s+)?same\b` claimed every statement
+# that OPENS on the resource two paths share — an index.lock, a roll-up file,
+# state.json — and answered it with "declares that there is no adjacent path",
+# which is the opposite of what such a statement says. Two distinct real paths
+# meeting at one resource is A-017's "what runs concurrently" answered exactly.
+#
+# The rule was lexical, not semantic, and the rephrasing below is the proof:
+# move the resource off the front of the sentence and the identical claim was
+# always accepted. The narrowed pattern reads the noun that actually carries a
+# restatement of the defect's OWN path — "same path", "same as".
+# --------------------------------------------------------------------------- #
+
+
+# The three statements PROVE drove through the real gate; 3 of 3 were refused
+# before this fix. Each names TWO distinct real paths meeting at one resource.
+_SHARED_RESOURCE_STATEMENTS = [
+    "The same index.lock is taken by the pathspec commit path and by "
+    "foundry_validate's git query, which is the concurrent interaction.",
+    "The same roll-up file is written by foundry_mark_stream and read by "
+    "_streams_complete_check, so those two are the adjacent writers.",
+    "Same state.json is read by foundry_get_context and written by "
+    "foundry_mark_phase_complete.",
+]
+
+
+@pytest.mark.parametrize("statement", _SHARED_RESOURCE_STATEMENTS)
+def test_a_shared_resource_named_first_is_an_answer_not_a_restatement(run_env, statement):
+    """D-085. Sharing a lock, a file or a record IS the adjacency — refusing to
+    hear it because the sentence opens on the resource fires in GRIND, the
+    phase where every defect must close, against the fixer who did the most
+    precise version of the work FR-009 asks for."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="refresh_session")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, (statement, result)
+
+
+def test_moving_the_resource_off_the_front_cannot_change_the_verdict():
+    """The finding's own control, pinned. These two sentences name the same two
+    paths, make the same claim about the same resource, and differ only in
+    which one opens the sentence — the second was ACCEPTED while the first was
+    REFUSED. A gate that splits an identical claim on word order is reading the
+    phrase and not the answer, so the pair is asserted together rather than
+    leaving the equivalence to the prose."""
+    resource_first = _SHARED_RESOURCE_STATEMENTS[0]
+    paths_first = (
+        "The pathspec commit path and foundry_validate's git query both take "
+        "index.lock, which is the concurrent interaction."
+    )
+
+    assert fo._statement_problem(resource_first, "", "") is None
+    assert fo._statement_problem(paths_first, "", "") is None
+
+
+# What the narrowed rule still owns: the two nouns that restate the path the
+# defect was found on rather than name one beside it.
+#   1. among the nine D-050 non-answers, and under the word floor too.
+#   2. among the wordy denials, and the ONE statement in the whole pinned
+#      corpus this rule alone refuses — "nothing further" matches neither
+#      adjacency denial and nine words clear the floor.
+#   3. the "same as" half, which nothing else covers either.
+# Every other pinned non-answer is independently held by the leading-negation
+# pattern, `_unbounded_denial`, or the word floor, so the narrowing could not
+# have reopened them. Module-level for the same reason `_D050_NON_ANSWERS` is:
+# the evidence drive reads this list rather than retyping it, so a corpus that
+# drifts drifts in one place.
+_OWN_PATH_RESTATEMENTS = [
+    "the same path",
+    "the same path the defect was found on, nothing further",
+    "same as the defect, no new path involved",
+]
+
+
+@pytest.mark.parametrize("statement", _OWN_PATH_RESTATEMENTS)
+def test_the_narrowed_rule_still_refuses_a_literal_own_path_restatement(run_env, statement):
+    """D-085 must not become D-050 again. The risk of loosening a rule for the
+    second time is that the third loosening has nothing left to protect, so
+    what survives is driven explicitly rather than assumed."""
+    project_root, fdir = run_env
+    _seed_defect(fdir, symbol="foundry_mark_stream")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001",
+        cycle=1,
+        adjacent_path_statement=statement,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (statement, result)
+    assert result["missing_fields"] == ["adjacent_path_statement"]
+
+    data = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert data["defects"][0]["status"] == "open"
+
+
+def test_no_whole_statement_pattern_claims_a_shared_resource_statement():
+    """D-085 derived from the compiled patterns, the way D-076's anchoring
+    invariant is.
+
+    The end-to-end tests above say the shared-resource statements are accepted;
+    this says WHY, which is the part a future edit can break silently. No
+    member of the whole-statement tuple may fire on them — a pattern that does
+    is asserting something about the statement that the statement denies, and
+    the refusal text it produces ("declares that there is no adjacent path") is
+    then false of what the caller wrote. The same tuple must still own the
+    restatement no other rule catches, so widening is caught in one direction
+    and gutting in the other.
+    """
+    for statement in _SHARED_RESOURCE_STATEMENTS:
+        normalized = " ".join(statement.split())
+        for pattern in fo._STATEMENT_NON_ANSWERS:
+            assert not pattern.search(normalized), (
+                f"{pattern.pattern!r} claims {normalized!r}, which names two "
+                f"distinct real paths meeting at one shared resource — that is "
+                f"A-017's 'what runs concurrently' answered exactly. Refusing "
+                f"it as a declaration that no adjacent path exists is D-085."
+            )
+
+    assert any(
+        pattern.search("the same path the defect was found on, nothing further")
+        for pattern in fo._STATEMENT_NON_ANSWERS
+    ), (
+        "nothing in the whole-statement tuple refuses a literal restatement of "
+        "the defect's own path any more. The word floor does not reach it (it "
+        "clears four words) and neither adjacency denial matches 'nothing "
+        "further', so this rule is the only thing standing between that "
+        "statement and a closed defect."
+    )
+
+
+# --------------------------------------------------------------------------- #
 # FR-005 / ST-001 — the SERVER counter stamps the fix, not the caller
 # --------------------------------------------------------------------------- #
 

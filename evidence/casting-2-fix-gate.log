@@ -23,6 +23,14 @@
 # no longer satisfy a gate whose whole purpose is to make the fixer name an
 # adjacent path. Every cross-language reference shape still passes -- a rule
 # that refused a real fix would be a worse defect than the one it closes.
-........................................................................ [ 83%]
-..............                                                           [100%]
-86 passed in 0.67s
+#
+# GRIND cycle 9, D-085: that ladder's own over-correction, and D-076's sibling
+# one pattern over. The leading `same` rule read a phrase rather than a
+# position, so a statement whose SUBJECT is the resource two paths share was
+# refused for "declaring that there is no adjacent path" -- the opposite of
+# what it says. Narrowed to the two nouns that actually restate the defect's
+# own path; the shared-resource drives are in
+# evidence/casting-2-adjacent-statement-shared-resource.log.
+........................................................................ [ 76%]
+......................                                                   [100%]
+94 passed in 0.63s
