@@ -75,6 +75,19 @@ SECTION_TYPE = {"install": "how-to", "advanced": "explanation",
 SECTION_AUDIENCE = {"getting-started": "user", "install": "operator", "advanced": "operator",
                     "troubleshooting": "user", "developer": "developer", "api": "developer"}
 
+
+def section_audience(user_is):
+    """The section map, with `user` standing for whoever this product's end reader actually is.
+
+    Some products have no `user`. Pioneer's own index says its reader is comfortable in a
+    terminal and a cloud console, which is an operator, and every one of its 67 pages is written
+    for one. Held to the default map its getting-started and troubleshooting pages reported an
+    audience mismatch for declaring the reader they have. `--subject-audience` already exists
+    for the subject directories, and this is the same admission for the fixed sections: the
+    layout is Harvester's, and Harvester is infrastructure too.
+    """
+    return {k: (user_is if v == "user" else v) for k, v in SECTION_AUDIENCE.items()}
+
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # The plan is a working document that happens to live in the docs directory, and llms.txt and
@@ -191,6 +204,8 @@ def parse_subjects(raw):
 
 
 def do_init(a):
+    user_is = getattr(a, "user_audience", "user")
+    section_map = section_audience(user_is)
     docs = a.docs
     # Parse every subject before the first write. This call used to sit below index.md, faq.md
     # and the getting-started and install sections, so one mistyped key left a half-built tree
@@ -248,11 +263,11 @@ def do_init(a):
             if name == "getting-started":
                 for i, (page, dtype) in enumerate(GETTING_STARTED, 1):
                     t = page[:-3].replace("-", " ").capitalize()
-                    if stub(os.path.join(d, page), t, i, doc_type=dtype, audience="user"):
+                    if stub(os.path.join(d, page), t, i, doc_type=dtype, audience=user_is):
                         made.append(f"{name}/{page}")
             elif stub(os.path.join(d, f"{name}.md"), label, 1,
                       doc_type=SECTION_TYPE.get(name, "how-to"),
-                      audience=SECTION_AUDIENCE.get(name, "user")):
+                      audience=section_map.get(name, user_is)):
                 made.append(f"{name}/{name}.md")
 
         for i, (key, label) in enumerate(subjects, start=4):
@@ -271,7 +286,7 @@ def do_init(a):
             category(d, label, pos)
             if stub(os.path.join(d, f"{name}.md"), label, 1,
                     doc_type=SECTION_TYPE.get(name, "explanation"),
-                    audience=SECTION_AUDIENCE.get(name, "user")):
+                    audience=section_map.get(name, user_is)):
                 made.append(f"{name}/{name}.md")
 
         if a.site:
@@ -403,6 +418,7 @@ def unreadable(error):
 
 def do_check(a):
     docs, bad, plan = a.docs, [], getattr(a, "plan", None)
+    section_map = section_audience(getattr(a, "user_audience", "user"))
 
     # Every read below can be refused, the one that asks whether --docs is a directory
     # included. A *.md that is a dangling symlink is listed like any
@@ -499,7 +515,7 @@ def do_check(a):
                     bad.append({"where": rel, "problem": "frontmatter has no title"})
 
         # A page sitting in a section whose reader is known should not claim a different one.
-        for section, expected in SECTION_AUDIENCE.items():
+        for section, expected in section_map.items():
             d = os.path.join(docs, section)
             if not os.path.isdir(d):
                 continue
@@ -661,6 +677,9 @@ def main():
     ap.add_argument("--site", action="store_true", help="also write the Docusaurus site")
     ap.add_argument("--site-dir", default="website",
                     help="where the site lives, its own directory so it cannot collide with the app")
+    ap.add_argument("--user-audience", default="user",
+                    choices=["user", "operator", "developer"],
+                    help="who this product's end reader is, for the sections mapped to `user`")
     ap.add_argument("--subject-audience", default="user", choices=["user", "operator", "developer"],
                     help="who the subject directories are written for. Most products document "
                          "their own features for the person using them")

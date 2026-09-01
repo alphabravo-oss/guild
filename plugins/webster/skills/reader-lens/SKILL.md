@@ -112,6 +112,17 @@ unread it is one of the things nobody checked. Say so in the report rather than 
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py template explanation user
 ```
 
+## A reference page's entries are the point
+
+`reference` and `api-reference` pages are exempt from the symbol, route, flag and variable
+rules. A page whose job is to name every metric was reporting one finding per metric: on one
+real set, 29 findings on one page and 18 on another accounted for 47 of its 56 leaks, all of
+them the same finding said 47 times.
+
+Architecture words are still forbidden there. A page listing metrics has no business saying
+"the handler", and an exemption that let the whole page through would put every leak one
+`doc_type` away from invisible.
+
 ## When a word is domain vocabulary rather than a leak
 
 One product's internals are another product's ordinary vocabulary. A Kubernetes tool's operators

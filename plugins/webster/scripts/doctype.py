@@ -748,14 +748,22 @@ def check_lens(rel, text, audience, dt, env_vars):
     if forbids is None:
         return defects, advisories
 
+    # A reference page's entries ARE the names it lists, and the lens read the audience without
+    # ever reading the type. A page whose job is to name every metric reported one finding per
+    # metric: on one real docs set, 29 findings on one page and 18 on another were 47 of its 56
+    # leaks, all of them the same finding. Architecture words stay forbidden here, because a
+    # page listing metrics still has no business saying "the handler".
+    entries_are_the_subject = dt in ("reference", "api-reference")
+
     named = []
     for n, line in prose_lines(text):
-        for m in CODE_IDENT.finditer(line):
-            if m.group(1).lower() not in IDENT_ALLOW:
-                named.append((n, f"`{m.group(1)}`", "an internal symbol name"))
-        for m in ENV_VAR.finditer(line):
-            if audience == "user" and m.group(1) in env_vars:
-                named.append((n, f"`{m.group(1)}`", "an environment variable"))
+        if not entries_are_the_subject:
+            for m in CODE_IDENT.finditer(line):
+                if m.group(1).lower() not in IDENT_ALLOW:
+                    named.append((n, f"`{m.group(1)}`", "an internal symbol name"))
+            for m in ENV_VAR.finditer(line):
+                if audience == "user" and m.group(1) in env_vars:
+                    named.append((n, f"`{m.group(1)}`", "an environment variable"))
         # LENS_MAY_NOT['user'] names "any route path" and "command-line flags" among the
         # things a user page may not name. LENS_MAY_NOT['operator'] names only internal
         # symbols and architecture, so an operator page may name a route or a flag because
@@ -765,7 +773,7 @@ def check_lens(rel, text, audience, dt, env_vars):
         # `/api/health` when that page is allowed to be about exactly that, and widening
         # ROUTE_PATH would have multiplied the false finding. CODE_IDENT and ARCH_HARD stay
         # outside this gate because both lines forbid them (FR-017, GI-003).
-        if audience == "user":
+        if audience == "user" and not entries_are_the_subject:
             for m in ROUTE_PATH.finditer(line):
                 named.append((n, m.group(1) or m.group(2), "a request route"))
             for m in FLAG.finditer(line):

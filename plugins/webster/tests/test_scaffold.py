@@ -1004,3 +1004,53 @@ def test_an_unreadable_plan_exits_two(run_script, tmp_path):
     assert json.loads(result.stdout)["status"] == "no_plan", (
         f"Every exit-2 path in this script carries a status naming it.\n{result.stdout}"
     )
+
+
+# -----------------------------------------------------------------------------
+# --user-audience: a product whose end reader is not a `user`.
+#
+# The section map is Harvester's, and Harvester is infrastructure. Pioneer's own
+# index says its reader is comfortable in a terminal and a cloud console, and
+# every one of its 67 pages is written for one; held to the default map its
+# getting-started and troubleshooting pages reported a mismatch for declaring
+# the reader they actually have. --subject-audience already made this admission
+# for the subject directories.
+# -----------------------------------------------------------------------------
+def test_the_user_sections_follow_user_audience(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    run_script("scaffold.py", "init", "--docs", docs, "--subject", "clusters:Clusters",
+               "--subject-audience", "operator", "--user-audience", "operator")
+
+    overview = (docs / "getting-started" / "overview.md").read_text(encoding="utf-8")
+
+    assert "audience: operator" in overview, (
+        f"init wrote the section map it will later be checked against, so a tree scaffolded "
+        f"with --user-audience must not be born failing its own audience check.\n{overview}"
+    )
+
+
+def test_check_accepts_the_audience_init_wrote(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    run_script("scaffold.py", "init", "--docs", docs, "--subject", "clusters:Clusters",
+               "--subject-audience", "operator", "--user-audience", "operator")
+
+    result = run_script("scaffold.py", "check", "--docs", docs, "--user-audience", "operator")
+
+    assert not [v for v in json.loads(result.stdout)["violations"] if "audience" in v["problem"]], (
+        f"init and check read one map, so what one writes the other has to accept.\n"
+        f"{result.stdout}"
+    )
+
+
+def test_the_default_map_is_unchanged(run_script, tmp_path):
+    docs = tmp_path / "docs"
+    run_script("scaffold.py", "init", "--docs", docs, "--subject", "clusters:Clusters",
+               "--user-audience", "operator")
+
+    result = run_script("scaffold.py", "check", "--docs", docs)
+
+    assert [v for v in json.loads(result.stdout)["violations"] if "audience" in v["problem"]], (
+        f"Without the flag the map is Harvester's, and an operator page in getting-started/ "
+        f"is the mismatch it has always been. A flag that changed the default would move "
+        f"every product's answer, not this one's.\n{result.stdout}"
+    )

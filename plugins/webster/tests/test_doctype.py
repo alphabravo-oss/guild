@@ -1107,3 +1107,40 @@ def test_the_rule_count_in_this_docstring_is_the_scripts_own_census():
         "The census swept up an advisory. An advisory never reaches exit 1 — `main` returns "
         f"`1 if defects else 0` — so counting one overstates the number. Found: {sorted(rules)}"
     )
+
+
+def test_a_reference_page_may_name_the_entries_it_lists(run_script, docs_dir):
+    """A reference page's entries ARE the names (FR-017).
+
+    The lens read the audience and never the type. A page whose job is to name every metric
+    reported one finding per metric: on one real docs set 29 findings on one page and 18 on
+    another were 47 of its 56 leaks, all of them the same finding said 47 times.
+    """
+    write_page(docs_dir, "metrics.md", "title: Metrics\ndoc_type: reference\naudience: operator",
+               "# Metrics\n\n| Name | Type |\n|---|---|\n"
+               "| `deploymentPhaseTotal` | counter |\n| `agentEnrollLatency` | histogram |\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "wrong-lens" not in result.stdout, (
+        f"A reference page listing metric names is doing its job, and reporting each entry "
+        f"buries the leaks that are real under the ones that are the point.\n{outcome(result)}"
+    )
+
+
+def test_a_reference_page_may_not_name_the_architecture(run_script, docs_dir):
+    """The exemption is for entries, not for prose (FR-017).
+
+    A page listing metrics still has no business saying "the handler", and an exemption that
+    let the whole page through would turn every leak into a doc_type away from invisible.
+    """
+    write_page(docs_dir, "metrics.md", "title: Metrics\ndoc_type: reference\naudience: operator",
+               "# Metrics\n\nThe handler writes each of these as it runs.\n\n"
+               "| Name | Type |\n|---|---|\n| `deploymentPhaseTotal` | counter |\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "part of the architecture" in result.stdout, (
+        f"'handler' is architecture on any page below developer, and a reference page is not "
+        f"a place to put one.\n{outcome(result)}"
+    )

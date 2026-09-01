@@ -1,6 +1,6 @@
 {
   "name": "webster",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Documentation for the person who has to use the thing, held to the bar of something you could hand a customer without reading it first. Every page declares who it is for, and that decides what the page may be about: a page for a user names screens, buttons and what the product gives back, never a symbol, a route or the architecture. Written from the product's own on-screen vocabulary before anyone opens the source. Prose is measured for the shape a reader pays for rather than for syllables, and then read by an agent that knows nothing about the product and reports where the page stopped it. Fixed layout modelled on Harvester, content types from The Good Docs Project, quality checks from the ISO/IEC/IEEE 26514 characteristics. Anchors every claim, measures drift against a recorded manifest, and refuses to state what it could not check.",
   "author": {
     "name": "AlphaBravo"
