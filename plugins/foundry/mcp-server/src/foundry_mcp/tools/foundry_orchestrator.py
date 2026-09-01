@@ -9,9 +9,13 @@ All operations are local file reads/writes. Zero API calls. Zero cost.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -131,17 +135,236 @@ def agent_model(subagent_type: str, baseline: str = "") -> dict:
     return {"model": resolved} if resolved else {}
 
 
-def _load_json(path: Path) -> dict:
+# --------------------------------------------------------------------------- #
+# Run-artifact persistence (D-098 / D-103).
+#
+# Two failure classes, one layer, because they are the two halves of the same
+# gap: the READ edge raised, and the window between the read and the write lost
+# writes.
+#
+# READS. ``_load_json`` was ``json.loads(path.read_text())`` with no try/except
+# and no shape check, and ``server.py``'s ``call_tool`` had none either — so a
+# corrupt ``state.json`` raised out of Foundry-Next, the mandatory handshake
+# before every phase transition, and the operator could not even read state to
+# diagnose it. A 24-combination matrix over 6 artifacts x {truncated, [], null,
+# "a string"} bricked a tool 24 times and named the offending file zero times.
+# The counterpart one rung down was D-059: ``_current_cycle`` guarded the VALUE
+# while nothing guarded the CONTAINER.
+#
+# The fix is split so that tolerance binds every reader with no per-site edit,
+# and naming happens where a human is listening:
+#   ``_read_document``  — the tolerant core: (data, named problem).
+#   ``_load_json``      — total. {} for missing/unreadable/malformed. NEVER
+#                         raises, so all of this module's readers are safe by
+#                         construction rather than by 33 remembered try/excepts.
+#   ``_artifact_guard`` — the named refusal, at the MCP entry points. Tolerance
+#                         alone would silently read a corrupt state.json as
+#                         cycle 0; the guard is what makes the file's name reach
+#                         the operator. ``test_orchestrator_gates`` derives the
+#                         entry-point set from server.py's _DISPATCH and fails on
+#                         the next one added without it.
+#
+# WRITES. ``_save_json`` is atomic per write, but every caller read, mutated and
+# wrote as three separate steps, and the tmp sidecar name was shared: a real
+# 4-process x 40-call drive on ``foundry_mark_stream`` SILENTLY LOST 107 of 160
+# tranches (67%) and raised 98 FileNotFoundError as one process renamed the
+# shared tmp out from under another. That is the DESIGNED path — F2 runs 4-8
+# parallel streams each calling Foundry-Stream as it finishes — and CT-003
+# requires partial records be "accepted and stored as they arrive".
+#   ``_save_json``            — unique tmp per writer, so no peer can rename it.
+#   ``_document_transaction`` — the locked read-modify-write every run-artifact
+#                               writer uses. RE-ENTRANT per path, which is not a
+#                               nicety: ``foundry_mark_phase_complete`` already
+#                               nests a state.json RMW inside ``_update_phase``'s
+#                               (that nesting was itself a latent lost update).
+#
+# This mirrors ``foundry.py``'s ``ledger_transaction`` BY CONVENTION, not by
+# import: that primitive yields a list under a collection key, which fits
+# defects.json and observations.json but not state.json / stream-rollup.json /
+# escalation.json, whose payload is the document itself. The refusal shape and
+# locking discipline are deliberately identical so a later consolidation is
+# mechanical. The flock — not the RLock — is what binds across MODULES: two
+# separate open() calls contend even inside one process, and verdicts.json has
+# a writer in each module.
+# --------------------------------------------------------------------------- #
+
+# Threads inside one server process; the flock sidecar covers a second server
+# process on the same repo. Re-entrant so a nested transaction on the same
+# thread cannot deadlock against itself.
+_ARTIFACT_LOCK = threading.RLock()
+
+# path -> in-flight document, per thread. A nested transaction on a path already
+# open on this thread yields the SAME dict and defers the write to the outermost
+# exit, so nesting composes instead of deadlocking on our own flock.
+_ARTIFACT_TX = threading.local()
+
+
+def _read_document(path: Path) -> tuple[dict, str | None]:
+    """Read a JSON object. Returns ``(data, problem)``; never raises.
+
+    ``problem`` is a human-readable string NAMING THE FILE when the artifact
+    exists but is not a readable JSON object, else None. An absent file is not
+    a problem — a run legitimately has artifacts it has not written yet.
+    """
     if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+        return {}, None
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {}, f"{path.name} could not be read ({type(exc).__name__}: {exc})"
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        return {}, f"{path.name} is not valid JSON ({exc})"
+    if not isinstance(data, dict):
+        return {}, (
+            f"{path.name} is not a JSON object (found "
+            f"{type(data).__name__}) — every run artifact is a mapping"
+        )
+    return data, None
+
+
+def _document_problem(path: Path) -> str | None:
+    """The named reason ``path`` is not a readable JSON object, or None."""
+    return _read_document(path)[1]
+
+
+def _load_json(path: Path) -> dict:
+    """Total, tolerant read of a run artifact. Returns {} rather than raising.
+
+    Every malformed-container shape — truncated, ``[]``, ``null``, ``42``,
+    ``"a string"``, non-UTF-8 — reads as an empty document, so no reader in
+    this module can raise across the MCP boundary. Callers that must TELL the
+    operator which file is broken use ``_artifact_guard`` / ``_document_problem``
+    rather than inspecting the return value, which cannot distinguish "absent"
+    from "corrupt" by design.
+    """
+    return _read_document(path)[0]
+
+
+def _read_text(path: Path) -> str:
+    """Tolerant text read of a run artifact. "" rather than raising.
+
+    ``directives.md`` is not JSON, so it needs the same container guard: a
+    non-UTF-8 byte in it raised UnicodeDecodeError straight out of
+    ``_read_directives`` and therefore out of Foundry-Next.
+    """
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
 
 
 def _save_json(path: Path, data: dict) -> None:
-    """Atomic JSON write — write to .tmp then rename."""
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.rename(path)
+    """Atomic JSON write — write to a UNIQUE .tmp, then rename.
+
+    The tmp name carries pid and thread id. The old ``path.with_suffix(".tmp")``
+    was shared by every concurrent writer of the same artifact, so a peer's
+    rename could move this call's half-written payload into place, or delete it
+    mid-write (the 98 FileNotFoundError in the D-103 drive).
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.rename(path)
+    finally:
+        # A failed write must not leave a stray sidecar behind; the rename
+        # consumes it on the success path, so this only fires on error.
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
+@contextmanager
+def _document_transaction(path: Path) -> Iterator[dict]:
+    """Exclusive read-modify-write over a run-artifact JSON document.
+
+    Yields the document as a dict. Mutate it in place; it is written back
+    through ``_save_json`` on clean exit. An exception inside the block
+    propagates and NOTHING is written, so a failed mutation cannot leave a
+    half-updated artifact.
+
+    Re-entrant per path: a nested transaction on a path this thread already
+    holds yields the same in-flight dict and defers the write to the outermost
+    exit. Without that, ``foundry_mark_phase_complete``'s existing nested
+    state.json write would block forever on its own flock.
+
+    A block that mutates NOTHING writes nothing: the document is snapshotted on
+    entry and compared on exit. That keeps a no-op caller byte-identical on disk
+    (verdict synthesis must not rewrite verdicts.json when every requirement
+    already has a row), keeps mtimes honest, and means a corrupt artifact a
+    caller only read is left intact rather than silently replaced by ``{}``.
+
+    A malformed document otherwise reads as ``{}`` (``_load_json``'s tolerance)
+    rather than raising, so a writer is never bricked by one. Callers that must
+    refuse instead run ``_artifact_guard`` first.
+    """
+    held = getattr(_ARTIFACT_TX, "docs", None)
+    if held is None:
+        held = _ARTIFACT_TX.docs = {}
+    key = str(path)
+    if key in held:
+        # Already open on this thread — same document, one write at the end.
+        yield held[key]
+        return
+
+    lock_path = path.with_name(path.name + ".lock")
+    with _ARTIFACT_LOCK:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                data = _load_json(path)
+                before = json.dumps(data, indent=2, sort_keys=True)
+                held[key] = data
+                yield data
+                if json.dumps(data, indent=2, sort_keys=True) != before:
+                    _save_json(path, data)
+            finally:
+                held.pop(key, None)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+# Artifacts whose corruption the guard reports. DERIVED, not a hand-kept list:
+# every top-level *.json in the run dir plus the castings manifest. A new
+# artifact is covered the moment it is written, which is the property the
+# hand-kept marker lists in this module have repeatedly failed to hold.
+def _run_artifact_problems(fdir: Path) -> list[str]:
+    """Named problems for every unreadable run artifact, in stable order."""
+    if not fdir or not fdir.exists():
+        return []
+    candidates = sorted(p for p in fdir.glob("*.json") if p.is_file())
+    manifest = fdir / "castings" / "manifest.json"
+    if manifest.is_file():
+        candidates.append(manifest)
+    return [p for p in (_document_problem(c) for c in candidates) if p]
+
+
+def _artifact_guard(fdir: Path) -> dict | None:
+    """Named refusal when a run artifact cannot be read, else None.
+
+    The house refusal shape: ``error`` names the offending FILES and what is
+    wrong with each, ``hint`` names the action. Called at the top of the MCP
+    entry points so the operator learns which file to repair instead of
+    receiving a traceback from the handshake that was supposed to tell them.
+    """
+    problems = _run_artifact_problems(fdir)
+    if not problems:
+        return None
+    return {
+        "error": (
+            "Run artifacts cannot be read: " + "; ".join(problems) + ". "
+            "The run's state is unreadable, so this tool refuses rather than "
+            "acting on a document it had to guess at."
+        ),
+        "hint": (
+            "Repair or delete the named file(s) in the run directory, then "
+            "retry. A deleted artifact is re-created empty; a corrupt one is "
+            "not silently overwritten."
+        ),
+        "corrupt_artifacts": problems,
+    }
 
 
 def _now() -> str:
@@ -249,10 +472,12 @@ def _marker_counts(marker: Path) -> dict | None:
     """
     if not marker.exists():
         return None
-    try:
-        text = marker.read_text(encoding="utf-8")
-    except OSError:
-        return None
+    # D-098: UnicodeDecodeError is a ValueError, not an OSError, so a marker
+    # with one non-UTF-8 byte raised straight through the old `except OSError`.
+    # An unreadable marker still yields the zero-counts record rather than None:
+    # None means "no marker", and a PRESENT marker whose numbers cannot be read
+    # must fail the coverage threshold, not skip it.
+    text = _read_text(marker)
     counts: dict = {"items_checked": 0, "items_total": 0, "findings": None}
     for line in text.splitlines():
         for key in ("items_checked", "items_total", "findings"):
@@ -323,34 +548,36 @@ def _synthesize_clean_prove_verdicts(
     if not ids:
         return 0
     verdicts_path = fdir / "verdicts.json"
-    verdicts = _load_json(verdicts_path)
-    requirements = verdicts.get("requirements")
-    if not isinstance(requirements, list):
-        requirements = []
-    existing_ids = {r.get("id") for r in requirements if isinstance(r, dict)}
     now = _now()
     synthesized = 0
-    for rid in ids:
-        if rid in existing_ids:
-            continue
-        requirements.append(
-            {
-                "id": rid,
-                "verdict": "VERIFIED",
-                "evidence": (
-                    "Auto-verified on clean PROVE "
-                    "(≥95% coverage, 0 findings)."
-                ),
-                "spec_text_cited": "",
-                "code_location": "",
-                "cycle": cycle,
-                "recorded_at": now,
-            }
-        )
-        synthesized += 1
-    if synthesized:
+    # D-103: verdicts.json is read-modify-written here AND by
+    # foundry.py#foundry_add_verdict. Serializing this side removes the
+    # orchestrator's contribution to the race; the flock is what would bind the
+    # other side too, once that writer takes it (logged as a concern).
+    with _document_transaction(verdicts_path) as verdicts:
+        requirements = verdicts.get("requirements")
+        if not isinstance(requirements, list):
+            requirements = []
+        existing_ids = {r.get("id") for r in requirements if isinstance(r, dict)}
+        for rid in ids:
+            if rid in existing_ids:
+                continue
+            requirements.append(
+                {
+                    "id": rid,
+                    "verdict": "VERIFIED",
+                    "evidence": (
+                        "Auto-verified on clean PROVE "
+                        "(≥95% coverage, 0 findings)."
+                    ),
+                    "spec_text_cited": "",
+                    "code_location": "",
+                    "cycle": cycle,
+                    "recorded_at": now,
+                }
+            )
+            synthesized += 1
         verdicts["requirements"] = requirements
-        _save_json(verdicts_path, verdicts)
     return synthesized
 
 
@@ -548,6 +775,14 @@ def foundry_gate(
 
     if not fdir.exists():
         return {"phase": phase, "passed": False, "reason": "foundry directory not found", "hint": "Run foundry_init first"}
+    if (corrupt := _artifact_guard(fdir)):
+        return {
+            "phase": phase,
+            "passed": False,
+            "reason": corrupt["error"],
+            "hint": corrupt["hint"],
+            "corrupt_artifacts": corrupt["corrupt_artifacts"],
+        }
 
     checklist: list[dict] = []
     passed = True
@@ -856,28 +1091,34 @@ def _record_stream_rollup(
     Returns the cycle's totals AFTER this record.
     """
     path = fdir / ROLLUP_FILENAME
-    data = _load_json(path)
-    cycles = data.setdefault("cycles", {})
-    bucket = cycles.setdefault(str(cycle), {})
-    entry = bucket.setdefault(
-        stream, {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
-    )
+    # D-103: THE concurrency site. F2 runs 4-8 parallel streams and each calls
+    # Foundry-Stream as it finishes, so the read-modify-write here is the
+    # designed path, not an edge case. Unlocked, a 4-process x 40-call drive
+    # lost 107 of 160 tranches — a direct violation of CT-003's "accepted and
+    # stored as they arrive".
+    with _document_transaction(path) as data:
+        cycles = data.setdefault("cycles", {})
+        if not isinstance(cycles, dict):
+            cycles = data["cycles"] = {}
+        bucket = cycles.setdefault(str(cycle), {})
+        entry = bucket.setdefault(
+            stream, {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
+        )
 
-    entry["records"].append(
-        {
-            "recorded_at": _now(),
-            "items_checked": items_checked,
-            "items_total": items_total,
-            "findings": findings_count,
-            "declared_cycle": declared_cycle,
-        }
-    )
-    entry["items_checked"] = entry.get("items_checked", 0) + items_checked
-    entry["items_total"] = max(entry.get("items_total", 0), items_total)
-    entry["findings"] = entry.get("findings", 0) + findings_count
+        entry["records"].append(
+            {
+                "recorded_at": _now(),
+                "items_checked": items_checked,
+                "items_total": items_total,
+                "findings": findings_count,
+                "declared_cycle": declared_cycle,
+            }
+        )
+        entry["items_checked"] = entry.get("items_checked", 0) + items_checked
+        entry["items_total"] = max(entry.get("items_total", 0), items_total)
+        entry["findings"] = entry.get("findings", 0) + findings_count
 
-    data["updated_at"] = _now()
-    _save_json(path, data)
+        data["updated_at"] = _now()
     return {
         "items_checked": entry["items_checked"],
         "items_total": entry["items_total"],
@@ -963,6 +1204,8 @@ def foundry_mark_stream(
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
 
     if items_checked <= 0:
         return {
@@ -975,6 +1218,49 @@ def foundry_mark_stream(
                      "coverage_diff: coverage_list source items diffed. "
                      "test01: derived spec-test hypotheses executed.",
             "hint": "If the stream genuinely checked 0 items, the scope may be wrong.",
+        }
+
+    # D-100: the counts accumulate by ADDITION across a cycle's tranches, so a
+    # negative value does not record a tranche — it ERASES earlier ones. The
+    # guard above refused items_checked <= 0 while findings_count had no lower
+    # bound at all, and that asymmetry was load-bearing:
+    # mark_stream("prove", 2, findings=9) then mark_stream("prove", 1,
+    # findings=-9) cancels the cycle's findings to 0 and flips _prove_is_clean
+    # False -> True. On TRACE the same cancellation stamps .trace-clean-at —
+    # the anchor that lets a LATER cycle skip the TRACE stream outright.
+    if findings_count < 0:
+        return {
+            "error": (
+                f"Cannot record {stream} with findings_count={findings_count}. "
+                "A cycle's findings accumulate across tranches, so a negative "
+                "count would erase findings an earlier record of this cycle "
+                "already reported."
+            ),
+            "hint": "Report the findings THIS tranche produced — zero or more, never negative.",
+        }
+
+    if items_total < 0:
+        return {
+            "error": (
+                f"Cannot record {stream} with items_total={items_total}. "
+                "The population a tranche was drawn from cannot be negative."
+            ),
+            "hint": "Report the size of the population, or 0 when this stream has no fixed denominator.",
+        }
+
+    # The near-miss beside the same guard: 1667% coverage was accepted in
+    # silence and trivially satisfied the >=95% gate. Judged PER RECORD, where
+    # "checked more than exist" is unambiguous — the cycle TOTAL is deliberately
+    # not judged here, because a legitimate re-record of a cycle would trip it
+    # and CT-003 requires tranches be stored, not refused.
+    if items_total > 0 and items_checked > items_total:
+        return {
+            "error": (
+                f"Cannot record {stream} with items_checked={items_checked} against "
+                f"items_total={items_total}: a tranche cannot check more items than "
+                "the population it declares."
+            ),
+            "hint": "Either items_checked is overstated or items_total understates the population.",
         }
 
     # The roll-up is keyed by the SERVER counter, never by the caller's `cycle`
@@ -1249,38 +1535,40 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
     even though those sub-phases did elapse in wall time.
     """
     state_path = fdir / "state.json"
-    state = _load_json(state_path)
     now = _now()
 
-    phase_times = state.get("phase_times", {})
-    for entry in phase_times.values():
-        _finalize_open_phase_entry(entry, now)
+    with _document_transaction(state_path) as state:
+        phase_times = state.get("phase_times", {})
+        if not isinstance(phase_times, dict):
+            phase_times = {}
+        for entry in phase_times.values():
+            _finalize_open_phase_entry(entry, now)
 
-    phase_times[new_phase] = {"started_at": now}
+        phase_times[new_phase] = {"started_at": now}
 
-    state["phase"] = new_phase
-    state["updated_at"] = now
-    state["phase_times"] = phase_times
-    history = state.get("phase_history", [])
-    history.append({"phase": new_phase, "entered_at": now})
-    state["phase_history"] = history
+        state["phase"] = new_phase
+        state["updated_at"] = now
+        state["phase_times"] = phase_times
+        history = state.get("phase_history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append({"phase": new_phase, "entered_at": now})
+        state["phase_history"] = history
 
-    if new_phase == "F6":
-        state["ended_at"] = now
-        started = state.get("started_at", "")
-        if started:
-            try:
-                start = datetime.fromisoformat(started)
-                end = datetime.fromisoformat(now)
-                delta = end - start
-                hours = int(delta.total_seconds() // 3600)
-                mins = int((delta.total_seconds() % 3600) // 60)
-                secs = int(delta.total_seconds() % 60)
-                state["total_duration"] = f"{hours}h {mins}m {secs}s"
-            except ValueError:
-                pass
-
-    _save_json(state_path, state)
+        if new_phase == "F6":
+            state["ended_at"] = now
+            started = state.get("started_at", "")
+            if started:
+                try:
+                    start = datetime.fromisoformat(started)
+                    end = datetime.fromisoformat(now)
+                    delta = end - start
+                    hours = int(delta.total_seconds() // 3600)
+                    mins = int((delta.total_seconds() % 3600) // 60)
+                    secs = int(delta.total_seconds() % 60)
+                    state["total_duration"] = f"{hours}h {mins}m {secs}s"
+                except (ValueError, TypeError):
+                    pass
 
     # P4 (ST-002): a real phase advance supersedes any pending gate-passed
     # guidance marker. Clear it so the next Foundry-Next emits the NEW phase's
@@ -1327,6 +1615,8 @@ def foundry_mark_phase_complete(
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
 
     nac = fdir / ".next-action-called"
     if not nac.exists():
@@ -1392,13 +1682,24 @@ def foundry_mark_phase_complete(
         # consults none. Only F3 -> F2 advances it — the F1 -> F2 entry from
         # CAST is the run's first INSPECT, not a new cycle.
         state_path = fdir / "state.json"
-        prev_phase = _load_json(state_path).get("phase", "")
-        _update_phase(fdir, "F2")
-        if prev_phase == "F3":
-            state = _load_json(state_path)
-            state["cycle"] = _current_cycle(fdir) + 1
-            state["updated_at"] = _now()
-            _save_json(state_path, state)
+        # D-103: read-phase, advance-phase and increment are ONE critical
+        # section. They used to be three separate read-modify-writes over the
+        # same file (the increment re-read state.json AFTER _update_phase had
+        # written it), so a concurrent writer landing between them lost either
+        # the phase or the counter. _update_phase nests inside this transaction
+        # and mutates the same in-flight document — which is what the
+        # re-entrancy in _document_transaction exists for.
+        with _document_transaction(state_path) as state:
+            prev_phase = state.get("phase", "")
+            _update_phase(fdir, "F2")
+            if prev_phase == "F3":
+                # _current_cycle still reads from disk, and that is correct
+                # here: the flock guarantees no peer is mid-write and this
+                # transaction has not flushed, so disk still holds the
+                # pre-increment counter. Keeping the read on the ONE guarded
+                # reader is what D-059's derived-membership test requires.
+                state["cycle"] = _current_cycle(fdir) + 1
+                state["updated_at"] = _now()
         cycle = _current_cycle(fdir)
         return {
             "ok": True,
@@ -1707,26 +2008,36 @@ def foundry_register_team(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init first."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     state_path = fdir / "state.json"
-    state = _load_json(state_path)
+    # D-103: the roster check and the roster write are one critical section \u2014
+    # two concurrent registrations both passed the "no active teams" check
+    # against the same snapshot and the second write dropped the first.
+    refusal: dict | None = None
+    total_teams = 0
+    with _document_transaction(state_path) as state:
+        teams = state.get("active_teams", [])
+        if not isinstance(teams, list):
+            teams = []
 
-    teams = state.get("active_teams", [])
+        teams_dir = Path.home() / ".claude" / "teams"
+        still_active = [t for t in teams if t != team_name and (teams_dir / t).is_dir()]
+        if still_active:
+            refusal = {
+                "error": f"Cannot register '{team_name}' \u2014 active teams exist: {', '.join(still_active)}",
+                "hint": "Shut down existing teammates (SendMessage + TeamDelete) and Foundry-Team-Down before creating a new team. One team at a time.",
+                "active_teams": still_active,
+            }
+        else:
+            if team_name not in teams:
+                teams.append(team_name)
+            state["active_teams"] = teams
+            total_teams = len(teams)
 
-    teams_dir = Path.home() / ".claude" / "teams"
-    still_active = [t for t in teams if t != team_name and (teams_dir / t).is_dir()]
-    if still_active:
-        return {
-            "error": f"Cannot register '{team_name}' \u2014 active teams exist: {', '.join(still_active)}",
-            "hint": "Shut down existing teammates (SendMessage + TeamDelete) and Foundry-Team-Down before creating a new team. One team at a time.",
-            "active_teams": still_active,
-        }
-
-    if team_name not in teams:
-        teams.append(team_name)
-    state["active_teams"] = teams
-    _save_json(state_path, state)
-
-    return {"ok": True, "registered": team_name, "total_teams": len(teams)}
+    if refusal:
+        return refusal
+    return {"ok": True, "registered": team_name, "total_teams": total_teams}
 
 
 def foundry_unregister_team(
@@ -1748,6 +2059,8 @@ def foundry_unregister_team(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
 
     # ── Phase 1: Verify TeamDelete was called ────────────────────────
     teams_dir = Path.home() / ".claude" / "teams"
@@ -1808,11 +2121,12 @@ def foundry_unregister_team(
 
     # ── Phase 4: Unregister from foundry state ───────────────────────
     state_path = fdir / "state.json"
-    state = _load_json(state_path)
-    teams = state.get("active_teams", [])
-    teams = [t for t in teams if t != team_name]
-    state["active_teams"] = teams
-    _save_json(state_path, state)
+    with _document_transaction(state_path) as state:
+        teams = state.get("active_teams", [])
+        if not isinstance(teams, list):
+            teams = []
+        teams = [t for t in teams if t != team_name]
+        state["active_teams"] = teams
 
     return {
         "ok": True,
@@ -1911,9 +2225,50 @@ FALLBACK_CLUSTER_DEPTH = 2
 # packets. Bare token overrides every class; "escalation-override: <class>"
 # overrides exactly that class.
 ESCALATION_OVERRIDE_TOKEN = "escalation-override"
+
+# D-101: the override is a MARKER GRAMMAR on its own line, not a substring.
+#
+# The old test was `ESCALATION_OVERRIDE_TOKEN not in text.lower()` followed by
+# `return scoped or {"*"}`, so a directive that FORBADE the override
+# de-escalated everything: Foundry-Directive("Never apply an
+# escalation-override. I want real structural fixes.") produced {"*"} and
+# emptied the escalated set — semantics exactly inverted from operator intent,
+# with no signal. It also fired on "the escalation-overrides list is empty" and
+# on the token in uppercase prose. ST-003 makes the override an EXPLICIT
+# directive action, and a substring match is not explicit.
+#
+# Recognised forms, each as a whole line (an optional markdown bullet or blank
+# space may precede it, nothing may follow it):
+#     escalation-override: <class>     — de-escalate exactly that class
+#     escalation-override: *           — de-escalate every class
+#     escalation-override              — de-escalate every class
+# Anything else mentioning the token is prose and does nothing.
+_OVERRIDE_LINE_PREFIX = r"^[\s>]*(?:[-*+]\s*)?"
 _OVERRIDE_SCOPED_RE = re.compile(
-    rf"{ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)", re.IGNORECASE
+    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)\s*$",
+    re.IGNORECASE | re.MULTILINE,
 )
+_OVERRIDE_BARE_RE = re.compile(
+    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}\s*[:=]?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# The scoped form's value spelled as "every class" rather than a class key.
+_OVERRIDE_ALL_VALUES = frozenset({"*", "all", "any", "every"})  # 4 spellings
+
+
+def _fallback_class(defect: dict) -> str:
+    """The ``type + file-cluster`` key, computed IGNORING any declared class.
+
+    Kept separate from ``_defect_class`` because D-102 needs both keys for the
+    same record: the declared identity, and the cluster it would have landed in
+    had no stream declared one.
+    """
+    dtype = canonical_defect_type(defect.get("type", "")) or defect.get("type") or "UNTYPED"
+    path = defect.get("file") or ""
+    segments = [p for p in str(path).replace("\\", "/").split("/") if p][:-1]
+    cluster = "/".join(segments[:FALLBACK_CLUSTER_DEPTH]) if segments else ""
+    return f"{dtype}@{cluster or '-'}"
 
 
 def _defect_class(defect: dict) -> str:
@@ -1926,12 +2281,56 @@ def _defect_class(defect: dict) -> str:
     declared = defect.get(DEFECT_CLASS_FIELD)
     if isinstance(declared, str) and declared.strip():
         return declared.strip()
+    return _fallback_class(defect)
 
-    dtype = canonical_defect_type(defect.get("type", "")) or defect.get("type") or "UNTYPED"
-    path = defect.get("file") or ""
-    segments = [p for p in str(path).replace("\\", "/").split("/") if p][:-1]
-    cluster = "/".join(segments[:FALLBACK_CLUSTER_DEPTH]) if segments else ""
-    return f"{dtype}@{cluster or '-'}"
+
+def _resolve_defect_classes(defects: list) -> dict[int, str]:
+    """Assign every defect a class key such that the buckets stay a PARTITION.
+
+    D-102 / FR-024 (implementer-tunable). ``class`` is OPTIONAL, so one stream
+    omitting it on an otherwise identical finding used to split a real cluster
+    in two: three defects on one file, same type, cycles 1/2/3, of which two
+    carried class "SHARED", bucketed as SHARED{1,3} and MISSING@src{2}. Neither
+    reached three consecutive cycles, so a class that genuinely recurred three
+    straight cycles escaped escalation in silence. ST-002 says EITHER the
+    declared field or the fallback accumulates the count — a mixed cluster
+    accumulated in neither.
+
+    THE RULE: an UNDECLARED defect joins the declared class that owns its
+    fallback cluster.
+
+      1. Declared defects keep their declared class, always. A stream that
+         named a class meant it, and two differently-declared classes are never
+         merged just because they share a file.
+      2. Each fallback cluster maps to the declared classes seen on defects in
+         that cluster. When exactly ONE declared class owns the cluster, the
+         cluster's undeclared defects join it.
+      3. When a cluster is owned by two or more declared classes the mapping is
+         ambiguous, so undeclared defects stay in their own fallback bucket.
+         Guessing between rival declared classes would invent a cluster no
+         stream asserted; refusing to guess only costs the accumulation the old
+         code was already failing to make.
+
+    Returns ``{id(defect): class_key}`` — keyed by identity so two structurally
+    identical dicts are still two records.
+    """
+    owners: dict[str, set[str]] = {}
+    for d in defects:
+        if not isinstance(d, dict) or not _class_declared(d):
+            continue
+        owners.setdefault(_fallback_class(d), set()).add(_defect_class(d))
+
+    resolved: dict[int, str] = {}
+    for d in defects:
+        if not isinstance(d, dict):
+            continue
+        if _class_declared(d):
+            resolved[id(d)] = _defect_class(d)
+            continue
+        cluster = _fallback_class(d)
+        claimants = owners.get(cluster, set())
+        resolved[id(d)] = next(iter(claimants)) if len(claimants) == 1 else cluster
+    return resolved
 
 
 def _class_declared(defect: dict) -> bool:
@@ -1954,16 +2353,32 @@ def _consecutive_run(cycles: set[int]) -> tuple[int, int | None]:
 
 
 def _escalation_overrides(project_root: str) -> set[str]:
-    """Class keys the human has explicitly de-escalated, or {"*"} for all."""
+    """Class keys the human has explicitly de-escalated, or {"*"} for all.
+
+    Recognises ONLY the line-anchored marker grammar (D-101). A directive that
+    merely mentions the token — including one forbidding its use — returns the
+    empty set, so escalation stays on.
+    """
     directives = _read_directives(project_root)
     text = "\n".join(directives.get("urgent", []) + directives.get("normal", []))
-    if ESCALATION_OVERRIDE_TOKEN not in text.lower():
-        return set()
-    scoped = {
-        m.group(1).strip(" .,;:'\"`") for m in _OVERRIDE_SCOPED_RE.finditer(text)
-    }
-    scoped = {s for s in scoped if s}
-    return scoped or {"*"}
+
+    scoped: set[str] = set()
+    override_all = False
+    for m in _OVERRIDE_SCOPED_RE.finditer(text):
+        value = m.group(1).strip(" .,;:'\"`")
+        if not value:
+            continue
+        if value.lower() in _OVERRIDE_ALL_VALUES:
+            override_all = True
+        else:
+            scoped.add(value)
+
+    if _OVERRIDE_BARE_RE.search(text):
+        override_all = True
+
+    if override_all:
+        return {"*"}
+    return scoped
 
 
 def _escalated_classes(fdir: Path, project_root: str) -> dict[str, dict]:
@@ -1978,11 +2393,17 @@ def _escalated_classes(fdir: Path, project_root: str) -> dict[str, dict]:
     overrides = _escalation_overrides(project_root)
     recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
 
+    # D-102: resolve every record's class in ONE pass over the whole ledger, so
+    # a cluster split across declared and undeclared records still accumulates
+    # as one class. Per-record `_defect_class` cannot see the ledger, and that
+    # blindness is what let a mixed cluster escape.
+    resolved = _resolve_defect_classes(defects)
+
     buckets: dict[str, dict] = {}
     for d in defects:
         if not isinstance(d, dict):
             continue
-        key = _defect_class(d)
+        key = resolved[id(d)]
         bucket = buckets.setdefault(
             key,
             {
@@ -2078,17 +2499,18 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
     moved on.
     """
     path = fdir / ESCALATION_FILENAME
-    data = _load_json(path)
-    classes = data.setdefault("classes", {})
-    for key, info in escalated.items():
-        entry = classes.setdefault(key, {})
-        entry["proposal"] = info["proposal"]
-        entry["escalated_at_cycle"] = info["escalated_at_cycle"]
-        entry["consecutive_cycles"] = info["consecutive_cycles"]
-        entry["defect_ids"] = info["defect_ids"]
-        entry["recorded_at"] = _now()
-    data["updated_at"] = _now()
-    _save_json(path, data)
+    with _document_transaction(path) as data:
+        classes = data.setdefault("classes", {})
+        if not isinstance(classes, dict):
+            classes = data["classes"] = {}
+        for key, info in escalated.items():
+            entry = classes.setdefault(key, {})
+            entry["proposal"] = info["proposal"]
+            entry["escalated_at_cycle"] = info["escalated_at_cycle"]
+            entry["consecutive_cycles"] = info["consecutive_cycles"]
+            entry["defect_ids"] = info["defect_ids"]
+            entry["recorded_at"] = _now()
+        data["updated_at"] = _now()
 
 
 # --- Defect lifecycle ---
@@ -2818,6 +3240,8 @@ def foundry_mark_defect_fixed(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     defects_path = fdir / "defects.json"
 
     statement = (adjacent_path_statement or "").strip()
@@ -3125,6 +3549,8 @@ def foundry_sync_defects(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     defects_path = fdir / "defects.json"
 
     # --- Validate the whole batch before writing anything ------------------
@@ -3338,6 +3764,17 @@ def foundry_sync_defects(
             defect = {
                 "id": _mint_defect_id(records),
                 "cycle": server_cycle,
+                # D-119: the caller's asserted cycle is persisted beside the
+                # server's, never instead of it. The two filing doors used to
+                # disagree about WHICH cycle a record belonged to whenever the
+                # counter was malformed — one fell back to the caller's value,
+                # this one resolved to 0 — so the same findings filed through
+                # different doors produced different cycle runs, and a class
+                # that recurred three straight cycles escaped escalation while
+                # the AC-011 DONE guard passed. Both doors now resolve to 0 and
+                # both record what the caller claimed, so the divergence is
+                # visible to migrate/escalation tooling instead of silent.
+                "declared_cycle": cycle,
                 "source": norm["source"],
                 "type": norm["type"],
                 "description": desc,
@@ -3399,6 +3836,8 @@ def foundry_defects_to_tasks(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     data = _load_json(fdir / "defects.json")
     open_defects = [d for d in data.get("defects", []) if d.get("status") == "open"]
 
@@ -3499,8 +3938,19 @@ def _stamp_subphase_transitions(fdir: Path) -> None:
     state_path = fdir / "state.json"
     if not state_path.exists():
         return
-    state = _load_json(state_path)
+    with _document_transaction(state_path) as state:
+        _stamp_subphases_in(state, fdir)
+
+
+def _stamp_subphases_in(state: dict, fdir: Path) -> None:
+    """The sub-phase stamping itself, over an already-open state document.
+
+    Split out so the read-modify-write runs inside ``_document_transaction``
+    (D-103) without indenting the whole body a level.
+    """
     phase_times = state.get("phase_times", {})
+    if not isinstance(phase_times, dict):
+        phase_times = {}
     now = _now()
     changed = False
 
@@ -3539,7 +3989,6 @@ def _stamp_subphase_transitions(fdir: Path) -> None:
 
     if changed:
         state["phase_times"] = phase_times
-        _save_json(state_path, state)
 
 
 def foundry_next_action(
@@ -3547,6 +3996,8 @@ def foundry_next_action(
 ) -> dict:
     """Determine what the lead should do next based on current foundry state."""
     fdir_stamp = get_run_dir(project_root)
+    if fdir_stamp and (corrupt := _artifact_guard(fdir_stamp)):
+        return corrupt
     trace_skip_decision: dict | None = None
     if fdir_stamp and fdir_stamp.exists():
         _stamp_subphase_transitions(fdir_stamp)
@@ -4391,6 +4842,43 @@ def _compute_next_action(project_root: str) -> dict:
 # --- Directives (non-blocking human steering) ---
 
 
+# --------------------------------------------------------------------------- #
+# The directives.md marker grammar (D-104).
+#
+# ONE definition, read by both sides: `_read_directives` splits the file on
+# these prefixes, and `foundry_inject_directive` refuses a body that contains
+# one. Two hand-kept copies of the same grammar is how the forgery worked in
+# the first place \u2014 the writer did not know what the reader would treat as
+# structure, so a priority="normal" body carrying a line beginning
+# `### [URGENT]` was parsed back out as a SECOND, urgent directive, overriding
+# the priority argument. Directive text was trusted end to end; combined with
+# D-101 that let any normal-priority prose forge urgency and de-escalate
+# classes.
+# --------------------------------------------------------------------------- #
+
+_DIRECTIVE_HEADER_URGENT = "### [URGENT]"
+_DIRECTIVE_HEADER_NORMAL = "### [DIRECTIVE]"
+_DIRECTIVE_HEADERS = (_DIRECTIVE_HEADER_URGENT, _DIRECTIVE_HEADER_NORMAL)  # 2 markers
+
+
+def _forged_header_lines(directive: str) -> list[str]:
+    """Body lines that `_read_directives` would parse as a priority header.
+
+    Both the raw line and its left-stripped form are checked: the parser keys
+    on `str.startswith`, so an indented marker is inert TODAY, but a body that
+    smuggles one is asking for exactly the reading this refuses, and the cost
+    of declining it is a rephrase.
+    """
+    return [
+        line
+        for line in directive.split("\n")
+        if any(
+            line.startswith(h) or line.lstrip().startswith(h)
+            for h in _DIRECTIVE_HEADERS
+        )
+    ]
+
+
 def foundry_inject_directive(
     directive: str,
     priority: str = "normal",
@@ -4400,6 +4888,31 @@ def foundry_inject_directive(
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
+
+    # D-104: refuse rather than escape. Escaping would silently alter the text
+    # the human wrote, and a directive is a human instruction \u2014 the house
+    # pattern for "this input cannot be honoured as given" is a named refusal
+    # that quotes the offending value and says what to do instead.
+    forged = _forged_header_lines(directive)
+    if forged:
+        return {
+            "error": (
+                "Directive body contains a line that would be read back as a "
+                "priority header, which would split it into a second directive "
+                "and override priority=" + repr(priority) + ": "
+                + "; ".join(repr(line) for line in forged[:3])
+                + ". Lines beginning "
+                + " or ".join(repr(h) for h in _DIRECTIVE_HEADERS)
+                + " are structure in directives.md, not content."
+            ),
+            "hint": (
+                "Reword those lines \u2014 drop the leading '### ' or the square "
+                "brackets. To file an urgent directive, pass priority='urgent'."
+            ),
+            "forged_header_lines": forged,
+        }
 
     directives_path = fdir / "directives.md"
     if not directives_path.exists():
@@ -4409,8 +4922,8 @@ def foundry_inject_directive(
         )
 
     with open(directives_path, "a", encoding="utf-8") as f:
-        marker = "URGENT" if priority == "urgent" else "DIRECTIVE"
-        f.write(f"\n### [{marker}] {_now()}\n\n{directive}\n")
+        header = _DIRECTIVE_HEADER_URGENT if priority == "urgent" else _DIRECTIVE_HEADER_NORMAL
+        f.write(f"\n{header} {_now()}\n\n{directive}\n")
 
     return {"ok": True, "priority": priority, "message": "Directive injected \u2014 lead will read it at next phase transition"}
 
@@ -4432,6 +4945,8 @@ def foundry_clear_directives(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     directives_path = fdir / "directives.md"
 
     active = _read_directives(project_root)
@@ -4485,7 +5000,9 @@ def _read_directives(project_root: str) -> dict:
     if not directives_path.exists():
         return {"has_directives": False, "urgent": [], "normal": [], "raw_text": ""}
 
-    text = directives_path.read_text(encoding="utf-8")
+    # D-098: a non-UTF-8 byte in directives.md raised UnicodeDecodeError out of
+    # here and therefore out of Foundry-Next, the mandatory handshake.
+    text = _read_text(directives_path)
 
     urgent: list[str] = []
     normal: list[str] = []
@@ -4493,13 +5010,13 @@ def _read_directives(project_root: str) -> dict:
     current_text: list[str] = []
 
     for line in text.split("\n"):
-        if line.startswith("### [URGENT]"):
+        if line.startswith(_DIRECTIVE_HEADER_URGENT):
             if current_priority and current_text:
                 target = urgent if current_priority == "urgent" else normal
                 target.append("\n".join(current_text).strip())
             current_priority = "urgent"
             current_text = []
-        elif line.startswith("### [DIRECTIVE]"):
+        elif line.startswith(_DIRECTIVE_HEADER_NORMAL):
             if current_priority and current_text:
                 target = urgent if current_priority == "urgent" else normal
                 target.append("\n".join(current_text).strip())
@@ -4527,6 +5044,8 @@ def foundry_get_context(
 
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run. Call Foundry-Init or foundry_init(resume='run-name').", "initialized": False}
+    if (corrupt := _artifact_guard(fdir)):
+        return {**corrupt, "initialized": False}
 
     state = _load_json(fdir / "state.json")
     defects = _load_json(fdir / "defects.json")

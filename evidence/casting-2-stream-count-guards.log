@@ -1,0 +1,22 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_stream_rollup.py -q -p no:cacheprovider -k "negative or refusal_names or more_items_than or partial_tranches or no_declared_population or cancel"
+# evidence-for: FR-014, CT-003
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+#
+# D-100 — a negative findings_count erased real findings.
+#
+# The counts accumulate by ADDITION across a cycle tranches, and findings_count
+# had no lower bound while items_checked <= 0 was already refused one line
+# away. That asymmetry was load-bearing: mark_stream(prove, 2, findings=9)
+# then (prove, 1, findings=-9) cancels the cycle findings to 0 and flips
+# _prove_is_clean False -> True. On TRACE the same cancellation stamps
+# .trace-clean-at, the anchor that lets a LATER cycle skip the TRACE stream
+# outright — so the erasure removes a whole verification stream from the run.
+#
+# Also pinned: the named near-miss beside the same guard (items_checked >
+# items_total, which accepted 1667% coverage in silence and trivially cleared
+# the >=95% gate), judged PER RECORD rather than on the cycle total — the
+# total is deliberately not judged, because CT-003 requires tranches be stored
+# and a legitimate re-record would trip it.
+........                                                                 [100%]
+8 passed, 27 deselected in 0.07s

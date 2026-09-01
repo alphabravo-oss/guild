@@ -60,7 +60,6 @@
 # declined this finding, Foundry-Defect kept it". The ten battery rows pass
 # without the fix -- the denylist rescues those on its own -- which is why the
 # fixture with no security noun in it is the one that makes the pin structural.
-
 === the same finding, offered at both filing doors ===
   finding                 : The comment above the cache helper says the dict is reused, but the handler rebuilds it on every call and never stores the result.
   observation_class       : DIRECTION_WORD
@@ -102,4 +101,4 @@ tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_
 tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The comment says the helper is defined above, but it moved.] PASSED [ 96%]
 tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The comment's list of streams omits flow_trace.] PASSED [100%]
 
-====================== 30 passed, 93 deselected in 0.07s =======================
+====================== 30 passed, 166 deselected in 0.12s ======================

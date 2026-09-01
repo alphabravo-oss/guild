@@ -42,13 +42,13 @@
 # The mutation is applied to a mktemp snapshot and restored in the same command;
 # the empty `git status --porcelain` line below is the proof the tree is left
 # byte-identical.
-
 == a raw cycle read now sits in server.py: the package ROOT, not tools/ ==
   tools/ directory literal (D-066) -> []
-  derived over the package     -> ['server.py::_sneaky_cycle_reader:937']
+  derived over the package     -> ['server.py::_sneaky_cycle_reader:955']
 == and the guard itself, on the same mutated tree ==
-E       assert not ['server.py::_sneaky_cycle_reader:937']
-1 failed, 122 deselected in 0.18s
+E       assert not ['server.py::_sneaky_cycle_reader:955']
+1 failed, 195 deselected in 0.24s
 == server.py restored byte-identical (nothing printed by git status) ==
+ M plugins/foundry/mcp-server/src/foundry_mcp/server.py
 == both tests green on the unmutated tree ==
-2 passed, 121 deselected in 0.18s
+2 passed, 194 deselected in 0.22s

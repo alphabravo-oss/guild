@@ -899,10 +899,28 @@ _DISPATCH = {
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
-    if handler:
+    if not handler:
+        return [TextContent(type="text", text=format_result(name, {"error": f"Unknown tool: {name}"}))]
+
+    # D-098: the outermost net. Every handler returns named refusals as dicts
+    # (the house pattern) and none is supposed to raise, but this boundary used
+    # to have no try/except at all — so one unguarded read of a corrupt
+    # state.json raised out of Foundry-Next, the mandatory pre-transition
+    # handshake, and the operator could not even read state to diagnose it. The
+    # tolerant loader in foundry_orchestrator means no KNOWN input reaches this
+    # branch; it exists for the unknown one, so a bug degrades to an error
+    # message naming the tool instead of bricking the run.
+    try:
         result = handler(arguments)
-    else:
-        result = {"error": f"Unknown tool: {name}"}
+    except Exception as exc:
+        result = {
+            "error": f"{name} failed: {type(exc).__name__}: {exc}",
+            "hint": (
+                "This is an unhandled server-side error, not a refusal. The run "
+                "state may be unreadable or on disk in an unexpected shape — "
+                "check the run directory's JSON artifacts."
+            ),
+        }
 
     return [TextContent(type="text", text=format_result(name, result))]
 

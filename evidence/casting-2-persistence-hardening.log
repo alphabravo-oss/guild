@@ -1,0 +1,46 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0] = [\".\", \"tests\", \"src\"]; import test_orchestrator_gates as t; print(t.render_corruption_matrix(False)); print(); print(t.render_corruption_matrix(True))" && echo "== the pins ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py tests/test_stream_rollup.py -q -p no:cacheprovider -k "malformed or corrupt or load_json or non_utf8 or artifact_guard or call_tool or transaction or concurrent or tmp_sidecar or matrix_bricks or absent_artifact or new_artifact"
+# evidence-for: NFR-002, CT-003, FR-014
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+#
+# D-098 + D-103 — the orchestrator persistence layer, hardened as one thing.
+# They are two halves of the same gap: the READ edge raised, and the window
+# between the read and the write lost writes.
+#
+# The table is group E's 24-combination matrix (6 run artifacts x {truncated,
+# [], null, "a string"}) driven through all 6 orchestrator MCP entry points,
+# under the PRE-fix reader and then under the shipped one. The pre-fix arm is
+# reconstructed by restoring the raw json.loads(read_text()) and disabling
+# _artifact_guard, which is the exact state the audit was run against.
+#
+# What the audit reported: 24/24 bricked a tool and NOT ONE named the
+# offending file. The second number is the one that mattered — Foundry-Next is
+# the mandatory pre-transition handshake, so a corrupt state.json meant the
+# operator could not even read state to diagnose the run.
+#
+# The driver is a helper in the test module, so this demonstration and the
+# assertions that pin it cannot drift apart.
+#
+== PRE-fix: raw json.loads(read_text()), no shape check, no guard ==
+   artifact                 truncated     list          null          string      
+   state.json               BRICKS 3/6    BRICKS 3/6    BRICKS 3/6    BRICKS 3/6  
+   defects.json             BRICKS 3/6    BRICKS 3/6    BRICKS 3/6    BRICKS 3/6  
+   verdicts.json            BRICKS 2/6    BRICKS 2/6    BRICKS 2/6    BRICKS 2/6  
+   stream-rollup.json       BRICKS 1/6    BRICKS 1/6    BRICKS 1/6    BRICKS 1/6  
+   escalation.json          silent        silent        silent        silent      
+   castings/manifest.json   BRICKS 2/6    BRICKS 2/6    BRICKS 2/6    BRICKS 2/6  
+   -> 20 of 24 brick at least one tool, 0 of 24 name the offending file
+
+== post-fix: tolerant loader + _artifact_guard at every entry point ==
+   artifact                 truncated     list          null          string      
+   state.json               names 6/6     names 6/6     names 6/6     names 6/6   
+   defects.json             names 6/6     names 6/6     names 6/6     names 6/6   
+   verdicts.json            names 6/6     names 6/6     names 6/6     names 6/6   
+   stream-rollup.json       names 6/6     names 6/6     names 6/6     names 6/6   
+   escalation.json          names 6/6     names 6/6     names 6/6     names 6/6   
+   castings/manifest.json   names 6/6     names 6/6     names 6/6     names 6/6   
+   -> 0 of 24 brick at least one tool, 24 of 24 name the offending file
+== the pins ==
+........................................................................ [ 93%]
+.....                                                                    [100%]
+77 passed, 154 deselected in 0.67s

@@ -23,6 +23,7 @@ incremented by any code path.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -883,3 +884,488 @@ def test_escalation_threshold_constant_is_three(run_env):
     """FR-006 / A-012 fixes N at 3. Pinned so a later edit to the constant has
     to be a deliberate spec change, not a silent retune."""
     assert ESCALATION_CYCLES == 3
+
+
+# --------------------------------------------------------------------------- #
+# D-101 — the escalation override is a marker grammar, not a substring
+#
+# TV-B-03: `if ESCALATION_OVERRIDE_TOKEN not in text.lower()` followed by
+# `return scoped or {"*"}` meant ANY mention of the token de-escalated EVERY
+# class. A directive that FORBADE the override therefore disabled escalation
+# wholesale — semantics exactly inverted from operator intent, with no signal.
+# ST-003 makes the override an EXPLICIT directive action, and a substring match
+# is not explicit.
+# --------------------------------------------------------------------------- #
+
+
+# Every one of these MENTIONS the token and none of them ASKS for an override.
+# The first is the verbatim repro from the defect report.
+_OVERRIDE_NON_REQUESTS = [
+    "Never apply an escalation-override. I want real structural fixes.",
+    "the escalation-overrides list is empty",
+    "DO NOT USE ESCALATION-OVERRIDE ON THIS RUN.",
+    "Ask me before you file any escalation-override for a security class.",
+    "Document why escalation-override exists in the protocol prose.",
+    "escalation-override is banned for the rest of this run",
+    "I removed the escalation-override: AUTH line from the earlier directive.",
+]
+
+# Each of these IS the marker grammar, on its own line.
+_OVERRIDE_REQUESTS_ALL = [
+    "escalation-override",
+    "escalation-override: *",
+    "escalation-override: all",
+    "- escalation-override",
+    "Reasoning above.\nescalation-override: *",
+]
+
+
+@pytest.mark.parametrize("directive", _OVERRIDE_NON_REQUESTS)
+def test_mentioning_the_override_token_in_prose_does_not_override(run_env, directive):
+    """D-101: a mention is not a request. Forbidding phrasings especially."""
+    project_root, fdir = run_env
+    foundry_inject_directive(directive, "normal", project_root)
+
+    assert fo._escalation_overrides(project_root) == set()
+
+
+@pytest.mark.parametrize("directive", _OVERRIDE_REQUESTS_ALL)
+def test_the_bare_marker_grammar_overrides_every_class(run_env, directive):
+    project_root, fdir = run_env
+    foundry_inject_directive(directive, "normal", project_root)
+
+    assert fo._escalation_overrides(project_root) == {"*"}
+
+
+def test_the_scoped_marker_grammar_overrides_exactly_that_class(run_env):
+    project_root, fdir = run_env
+    foundry_inject_directive("escalation-override: FALSE_DOCUMENTED_CONTRACT", "normal", project_root)
+
+    assert fo._escalation_overrides(project_root) == {"FALSE_DOCUMENTED_CONTRACT"}
+
+
+def test_a_directive_forbidding_the_override_leaves_escalation_armed(run_env):
+    """The full repro, end to end: the class stays escalated.
+
+    Verified in the defect report against a class open across cycles 1/2/3 —
+    `_escalation_overrides() == {"*"}` collapsed `_escalated_classes()` to {}.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    assert set(_escalated_classes(fdir, project_root)) == {"FALSE_DOCUMENTED_CONTRACT"}
+
+    foundry_inject_directive(
+        "Never apply an escalation-override. I want real structural fixes.",
+        "normal",
+        project_root,
+    )
+
+    assert set(_escalated_classes(fdir, project_root)) == {"FALSE_DOCUMENTED_CONTRACT"}
+
+
+def test_the_marker_grammar_still_de_escalates_the_named_class(run_env):
+    """The override must keep WORKING — D-101 narrows the trigger, it does not
+    remove the capability AC-010 requires."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    foundry_inject_directive(
+        "escalation-override: FALSE_DOCUMENTED_CONTRACT", "normal", project_root
+    )
+
+    assert _escalated_classes(fdir, project_root) == {}
+
+
+# --------------------------------------------------------------------------- #
+# D-102 — a mixed declared/undeclared cluster still accumulates
+#
+# TV-B-04: `class` is OPTIONAL, so one stream omitting it split a real cluster
+# into SHARED{1,3} and MISSING@src{2}. Neither reached three consecutive
+# cycles, so a class that genuinely recurred three straight cycles escaped
+# escalation in silence — ST-002 says EITHER path accumulates the count, and a
+# mixed cluster accumulated in neither.
+# --------------------------------------------------------------------------- #
+
+
+def _mixed_cluster(klass: str = "SHARED", file_path: str = "src/a.py") -> list[dict]:
+    """The defect report's repro: same file, same type, cycles 1/2/3, and only
+    TWO of the three carry the declared class."""
+    return [
+        _defect("D-001", 1, type="MISSING", file=file_path, **{"class": klass}),
+        _defect("D-002", 2, type="MISSING", file=file_path),  # no class declared
+        _defect("D-003", 3, type="MISSING", file=file_path, **{"class": klass}),
+    ]
+
+
+def test_a_mixed_declared_cluster_escalates_on_the_third_cycle(run_env):
+    """D-102, the exact repro. Before the fix this returned {}."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _mixed_cluster())
+    _write_state(fdir, phase="F3", cycle=3)
+
+    escalated = _escalated_classes(fdir, project_root)
+
+    assert set(escalated) == {"SHARED"}, escalated
+    assert escalated["SHARED"]["consecutive_cycles"] == 3
+    assert escalated["SHARED"]["cycles"] == [1, 2, 3]
+    # The undeclared record is CARRIED, not merely counted: closure still binds
+    # it (AC-011), so it must appear on the structural packet.
+    assert set(escalated["SHARED"]["defect_ids"]) == {"D-001", "D-002", "D-003"}
+
+
+def test_the_undeclared_record_is_absorbed_not_duplicated(run_env):
+    """The buckets stay a PARTITION. Counting the undeclared record in both its
+    fallback cluster AND the declared class would double-escalate: two
+    structural packets covering an overlapping defect set."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _mixed_cluster())
+    _write_state(fdir, phase="F3", cycle=3)
+
+    escalated = _escalated_classes(fdir, project_root)
+
+    assert len(escalated) == 1
+    all_ids = [did for info in escalated.values() for did in info["defect_ids"]]
+    assert len(all_ids) == len(set(all_ids))
+
+
+def test_two_declared_classes_over_one_cluster_do_not_absorb(run_env):
+    """The ambiguity guard. When rival declared classes own the same fallback
+    cluster there is no non-arbitrary owner, so the undeclared record stays in
+    its own bucket rather than being assigned to whichever sorted first."""
+    project_root, fdir = run_env
+    _write_defects(fdir, [
+        _defect("D-001", 1, type="MISSING", file="src/a.py", **{"class": "ALPHA"}),
+        _defect("D-002", 2, type="MISSING", file="src/a.py", **{"class": "BETA"}),
+        _defect("D-003", 3, type="MISSING", file="src/a.py"),
+    ])
+    _write_state(fdir, phase="F3", cycle=3)
+
+    resolved = fo._resolve_defect_classes(
+        json.loads((fdir / "defects.json").read_text())["defects"]
+    )
+    assert sorted(resolved.values()) == ["ALPHA", "BETA", "MISSING@src"]
+    assert _escalated_classes(fdir, project_root) == {}
+
+
+def test_a_declared_class_is_never_merged_into_another_declared_class(run_env):
+    """Rule 1: a stream that named a class meant it. Two declared classes on
+    one file stay two classes even though their fallback cluster is shared."""
+    project_root, fdir = run_env
+    _write_defects(fdir, [
+        _defect(f"D-{i:03d}", c, type="MISSING", file="src/a.py", **{"class": k})
+        for i, (c, k) in enumerate(
+            [(1, "ALPHA"), (2, "ALPHA"), (3, "ALPHA"), (1, "BETA"), (2, "BETA"), (3, "BETA")],
+            start=1,
+        )
+    ])
+    _write_state(fdir, phase="F3", cycle=3)
+
+    assert set(_escalated_classes(fdir, project_root)) == {"ALPHA", "BETA"}
+
+
+def test_a_wholly_undeclared_cluster_still_uses_the_fallback(run_env):
+    """FR-024 / ST-002: the fallback path is untouched by the absorption rule."""
+    project_root, fdir = run_env
+    _write_defects(fdir, [
+        _defect("D-001", 1, type="MISSING", file="src/a.py"),
+        _defect("D-002", 2, type="MISSING", file="src/b.py"),
+        _defect("D-003", 3, type="MISSING", file="src/c.py"),
+    ])
+    _write_state(fdir, phase="F3", cycle=3)
+
+    assert set(_escalated_classes(fdir, project_root)) == {"MISSING@src"}
+
+
+def test_two_cycles_of_a_mixed_cluster_still_do_not_fire(run_env):
+    """D-102 widens what COUNTS as one class; it must not weaken N=3."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _mixed_cluster()[:2])
+    _write_state(fdir, phase="F3", cycle=2)
+
+    assert _escalated_classes(fdir, project_root) == {}
+
+
+# --------------------------------------------------------------------------- #
+# D-119 — the two filing doors agree on WHICH cycle a record belongs to
+#
+# TV-E-01: two independent derivations of one rule diverged on a malformed
+# counter. foundry.py#_server_cycle returned None and _stamp_cycle then fell
+# back to the CALLER's cycle; foundry_orchestrator.py#_current_cycle returned 0
+# on the same input. _stamp_cycle's docstring claims "Every writer goes through
+# this, so 'which cycle was this?' has one answer per run" — it had two.
+#
+# The harm is not cosmetic. Identical run, identical findings, identical class,
+# caller cycles 1/2/3, only the DOOR differs: Foundry-Defect stamped [1,2,3]
+# and escalated and DONE refused, while Foundry-Sync stamped [0] and neither
+# fired. Mixed filing persisted [1,0,3] — longest consecutive run 2 — so a
+# genuine systemic class evaded escalation and the AC-011 guard never fired.
+#
+# LEAD INTERFACE RULING (cross-casting, casting 3 owns the foundry.py half):
+# on a malformed/unusable counter BOTH doors resolve the stamped cycle to 0,
+# matching _current_cycle's documented "every reader gets a usable integer"
+# and ST-001's "the caller's cycle is never trusted for stamping"; AND both
+# writers persist the caller-supplied value as `declared_cycle` for
+# auditability, so the divergence is visible rather than silent.
+#
+# 5964be0 made the doors agree on WHAT a defect is. This makes them agree on
+# WHEN.
+# --------------------------------------------------------------------------- #
+
+
+# no-key / null / '3' / -3 / 2.5 / true — the defect report's matrix verbatim.
+_MALFORMED_COUNTERS = [
+    pytest.param({}, id="no-key"),
+    pytest.param({"cycle": None}, id="null"),
+    pytest.param({"cycle": "3"}, id="str"),
+    pytest.param({"cycle": -3}, id="negative"),
+    pytest.param({"cycle": 2.5}, id="float"),
+    pytest.param({"cycle": True}, id="bool"),
+]
+
+CALLER_CYCLE = 7
+
+
+@pytest.mark.parametrize("state", _MALFORMED_COUNTERS)
+def test_current_cycle_reads_every_malformed_counter_as_zero(run_env, state):
+    """My half of the ruling: _current_cycle already conforms — pinned so it
+    keeps conforming, over the whole matrix rather than one example."""
+    _project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", **state}), encoding="utf-8")
+
+    assert _current_cycle(fdir) == 0
+
+
+def test_current_cycle_reads_a_malformed_container_as_zero(run_env):
+    """The rung D-098 added underneath: the CONTAINER, not just the value.
+    `[1,2,3]` used to raise AttributeError out of every caller."""
+    _project_root, fdir = run_env
+    (fdir / "state.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    assert _current_cycle(fdir) == 0
+
+
+def _stamped_via_sync(project_root: str, cycle: int) -> dict:
+    """File one finding through the BATCH door; return the persisted record."""
+    fo.foundry_sync_defects(
+        cycle=cycle,
+        findings=[{
+            "source": "trace",
+            "type": "UNWIRED",
+            "description": "the session refresh never calls the token store",
+            "symbol": "refresh_session",
+            "file": "src/auth/session.py",
+        }],
+        project_root=project_root,
+    )
+    fdir = Path(project_root) / "foundry-archive" / "escalation-run"
+    return json.loads((fdir / "defects.json").read_text())["defects"][-1]
+
+
+def _stamped_via_add(project_root: str, cycle: int) -> dict:
+    """File the same finding through the SINGLE door; return the record.
+
+    Importing casting 3's door to drive the parity comparison is READING it,
+    not editing it — the foundry.py half of this contract is theirs.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    foundry_add_defect(
+        cycle=cycle,
+        source="trace",
+        defect_type="UNWIRED",
+        description="the session refresh never calls the token store",
+        symbol="refresh_session",
+        file_path="src/auth/session.py",
+        project_root=project_root,
+    )
+    fdir = Path(project_root) / "foundry-archive" / "escalation-run"
+    return json.loads((fdir / "defects.json").read_text())["defects"][-1]
+
+
+# The parity assertions below are a JOINT pin: the batch door is casting 2's
+# and the single door is casting 3's (foundry.py#_stamp_cycle / #_server_cycle,
+# being brought to this same contract in this cycle). Red here means one half
+# has not landed yet, and the messages name which — never misread these as a
+# regression in the orchestrator.
+_OWNER = (
+    "casting 3 owns foundry.py#_stamp_cycle: on a malformed counter it must "
+    "resolve to 0 (not fall back to the caller's value) and persist "
+    "declared_cycle on the record"
+)
+
+
+@pytest.mark.parametrize("state", _MALFORMED_COUNTERS)
+def test_both_filing_doors_stamp_the_same_cycle(run_env, state):
+    """The parity pin. Identical finding, identical caller cycle, one door each
+    — the stamps must be IDENTICAL, and per the ruling both must be 0."""
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", **state}), encoding="utf-8")
+
+    single = _stamped_via_add(project_root, CALLER_CYCLE)
+    batch = _stamped_via_sync(project_root, CALLER_CYCLE)
+
+    assert single["cycle"] == batch["cycle"], (
+        f"doors disagree on a malformed counter: single(foundry.py)="
+        f"{single['cycle']} batch(orchestrator)={batch['cycle']} "
+        f"(caller said {CALLER_CYCLE}). {_OWNER}"
+    )
+    assert single["cycle"] == 0, _OWNER
+
+
+@pytest.mark.parametrize("state", _MALFORMED_COUNTERS)
+def test_both_filing_doors_persist_the_callers_declared_cycle(run_env, state):
+    """Auditability half of the ruling: what the caller CLAIMED survives on the
+    record, so a divergence is visible and migrate/escalation tooling can
+    reconcile it later. Mirrors stream-rollup's existing declared_cycle field.
+    """
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", **state}), encoding="utf-8")
+
+    single = _stamped_via_add(project_root, CALLER_CYCLE)
+    batch = _stamped_via_sync(project_root, CALLER_CYCLE)
+
+    assert single.get("declared_cycle") == CALLER_CYCLE, _OWNER
+    assert batch["declared_cycle"] == CALLER_CYCLE
+
+
+# --------------------------------------------------------------------------- #
+# The BATCH door alone — casting 2's half of the ruling, verifiable on its own
+# so this casting's completeness does not depend on the sibling's commit order.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("state", _MALFORMED_COUNTERS)
+def test_the_batch_door_stamps_zero_on_a_malformed_counter(run_env, state):
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", **state}), encoding="utf-8")
+
+    assert _stamped_via_sync(project_root, CALLER_CYCLE)["cycle"] == 0
+
+
+@pytest.mark.parametrize("state", _MALFORMED_COUNTERS)
+def test_the_batch_door_persists_the_callers_declared_cycle(run_env, state):
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", **state}), encoding="utf-8")
+
+    assert _stamped_via_sync(project_root, CALLER_CYCLE)["declared_cycle"] == CALLER_CYCLE
+
+
+def test_the_batch_door_stamps_a_healthy_counter_over_the_callers_claim(run_env):
+    """ST-001 on the path that is entirely this casting's: the server counter
+    wins, and the caller's 7 survives only as the audit field."""
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", "cycle": 4}), encoding="utf-8")
+
+    record = _stamped_via_sync(project_root, CALLER_CYCLE)
+    assert record["cycle"] == 4
+    assert record["declared_cycle"] == CALLER_CYCLE
+
+
+def test_a_healthy_counter_is_stamped_by_both_doors_unchanged(run_env):
+    """NFR-002: the ruling changes the MALFORMED path only. A real counter is
+    still the authority at both doors, and the caller's 7 is still ignored."""
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", "cycle": 4}), encoding="utf-8")
+
+    single = _stamped_via_add(project_root, CALLER_CYCLE)
+    batch = _stamped_via_sync(project_root, CALLER_CYCLE)
+
+    assert single["cycle"] == batch["cycle"] == 4
+    assert batch["declared_cycle"] == CALLER_CYCLE
+    assert single.get("declared_cycle") == CALLER_CYCLE, _OWNER
+
+
+def test_mixed_door_filing_across_three_cycles_still_escalates(run_env):
+    """The harm, end to end. Same class, three consecutive cycles, alternating
+    doors, on an archive whose counter is malformed. Before the ruling the
+    stamps were [1, 0, 3] — longest consecutive run 2 — and a genuine systemic
+    class evaded escalation while the AC-011 DONE guard passed."""
+    project_root, fdir = run_env
+
+    for cycle, door in ((1, _stamped_via_add), (2, _stamped_via_sync), (3, _stamped_via_add)):
+        (fdir / "state.json").write_text(
+            json.dumps({"phase": "F3", "cycle": cycle}), encoding="utf-8"
+        )
+        door(project_root, cycle)
+
+    # A malformed counter must not let one door drift off the others.
+    stamps = [d["cycle"] for d in json.loads((fdir / "defects.json").read_text())["defects"]]
+    assert stamps == [1, 2, 3], stamps
+
+    escalated = _escalated_classes(fdir, project_root)
+    assert set(escalated) == {"UNWIRED@src/auth"}, escalated
+    assert escalated["UNWIRED@src/auth"]["consecutive_cycles"] == 3
+
+
+def _overrides_prefix(text: str) -> set[str]:
+    """The PRE-fix override reader, verbatim: a substring test then a fallback.
+
+    Kept so the evidence log can show the same phrasings judged by both rules
+    side by side, rather than asserting the new behaviour against nothing.
+    """
+    if fo.ESCALATION_OVERRIDE_TOKEN not in text.lower():
+        return set()
+    scoped = {
+        m.group(1).strip(" .,;:'\"`")
+        for m in re.finditer(
+            rf"{fo.ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)", text, re.IGNORECASE
+        )
+    }
+    return {s for s in scoped if s} or {"*"}
+
+
+def render_override_table() -> str:
+    """D-101 pre/post, over the phrasings the pins use. Used by the evidence log."""
+    import tempfile
+
+    rows = ["   %-9s %-9s %s" % ("PRE-fix", "post-fix", "directive text"),
+            "   %-9s %-9s %s" % ("-------", "--------", "--------------")]
+
+    def post(text: str) -> set[str]:
+        root = Path(tempfile.mkdtemp())
+        fdir = root / "foundry-archive" / "ov"
+        (fdir / "castings").mkdir(parents=True)
+        foundry_state.set_active_run("ov")
+        try:
+            foundry_inject_directive(text, "normal", str(root))
+            return fo._escalation_overrides(str(root))
+        finally:
+            foundry_state.clear_active_run()
+
+    def fmt(value: set[str]) -> str:
+        if value == {"*"}:
+            return "ALL"
+        return ",".join(sorted(value)) if value else "none"
+
+    out = ["== D-101: a MENTION of the token is not a REQUEST for an override =="] + rows
+    for text in _OVERRIDE_NON_REQUESTS:
+        out.append("   %-9s %-9s %s" % (fmt(_overrides_prefix(text)), fmt(post(text)),
+                                        text.replace("\n", " / ")[:64]))
+    out.append("")
+    out.append("== the marker grammar, which must keep working ==")
+    out.extend(rows)
+    for text in _OVERRIDE_REQUESTS_ALL + ["escalation-override: FALSE_DOCUMENTED_CONTRACT"]:
+        out.append("   %-9s %-9s %s" % (fmt(_overrides_prefix(text)), fmt(post(text)),
+                                        text.replace("\n", " / ")[:64]))
+    return "\n".join(out)
+
+
+def test_the_override_table_shows_the_inversion_and_the_fix():
+    """The pre/post table is asserted, not merely rendered: every forbidding
+    phrasing overrode EVERY class before and overrides none now, and every
+    marker-grammar line still lands."""
+    # Every forbidding / discussing phrasing DID trigger an override before —
+    # that is the inversion — and triggers none now.
+    for text in _OVERRIDE_NON_REQUESTS:
+        assert _overrides_prefix(text) != set(), f"pre-fix arm is wrong for {text!r}"
+
+    # ...and most of them de-escalated EVERY class, not merely one.
+    wholesale = [t for t in _OVERRIDE_NON_REQUESTS if _overrides_prefix(t) == {"*"}]
+    assert len(wholesale) >= 6, wholesale
+
+    table = render_override_table()
+    assert "== D-101" in table
+    assert table.count("ALL       none") == len(wholesale)
