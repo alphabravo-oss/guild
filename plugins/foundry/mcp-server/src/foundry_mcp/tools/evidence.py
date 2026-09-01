@@ -24,6 +24,7 @@ import difflib
 import json
 import os
 import re
+import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -351,8 +352,8 @@ def _compare_byte_match(
 # Four patterns, first-hit-wins ordering inside ``_check_stub_patterns``:
 #
 #   1. TOO_SMALL — log encoded length < EVIDENCE_STUB_MIN_BYTES (128)
-#   2. NO_CMD_IN_HEADER — first 3 body lines (header comments + blanks
-#      stripped) lack the cmd-first-token substring
+#   2. VACUOUS_CMD — the declared command runs nothing but no-ops and pure
+#      output emitters, so its output proves nothing about the tree
 #   3. BARE_PASS — log body is a single ``PASS`` (or PASS|OK|✓|SUCCESS for
 #      _check_stub_patterns; ``_is_stub_pattern_bare_pass`` is PASS-only
 #      per its test contract)
@@ -362,11 +363,73 @@ def _compare_byte_match(
 # Sub-tokens emitted via ``_check_stub_patterns`` failure_detail; the public
 # closed-vocabulary token remains ``EVIDENCE_STUB_DETECTED`` (8-token
 # allowlist preserved).
+#
+# WHY RULE 2 JUDGES THE COMMAND AND NOT THE LOG (D-062)
+# -----------------------------------------------------
+# It used to judge the log: it required the command's FIRST TOKEN to appear as
+# a substring of the first three body lines. Two facts sank that rule.
+#
+# First, it is measurably wrong about real evidence. The dominant evidence
+# command in this repo is `cd plugins/foundry/mcp-server && uv run --with
+# pytest pytest ...`, whose first token is `cd` — which no pytest banner ever
+# echoes — and `pytest -q`'s output (`.... [100%]` / `40 passed in 0.26s`)
+# quotes nothing from its command line at all. Run over the corpus this effort
+# committed, the rule called 19 of 25 genuine logs stubs. Widening it to every
+# token of the whole command does not save it: the `-q` bodies contain no token
+# of their command anywhere, not just in the first three lines.
+#
+# Second, and decisive: this library runs at step 6, AFTER `_compare_byte_match`
+# has already proven the committed bytes ARE the output of re-executing this
+# command in a clean worktree at the casting commit. Given that proof, "the
+# output does not quote the command" carries no information about fabrication.
+# The failure it was groping for — a body of boilerplate unrelated to the
+# command — is caught upstream and far more strongly, as
+# EVIDENCE_OUTPUT_MISMATCH.
+#
+# What byte-match CANNOT catch is the vector RESEARCH.md calls Pitfall 4: a
+# self-consistent fabricated log replayed by a command that does no work
+# (`echo`, `printf`, `true`). Such a command reproduces its own fabricated body
+# on every re-execution, so it byte-matches forever. That is what rule 2 now
+# judges, from the command text alone — strictly stronger than the rule it
+# replaces, which a fabricator defeated by adding one echoed line.
 # ---------------------------------------------------------------------------
 EVIDENCE_STUB_TOO_SMALL = "EVIDENCE_STUB_TOO_SMALL"
-EVIDENCE_STUB_NO_CMD_IN_HEADER = "EVIDENCE_STUB_NO_CMD_IN_HEADER"
+EVIDENCE_STUB_VACUOUS_CMD = "EVIDENCE_STUB_VACUOUS_CMD"
 EVIDENCE_STUB_BARE_PASS = "EVIDENCE_STUB_BARE_PASS"
 EVIDENCE_STUB_TIMESTAMP_CLUSTER = "EVIDENCE_STUB_TIMESTAMP_CLUSTER"
+
+# Words that separate one command from the next. The token AFTER any of these
+# is in command position, which is the only position rule 2 judges.
+_STUB_CMD_SEPARATORS = frozenset({
+    "&&", "||", "|", "|&", ";", ";;", "&", "(", ")", "{", "}", "!",
+    "then", "else", "elif", "do", "done", "fi", "in",
+})  # 18 separators
+
+# Words in command position that delegate the real work to a payload. When a
+# `-c` argument follows, rule 2 recurses into it rather than stopping here.
+_STUB_SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash"})  # 4 wrappers
+
+# Words in command position that neither do work nor delegate it: shell
+# bookkeeping. Skipped — they neither prove work nor prove its absence.
+_STUB_SHELL_BOOKKEEPING = frozenset({
+    "cd", "test", "[", "[[", "set", "export", "local", "unset", "shift",
+    "read", "trap", "wait", "pushd", "popd", "eval",
+})  # 15 words
+
+# Words in command position that emit output without reading or running
+# anything under test. A command built ONLY from these can reproduce any body
+# it likes on every re-execution, which is exactly how a fabricated log
+# byte-matches itself. `cat` is deliberately ABSENT: reading a file committed
+# at the casting commit is real evidence about the tree, and the test harness's
+# replay path (`cat replay.txt`) depends on it staying legitimate.
+_STUB_VACUOUS_PROGRAMS = frozenset({
+    ":", "true", "false", "echo", "printf", "yes", "exit", "return", "sleep",
+})  # 9 programs
+
+# Depth ceiling for `sh -c '<payload>'` recursion. Two levels covers every
+# shape in the corpus (`sh -c` wrapping a script that itself calls `sh -c`);
+# beyond it the command is treated as doing work (fail open, never reject).
+_STUB_CMD_RECURSION_LIMIT = 2
 
 # Bare-pass regex used by _check_stub_patterns — broader than the
 # _is_stub_pattern_bare_pass helper (which is PASS-only per its test).
@@ -421,31 +484,112 @@ def _is_stub_pattern_too_small(
     return len(text.encode("utf-8")) < threshold
 
 
-def _is_stub_pattern_no_cmd_in_header(
-    text: str,
-    cmd: str,
-    check_lines: int = 3,
-) -> bool:
-    """Return True if the first ``check_lines`` body lines lack the
-    cmd-first-token substring.
+def _shell_tokens(cmd: str) -> list[str] | None:
+    """Split ``cmd`` the way a shell would, or None when it cannot be parsed.
 
-    "Body" = output minus leading ``# evidence-*:`` header comment block
-    and blank lines. The cmd-first-token is the first whitespace-separated
-    token of ``cmd`` (e.g. ``pytest`` for ``pytest -k login``). Used as a
-    smoke signal that the captured output starts with execution of the
-    declared command rather than fabricated boilerplate.
+    ``punctuation_chars=True`` is what makes `;`, `&&`, `|` and the grouping
+    characters come back as their OWN tokens — ``shlex.split`` folds them into
+    the preceding word (``"echo a; grep b"`` -> ``["echo", "a;", ...]``), which
+    would hide every command position after the first. Quoting is honoured, so
+    an ``sh -c '<script>'`` payload arrives as one token and can be re-lexed.
 
-    Empty cmd ⇒ rule vacuously satisfied (returns False).
+    Returns None on unbalanced quotes. Callers treat that as "cannot judge" and
+    fail OPEN — an unparseable command is never rejected on this rule's word.
     """
-    if not cmd:
+    try:
+        lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _command_position_programs(cmd: str, _depth: int = 0) -> list[str] | None:
+    """Return the program invoked at each command position in ``cmd``.
+
+    Command position = the first token, or the token after a separator
+    (``&&``, ``;``, ``|``, a subshell paren, …). Environment assignments
+    (``PYTHONPATH=src pytest``) are stepped over so the program behind them is
+    what gets reported. A shell wrapper with a ``-c`` payload
+    (``sh -c 'python3 …; grep …'``) is recursed into, because the wrapper name
+    says nothing about whether the payload works.
+
+    Returns None when the command cannot be lexed (see ``_shell_tokens``).
+    """
+    tokens = _shell_tokens(cmd)
+    if tokens is None:
+        return None
+
+    programs: list[str] = []
+    at_command_position = True
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in _STUB_CMD_SEPARATORS:
+            at_command_position = True
+            index += 1
+            continue
+        if not at_command_position:
+            index += 1
+            continue
+        # `VAR=value cmd …` — the assignment is a prefix, not the program.
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token, re.DOTALL):
+            index += 1
+            continue
+        at_command_position = False
+        name = token.rsplit("/", 1)[-1]
+        if name in _STUB_SHELL_WRAPPERS and _depth < _STUB_CMD_RECURSION_LIMIT:
+            # Recurse into `-c <payload>` when there is one; a wrapper invoked
+            # any other way (`sh script.sh`) runs a script, which is work.
+            payload_index = next(
+                (
+                    i + 1
+                    for i in range(index + 1, len(tokens) - 1)
+                    if tokens[i] == "-c"
+                ),
+                None,
+            )
+            if payload_index is not None:
+                inner = _command_position_programs(
+                    tokens[payload_index], _depth=_depth + 1
+                )
+                if inner is None:
+                    return None
+                programs.extend(inner)
+                index = payload_index + 1
+                continue
+        if name in _STUB_SHELL_BOOKKEEPING:
+            index += 1
+            continue
+        programs.append(name)
+        index += 1
+    return programs
+
+
+def _is_stub_pattern_vacuous_cmd(cmd: str) -> bool:
+    """Return True when ``cmd`` runs nothing but no-ops and output emitters.
+
+    This is the rule that survives byte-match. By the time the stub library
+    runs, the committed log has been proven to be this command's own output at
+    the casting commit — so the only fabrication left is a command that emits a
+    canned body without touching the tree (``echo``/``printf``/``true``), which
+    then byte-matches itself on every re-execution forever.
+
+    Judged over the WHOLE command, at every command position, recursing into
+    ``sh -c`` payloads: one real program anywhere (``pytest``, ``python3``,
+    ``grep``, ``git``, ``cat``) means the command does work, whatever its first
+    token is. See the library header for why the previous first-token-in-output
+    reading had to go (D-062).
+
+    Fails OPEN in all three ambiguous cases — an empty command, an unlexable
+    one, and one with no classifiable command position are never called stubs.
+    """
+    if not cmd.strip():
         return False
-    cmd_first_token = cmd.split(maxsplit=1)[0]
-    body = _strip_header_and_blank_lines(text)
-    first_n = body[:check_lines]
-    if not first_n:
-        # Empty body — TOO_SMALL territory, not NO_CMD_IN_HEADER.
+    programs = _command_position_programs(cmd)
+    if not programs:
         return False
-    return not any(cmd_first_token in ln for ln in first_n)
+    return all(name in _STUB_VACUOUS_PROGRAMS for name in programs)
 
 
 def _is_stub_pattern_bare_pass(text: str) -> bool:
@@ -496,21 +640,21 @@ def _check_stub_patterns(log_text: str, evidence_cmd: str) -> str | None:
     sub-token embedded in ``failure_detail`` (preserves the 8-token
     closed vocabulary).
 
-    Order: TOO_SMALL → NO_CMD_IN_HEADER → BARE_PASS → TIMESTAMP_CLUSTER.
+    Order: TOO_SMALL → VACUOUS_CMD → BARE_PASS → TIMESTAMP_CLUSTER.
     First hit wins (CONTEXT.md "Stub-pattern library — first hit wins").
 
     Stub patterns fire ON TOP of byte-match (CONTEXT.md): even when
     ``_compare_byte_match`` succeeds, a stub-pattern hit rejects the log.
+    Rules 1, 3 and 4 judge the LOG for triviality; rule 2 judges the COMMAND
+    for vacuity, which is the only fabrication a byte-match cannot see.
     """
     # Pattern 1: TOO_SMALL
     if _is_stub_pattern_too_small(log_text, EVIDENCE_STUB_MIN_BYTES):
         return EVIDENCE_STUB_TOO_SMALL
 
-    # Pattern 2: NO_CMD_IN_HEADER (skip when no cmd to anchor on)
-    if evidence_cmd and _is_stub_pattern_no_cmd_in_header(
-        log_text, evidence_cmd, check_lines=3
-    ):
-        return EVIDENCE_STUB_NO_CMD_IN_HEADER
+    # Pattern 2: VACUOUS_CMD (skip when there is no cmd to judge)
+    if evidence_cmd and _is_stub_pattern_vacuous_cmd(evidence_cmd):
+        return EVIDENCE_STUB_VACUOUS_CMD
 
     # Pattern 3: BARE_PASS / OK / ✓ / SUCCESS — broader than the
     # _is_stub_pattern_bare_pass helper, which is PASS-only per its test.

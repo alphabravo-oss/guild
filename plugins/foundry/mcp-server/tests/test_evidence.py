@@ -17,7 +17,8 @@ and unit tests against ``evidence._is_stub_pattern`` family):
   - test_timeout_kills_and_rejects
   - test_exit_nonzero_rejects
   - test_stub_pattern_too_small
-  - test_stub_pattern_no_cmd_in_header
+  - test_stub_pattern_vacuous_cmd (was test_stub_pattern_no_cmd_in_header
+    until D-062 retired the first-token-in-output reading)
   - test_stub_pattern_bare_pass
   - test_stub_pattern_timestamp_cluster
   - test_stub_pattern_overrides_match
@@ -271,34 +272,48 @@ def test_stub_pattern_too_small():
     assert evidence._is_stub_pattern_too_small(long_output, threshold=128) is False
 
 
-def test_stub_pattern_no_cmd_in_header():
-    """First N lines of output don't contain cmd-first-token substring →
-    EVIDENCE_STUB_NO_CMD_IN_HEADER. cmd-first-token is the first whitespace-
-    separated token of the ``# evidence-cmd:`` header (e.g. ``pytest``).
+def test_stub_pattern_vacuous_cmd():
+    """A command that runs only no-ops and output emitters →
+    EVIDENCE_STUB_VACUOUS_CMD. Judged over the WHOLE command at every command
+    position, recursing into ``sh -c`` payloads — never over the log's text.
+
+    This replaces the first-token-in-output rule (D-062), which rejected 19 of
+    the 25 evidence logs this effort committed because `cd … && uv run pytest`
+    starts with `cd` and `pytest -q` output quotes nothing from its own command
+    line. The rule that survives byte-match is about the COMMAND: a body a
+    command can emit without touching the tree byte-matches itself forever,
+    which is the one fabrication re-execution cannot see.
     """
-    cmd = "pytest -k some_test"
-    output = (
-        "Build successful.\n"
-        "All checks passed.\n"
-        "Done.\n"
-        "============================= test session starts ==============================\n"
-    )
-    # Default check_lines window covers first 3 lines; pytest substring is
-    # absent from those lines.
+    # Vacuous: emits a canned body, reads nothing, runs nothing.
+    assert evidence._is_stub_pattern_vacuous_cmd("echo PASS") is True
+    assert evidence._is_stub_pattern_vacuous_cmd("true") is True
     assert (
-        evidence._is_stub_pattern_no_cmd_in_header(output, cmd, check_lines=3)
+        evidence._is_stub_pattern_vacuous_cmd(
+            "echo 'collected 42 items'; printf '42 passed in 1.2s\\n'"
+        )
         is True
     )
-    # When the cmd-token IS in the first 3 lines, predicate is False.
-    output_ok = (
-        "============================= pytest test session starts =====================\n"
-        "Build successful.\n"
-        "Done.\n"
-    )
-    assert (
-        evidence._is_stub_pattern_no_cmd_in_header(output_ok, cmd, check_lines=3)
-        is False
-    )
+    # …including when a shell wrapper hides it — the payload is what counts.
+    assert evidence._is_stub_pattern_vacuous_cmd("sh -c 'echo a; echo b'") is True
+
+    # Real work anywhere in the command clears the rule, whatever the first
+    # token is. These four shapes are the corpus's actual command grammar.
+    for cmd in (
+        "pytest -k some_test",
+        "cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/x.py -q",
+        "sh -c 'echo === section ===; python3 -c \"print(1)\"'",
+        "echo '== plugin.json =='; grep -n version plugin.json",
+    ):
+        assert evidence._is_stub_pattern_vacuous_cmd(cmd) is False, cmd
+
+    # `cat` reads a file committed at the casting commit — real evidence about
+    # the tree, and the replay harness depends on it staying legitimate.
+    assert evidence._is_stub_pattern_vacuous_cmd("cat replay.txt") is False
+
+    # Fails OPEN where it cannot judge: never reject a log on this rule's word
+    # because its command was empty or unlexable.
+    assert evidence._is_stub_pattern_vacuous_cmd("") is False
+    assert evidence._is_stub_pattern_vacuous_cmd("echo 'unbalanced") is False
 
 
 def test_stub_pattern_bare_pass():
@@ -363,7 +378,7 @@ def test_stub_pattern_overrides_match():
         "EVIDENCE_STUB_DETECTED",
         "EVIDENCE_STUB_BARE_PASS",
         "EVIDENCE_STUB_TOO_SMALL",
-        "EVIDENCE_STUB_NO_CMD_IN_HEADER",
+        "EVIDENCE_STUB_VACUOUS_CMD",
     }
 
 
@@ -634,11 +649,13 @@ def test_missing_evidence_on_a_v21_spec_is_rejected(run_accept_casting_with_evid
 # wrong one skips; reading the right one engages.
 # ===========================================================================
 
-# The leading `[replay] cat replay.txt` anchor carries the cmd-first-token
-# into the first 3 body lines so `_is_stub_pattern_no_cmd_in_header` does not
-# fire on the synthetic replay. A real pytest log carries its own token via
-# "test session starts"; the same anchor convention is used by conftest's
-# `use_cat_replay` harness.
+# The leading `[replay] cat replay.txt` line is a historical anchor: it existed
+# to carry the cmd-first-token into the first 3 body lines back when the stub
+# library judged the LOG against its command. D-062 retired that reading (the
+# rule now judges the COMMAND for vacuity, and `cat` is not vacuous), so the
+# anchor is inert here — kept because conftest's `use_cat_replay` harness still
+# writes the same line into both the committed log and the replay file, and the
+# comparison is byte-exact on both sides.
 _EVIDENCE_BODY = (
     "[replay] cat replay.txt\n"
     "collected 3 items\n"
@@ -1114,3 +1131,62 @@ def test_missing_spec_path_is_visible_as_a_v20_downgrade(tmp_path):
     assert result["verdict"] == "skipped"
     assert result["spec_format_version"] == "v2.0"
     assert result["spec_path"] == str(absent)
+
+
+# ---------------------------------------------------------------------------
+# D-062 — the corpus and the heuristic can never drift apart again
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def test_no_committed_evidence_log_is_a_stub():
+    """Every committed ``evidence/*.log`` clears the stub library, judged by
+    the SHIPPED predicate on the SHIPPED bytes.
+
+    This is the pin D-062 asks for, and it is environment-free: no subprocess,
+    no worktree, no clone — ``_check_stub_patterns`` is a pure function of the
+    file's committed bytes and its declared ``# evidence-cmd:``. It is the
+    exact call the gate makes at step 6 of ``_verify_one_evidence_file``.
+
+    It failed for 19 of 25 logs before D-062, because the rule required the
+    command's FIRST TOKEN in the first three body lines and this repo's
+    evidence commands begin `cd …`/`sh -c …`/`QG=…`. A gate that rejects its
+    own corpus is wedged the moment it becomes reachable, so the corpus is now
+    a test input: change the heuristic and this fails, commit a stub log and
+    this fails.
+    """
+    evidence_dir = REPO_ROOT / "evidence"
+    logs = sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {evidence_dir}")
+
+    stub_hits = {}
+    for log_path in logs:
+        text = log_path.read_text(encoding="utf-8")
+        header = evidence._parse_evidence_header(text)
+        token = evidence._check_stub_patterns(text, header.get("cmd") or "")
+        if token:
+            stub_hits[log_path.name] = token
+
+    assert stub_hits == {}, (
+        f"{len(stub_hits)} of {len(logs)} committed evidence logs are rejected "
+        f"as stubs by the shipped gate: {stub_hits}"
+    )
+
+
+def test_every_committed_evidence_log_declares_a_command():
+    """The corpus also has to clear the rung ABOVE the stub library: a log with
+    no ``# evidence-cmd:`` header is rejected as EVIDENCE_COMMAND_MISSING
+    before re-execution is even attempted, so it can never reach the sweep
+    above and would otherwise pass it vacuously."""
+    evidence_dir = REPO_ROOT / "evidence"
+    logs = sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {evidence_dir}")
+
+    undeclared = [
+        p.name
+        for p in logs
+        if not (evidence._parse_evidence_header(p.read_text(encoding="utf-8")).get("cmd") or "").strip()
+    ]
+    assert undeclared == [], f"evidence logs with no `# evidence-cmd:`: {undeclared}"

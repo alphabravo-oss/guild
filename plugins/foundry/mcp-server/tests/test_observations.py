@@ -333,6 +333,83 @@ def test_non_comment_subject_cannot_be_an_observation(
     assert len(_observations(run)["tripwire"]) == 2
 
 
+def test_omitting_target_kind_entirely_is_refused_and_audited(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-069 / AC-002 — the demotion path fails CLOSED when the argument is not
+    passed AT ALL, not merely when it is passed empty.
+
+    The matched pair PROVE drove: the same finding, the same classification,
+    one argument apart. It is deliberately worded so no OTHER denylist entry
+    can match — no security vocabulary, no "spec requires", no cite — so the
+    only thing standing between it and the observations ledger is the
+    NON_COMMENT branch.
+
+    The writer used to carry ``target_kind: str = "comment"``, so omission —
+    the DEFAULT behaviour of every caller, since the field is optional in the
+    advertised schema — fabricated the declaration the denylist checks and a
+    real code-behaviour finding was demoted out of the blocking ledger with the
+    tripwire silent. Recording an observation IS the demotion, so absence must
+    reach the same refusal a declared non-comment gets.
+    """
+    perf = "The handler rebuilds the lookup dict on every call where one cached copy would do."
+
+    declared = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=perf,
+        classification="PROSE_COUNT",
+        target_kind="function",
+        project_root=str(tmp_path),
+    )
+    omitted = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=perf,
+        classification="PROSE_COUNT",
+        # target_kind deliberately NOT passed — the bypass, verbatim.
+        project_root=str(tmp_path),
+    )
+
+    # Both halves of the pair reach the same verdict.
+    assert declared["denylist_class"] == "NON_COMMENT", declared
+    assert omitted["denylist_class"] == "NON_COMMENT", omitted
+    # …and the refusal names the missing field and the action, so the caller
+    # is not left guessing that re-wording is the repair.
+    assert omitted["missing_field"] == "target_kind", omitted
+    assert "target_kind" in omitted["hint"] and "Foundry-Defect" in omitted["hint"]
+
+    ledger = _observations(run)
+    # Nothing was demoted…
+    assert ledger["observations"] == []
+    # …and the audit signal fired for BOTH attempts, durably. It used to be
+    # silent on exactly the one that got through.
+    assert len(ledger["tripwire"]) == 2, ledger["tripwire"]
+    assert [t["denylist_class"] for t in ledger["tripwire"]] == [
+        "NON_COMMENT",
+        "NON_COMMENT",
+    ]
+    assert "no target_kind was declared" in ledger["tripwire"][1]["detail"]
+
+
+def test_declared_comment_still_records_after_the_fail_closed_default(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-069's other half: failing closed on absence must not close the channel
+    itself. A stream that DECLARES its subject a comment still gets its finding
+    into the observations ledger."""
+    result = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=DRIFT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert result.get("observation_id"), result
+    assert _observations(run)["tripwire"] == []
+    assert len(_observations(run)["observations"]) == 1
+
+
 def test_non_comment_prose_is_not_recordable_as_an_observation(
     run: Path, tmp_path: Path
 ) -> None:

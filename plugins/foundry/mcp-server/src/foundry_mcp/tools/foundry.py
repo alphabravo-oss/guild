@@ -24,7 +24,12 @@ direction:
     be silently blocked.
   * ``foundry_add_observation`` rejects a finding when any denylist entry
     matches OR when the subject was not declared to be a comment, and fires the
-    audit tripwire on the attempt (AC-002).
+    audit tripwire on the attempt (AC-002). It carries NO default for
+    ``target_kind`` (D-069): recording an observation IS the demotion, so an
+    undeclared subject must reach the NON_COMMENT branch rather than be handed
+    a fabricated "comment" by the signature. Any wrapper that supplies its own
+    fallback re-opens the hole — the declaration has to come from the stream
+    that made the claim.
 
 That second decision is EXPORTED as ``record_denylist_tripwire`` rather than
 buried in the writer's body, because a caller that pre-filters on the denylist
@@ -347,11 +352,18 @@ def record_denylist_tripwire(
         return None
 
     target_kind = finding.get("target_kind")
-    detail = (
-        f"target_kind={target_kind!r} is not a declared comment"
-        if denied == "NON_COMMENT"
-        else f"the finding matches the {denied} denylist entry"
-    )
+    if denied != "NON_COMMENT":
+        detail = f"the finding matches the {denied} denylist entry"
+    elif not (isinstance(target_kind, str) and target_kind.strip()):
+        # Absence is the common case and its own diagnosis: `target_kind` is
+        # optional in the advertised schema, so omitting it is what a caller
+        # does by DEFAULT. Name the missing field, not its empty value.
+        detail = (
+            "no target_kind was declared; demotion out of the defect ledger "
+            'requires an explicit target_kind="comment"'
+        )
+    else:
+        detail = f"target_kind={target_kind!r} is not a declared comment"
     tripwire = {
         "cycle": cycle,
         "source": source,
@@ -855,7 +867,14 @@ def foundry_add_observation(
     source: str,
     description: str,
     classification: str = "",
-    target_kind: str = "comment",
+    # NO DEFAULT VALUE (D-069). A signature default of "comment" here made the
+    # writer FABRICATE the very declaration the denylist checks, so a caller
+    # that simply omitted the argument — the default behaviour of every caller,
+    # since the field is optional in the advertised schema and named in no
+    # agent prose — got a genuine code-behaviour finding demoted out of the
+    # defect ledger with the tripwire silent. Absence must reach the
+    # NON_COMMENT branch, not be papered over before it.
+    target_kind: str = "",
     spec_ref: str = "",
     symbol: str = "",
     file_path: str = "",
@@ -875,9 +894,20 @@ def foundry_add_observation(
     ``spec_ref`` is itself a spec-required-behaviour claim, so citing a
     requirement is by construction enough to keep a finding a defect.
 
+    RECORDING AN OBSERVATION *IS* THE DEMOTION, so this path fails CLOSED on an
+    undeclared subject: the default is "not demotable unless declared", never
+    "demotable unless declared". That is the opposite of ``foundry_add_defect``
+    on purpose \u2014 there, absence must not license a refusal, because refusing a
+    defect is also a demotion. Both surfaces read the same predicate and both
+    fail in the direction that keeps a finding blocking.
+
     Args:
         classification: optional; a member of ``vocab.OBSERVATION_CLASSES``.
             Derived from the description when omitted.
+        target_kind: REQUIRED in effect \u2014 must be the explicit string
+            "comment". Omitting it is refused under the NON_COMMENT denylist
+            entry and fires the tripwire, exactly as a present non-comment
+            value does.
 
     Returns:
         ``{observation_id, classification, total_observations}``, or a named
@@ -913,6 +943,7 @@ def foundry_add_observation(
     )
     if tripwire is not None:
         denied = tripwire["denylist_class"]
+        undeclared = not target_kind.strip()
         return {
             "error": (
                 f"Refused: {denied} can NEVER be recorded as an observation \u2014 "
@@ -920,11 +951,23 @@ def foundry_add_observation(
                 f"{', '.join(sorted(NEVER_DEMOTE_CLASSES))}."
             ),
             "hint": (
-                "File it as a defect via Foundry-Defect. The audit tripwire "
-                "has fired and is recorded in observations.json and "
-                "forge-log.md."
+                # Name the missing field and the action, not just the refusal:
+                # an omitted target_kind is a caller bug with two legitimate
+                # repairs, and the wrong one to guess is "re-word it".
+                'Pass target_kind="comment" if the finding really is about '
+                "comment prose; if it is about code \u2014 a function, a handler, a "
+                "wiring path \u2014 it is a defect and belongs in Foundry-Defect. "
+                "The audit tripwire has fired and is recorded in "
+                "observations.json and forge-log.md."
+                if undeclared
+                else (
+                    "File it as a defect via Foundry-Defect. The audit "
+                    "tripwire has fired and is recorded in observations.json "
+                    "and forge-log.md."
+                )
             ),
             "denylist_class": denied,
+            "missing_field": "target_kind" if undeclared else None,
             "tripwire": tripwire,
         }
 

@@ -1,0 +1,15 @@
+# evidence-cmd: PYTHONPATH=plugins/foundry/mcp-server/src python3 -c 'import pathlib; from foundry_mcp.tools.evidence import _check_stub_patterns as C, _parse_evidence_header as H, _is_stub_pattern_vacuous_cmd as V; logs = sorted(pathlib.Path("evidence").glob("*.log")); hits = sorted(p.name + " -> " + str(C(p.read_text(encoding="utf-8"), H(p.read_text(encoding="utf-8")).get("cmd") or "")) for p in logs if C(p.read_text(encoding="utf-8"), H(p.read_text(encoding="utf-8")).get("cmd") or "")); print("committed evidence logs judged:", len(logs)); print("stub-pattern rejections:", len(hits)); [print("  " + h) for h in hits]; print(); print("=== the rule that replaced it judges the COMMAND, at every command position ==="); [print("  vacuous=%-5s  %s" % (V(c), c)) for c in ["echo PASS", "printf x", "true", "sh -c \"echo a; echo b\"", "sh -c \"echo a; python3 -c print\"", "cat replay.txt", "cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_evidence.py -q"]]'
+# evidence-for: FR-017, AC-023
+# evidence-volatile: judged: \d+
+
+committed evidence logs judged: 29
+stub-pattern rejections: 0
+
+=== the rule that replaced it judges the COMMAND, at every command position ===
+  vacuous=True   echo PASS
+  vacuous=True   printf x
+  vacuous=True   true
+  vacuous=True   sh -c "echo a; echo b"
+  vacuous=False  sh -c "echo a; python3 -c print"
+  vacuous=False  cat replay.txt
+  vacuous=False  cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_evidence.py -q
