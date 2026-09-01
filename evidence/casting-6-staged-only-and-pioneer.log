@@ -1,27 +1,48 @@
-# evidence-cmd: echo "== every git query the shipped guard EXECUTES (comment lines stripped) =="; grep -vE '^[[:space:]]*#' plugins/foundry/hooks/pre-commit-guard.sh | grep -oE 'git (diff|cat-file|stash|rev-parse|hash-object)[^|;)"]*' | sed 's/[[:space:]]*$//' | sort -u; echo "== working-tree queries among those (expect 0) =="; grep -vE '^[[:space:]]*#' plugins/foundry/hooks/pre-commit-guard.sh | grep -cE 'diff --name-only HEAD|diff HEAD|git stash' || true; echo; echo "== pioneer consumer: quality-gate.sh (run tooling, its own repo) =="; echo -n "staged-only queries: "; grep -c 'git diff --cached --name-only' /Users/rayjanoka/ab/code/pioneer/.claude/hooks/quality-gate.sh; echo -n "working-tree queries in executable lines: "; grep -vE '^[[:space:]]*#' /Users/rayjanoka/ab/code/pioneer/.claude/hooks/quality-gate.sh | grep -cE 'diff --name-only HEAD' || true; echo -n "exit contract preserved: "; grep -c 'exit 2' /Users/rayjanoka/ab/code/pioneer/.claude/hooks/quality-gate.sh; echo; echo "== pioneer registration: what makes the hook actually run =="; python3 -c "import json;h=json.load(open('/Users/rayjanoka/ab/code/pioneer/.claude/settings.json'))['hooks'];print('registered events:', ', '.join(sorted(h)));print('Stop ->', h['Stop'][0]['hooks'][0]['command'].split('; ')[-1])"
+# evidence-cmd: QG=/Users/rayjanoka/ab/code/pioneer/.claude/hooks/quality-gate.sh; G=plugins/foundry/hooks/pre-commit-guard.sh; echo "== every git query the shipped guard EXECUTES (comment lines stripped) =="; grep -vE '^[[:space:]]*#' "$G" | grep -oE 'git (diff|cat-file|stash|rev-parse|hash-object)[^|;)"]*' | sed 's/[[:space:]]*$//' | sort -u; echo -n "working-tree queries among those (expect 0): "; grep -vE '^[[:space:]]*#' "$G" | grep -cE 'diff --name-only HEAD|diff HEAD|git stash' || true; echo -n "D-014 shape lock, staged blob piped into a matcher (expect 0): "; grep -vE '^[[:space:]]*#' "$G" | grep 'cat-file blob' | sed 's/||//g' | grep -c '|' || true; echo; echo "== pioneer consumer: quality-gate.sh (run tooling, its own repo) =="; echo -n "staged-only path queries: "; grep -c 'git diff --cached --name-only' "$QG"; echo -n "working-tree path queries in executable lines (expect 0): "; grep -vE '^[[:space:]]*#' "$QG" | grep -cE 'diff --name-only HEAD' || true; echo -n "staged-tree materialization present: "; grep -c 'git checkout-index -a -f --prefix' "$QG"; echo -n "no-stash rule honoured (expect 0): "; grep -vE '^[[:space:]]*#' "$QG" | grep -c 'git stash' || true; echo -n "D-013 content judgments rooted at the staged tree: "; grep -vE '^[[:space:]]*#' "$QG" | grep -c 'CHECK_ROOT'; echo -n "D-013 linter/test invocations still reading the working tree (expect 0): "; grep -vE '^[[:space:]]*#' "$QG" | grep -E 'gofmt|prettier --check|eslint |ruff (format|check)|swiftformat|swiftlint|go vet|go test|npx (vitest|jest)|pytest --tb|swift test' | grep -c 'PROJECT_ROOT' || true; echo -n "exit contract preserved: "; grep -c 'exit 2' "$QG"; echo; echo "== shipped guard actually INSTALLED in the repos this run commits to =="; for r in /Users/rayjanoka/ab/code/pioneer /Users/rayjanoka/ab/code/pioneer/.claude; do h="$(cd "$r" && git rev-parse --git-path hooks)/pre-commit"; case "$h" in /*) ;; *) h="$r/$h";; esac; printf '%s\n  installed=%s executable=%s identical-to-shipped-asset=%s\n' "$r" "$([ -f "$h" ] && echo yes || echo no)" "$([ -x "$h" ] && echo yes || echo no)" "$(cmp -s "$G" "$h" && echo yes || echo no)"; done; echo; echo "== pioneer registration: what makes the Stop hook actually run =="; python3 -c "import json;h=json.load(open('/Users/rayjanoka/ab/code/pioneer/.claude/settings.json'))['hooks'];print('registered events:', ', '.join(sorted(h)));print('Stop ->', h['Stop'][0]['hooks'][0]['command'].split('; ')[-1])"
 # evidence-for: AC-016, AC-017, FR-012
 # evidence-timeout: 120
 #
-# GI-002, both halves: the shipped asset and its first consumer.
+# GI-002, all three halves: the shipped asset, its first consumer, and the
+# fact that the asset is actually INSTALLED where the run commits.
 #
-# The first block enumerates every git invocation the guard actually
-# EXECUTES, with comment lines stripped — the header discusses the
-# anti-pattern by name so a whole-file scan would flag the documentation.
-# Every surviving query is an index query: --cached for the path list,
-# and :0:<path> blob reads for the content. No stash, in any form.
-# rev-parse --verify HEAD is a ref-existence check for the unborn-branch
-# fallback, not a working-tree read.
+# Block 1 enumerates every git invocation the guard actually EXECUTES, with
+# comment lines stripped — the header discusses the anti-pattern by name so a
+# whole-file scan would flag the documentation. Every surviving query is an
+# index query: --cached for the path list, :0:<path> blob reads for content.
+# No stash, in any form. `rev-parse --verify HEAD` is a ref-existence check
+# for the unborn-branch fallback, not a working-tree read.
 #
-# The pioneer block is the consumer half (A-034: run tooling, in scope;
-# Pioneer PRODUCT code untouched). It lives in its own git repository at
-# /Users/rayjanoka/ab/code/pioneer/.claude, so it cannot ride in this
-# casting commit and is committed separately there. Its four
-# `git diff --name-only HEAD` calls became `git diff --cached
-# --name-only`; the exit-0-pass / exit-2-block contract is unchanged.
+# The D-014 shape lock is new this cycle. `git cat-file blob :0:$p | grep -q`
+# FAILS OPEN above the pipe buffer: grep -q exits 0 on first match and closes
+# the pipe, git dies of SIGPIPE (141), `pipefail` reports the pipeline as 141,
+# and the enclosing `if` swallows that as "no match" — so the larger the
+# violation the more reliably it committed. Measured: a 4.2 MB file with a
+# conflict marker on line 1 committed cleanly. The guard now redirects each
+# staged blob to a scratch file and checks the file, so the count of pipes on
+# any `cat-file blob` line is the structural proof the shape is gone.
 #
-# The registration block matters as much as the query fix: the hook had
-# NO Stop entry, so it never ran at all. A correct guard that is never
-# invoked is not a guard.
+# Block 2 is the consumer half (A-034: run tooling, in scope; Pioneer PRODUCT
+# code untouched). It lives in its own git repository at
+# /Users/rayjanoka/ab/code/pioneer/.claude, so it cannot ride in this casting
+# commit and is committed separately there.
+#
+# D-013 is the other half of "staged-only" that CAST got wrong. Converting the
+# four path queries to --cached fixed WHICH FILES are judged; every check then
+# still read "$PROJECT_ROOT/$file" — the WORKING TREE — so a peer's unstaged
+# edit changed the verdict anyway. quality-gate.sh now checks the index out to
+# a private temp tree (git checkout-index, ~0.4s on 3,565 files) and roots all
+# thirteen judgments there. Zero linter or test invocations read PROJECT_ROOT.
+#
+# Block 3 answers PROVE's finding that the asset was shipped but never
+# installed. GI-002 says the pioneer copy gets fixed "as a consumer of that
+# asset", which requires the asset to be present. Both repositories the run
+# commits to now carry it, byte-identical to the shipped source. Note the
+# .claude repo is a SUBMODULE — its hook path resolves under
+# .git/modules/.claude/hooks, which is exactly why the installer asks git
+# (`rev-parse --git-path hooks`) instead of assuming .git/hooks.
+#
+# Block 4 matters as much as the query fix: the hook had NO Stop entry, so it
+# never ran at all. A correct guard that is never invoked is not a guard.
 
 == every git query the shipped guard EXECUTES (comment lines stripped) ==
 git cat-file -s
@@ -30,14 +51,24 @@ git diff --cached --name-only --diff-filter=d -z
 git hash-object -t tree /dev/null
 git rev-parse --show-toplevel
 git rev-parse --verify --quiet HEAD >/dev/null 2>&1
-== working-tree queries among those (expect 0) ==
-0
+working-tree queries among those (expect 0): 0
+D-014 shape lock, staged blob piped into a matcher (expect 0): 0
 
 == pioneer consumer: quality-gate.sh (run tooling, its own repo) ==
-staged-only queries: 4
-working-tree queries in executable lines: 0
+staged-only path queries: 4
+working-tree path queries in executable lines (expect 0): 0
+staged-tree materialization present: 1
+no-stash rule honoured (expect 0): 0
+D-013 content judgments rooted at the staged tree: 31
+D-013 linter/test invocations still reading the working tree (expect 0): 0
 exit contract preserved: 1
 
-== pioneer registration: what makes the hook actually run ==
+== shipped guard actually INSTALLED in the repos this run commits to ==
+/Users/rayjanoka/ab/code/pioneer
+  installed=yes executable=yes identical-to-shipped-asset=yes
+/Users/rayjanoka/ab/code/pioneer/.claude
+  installed=yes executable=yes identical-to-shipped-asset=yes
+
+== pioneer registration: what makes the Stop hook actually run ==
 registered events: PostCompact, PostToolUse, PreCompact, PreToolUse, SessionStart, Stop, TeammateIdle
 Stop -> "$R/.claude/hooks/quality-gate.sh"

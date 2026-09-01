@@ -1,4 +1,4 @@
-# evidence-cmd: echo "== plugin.json =="; grep -n '"version"' plugins/foundry/.claude-plugin/plugin.json; echo "== marketplace.json (foundry entry) =="; grep -A4 '"name": "foundry",' .claude-plugin/marketplace.json | grep -E '"(name|version)"'; echo "== mcp-server/pyproject.toml =="; grep -n "^version" plugins/foundry/mcp-server/pyproject.toml; echo "== foundry_mcp/__init__.py (what the running server reports) =="; grep -n "__version__" plugins/foundry/mcp-server/src/foundry_mcp/__init__.py; echo "== uv.lock (regenerated to track pyproject) =="; grep -A1 'name = "foundry-mcp"' plugins/foundry/mcp-server/uv.lock; echo "== mcp cap MUST NOT move (explicitly out of scope) =="; grep -n "^dependencies" plugins/foundry/mcp-server/pyproject.toml
+# evidence-cmd: echo "== plugin.json =="; grep -n '"version"' plugins/foundry/.claude-plugin/plugin.json; echo "== marketplace.json (foundry entry) =="; grep -A4 '"name": "foundry",' .claude-plugin/marketplace.json | grep -E '"(name|version)"'; echo "== mcp-server/pyproject.toml =="; grep -n "^version" plugins/foundry/mcp-server/pyproject.toml; echo "== foundry_mcp/__init__.py (what the running server reports) =="; grep -n "__version__" plugins/foundry/mcp-server/src/foundry_mcp/__init__.py; echo "== uv.lock (regenerated to track pyproject) =="; grep -A1 'name = "foundry-mcp"' plugins/foundry/mcp-server/uv.lock; echo "== README badges (the fifth and sixth version sites) =="; grep -on 'foundry-4\.[0-9][0-9.]*' README.md plugins/foundry/README.md; echo "== any 4.8.0 left on a shipped surface (expect none) =="; grep -rln "4\.8\.0" README.md plugins/foundry/README.md plugins/foundry/.claude-plugin/plugin.json .claude-plugin/marketplace.json || echo "(none)"; echo "== mcp cap MUST NOT move (explicitly out of scope) =="; grep -n "^dependencies" plugins/foundry/mcp-server/pyproject.toml
 # evidence-for: US-007, AC-027, FR-022
 # evidence-timeout: 120
 #
@@ -11,12 +11,25 @@
 # server still at 1.7.1, never taking a 1.8.x, so the tracking bump is
 # 1.8.0 and not 1.9.0. Both plugin manifests read 4.9.0.
 #
-# FOUR version sites, not three. __init__.py is the one the spec File
-# Change Map omits, and it is the version the RUNNING server reports:
-# server.py:13 imports __version__ from it and surfaces it at :546.
-# uv.lock is a fifth, generated site — uv re-locks it automatically from
-# pyproject, so it is committed here rather than left dirty in a tree
-# shared with other castings.
+# SIX version sites, not the three the spec File Change Map names.
+#   1-2. plugin.json + marketplace.json — the pair `claude plugin update`
+#        reads. These two must never disagree.
+#     3. mcp-server/pyproject.toml — the packaged server version.
+#     4. foundry_mcp/__init__.py — omitted by the File Change Map, and the
+#        one the RUNNING server actually reports: server.py:13 imports
+#        __version__ from it and surfaces it at :546.
+#     5. uv.lock — generated; uv re-locks it from pyproject automatically,
+#        so it is committed here rather than left dirty in a tree shared
+#        with other castings.
+#   6-7. The two README badges. Added this cycle for D-024: both still
+#        advertised 4.8.0 after the manifests moved to 4.9.0, so every
+#        reader of either README saw a stale version. They are hand-edited
+#        markdown with no generator, which is exactly why they were missed.
+#
+# The release checklist should carry all of them. Nothing in the repo
+# enforces agreement between these sites — no CI, no generator, no test —
+# so the trailing grep for a stale 4.8.0 across every shipped surface is
+# the only mechanical check that exists, and it is this file.
 
 == plugin.json ==
 4:  "version": "4.9.0",
@@ -30,5 +43,10 @@
 == uv.lock (regenerated to track pyproject) ==
 name = "foundry-mcp"
 version = "1.8.0"
+== README badges (the fifth and sixth version sites) ==
+README.md:127:foundry-4.9.0
+plugins/foundry/README.md:7:foundry-4.9.0
+== any 4.8.0 left on a shipped surface (expect none) ==
+(none)
 == mcp cap MUST NOT move (explicitly out of scope) ==
 17:dependencies = ["mcp>=1.0.0,<2.0.0", "jsonschema>=4.20.0"]

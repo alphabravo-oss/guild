@@ -21,6 +21,27 @@
 # a well-documented footgun in the pre-commit ecosystem. Staged CONTENT is read
 # straight out of the index instead; the working tree is never mutated.
 #
+# MUST NEVER PIPE STAGED CONTENT INTO A MATCHER THAT CAN EXIT EARLY. This is a
+# correctness rule, not a style preference, and it is written here because the
+# obvious spelling of this hook is silently, catastrophically wrong:
+#
+#     git cat-file blob ":0:$path" | grep -q PATTERN     # ← FAILS OPEN
+#
+# `grep -q` exits 0 the instant it matches and closes the pipe. On any blob big
+# enough to outlast the pipe buffer, `git cat-file` is still writing, takes
+# SIGPIPE, and dies 141. `set -o pipefail` then reports the PIPELINE as 141, and
+# an `if` condition reads that nonzero status as "no match" — so a MATCH becomes
+# a PASS, and the larger the violation the more reliably it is waved through.
+# Measured fail-open band: roughly 100 KB up to the size limit; a 4.2 MB file
+# with a conflict marker on line 1 committed cleanly through this hook.
+#
+# Staged content is therefore read ONCE, IN FULL, into a private scratch file
+# outside the repository, and every content check runs against that file. The
+# one pipeline that remains (`tr | wc`, for the binary probe) is safe for a
+# stated reason and not by luck: `wc` is the reader, and `wc` counts to EOF by
+# definition — it has no early exit to take. Any future check that pipes blob
+# bytes into something that CAN stop early belongs here, against the file.
+#
 # THIS SCRIPT EXISTS TO BLOCK. That is the inverse of the plugin's only other
 # shipped hook (hooks/session-start-serena.sh), which promises that every path
 # exits 0, so the contract here is stated just as loudly:
@@ -54,6 +75,16 @@ set -euo pipefail
 # abort under `set -e` with a nonzero status and no output, blocking the commit
 # for no visible reason.
 trap 'printf "[foundry-guard] INTERNAL ERROR at line %s — commit blocked.\n" "$LINENO" >&2' ERR
+
+# ── Scratch file for staged blobs ────────────────────────────────────────────
+# Staged content is copied here, whole, one path at a time — see "MUST NEVER
+# PIPE STAGED CONTENT" above. It lives in TMPDIR, never in the repository, so
+# nothing this guard does is visible to `git status` or to a peer's editor, and
+# the no-stash rule is honoured: the working tree is read-only to this script.
+# Bounded by the size check below, which runs BEFORE the read, so an oversize
+# blob is rejected without ever being written to disk.
+SCRATCH="$(mktemp "${TMPDIR:-/tmp}/foundry-guard.XXXXXX")"
+trap 'rm -f "$SCRATCH"' EXIT
 
 # ── Tunables ─────────────────────────────────────────────────────────────────
 # Largest staged blob, in bytes, that may be committed. Default 5 MiB. Named to
@@ -140,21 +171,34 @@ for path in "${STAGED[@]}"; do
     continue
   fi
 
-  # ── Check 2: unresolved conflict markers in staged content ─────────────────
-  # Reads the blob out of the index and pipes it to grep. `|| true` guards the
-  # non-match case, whose exit status 1 would otherwise abort under `set -e`.
-  if git cat-file blob ":0:${path}" 2>/dev/null |
-     LC_ALL=C grep -Eq -- "$CONFLICT_RE"; then
+  # ── Read the staged blob, ONCE, IN FULL ────────────────────────────────────
+  # Redirection to a file, not a pipe into a matcher: `git cat-file` runs to
+  # completion every time, so there is no SIGPIPE for `pipefail` to turn into a
+  # bogus "no match". This single line is what makes the checks below fail
+  # CLOSED on a large blob. See the header for the failure it replaces.
+  git cat-file blob ":0:${path}" >"$SCRATCH" 2>/dev/null || continue
 
-    # Confirm the blob is text before reporting. A binary blob whose bytes
-    # happen to spell a marker at a line boundary is astronomically unlikely,
-    # but the check is one cheap pipe and it turns "probably right" into
-    # "right". A NUL byte anywhere is git's own test for binary content, so a
-    # blob whose NUL-stripped length differs from its real length is binary.
-    nul_free="$(git cat-file blob ":0:${path}" 2>/dev/null | tr -d '\0' | wc -c | tr -d ' ')"
-    if [ "$nul_free" = "$size" ]; then
-      violation "${path} — staged content contains unresolved merge-conflict markers."
-    fi
+  # ── Check 2: is this text at all? ──────────────────────────────────────────
+  # A NUL byte anywhere is git's own test for binary content, so a blob whose
+  # NUL-stripped length differs from its real length is binary. Binary blobs
+  # are exempt from the text checks below — an image whose bytes happen to
+  # spell a marker at a line boundary is not a merge conflict.
+  #
+  # `tr | wc` is a pipeline, and it is deliberately allowed: `wc` is the reader
+  # and it counts to EOF by definition, so neither command can exit early and
+  # neither can raise SIGPIPE on the other.
+  nul_free="$(tr -d '\0' <"$SCRATCH" | wc -c | tr -d ' ')"
+  if [ "$nul_free" != "$size" ]; then
+    continue
+  fi
+
+  # ── Check 3: unresolved conflict markers in staged content ─────────────────
+  # grep reads the scratch FILE, so `-q` is free to stop at the first match:
+  # there is no upstream process left to kill, the exit status is grep's own,
+  # and an `if` condition exempts it from `set -e`. Match = violation, always,
+  # at any blob size.
+  if LC_ALL=C grep -Eq -- "$CONFLICT_RE" "$SCRATCH"; then
+    violation "${path} — staged content contains unresolved merge-conflict markers."
   fi
 done
 

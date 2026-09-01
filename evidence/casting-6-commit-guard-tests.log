@@ -17,34 +17,56 @@
 # AC-017 / GI-002 are the last four: a static scan of the shipped sources
 # proving no executable line stashes or queries the working tree, so a
 # future edit reintroducing the anti-pattern fails this suite.
+#
+# Five tests are new this cycle, locking D-014 — a fail-open the guard had
+# at scale. `git cat-file blob :0:$p | grep -q RE` returns a MATCH as a PASS
+# on any blob past the pipe buffer: grep -q exits 0 the instant it matches
+# and closes the pipe, git takes SIGPIPE and dies 141, `set -o pipefail`
+# reports the whole pipeline as 141, and the enclosing `if` reads that
+# nonzero status as "no match". Verified against the pre-fix guard: a
+# 1.5 MB and a 4.2 MB file, each with a conflict marker on LINE 1, both
+# committed cleanly; both are blocked now.
+#
+# The four behavioural locks are deliberately paired so neither can be
+# satisfied by a lazy fix. The two parametrized sizes stop a fix that only
+# enlarges a buffer. `allows_a_large_clean_staged_blob` stops a fix that
+# blocks everything big. `exempts_binary_blobs` stops a fix that drops the
+# binary probe and starts blocking images. The fifth is structural: no
+# executable line may pipe a `cat-file blob` anywhere, so the SHAPE cannot
+# return at a size nobody parametrized.
 
 ============================= test session starts ==============================
-collecting ... collected 25 items
+collecting ... collected 30 items
 
-tests/test_commit_guard.py::test_pathspec_commit_records_only_its_own_paths PASSED [  4%]
-tests/test_commit_guard.py::test_pathspec_commit_leaves_peer_files_staged PASSED [  8%]
-tests/test_commit_guard.py::test_bare_commit_captures_peer_files PASSED  [ 12%]
-tests/test_commit_guard.py::test_guard_allows_clean_staged_content PASSED [ 16%]
-tests/test_commit_guard.py::test_guard_ignores_peer_untracked_working_tree_file PASSED [ 20%]
-tests/test_commit_guard.py::test_guard_ignores_peer_unstaged_edit_to_tracked_file PASSED [ 24%]
-tests/test_commit_guard.py::test_guard_ignores_peer_staged_file_outside_the_pathspec PASSED [ 28%]
-tests/test_commit_guard.py::test_guard_reads_content_from_the_index_not_the_working_tree PASSED [ 32%]
-tests/test_commit_guard.py::test_guard_blocks_when_only_the_staged_blob_is_dirty PASSED [ 36%]
-tests/test_commit_guard.py::test_guard_blocks_staged_conflict_markers PASSED [ 40%]
-tests/test_commit_guard.py::test_guard_blocks_oversize_staged_blob PASSED [ 44%]
-tests/test_commit_guard.py::test_guard_allows_first_commit_on_unborn_branch PASSED [ 48%]
-tests/test_commit_guard.py::test_installer_is_idempotent PASSED          [ 52%]
-tests/test_commit_guard.py::test_installer_restores_a_modified_copy PASSED [ 56%]
-tests/test_commit_guard.py::test_installer_restores_lost_executable_bit PASSED [ 60%]
-tests/test_commit_guard.py::test_installer_honors_core_hookspath PASSED  [ 64%]
-tests/test_commit_guard.py::test_installer_backs_up_a_foreign_hook PASSED [ 68%]
-tests/test_commit_guard.py::test_installer_no_clobber_refuses_foreign_hook PASSED [ 72%]
-tests/test_commit_guard.py::test_installer_fails_on_non_git_target PASSED [ 76%]
-tests/test_commit_guard.py::test_installer_fails_on_missing_target PASSED [ 80%]
-tests/test_commit_guard.py::test_shipped_assets_exist_and_are_executable PASSED [ 84%]
-tests/test_commit_guard.py::test_guard_never_queries_the_working_tree PASSED [ 88%]
-tests/test_commit_guard.py::test_guard_actually_uses_the_cached_query PASSED [ 92%]
+tests/test_commit_guard.py::test_pathspec_commit_records_only_its_own_paths PASSED [  3%]
+tests/test_commit_guard.py::test_pathspec_commit_leaves_peer_files_staged PASSED [  6%]
+tests/test_commit_guard.py::test_bare_commit_captures_peer_files PASSED  [ 10%]
+tests/test_commit_guard.py::test_guard_allows_clean_staged_content PASSED [ 13%]
+tests/test_commit_guard.py::test_guard_ignores_peer_untracked_working_tree_file PASSED [ 16%]
+tests/test_commit_guard.py::test_guard_ignores_peer_unstaged_edit_to_tracked_file PASSED [ 20%]
+tests/test_commit_guard.py::test_guard_ignores_peer_staged_file_outside_the_pathspec PASSED [ 23%]
+tests/test_commit_guard.py::test_guard_reads_content_from_the_index_not_the_working_tree PASSED [ 26%]
+tests/test_commit_guard.py::test_guard_blocks_when_only_the_staged_blob_is_dirty PASSED [ 30%]
+tests/test_commit_guard.py::test_guard_blocks_staged_conflict_markers PASSED [ 33%]
+tests/test_commit_guard.py::test_guard_blocks_oversize_staged_blob PASSED [ 36%]
+tests/test_commit_guard.py::test_guard_blocks_conflict_markers_in_a_large_staged_blob[1500000] PASSED [ 40%]
+tests/test_commit_guard.py::test_guard_blocks_conflict_markers_in_a_large_staged_blob[4200000] PASSED [ 43%]
+tests/test_commit_guard.py::test_guard_allows_a_large_clean_staged_blob PASSED [ 46%]
+tests/test_commit_guard.py::test_guard_exempts_binary_blobs_from_the_text_checks PASSED [ 50%]
+tests/test_commit_guard.py::test_guard_never_pipes_blob_content_into_an_early_exiting_matcher PASSED [ 53%]
+tests/test_commit_guard.py::test_guard_allows_first_commit_on_unborn_branch PASSED [ 56%]
+tests/test_commit_guard.py::test_installer_is_idempotent PASSED          [ 60%]
+tests/test_commit_guard.py::test_installer_restores_a_modified_copy PASSED [ 63%]
+tests/test_commit_guard.py::test_installer_restores_lost_executable_bit PASSED [ 66%]
+tests/test_commit_guard.py::test_installer_honors_core_hookspath PASSED  [ 70%]
+tests/test_commit_guard.py::test_installer_backs_up_a_foreign_hook PASSED [ 73%]
+tests/test_commit_guard.py::test_installer_no_clobber_refuses_foreign_hook PASSED [ 76%]
+tests/test_commit_guard.py::test_installer_fails_on_non_git_target PASSED [ 80%]
+tests/test_commit_guard.py::test_installer_fails_on_missing_target PASSED [ 83%]
+tests/test_commit_guard.py::test_shipped_assets_exist_and_are_executable PASSED [ 86%]
+tests/test_commit_guard.py::test_guard_never_queries_the_working_tree PASSED [ 90%]
+tests/test_commit_guard.py::test_guard_actually_uses_the_cached_query PASSED [ 93%]
 tests/test_commit_guard.py::test_installer_never_stashes_or_reads_the_working_tree PASSED [ 96%]
 tests/test_commit_guard.py::test_installer_copies_rather_than_symlinks PASSED [100%]
 
-============================== 25 passed in 3.60s ==============================
+============================== 30 passed in 4.37s ==============================

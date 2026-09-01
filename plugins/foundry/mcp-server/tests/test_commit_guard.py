@@ -444,6 +444,121 @@ def test_guard_blocks_oversize_staged_blob(guarded_repo: Path, env: dict[str, st
     assert ok.returncode == 0, ok.stderr
 
 
+@pytest.mark.parametrize("payload_bytes", [1_500_000, 4_200_000])
+def test_guard_blocks_conflict_markers_in_a_large_staged_blob(
+    guarded_repo: Path, env: dict[str, str], payload_bytes: int
+):
+    """A violation must block at ANY blob size (D-014 regression lock).
+
+    The obvious spelling of the marker check —
+
+        git cat-file blob ":0:$path" | grep -q PATTERN
+
+    fails OPEN above roughly the pipe-buffer size. ``grep -q`` exits 0 the
+    instant it matches and closes the pipe; ``git cat-file`` is still writing,
+    takes SIGPIPE and dies 141; ``set -o pipefail`` reports the whole pipeline
+    as 141; and the enclosing ``if`` reads that nonzero status as "no match".
+    The bigger the violation, the more certainly it was waved through. This was
+    not theoretical: a 4.2 MB file with a marker on line 1 committed cleanly.
+
+    Both sizes are exercised on purpose. 1.5 MB is comfortably past the 64 KiB
+    pipe buffer where the race first appears; 4.2 MB is the size PROVE actually
+    demonstrated committing. A fix that only enlarges a buffer passes the
+    small case and fails the large one.
+    """
+    filler = "a" * 4096 + "\n"
+    body = filler * (payload_bytes // len(filler))
+    # Marker on line 1, so a matcher that stops at the first hit stops almost
+    # immediately — with megabytes still unread behind it. That gap is the bug.
+    _write(guarded_repo, "big_conflict.txt", CONFLICT_BLOCK + body)
+    _git(["add", "big_conflict.txt"], cwd=guarded_repo, env=env)
+    head_before = _git(["rev-parse", "HEAD"], cwd=guarded_repo, env=env).stdout
+
+    result = _git(
+        ["commit", "-m", "big", "--", "big_conflict.txt"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        f"FAIL-OPEN: a {payload_bytes}-byte staged blob with conflict markers "
+        "on line 1 was committed. The guard is reading staged content through "
+        "a pipe into an early-exiting matcher again.\n" + combined
+    )
+    assert "big_conflict.txt" in combined, "a blocked commit must name the path"
+    assert head_before == _git(
+        ["rev-parse", "HEAD"], cwd=guarded_repo, env=env
+    ).stdout, "the commit landed despite a nonzero exit"
+
+
+def test_guard_allows_a_large_clean_staged_blob(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """The size cases above must block on CONTENT, not merely on being large.
+
+    Without this, a guard that blocked every blob over a megabyte would pass
+    the regression lock while being useless.
+    """
+    _write(guarded_repo, "big_clean.txt", ("b" * 4096 + "\n") * 500)
+    _git(["add", "big_clean.txt"], cwd=guarded_repo, env=env)
+
+    result = _git(
+        ["commit", "-m", "clean", "--", "big_clean.txt"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_guard_exempts_binary_blobs_from_the_text_checks(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """A binary blob whose bytes spell a marker is not a merge conflict.
+
+    Pins the binary probe that guards the marker check, so that fixing the
+    fail-open did not turn every image containing an unlucky byte run into a
+    blocked commit.
+    """
+    payload = CONFLICT_BLOCK.encode() + b"\x00\x01\x02" + b"c" * 200_000
+    (guarded_repo / "asset.bin").write_bytes(payload)
+    _git(["add", "asset.bin"], cwd=guarded_repo, env=env)
+
+    result = _git(
+        ["commit", "-m", "bin", "--", "asset.bin"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "a binary blob was blocked by a text check\n" + result.stdout + result.stderr
+    )
+
+
+def test_guard_never_pipes_blob_content_into_an_early_exiting_matcher():
+    """Source-level lock on the D-014 root cause.
+
+    The behavioural tests above catch the bug at the sizes they exercise. This
+    catches the SHAPE, so a reviewer does not have to guess whether some new
+    check reintroduced it at a size nobody tested.
+    """
+    for line in _executable_lines(GUARD_SRC.read_text(encoding="utf-8")):
+        if "cat-file blob" not in line:
+            continue
+        # `||` is the OR operator, not a pipe; only a real pipe is the hazard.
+        piped = line.replace("||", "")
+        assert "|" not in piped, (
+            "staged blob content is piped somewhere in the guard:\n"
+            f"  {line.strip()}\n"
+            "Under `set -o pipefail` a matcher that exits early (grep -q, head, "
+            "sed -n 1q) kills git with SIGPIPE and the pipeline reports 141, "
+            "which an `if` swallows as 'no match' — the check fails OPEN on "
+            "large blobs. Redirect the blob to a file and check the file."
+        )
+
+
 def test_guard_allows_first_commit_on_unborn_branch(
     tmp_path: Path, env: dict[str, str]
 ):
