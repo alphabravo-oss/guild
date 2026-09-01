@@ -36,10 +36,19 @@ symbol ``check``, the trailing ``-totally-nonexistent-thing`` was discarded as
 non-cite text, and ``check`` resolved on its own — so the guard answered about
 one symbol and reported on another, and a cite that resolves nowhere passed.
 The failure was one-directional and always permissive, which is exactly
-AC-006's failure direction. Any future change here must keep silent
-truncation impossible: a symbol ends only where no symbol character follows,
-and a trailing separator stays IN the symbol so a malformed cite fails
-resolution loudly instead of being quietly shortened into a resolvable one.
+AC-006's failure direction.
+
+The rule any future change must preserve: a symbol may never end with a
+hyphen or word character still sitting next to it, because that is the state
+in which the guard checks one symbol and reports on another. The two
+separators are therefore treated differently, and deliberately. A trailing
+``-`` is kept (``guard.sh#check-`` is the symbol ``check-``, which fails
+resolution as written) because a dangling hyphen is malformed spelling, and
+shortening it to ``check`` would resolve. A trailing ``.`` is dropped
+(``ledger.py#add_defect.`` is the symbol ``add_defect``) because that is a
+cite ending a sentence — the common case in a completion report, and one
+where the period is punctuation rather than part of the name. Neither is a
+truncation: in both, the symbol ends where the author's symbol ends.
 
 RESOLUTION IS MECHANICAL, NOT SEMANTIC
 --------------------------------------
