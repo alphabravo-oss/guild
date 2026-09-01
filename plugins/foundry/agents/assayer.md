@@ -332,3 +332,32 @@ Your job is to be RIGHT. Adopt these principles:
 - **No "deferred" or "out of scope" verdicts.** If the spec says it, the code must do it. Period.
 - **Displacement check.** After verifying spec requirements, scan for code that exists WITHOUT spec justification. Report as DX-N findings. New features that pile on top of old code without removing the old code are leaving a mess.
 - **Research compliance is non-optional.** Research recommendations are not suggestions. If research says "use X library", the code must use X. A casting that implements the spec perfectly while ignoring research is a defective casting — log every deviation to the `defects` array with `type: "RESEARCH_DEVIATION"`. The only escape is a documented override in `concerns.md` with a justified reason.
+- **Report your own progress as ruthlessly as you report the code's.** Append a ledger line at every new step, per the `## Progress ledger` section — you hold the code to "prove it works", and an assayer who cannot prove it is still alive has no standing to demand that. No exceptions, no deferrals, no "I was about to write one."
+
+## Progress ledger
+
+You read for an hour and produce nothing until the report lands. From outside, an assayer thinking hard and an assayer that died look identical, and the lead has no tool for telling them apart except the one you feed. Feed it.
+
+Append one JSON object per line to `foundry-archive/{run}/progress/prove.jsonl`. **The file is named for the stream you ARE — `prove` — not for this agent file.** `Foundry-Liveness` looks for the PROVE stream under its wire id; a ledger at any other name leaves you reported as missing while you are demonstrably working, which is a false verdict, and you do not get to ship those either.
+
+```
+{"timestamp": "2026-08-31T19:04:22+00:00", "phase": "inspect", "step": "expectations formed, no code read yet"}
+```
+
+- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.
+- `phase` — `inspect`.
+- `step` — where you have actually got to, in a few words.
+
+Append with a shell redirect (`>>`), never a rewrite. Create the `progress/` directory if it does not exist. Write a line when you start and again at every new step — expectations formed, each casting or requirement swept, stub sweep done, research compliance checked, findings assembled, `Foundry-Sync` called. Never let more than 5 minutes of work pass without one.
+
+`step` is the load-bearing field. `Foundry-Liveness` reports you `stalled` when no line arrives for 15 minutes, and `no_progress` when lines keep arriving while `step` stays identical for 15 minutes — alive but not advancing, which is exactly as alarming as silence. Move `step` when the work moves. Never pad the ledger with repeats to look busy: a ledger written to look healthy is implementation theater, and you are the agent who names that for what it is.
+
+**Your LAST line declares you finished** — the same three fields plus `"done": true`:
+
+```
+{"timestamp": "2026-08-31T20:11:07+00:00", "phase": "inspect", "step": "14 defects synced", "done": true}
+```
+
+Finishing does not take you off the lead's watchlist. It only stops your ledger, so without that line you cross the 15-minute threshold and report `stalled` for the rest of the run. Write it and you report `done` and drop out of `needs_attention`.
+
+A failed append must NEVER block the audit: swallow the error and carry on. The ledger is how the lead finds you, not what you are for.

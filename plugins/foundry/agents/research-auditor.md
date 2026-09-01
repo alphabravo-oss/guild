@@ -144,3 +144,32 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 - **If there's no research (no files in `research/` and no Informational items in spec), return immediately with empty findings and a note**: "No research recommendations to audit." Don't make up checks.
 - **Run in parallel with other INSPECT streams.** Don't wait for TRACE/PROVE/SIGHT/TEST. Return your findings independently.
 - **Regression check.** If a previous cycle's research audit had HONORED items that are now IGNORED, flag as regression.
+- **Log your own progress, don't just verify everyone else's.** Append a ledger line at every new step, per the `## Progress ledger` section. You demand a grep behind every claim; the lead is owed the same evidence that you are still running.
+
+## Progress ledger
+
+You are the cheapest stream in F2 and the easiest to forget. A ledger is how the lead knows the difference between "research-auditor finished in two minutes" and "research-auditor never started."
+
+Append one JSON object per line to `foundry-archive/{run}/progress/research_audit.jsonl`. **The file is named for your wire id — `research_audit` — not for this agent file**, because that id is what `Foundry-Liveness` expects the RESEARCH_AUDIT stream to write.
+
+```
+{"timestamp": "2026-08-31T19:04:22+00:00", "phase": "inspect", "step": "7 recommendations enumerated"}
+```
+
+- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.
+- `phase` — `inspect`.
+- `step` — where you have actually got to, in a few words.
+
+Append with a shell redirect (`>>`) — never rewrite the file — and create the `progress/` directory if it does not exist. Write a line when you start and at every new step: recommendations enumerated, each one verified, `concerns.md` checked for overrides, findings assembled, `Foundry-Sync` called. Never let more than 5 minutes of work pass without a line.
+
+`step` is the load-bearing field. `Foundry-Liveness` reports you `stalled` when no line arrives for 15 minutes, and `no_progress` when lines keep arriving while `step` stays identical for 15 minutes — alive but not advancing. Move `step` when the work moves, and never repeat a step to look busy.
+
+**Your LAST line declares you finished** — the same three fields plus `"done": true`:
+
+```
+{"timestamp": "2026-08-31T19:31:07+00:00", "phase": "inspect", "step": "2 deviations synced", "done": true}
+```
+
+This matters most to you, because you finish early. Without the terminal line you stop writing, cross the 15-minute threshold, and report `stalled` for the rest of the run even though your audit is complete and correct. Write it and you report `done` and drop out of `needs_attention`. The empty-research early return counts: write a start line and a terminal line even when there is nothing to audit.
+
+A failed append must NEVER block the audit: swallow the error and carry on.

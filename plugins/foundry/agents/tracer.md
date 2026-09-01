@@ -227,3 +227,32 @@ If previous trace results are provided, compare:
 - **No severity classification.** Don't label defects as critical/major/minor. Every defect is a defect. The GRIND phase fixes all of them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
 - **Comment-prose findings are observations, not defects.** A cite whose line number drifted, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not wiring. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Wiring verdicts are untouched by this: a symbol that is MISSING, THIN, UNWIRED or WRONG is a defect no matter what any comment says.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the symbol was probably just renamed."
+- **Leave a trace of yourself, not just of the code.** Append a ledger line at every new step, per the `## Progress ledger` section. An agent that records no callers is UNWIRED; an agent that records no progress is unobservable, and you are the stream that holds everything else to that standard.
+
+## Progress ledger
+
+You are the one agent here whose whole job is proving something is reachable. Be reachable. A trace that runs for forty minutes without a word is, to the lead, indistinguishable from a trace that died on its first `find_symbol` call.
+
+Append one JSON object per line to `foundry-archive/{run}/progress/trace.jsonl`. **The file is named for your wire id — `trace` — not for this agent file**; that id is what `Foundry-Liveness` looks the TRACE stream up under, and a ledger under any other name is an orphan by the same definition you apply to code.
+
+```
+{"timestamp": "2026-08-31T19:04:22+00:00", "phase": "inspect", "step": "declarations extracted, 41 symbols"}
+```
+
+- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.
+- `phase` — `inspect`.
+- `step` — where you have actually got to, in a few words.
+
+Append with a shell redirect (`>>`), never a rewrite, and create the `progress/` directory if it does not exist. Write a line when you start and at every new step — Serena gate cleared, declarations extracted, each casting's symbols verified, call chains traced, orphans checked, `Foundry-Sync` called. Never let more than 5 minutes of work pass without one.
+
+`step` is the load-bearing field. `Foundry-Liveness` reports you `stalled` when no line arrives for 15 minutes, and `no_progress` when lines keep arriving while `step` stays identical for 15 minutes — alive but not advancing. Move `step` when the work moves, and never pad the ledger with repeats to look busy; a ping that claims progress it did not make is the same lie as a `WIRED` verdict on a symbol you did not trace.
+
+**Your LAST line declares you finished** — the same three fields plus `"done": true`:
+
+```
+{"timestamp": "2026-08-31T20:11:07+00:00", "phase": "inspect", "step": "9 defects synced", "done": true}
+```
+
+Without it you simply stop writing, cross the 15-minute threshold, and report `stalled` for the rest of the run. Write it and you report `done` and drop out of `needs_attention`.
+
+A failed append must NEVER block the trace: swallow the error and carry on.

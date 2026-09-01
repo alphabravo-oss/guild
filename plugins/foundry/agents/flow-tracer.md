@@ -205,3 +205,30 @@ Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `C
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a prose count, a direction word, a stale enumeration — comment prose. It goes to the run's `observations.json` ledger, never the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. The symbol is authoritative, so a moved line alone produces no finding of any kind. Chain verdicts are untouched: a packet that is not `SOURCED` is still a defect.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no demotion into `orphan_warnings` or any other non-blocking channel.
 - **No sub-agents.** Verify in-process using your tools.
+- **Keep your own chain intact.** Append a ledger line at every new step, per the `## Progress ledger` section. A walk nobody can observe terminates prematurely for the lead exactly the way `CHAIN_BROKEN` does for the code.
+
+## Progress ledger
+
+A silent walk is an unobservable walk. Append one JSON object per line to `foundry-archive/{run}/progress/flow_trace.jsonl` — **named for your wire id, `flow_trace`, not for this agent file**, because that is the id `Foundry-Liveness` expects the FLOW_TRACE stream to write.
+
+```
+{"timestamp": "2026-08-31T19:04:22+00:00", "phase": "inspect", "step": "delta loaded, 12 packets"}
+```
+
+- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.
+- `phase` — `inspect`.
+- `step` — where you have actually got to, in a few words.
+
+Append with a shell redirect (`>>`), never a rewrite; create `progress/` if it is absent. One line when you start, one at every new step — Serena gate cleared, delta and graph loaded, each packet walked, orphans checked, `Foundry-Sync` called — and never more than 5 minutes of work between lines.
+
+`step` carries the signal. No line for 15 minutes reports `stalled`; lines with an unchanged `step` for 15 minutes report `no_progress` — alive, not advancing. Move `step` when the walk moves. Padding the ledger to look busy is a fabricated chain, and fabrication is the one thing this stream exists to catch.
+
+**Your LAST line declares you finished** — same three fields plus `"done": true`:
+
+```
+{"timestamp": "2026-08-31T20:11:07+00:00", "phase": "inspect", "step": "5 defects synced", "done": true}
+```
+
+Skip it and you cross the 15-minute threshold and report `stalled` for the rest of the run. Write it and you report `done` and drop out of `needs_attention`.
+
+A failed append never blocks the walk: swallow the error, carry on.

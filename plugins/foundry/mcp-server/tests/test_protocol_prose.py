@@ -52,6 +52,7 @@ from pathlib import Path
 import pytest
 
 from foundry_mcp.schemas import vocab
+from foundry_mcp.tools import foundry_spawn as fs
 
 # D-048: the vocabulary assertions below READ the real enum rather than
 # re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
@@ -821,12 +822,17 @@ def test_start_md_documents_the_liveness_tool() -> None:
         "that no protocol prose told the lead to call."
     )
     assert "`Foundry-Liveness`" in text, "start.md never names the Foundry-Liveness tool"
-    # The two-axis answer is the whole point: a bare heartbeat cannot
-    # distinguish these, and A-025 names the distinction explicitly.
-    for status in ("`progressing`", "`no_progress`", "`stalled`", "`unknown`"):
-        assert status in text, (
-            f"start.md's liveness guidance does not document the {status} "
-            f"status. The closed vocabulary is the lead's decision surface."
+    # D-052 / D-056: derived from the shipped enum, never a re-typed list. The
+    # four statuses this loop used to name as literals stayed green while the
+    # tool grew `done` and `no_ledger`, so the doc documented two-thirds of a
+    # closed vocabulary and the pin had nothing to say about it. Reading
+    # PROGRESS_STATUSES makes the next status fail here instead of drifting.
+    for status in sorted(fs.PROGRESS_STATUSES):
+        assert f"| `{status}` |" in text, (
+            f"start.md's liveness table has no row for the `{status}` status. "
+            f"The table is the lead's decision surface and the tool can return "
+            f"every member of PROGRESS_STATUSES ({sorted(fs.PROGRESS_STATUSES)}); "
+            f"an undocumented status is one the lead has no instruction for."
         )
     assert "needs_attention" in text, (
         "start.md does not mention the needs_attention array the tool returns."
@@ -1494,4 +1500,292 @@ def test_the_source_sweep_finds_the_known_call_sites() -> None:
         "the `source:` sweep matched no `temper` instruction. skills/temper/"
         "SKILL.md routes its findings that way, so a miss means the regex no "
         "longer matches the prose shape and the guard has gone vacuous."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 4 -- D-052/D-056 (liveness table lied), D-053/D-055 (write half)
+# ---------------------------------------------------------------------------
+
+# The two membership lines in start.md's liveness section. Split into a label
+# and a payload so the assertion reads the payload only: the label itself
+# contains the words `needs_attention`, and a regex over the whole line would
+# count that as a status being named.
+_IN_NEEDS_ATTENTION_LABEL = "- **In `needs_attention`:**"
+_NOT_IN_NEEDS_ATTENTION_LABEL = "- **Not in `needs_attention`:**"
+
+# A markdown code span holding a lowercase identifier -- the shape every
+# liveness status is written in.
+_CODE_SPAN_RE = re.compile(r"`([a-z_]+)`")
+
+
+def _statuses_named_after(label: str) -> set[str]:
+    """Return the liveness statuses named on the start.md line with ``label``.
+
+    Filtered to PROGRESS_STATUSES members so an unrelated code span in the
+    same sentence is not read as a status -- and so a MISSPELLED status is
+    dropped rather than accepted, which turns the set comparison red exactly
+    the way a wrong status should.
+    """
+    for line in _read(START_MD).splitlines():
+        if line.startswith(label):
+            payload = line[len(label) :]
+            return {
+                token
+                for token in _CODE_SPAN_RE.findall(payload)
+                if token in fs.PROGRESS_STATUSES
+            }
+    raise AssertionError(
+        f"start.md has no line beginning '{label}'. The needs_attention "
+        f"membership must be stated as an explicit list on its own line -- a "
+        f"prose RULE ('every agent whose status is not progressing') is what "
+        f"D-052/D-056 found already false, and no test can check a rule."
+    )
+
+
+def test_start_md_states_needs_attention_membership_as_the_tool_computes_it() -> None:
+    """D-052 / D-056: the doc asserted a rule the shipped tool contradicts.
+
+    start.md said the array holds "every agent whose status is not
+    `progressing`". ``foundry_liveness`` builds it from
+    NEEDS_ATTENTION_STATUSES, which excludes `done` as well -- deliberately,
+    because a finished agent on the watchlist is the silting-up the terminal
+    line exists to stop. Under the doc's rule every completed casting would
+    live in needs_attention forever.
+
+    Both directions are pinned by set equality against the real frozensets, so
+    a status added to either side of the enum, or moved between them, fails
+    here instead of quietly making the doc wrong again.
+    """
+    listed = _statuses_named_after(_IN_NEEDS_ATTENTION_LABEL)
+    assert listed == set(fs.NEEDS_ATTENTION_STATUSES), (
+        f"start.md lists {sorted(listed)} as the needs_attention members; the "
+        f"tool returns {sorted(fs.NEEDS_ATTENTION_STATUSES)}. The array is a "
+        f"call-to-action list -- a doc that overstates it trains the lead to "
+        f"ignore it, and one that understates it hides a wedged agent."
+    )
+
+    excluded = _statuses_named_after(_NOT_IN_NEEDS_ATTENTION_LABEL)
+    expected_excluded = set(fs.PROGRESS_STATUSES) - set(fs.NEEDS_ATTENTION_STATUSES)
+    assert excluded == expected_excluded, (
+        f"start.md names {sorted(excluded)} as excluded from needs_attention; "
+        f"the tool excludes {sorted(expected_excluded)}. Stating the exclusion "
+        f"explicitly is what makes `done` legible as a deliberate omission "
+        f"rather than an oversight the next reader 'fixes'."
+    )
+
+    # Belt and braces: the two lists must partition the vocabulary, so no
+    # status can be added to the table and then omitted from both lines.
+    assert listed | excluded == set(fs.PROGRESS_STATUSES), (
+        f"the two membership lines cover {sorted(listed | excluded)} but the "
+        f"vocabulary is {sorted(fs.PROGRESS_STATUSES)}. Every status must be "
+        f"on exactly one of the two lines."
+    )
+    assert not (listed & excluded), (
+        f"{sorted(listed & excluded)} appears on both membership lines."
+    )
+
+
+def test_start_md_liveness_table_explains_the_terminal_status() -> None:
+    """D-052: `done` is not just a sixth row, it is the row with a reason."""
+    text = _flat(START_MD)
+    assert f'`"{fs.TERMINAL_FIELD}": true`' in text, (
+        "start.md's liveness table documents the `done` status without naming "
+        "the ledger field that produces it, so a lead reading a `done` row "
+        "cannot tell what the agent actually did to earn it."
+    )
+    assert "outranks every age check" in text, (
+        "start.md does not state that `done` is terminal regardless of age. "
+        "That precedence is the whole fix: without it a lead reads a 3600s-old "
+        "`done` agent as a stalled one."
+    )
+
+
+# ---------------------------------------------------------------------------
+# FR-015 write half -- D-053 / D-055
+#
+# The ledger filename is the stream's WIRE id, never its agent filename:
+# `foundry_liveness` globs `progress/*.jsonl` and takes `path.stem` as the
+# agent, and `_missing_stream_records` synthesizes its no_ledger row keyed on
+# the same wire id. An assayer writing `assayer.jsonl` would therefore appear
+# TWICE -- once under a stem nothing expects, and once as a permanent
+# `no_ledger` for `prove`. That trap is why the mapping is asserted against
+# the roster rather than eyeballed.
+# ---------------------------------------------------------------------------
+
+STREAM_LEDGER_IDS = {
+    ASSAYER: "prove",
+    TRACER: "trace",
+    FLOW_TRACER: "flow_trace",
+    RESEARCH_AUDITOR: "research_audit",
+}
+
+
+def test_the_stream_ledger_ids_are_the_liveness_roster() -> None:
+    """Floor check: the mapping below must BE the roster the tool expects."""
+    assert set(STREAM_LEDGER_IDS.values()) == set(fs.INSPECT_STREAM_AGENT_IDS), (
+        f"this module maps the stream agents to {sorted(STREAM_LEDGER_IDS.values())}; "
+        f"foundry_spawn expects ledgers from {sorted(fs.INSPECT_STREAM_AGENT_IDS)}. "
+        f"A stream added to the roster needs the protocol in its agent file, and "
+        f"this mapping is what makes that omission fail."
+    )
+    assert set(STREAM_LEDGER_IDS) == set(STREAM_AGENTS), (
+        "the ledger mapping and the split parametrisation disagree about which "
+        "files are the four defect-filing streams."
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "wire_id"), sorted(STREAM_LEDGER_IDS.items()), ids=lambda v: getattr(v, "name", v)
+)
+def test_each_stream_agent_carries_the_progress_protocol(path: Path, wire_id: str) -> None:
+    """D-053 / D-055 / FR-015 / GI-001: the write half, baked into the files.
+
+    FR-015 requires spawned agents to append progress lines, "protocol
+    instruction in agent prompts". For a teammate that instruction rides on the
+    spawn prompt ``foundry_spawn`` builds. The four F2 streams are spawned from
+    the roster in commands/start.md instead, so nothing hands them anything --
+    and GRIND-3's ``no_ledger`` status only made the silence VISIBLE. This is
+    the delivery: the same durable placement GI-001 uses for the
+    observation/defect split, in the agent file itself, on a fresh checkout.
+    """
+    text = _read(path)
+    flat = _flat(path)
+
+    # Anchored on the HEADING, not the string: the Rules bullet below refers to
+    # "`## Progress ledger` section" in backticks, so a bare substring check
+    # stays green when the section itself is deleted and only the pointer
+    # survives -- verified by mutation, and exactly the vacuous-pin shape D-056
+    # filed against the old liveness test.
+    assert "\n## Progress ledger\n" in text, (
+        f"{_rel(path)} has no `## Progress ledger` section heading. Without the "
+        f"section this stream writes no ledger and is invisible to "
+        f"Foundry-Liveness for the whole of F2 -- the exact gap D-053/D-055 "
+        f"filed. (A Rules bullet POINTING at the section is not the section.)"
+    )
+    assert "`## Progress ledger` section" in text, (
+        f"{_rel(path)}'s `## Rules` block does not bind the ledger obligation. "
+        f"The Rules block is this file's normative register; a section nothing "
+        f"in Rules points at reads as background."
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "wire_id"), sorted(STREAM_LEDGER_IDS.items()), ids=lambda v: getattr(v, "name", v)
+)
+def test_stream_ledger_path_matches_what_liveness_reads(path: Path, wire_id: str) -> None:
+    """D-053: the path is a contract with `_read_progress_ledger`, not a hint.
+
+    Assembled from the shipped constants rather than typed out, so moving the
+    directory or renaming a stream turns this red instead of leaving four
+    agent files writing where nothing looks.
+    """
+    expected = f"foundry-archive/{{run}}/{fs.PROGRESS_DIR_NAME}/{wire_id}.jsonl"
+    text = _read(path)
+    assert expected in text, (
+        f"{_rel(path)} does not name its ledger as `{expected}`. "
+        f"foundry_liveness globs {fs.PROGRESS_DIR_NAME}/*.jsonl and takes the "
+        f"filename stem as the agent id, so a ledger written anywhere else -- "
+        f"or under this agent's FILE name instead of its wire id `{wire_id}` -- "
+        f"is reported under an id nothing expects while `{wire_id}` stays "
+        f"permanently `no_ledger`."
+    )
+    assert "not for this agent file" in _flat(path), (
+        f"{_rel(path)} does not warn that the ledger is named for the wire id "
+        f"`{wire_id}` rather than the agent file. That confusion produces two "
+        f"wrong rows in one call, and it is the likeliest way to get this wrong."
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "wire_id"), sorted(STREAM_LEDGER_IDS.items()), ids=lambda v: getattr(v, "name", v)
+)
+def test_stream_ledger_line_shape_matches_what_liveness_parses(
+    path: Path, wire_id: str
+) -> None:
+    """D-053 / D-055: the three fields and the terminal line, byte-for-byte.
+
+    ``_read_progress_ledger`` keeps a line only if it parses as a JSON object
+    with a ``timestamp`` ``_parse_progress_timestamp`` accepts; ``_step_key``
+    reads ``phase`` and ``step``; ``_is_terminal`` requires ``done`` to be
+    exactly ``true``. Prose that names different fields produces a ledger the
+    tool silently discards -- an agent dutifully writing lines and still
+    reported `unknown`.
+    """
+    text = _read(path)
+    flat = _flat(path)
+
+    for field in ('"timestamp"', '"phase"', '"step"'):
+        assert field in text, (
+            f"{_rel(path)}'s progress protocol never names the {field} field. "
+            f"A line missing it is dropped by _read_progress_ledger or read as "
+            f"an empty step key, so the agent writes and is still invisible."
+        )
+    assert '"phase": "inspect"' in text, (
+        f"{_rel(path)} does not pin `phase` to `inspect`. The synthesized "
+        f"no_ledger row for this stream reports phase `inspect`; a stream that "
+        f"writes something else makes the two rows disagree about one agent."
+    )
+    assert f'"{fs.TERMINAL_FIELD}": true' in text, (
+        f"{_rel(path)} never tells this stream to write the terminal "
+        f'`"{fs.TERMINAL_FIELD}": true` line. Without it the stream finishes, '
+        f"stops writing, crosses the threshold and reports `{fs.STATUS_STALLED}` "
+        f"for the rest of the run -- refilling needs_attention with completed "
+        f"work, which is D-022 all over again."
+    )
+
+    cadence_min = fs.PROGRESS_CADENCE_SECONDS // 60
+    stall_min = fs.STALL_THRESHOLD_SECONDS // 60
+    assert f"{cadence_min} minutes" in flat, (
+        f"{_rel(path)} does not state the {cadence_min}-minute cadence. The "
+        f"number is derived from real spawn timings (FR-025); prose that omits "
+        f"it leaves the agent guessing how often 'periodic' is."
+    )
+    assert f"{stall_min} minutes" in flat, (
+        f"{_rel(path)} does not state the {stall_min}-minute stall threshold, "
+        f"so the agent cannot tell what its silence will be read as."
+    )
+    for status in (fs.STATUS_STALLED, fs.STATUS_NO_PROGRESS, fs.STATUS_DONE):
+        assert f"`{status}`" in text, (
+            f"{_rel(path)} does not name the `{status}` status its ledger "
+            f"produces. The consequence is what makes the protocol stick."
+        )
+    assert ">>" in text, (
+        f"{_rel(path)} does not name an append (`>>`) as the write mechanism. "
+        f"research-auditor.md is granted Read/Grep/Glob/Bash and no Write tool, "
+        f"so a shell append is the only mechanism all four streams share -- and "
+        f"a rewrite would truncate the history the lead reads."
+    )
+
+
+def test_start_md_f2_roster_names_the_stream_progress_ledgers() -> None:
+    """D-053 / GI-001: the roster half of the durable placement.
+
+    GI-001's shape is "the four agent files PLUS start.md's F2 roster". The
+    roster is where the lead learns it has nothing to paste -- without that,
+    the reactive `no_ledger` channel reads like the intended mechanism rather
+    than the stopgap it is.
+    """
+    text = _read(START_MD)
+    flat = _flat(START_MD)
+
+    for wire_id in sorted(fs.INSPECT_STREAM_AGENT_IDS):
+        assert f"{wire_id}.jsonl" in text, (
+            f"start.md's F2 roster does not name `{wire_id}.jsonl`. The lead "
+            f"has no way to know which ledger belongs to which stream, and the "
+            f"wire-id-not-filename rule is invisible."
+        )
+    assert f"foundry-archive/{{run}}/{fs.PROGRESS_DIR_NAME}/" in text, (
+        "start.md's F2 roster does not name the progress directory the streams "
+        "write to."
+    )
+    assert "`## Progress ledger` section of each of the four agent files" in flat, (
+        "start.md's F2 roster does not say the instruction lives in the agent "
+        "files. That sentence is what distinguishes a baked-in protocol "
+        "(GI-001, AC-003) from a per-run injection the lead has to perform."
+    )
+    assert "no per-run configuration and nothing for you to paste" in flat, (
+        "start.md's F2 roster does not state that the progress protocol needs "
+        "no per-run configuration, so a lead may re-introduce the injection "
+        "step the durable placement exists to retire."
     )
