@@ -169,6 +169,16 @@ def _current_cycle(fdir: Path) -> int:
 
     Returns 0 for a missing, absent, or malformed value so every reader gets a
     usable integer rather than having to guard the state file's shape.
+
+    "Every reader" is enforced, not aspirational: no other function in this
+    package may read ``state.json["cycle"]`` directly. Four once did (D-059),
+    and a raw read hands on whatever the file holds — a str/None/list/dict
+    raised an unhandled TypeError out of Foundry-Next, the mandatory handshake
+    before every phase transition and gate, while -3 and 2.5 propagated
+    silently into responses and onto every row of a synthesized verdict.
+    ``test_orchestrator_gates.test_every_state_cycle_read_goes_through_a_
+    guarded_reader`` derives the reader set from the source and fails on the
+    next one added.
     """
     value = _load_json(fdir / "state.json").get("cycle", 0)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -3221,8 +3231,7 @@ def foundry_next_action(
     # Context budget tracking
     fdir_cb = get_run_dir(project_root)
     if fdir_cb and fdir_cb.exists():
-        state_cb = _load_json(fdir_cb / "state.json")
-        cycle = state_cb.get("cycle", 0)
+        cycle = _current_cycle(fdir_cb)
         # Estimate context usage based on cycle count
         if cycle >= 3:
             usage = "critical"
@@ -3410,7 +3419,7 @@ def _format_status_display(project_root: str) -> str:
     phase = state.get("phase", "F0")
     phase_times = state.get("phase_times", {})
     started = state.get("started_at", "")
-    cycle = state.get("cycle", 0)
+    cycle = _current_cycle(fdir)
 
     elapsed = ""
     if started:
@@ -3811,7 +3820,7 @@ def _compute_next_action(project_root: str) -> dict:
         # requirement ID BEFORE emitting the auto-pass so the two gates agree.
         if _prove_is_clean(fdir, project_root):
             _synthesize_clean_prove_verdicts(
-                fdir, project_root, cycle=state.get("cycle", 0)
+                fdir, project_root, cycle=_current_cycle(fdir)
             )
 
         temper = state.get("temper", False)
@@ -4081,7 +4090,7 @@ def foundry_get_context(
         "initialized": True,
         "state": {
             "phase": state.get("phase", "unknown"),
-            "cycle": state.get("cycle", 0),
+            "cycle": _current_cycle(fdir),
             "spec_path": state.get("spec_path", ""),
             "temper": state.get("temper", False),
             "nyquist": state.get("nyquist", False),

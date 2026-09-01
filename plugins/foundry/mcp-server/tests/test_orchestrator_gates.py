@@ -54,6 +54,7 @@ no test depends on the ambient tmux session or ~/.claude/teams state.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
@@ -2028,3 +2029,240 @@ def test_liveness_registration_reaches_the_handler_through_dispatch(run_env, tmp
         assert [a["agent"] for a in one["agents"]] == ["casting-9"]
     finally:
         foundry_server._project_root = previous_root
+
+
+# --------------------------------------------------------------------------- #
+# D-059 (FR-005 / ST-001) — the cycle reader is bound to EVERY reader
+#
+# ``_current_cycle`` was added by this effort and its docstring states the
+# contract: it returns 0 for a missing, absent, or malformed value "so every
+# reader gets a usable integer rather than having to guard the state file's
+# shape". Four readers then bypassed it and read ``state.json["cycle"]`` raw,
+# with two distinct consequences: an unhandled TypeError out of Foundry-Next
+# (the mandatory pre-transition handshake, so a crash there wedges the run with
+# no protocol recovery path) and Foundry-Context; and, for values that compare
+# without raising, silent propagation of -3 / 2.5 into the response AND into
+# the ``cycle`` stamped on every row of a synthesized verdict record.
+#
+# The instances are fixed below the guard. The guard itself is what closes the
+# CLASS: this run has now hit "a correct mechanism bound to some of its members
+# rather than all" five times (D-037/D-043 _done_preconditions, D-040/D-046 the
+# cite prose, D-048 the vocabulary, D-056 the liveness tuple, and this). A
+# hand-maintained list of call sites is the same shape of defect one level up,
+# so membership is DERIVED from the source instead.
+# --------------------------------------------------------------------------- #
+
+# The only sanctioned readers of ``state.json["cycle"]``. Both are total.
+# ``foundry_orchestrator._current_cycle`` normalises to 0.
+# ``foundry._server_cycle`` returns None for a malformed value so its callers
+# can take ST-001's documented legacy-archive fallback; it is a deliberate
+# second copy because the orchestrator imports that module and reading back
+# would close a cycle in the import graph.
+GUARDED_CYCLE_READERS = frozenset({"_current_cycle", "_server_cycle"})  # 2 readers
+
+
+def _mentions_state_json(node: ast.AST) -> bool:
+    """True when the expression subtree names the state file.
+
+    Keyed on the ``"state.json"`` literal rather than on ``_load_json`` so a
+    reader that reaches the file by some other route -- ``json.loads(
+    (fdir / "state.json").read_text())`` -- is caught by the same rule.
+    """
+    return any(
+        isinstance(n, ast.Constant) and n.value == "state.json" for n in ast.walk(node)
+    )
+
+
+def _raw_state_cycle_reads(path: Path) -> list[str]:
+    """Every read of the state file's ``cycle`` outside a guarded reader.
+
+    Parsed from the file on disk rather than from a list maintained beside it,
+    so the guard cannot be satisfied by updating a copy and forgetting a call
+    site -- and so a NEW module that starts reading the counter is covered the
+    day it is written, without anyone remembering to enrol it.
+
+    Only ``Load`` subscripts count: ``state["cycle"] = _current_cycle(fdir) + 1``
+    is the boundary increment writing the counter, not a reader bypassing it.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if fn.name in GUARDED_CYCLE_READERS:
+            continue
+        state_names = {
+            target.id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign) and _mentions_state_json(node.value)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for node in ast.walk(fn):
+            base: ast.AST | None = None
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "cycle"
+            ):
+                base = node.func.value
+            elif (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.ctx, ast.Load)
+                and isinstance(node.slice, ast.Constant)
+                and node.slice.value == "cycle"
+            ):
+                base = node.value
+            if base is None:
+                continue
+            if (isinstance(base, ast.Name) and base.id in state_names) or (
+                _mentions_state_json(base)
+            ):
+                offenders.append(f"{path.name}::{fn.name}:{node.lineno}")
+    return sorted(set(offenders))
+
+
+def test_every_state_cycle_read_goes_through_a_guarded_reader():
+    """D-059's root cause, asserted as a property of the whole tools package.
+
+    Before the fix this reported exactly the four sites PROVE named:
+    foundry_next_action:3225, _format_status_display:3413,
+    _compute_next_action:3814, foundry_get_context:4084.
+
+    Scope is the tools package because that is the MCP request path, where a
+    raise wedges a live run. The two offline scripts that also read the
+    counter are deliberately outside it, not overlooked: scripts/measure-run.py
+    (_read_state_cycle_count) and scripts/migrate-archive.py (_as_cycle) each
+    already carry their OWN total reader with the same bool/int/negative guard,
+    and neither runs inside a tool call. If either ever grows a raw read, it
+    needs its own guard next to it -- widening this one across module
+    boundaries would mean allow-listing three more reader names here and
+    coupling this casting's test to files it does not own.
+    """
+    tools_dir = Path(fo.__file__).resolve().parent
+    modules = sorted(p for p in tools_dir.glob("*.py") if p.name != "__init__.py")
+    assert modules, f"no tool modules discovered under {tools_dir}"
+
+    offenders = sorted(o for p in modules for o in _raw_state_cycle_reads(p))
+    assert not offenders, (
+        f"{offenders} read state.json's 'cycle' directly instead of through a "
+        f"guarded reader ({sorted(GUARDED_CYCLE_READERS)}). A raw read hands on "
+        f"whatever the state file holds: a str/None/list/dict crashes the very "
+        f"next ordered comparison, and -3 or 2.5 propagates silently into "
+        f"responses and into written verdict records. Route the read through "
+        f"_current_cycle -- do not shrink this assertion or add to the "
+        f"allow-list, which exists for TOTAL readers only."
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_cycle",
+    ["seven", None, [], {"a": 1}, -3, 2.5, True],
+    ids=["str", "null", "list", "dict", "negative", "float", "bool"],
+)
+def test_malformed_state_cycle_leaves_next_and_context_answering(run_env, bad_cycle):
+    """AC-008 / FR-005 on the defect path and its nearest neighbour.
+
+    Foundry-Next is the mandatory handshake before EVERY phase transition and
+    EVERY gate, and commands/start.md makes it the universal loop step, so an
+    unhandled raise there wedges the run with no recovery path through the
+    protocol. Driven over _DISPATCH because that is the surface the lead
+    actually calls, and because jsonschema validates the ARGUMENTS -- nothing
+    validates the state file the handler then reads.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=bad_cycle)
+    _write_manifest_with_castings(fdir, ["src/api/handler.py"], no_ui=True)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+
+        nxt = foundry_server._DISPATCH["Foundry-Next"]({})
+        ctx = foundry_server._DISPATCH["Foundry-Context"]({})
+    finally:
+        foundry_server._project_root = previous_root
+
+    # Answers rather than raising...
+    assert nxt["context_budget"]["cycles_completed"] == 0
+    assert ctx["state"]["cycle"] == 0
+    # ...and normalises rather than passing the malformed value through.
+    assert isinstance(ctx["state"]["cycle"], int)
+    assert not isinstance(ctx["state"]["cycle"], bool)
+    # The status display renders the normalised counter, not the raw value.
+    assert "Cycle: 0" in fo._format_status_display(project_root)
+
+
+def test_valid_state_cycle_still_reaches_next_and_context_unchanged(run_env):
+    """NFR-002: the fix normalises malformed values, it does not flatten real
+    ones. A run whose counter genuinely reads 4 still reports 4."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=4)
+    _write_manifest_with_castings(fdir, ["src/api/handler.py"], no_ui=True)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        nxt = foundry_server._DISPATCH["Foundry-Next"]({})
+        ctx = foundry_server._DISPATCH["Foundry-Context"]({})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert nxt["context_budget"]["cycles_completed"] == 4
+    assert nxt["context_budget"]["estimated_usage"] == "critical"
+    assert ctx["state"]["cycle"] == 4
+    assert "Cycle: 4" in fo._format_status_display(project_root)
+
+
+# --- the ADJACENT path: a written record, not a response field -------------- #
+
+
+@pytest.mark.parametrize("bad_cycle", ["seven", -3, 2.5], ids=["str", "negative", "float"])
+def test_malformed_state_cycle_never_reaches_synthesized_verdicts(run_env, bad_cycle):
+    """D-059 adjacent-path test (AC-013).
+
+    The defect was found on Foundry-Next's context-budget path, where a bad
+    value lands in a response field. This drives a DIFFERENT caller and a
+    DIFFERENT transition: _compute_next_action's F4 clean-PROVE auto-pass,
+    which passes the same read as ``cycle=`` into
+    ``_synthesize_clean_prove_verdicts`` -- and that stamps it onto EVERY
+    synthesized row of verdicts.json. Here the consequence is persisted data
+    that outlives the call, and 'seven' never raises on this path because
+    nothing compares it; it is simply written.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "US-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False, cycle=bad_cycle)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "transition_to_done"
+
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))["requirements"]
+    assert {r["id"] for r in rows} == set(ids)
+    for row in rows:
+        assert row["cycle"] == 0, f"{row['id']} carries the malformed state cycle"
+        assert isinstance(row["cycle"], int) and not isinstance(row["cycle"], bool)
+
+
+def test_valid_state_cycle_is_stamped_on_synthesized_verdicts(run_env):
+    """The same adjacent path with a real counter: the value is carried, not
+    zeroed. Without this the test above would pass on a hardcoded 0."""
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False, cycle=5)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))["requirements"]
+    assert [r["cycle"] for r in rows] == [5, 5]
