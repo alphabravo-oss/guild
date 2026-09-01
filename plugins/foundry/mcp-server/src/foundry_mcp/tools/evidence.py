@@ -945,7 +945,13 @@ def verify_evidence(
             'failure_detail': str | None,
             'provenance_records': list[dict],
             'manifest_updates': dict,
+            'spec_path': str,
+            'spec_format_version': 'vN.N',
         }``
+
+    ``spec_path`` / ``spec_format_version`` report the spec this call actually
+    read and the version it parsed out of it, on BOTH branches — the audit
+    trail for the routing decision.
 
     On the v2.0 skip path ``manifest_updates['stream_skips']`` carries the
     appended record so callers (e.g. ``foundry_accept_casting``) can audit
@@ -977,6 +983,8 @@ def verify_evidence(
             "failure_detail": None,
             "provenance_records": [],
             "manifest_updates": {"stream_skips": [skip_record]},
+            "spec_path": str(effective_spec_path),
+            "spec_format_version": f"v{spec_version[0]}.{spec_version[1]}",
         }
 
     # v2.1+ engagement path delegates to the Plan 04-03 body, then persists
@@ -989,6 +997,13 @@ def verify_evidence(
     )
     for record in result.get("provenance_records", []):
         _append_to_manifest_evidence_provenance(project_root, casting_id, record)
+    # Report WHICH spec drove the routing decision on both branches. A caller
+    # that hands over the wrong path gets a silent v2.0 downgrade otherwise —
+    # `_read_spec_format_version` defaults to (2, 0) on a missing file — so
+    # the effective path is the only evidence distinguishing "this run is
+    # legitimately v2.0" from "the caller pointed at a spec that isn't there".
+    result["spec_path"] = str(effective_spec_path)
+    result["spec_format_version"] = f"v{spec_version[0]}.{spec_version[1]}"
     return result
 
 

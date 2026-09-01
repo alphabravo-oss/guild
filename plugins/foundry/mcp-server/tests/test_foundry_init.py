@@ -182,3 +182,101 @@ def test_resume_tolerates_missing_target_url(tmp_path):
     resumed = foundry_init(resume=run_name, project_root=str(tmp_path))
     assert resumed.get("resumed") is True
     assert resumed.get("run_name") == run_name
+
+
+# ===========================================================================
+# Casting 3 / FR-001 / FR-019 / AC-004 — run artifacts seeded at init.
+#
+#   AC-004a  a fresh run carries observations.json, seeded empty, alongside
+#            defects.json.
+#   AC-004b  a fresh run carries directives.md holding the observation/defect
+#            ruling as a default F0 directive.
+#   AC-004c  the seeded directive parses — it is written in the exact grammar
+#            `_read_directives` reads, at NORMAL priority. This is the test
+#            that fails if the seeding drifts out of the grammar, which would
+#            leave the ruling present on disk but invisible to the lead.
+# ===========================================================================
+
+
+def test_init_seeds_an_empty_observations_ledger(tmp_path):
+    """AC-004a / FR-001 — the typed non-blocking channel exists from the first
+    moment of the run, so a stream never has to decide whether it is there."""
+    result = foundry_init(project_root=str(tmp_path))
+    path = Path(result["foundry_dir"]) / "observations.json"
+    assert path.is_file(), "observations.json not seeded at init"
+    assert "observations.json" in result["files_created"]
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+    assert ledger == {"observations": [], "tripwire": []}
+
+
+def test_init_seeds_the_f0_observation_defect_ruling(tmp_path):
+    """AC-004b — Foundry-Init seeds the observation/defect ruling as a default
+    F0 directive, with no per-run configuration required."""
+    result = foundry_init(project_root=str(tmp_path))
+    path = Path(result["foundry_dir"]) / "directives.md"
+    assert path.is_file(), "directives.md not seeded at init"
+    assert "directives.md" in result["files_created"]
+    text = path.read_text(encoding="utf-8")
+    assert "OBSERVATION/DEFECT SPLIT" in text
+    assert "observations.json" in text
+    assert "never-demote denylist is absolute" in text
+    assert "audit" in text and "tripwire" in text
+
+
+def test_seeded_directive_parses_as_a_normal_directive(tmp_path):
+    """AC-004c — the seeded body is written in the grammar `_read_directives`
+    parses (a `### [DIRECTIVE] {iso}` header, a blank line, then the body).
+
+    Priority matters: the ruling is seeded NORMAL, which is why the
+    Foundry-Next renderer must show normal directives alongside urgent ones.
+    A directive written in any other shape parses as no directive at all."""
+    from foundry_mcp.tools.foundry_orchestrator import _read_directives
+
+    result = foundry_init(project_root=str(tmp_path))
+    set_active_run(result["run_name"])
+
+    directives = _read_directives(str(tmp_path))
+    assert directives["has_directives"] is True
+    assert directives["urgent"] == []
+    assert len(directives["normal"]) == 1
+    assert "OBSERVATION/DEFECT SPLIT" in directives["normal"][0]
+
+
+def test_seeded_directive_survives_an_urgent_injection(tmp_path):
+    """The seeded ruling must still PARSE as a standing normal directive after
+    an urgent one is injected — both lists are populated independently.
+
+    (Whether the Foundry-Next renderer then DISPLAYS both is the other half of
+    FR-019 and lives in foundry_orchestrator.py; this test pins the parse so
+    that half has something correct to render.)"""
+    from foundry_mcp.tools.foundry_orchestrator import (
+        _read_directives,
+        foundry_inject_directive,
+    )
+
+    result = foundry_init(project_root=str(tmp_path))
+    set_active_run(result["run_name"])
+    foundry_inject_directive(
+        directive="Stop and re-read the spec.",
+        priority="urgent",
+        project_root=str(tmp_path),
+    )
+
+    directives = _read_directives(str(tmp_path))
+    assert len(directives["urgent"]) == 1
+    assert len(directives["normal"]) == 1, (
+        "the seeded F0 ruling was lost when an urgent directive arrived"
+    )
+    assert "OBSERVATION/DEFECT SPLIT" in directives["normal"][0]
+
+
+def test_seeded_artifacts_are_fresh_per_run(tmp_path):
+    """Every run gets its own ledger and its own seeded ruling — observations
+    are persisted PER RUN (FR-023)."""
+    first = foundry_init(project_root=str(tmp_path))
+    second = foundry_init(project_root=str(tmp_path))
+    assert first["run_name"] != second["run_name"]
+    for result in (first, second):
+        fdir = Path(result["foundry_dir"])
+        assert json.loads((fdir / "observations.json").read_text())["observations"] == []
+        assert "OBSERVATION/DEFECT SPLIT" in (fdir / "directives.md").read_text()

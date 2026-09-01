@@ -51,6 +51,9 @@ RED-or-SKIP discipline:
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 # Plan 04-02 ships the module skeleton. Until then, the entire module SKIPs
@@ -557,3 +560,253 @@ def test_f09_subcheck_7k_catches_missing_evid01(run_accept_casting_with_evidence
     assert result["verdict"] == "rejected"
     f09 = result["manifest"].get("f09_diagnostics", "")
     assert "7k" in f09 or "EVID-01" in f09
+
+
+# ===========================================================================
+# Casting 3 / FR-017 / AC-023 / OT-011 — the evidence gate resolves the RUN's
+# actual spec path.
+#
+# `foundry_accept_casting` passed a hardcoded `<project_root>/specs/spec.md`
+# into `verify_evidence`. Most runs have no such file, and
+# `_read_spec_format_version` defaults to v2.0 on a miss — so every v2.1 run
+# was silently downgraded to the stream-skip branch and no evidence was ever
+# re-executed. The run's real spec was already resolved 110 lines earlier in
+# the same function (`foundry_spec_hash`) and thrown away.
+#
+# The decisive test builds a repo where the two paths DISAGREE: the stale
+# `specs/spec.md` is v2.0 while the run's actual spec is v2.1. Reading the
+# wrong one skips; reading the right one engages.
+# ===========================================================================
+
+# The leading `[replay] cat replay.txt` anchor carries the cmd-first-token
+# into the first 3 body lines so `_is_stub_pattern_no_cmd_in_header` does not
+# fire on the synthetic replay. A real pytest log carries its own token via
+# "test session starts"; the same anchor convention is used by conftest's
+# `use_cat_replay` harness.
+_EVIDENCE_BODY = (
+    "[replay] cat replay.txt\n"
+    "collected 3 items\n"
+    "\n"
+    "tests/test_gate.py::test_accepts_symbol_cite PASSED\n"
+    "tests/test_gate.py::test_rejects_unresolvable_symbol PASSED\n"
+    "tests/test_gate.py::test_ignores_stale_line_hint PASSED\n"
+    "\n"
+    "3 passed\n"
+)
+
+
+def _run_git(args: list[str], cwd: Path) -> None:
+    subprocess.run(
+        [
+            "git",
+            "-c", "user.name=Foundry Test",
+            "-c", "user.email=test@example.invalid",
+            "-c", "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _build_divergent_spec_repo(tmp_path: Path) -> dict:
+    """A repo whose stale ``specs/spec.md`` is v2.0 and whose RUN spec is v2.1.
+
+    Returns the arguments ``foundry_accept_casting`` needs, plus the two spec
+    paths so a test can assert which one was read.
+    """
+    from foundry_mcp.tools.foundry import foundry_init
+    from foundry_mcp.tools.foundry_handoff import _hash_str, foundry_spec_hash
+    from foundry_mcp.tools.foundry_state import set_active_run
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _run_git(["init", "-q", "-b", "main"], project_root)
+
+    # The STALE path the gate used to hardcode. Deliberately v2.0: if the gate
+    # reads this one, evidence verification skips and the test fails.
+    stale_spec = project_root / "specs" / "spec.md"
+    stale_spec.parent.mkdir(parents=True, exist_ok=True)
+    stale_spec.write_text(
+        "---\nspec_format_version: v2.0\n---\n# Stale spec\n", encoding="utf-8"
+    )
+
+    (project_root / "castings").mkdir(parents=True, exist_ok=True)
+    (project_root / "castings" / "manifest.json").write_text(
+        '{"castings": [{"id": "1", "evidence_provenance": []}]}\n', encoding="utf-8"
+    )
+
+    # A real source file so the completion report's path#Symbol cite resolves.
+    (project_root / "src").mkdir()
+    (project_root / "src" / "gate.py").write_text(
+        "def accept_casting():\n    return True\n", encoding="utf-8"
+    )
+
+    # Committed evidence: a deterministic cat-replay so re-execution
+    # byte-matches the committed log. The comparator matches the FULL
+    # committed file (header lines included), so replay.txt must hold the
+    # whole log rather than just its body — same discipline as conftest's
+    # ``use_cat_replay`` harness.
+    evidence_log = (
+        "# evidence-cmd: cat replay.txt\n"
+        "# evidence-for: AC-023\n"
+        "\n" + _EVIDENCE_BODY
+    )
+    (project_root / "replay.txt").write_text(evidence_log, encoding="utf-8")
+    evidence_dir = project_root / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "casting-1-gate.log").write_text(evidence_log, encoding="utf-8")
+
+    _run_git(["add", "-A"], project_root)
+    _run_git(["commit", "-q", "-m", "casting 1"], project_root)
+    casting_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project_root, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    # The RUN's actual spec — v2.1 — written where foundry_spec_hash looks.
+    init = foundry_init(project_root=str(project_root))
+    fdir = Path(init["foundry_dir"])
+    set_active_run(init["run_name"])
+    run_spec = fdir / "spec.md"
+    run_spec.write_text(
+        "---\nspec_format_version: v2.1\n---\n"
+        "# Run spec\n\nAC-023 the gate reads the run's spec.\n",
+        encoding="utf-8",
+    )
+
+    prompt_text = (
+        "<spec_requirements>\n"
+        "- **AC-023**: evidence runs against the run's actual spec\n"
+        "</spec_requirements>\n"
+    )
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        prompt_text, encoding="utf-8"
+    )
+
+    return {
+        "project_root": project_root,
+        "casting_commit": casting_commit,
+        "spec_hash": foundry_spec_hash(project_root=str(project_root))["spec_hash"],
+        "prompt_hash": _hash_str(prompt_text),
+        "run_spec": run_spec,
+        "stale_spec": stale_spec,
+    }
+
+
+def test_accept_casting_resolves_the_runs_actual_spec_path(tmp_path):
+    """AC-023 / OT-011 — Foundry-Accept-Casting with a casting commit
+    re-executes evidence in a worktree against the RUN's spec.
+
+    The repo's `specs/spec.md` is v2.0 and the run's spec is v2.1. Engagement
+    (verdict "accepted", not "skipped") is only possible if the gate read the
+    run's spec — so this test fails on the hardcoded path it replaces."""
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report="AC-023 implemented at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+    finally:
+        clear_active_run()
+
+    # The spec actually read is the run's, NOT <project_root>/specs/spec.md.
+    assert result["evidence_spec_path"] == str(env["run_spec"])
+    assert result["evidence_spec_path"] != str(env["stale_spec"])
+
+    # Engaged rather than skipped — the observable consequence of reading the
+    # right spec, and the whole point of FR-017.
+    assert result["evidence_verdict"] == "accepted", result
+    assert len(result["evidence_provenance"]) == 1
+    assert result["evidence_provenance"][0]["verdict"] == "accepted"
+    assert result["ok"] is True, result["warning"]
+
+
+def test_accept_casting_without_a_commit_reports_no_spec_path(tmp_path):
+    """No-regression — the casting_commit=None backwards-compat shim still
+    bypasses evidence verification entirely."""
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report="AC-023 implemented at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+        )
+    finally:
+        clear_active_run()
+
+    assert result["evidence_verdict"] is None
+    assert result["evidence_spec_path"] is None
+    assert result["ok"] is True, result["warning"]
+
+
+def test_verify_evidence_reports_which_spec_drove_the_routing(tmp_path):
+    """Both branches name the spec they read and the version they parsed — the
+    only signal distinguishing "legitimately v2.0" from "the caller pointed at
+    a spec that isn't there"."""
+    from foundry_mcp.tools.evidence import verify_evidence
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    clear_active_run()
+
+    skipped = verify_evidence(
+        casting_id=1,
+        project_root=env["project_root"],
+        casting_commit=env["casting_commit"],
+        spec_path=env["stale_spec"],
+        run_dir=tmp_path / "run-skip",
+    )
+    assert skipped["verdict"] == "skipped"
+    assert skipped["spec_path"] == str(env["stale_spec"])
+    assert skipped["spec_format_version"] == "v2.0"
+
+    run_dir = tmp_path / "run-engage"
+    run_dir.mkdir()
+    engaged = verify_evidence(
+        casting_id=1,
+        project_root=env["project_root"],
+        casting_commit=env["casting_commit"],
+        spec_path=env["run_spec"],
+        run_dir=run_dir,
+    )
+    assert engaged["verdict"] == "accepted", engaged
+    assert engaged["spec_path"] == str(env["run_spec"])
+    assert engaged["spec_format_version"] == "v2.1"
+
+
+def test_missing_spec_path_is_visible_as_a_v20_downgrade(tmp_path):
+    """The failure mode FR-017 fixes, pinned: a spec path that does not exist
+    parses as v2.0 and skips. Reporting the path is what makes that
+    diagnosable instead of silent."""
+    from foundry_mcp.tools.evidence import verify_evidence
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    clear_active_run()
+    absent = env["project_root"] / "specs" / "does-not-exist.md"
+
+    result = verify_evidence(
+        casting_id=1,
+        project_root=env["project_root"],
+        casting_commit=env["casting_commit"],
+        spec_path=absent,
+        run_dir=tmp_path / "run-absent",
+    )
+    assert result["verdict"] == "skipped"
+    assert result["spec_format_version"] == "v2.0"
+    assert result["spec_path"] == str(absent)

@@ -1,0 +1,13 @@
+# evidence-cmd: grep -c 'observations.json' plugins/foundry/agents/assayer.md plugins/foundry/agents/tracer.md plugins/foundry/agents/flow-tracer.md plugins/foundry/agents/research-auditor.md plugins/foundry/commands/start.md | sort; grep -c 'never-demote denylist is absolute' plugins/foundry/agents/assayer.md plugins/foundry/agents/tracer.md plugins/foundry/agents/flow-tracer.md plugins/foundry/agents/research-auditor.md plugins/foundry/commands/start.md | sort
+# evidence-for: AC-003
+
+plugins/foundry/agents/assayer.md:1
+plugins/foundry/agents/flow-tracer.md:1
+plugins/foundry/agents/research-auditor.md:1
+plugins/foundry/agents/tracer.md:1
+plugins/foundry/commands/start.md:1
+plugins/foundry/agents/assayer.md:1
+plugins/foundry/agents/flow-tracer.md:1
+plugins/foundry/agents/research-auditor.md:1
+plugins/foundry/agents/tracer.md:1
+plugins/foundry/commands/start.md:1

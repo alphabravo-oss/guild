@@ -26,6 +26,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
 from foundry_mcp.tools.foundry_state import get_run_dir
 
 
@@ -246,13 +247,21 @@ def foundry_accept_casting(
         On success:
             {"ok": True, "casting_id": N, "acceptance_criteria": [...],
              "must_verify": [...], "warning": str | None,
+             "unresolved_symbol_cites": [],
              "evidence_verdict": "accepted" | "skipped",
-             "evidence_provenance": [...]}
+             "evidence_provenance": [...],
+             "evidence_spec_path": str | None}
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
         On evidence rejection:
             {"ok": False, "failure_token": "EVIDENCE_*", "failure_detail": "...",
              "evidence_provenance": [...]}
+
+    ``evidence_spec_path`` names the spec the evidence run actually read —
+    resolved from the RUN (``foundry_spec_hash``), never re-derived from a
+    fixed ``<project_root>/specs/spec.md`` guess. It is the observable proof
+    that a v2.1 run engaged evidence re-execution rather than silently routing
+    through the v2.0 stream-skip branch.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -316,20 +325,20 @@ def foundry_accept_casting(
     # Requirement-ID citation check.
     #
     # Parse every tagged requirement ID from the casting's <spec_requirements>
-    # block. For each ID, verify the completion report contains a file:line
-    # citation within 300 chars of the ID mention. Missing citations mean
-    # the teammate did not (or cannot) prove that requirement was implemented —
-    # mechanical proof-of-coverage, prevents drift between what the spec asked
-    # for and what the teammate claims was built.
+    # block. For each ID, verify the completion report contains a citation
+    # within 300 chars of the ID mention. Missing citations mean the teammate
+    # did not (or cannot) prove that requirement was implemented — mechanical
+    # proof-of-coverage, prevents drift between what the spec asked for and
+    # what the teammate claims was built.
+    #
+    # FR-004 / AC-005: BOTH cite forms count — the durable `path#Symbol` form
+    # and the legacy `file:line` form. The grammar lives in
+    # `citation.CITATION_PATTERN` so the gate and the resolution guard below
+    # cannot drift apart; widening it here never narrows what was accepted
+    # before, because the file:line alternative is carried through unchanged.
     req_id_pattern = r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b"
     casting_req_ids = sorted(set(re.findall(req_id_pattern, spec_block)))
-    # A citation is a file path with a line number: `path/to/file.ext:123`
-    # or `path/to/file.ext:123-145`. Allow common source extensions.
-    citation_pattern = re.compile(
-        r"[\w./\-]+\.(?:py|ts|tsx|js|jsx|go|rs|java|rb|cpp|c|h|hpp|kt|swift|sql|yaml|yml|json|md|sh|toml|html|css|scss|vue|svelte|tf|hcl)"
-        r":\d+(?:-\d+)?",
-        re.IGNORECASE,
-    )
+    citation_pattern = CITATION_PATTERN
     missing_citations: list = []
     for rid in casting_req_ids:
         # Find every occurrence of the requirement ID in the report.
@@ -342,6 +351,15 @@ def foundry_accept_casting(
                 break
         if not found_citation:
             missing_citations.append(rid)
+
+    # Mechanical symbol-resolution guard (FR-004 / AC-006 / AC-007).
+    #
+    # A new rung on the precondition ladder: every `path#Symbol` cite in the
+    # report must resolve in the tree. A cite whose symbol resolves is VALID
+    # however stale a `:line` hint beside it has become — the guard never
+    # reads the line component, so a moved line produces no finding of any
+    # kind. A symbol that resolves nowhere is a defect and blocks acceptance.
+    unresolved_cites = unresolved_symbol_cites(completion_report, project_root)
 
     # ============================================================
     # Phase 4 / EVID-01: server-side evidence re-execution.
@@ -362,6 +380,7 @@ def foundry_accept_casting(
     # ============================================================
     evidence_verdict = None
     evidence_provenance: list[dict] = []
+    evidence_spec_path: Path | None = None
     if casting_commit is not None:
         from foundry_mcp.tools.evidence import verify_evidence
         from foundry_mcp.tools.foundry_state import get_run_dir as _get_run_dir
@@ -369,11 +388,22 @@ def foundry_accept_casting(
         # Resolve run_dir for worktree storage. fdir is the active foundry
         # run dir (computed at function entry); pass it through so the
         # worktree lives under foundry-archive/{run}/worktrees/.
+        #
+        # FR-017 / AC-023: the spec path is the RUN's spec, not a third
+        # re-derivation. `foundry_spec_hash` already resolved it above
+        # (fdir/spec.md, else the spec_path recorded in state.json) and the
+        # result is in `spec_result`. The hardcoded
+        # `<project_root>/specs/spec.md` this replaces pointed at a file most
+        # runs do not have; `verify_evidence` reads `spec_format_version` off
+        # whatever path it is handed and defaults to v2.0 on a miss, so the
+        # wrong path silently downgraded every v2.1 run to the stream-skip
+        # branch and no evidence was ever re-executed.
+        evidence_spec_path = Path(spec_result["spec_path"])
         evidence_result = verify_evidence(
             casting_id=casting_id,
             project_root=Path(project_root),
             casting_commit=casting_commit,
-            spec_path=Path(project_root) / "specs" / "spec.md",
+            spec_path=evidence_spec_path,
             run_dir=fdir,
         )
         evidence_verdict = evidence_result["verdict"]
@@ -428,6 +458,7 @@ def foundry_accept_casting(
                 "failure_token": evidence_result["failure_token"],
                 "failure_detail": evidence_result["failure_detail"],
                 "evidence_provenance": evidence_provenance,
+                "evidence_spec_path": str(evidence_spec_path),
                 "hint": (
                     "Evidence re-execution rejected the casting. The teammate's "
                     "committed log diverges from a clean re-execution of "
@@ -518,13 +549,27 @@ def foundry_accept_casting(
         )
     elif missing_citations:
         warning = (
-            f"Completion report is missing file:line citations for "
+            f"Completion report is missing citations for "
             f"{len(missing_citations)} requirement(s): {', '.join(missing_citations)}. "
             f"Every requirement ID in the casting's <spec_requirements> block must "
-            f"have a corresponding file:line citation in the completion report proving "
-            f"where it was implemented. Do NOT accept this casting. Re-dispatch with "
+            f"have a corresponding citation in the completion report proving where it "
+            f"was implemented. Do NOT accept this casting. Re-dispatch with "
             f"instruction: 'For each requirement ID (US-N, FR-N, etc.) cite the exact "
-            f"file:line where it was implemented.' Build-green is necessary but NOT sufficient."
+            f"path#Symbol where it was implemented.' Build-green is necessary but NOT sufficient."
+        )
+    elif unresolved_cites:
+        # AC-006 — an unresolvable symbol is a defect, not a warning about
+        # formatting. Named individually so the teammate can fix the cite
+        # rather than re-scan the whole report.
+        warning = (
+            f"Completion report cites {len(unresolved_cites)} symbol(s) that resolve "
+            f"nowhere in the tree: "
+            f"{', '.join(c['cite'] for c in unresolved_cites)}. "
+            f"Each is a defect from the mechanical symbol-resolution guard. Do NOT "
+            f"accept this casting. Re-dispatch with instruction: 'Every path#Symbol "
+            f"cite must name a symbol that exists in the named file.' A stale :line "
+            f"hint is NOT the problem — the line component is never judged, so do not "
+            f"run a cite-refresh sweep."
         )
 
     # Record the acceptance attempt as a handoff entry.
@@ -546,9 +591,11 @@ def foundry_accept_casting(
         "acceptance_criteria": acs,
         "requirement_ids": casting_req_ids,
         "missing_citations": missing_citations,
+        "unresolved_symbol_cites": unresolved_cites,
         "must_verify": [
             f"Every AC above has a corresponding artifact/behavior in the completion report",
-            f"Every requirement ID has a file:line citation in the completion report",
+            f"Every requirement ID has a path#Symbol or file:line citation in the completion report",
+            f"Every path#Symbol cite resolves in the tree (a stale :line hint is never a finding)",
             f"Build is green AND tests pass",
             f"No scope-flag phrases in the completion report",
             f"Research compliance check (if research_context applies): each recommendation honored",
@@ -556,4 +603,7 @@ def foundry_accept_casting(
         "warning": warning,
         "evidence_verdict": evidence_verdict,
         "evidence_provenance": evidence_provenance,
+        "evidence_spec_path": (
+            str(evidence_spec_path) if evidence_spec_path is not None else None
+        ),
     }

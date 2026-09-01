@@ -1,11 +1,139 @@
-"""verify_citations tool — cross-reference spec requirements with PROVE verdicts."""
+"""verify_citations tool — cross-reference spec requirements with PROVE verdicts.
+
+Also the home of the durable-cite grammar and the mechanical symbol-resolution
+guard (FR-004 / US-002). The gate that consumes them is
+``foundry_handoff.foundry_accept_casting``.
+
+CITE GRAMMAR (AC-005/006/007)
+-----------------------------
+Two cite forms are valid, and they are validated by different rules:
+
+    path/to/file.py:42          file:line   — the legacy form, still accepted
+    path/to/file.py#Symbol      path#Symbol — the durable form
+
+A line hint may sit on either side of the ``#`` (``file.py:42#Symbol`` and
+``file.py#Symbol:42`` both parse). **The line component is never judged.**
+A ``#Symbol`` cite is valid exactly when its symbol resolves in the named
+file, however stale the hint beside it has become — so a moved line alone
+produces no finding of any kind, and cite-refresh sweeps are prohibited
+without an explicit directive (AC-007).
+
+A ``#Symbol`` whose symbol resolves nowhere is a DEFECT (AC-006), reported by
+``unresolved_symbol_cites``.
+
+RESOLUTION IS MECHANICAL, NOT SEMANTIC
+--------------------------------------
+``symbol_cite_resolves`` is a whole-word search over the cited file, with a
+dotted symbol (``Class.method``) requiring every component to be present. It
+is deliberately language-agnostic and deliberately biased toward resolving:
+an unresolvable verdict blocks a casting, so a false negative is the
+expensive direction and a false positive costs only a cite that a human
+reader would have caught anyway.
+"""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from foundry_mcp.parsers.prove import Verdict, parse_prove_report
 from foundry_mcp.parsers.spec import extract_requirements
+
+# ---------------------------------------------------------------------------
+# Durable-cite grammar (FR-004 / AC-005).
+#
+# The source-extension whitelist is lifted verbatim from the citation check
+# this grammar replaces (foundry_handoff.foundry_accept_casting) so that
+# widening the grammar cannot narrow what the gate accepted before.
+# ---------------------------------------------------------------------------
+
+_PATH = (
+    r"[\w./\-]+\."
+    r"(?:py|ts|tsx|js|jsx|go|rs|java|rb|cpp|c|h|hpp|kt|swift|sql|yaml|yml"
+    r"|json|md|sh|toml|html|css|scss|vue|svelte|tf|hcl)"
+)
+# An UNVALIDATED hint. Present in the grammar so a cite carrying one still
+# parses; never compared against anything (AC-007).
+_LINE_HINT = r":\d+(?:-\d+)?"
+_SYMBOL = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+
+#: ``path/to/file.ext:123`` or ``:123-145`` — the legacy form (AC-005).
+FILE_LINE_CITE_PATTERN = re.compile(_PATH + _LINE_HINT, re.IGNORECASE)
+
+#: ``path/to/file.ext#Symbol`` with an optional line hint on either side.
+SYMBOL_CITE_PATTERN = re.compile(
+    rf"(?P<path>{_PATH})(?:{_LINE_HINT})?#(?P<symbol>{_SYMBOL})(?:{_LINE_HINT})?",
+    re.IGNORECASE,
+)
+
+#: Either form. The symbol alternative is tried FIRST so that
+#: ``file.py:42#Symbol`` is read as one symbol cite rather than as a bare
+#: file:line cite with trailing noise.
+CITATION_PATTERN = re.compile(
+    rf"(?:{_PATH}(?:{_LINE_HINT})?#{_SYMBOL}(?:{_LINE_HINT})?)"
+    rf"|(?:{_PATH}{_LINE_HINT})",
+    re.IGNORECASE,
+)
+
+
+def iter_symbol_cites(text: str) -> list[dict]:
+    """Return every ``path#Symbol`` cite in ``text``, in order, deduplicated.
+
+    Each entry is ``{"cite", "file", "symbol"}``. ``cite`` is the raw matched
+    text (line hint included, if the author wrote one); ``file`` and
+    ``symbol`` are the two components validity actually turns on.
+    """
+    seen: set[tuple[str, str]] = set()
+    cites: list[dict] = []
+    for m in SYMBOL_CITE_PATTERN.finditer(text):
+        key = (m.group("path"), m.group("symbol"))
+        if key in seen:
+            continue
+        seen.add(key)
+        cites.append(
+            {"cite": m.group(0), "file": key[0], "symbol": key[1]}
+        )
+    return cites
+
+
+def symbol_cite_resolves(
+    file_path: str,
+    symbol: str,
+    project_root: str = ".",
+) -> bool:
+    """True when ``symbol`` is present in ``file_path`` as a whole word.
+
+    A dotted symbol (``Class.method``) resolves only when EVERY component is
+    present. A missing or unreadable file never resolves. The line component
+    of a cite is not an input here and is never consulted (AC-007).
+    """
+    target = Path(file_path)
+    if not target.is_absolute():
+        target = Path(project_root) / file_path
+    if not target.is_file():
+        return False
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return all(
+        re.search(rf"\b{re.escape(part)}\b", text)
+        for part in symbol.split(".")
+    )
+
+
+def unresolved_symbol_cites(text: str, project_root: str = ".") -> list[dict]:
+    """Return the ``path#Symbol`` cites in ``text`` that resolve nowhere.
+
+    The mechanical resolution guard of AC-006: every entry returned is a
+    DEFECT. A cite whose symbol resolves is absent from the result no matter
+    how stale a line hint beside it is (AC-007).
+    """
+    return [
+        cite
+        for cite in iter_symbol_cites(text)
+        if not symbol_cite_resolves(cite["file"], cite["symbol"], project_root)
+    ]
 
 
 def verify_citations(

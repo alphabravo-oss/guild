@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run -q --with pytest pytest tests/test_observations.py -q -rN -p no:cacheprovider
+# evidence-for: US-001, AC-001, AC-002, AC-019, AC-025, FR-001, FR-002, FR-020, FR-023
+# evidence-volatile: \d+\.\d+s
+
+.................................                                        [100%]
+33 passed in 0.25s
