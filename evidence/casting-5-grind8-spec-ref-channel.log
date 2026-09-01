@@ -6,12 +6,12 @@
 # evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+
 
 ============================= test session starts ==============================
-platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpd425eh/bin/python
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmp5fTbCI/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/b593f94e-e88b-444d-bfde-c9e6fb4f6ce0/scratchpad/wt-head/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collecting ... collected 165 items / 154 deselected / 11 selected
+collecting ... collected 170 items / 159 deselected / 11 selected
 
 tests/test_protocol_prose.py::test_spec_ref_is_a_real_parameter_on_every_filing_surface PASSED [  9%]
 tests/test_protocol_prose.py::test_a_bare_spec_ref_is_by_itself_a_never_demote_match PASSED [ 18%]
@@ -25,4 +25,4 @@ tests/test_protocol_prose.py::test_documented_shapes_that_carry_a_spec_ref_are_u
 tests/test_protocol_prose.py::test_shapes_carrying_a_spec_ref_qualify_it_at_the_example[tracer.md] PASSED [ 90%]
 tests/test_protocol_prose.py::test_shapes_carrying_a_spec_ref_qualify_it_at_the_example[research-auditor.md] PASSED [100%]
 
-====================== 11 passed, 154 deselected in 0.20s ======================
+====================== 11 passed, 159 deselected in 0.20s ======================
