@@ -6,11 +6,11 @@
 
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/b593f94e-e88b-444d-bfde-c9e6fb4f6ce0/scratchpad/iso-c3/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/b593f94e-e88b-444d-bfde-c9e6fb4f6ce0/scratchpad/head-c3/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
 collected 30 items
 
 tests/test_evidence.py ..............................                    [100%]
 
-============================== 30 passed in 7.61s ==============================
+============================== 30 passed in 7.55s ==============================
