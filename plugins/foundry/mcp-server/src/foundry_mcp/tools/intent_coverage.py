@@ -82,20 +82,26 @@ import io
 import json
 from pathlib import Path
 
-from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path
+from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path, _save_json
 from foundry_mcp.tools.foundry_state import get_run_dir
 
 
 def _save_json_atomic(path: Path, data: dict) -> None:
-    """Atomic JSON write — write to .tmp then rename.
+    """Atomic JSON write, through the guarded primitive.
 
-    Mirrors foundry.py:_save_json discipline (write to sibling .tmp then
-    os-level rename) so a concurrent reader never observes a truncated
-    manifest.json.
+    This carried its own copy of the tmp+rename and its docstring claimed to
+    mirror foundry.py's discipline. It mirrored the tmp+rename and not the
+    flock, and it copied the sidecar name D-103 had already removed:
+    ``path.with_suffix(".tmp")`` is SHARED by every concurrent writer of the
+    same artifact, so a peer's rename could move this call's half-written
+    manifest.json into place or delete it mid-write. manifest.json is a real
+    run artifact that Foundry-Validate-Castings and Foundry-Spawn-Teammate
+    read concurrently, so the window was reachable.
+
+    Delegated rather than repaired: the fifth copy of a write primitive is the
+    defect class, not a smaller version of it.
     """
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.rename(path)
+    _save_json(path, data)
 
 
 def _run_validator_in_process(

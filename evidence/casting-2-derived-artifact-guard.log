@@ -1,0 +1,85 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, tempfile; sys.path[:0]=["tests","src"]; from pathlib import Path; import test_orchestrator_gates as t; print(t.render_derived_guard_table(Path(tempfile.mkdtemp())))' && echo "" && echo "== the three package-wide assertions, driven ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "document_load or renames_onto or ledger_scan_bypasses or derived_guard_table or planted_copies" 2>&1 | grep -E "passed|failed"
+# evidence-for: FR-020, AC-025, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# THE STRUCTURAL PACKET'S CENTREPIECE (lead ruling ST-002/ST-003, FR-008).
+#
+# The escalated class: "a hardening mechanism bound by hand to the site where a
+# defect was reported, instead of derived from the members the module or
+# artifact set actually contains." Four fixes in this module are the same shape:
+#
+#   D-097  `_dict_records` applied to ONE of the two filing doors  -> D-128
+#   D-098  `_load_json` hardened in two of its three copies        -> D-130
+#   D-103  `_save_json` given a unique sidecar in one of its copies
+#   D-119  the cycle readers (closed by GUARDED_CYCLE_READERS)
+#
+# Each was fixed AT THE REPORTED SITE and left live copies behind. This log is
+# the guard that makes the fifth copy unrepresentable.
+#
+# WHAT WAS RED AT ab5a430. The three rules were written first and run against
+# the unfixed tree. They reported seven members, not the one the defect report
+# had found:
+#
+#   unguarded document loads:
+#     forge_spec.py::_load_json:32                       <- D-130, the known one
+#     foundry_handoff.py::foundry_spec_hash:174          <- found by the scan
+#     foundry_validate.py::foundry_validate_castings:104 <- found by the scan
+#     foundry_validate.py::foundry_validate_castings:129 <- found by the scan
+#     validation.py::validate_report:113                 <- found by the scan
+#   unlocked artifact renames:
+#     forge_spec.py::_save_json:38                       <- D-103's shape
+#     intent_coverage.py::_save_json_atomic:98           <- found by the scan
+#   raw ledger iterations:
+#     foundry_orchestrator.py::foundry_sync_defects:3631,3644,3796  <- D-128
+#     foundry_orchestrator.py::foundry_mark_defect_fixed:3260,3357
+#
+# Every one of the four the hand search missed is reachable over MCP:
+# Foundry-Spec-Hash, Foundry-Validate-Castings and Validate-Report are all in
+# server.py's _DISPATCH, and intent_coverage's unlocked writer writes
+# castings/manifest.json, which two other tools read concurrently. That the
+# scan found four more than the report is the argument for the scan.
+#
+# THE ALLOW-LIST IS EMPTY. This is not "the guarded primitives are enrolled
+# here" -- there is nothing to enrol. `_read_document` carries its try/except
+# in its own body and `_save_json` sits in a module that owns an flock
+# discipline, so both PASS THE RULES ON THEIR OWN MERITS. A name allow-list is
+# exactly the mechanism D-066 caught one level up; adding one would have
+# committed the escalated class inside the guard meant to close it.
+#
+# THE TABLE BELOW is the forward claim, which is the one that matters: today's
+# copies being gone is what the four prior fixes each achieved. Five FRESH
+# copies -- verbatim reproductions of the shapes D-097, D-098 and D-103 closed
+# -- are planted in modules none of those fixes touched, including the package
+# ROOT (server.py's position, which owns _DISPATCH) and two NON-tools
+# subpackages. All five are named. Membership is derived over both axes, files
+# and directories, so neither a new module nor a new subpackage has to be
+# remembered anywhere.
+#
+# WHAT THESE RULES DO NOT BIND, stated so silence is not mistaken for coverage.
+# Both residuals are DIFFERENT classes, not this one dodged, and both are in
+# concerns.md with their exact sites:
+#   - read_text() raising UnicodeDecodeError before json.loads is reached
+#     (foundry_spawn.py:1163,1448 catch json.JSONDecodeError alone) -- a
+#     property of the TEXT READ, not of the document load;
+#   - a locked write primitive CALLED from outside its lock (foundry.py's
+#     _save_json has six such callers) -- rule (b) binds a renaming module to
+#     owning a lock, not every call to reaching the writer through it.
+# Both live in files castings 3 and 4 own this cycle; neither is editable here.
+== the three rules over the installed package, after this casting's fixes ==
+   unguarded document loads      : none
+   unlocked artifact renames     : none
+   raw ledger iterations         : none
+
+== and a FRESH copy planted where a directory literal could not see it ==
+   planted at                         what the derived scan reports
+   ----------                         -----------------------------
+   <pkg root>/regressed.py            ['regressed.py::_load_json:7']
+   <pkg>/parsers/regressed.py         ['regressed.py::_load_json:7']
+   <pkg root>/regressed.py            ['regressed.py::_save_json:6']
+   <pkg>/schemas/regressed.py         ['regressed.py::_save_json:6']
+   <pkg root>/regressed.py            ['regressed.py::sync:3']
+
+== the three package-wide assertions, driven ==
+5 passed, 203 deselected in 0.84s

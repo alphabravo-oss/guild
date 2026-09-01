@@ -27,9 +27,9 @@
    defects.json             BRICKS 3/6    BRICKS 3/6    BRICKS 3/6    BRICKS 3/6  
    verdicts.json            BRICKS 2/6    BRICKS 2/6    BRICKS 2/6    BRICKS 2/6  
    stream-rollup.json       BRICKS 1/6    BRICKS 1/6    BRICKS 1/6    BRICKS 1/6  
-   escalation.json          silent        silent        silent        silent      
+   escalation.json          BRICKS 2/6    BRICKS 2/6    BRICKS 2/6    BRICKS 2/6  
    castings/manifest.json   BRICKS 2/6    BRICKS 2/6    BRICKS 2/6    BRICKS 2/6  
-   -> 20 of 24 brick at least one tool, 0 of 24 name the offending file
+   -> 24 of 24 brick at least one tool, 0 of 24 name the offending file
 
 == post-fix: tolerant loader + _artifact_guard at every entry point ==
    artifact                 truncated     list          null          string      
@@ -41,6 +41,6 @@
    castings/manifest.json   names 6/6     names 6/6     names 6/6     names 6/6   
    -> 0 of 24 brick at least one tool, 24 of 24 name the offending file
 == the pins ==
-........................................................................ [ 93%]
-.....                                                                    [100%]
-77 passed, 154 deselected in 0.67s
+........................................................................ [ 91%]
+.......                                                                  [100%]
+79 passed, 164 deselected in 0.77s

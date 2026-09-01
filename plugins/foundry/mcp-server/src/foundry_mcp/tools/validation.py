@@ -110,7 +110,33 @@ def validate_report(
     # Load schema
     if schema_path:
         spath = root / schema_path if not Path(schema_path).is_absolute() else Path(schema_path)
-        schema = json.loads(spath.read_text(encoding="utf-8"))
+        # D-130's class, found by the package-wide scan. This was a bare
+        # `json.loads(spath.read_text(...))`, so a caller who named a
+        # non-existent, unreadable or malformed schema got a traceback across
+        # the MCP boundary rather than the named refusal every other bad input
+        # to this tool receives two lines below. The schema is not a run
+        # artifact -- it is a path the CALLER supplied -- so the refusal is
+        # local and says so, rather than borrowing the run-artifact guard.
+        try:
+            schema = json.loads(spath.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return {
+                "valid": False,
+                "errors": [
+                    f"Schema could not be read: {spath} "
+                    f"({type(exc).__name__}: {exc})"
+                ],
+                "stats": {},
+            }
+        if not isinstance(schema, dict):
+            return {
+                "valid": False,
+                "errors": [
+                    f"Schema is not a JSON object (found "
+                    f"{type(schema).__name__}): {spath}"
+                ],
+                "stats": {},
+            }
     elif schema_name in SCHEMAS:
         schema = SCHEMAS[schema_name]
     else:

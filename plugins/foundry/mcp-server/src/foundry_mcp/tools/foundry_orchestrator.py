@@ -326,19 +326,69 @@ def _document_transaction(path: Path) -> Iterator[dict]:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+def _text_problem(path: Path) -> str | None:
+    """The named reason ``path`` is not readable UTF-8 text, or None.
+
+    The non-JSON rung of the same ladder ``_document_problem`` occupies. An
+    absent file is not a problem; an undecodable one is, and it must be named.
+    """
+    if not path.exists():
+        return None
+    try:
+        path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return (
+            f"{path.name} could not be read as UTF-8 text "
+            f"({type(exc).__name__}: {exc})"
+        )
+    return None
+
+
+# How to tell whether an artifact of a given type is readable. The TABLE varies
+# by file type; MEMBERSHIP is derived by globbing the run directory, so a new
+# artifact of a known type is guarded the day it is written. A suffix with no
+# decoder is not checked — the table is the extension point, and it is the one
+# thing here a new artifact TYPE (not a new artifact) requires.
+_ARTIFACT_DECODERS = {
+    ".json": _document_problem,
+    ".md": _text_problem,
+}
+
+
 # Artifacts whose corruption the guard reports. DERIVED, not a hand-kept list:
-# every top-level *.json in the run dir plus the castings manifest. A new
-# artifact is covered the moment it is written, which is the property the
-# hand-kept marker lists in this module have repeatedly failed to hold.
+# every top-level file in the run dir with a decoder, plus the castings
+# manifest. A new artifact is covered the moment it is written, which is the
+# property the hand-kept marker lists in this module have repeatedly failed to
+# hold.
+#
+# D-129 — the glob was `*.json` alone, and that was the whole defect. D-098
+# made `_read_text` tolerant so an undecodable directives.md stopped RAISING
+# out of Foundry-Next, and added NO guard half: the file was simply read as
+# EMPTY. So one stray non-UTF-8 byte silently voided a LIVE URGENT directive
+# ("STOP the cast wave, the spec changed"), Foundry-Next reported
+# directives=null with the text and the filename appearing nowhere, and
+# Foundry-Clear then reported {"ok": true, "cleared_count": 0}, TRUNCATED the
+# file and wrote no archive record. Destroyed data, reported as success.
+#
+# The fix is not "also check directives.md" — naming that file here is the
+# escalated class, and the next non-JSON artifact would repeat it. The glob
+# derives the members; the decoder table says how to read each type.
 def _run_artifact_problems(fdir: Path) -> list[str]:
     """Named problems for every unreadable run artifact, in stable order."""
     if not fdir or not fdir.exists():
         return []
-    candidates = sorted(p for p in fdir.glob("*.json") if p.is_file())
+    candidates = sorted(p for p in fdir.glob("*") if p.is_file())
     manifest = fdir / "castings" / "manifest.json"
     if manifest.is_file():
         candidates.append(manifest)
-    return [p for p in (_document_problem(c) for c in candidates) if p]
+    problems: list[str] = []
+    for candidate in candidates:
+        decoder = _ARTIFACT_DECODERS.get(candidate.suffix.lower())
+        if decoder is None:
+            continue
+        if (problem := decoder(candidate)):
+            problems.append(problem)
+    return problems
 
 
 def _artifact_guard(fdir: Path) -> dict | None:
@@ -2243,18 +2293,61 @@ ESCALATION_OVERRIDE_TOKEN = "escalation-override"
 #     escalation-override: *           — de-escalate every class
 #     escalation-override              — de-escalate every class
 # Anything else mentioning the token is prose and does nothing.
-_OVERRIDE_LINE_PREFIX = r"^[\s>]*(?:[-*+]\s*)?"
+# D-133 — two residual holes in the same grammar, both "invisible rather than
+# refused", and one root under them.
+#
+# (1) THE VALUE. The group was `(\S+)`, so a class key containing a SPACE could
+#     never be overridden — and FR-007 makes `class` free text that a stream
+#     writes. Driven: the class "SHARED RESOURCE LEAK" escalates;
+#     Foundry-Directive("escalation-override: SHARED RESOURCE LEAK") returned
+#     ok:true "injected", `_escalation_overrides()` returned set(), and the
+#     class stayed escalated. Worse than inert: `_structural_proposal`
+#     interpolates the class key into the instruction it hands the lead, so
+#     the tool was telling the operator to send a string it could not read.
+#     The value now runs to end of line and may be quoted.
+#
+# (2) THE PREFIX. `[\s>]*` admitted the blockquote character, so QUOTING an
+#     escalation packet into a directive — "> escalation-override: X", even
+#     buried at line 8 of a 9-line note — silently de-escalated the class. A
+#     quotation reports what someone else wrote; it is never a request. The
+#     quoted form is still MATCHED, by its own pattern, so that it can be
+#     reported as ignored rather than vanish.
+#
+# (3) THE ROOT. Nothing reported an override either way. See `_override_report`.
+_OVERRIDE_LINE_PREFIX = r"^[ \t]*(?:[-*+][ \t]*)?"
+_OVERRIDE_QUOTED_PREFIX = r"^[ \t]*>[ \t>]*(?:[-*+][ \t]*)?"
 _OVERRIDE_SCOPED_RE = re.compile(
-    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)\s*$",
+    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}\s*[:=][ \t]*(\S.*?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _OVERRIDE_BARE_RE = re.compile(
-    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}\s*[:=]?\s*$",
+    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}[ \t]*[:=]?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Recognised ONLY to be reported as ignored — never to honour.
+_OVERRIDE_QUOTED_RE = re.compile(
+    rf"{_OVERRIDE_QUOTED_PREFIX}{ESCALATION_OVERRIDE_TOKEN}"
+    rf"(?:[ \t]*[:=][ \t]*\S.*?)?[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
 # The scoped form's value spelled as "every class" rather than a class key.
 _OVERRIDE_ALL_VALUES = frozenset({"*", "all", "any", "every"})  # 4 spellings
+
+# Quote characters a class key may be wrapped in. A quoted key keeps its inner
+# punctuation verbatim — that is what quoting it is FOR — while a bare key
+# keeps the D-101 trailing-punctuation strip so "escalation-override: AUTH."
+# still names AUTH.
+_OVERRIDE_QUOTES = ('"', "'", "`")
+
+
+def _override_value(raw: str) -> str:
+    """The class key a scoped marker names, unwrapped and trimmed."""
+    value = raw.strip()
+    for quote in _OVERRIDE_QUOTES:
+        if len(value) >= 2 and value.startswith(quote) and value.endswith(quote):
+            return value[1:-1].strip()
+    return value.strip(" .,;:'\"`")
 
 
 def _fallback_class(defect: dict) -> str:
@@ -2352,45 +2445,70 @@ def _consecutive_run(cycles: set[int]) -> tuple[int, int | None]:
     return best_len, best_end
 
 
-def _escalation_overrides(project_root: str) -> set[str]:
-    """Class keys the human has explicitly de-escalated, or {"*"} for all.
-
-    Recognises ONLY the line-anchored marker grammar (D-101). A directive that
-    merely mentions the token — including one forbidding its use — returns the
-    empty set, so escalation stays on.
-    """
+def _directives_text(project_root: str) -> str:
+    """Every active directive's body, urgent first, as one block of text."""
     directives = _read_directives(project_root)
-    text = "\n".join(directives.get("urgent", []) + directives.get("normal", []))
+    return "\n".join(directives.get("urgent", []) + directives.get("normal", []))
 
-    scoped: set[str] = set()
+
+def _override_markers(text: str) -> dict:
+    """Every escalation-override marker in ``text``, and how each was read.
+
+    Returns ``{"overrides": set[str], "scoped": list[str], "quoted":
+    list[str]}``. ``overrides`` is ``{"*"}`` for the every-class forms. The
+    quoted markers are NOT in ``overrides`` — they are carried so the decision
+    to ignore them can be reported instead of being silent.
+    """
+    scoped: list[str] = []
     override_all = False
-    for m in _OVERRIDE_SCOPED_RE.finditer(text):
-        value = m.group(1).strip(" .,;:'\"`")
+    for match in _OVERRIDE_SCOPED_RE.finditer(text):
+        value = _override_value(match.group(1))
         if not value:
             continue
         if value.lower() in _OVERRIDE_ALL_VALUES:
             override_all = True
         else:
-            scoped.add(value)
+            scoped.append(value)
 
     if _OVERRIDE_BARE_RE.search(text):
         override_all = True
 
-    if override_all:
-        return {"*"}
-    return scoped
+    quoted = [m.group(0).strip() for m in _OVERRIDE_QUOTED_RE.finditer(text)]
+
+    return {
+        "overrides": {"*"} if override_all else set(scoped),
+        "scoped": sorted(set(scoped)),
+        "quoted": quoted,
+    }
 
 
-def _escalated_classes(fdir: Path, project_root: str) -> dict[str, dict]:
+def _escalation_overrides(project_root: str) -> set[str]:
+    """Class keys the human has explicitly de-escalated, or {"*"} for all.
+
+    Recognises ONLY the line-anchored marker grammar (D-101), and only
+    UNQUOTED (D-133). A directive that merely mentions the token — including
+    one forbidding its use, and including one quoting an escalation packet
+    back — returns the empty set, so escalation stays on.
+    """
+    return _override_markers(_directives_text(project_root))["overrides"]
+
+
+def _escalated_classes(
+    fdir: Path, project_root: str, *, apply_overrides: bool = True
+) -> dict[str, dict]:
     """Classes that have recurred for ESCALATION_CYCLES consecutive cycles.
 
     A class qualifies while it still has OPEN defects: once every defect of the
     class closes, the class is cleared (ST-003) and stops producing a
     structural packet. Escalation therefore never waives closure — it changes
     the SHAPE of the work, not whether it must be done (AC-011).
+
+    ``apply_overrides=False`` answers "what WOULD be escalated if the human had
+    sent no override?" — which is the only way to report what an override
+    actually did (D-133). Every production caller leaves it True.
     """
     defects = _load_json(fdir / "defects.json").get("defects", [])
-    overrides = _escalation_overrides(project_root)
+    overrides = _escalation_overrides(project_root) if apply_overrides else set()
     recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
 
     # D-102: resolve every record's class in ONE pass over the whole ledger, so
@@ -2465,6 +2583,87 @@ def _escalated_classes(fdir: Path, project_root: str) -> dict[str, dict]:
     return escalated
 
 
+def _override_instruction(class_key: str) -> str:
+    """The exact directive text that de-escalates ``class_key``.
+
+    RENDERED and verified against the reader, never typed beside it. D-133's
+    first hole was `_structural_proposal` interpolating a class key into an
+    instruction the grammar could not parse back — the tool telling the
+    operator to send a string that could not work. A key whose bare form does
+    not survive `_override_markers` is emitted quoted, so what this returns is
+    always something `_escalation_overrides` will read as that class.
+    """
+    bare = f"{ESCALATION_OVERRIDE_TOKEN}: {class_key}"
+    if _override_markers(bare)["overrides"] == {class_key}:
+        return bare
+    return f'{ESCALATION_OVERRIDE_TOKEN}: "{class_key}"'
+
+
+def _override_report(fdir: Path, project_root: str) -> dict:
+    """Every escalation-override DECISION, reported rather than left silent.
+
+    D-133's COMMON ROOT, and the reason its other two halves stayed invisible
+    for a whole cycle. Nothing reported an override in either direction:
+    ``foundry_inject_directive`` returned ok:true "Directive injected" and
+    named no recognised override, and the consumer in ``_escalated_classes``
+    silently ``continue``d past the class it dropped. So all four outcomes —
+    the override worked, the class key was mistyped, the key carried a space
+    the grammar could not read, the marker was quoted out of an escalation
+    packet — produced BYTE-IDENTICAL output. An operator had no way to tell a
+    working override from a dead one except by watching what the next
+    Foundry-Tasks emitted, which is the shape of every defect in this class.
+
+    Four decisions, each named:
+      * de_escalated — the marker matched an escalated class, which is now off
+      * unmatched    — a marker was read, and no escalated class has that key
+      * quoted       — a marker was seen and IGNORED because it was quoted
+      * escalated_classes — what is escalated with no override applied, so an
+                       unmatched key can be compared against real ones
+    """
+    markers = _override_markers(_directives_text(project_root))
+    candidates = set(_escalated_classes(fdir, project_root, apply_overrides=False))
+    overrides = markers["overrides"]
+    wildcard = "*" in overrides
+
+    de_escalated = sorted(candidates) if wildcard else sorted(overrides & candidates)
+    unmatched = [] if wildcard else sorted(overrides - candidates)
+
+    known = (
+        f"currently escalated: {', '.join(sorted(candidates))}"
+        if candidates
+        else "no class is currently escalated"
+    )
+
+    decisions: list[str] = []
+    if wildcard:
+        decisions.append(
+            f"escalation-override (every class) — de-escalated "
+            f"{len(de_escalated)} class(es): "
+            + (", ".join(de_escalated) if de_escalated else f"none ({known})")
+        )
+    for key in de_escalated if not wildcard else []:
+        decisions.append(f"escalation-override: {key!r} — de-escalated")
+    for key in unmatched:
+        decisions.append(
+            f"escalation-override: {key!r} — matched NO escalated class ({known}). "
+            f"The class key is free text a stream declares; it must match "
+            f"EXACTLY, spaces included."
+        )
+    for line in markers["quoted"]:
+        decisions.append(
+            f"{line!r} — IGNORED: a blockquoted marker is a quotation of what "
+            f"someone else wrote, not a request. Repeat it unquoted to apply it."
+        )
+
+    return {
+        "decisions": decisions,
+        "de_escalated": de_escalated,
+        "unmatched": unmatched,
+        "quoted_ignored": markers["quoted"],
+        "escalated_classes": sorted(candidates),
+    }
+
+
 def _structural_proposal(info: dict) -> str:
     """Compose the structural-fix proposal recorded on the class's packet.
 
@@ -2487,7 +2686,7 @@ def _structural_proposal(info: dict) -> str:
         f"every listed defect closes as a consequence. Closure is NOT waived: all "
         f"of {', '.join(info['defect_ids'])} must reach fixed. If this class is "
         f"genuinely not systemic, the lead can restore per-instance packets with "
-        f"Foundry-Directive('{ESCALATION_OVERRIDE_TOKEN}: {info['class']}')."
+        f"Foundry-Directive('{_override_instruction(info['class'])}')."
     )
 
 
@@ -3235,7 +3434,7 @@ def foundry_mark_defect_fixed(
     only. Escalation reads these numbers back, and it accumulated against
     lead-asserted cycles while the server counter sat at 0.
     """
-    from foundry_mcp.tools.foundry import ledger_transaction
+    from foundry_mcp.tools.foundry import _dict_records, ledger_transaction
 
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -3257,8 +3456,13 @@ def foundry_mark_defect_fixed(
     open_count = 0
     with ledger_transaction(defects_path, "defects") as records:
         target = None
-        for d in records:
-            if isinstance(d, dict) and d.get("id") == defect_id:
+        # D-128: this door's inline `isinstance(d, dict)` was CORRECT and was
+        # still an instance of the class — a hand-applied copy of the filter
+        # `_dict_records` exists to hold once. The batch door's identical scan
+        # had no copy at all, which is how one door tolerated a malformed
+        # record while the other lost the caller's filing to an AttributeError.
+        for d in _dict_records(records):
+            if d.get("id") == defect_id:
                 target = d
                 break
 
@@ -3354,7 +3558,7 @@ def foundry_mark_defect_fixed(
             target["adjacent_path_test"] = test_ref
 
         open_count = sum(
-            1 for d in records if isinstance(d, dict) and d.get("status") == "open"
+            1 for d in _dict_records(records) if d.get("status") == "open"
         )
 
     if refusal is not None:
@@ -3541,6 +3745,7 @@ def foundry_sync_defects(
     findings landed.
     """
     from foundry_mcp.tools.foundry import (
+        _dict_records,
         asserts_code_behaviour,
         ledger_transaction,
         record_denylist_tripwire,
@@ -3628,7 +3833,33 @@ def foundry_sync_defects(
     # pure, so minting inside the transaction is what stops two concurrent
     # filers reading the same snapshot and claiming the same id.
     with ledger_transaction(defects_path, "defects") as records:
-        fixed = [d for d in records if d.get("status") == "fixed"]
+        # D-128 — the half of D-097 that was never applied.
+        #
+        # `_dict_records` was added to foundry.py BY D-097, with the docstring
+        # "Tolerating it in ONE place is what keeps the two halves of the same
+        # scan consistent", and then applied to the single door only. This
+        # batch door kept its raw `d.get(...)` over every historical record.
+        # Driven with {"defects": [{"id":"D-001",...}, "not-a-dict"]}:
+        # Foundry-Defect persisted D-002 and preserved the malformed record,
+        # Foundry-Defects read clean, and Foundry-Sync raised AttributeError
+        # 'str' object has no attribute 'get'. The raise lands AFTER the
+        # in-transaction list is mutated, so `_save_json` never runs, the
+        # filing the stream just made is GONE, and the escaped traceback names
+        # no file -- the one row breaking D-095/D-098's 21/24 named-refusal
+        # bar.
+        #
+        # THE PRIMITIVE NOW CLOSES THIS TOO. D-127 landed in foundry.py during
+        # this same cycle and moved the filter INSIDE `ledger_transaction`,
+        # which yields mapping records only and re-inserts the non-dicts by
+        # index before the write. So this call is idempotent today rather than
+        # load-bearing, and it is kept deliberately on both counts: it is what
+        # the scan in test_orchestrator_gates.py asserts (an orchestrator that
+        # iterates the binding directly has bypassed the guarantee however
+        # careful its body is), and it keeps this door's correctness legible
+        # here instead of resting silently on a sibling module's internals.
+        # Two guards on one class from both sides is the shape the escalated
+        # class asks for; one guard in a file this casting may not edit is not.
+        fixed = [d for d in _dict_records(records) if d.get("status") == "fixed"]
 
         for finding, norm in zip(findings, normalized):
             symbol = finding.get("symbol", "")
@@ -3641,8 +3872,8 @@ def foundry_sync_defects(
                     break
 
             if match_id:
-                for d in records:
-                    if d["id"] == match_id:
+                for d in _dict_records(records):
+                    if d.get("id") == match_id:
                         d["status"] = "open"
                         d["regression"] = True
                         d["reopened_in_cycle"] = server_cycle
@@ -3793,7 +4024,7 @@ def foundry_sync_defects(
             records.append(defect)
             added += 1
 
-        total_open = sum(1 for d in records if d.get("status") == "open")
+        total_open = sum(1 for d in _dict_records(records) if d.get("status") == "open")
 
     if regressions:
         forge_log = fdir / "forge-log.md"
@@ -4106,6 +4337,19 @@ def foundry_next_action(
             )
         if blocks:
             directive_block = "\n\n" + "\n\n".join(blocks)
+
+    # D-133: every escalation-override decision is reported in the lead's own
+    # output too, not only at the injecting call. A directive is standing text
+    # — the lead that reads it may be a different session from the one that
+    # sent it, and a marker that matched no escalated class must not look
+    # identical to one that de-escalated three.
+    if fdir_stall and fdir_stall.exists():
+        override = _override_report(fdir_stall, project_root)
+        if override["decisions"]:
+            result["escalation_overrides"] = override
+            directive_block += "\n\nESCALATION-OVERRIDE DECISIONS:\n- " + "\n- ".join(
+                override["decisions"]
+            )
 
     critical_rules = (
         "\n\nCRITICAL RULES:"
@@ -4466,14 +4710,20 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
     if not escalated:
         return ""
     names = ", ".join(sorted(escalated))
+    # Each restore instruction is rendered per class and verified to round-trip
+    # (D-133), rather than offering a "<class>" placeholder the operator has to
+    # fill in with a key the grammar may not read back.
+    restores = "; ".join(
+        f"Foundry-Directive('{_override_instruction(key)}')"
+        for key in sorted(escalated)
+    )
     return (
         f" ESCALATED: {len(escalated)} defect class(es) have recurred for "
         f"{ESCALATION_CYCLES}+ consecutive cycles ({names}). Foundry-Tasks will "
         "emit ONE structural-fix packet per escalated class instead of "
         "per-instance packets — dispatch that packet as a single task and do not "
         "split it back apart. Every listed defect must still close. To restore "
-        f"per-instance packets, inject Foundry-Directive('{ESCALATION_OVERRIDE_TOKEN}: "
-        "<class>')."
+        f"per-instance packets: {restores}."
     )
 
 
@@ -4860,6 +5110,68 @@ _DIRECTIVE_HEADER_URGENT = "### [URGENT]"
 _DIRECTIVE_HEADER_NORMAL = "### [DIRECTIVE]"
 _DIRECTIVE_HEADERS = (_DIRECTIVE_HEADER_URGENT, _DIRECTIVE_HEADER_NORMAL)  # 2 markers
 
+# The bootstrap text of an empty directives.md. ONE definition: the injector
+# wrote it and the clearer wrote it back, as two separate string literals, so
+# "is this file empty of directives?" could not be asked without re-typing a
+# third copy — and D-129's conservation guard below has to ask exactly that.
+_DIRECTIVES_PREAMBLE = (
+    "# Foundry Directives\n\n"
+    "Human steering inputs — read at every phase transition.\n\n"
+)
+
+
+def _directive_header_count(text: str) -> int:
+    """How many priority headers the parser can see in ``text``."""
+    return sum(
+        1
+        for line in text.split("\n")
+        if any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+    )
+
+
+def _unaccounted_directive_text(path: Path, parsed: dict) -> str | None:
+    """Content Foundry-Clear would destroy without archiving it, or None.
+
+    D-129's second half, and the reason the guard alone is not enough. The
+    encoding rung is closed upstream: an undecodable directives.md is now a
+    NAMED refusal from ``_artifact_guard`` at every door. But the harm —
+    "reports success, truncates the file, writes no archive record" — is
+    reachable without any encoding fault at all. Hand-edit a ``###`` to a
+    ``##`` and the parser sees no header, returns no directives, and the
+    clearer truncates a file full of live human steering.
+
+    So the destructive write carries its own conservation check: Foundry-Clear
+    may only destroy what it could account for.
+
+      * No header the parser recognises — the whole file is preamble. Truncating
+        rewrites the preamble verbatim, so it is safe if that is genuinely all
+        the file holds, and a refusal otherwise.
+      * Headers present — every one of them must have produced a directive the
+        archive will carry. A count that does not match means text is sitting
+        in the file that the archive would not receive.
+
+    Returns the unaccounted text (for the refusal to quote), or None when the
+    file is fully accounted for.
+    """
+    if not path.exists():
+        return None
+    text = _read_text(path)
+    headers = _directive_header_count(text)
+    if headers == 0:
+        body = text.strip()
+        if body and body != _DIRECTIVES_PREAMBLE.strip():
+            return body
+        return None
+    if headers != len(parsed.get("urgent", [])) + len(parsed.get("normal", [])):
+        lines = text.split("\n")
+        first = next(
+            i
+            for i, line in enumerate(lines)
+            if any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+        )
+        return "\n".join(lines[first:]).strip()
+    return None
+
 
 def _forged_header_lines(directive: str) -> list[str]:
     """Body lines that `_read_directives` would parse as a priority header.
@@ -4916,16 +5228,29 @@ def foundry_inject_directive(
 
     directives_path = fdir / "directives.md"
     if not directives_path.exists():
-        directives_path.write_text(
-            "# Foundry Directives\n\nHuman steering inputs \u2014 read at every phase transition.\n\n",
-            encoding="utf-8",
-        )
+        directives_path.write_text(_DIRECTIVES_PREAMBLE, encoding="utf-8")
 
     with open(directives_path, "a", encoding="utf-8") as f:
         header = _DIRECTIVE_HEADER_URGENT if priority == "urgent" else _DIRECTIVE_HEADER_NORMAL
         f.write(f"\n{header} {_now()}\n\n{directive}\n")
 
-    return {"ok": True, "priority": priority, "message": "Directive injected \u2014 lead will read it at next phase transition"}
+    result = {
+        "ok": True,
+        "priority": priority,
+        "message": "Directive injected \u2014 lead will read it at next phase transition",
+    }
+
+    # D-133: report the override decision HERE, at the call that made it. The
+    # operator learns immediately whether the marker they just sent was read,
+    # matched nothing, or was ignored as quoted \u2014 instead of discovering it by
+    # watching what the next Foundry-Tasks emits.
+    override = _override_report(fdir, project_root)
+    if override["decisions"]:
+        result["escalation_override"] = override
+        result["message"] += " | escalation-override: " + "; ".join(
+            override["decisions"]
+        )
+    return result
 
 
 DIRECTIVES_CLEARED_FILENAME = "directives-cleared.md"
@@ -4954,6 +5279,29 @@ def foundry_clear_directives(
     normal = active.get("normal", [])
     cleared_count = len(urgent) + len(normal)
 
+    # D-129: refuse rather than destroy. FR-019 makes preserving a record this
+    # tool's whole contract, and a truncate that outruns the archive breaks it
+    # silently — the operator is told "No active directives to clear" while the
+    # directives are being deleted.
+    if (unaccounted := _unaccounted_directive_text(directives_path, active)) is not None:
+        return {
+            "error": (
+                f"directives.md holds {len(unaccounted)} characters of text that "
+                f"this tool could not parse as directives, so clearing it would "
+                f"DESTROY content no archive record would carry. Refused. "
+                f"Unparsed text begins: {unaccounted[:160]!r}"
+            ),
+            "hint": (
+                "The file's header grammar is broken — a directive block opens "
+                + " or ".join(repr(h) for h in _DIRECTIVE_HEADERS)
+                + " at the start of a line. Repair the headers (or move the text "
+                "somewhere safe and reset the file) and retry. Nothing was "
+                "cleared and nothing was written."
+            ),
+            "unaccounted_characters": len(unaccounted),
+            "cleared_count": 0,
+        }
+
     if cleared_count:
         archive = fdir / DIRECTIVES_CLEARED_FILENAME
         if not archive.exists():
@@ -4970,10 +5318,7 @@ def foundry_clear_directives(
                 f.write(f"- **[DIRECTIVE]** {text}\n")
 
     if directives_path.exists():
-        directives_path.write_text(
-            "# Foundry Directives\n\nHuman steering inputs \u2014 read at every phase transition.\n\n",
-            encoding="utf-8",
-        )
+        directives_path.write_text(_DIRECTIVES_PREAMBLE, encoding="utf-8")
 
     return {
         "ok": True,

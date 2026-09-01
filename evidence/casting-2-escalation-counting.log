@@ -27,4 +27,4 @@
 # subject is the counting rule, not the cross-door parity; the unfiltered
 # whole-file run is captured in casting-2-escalation.log.
 ............................                                             [100%]
-28 passed, 68 deselected in 0.07s
+28 passed, 135 deselected in 0.07s

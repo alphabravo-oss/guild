@@ -3409,3 +3409,673 @@ def test_the_forgery_table_shows_the_forgery_and_the_refusal():
             assert "urgent=1" not in line.split("REFUSED")[1]
     # The benign body is accepted on BOTH arms — the refusal is narrow.
     assert table.rsplit("\n", 1)[1].count("urgent=0 normal=1") == 2
+
+
+# --------------------------------------------------------------------------- #
+# D-130 / D-128 / D-103 — the artifact-handling guard, asserted over the PACKAGE
+#
+# THE ESCALATED CLASS (GRIND cycles 15-18, lead ruling ST-002/ST-003, FR-008):
+# "a hardening mechanism bound by hand to the site where a defect was reported,
+# instead of derived from the members the module or artifact set actually
+# contains."
+#
+# Its history in this module is four fixes to the same shape:
+#   D-097  `_dict_records` was added to foundry.py and applied to ONE of the two
+#          filing doors. The batch door kept its raw `d.get(...)`, so a
+#          malformed historical record still raised AFTER the append, aborting
+#          the transaction and silently discarding the filing (D-128).
+#   D-098  `_load_json` was made tolerant in foundry_orchestrator.py and in
+#          foundry.py. The THIRD copy, forge_spec.py, was named in bold by
+#          TEMPER group A ("Fix once, in one place -- patching only
+#          foundry.py:159 leaves two live copies") and was still the unguarded
+#          original: 9 corruption shapes x 2 doors = 18/18 raises (D-130).
+#   D-103  `_save_json` was given a UNIQUE tmp sidecar in foundry_orchestrator.py
+#          so a peer's rename could not move a half-written payload into place.
+#          The copies elsewhere kept the shared `path.with_suffix(".tmp")`.
+#   D-119  the cycle readers -- closed by `GUARDED_CYCLE_READERS` above, which
+#          is the shape this section mirrors.
+#
+# Every one of those was fixed AT THE REPORTED SITE and left live copies behind.
+# So membership is DERIVED here, exactly as it is for the cycle readers: the
+# offence is computed from each call site's OWN code, over every module the
+# package contains.
+#
+# THE ALLOW-LIST IS EMPTY, and that is the point. It is not "the guarded
+# primitives are listed here"; it is that the guarded primitives PASS THESE
+# RULES ON THEIR OWN MERITS -- `_read_document` carries its try/except in its
+# body, `_save_json` sits in a module that owns a flock discipline -- so there
+# is nothing to enrol and nothing a future edit can quietly add itself to. A
+# name allow-list is precisely the mechanism D-066 caught one level up; adding
+# one here would commit the escalated class inside the guard that exists to
+# make it unrepresentable.
+#
+# WHAT THESE RULES DO NOT BIND, stated so a later reader does not mistake
+# silence for coverage. Both residuals are DIFFERENT classes, not this one
+# dodged, and both are logged in concerns.md with their exact sites:
+#   - `read_text(...)` raising UnicodeDecodeError before json.loads is ever
+#     reached. That is a property of the TEXT READ, not of the document load.
+#     foundry_spawn.py:1163,1448 catch `json.JSONDecodeError` alone.
+#   - a locked write primitive CALLED from outside its lock. Rule (b) binds a
+#     module that renames to owning a locking discipline; it does not prove
+#     every call reaches the writer through it. foundry.py::_save_json has six
+#     callers outside `ledger_transaction`.
+# --------------------------------------------------------------------------- #
+
+# Exception names whose handler covers what `json.loads` itself raises. A
+# handler naming any of these keeps the decode failure off the MCP boundary,
+# which is the NFR-002 property -- "never raise across MCP" -- that D-130's
+# 18/18 raises violated. Attribute spellings are matched on the attribute name,
+# so `json.JSONDecodeError` and a bare `JSONDecodeError` import both count.
+_DECODE_HANDLER_NAMES = frozenset({
+    "ValueError", "JSONDecodeError", "Exception", "BaseException",
+})
+
+# How a document reaches `json.loads`. A load over anything else -- a JSONL
+# line, a subprocess's stdout -- is not a DOCUMENT load and is not this class.
+_FILE_READ_METHODS = frozenset({"read_text", "read_bytes"})
+
+
+def _handler_covers_decode(handler: ast.ExceptHandler) -> bool:
+    """True when this ``except`` clause catches a JSON decode failure."""
+    if handler.type is None:
+        return True  # bare `except:` catches everything
+    names = {
+        node.attr if isinstance(node, ast.Attribute) else node.id
+        for node in ast.walk(handler.type)
+        if isinstance(node, (ast.Name, ast.Attribute))
+    }
+    return bool(names & _DECODE_HANDLER_NAMES)
+
+
+def _reads_a_file(node: ast.AST) -> bool:
+    """True when the expression subtree reads a file's bytes or text."""
+    for n in ast.walk(node):
+        if not isinstance(n, ast.Call):
+            continue
+        if isinstance(n.func, ast.Attribute) and n.func.attr in _FILE_READ_METHODS:
+            return True
+        if isinstance(n.func, ast.Name) and n.func.id == "open":
+            return True
+    return False
+
+
+def _is_document_load(node: ast.AST) -> bool:
+    """True for ``json.load(s)`` applied to something read off disk."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr in ("load", "loads")
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "json"
+    ):
+        return False
+    return _reads_a_file(node)
+
+
+def _walk_guarded(node: ast.AST, fn: str, guarded: bool, visit) -> None:
+    """Depth-first walk carrying the enclosing function and decode coverage.
+
+    ``guarded`` is True inside the BODY of a ``try`` whose handlers catch the
+    decode family. It resets at every function boundary -- a function defined
+    inside a ``try`` is not protected at the point it is CALLED -- and it does
+    not extend into the handlers, ``else`` or ``finally``, where a second raise
+    would propagate.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        fn, guarded = node.name, False
+    elif isinstance(node, (ast.Try, ast.TryStar)):
+        covered = guarded or any(_handler_covers_decode(h) for h in node.handlers)
+        for stmt in node.body:
+            _walk_guarded(stmt, fn, covered, visit)
+        for part in (*node.handlers, *node.orelse, *node.finalbody):
+            _walk_guarded(part, fn, guarded, visit)
+        return
+    visit(node, fn, guarded)
+    for child in ast.iter_child_nodes(node):
+        _walk_guarded(child, fn, guarded, visit)
+
+
+def _unguarded_document_loads(path: Path) -> list[str]:
+    """Every document load that can raise a decode failure at its caller.
+
+    D-130's shape, derived from the site rather than from a list of known
+    copies: `if not path.exists(): return {}` followed by
+    `json.loads(path.read_text(...))` with no try/except and no isinstance.
+    Route the read through the module's tolerant `_load_json` (which returns
+    {} for every malformed container) and report the file through
+    `_document_problem` / `_artifact_guard` when the operator must be told
+    WHICH file is broken.
+    """
+    offenders: list[str] = []
+
+    def visit(node: ast.AST, fn: str, guarded: bool) -> None:
+        if _is_document_load(node) and not guarded:
+            offenders.append(f"{path.name}::{fn}:{node.lineno}")
+
+    _walk_guarded(ast.parse(path.read_text(encoding="utf-8")), "<module>", False, visit)
+    return sorted(set(offenders))
+
+
+def _unlocked_artifact_renames(path: Path) -> list[str]:
+    """Every tmp+rename in a module that owns no locking discipline.
+
+    D-103's shape: `tmp = path.with_suffix(".tmp"); tmp.write_text(...);
+    tmp.rename(path)`. The sidecar name is SHARED by every concurrent writer of
+    the same artifact, so a peer's rename can move this call's half-written
+    payload into place or delete it mid-write. A module that renames onto a
+    shared artifact must serialize its writes; one that does not must not carry
+    its own copy of the write primitive at all -- it imports the guarded one.
+
+    Derived from whether the module itself takes an exclusive lock, not from
+    which modules are known to be safe.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    holds_a_lock = any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "flock"
+        for n in ast.walk(tree)
+    )
+    if holds_a_lock:
+        return []
+
+    offenders: list[str] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            is_rename = node.func.attr == "rename"
+            is_replace = (
+                node.func.attr == "replace"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "os"
+            )
+            if is_rename or is_replace:
+                offenders.append(f"{path.name}::{fn.name}:{node.lineno}")
+    return sorted(set(offenders))
+
+
+def _iteration_sources(node: ast.AST) -> list[ast.AST]:
+    """The iterables of a ``for`` loop or any comprehension."""
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return [node.iter]
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+        return [gen.iter for gen in node.generators]
+    return []
+
+
+def _raw_ledger_iterations(path: Path) -> list[str]:
+    """Every direct iteration over a ``ledger_transaction`` record binding.
+
+    D-128's shape. ``ledger_transaction`` USED to yield the ledger's list
+    verbatim, malformed historical records included, and
+    ``allocate_record_id`` was the only reader that skipped a non-dict. Every
+    other scan assumed dicts, so `d.get("status")` raised on one -- and it
+    raised AFTER the new record was appended, so the transaction aborted,
+    nothing was written, and the filing the stream made was GONE while the
+    caller got a traceback that named no file.
+
+    D-127 has since moved that filter INSIDE the primitive: the transaction
+    now yields mapping records only and re-inserts the non-dicts by index
+    before the write. That is the better fix and it is not this one's
+    substitute. This rule asserts the ORCHESTRATOR still reaches records
+    through `_dict_records` rather than resting on what a sibling module
+    currently does inside a contextmanager -- so a revert there, a second
+    ledger primitive, or a caller binding the raw document surfaces here as a
+    named offender instead of as a silently reopened D-128.
+
+    The rule is the ITERATION, not the attribute access: `_dict_records(...)`
+    is the one place that tolerance is named, so a scan that iterates the
+    binding directly has bypassed it however carefully its body is written. An
+    inline `isinstance(d, dict)` is a hand-applied copy of the primitive --
+    correct today, and the same copy-per-site that is this whole class.
+
+    Whole-list operations (``append``, ``len``, ``allocate_record_id``) do not
+    touch elements and are untouched by this rule.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for block in ast.walk(fn):
+            if not isinstance(block, (ast.With, ast.AsyncWith)):
+                continue
+            bindings = {
+                item.optional_vars.id
+                for item in block.items
+                if isinstance(item.context_expr, ast.Call)
+                and isinstance(item.context_expr.func, ast.Name)
+                and item.context_expr.func.id == "ledger_transaction"
+                and isinstance(item.optional_vars, ast.Name)
+            }
+            if not bindings:
+                continue
+            for inner in ast.walk(block):
+                for source in _iteration_sources(inner):
+                    if isinstance(source, ast.Name) and source.id in bindings:
+                        offenders.append(f"{path.name}::{fn.name}:{source.lineno}")
+    return sorted(set(offenders))
+
+
+def test_no_document_load_can_raise_across_the_mcp_boundary():
+    """D-130, asserted as a property of the whole installed package.
+
+    Before the fix this reported forge_spec.py::_load_json:32 -- the third
+    `_load_json` copy, reachable over MCP through Forge-Spec-Start/Check/Status
+    -- plus four more the defect report had not found, every one of them on the
+    request path: foundry_handoff.py::foundry_spec_hash (Foundry-Spec-Hash),
+    foundry_validate.py::foundry_validate_castings x2
+    (Foundry-Validate-Castings) and validation.py::validate_report
+    (Validate-Report). That the scan found four the hand search missed is the
+    argument for the scan.
+    """
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    modules = _package_modules(pkg)
+    assert modules, f"no modules discovered under {pkg}"
+
+    offenders = sorted(o for p in modules for o in _unguarded_document_loads(p))
+    assert not offenders, (
+        f"{offenders} load a JSON document off disk without handling the decode "
+        f"failure, so a corrupt or truncated artifact raises out of the tool "
+        f"and across the MCP boundary as a traceback that names no file. "
+        f"NFR-002 and the house rule are the same sentence here: never raise "
+        f"across MCP, refuse by name. Route the read through the module's "
+        f"tolerant `_load_json` and report the file with `_artifact_guard` / "
+        f"`_document_problem`. There is no allow-list to add yourself to -- "
+        f"the guarded loaders pass this rule on their own merits."
+    )
+
+
+def test_no_module_renames_onto_a_run_artifact_without_a_lock():
+    """D-103, as a package property.
+
+    Before the fix: forge_spec.py::_save_json:38 and
+    intent_coverage.py::_save_json_atomic:98, both the shared-sidecar shape,
+    the second of which writes castings/manifest.json -- a real run artifact
+    two other tools read concurrently. Its own docstring claimed to mirror
+    foundry.py's discipline; it mirrored the tmp+rename and not the flock.
+    """
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    offenders = sorted(o for p in _package_modules(pkg) for o in _unlocked_artifact_renames(p))
+    assert not offenders, (
+        f"{offenders} rename a tmp sidecar into place in a module that takes no "
+        f"exclusive lock. The sidecar name is shared by every concurrent writer "
+        f"of the same artifact, so a peer's rename moves a half-written payload "
+        f"into place or deletes it mid-write. Import the guarded `_save_json` / "
+        f"`_document_transaction` rather than carrying a fifth copy of the "
+        f"write primitive."
+    )
+
+
+def test_no_ledger_scan_bypasses_the_malformed_record_filter():
+    """D-128, as a package property.
+
+    Before the fix this reported foundry_sync_defects:3631,3644,3796 (the batch
+    door D-097 missed) and foundry_mark_defect_fixed:3260,3357 (correct today
+    via an inline `isinstance`, which is the hand-applied copy this class is
+    made of).
+    """
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    offenders = sorted(o for p in _package_modules(pkg) for o in _raw_ledger_iterations(p))
+    assert not offenders, (
+        f"{offenders} iterate a ledger_transaction record binding directly. The "
+        f"transaction yields the ledger VERBATIM, malformed historical records "
+        f"included, so an element scan raises mid-transaction -- after the "
+        f"append, so nothing is written and the filing is silently lost. "
+        f"Iterate `_dict_records(<binding>)`; an inline isinstance is another "
+        f"copy of the same filter, which is the defect class itself."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-129 (FR-019 / AC-004 / NFR-002) — the artifact guard derives its NON-JSON
+# members too, and Foundry-Clear never destroys what it could not account for.
+#
+# THE HARM, driven end to end at ab5a430: inject an URGENT directive ("STOP the
+# cast wave, the spec changed"); Foundry-Next shows it. Append ONE byte
+# b"\xe9\n". Foundry-Next then reports directives=null with NO error, and the
+# directive text and the string "directives.md" appear NOWHERE in the response.
+# Foundry-Clear returns {"ok": true, "cleared_count": 0, "message": "No active
+# directives to clear"}, TRUNCATES the file to its empty header, and writes no
+# archive record. A live urgent directive is destroyed and the destruction is
+# reported as success.
+#
+# D-098 had fixed the RAISE (`_read_text` is tolerant) and added no guard half,
+# so an undecodable directives.md was simply read as EMPTY. It was never
+# checked because `_run_artifact_problems` globbed `*.json` alone.
+# --------------------------------------------------------------------------- #
+
+_URGENT_DIRECTIVE = "STOP the cast wave, the spec changed"
+
+
+def _seed_directive(project_root: str, text: str, priority: str = "urgent") -> None:
+    assert fo.foundry_inject_directive(text, priority, project_root).get("ok")
+
+
+def test_an_undecodable_directives_md_is_named_not_silently_empty(run_env):
+    """FR-019 / AC-004 / NFR-002 — the repro, at the handshake.
+
+    The pre-fix response said directives=null and named no file. The bar is
+    NOT merely 'does not raise' (D-098 already cleared that) -- it is that the
+    operator is told WHICH file to repair.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+
+    # Control: it is visible while the file is readable.
+    before = fo.foundry_next_action(project_root)
+    assert _URGENT_DIRECTIVE in json.dumps(before)
+
+    with open(fdir / "directives.md", "ab") as f:
+        f.write(b"\xe9\n")
+
+    after = fo.foundry_next_action(project_root)
+
+    assert "error" in after, after
+    assert "directives.md" in after["error"], after["error"]
+    assert after.get("corrupt_artifacts"), after
+    assert any("directives.md" in p for p in after["corrupt_artifacts"])
+
+
+def test_foundry_clear_refuses_an_undecodable_file_and_destroys_nothing(run_env):
+    """FR-019's contract is 'preserves a record'. A clear that truncates a file
+    it could not read keeps no record of anything, so it must not run."""
+    project_root, fdir = run_env
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+    directives = fdir / "directives.md"
+    with open(directives, "ab") as f:
+        f.write(b"\xe9\n")
+    before = directives.read_bytes()
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert "error" in result, result
+    assert "directives.md" in result["error"]
+    # The file is untouched and no archive record was invented for it.
+    assert directives.read_bytes() == before
+    assert not (fdir / fo.DIRECTIVES_CLEARED_FILENAME).exists()
+
+
+def test_foundry_clear_still_clears_and_records_a_readable_directive(run_env):
+    """The control arm. The refusal above must be NARROW -- a readable
+    directive still clears with count 1 and still writes the archive."""
+    project_root, fdir = run_env
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert result["ok"] is True, result
+    assert result["cleared_count"] == 1
+    assert result["urgent_cleared"] == 1
+    archive = fdir / fo.DIRECTIVES_CLEARED_FILENAME
+    assert archive.exists()
+    assert _URGENT_DIRECTIVE in archive.read_text(encoding="utf-8")
+    # ...and the live file really is reset.
+    assert fo._read_directives(project_root)["has_directives"] is False
+
+
+def test_foundry_clear_refuses_a_broken_header_grammar_rather_than_truncating(run_env):
+    """The half no encoding fault is needed to reach.
+
+    Hand-edit a '###' to a '##' and the parser sees no header, returns no
+    directives, and the pre-fix clearer truncated a file full of live human
+    steering while reporting 'No active directives to clear'. Same harm as the
+    non-UTF-8 route, reached without a single bad byte -- which is why the
+    conservation check lives at the destructive write and not only in the
+    decoder.
+    """
+    project_root, fdir = run_env
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+    directives = fdir / "directives.md"
+    directives.write_text(
+        directives.read_text(encoding="utf-8").replace("### [URGENT]", "## [URGENT]"),
+        encoding="utf-8",
+    )
+    before = directives.read_text(encoding="utf-8")
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert "error" in result, result
+    assert result["cleared_count"] == 0
+    assert _URGENT_DIRECTIVE in directives.read_text(encoding="utf-8")
+    assert directives.read_text(encoding="utf-8") == before
+
+
+def test_a_never_used_directives_file_still_clears_as_a_no_op(run_env):
+    """The conservation check must not refuse the ordinary empty case: a
+    directives.md holding only the preamble is fully accounted for."""
+    project_root, fdir = run_env
+    (fdir / "directives.md").write_text(fo._DIRECTIVES_PREAMBLE, encoding="utf-8")
+
+    result = fo.foundry_clear_directives(project_root)
+
+    assert result["ok"] is True, result
+    assert result["cleared_count"] == 0
+
+
+def test_every_decodable_artifact_type_the_run_dir_holds_is_guarded(run_env):
+    """DERIVED MEMBERSHIP, asserted as such — the escalated class's binding rule.
+
+    Corrupt EVERY top-level artifact the run directory actually holds, one at a
+    time, and require a named refusal naming that file. Membership comes from
+    globbing the directory, so this test does not know -- and must not know --
+    that "directives.md" is one of them. Add a new artifact of a decodable type
+    tomorrow and it is covered here the same day, with no edit to this file.
+
+    This is the assertion that FAILS when a member is unbound: before the fix,
+    every ``.md`` member came back clean because the guard globbed ``*.json``.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+    (fdir / "spec.md").write_text("# Spec\n\n- **US-001:** a thing\n", encoding="utf-8")
+    (fdir / "defects.json").write_text(json.dumps({"defects": []}), encoding="utf-8")
+
+    members = sorted(
+        p for p in fdir.glob("*")
+        if p.is_file() and p.suffix.lower() in fo._ARTIFACT_DECODERS
+    )
+    # The fixture must actually exercise BOTH decoders, or the derivation is
+    # being asserted against a set that cannot distinguish the fix.
+    assert {p.suffix for p in members} == {".json", ".md"}, members
+
+    for member in members:
+        original = member.read_bytes()
+        try:
+            member.write_bytes(b"\xe9\x00 not a readable artifact\n")
+            problems = fo._run_artifact_problems(fdir)
+            assert any(member.name in p for p in problems), (
+                f"{member.name} was corrupted and the guard reported {problems}. "
+                f"Membership must be DERIVED from what the run directory holds; "
+                f"a type with no decoder is a silent hole exactly like the "
+                f"`*.json` glob was."
+            )
+            guard = fo._artifact_guard(fdir)
+            assert guard is not None and member.name in guard["error"]
+        finally:
+            member.write_bytes(original)
+
+    # ...and with everything restored the guard is silent again.
+    assert fo._artifact_guard(fdir) is None
+
+
+# --------------------------------------------------------------------------- #
+# Pre/post tables for the evidence logs, ASSERTED below so the comparison is a
+# claim this suite holds rather than a picture printed beside it.
+# --------------------------------------------------------------------------- #
+
+
+def _prefix_run_artifact_problems(fdir: Path) -> list[str]:
+    """``_run_artifact_problems`` verbatim as it stood at ab5a430.
+
+    `sorted(p for p in fdir.glob("*.json"))` plus the castings manifest. Kept
+    so the evidence log can show the same run directory judged by both rules.
+    """
+    if not fdir or not fdir.exists():
+        return []
+    candidates = sorted(p for p in fdir.glob("*.json") if p.is_file())
+    manifest = fdir / "castings" / "manifest.json"
+    if manifest.is_file():
+        candidates.append(manifest)
+    return [p for p in (fo._document_problem(c) for c in candidates) if p]
+
+
+def render_artifact_guard_table(fdir: Path) -> str:
+    """D-129 pre/post: which corrupted artifacts each glob can SEE."""
+    members = sorted(
+        p for p in fdir.glob("*")
+        if p.is_file() and p.suffix.lower() in fo._ARTIFACT_DECODERS
+    )
+    out = [
+        "== D-129: corrupt one artifact at a time; who reports it by name? ==",
+        "   %-24s %-12s %s" % ("artifact", "PRE-fix", "post-fix"),
+        "   %-24s %-12s %s" % ("-" * 8, "-" * 7, "-" * 8),
+    ]
+    for member in members:
+        original = member.read_bytes()
+        try:
+            member.write_bytes(b"\xe9\x00 not a readable artifact\n")
+            pre = any(member.name in p for p in _prefix_run_artifact_problems(fdir))
+            post = any(member.name in p for p in fo._run_artifact_problems(fdir))
+            out.append("   %-24s %-12s %s" % (
+                member.name,
+                "NAMED" if pre else "invisible",
+                "NAMED" if post else "invisible",
+            ))
+        finally:
+            member.write_bytes(original)
+    return "\n".join(out)
+
+
+# A fresh copy of each guarded primitive, planted in a module the packet never
+# named. This is the FUTURE-copy case the escalated class is really about: the
+# four fixes before this one each closed the copies that existed and left the
+# next one free to appear.
+_PLANTED_LOADER = (
+    "import json\n"
+    "from pathlib import Path\n"
+    "\n"
+    "def _load_json(path):\n"
+    "    if not path.exists():\n"
+    "        return {}\n"
+    "    return json.loads(path.read_text(encoding='utf-8'))\n"
+)
+_PLANTED_WRITER = (
+    "import json\n"
+    "\n"
+    "def _save_json(path, data):\n"
+    "    tmp = path.with_suffix('.tmp')\n"
+    "    tmp.write_text(json.dumps(data), encoding='utf-8')\n"
+    "    tmp.rename(path)\n"
+)
+_PLANTED_LEDGER_SCAN = (
+    "def sync(defects_path):\n"
+    "    with ledger_transaction(defects_path, 'defects') as records:\n"
+    "        fixed = [d for d in records if d.get('status') == 'fixed']\n"
+    "        return fixed\n"
+)
+
+
+def _plant(tmp_path: Path, name: str, source: str) -> Path:
+    module = tmp_path / name
+    module.parent.mkdir(parents=True, exist_ok=True)
+    module.write_text(source, encoding="utf-8")
+    return module
+
+
+def render_derived_guard_table(tmp_path: Path) -> str:
+    """The structural claim: a FIFTH copy is caught wherever it is written.
+
+    Membership is derived over the package on both axes, so the planted copies
+    go in positions a directory literal would have missed — the package ROOT
+    (server.py's position, which owns _DISPATCH) and a NON-tools subpackage.
+    """
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    modules = _package_modules(pkg)
+
+    out = [
+        "== the three rules over the installed package, after this casting's fixes ==",
+        "   unguarded document loads      : %s" % (
+            sorted(o for p in modules for o in _unguarded_document_loads(p)) or "none"),
+        "   unlocked artifact renames     : %s" % (
+            sorted(o for p in modules for o in _unlocked_artifact_renames(p)) or "none"),
+        "   raw ledger iterations         : %s" % (
+            sorted(o for p in modules for o in _raw_ledger_iterations(p)) or "none"),
+        "",
+        "== and a FRESH copy planted where a directory literal could not see it ==",
+        "   %-34s %s" % ("planted at", "what the derived scan reports"),
+        "   %-34s %s" % ("-" * 10, "-" * 29),
+    ]
+    plants = [
+        ("<pkg root>/regressed.py", _PLANTED_LOADER, _unguarded_document_loads),
+        ("<pkg>/parsers/regressed.py", _PLANTED_LOADER, _unguarded_document_loads),
+        ("<pkg root>/regressed.py", _PLANTED_WRITER, _unlocked_artifact_renames),
+        ("<pkg>/schemas/regressed.py", _PLANTED_WRITER, _unlocked_artifact_renames),
+        ("<pkg root>/regressed.py", _PLANTED_LEDGER_SCAN, _raw_ledger_iterations),
+    ]
+    for label, source, rule in plants:
+        relative = label.replace("<pkg root>/", "").replace("<pkg>/", "")
+        module = _plant(tmp_path, relative, source)
+        found = rule(module)
+        out.append("   %-34s %s" % (label, found or "MISSED"))
+    return "\n".join(out)
+
+
+def test_the_artifact_guard_table_shows_the_blind_spot_and_the_fix(run_env):
+    """Asserted: every JSON member was already NAMED (the fix narrows nothing),
+    and every non-JSON member was INVISIBLE and is NAMED now."""
+    project_root, fdir = run_env
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+    (fdir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (fdir / "defects.json").write_text(json.dumps({"defects": []}), encoding="utf-8")
+
+    table = render_artifact_guard_table(fdir)
+    rows = [r for r in table.split("\n") if r.startswith("   ") and ".json" in r or
+            (r.startswith("   ") and ".md" in r)]
+    assert rows, table
+
+    for row in rows:
+        name = row.split()[0]
+        pre, post = row.split()[1], row.split()[2]
+        assert post == "NAMED", f"{name} is still invisible to the guard: {row}"
+        if name.endswith(".json"):
+            assert pre == "NAMED", f"NFR-002: {name} must not have regressed: {row}"
+        else:
+            assert pre == "invisible", f"pre-fix arm is wrong for {name}: {row}"
+
+
+def test_the_derived_guard_table_catches_a_fresh_copy_anywhere(tmp_path):
+    """The structural claim, asserted rather than described.
+
+    Each planted copy is a verbatim reproduction of the shape one of the four
+    prior fixes closed, written in a module none of them touched. All five are
+    named. This is what "unrepresentable" means here: not that today's copies
+    are gone, but that tomorrow's cannot arrive unannounced.
+    """
+    table = render_derived_guard_table(tmp_path)
+    assert "MISSED" not in table, table
+    # The package itself is clean, or the planted-copy claim proves nothing.
+    assert table.count("none") == 3, table
+
+
+def test_the_planted_copies_are_the_shapes_the_prior_fixes_closed(tmp_path):
+    """Guards the guard: a planted copy that no rule fires on would make the
+    table above vacuous, so each shape is checked against its own rule."""
+    loader = _plant(tmp_path, "a.py", _PLANTED_LOADER)
+    writer = _plant(tmp_path, "b.py", _PLANTED_WRITER)
+    scan = _plant(tmp_path, "c.py", _PLANTED_LEDGER_SCAN)
+
+    assert _unguarded_document_loads(loader) == ["a.py::_load_json:7"]
+    assert _unlocked_artifact_renames(writer) == ["b.py::_save_json:6"]
+    assert _raw_ledger_iterations(scan) == ["c.py::sync:3"]
+    # ...and each rule is silent on the other two shapes: three rules, three
+    # distinct classes, no rule standing in for another.
+    assert _unguarded_document_loads(writer) == []
+    assert _unlocked_artifact_renames(loader) == []
+    assert _raw_ledger_iterations(loader) == []

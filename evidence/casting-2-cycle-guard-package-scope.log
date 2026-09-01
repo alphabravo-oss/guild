@@ -65,7 +65,7 @@
   derived over the package     -> ['server.py::_sneaky_cycle_reader:955']
 == and the guard itself, on the same mutated tree ==
 E       assert not ['server.py::_sneaky_cycle_reader:955']
-1 failed, 195 deselected in 0.39s
+1 failed, 207 deselected in 0.43s
 == server.py restored: byte-identical to the pre-mutation snapshot, appended reader gone ==
 == both tests green on the unmutated tree ==
-2 passed, 194 deselected in 0.23s
+2 passed, 206 deselected in 0.45s

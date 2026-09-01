@@ -1,0 +1,65 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, json, tempfile; sys.path[:0]=["tests","src"]; from pathlib import Path; from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state; import test_orchestrator_gates as t; root=Path(tempfile.mkdtemp()); fdir=root/"foundry-archive"/"ev"; (fdir/"castings").mkdir(parents=True); foundry_state.set_active_run("ev"); D="STOP the cast wave, the spec changed"; fo.foundry_inject_directive(D,"urgent",str(root)); (fdir/"spec.md").write_text("# Spec\n",encoding="utf-8"); (fdir/"defects.json").write_text(json.dumps({"defects":[]}),encoding="utf-8"); print(t.render_artifact_guard_table(fdir)); print(); print("== the repro, end to end through the real tools =="); a=fo.foundry_next_action(str(root)); print("   readable  Foundry-Next  directive visible ......... %s" % (D in json.dumps(a))); f=open(fdir/"directives.md","ab"); f.write(b"\xe9\n"); f.close(); b=fo.foundry_next_action(str(root)); print("   +1 byte   Foundry-Next  error names directives.md .. %s   (PRE-fix: directives=null, named nothing)" % ("directives.md" in b.get("error",""))); c=fo.foundry_clear_directives(str(root)); print("   +1 byte   Foundry-Clear refused ................... %s   (PRE-fix: ok=true, cleared_count=0)" % ("error" in c)); print("   +1 byte   Foundry-Clear error names directives.md . %s" % ("directives.md" in c.get("error",""))); print("   +1 byte   file still holds the directive ......... %s   (PRE-fix: TRUNCATED to the empty header)" % (D.encode() in (fdir/"directives.md").read_bytes())); print("   +1 byte   archive record invented ............... %s" % ((fdir/fo.DIRECTIVES_CLEARED_FILENAME).exists())); print(); print("== the grammar half, which needs no bad byte at all =="); (fdir/"directives.md").write_bytes((fdir/"directives.md").read_bytes().replace(b"\xe9\n",b"").replace(b"### [URGENT]",b"## [URGENT]")); d=fo.foundry_clear_directives(str(root)); print("   ###->##   Foundry-Clear refused ................... %s   (PRE-fix: truncated live steering)" % ("error" in d)); print("   ###->##   file still holds the directive ......... %s" % (D.encode() in (fdir/"directives.md").read_bytes())); print(); print("== the control arm: a readable directive still clears and still records =="); (fdir/"directives.md").write_bytes((fdir/"directives.md").read_bytes().replace(b"## [URGENT]",b"### [URGENT]")); e=fo.foundry_clear_directives(str(root)); print("   readable  Foundry-Clear ok=%s cleared_count=%s urgent=%s" % (e.get("ok"), e.get("cleared_count"), e.get("urgent_cleared"))); print("   readable  archive written ....................... %s" % ((fdir/fo.DIRECTIVES_CLEARED_FILENAME).exists())); print("   readable  archive carries the directive text .... %s" % (D in (fdir/fo.DIRECTIVES_CLEARED_FILENAME).read_text(encoding="utf-8"))); foundry_state.clear_active_run()' && echo "" && echo "== the pins, driven ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "undecodable or broken_header or never_used or decodable_artifact_type or artifact_guard_table" 2>&1 | grep -E "passed|failed"
+# evidence-for: FR-019, AC-004, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-129 -- ONE STRAY NON-UTF-8 BYTE IN directives.md SILENTLY VOIDED A LIVE
+# URGENT DIRECTIVE, AND Foundry-Clear THEN REPORTED SUCCESS, TRUNCATED THE
+# FILE, AND WROTE NO ARCHIVE RECORD. Destroyed data, reported as success.
+#
+# D-098 had fixed the RAISE -- `_read_text` is tolerant, so an undecodable
+# directives.md stopped throwing UnicodeDecodeError out of Foundry-Next -- and
+# added NO GUARD HALF. The file was simply read as EMPTY. It was never checked
+# because `_run_artifact_problems` globbed `*.json` and nothing else, so the
+# one run artifact that is not JSON was the one artifact the guard could not
+# see. That is the escalated class exactly: membership derived over the files
+# of a TYPE, with the type itself typed.
+#
+# THE FIX IS NOT "ALSO CHECK directives.md". Naming that file in the guard is
+# the same defect one turn later, and the next non-JSON artifact repeats it.
+# Membership is derived by globbing every top-level file in the run directory;
+# a per-suffix DECODER TABLE says how to read each type. The table is what a
+# new artifact TYPE requires -- not a new artifact, which is covered the day it
+# is written. spec.md in the table below is the proof: nobody added it, and it
+# is guarded.
+#
+# THE SECOND HALF, and why the decoder alone is not enough. The harm --
+# "reports success, truncates, no record" -- is reachable with no encoding
+# fault at all: hand-edit a `###` to a `##` and the parser sees no header,
+# returns no directives, and the pre-fix clearer truncated a file full of live
+# human steering. So the destructive write carries its own conservation check:
+# Foundry-Clear may only destroy what it could account for. FR-019 makes
+# preserving a record this tool's whole contract, and a truncate that outruns
+# the archive breaks it in silence.
+#
+# The control arm is in the log deliberately: the refusal must be NARROW. A
+# readable directive still clears with count 1 and still writes
+# directives-cleared.md, and every *.json member was already NAMED before this
+# change and still is (NFR-002 -- the fix widens, it narrows nothing).
+== D-129: corrupt one artifact at a time; who reports it by name? ==
+   artifact                 PRE-fix      post-fix
+   --------                 -------      --------
+   defects.json             NAMED        NAMED
+   directives.md            invisible    NAMED
+   spec.md                  invisible    NAMED
+
+== the repro, end to end through the real tools ==
+   readable  Foundry-Next  directive visible ......... True
+   +1 byte   Foundry-Next  error names directives.md .. True   (PRE-fix: directives=null, named nothing)
+   +1 byte   Foundry-Clear refused ................... True   (PRE-fix: ok=true, cleared_count=0)
+   +1 byte   Foundry-Clear error names directives.md . True
+   +1 byte   file still holds the directive ......... True   (PRE-fix: TRUNCATED to the empty header)
+   +1 byte   archive record invented ............... False
+
+== the grammar half, which needs no bad byte at all ==
+   ###->##   Foundry-Clear refused ................... True   (PRE-fix: truncated live steering)
+   ###->##   file still holds the directive ......... True
+
+== the control arm: a readable directive still clears and still records ==
+   readable  Foundry-Clear ok=True cleared_count=1 urgent=1
+   readable  archive written ....................... True
+   readable  archive carries the directive text .... True
+
+== the pins, driven ==
+6 passed, 202 deselected in 0.24s

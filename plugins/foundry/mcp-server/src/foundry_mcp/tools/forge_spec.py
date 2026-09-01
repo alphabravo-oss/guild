@@ -9,10 +9,30 @@ Zero API calls. Zero cost.
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+# D-130 — the THIRD `_load_json` copy, imported now instead of re-typed.
+#
+# TEMPER group A named this file in bold: "Fix once, in one place -- patching
+# only foundry.py:159 leaves two live copies". D-098 hardened the other two and
+# this one stayed the unguarded original -- `json.loads(path.read_text(...))`
+# with no try/except and no isinstance -- behind three tools that ARE in the
+# server's _DISPATCH. Driven at ab5a430: 9 corruption shapes x 2 doors = 18/18
+# raises, 0/18 named refusals, JSONDecodeError for the syntax shapes and
+# `AttributeError: 'list' object has no attribute 'get'` for the wrong-type
+# shapes -- byte-for-byte the D-098 signature, two fixes later.
+#
+# The import is the fix, not a fourth copy of the tolerance. `_save_json` is
+# gone entirely: `_document_transaction` does the read-modify-write under an
+# flock with a per-writer tmp sidecar, so the shared `path.with_suffix(".tmp")`
+# that carried the D-103 shape here has no successor.
+from foundry_mcp.tools.foundry_orchestrator import (
+    _document_problem,
+    _document_transaction,
+    _load_json,
+)
 
 PLANNING_DIR = "foundry-planning"
 
@@ -26,16 +46,71 @@ _PHASE_LABELS = {
 }
 
 
-def _load_json(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+def _planning_guard(proj_dir: Path) -> dict | None:
+    """Named refusal when a planning artifact cannot be read, else None.
+
+    Membership is DERIVED -- every top-level ``*.json`` in the project
+    directory, the same rule ``_run_artifact_problems`` applies to a run
+    directory -- so a forge-spec artifact added later is guarded the day it is
+    written rather than the cycle someone remembers it. There is one such file
+    today; naming it would be the defect this guard exists to close.
+    """
+    if not proj_dir.exists():
+        return None
+    problems = [
+        p
+        for p in (
+            _document_problem(c)
+            for c in sorted(proj_dir.glob("*.json"))
+            if c.is_file()
+        )
+        if p
+    ]
+    if not problems:
+        return None
+    return {
+        "error": (
+            "Forge-spec state cannot be read: " + "; ".join(problems) + ". "
+            "This tool refuses rather than acting on a document it had to "
+            "guess at, or writing over one whose contents it could not read."
+        ),
+        "hint": (
+            "Repair or delete the named file(s) under the project's "
+            f"{PLANNING_DIR}/ directory, then retry. A deleted state file is "
+            "re-created by Forge-Spec-Start; a corrupt one is not silently "
+            "overwritten."
+        ),
+        "corrupt_artifacts": problems,
+    }
 
 
-def _save_json(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.rename(path)
+def _sound_state(state: dict, project_name: str) -> dict:
+    """Repair ``state`` in place to the shape every reader below assumes.
+
+    The tolerant loader closes the RAISE, not the SHAPE: a corrupt document
+    reads as ``{}``, and `{}["phases"]` is a KeyError one line later, which
+    lands on the MCP boundary exactly as the JSONDecodeError did. A document
+    that is a valid JSON object with ``"phases": []`` reaches the same place by
+    a different route -- that is corruption shape 8 of the D-130 drive,
+    `'list' object has no attribute 'get'`.
+
+    So the shape is repaired ONCE, here, rather than defended at each of the
+    three doors: a missing or wrong-typed key takes the default and every
+    usable value survives.
+    """
+    default = _default_state(project_name)
+    for key, value in default.items():
+        if key == "phases":
+            continue
+        if not isinstance(state.get(key), type(value)):
+            state[key] = value
+    phases = state.get("phases")
+    if not isinstance(phases, dict):
+        phases = state["phases"] = {}
+    for key, value in default["phases"].items():
+        if not isinstance(phases.get(key), dict):
+            phases[key] = value
+    return state
 
 
 def _slugify(name: str) -> str:
@@ -78,11 +153,13 @@ def forge_spec_start(project_name: str, project_root: str = ".") -> dict:
 
     slug = _slugify(project_name)
     proj_dir = _get_project_dir(project_root, project_name)
+    if (corrupt := _planning_guard(proj_dir)):
+        return corrupt
 
     # Resume if state already exists
     state_path = proj_dir / "state.json"
     if state_path.exists():
-        state = _load_json(state_path)
+        state = _sound_state(_load_json(state_path), project_name)
         return {
             "project_name": project_name,
             "slug": slug,
@@ -97,12 +174,14 @@ def forge_spec_start(project_name: str, project_root: str = ".") -> dict:
     (proj_dir / "research").mkdir(exist_ok=True)
     (proj_dir / "splits").mkdir(exist_ok=True)
 
-    state = _default_state(project_name)
     spec_path = str(proj_dir / "spec.md")
     plan_path = str(proj_dir / "plan.md")
-    state["foundry_spec_path"] = spec_path
-    state["foundry_plan_path"] = plan_path
-    _save_json(state_path, state)
+    with _document_transaction(state_path) as state:
+        state.update(_default_state(project_name))
+        state["foundry_spec_path"] = spec_path
+        state["foundry_plan_path"] = plan_path
+        snapshot = dict(state)
+    state = snapshot
 
     return {
         "project_name": project_name,
@@ -237,19 +316,24 @@ def forge_spec_check(
     state_path = proj_dir / "state.json"
     if not state_path.exists():
         return {"error": f"No forge-spec project '{project_name}'. Run Forge-Spec-Start first."}
+    if (corrupt := _planning_guard(proj_dir)):
+        return corrupt
 
-    state = _load_json(state_path)
-
-    if action == "codebase":
-        result = _check_codebase(proj_dir, state)
-    elif action == "decompose":
-        result = _check_decompose(proj_dir, state)
-    elif action == "spec":
-        result = _check_spec(proj_dir, state, project_root)
-    else:
-        return {"error": f"Unknown action '{action}'. Use: codebase, decompose, spec"}
-
-    _save_json(state_path, state)
+    # ONE critical section over state.json: the check helpers mutate the
+    # document and the write is the same transaction's exit, so a concurrent
+    # Forge-Spec-Check cannot read this call's pre-image and write over its
+    # result. The unknown-action branch mutates nothing, and a transaction that
+    # mutates nothing writes nothing -- the file is left byte-identical.
+    with _document_transaction(state_path) as state:
+        _sound_state(state, project_name)
+        if action == "codebase":
+            result = _check_codebase(proj_dir, state)
+        elif action == "decompose":
+            result = _check_decompose(proj_dir, state)
+        elif action == "spec":
+            result = _check_spec(proj_dir, state, project_root)
+        else:
+            result = {"error": f"Unknown action '{action}'. Use: codebase, decompose, spec"}
     return result
 
 
@@ -263,8 +347,14 @@ def forge_spec_status(project_name: str, project_root: str = ".") -> dict:
     if not state_path.exists():
         return {"error": f"No forge-spec project '{project_name}'. Run Forge-Spec-Start first."}
 
-    state = _load_json(state_path)
-    phases = state.get("phases", {})
+    if (corrupt := _planning_guard(proj_dir)):
+        return corrupt
+
+    # Status is a READ: the shape is repaired on the in-memory copy and the
+    # file is not rewritten, so asking what state a project is in never
+    # changes it.
+    state = _sound_state(_load_json(state_path), project_name)
+    phases = state["phases"]
 
     checklist = []
     for phase_key in _PHASES:

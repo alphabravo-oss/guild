@@ -1,0 +1,76 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys; sys.path[:0]=["tests","src"]; import test_escalation as t; print(t.render_ledger_parity_table()); print(); print(t.render_ledger_door_table())' && echo "" && echo "== the parity pins, driven ==" && uv run --quiet --with pytest pytest tests/test_escalation.py -q -p no:cacheprovider -k "malformed_historical or loses_the_filing or discards_the_malformed or open_count_over_a_junk or regression_reopen or ledger_parity_table or ledger_door_table" 2>&1 | grep -E "passed|failed"
+# evidence-for: FR-020, AC-025, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-128 -- D-097's fix was applied to the SINGLE door and not the BATCH door,
+# so a filed defect was still silently discarded.
+#
+# `foundry_sync_defects` ran `[d for d in records if d.get("status") ==
+# "fixed"]` INSIDE the ledger transaction: a raw .get() over every historical
+# record, no isinstance guard. foundry.py already carried the remedy --
+# `_dict_records`, added BY D-097, whose docstring says "Tolerating it in ONE
+# place is what keeps the two halves of the same scan consistent" -- and the
+# batch door did not use it. Two more raw scans sat in the same block: the
+# reopen pass matched on `d["id"]`, and the closing count re-scanned the list.
+#
+# WHY IT LOSES DATA rather than merely erroring. The raise lands AFTER the
+# in-transaction list is mutated, so `_save_json` never runs, the transaction
+# aborts, and the filing the stream just made is GONE. The caller receives a
+# traceback that names no file. That is the one row breaking D-095/D-098's
+# stated bar of 21/24 named refusals: shape-8 x Sync raised AND lost, while
+# Foundry-Defect persisted the record and preserved the malformed one, and
+# Foundry-Defects read clean.
+#
+# THE PARITY FRAME. Asserted across BOTH doors rather than as a Sync outcome,
+# for the reason the cycle-stamp rows in this suite already use: two filing
+# doors that disagree about what a defect ledger may contain IS the defect.
+# Three properties, six non-dict shapes, both doors: neither raises, neither
+# loses the filing it was handed, and neither DROPS the junk record --
+# tolerating a malformed record must not mean deleting it, which would be a
+# quieter D-096 (refusing to lose records to a bad container while losing them
+# to a bad record).
+#
+# BOTH SIDES OF THE CLASS ARE NOW CLOSED, and the second arrived mid-cycle.
+# Casting 3's D-127 moved the filter INSIDE `ledger_transaction`, which now
+# yields mapping records only and re-inserts the non-dicts by index before the
+# write. So the orchestrator's `_dict_records` calls are idempotent today
+# rather than load-bearing. They are kept deliberately: the package scan in
+# test_orchestrator_gates.py asserts the orchestrator reaches records through
+# the filter rather than resting on what a sibling module currently does
+# inside a contextmanager, so a revert there, a second ledger primitive, or a
+# caller binding the raw document surfaces as a named offender instead of as a
+# silently reopened D-128.
+== D-128: the batch door's scan, over a ledger holding one junk record ==
+   shape        PRE-fix   what the door got
+   ------------ -------   -----------------
+   "not-a-dict" RAISES    AttributeError: 'str' object has no attribute 'get'
+   null         RAISES    AttributeError: 'NoneType' object has no attribute 'get'
+   42           RAISES    AttributeError: 'int' object has no attribute 'get'
+   true         RAISES    AttributeError: 'bool' object has no attribute 'get'
+   ["nested"]   RAISES    AttributeError: 'list' object has no attribute 'get'
+   3.5          RAISES    AttributeError: 'float' object has no attribute 'get'
+
+== the same shapes through _dict_records, the one place the tolerance lives ==
+   "not-a-dict" post-fix  scanned 1 of 2 records, no raise
+   null         post-fix  scanned 1 of 2 records, no raise
+   42           post-fix  scanned 1 of 2 records, no raise
+   true         post-fix  scanned 1 of 2 records, no raise
+   ["nested"]   post-fix  scanned 1 of 2 records, no raise
+   3.5          post-fix  scanned 1 of 2 records, no raise
+
+== both doors DRIVEN: does either raise, lose the filing, or drop the junk? ==
+   junk record  Defect     Sync       filing kept  junk kept
+   -----------  ------     ----       -----------  ---------
+   "not-a-dict" ok         ok         yes          yes
+   null         ok         ok         yes          yes
+   42           ok         ok         yes          yes
+   true         ok         ok         yes          yes
+   ["nested"]   ok         ok         yes          yes
+   3.5          ok         ok         yes          yes
+
+   PRE-fix every row read: Defect=ok  Sync=AttributeError  filing kept=NO  junk kept=yes
+
+== the parity pins, driven ==
+28 passed, 135 deselected in 0.08s

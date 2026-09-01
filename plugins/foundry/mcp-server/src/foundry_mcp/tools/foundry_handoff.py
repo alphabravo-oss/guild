@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
+from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
 from foundry_mcp.tools.foundry_state import get_run_dir
 
 
@@ -166,12 +167,20 @@ def foundry_spec_hash(project_root: str = ".") -> dict:
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"ok": False, "error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return {"ok": False, **corrupt}
 
     spec_path = fdir / "spec.md"
     if not spec_path.exists():
         state_path = fdir / "state.json"
         if state_path.exists():
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+            # D-130's class, found by the package-wide scan rather than by a
+            # defect report: this was `json.loads(state_path.read_text(...))`,
+            # so a corrupt state.json raised out of Foundry-Spec-Hash -- the
+            # tool every Foundry-Spawn-Teammate and Foundry-Accept-Casting call
+            # depends on -- as a traceback naming no file. Routed through the
+            # orchestrator's tolerant loader; the guard above it names the file.
+            state = _load_json(state_path)
             sp = state.get("spec_path", "")
             if sp:
                 candidate = Path(project_root) / sp

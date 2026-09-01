@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
 from foundry_mcp.tools.foundry_state import get_run_dir
 
 
@@ -97,11 +98,18 @@ def foundry_validate_castings(
     if not fdir:
         return {"passed": False, "error": "No active foundry run"}
 
+    if (corrupt := _artifact_guard(fdir)):
+        return {"passed": False, **corrupt}
+
     manifest_path = fdir / "castings" / "manifest.json"
     if not manifest_path.exists():
         return {"passed": False, "error": "No manifest.json found"}
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # D-130's class, found by the package-wide scan. Both reads below were
+    # `json.loads(...read_text(...))`, so a corrupt manifest.json or state.json
+    # raised out of Foundry-Validate-Castings instead of naming the file. The
+    # guard above reports both by name; these loads are now total.
+    manifest = _load_json(manifest_path)
     castings = manifest.get("castings", [])
     spec_type = (manifest.get("spec_type") or "GREENFIELD").upper()
 
@@ -126,7 +134,7 @@ def foundry_validate_castings(
 
     # Load spec to extract requirements
     spec_path = fdir / "spec.md"
-    state = json.loads((fdir / "state.json").read_text(encoding="utf-8")) if (fdir / "state.json").exists() else {}
+    state = _load_json(fdir / "state.json")
     if not spec_path.exists():
         sp = state.get("spec_path", "")
         if sp:

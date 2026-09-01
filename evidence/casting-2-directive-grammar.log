@@ -41,7 +41,7 @@
    all       ALL       escalation-override: all
    ALL       ALL       - escalation-override
    ALL       ALL       Reasoning above. / escalation-override: *
-   FALSE_DOCUMENTED_CONTRACT FALSE_DOCUMENTED_CONTRACT escalation-override: FALSE_DOCUMENTED_CONTRACT
+   FALSE_DOCUMENTED_CONT... FALSE_DOCUMENTED_CONT... escalation-override: FALSE_DOCUMENTED_CONTRACT
 
 == D-104: priority=normal bodies carrying a line that reads as a header ==
    PRE-fix (no injection guard)           post-fix  body
@@ -55,5 +55,5 @@
    urgent=0 normal=1 override=none        urgent=0 normal=1 override=none Read the URGENT note in the spec before you start. /
 
 == the pins ==
-............................                                             [100%]
-28 passed, 264 deselected in 0.09s
+.........................................................                [100%]
+57 passed, 314 deselected in 0.30s

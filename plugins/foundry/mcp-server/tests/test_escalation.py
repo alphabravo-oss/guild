@@ -1343,7 +1343,10 @@ def render_override_table() -> str:
     def fmt(value: set[str]) -> str:
         if value == {"*"}:
             return "ALL"
-        return ",".join(sorted(value)) if value else "none"
+        if not value:
+            return "none"
+        rendered = ",".join(sorted(value))
+        return rendered if len(rendered) <= 24 else rendered[:21] + "..."
 
     out = ["== D-101: a MENTION of the token is not a REQUEST for an override =="] + rows
     for text in _OVERRIDE_NON_REQUESTS:
@@ -1374,3 +1377,662 @@ def test_the_override_table_shows_the_inversion_and_the_fix():
     table = render_override_table()
     assert "== D-101" in table
     assert table.count("ALL       none") == len(wholesale)
+
+
+# --------------------------------------------------------------------------- #
+# D-128 (FR-020 / AC-025 / NFR-002) — the malformed-record row of the cross-door
+# parity matrix.
+#
+# D-097 added `_dict_records` to foundry.py and applied it to the SINGLE door.
+# The BATCH door kept `[d for d in records if d.get("status") == "fixed"]` over
+# every historical record. Driven at ab5a430 with
+# {"defects": [{"id":"D-001","status":"open"}, "not-a-dict"]}:
+#
+#     Foundry-Defect  -> D-002 persisted, malformed record preserved   (correct)
+#     Foundry-Defects -> clean                                          (correct)
+#     Foundry-Sync    -> AttributeError 'str' object has no attribute 'get'
+#
+# and the raise lands AFTER the in-transaction list is mutated, so nothing is
+# written, the filing the stream just made is GONE, and the escaped text names
+# no file. That is the one row breaking D-095/D-098's stated bar (21/24 named
+# refusals, 2 tolerate, shape-8 x Sync raises AND loses).
+#
+# Asserted as PARITY across both doors rather than as a Sync outcome, for the
+# same reason the cycle-stamp rows above are: two filing doors that disagree
+# about what a defect ledger may contain is the defect, not the symptom.
+# --------------------------------------------------------------------------- #
+
+# Every non-dict JSON value a hand-edited or half-migrated ledger can hold.
+_MALFORMED_RECORDS = ["not-a-dict", None, 42, True, ["nested"], 3.5]
+
+
+@pytest.mark.parametrize("junk", _MALFORMED_RECORDS)
+def test_neither_filing_door_raises_on_a_malformed_historical_record(run_env, junk):
+    """NFR-002 / the house rule: never raise across MCP, refuse by name."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_defects(fdir, [_defect("D-001", 1), junk])
+
+    single = _stamped_via_add(project_root, 1)
+    batch = _stamped_via_sync(project_root, 1)
+
+    assert single["id"] and batch["id"]
+
+
+@pytest.mark.parametrize("junk", _MALFORMED_RECORDS)
+def test_neither_filing_door_loses_the_filing_it_was_handed(run_env, junk):
+    """The harm, not the traceback. The raise aborted the transaction AFTER the
+    append, so the good filing was discarded and the caller was told nothing
+    that named a file. Both doors must PERSIST what they were handed."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_defects(fdir, [_defect("D-001", 1), junk])
+
+    fo.foundry_sync_defects(
+        cycle=1,
+        findings=[{
+            "source": "trace",
+            "type": "UNWIRED",
+            "description": "the session refresh never calls the token store",
+            "symbol": "refresh_session",
+            "file": "src/auth/session.py",
+        }],
+        project_root=project_root,
+    )
+
+    persisted = json.loads((fdir / "defects.json").read_text())["defects"]
+    ids = [d.get("id") for d in persisted if isinstance(d, dict)]
+    assert "D-002" in ids, persisted
+
+
+@pytest.mark.parametrize("junk", _MALFORMED_RECORDS)
+def test_neither_filing_door_discards_the_malformed_record(run_env, junk):
+    """NFR-002's no-narrowing half. Tolerating a junk record must not mean
+    DELETING it -- that would be a quieter D-096, refusing to lose records to a
+    bad container while losing them to a bad record. The single door already
+    preserved it; the batch door must agree."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_defects(fdir, [_defect("D-001", 1), junk])
+
+    _stamped_via_sync(project_root, 1)
+
+    persisted = json.loads((fdir / "defects.json").read_text())["defects"]
+    assert junk in persisted, persisted
+
+
+@pytest.mark.parametrize("junk", _MALFORMED_RECORDS)
+def test_both_doors_agree_on_the_open_count_over_a_junk_ledger(run_env, junk):
+    """The scan D-128 named, read back through both doors. A count that
+    disagrees is the two halves of the same scan diverging again."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_defects(fdir, [_defect("D-001", 1), junk])
+
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    single = foundry_add_defect(
+        cycle=1, source="trace", defect_type="UNWIRED",
+        description="a first finding", symbol="a", file_path="src/api/a.py",
+        project_root=project_root,
+    )
+    batch = fo.foundry_sync_defects(
+        cycle=1,
+        findings=[{
+            "source": "trace", "type": "UNWIRED",
+            "description": "a second finding", "symbol": "b",
+            "file": "src/api/b.py",
+        }],
+        project_root=project_root,
+    )
+
+    # The two doors spell the same number differently (`open_defects` vs
+    # `total_open`); what must agree is the COUNT the scan produced.
+    assert single["open_defects"] == 2, single
+    assert batch["total_open"] == 3, batch
+
+
+def test_a_regression_reopen_survives_a_junk_ledger(run_env):
+    """The other raw scan in the same block: the reopen pass matched on
+    `d["id"]`, which raises on a junk record exactly as `d.get` did."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    fixed = _defect("D-001", 1, status="fixed", fixed_in_cycle=1,
+                    symbol="refresh_session", file="src/auth/session.py",
+                    description="the session refresh never calls the token store")
+    _write_defects(fdir, ["not-a-dict", fixed])
+
+    result = fo.foundry_sync_defects(
+        cycle=1,
+        findings=[{
+            "source": "trace", "type": "UNWIRED",
+            "description": "the session refresh never calls the token store",
+            "symbol": "refresh_session", "file": "src/auth/session.py",
+        }],
+        project_root=project_root,
+    )
+
+    assert result["reopened"] == 1, result
+    assert result["regressions"] == ["D-001"], result
+
+
+# --------------------------------------------------------------------------- #
+# D-133 (AC-010 / ST-003 / FR-008) — the override grammar's two residual holes,
+# and the common root under them.
+#
+# D-101's fix is correct and closed: a MENTION of the token is no longer a
+# REQUEST. What survived it, both "invisible rather than refused":
+#
+#   (1) `_OVERRIDE_SCOPED_RE`'s value group was `(\S+)`, so a class key
+#       containing a SPACE could never be overridden -- and FR-007 makes
+#       `class` free text a stream writes. Driven: "SHARED RESOURCE LEAK"
+#       escalates; Foundry-Directive("escalation-override: SHARED RESOURCE
+#       LEAK") returns ok:true "injected", `_escalation_overrides()` is set(),
+#       and the class stays escalated. `_structural_proposal` interpolates that
+#       key into the instruction it hands the lead, so the tool tells the
+#       operator to send a string it cannot read back.
+#   (2) `_OVERRIDE_LINE_PREFIX` admitted the blockquote char, so QUOTING an
+#       escalation packet into a directive silently de-escalated the class.
+#   (3) COMMON ROOT: nothing reported an override in either direction.
+# --------------------------------------------------------------------------- #
+
+# Class keys a stream can legitimately declare under FR-007's free text. The
+# first is the one from the defect report.
+_AWKWARD_CLASS_KEYS = [
+    "SHARED RESOURCE LEAK",
+    "a hardening mechanism bound by hand to the site where a defect was reported",
+    "auth: token refresh",
+    "UNWIRED@src/api",
+    "FALSE_DOCUMENTED_CONTRACT",
+]
+
+
+@pytest.mark.parametrize("klass", _AWKWARD_CLASS_KEYS)
+def test_a_class_key_with_a_space_can_be_overridden(run_env, klass):
+    """(1) FR-007 makes the class key free text; the grammar must be able to
+    name any key a stream can declare."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3], klass=klass))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    assert set(_escalated_classes(fdir, project_root)) == {klass}
+
+    foundry_inject_directive(f"escalation-override: {klass}", "normal", project_root)
+
+    assert _escalated_classes(fdir, project_root) == {}
+
+
+@pytest.mark.parametrize("klass", _AWKWARD_CLASS_KEYS)
+def test_the_restore_instruction_the_tool_prints_actually_works(run_env, klass):
+    """The property behind (1), which the space bug was only one instance of:
+    the marker text this server HANDS the operator must be one this server can
+    READ BACK. Driven by feeding the printed instruction straight back in."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3], klass=klass))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    escalated = _escalated_classes(fdir, project_root)
+    proposal = fo._structural_proposal(escalated[klass] | {"proposal": ""})
+
+    # Lift the directive text out of the printed Foundry-Directive('...') call.
+    marker = re.search(r"Foundry-Directive\('(.+?)'\)\.", proposal)
+    assert marker, proposal
+    foundry_inject_directive(marker.group(1), "normal", project_root)
+
+    assert _escalated_classes(fdir, project_root) == {}, (
+        f"the proposal told the operator to send {marker.group(1)!r} and the "
+        f"reader did not honour it"
+    )
+
+
+_QUOTED_MARKERS = [
+    "> escalation-override: FALSE_DOCUMENTED_CONTRACT",
+    ">escalation-override: *",
+    "> escalation-override",
+    "> - escalation-override: FALSE_DOCUMENTED_CONTRACT",
+    ">> escalation-override: *",
+    # The report's exact shape: buried at line 8 of a 9-line note.
+    "\n".join([f"line {i}" for i in range(1, 8)]
+              + ["> escalation-override: FALSE_DOCUMENTED_CONTRACT", "line 9"]),
+]
+
+
+@pytest.mark.parametrize("directive", _QUOTED_MARKERS)
+def test_a_blockquoted_marker_is_not_honoured(run_env, directive):
+    """(2) Quoting an escalation packet back into a directive is a REPORT of
+    what the packet said, never a request to act on it."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    foundry_inject_directive(directive, "normal", project_root)
+
+    assert fo._escalation_overrides(project_root) == set()
+    assert set(_escalated_classes(fdir, project_root)) == {"FALSE_DOCUMENTED_CONTRACT"}
+
+
+@pytest.mark.parametrize("directive", _QUOTED_MARKERS)
+def test_a_blockquoted_marker_is_reported_as_ignored_not_dropped(run_env, directive):
+    """(3) Ignoring it silently is the same failure one step later: the
+    operator must be told the marker was seen and why it did nothing."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    result = foundry_inject_directive(directive, "normal", project_root)
+
+    assert result["ok"] is True
+    report = result.get("escalation_override")
+    assert report, result
+    assert report["quoted_ignored"], report
+    assert any("IGNORED" in d for d in report["decisions"]), report
+
+
+def test_a_recognised_override_is_reported_by_the_injecting_call(run_env):
+    """(3) The working case must be reported too, or the operator still cannot
+    tell a live override from a dead one."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    result = foundry_inject_directive(
+        "escalation-override: FALSE_DOCUMENTED_CONTRACT", "normal", project_root
+    )
+
+    report = result["escalation_override"]
+    assert report["de_escalated"] == ["FALSE_DOCUMENTED_CONTRACT"], report
+    assert "de-escalated" in " ".join(report["decisions"])
+    assert "FALSE_DOCUMENTED_CONTRACT" in result["message"]
+
+
+def test_an_override_naming_no_escalated_class_says_so(run_env):
+    """(3) The mistyped-key case -- byte-identical to a working override before
+    the fix. It must name what IS escalated so the typo is visible."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    result = foundry_inject_directive(
+        "escalation-override: FALSE_DOCUMENTED_CONTRAC", "normal", project_root
+    )
+
+    report = result["escalation_override"]
+    assert report["unmatched"] == ["FALSE_DOCUMENTED_CONTRAC"], report
+    assert report["de_escalated"] == []
+    decisions = " ".join(report["decisions"])
+    assert "matched NO escalated class" in decisions
+    assert "FALSE_DOCUMENTED_CONTRACT" in decisions  # the real key, for comparison
+    # ...and the class really is still escalated.
+    assert set(_escalated_classes(fdir, project_root)) == {"FALSE_DOCUMENTED_CONTRACT"}
+
+
+def test_foundry_next_reports_the_override_decision_too(run_env):
+    """(3) A directive is STANDING text: the lead that reads it may be a
+    different session from the one that sent it, so the decision has to be in
+    the lead's own output and not only in the injecting call's return."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+    foundry_inject_directive(
+        "escalation-override: FALSE_DOCUMENTED_CONTRAC", "normal", project_root
+    )
+
+    action = fo.foundry_next_action(project_root)
+
+    assert action["escalation_overrides"]["unmatched"] == ["FALSE_DOCUMENTED_CONTRAC"]
+    assert "ESCALATION-OVERRIDE DECISIONS" in action["instructions"]
+    assert "matched NO escalated class" in action["instructions"]
+
+
+def test_a_quoted_marker_beside_a_real_one_honours_only_the_real_one(run_env):
+    """The two halves must not interfere: quoting the packet while ALSO asking
+    for the override is a real request plus a quotation."""
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    foundry_inject_directive(
+        "As the packet says:\n"
+        "> escalation-override: SOMETHING ELSE\n"
+        "and I do want it here:\n"
+        "escalation-override: FALSE_DOCUMENTED_CONTRACT",
+        "normal",
+        project_root,
+    )
+
+    assert fo._escalation_overrides(project_root) == {"FALSE_DOCUMENTED_CONTRACT"}
+    assert _escalated_classes(fdir, project_root) == {}
+
+
+@pytest.mark.parametrize("directive", _OVERRIDE_NON_REQUESTS)
+def test_widening_the_value_group_did_not_reopen_d_101(run_env, directive):
+    """NFR-002 for the grammar itself. The value group went from `(\\S+)` to
+    end-of-line, which is exactly the direction that could resurrect D-101's
+    inversion. Every phrasing D-101 closed is re-driven against the new
+    grammar."""
+    project_root, fdir = run_env
+    foundry_inject_directive(directive, "normal", project_root)
+
+    assert fo._escalation_overrides(project_root) == set()
+
+
+@pytest.mark.parametrize("directive", _OVERRIDE_REQUESTS_ALL)
+def test_widening_the_value_group_kept_the_bare_marker_working(run_env, directive):
+    """...and the capability AC-010 requires still works."""
+    project_root, fdir = run_env
+    foundry_inject_directive(directive, "normal", project_root)
+
+    assert fo._escalation_overrides(project_root) == {"*"}
+
+
+# --------------------------------------------------------------------------- #
+# Pre/post tables. Rendered for the evidence logs and ASSERTED below, so the
+# comparison is a claim this suite holds rather than a picture beside it.
+# --------------------------------------------------------------------------- #
+
+
+def _prefix_scan(records: list) -> str:
+    """The PRE-fix batch-door scan, verbatim, over ``records``.
+
+    `foundry_sync_defects` line 3631 as it stood at ab5a430. Kept so the
+    evidence log can show the same ledger judged by both rules side by side.
+    """
+    try:
+        [d for d in records if d.get("status") == "fixed"]
+        return "ok"
+    except AttributeError as exc:
+        return f"{type(exc).__name__}: {exc}"
+
+
+def render_ledger_parity_table() -> str:
+    """D-128 pre/post over every non-dict record shape a ledger can hold."""
+    from foundry_mcp.tools.foundry import _dict_records
+
+    out = [
+        "== D-128: the batch door's scan, over a ledger holding one junk record ==",
+        "   %-12s %-9s %s" % ("shape", "PRE-fix", "what the door got"),
+        "   %-12s %-9s %s" % ("-" * 12, "-------", "-" * 17),
+    ]
+    for junk in _MALFORMED_RECORDS:
+        records = [{"id": "D-001", "status": "open"}, junk]
+        result = _prefix_scan(records)
+        out.append("   %-12s %-9s %s" % (
+            json.dumps(junk)[:12], "RAISES" if result != "ok" else "ok", result[:56]
+        ))
+    out.append("")
+    out.append("== the same shapes through _dict_records, the one place the tolerance lives ==")
+    for junk in _MALFORMED_RECORDS:
+        records = [{"id": "D-001", "status": "open"}, junk]
+        kept = _dict_records(records)
+        out.append("   %-12s post-fix  scanned %d of %d records, no raise" % (
+            json.dumps(junk)[:12], len(kept), len(records)
+        ))
+    return "\n".join(out)
+
+
+def test_the_ledger_parity_table_shows_the_raise_and_the_fix():
+    """Asserted, not merely rendered: every shape DID raise on the pre-fix
+    scan -- that is the defect -- and every shape is scanned now."""
+    from foundry_mcp.tools.foundry import _dict_records
+
+    for junk in _MALFORMED_RECORDS:
+        records = [{"id": "D-001", "status": "open"}, junk]
+        assert _prefix_scan(records).startswith("AttributeError"), junk
+        assert len(_dict_records(records)) == 1
+
+    table = render_ledger_parity_table()
+    assert table.count("RAISES") == len(_MALFORMED_RECORDS)
+    assert "no raise" in table
+
+
+def _prefix_override_prefix() -> re.Pattern:
+    """The PRE-fix line prefix, verbatim: `[\\s>]*` admitted the blockquote."""
+    return re.compile(
+        rf"^[\s>]*(?:[-*+]\s*)?{fo.ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)\s*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+
+def _overrides_d133_prefix(text: str) -> set[str]:
+    """D-101's grammar as it stood at ab5a430: `(\\S+)` value, `>` allowed.
+
+    Reproduced whole, including the `_OVERRIDE_ALL_VALUES` mapping, so the
+    PRE-fix column is what that code really returned and not a simplification
+    of it.
+    """
+    scoped: set[str] = set()
+    override_all = False
+    for m in _prefix_override_prefix().finditer(text):
+        value = m.group(1).strip(" .,;:'\"`")
+        if not value:
+            continue
+        if value.lower() in fo._OVERRIDE_ALL_VALUES:
+            override_all = True
+        else:
+            scoped.add(value)
+    if re.search(
+        rf"^[\s>]*(?:[-*+]\s*)?{fo.ESCALATION_OVERRIDE_TOKEN}\s*[:=]?\s*$",
+        text, re.IGNORECASE | re.MULTILINE,
+    ):
+        override_all = True
+    return {"*"} if override_all else scoped
+
+
+def render_override_decision_table() -> str:
+    """D-133 pre/post over the two holes, plus the reporting that was absent."""
+
+    def fmt(value: set[str]) -> str:
+        if value == {"*"}:
+            return "ALL"
+        if not value:
+            return "none"
+        rendered = ",".join(sorted(value))
+        return rendered if len(rendered) <= 24 else rendered[:21] + "..."
+
+    def post(text: str) -> set[str]:
+        return fo._override_markers(text)["overrides"]
+
+    out = [
+        "== D-133 (1) THE VALUE: a class key with a space could never be named ==",
+        "   %-24s %-24s %s" % ("PRE-fix", "post-fix", "directive text"),
+        "   %-24s %-24s %s" % ("-" * 7, "-" * 8, "-" * 14),
+    ]
+    for key in _AWKWARD_CLASS_KEYS:
+        text = f"{fo.ESCALATION_OVERRIDE_TOKEN}: {key}"
+        out.append("   %-24s %-24s %s" % (
+            fmt(_overrides_d133_prefix(text)), fmt(post(text)), text[:56]
+        ))
+    out.append("")
+    out.append("== D-133 (2) THE PREFIX: quoting an escalation packet de-escalated it ==")
+    out.extend(out[1:3])
+    for text in _QUOTED_MARKERS:
+        out.append("   %-24s %-24s %s" % (
+            fmt(_overrides_d133_prefix(text)), fmt(post(text)),
+            text.replace("\n", " / ")[:56]
+        ))
+    out.append("")
+    out.append("== D-101's closures, re-driven against the widened value group ==")
+    out.extend(out[1:3])
+    for text in _OVERRIDE_NON_REQUESTS:
+        out.append("   %-24s %-24s %s" % (
+            fmt(_overrides_d133_prefix(text)), fmt(post(text)),
+            text.replace("\n", " / ")[:56]
+        ))
+    out.append("")
+    out.append("== the marker grammar AC-010 requires, still working ==")
+    out.extend(out[1:3])
+    for text in _OVERRIDE_REQUESTS_ALL:
+        out.append("   %-24s %-24s %s" % (
+            fmt(_overrides_d133_prefix(text)), fmt(post(text)),
+            text.replace("\n", " / ")[:56]
+        ))
+    return "\n".join(out)
+
+
+def test_the_override_decision_table_shows_both_holes_and_the_fix():
+    """Asserted arm by arm.
+
+    (1) every space-carrying key WAS unnameable and is nameable now;
+    (2) every quoted marker DID override and overrides nothing now;
+    and neither change reopened D-101 or broke AC-010's capability.
+    """
+    spaced = [k for k in _AWKWARD_CLASS_KEYS if " " in k]
+    assert len(spaced) >= 3
+    for key in spaced:
+        text = f"{fo.ESCALATION_OVERRIDE_TOKEN}: {key}"
+        # The pre-fix reader could only ever see the LAST whitespace-free run,
+        # never the key itself -- most often nothing at all.
+        assert _overrides_d133_prefix(text) != {key}, key
+        assert fo._override_markers(text)["overrides"] == {key}, key
+
+    for text in _QUOTED_MARKERS:
+        assert _overrides_d133_prefix(text) != set(), f"pre-fix arm wrong for {text!r}"
+        assert fo._override_markers(text)["overrides"] == set(), text
+        assert fo._override_markers(text)["quoted"], text
+
+    for text in _OVERRIDE_NON_REQUESTS:
+        assert fo._override_markers(text)["overrides"] == set(), text
+    for text in _OVERRIDE_REQUESTS_ALL:
+        assert fo._override_markers(text)["overrides"] == {"*"}, text
+
+    table = render_override_decision_table()
+    assert "D-133 (1) THE VALUE" in table
+    assert "D-133 (2) THE PREFIX" in table
+
+
+def _isolated_run(defects: list[dict]) -> tuple[str, Path]:
+    """A throwaway activated run seeded with ``defects``. Caller clears."""
+    import tempfile
+
+    root = Path(tempfile.mkdtemp())
+    fdir = root / "foundry-archive" / "ov"
+    (fdir / "castings").mkdir(parents=True)
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3", "cycle": 3}))
+    _write_defects(fdir, defects)
+    foundry_state.set_active_run("ov")
+    return str(root), fdir
+
+
+# The five outcomes an operator has to be able to tell apart. Before the fix
+# every one of them produced byte-identical output.
+_OVERRIDE_OUTCOMES = [
+    ("(no directive)", None),
+    ("recognised", "escalation-override: FALSE_DOCUMENTED_CONTRACT"),
+    ("mistyped key", "escalation-override: FALSE_DOCUMENTED_CONTRAC"),
+    ("key with a space", "escalation-override: SHARED RESOURCE LEAK"),
+    ("quoted out of a packet", "> escalation-override: FALSE_DOCUMENTED_CONTRACT"),
+]
+
+
+def _override_outcome_reports() -> list[tuple[str, bool, str]]:
+    """Drive each outcome; return (label, still_escalated, what_was_reported)."""
+    rows = []
+    for label, text in _OVERRIDE_OUTCOMES:
+        project_root, fdir = _isolated_run(_recurring([1, 2, 3]))
+        try:
+            result = (
+                foundry_inject_directive(text, "normal", project_root) if text else {}
+            )
+            still = bool(_escalated_classes(fdir, project_root))
+            report = result.get("escalation_override") or {}
+            said = "; ".join(report.get("decisions", [])) or "(nothing)"
+            rows.append((label, still, said))
+        finally:
+            foundry_state.clear_active_run()
+    return rows
+
+
+def render_override_root_table() -> str:
+    """D-133 (3): the four decisions, each now distinguishable."""
+    rows = _override_outcome_reports()
+    out = [
+        "== D-133 (3) THE ROOT: every outcome used to produce identical output ==",
+        "   %-24s %-10s %s" % ("directive", "escalated", "what the tool reported"),
+        "   %-24s %-10s %s" % ("-" * 9, "-" * 9, "-" * 22),
+    ]
+    for label, still, said in rows:
+        out.append("   %-24s %-10s %s" % (label, "yes" if still else "NO", said[:92]))
+    out.append("")
+    out.append(
+        "   distinct reports across the five outcomes: %d of %d   (PRE-fix: 1 of %d)"
+        % (len({r[2] for r in rows}), len(rows), len(rows))
+    )
+    return "\n".join(out)
+
+
+def test_every_override_outcome_is_distinguishable(run_env):
+    """D-133 (3) asserted: the five outcomes must produce five DIFFERENT
+    reports. One shared report is the defect -- an operator could not tell a
+    live override from a dead one without watching the next Foundry-Tasks."""
+    rows = _override_outcome_reports()
+    said = [r[2] for r in rows]
+    assert len(set(said)) == len(rows), rows
+    by_label = {r[0]: r for r in rows}
+    assert by_label["recognised"][1] is False
+    for label in ("mistyped key", "key with a space", "quoted out of a packet"):
+        assert by_label[label][1] is True, by_label[label]
+    assert "(nothing)" == by_label["(no directive)"][2]
+
+
+def _door_outcomes() -> list[tuple]:
+    """Drive both filing doors over each junk shape; return the matrix rows."""
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    def drive(fn):
+        try:
+            fn()
+            return "ok"
+        except Exception as exc:  # noqa: BLE001 - the point is what escaped
+            return type(exc).__name__
+
+    rows = []
+    for junk in _MALFORMED_RECORDS:
+        project_root, fdir = _isolated_run([_defect("D-001", 1), junk])
+        try:
+            single = drive(lambda: foundry_add_defect(
+                cycle=1, source="trace", defect_type="UNWIRED", description="a",
+                symbol="a", file_path="src/a.py", project_root=project_root))
+            batch = drive(lambda: fo.foundry_sync_defects(
+                cycle=1, findings=[{"source": "trace", "type": "UNWIRED",
+                                    "description": "b", "symbol": "b",
+                                    "file": "src/b.py"}],
+                project_root=project_root))
+            records = json.loads((fdir / "defects.json").read_text())["defects"]
+            ids = [d.get("id") for d in records if isinstance(d, dict)]
+            rows.append((junk, single, batch, "D-003" in ids, junk in records))
+        finally:
+            foundry_state.clear_active_run()
+    return rows
+
+
+def render_ledger_door_table() -> str:
+    """D-128: both doors, every junk shape, all three properties."""
+    out = [
+        "== both doors DRIVEN: does either raise, lose the filing, or drop the junk? ==",
+        "   %-12s %-10s %-10s %-12s %s" % (
+            "junk record", "Defect", "Sync", "filing kept", "junk kept"),
+        "   %-12s %-10s %-10s %-12s %s" % (
+            "-" * 11, "-" * 6, "-" * 4, "-" * 11, "-" * 9),
+    ]
+    for junk, single, batch, kept, preserved in _door_outcomes():
+        out.append("   %-12s %-10s %-10s %-12s %s" % (
+            json.dumps(junk)[:12], single, batch,
+            "yes" if kept else "NO", "yes" if preserved else "NO"))
+    out.append("")
+    out.append(
+        "   PRE-fix every row read: Defect=ok  Sync=AttributeError  "
+        "filing kept=NO  junk kept=yes"
+    )
+    return "\n".join(out)
+
+
+def test_the_ledger_door_table_shows_both_doors_agreeing(run_env):
+    """D-128 asserted over the whole matrix: no raise, no lost filing, no
+    dropped junk record, at either door, for any shape."""
+    rows = _door_outcomes()
+    assert len(rows) == len(_MALFORMED_RECORDS)
+    for junk, single, batch, kept, preserved in rows:
+        assert single == "ok", (junk, single)
+        assert batch == "ok", (junk, batch)
+        assert kept, f"the filing handed to the doors was lost for {junk!r}"
+        assert preserved, f"the malformed record was DROPPED for {junk!r}"
