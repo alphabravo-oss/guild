@@ -66,9 +66,10 @@ Vocabulary — every class name, stream id and defect type — comes from
 CYCLE STAMPING (ST-001)
 -----------------------
 Records are stamped with the SERVER's cycle counter (``state.json['cycle']``,
-advanced by the GRIND -> INSPECT boundary handler), not the caller's argument.
-The caller's value survives only as the fallback for a legacy archive that has
-no counter. See ``_server_cycle`` / ``_stamp_cycle``.
+advanced by the GRIND -> INSPECT boundary handler), never the caller's argument
+— not even when the counter is missing or unusable, which resolves to 0. The
+caller's assertion survives beside the stamp as ``declared_cycle`` so the
+divergence is auditable rather than silent. See ``_server_cycle``.
 
 CONCURRENCY (FR-020 / AC-025)
 -----------------------------
@@ -752,41 +753,40 @@ def record_denylist_tripwire(
     return tripwire
 
 
-def _server_cycle(fdir: Path) -> int | None:
-    """Return the server-owned cycle counter, or None when there isn't one.
+def _server_cycle(fdir: Path) -> int:
+    """Return the server-owned cycle counter. Never caller-supplied.
 
     ``state.json['cycle']`` is maintained by the F3 GRIND -> F2 INSPECT
     boundary handler (``foundry_orchestrator.foundry_mark_phase_complete``,
-    the ``inspect_start`` token). Per ST-001 it is the authority wherever it
-    exists, and a caller-supplied ``cycle`` is not trusted against it: every
-    cycle number in grand-vulture's data model was an integer the lead
-    asserted, which is why its defects span cycles 0-17 while its state.json
-    reads 0.
+    the ``inspect_start`` token). Per ST-001 it is the authority, and a
+    caller-supplied ``cycle`` is not trusted against it: every cycle number in
+    grand-vulture's data model was an integer the lead asserted, which is why
+    its defects span cycles 0-17 while its state.json reads 0. Every writer of
+    a cycle-stamped record in this module goes through this one reader, so
+    "which cycle was this?" has one answer per run instead of one per caller.
 
-    ``None`` means no server counter exists — a legacy archive whose state.json
-    predates the counter, or is missing, or holds a non-integer. Only then may
-    a caller fall back to the value it was handed.
+    Missing, absent, or malformed resolves to 0 rather than to the caller's
+    value (D-119). This function used to return None there and its callers took
+    that as licence to stamp the number they were handed, while the counterpart
+    reader ``foundry_orchestrator._current_cycle`` resolved the identical input
+    to 0 — so the SAME finding filed through Foundry-Defect and through
+    Foundry-Sync landed in different cycles, and a class that recurred three
+    straight cycles evaded ST-002 escalation because mixed-door filing broke
+    the consecutive run. Trusting the caller in the degraded case is exactly
+    what ST-001 exists to remove, so the degraded case resolves to the same
+    deterministic 0 both doors already agreed on for a corrupt CONTAINER. What
+    the caller claimed is not discarded: both doors persist it beside the stamp
+    as ``declared_cycle``.
 
     Read directly rather than through the orchestrator's private
     ``_current_cycle``: the orchestrator imports THIS module, so importing back
-    would close a cycle in the import graph.
+    would close a cycle in the import graph. The two are a deliberate second
+    copy, held to one contract by ``test_escalation``'s cross-door parity pins.
     """
-    value = _load_json(fdir / "state.json").get("cycle")
+    value = _load_json(fdir / "state.json").get("cycle", 0)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
+        return 0
     return value
-
-
-def _stamp_cycle(fdir: Path, caller_cycle: int) -> int:
-    """Return the cycle number to PERSIST on a record.
-
-    The server counter wherever one exists; the caller's value only as the
-    legacy-archive fallback. Every writer of a cycle-stamped record goes
-    through this, so "which cycle was this?" has one answer per run instead of
-    one per caller.
-    """
-    server = _server_cycle(fdir)
-    return caller_cycle if server is None else server
 
 
 _ADJECTIVES = [
@@ -1091,9 +1091,10 @@ def foundry_add_defect(
             path and ``foundry_sync_defects`` store the same type for the same
             finding. An UNKNOWN value is still refused by name rather than
             coerced onto a known one (CT-002).
-        cycle: the caller's assertion, honoured only when the run has no
-            server-side cycle counter (legacy archives). Where ``state.json``
-            carries one, THAT is what is persisted — see ``_stamp_cycle``.
+        cycle: the caller's assertion. NEVER what is persisted as the record's
+            ``cycle`` — ``state.json``'s counter is, resolving to 0 when it is
+            absent or unusable (see ``_server_cycle``). Kept on the record as
+            ``declared_cycle`` so the claim is auditable.
         target_kind: what the finding is ABOUT. Pass "comment" when the
             subject is a code comment \u2014 that declaration is what allows the
             comment-prose refusal of AC-001 to engage. Any other value, or
@@ -1187,8 +1188,19 @@ def foundry_add_defect(
     now = datetime.now(timezone.utc).isoformat()
     defect = {
         "id": "",  # assigned inside the transaction
-        # ST-001: the server's counter is the authority wherever it exists.
-        "cycle": _stamp_cycle(fdir, cycle),
+        # ST-001: the server's counter is the authority, full stop.
+        "cycle": _server_cycle(fdir),
+        # D-119: the caller's asserted cycle is persisted beside the server's,
+        # never instead of it — the same field, in the same position, that
+        # `foundry_sync_defects` writes on the batch door. The two doors used
+        # to disagree about WHICH cycle a record belonged to whenever the
+        # counter was malformed (this one fell back to the caller's value, the
+        # other resolved to 0), so identical findings filed through different
+        # doors produced different cycle runs and a systemic class escaped
+        # ST-002 escalation while the AC-011 DONE guard passed. Both doors now
+        # resolve to 0 and both record the claim, so a divergence is visible to
+        # migrate/escalation tooling instead of silent.
+        "declared_cycle": cycle,
         "source": source,
         "type": canonical_type,
         "description": description,
@@ -1235,6 +1247,10 @@ def foundry_add_defect(
     return {
         "defect_id": defect_id,
         "cycle": defect["cycle"],
+        # Echoed for the same reason the batch door echoes it: the caller can
+        # see, in the response, that the number it asserted was not the number
+        # its record was stamped with.
+        "declared_cycle": cycle,
         "type": canonical_type,
         "total_defects": total,
         "open_defects": open_count,
@@ -1325,7 +1341,7 @@ def foundry_add_observation(
     # one exported call so that every path into this ledger is audited by the
     # same code \u2014 see `record_denylist_tripwire`.
     tripwire = record_denylist_tripwire(
-        fdir, finding, cycle=_stamp_cycle(fdir, cycle), source=source
+        fdir, finding, cycle=_server_cycle(fdir), source=source
     )
     if tripwire is not None:
         denied = tripwire["denylist_class"]
@@ -1386,7 +1402,7 @@ def foundry_add_observation(
         "id": "",  # assigned inside the transaction
         # Same authority as a defect's — the two ledgers must agree about which
         # cycle a finding belongs to or the per-cycle roll-up cannot join them.
-        "cycle": _stamp_cycle(fdir, cycle),
+        "cycle": _server_cycle(fdir),
         "source": source,
         "classification": resolved,
         "description": description,
@@ -1538,9 +1554,8 @@ def foundry_add_verdict(
     """Record a verdict for a requirement with spec citation and code evidence.
 
     Args:
-        cycle: the caller's assertion, honoured only when the run has no
-            server-side cycle counter. ST-001 makes the server's counter the
-            authority wherever it exists — a verdict stamped with a
+        cycle: the caller's assertion, never persisted. ST-001 makes the
+            server's counter the authority — a verdict stamped with a
             lead-asserted number cannot be joined against the defects filed in
             the same cycle, which is the whole point of stamping it.
     """
@@ -1556,7 +1571,7 @@ def foundry_add_verdict(
     if not isinstance(data.get("requirements"), list):
         data["requirements"] = []
 
-    stamped_cycle = _stamp_cycle(fdir, cycle)
+    stamped_cycle = _server_cycle(fdir)
     entry = {
         "id": requirement_id,
         "verdict": verdict,

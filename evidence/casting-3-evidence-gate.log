@@ -9,9 +9,9 @@ platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
 rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 63 items
+collected 68 items
 
-tests/test_evidence.py ................................................. [ 77%]
-..............                                                           [100%]
+tests/test_evidence.py ................................................. [ 72%]
+...................                                                      [100%]
 
-============================= 63 passed in 53.45s ==============================
+============================= 68 passed in 53.89s ==============================

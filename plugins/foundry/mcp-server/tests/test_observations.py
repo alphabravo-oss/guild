@@ -1053,12 +1053,20 @@ def test_verdict_is_stamped_with_the_server_cycle(
     assert verdicts["requirements"][0]["cycle"] == 5
 
 
-def test_caller_cycle_survives_only_when_there_is_no_server_counter(
+def test_an_absent_counter_stamps_zero_and_keeps_the_callers_claim(
     run: Path, tmp_path: Path
 ) -> None:
-    """The legacy-archive fallback. A run whose state.json predates the counter
-    has no better answer than the caller's, so the caller's is kept — the rule
-    is "the server wins where it knows", not "the caller is always wrong"."""
+    """D-119 — this test asserted the OPPOSITE until the lead's interface
+    ruling. A run whose state.json predates the counter used to keep the
+    caller's number, on the reasoning that the server had "no better answer".
+    It does: 0. Trusting the caller in the degraded case is precisely what
+    ST-001 exists to remove, ``foundry_orchestrator._current_cycle`` has
+    resolved this input to 0 since D-059, and a filing door that disagrees with
+    its sibling about WHICH cycle a record belongs to breaks escalation's
+    consecutive-cycle count no matter which door is "right".
+
+    The caller is not silently overruled — its 12 is on the record.
+    """
     _drop_server_cycle(run)
     result = foundry_add_defect(
         cycle=12,
@@ -1067,21 +1075,52 @@ def test_caller_cycle_survives_only_when_there_is_no_server_counter(
         description="Legacy archive finding.",
         project_root=str(tmp_path),
     )
-    assert result["cycle"] == 12, result
-    assert _defects(run)[0]["cycle"] == 12
+    assert result["cycle"] == 0, result
+    assert result["declared_cycle"] == 12, result
+    assert _defects(run)[0]["cycle"] == 0
+    assert _defects(run)[0]["declared_cycle"] == 12
 
 
-@pytest.mark.parametrize("bogus", [None, "3", -1, True, 1.5])
-def test_malformed_server_counter_falls_back_to_the_caller(
-    run: Path, tmp_path: Path, bogus: object
+# The defect report's matrix verbatim, and the same six cases
+# ``test_escalation._MALFORMED_COUNTERS`` drives through BOTH doors: a counter
+# that is absent, null, a string, negative, a float, or a bool is not a counter.
+# `True` earns its own case because bool is an int subclass and would otherwise
+# stamp cycle 1.
+_MALFORMED_COUNTERS = [
+    pytest.param("no-key", None, id="no-key"),
+    pytest.param("value", None, id="null"),
+    pytest.param("value", "3", id="str"),
+    pytest.param("value", -3, id="negative"),
+    pytest.param("value", 2.5, id="float"),
+    pytest.param("value", True, id="bool"),
+]
+
+
+@pytest.mark.parametrize("mode,bogus", _MALFORMED_COUNTERS)
+def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
+    run: Path, tmp_path: Path, mode: str, bogus: object
 ) -> None:
-    """A non-integer, negative, or boolean counter is not a counter. Reading
-    one as a cycle number would be worse than trusting the caller, so it is
-    treated as absent — `True` included, since bool is an int subclass and
-    would otherwise stamp cycle 1."""
+    """D-119, the single door's half of the cross-door contract.
+
+    ``foundry.py`` used to read a malformed counter as "no counter" and stamp
+    the caller's 8, while ``foundry_orchestrator.py`` read the identical file
+    and stamped 0. Identical findings filed through Foundry-Defect and
+    Foundry-Sync therefore landed in different cycles: mixed filing persisted
+    [1,0,3] where one door alone would have persisted [1,2,3], the longest
+    consecutive run was 2, and a genuine systemic class evaded ST-002
+    escalation while the AC-011 DONE guard passed.
+
+    ``test_escalation.test_both_filing_doors_stamp_the_same_cycle`` pins the
+    two doors against each other over this same matrix; this pins THIS door
+    against the ruling on its own, so the contract is verifiable here without
+    reading the sibling's tests.
+    """
     state_path = run / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    state["cycle"] = bogus
+    if mode == "no-key":
+        state.pop("cycle", None)
+    else:
+        state["cycle"] = bogus
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
     result = foundry_add_defect(
@@ -1091,7 +1130,33 @@ def test_malformed_server_counter_falls_back_to_the_caller(
         description="Finding filed against a corrupt state file.",
         project_root=str(tmp_path),
     )
-    assert result["cycle"] == 8, result
+    assert result["cycle"] == 0, result
+    assert _defects(run)[0]["cycle"] == 0
+    # The claim survives beside the stamp — the ruling's auditability half.
+    assert result["declared_cycle"] == 8, result
+    assert _defects(run)[0]["declared_cycle"] == 8
+    # The human-readable mirror must not disagree with the ledger.
+    assert "Cycle 0" in (run / "forge-log.md").read_text(encoding="utf-8")
+
+
+def test_a_healthy_counter_still_outranks_the_caller_and_keeps_the_claim(
+    run: Path, tmp_path: Path
+) -> None:
+    """NFR-002 guard on the ruling: D-119 changes the MALFORMED path only. A
+    real counter is still the authority and the caller's number is still
+    ignored — it is now merely recorded as well."""
+    _set_server_cycle(run, 6)
+    result = foundry_add_defect(
+        cycle=99,
+        source="trace",
+        defect_type="WRONG",
+        description="Filed against a healthy counter.",
+        project_root=str(tmp_path),
+    )
+    assert result["cycle"] == 6, result
+    assert result["declared_cycle"] == 99, result
+    assert _defects(run)[0]["cycle"] == 6
+    assert _defects(run)[0]["declared_cycle"] == 99
 
 
 # --- AC-002 — the tripwire is reachable, not just present -------------------

@@ -1448,3 +1448,174 @@ def test_a_failing_teardown_does_not_destroy_the_verdict(tmp_path, monkeypatch):
     # No evidence files in the synthetic worktree, so the BODY's own verdict is
     # EVIDENCE_COMMAND_MISSING. The point is that it survives teardown.
     assert result["failure_token"] == "EVIDENCE_COMMAND_MISSING", result
+
+
+# --- D-111: two live worktrees for one casting never share a directory -------
+#
+# TV-C-03. `_setup_worktree` derived its path from the casting id alone and then
+# tore down "whatever is already there" OUTSIDE `_WORKTREE_LOCK`, which covered
+# only `git worktree add`. Driven with two threads on casting 1: A's marker file
+# was present before B ran and gone after, because B deleted A's LIVE worktree
+# and re-created it — A's evidence commands then ran against a tree that had
+# been destroyed and rebuilt mid-flight, and the operator saw an
+# EVIDENCE_OUTPUT_MISMATCH with nothing pointing at concurrency.
+#
+# These drive `worktree_helpers` directly rather than through the
+# `run_accept_casting_with_evidence` harness because the harness deliberately
+# gives each concurrent thread a DIFFERENT casting id (conftest.py:634) — the
+# exact collision under test is the one it is built to avoid.
+
+
+def _worktree_repo(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A real one-commit git repo. Returns (project_root, run_dir, commit)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "tracked.txt").write_text("content\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    return repo, run_dir, head
+
+
+def test_a_same_casting_peer_cannot_destroy_a_live_worktree(tmp_path):
+    """The D-111 repro. Two threads, one casting id: the first thread's tree
+    must still be intact — same path, same marker — after the second has set up
+    and torn down its own."""
+    import threading
+
+    from foundry_mcp.tools import worktree_helpers as wh
+
+    repo, run_dir, head = _worktree_repo(tmp_path)
+
+    a_ready = threading.Event()
+    b_done = threading.Event()
+    paths: dict[str, Path] = {}
+    observed: dict[str, bool] = {}
+    errors: list[BaseException] = []
+
+    def _thread_a() -> None:
+        try:
+            path = wh._setup_worktree(repo, 1, head, run_dir)
+            paths["a"] = path
+            (path / "A_IS_LIVE").write_text("a", encoding="utf-8")
+            a_ready.set()
+            b_done.wait(timeout=60)
+            # Recorded HERE, inside A's own lifetime — A tears its tree down
+            # two lines below, so a Path checked after the join would report
+            # A's own cleanup as the peer's damage.
+            observed["marker"] = (path / "A_IS_LIVE").is_file()
+            observed["checkout"] = (path / "tracked.txt").is_file()
+            wh._teardown_worktree(repo, path)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+            a_ready.set()
+
+    def _thread_b() -> None:
+        try:
+            a_ready.wait(timeout=60)
+            path = wh._setup_worktree(repo, 1, head, run_dir)
+            paths["b"] = path
+            wh._teardown_worktree(repo, path)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            b_done.set()
+
+    threads = [threading.Thread(target=t) for t in (_thread_a, _thread_b)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=90)
+    assert not errors, errors
+
+    assert paths["a"] != paths["b"], (
+        f"both invocations claimed {paths['a']} — a same-casting peer still "
+        f"derives the live tree's path"
+    )
+    assert observed["marker"], (
+        "the peer destroyed the live worktree: A's marker was written before B "
+        "ran and was gone after"
+    )
+    assert observed["checkout"], "A's checkout did not survive B's setup intact"
+
+
+def test_the_uncontended_path_keeps_the_plain_casting_name(tmp_path):
+    """The claim is contention-only. A lone invocation must land on exactly
+    ``worktrees/casting-{id}``: the evidence harness measures teardown by
+    asserting that path is gone (conftest.py:690), and a name that is unique per
+    call would make that assertion pass without measuring anything.
+    """
+    from foundry_mcp.tools import worktree_helpers as wh
+
+    repo, run_dir, head = _worktree_repo(tmp_path)
+
+    path = wh._setup_worktree(repo, 7, head, run_dir)
+    assert path == run_dir / "worktrees" / "casting-7"
+    wh._teardown_worktree(repo, path)
+    assert not path.exists()
+
+    # And nothing is stranded: the same id reuses the same name next time.
+    again = wh._setup_worktree(repo, 7, head, run_dir)
+    assert again == path
+    wh._teardown_worktree(repo, again)
+
+
+def test_teardown_leaves_no_worktree_dir_behind(tmp_path):
+    """Non-vacuous leak check. Serial setup/teardown of three castings must
+    leave ``worktrees/`` empty — the check the harness's ``worktree_torn_down``
+    flag can no longer make on its own once suffixed siblings are possible."""
+    from foundry_mcp.tools import worktree_helpers as wh
+
+    repo, run_dir, head = _worktree_repo(tmp_path)
+
+    for casting_id in (1, 2, 3):
+        path = wh._setup_worktree(repo, casting_id, head, run_dir)
+        assert path.is_dir()
+        wh._teardown_worktree(repo, path)
+
+    leftovers = sorted(p.name for p in (run_dir / "worktrees").iterdir())
+    assert leftovers == [], f"worktree dirs leaked: {leftovers}"
+
+
+def test_a_crashed_runs_leftover_is_reclaimed_by_name(tmp_path):
+    """Pitfall 1, which a per-call unique path would have silently retired. A
+    dir left by a process that died before teardown is claimed by nobody, so
+    the next invocation for that casting tears it down and reuses the name
+    instead of accumulating one orphan per GRIND cycle."""
+    from foundry_mcp.tools import worktree_helpers as wh
+
+    repo, run_dir, head = _worktree_repo(tmp_path)
+
+    stale = run_dir / "worktrees" / "casting-4"
+    stale.mkdir(parents=True)
+    (stale / "LITTER").write_text("from a dead run\n", encoding="utf-8")
+
+    path = wh._setup_worktree(repo, 4, head, run_dir)
+    assert path == stale
+    assert not (path / "LITTER").exists(), "the leftover was not cleaned up"
+    assert (path / "tracked.txt").is_file()
+    wh._teardown_worktree(repo, path)
+
+
+def test_a_failed_setup_does_not_strand_the_casting_name(tmp_path):
+    """The claim outlives the call by design, so a setup that returns no live
+    tree has to release it — otherwise one unresolvable commit would push every
+    later invocation for that casting onto a suffixed path forever."""
+    from foundry_mcp.tools import worktree_helpers as wh
+
+    repo, run_dir, head = _worktree_repo(tmp_path)
+
+    with pytest.raises(RuntimeError):
+        wh._setup_worktree(repo, 5, "0" * 40, run_dir)  # unresolvable commit
+
+    path = wh._setup_worktree(repo, 5, head, run_dir)
+    assert path == run_dir / "worktrees" / "casting-5"
+    wh._teardown_worktree(repo, path)
