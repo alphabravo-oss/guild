@@ -21,8 +21,10 @@
 # _current_cycle resolves the whole matrix (no-key/null/str/negative/float/
 # bool, plus a malformed CONTAINER) to 0, and that the BATCH door stamps 0 and
 # persists the caller-asserted value as declared_cycle. The CROSS-DOOR parity
-# pins live in the same file and are RED until casting 3 brings
-# foundry.py#_stamp_cycle to the same contract; they are deliberately excluded
-# from this selection because their other half has not landed.
+# pins live in the same file and are GREEN as of 6453159, which brought the
+# single door -- plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle
+# -- to the same contract. They stay outside THIS selection because this log's
+# subject is the counting rule, not the cross-door parity; the unfiltered
+# whole-file run is captured in casting-2-escalation.log.
 ............................                                             [100%]
 28 passed, 68 deselected in 0.07s

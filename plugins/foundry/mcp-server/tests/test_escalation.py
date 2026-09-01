@@ -1092,10 +1092,14 @@ def test_two_cycles_of_a_mixed_cluster_still_do_not_fire(run_env):
 # D-119 — the two filing doors agree on WHICH cycle a record belongs to
 #
 # TV-E-01: two independent derivations of one rule diverged on a malformed
-# counter. foundry.py#_server_cycle returned None and _stamp_cycle then fell
-# back to the CALLER's cycle; foundry_orchestrator.py#_current_cycle returned 0
-# on the same input. _stamp_cycle's docstring claims "Every writer goes through
-# this, so 'which cycle was this?' has one answer per run" — it had two.
+# counter. plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle
+# returned None, and the caller-side wrapper around it — named _stamp_cycle at
+# the time, deleted in 6453159 which folded it back into _server_cycle — took
+# that as licence to fall back to the CALLER's cycle; while
+# plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_current_cycle
+# returned 0 on the same input. That wrapper's docstring claimed "Every writer
+# goes through this, so 'which cycle was this?' has one answer per run" — it
+# had two.
 #
 # The harm is not cosmetic. Identical run, identical findings, identical class,
 # caller cycles 1/2/3, only the DOOR differs: Foundry-Defect stamped [1,2,3]
@@ -1186,14 +1190,15 @@ def _stamped_via_add(project_root: str, cycle: int) -> dict:
 
 
 # The parity assertions below are a JOINT pin: the batch door is casting 2's
-# and the single door is casting 3's (foundry.py#_stamp_cycle / #_server_cycle,
-# being brought to this same contract in this cycle). Red here means one half
-# has not landed yet, and the messages name which — never misread these as a
-# regression in the orchestrator.
+# and the single door is casting 3's
+# (plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle).
+# Both halves have landed, so red here is a REGRESSION in one of them, and the
+# messages name which — never misread these as a regression in the orchestrator.
 _OWNER = (
-    "casting 3 owns foundry.py#_stamp_cycle: on a malformed counter it must "
-    "resolve to 0 (not fall back to the caller's value) and persist "
-    "declared_cycle on the record"
+    "casting 3 owns "
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle: "
+    "on a malformed counter it must resolve to 0 (not fall back to the "
+    "caller's value) and persist declared_cycle on the record"
 )
 
 
