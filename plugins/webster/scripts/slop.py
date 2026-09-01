@@ -140,6 +140,17 @@ CASE_SENSITIVE = {"emoji-heading", "emoji-bullet", "title-case-heading",
 
 SKIP_FENCE = re.compile(r"^\s*```")
 
+# A blockquote is a quotation, and the wording in it belongs to whoever is being quoted. The
+# prose rules judge how the author writes; applying them to a quote asks the author to misquote.
+# Every em-dash finding in the first documentation set this plugin wrote from a running product
+# was a blockquote carrying the product's own screen text, and "restructure the sentence" there
+# would have put words on the page that the interface does not say.
+BLOCKQUOTE = re.compile(r"^\s*>")
+
+# What still applies inside a quotation. These are about what the page carries rather than how
+# it is written, and a quotation mark launders none of them.
+RESIDUE_RULES = {"agent-attribution", "conversation-artifact", "orchestration-marker"}
+
 
 def unreadable(error):
     """os.walk's onerror. Re-raises instead of walking on.
@@ -239,12 +250,17 @@ def main():
                 in_fence = not in_fence
                 is_diagram_fence = in_fence and bool(re.search(r"(mermaid|d2|dot)", line))
                 continue
+            quoted = bool(BLOCKQUOTE.match(line))
             for rid, sev, pat, why in RULES:
                 diagram_rule = rid.startswith("diagram-")
                 # prose rules skip code blocks; diagram rules only run inside diagram fences
                 if diagram_rule and not is_diagram_fence:
                     continue
                 if not diagram_rule and in_fence:
+                    continue
+                # Residue is still residue inside a quote: an agent byline or a conversation
+                # artifact is not made quotable by indenting it.
+                if quoted and not diagram_rule and rid not in RESIDUE_RULES:
                     continue
                 if re.search(pat, line, 0 if rid in CASE_SENSITIVE else re.I):
                     if rid == "bold-label-bullets":
