@@ -1,16 +1,7 @@
-# evidence-cmd: test -d plugins/foundry/mcp-server && cd plugins/foundry/mcp-server && uv run -q --with pytest pytest tests/test_protocol_prose.py -rN -p no:cacheprovider
+# evidence-cmd: test -d plugins/foundry/mcp-server && cd plugins/foundry/mcp-server && uv run -q --with pytest pytest tests/test_protocol_prose.py -q -p no:cacheprovider -k "routes_comment_prose_to_observations or states_the_never_demote_denylist_absolutely or split_did_not_soften or f2_roster_carries_the_split or f2_roster_scopes_the_split_claim"
 # evidence-for: AC-003
-# evidence-volatile: rootdir: \S+
+# evidence-volatile: \d+ deselected
 # evidence-volatile: \d+\.\d+s
 
-============================= test session starts ==============================
-platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
-configfile: pyproject.toml
-plugins: anyio-4.14.2
-collected 77 items
-
-tests/test_protocol_prose.py ........................................... [ 55%]
-..................................                                       [100%]
-
-============================== 77 passed in 0.03s ==============================
+..............                                                           [100%]
+14 passed, 139 deselected in 0.02s
