@@ -204,9 +204,12 @@ For each major feature, walk through the complete workflow as a user would:
    - PL-2: "Edit flow — EditCredential component reads credential by ID but DetailPage
      doesn't pass the ID prop, so edit form loads empty"
 
-**PL-N findings are high severity** — they represent flows that a user will hit on
-their first interaction. A feature with working functions but broken workflows is
-worse than a missing feature (users expect it to work and get confused when it doesn't).
+**PL-N findings are defects, never observations** — they represent flows that a user
+will hit on their first interaction. A feature with working functions but broken
+workflows is worse than a missing feature (users expect it to work and get confused
+when it doesn't). This is a channel statement, not a severity one: a broken workflow
+is not a comment, so the never-demote denylist puts it in the defect ledger whatever
+else is true about it.
 
 In foundry TRACE mode, PL-N findings become defects alongside L-N and THIN-N findings.
 
@@ -276,28 +279,33 @@ JSON block at the end for tooling consumption.
         "type": "object",
         "properties": {
           "id": {"type": "string", "description": "Finding ID (L-N, THIN-N, SA-N, DEV-N)"},
-          "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
-          "category": {"type": "string", "description": "gap|thin|ambiguity|deviation"},
-          "file": {"type": "string", "description": "Primary file path"},
-          "line": {"type": "integer", "description": "Line number (if applicable)"},
+          "classification": {"type": "string", "enum": ["DEFECT", "OBSERVATION"],
+            "description": "Channel, not a tier. Comment-prose findings are OBSERVATION; every other finding is a DEFECT. The never-demote denylist overrides this field."},
+          "type": {"type": "string",
+            "enum": ["MISSING", "WRONG", "THIN", "HOLLOW", "PARTIAL", "UNWIRED",
+                     "BROKEN", "FAIL", "ARCHITECTURAL_PLACEMENT", "RESEARCH_DEVIATION",
+                     "COVERAGE_INCOMPLETE", "THIN_MIGRATION"],
+            "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
+          "class": {"type": "string",
+            "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+          "file": {"type": "string", "description": "Bare path. Never carries a line number."},
+          "symbol": {"type": "string", "description": "The symbol the finding is about. With `file` this is the `path#Symbol` cite."},
           "description": {"type": "string", "description": "What's wrong and why"},
           "spec_reference": {"type": "string", "description": "Spec section/requirement ID"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "severity", "category", "file", "description"]
+        "required": ["id", "classification", "type", "file", "symbol", "description"]
       }
     },
     "summary": {
       "type": "object",
       "properties": {
         "total": {"type": "integer"},
-        "by_severity": {
+        "by_classification": {
           "type": "object",
           "properties": {
-            "critical": {"type": "integer"},
-            "high": {"type": "integer"},
-            "medium": {"type": "integer"},
-            "low": {"type": "integer"}
+            "DEFECT": {"type": "integer"},
+            "OBSERVATION": {"type": "integer"}
           }
         },
         "verdict": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]},
@@ -311,9 +319,13 @@ JSON block at the end for tooling consumption.
 }
 ```
 
+**There is no `severity` field, and adding one is a vocabulary violation.** Every defect is a defect and GRIND fixes them all, so a tier has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. `type` and `classification` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` and `#FINDING_CLASSES` — a value outside them is rejected server-side rather than coerced onto something known.
+
+**There is no `line` field either.** A finding cites `path#Symbol` — `file` bare, `symbol` beside it. The symbol is authoritative, and the commit-pinned-run-artifact carve-out that permits a line hint does not reach a findings record: this JSON goes straight to the foundry defect sync tools and is then re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
+
 **Verdict rules:**
-- **FAIL**: any critical or high finding
-- **WARN**: only medium/low findings
+- **FAIL**: any finding classified `DEFECT`
+- **WARN**: findings exist but every one is classified `OBSERVATION`
 - **PASS**: zero findings (rare — verify you didn't miss anything)
 
 This JSON format can be passed directly to the foundry defect sync tools.

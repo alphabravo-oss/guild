@@ -818,3 +818,371 @@ def test_resume_md_tells_the_lead_to_migrate_an_old_archive() -> None:
         "resume.md does not say the migration is idempotent, so a lead will try "
         "to judge the archive's age by eye instead of just running it."
     )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 2 -- D-040, D-041, D-042
+# ---------------------------------------------------------------------------
+
+# The agent files that mandate a cite but that no casting owned in CAST. Their
+# `file:line` mandates outlived the GRIND-1 conversion of the four stream
+# agents, so FR-004 held on the verifiers and leaked everywhere else.
+COVERAGE_DIFF = AGENTS / "coverage-diff.md"
+PATTERN_MAPPER = AGENTS / "pattern-mapper.md"
+CODEBASE_MAPPER = AGENTS / "codebase-mapper.md"
+RESEARCHER = AGENTS / "researcher.md"
+NYQUIST_AUDITOR = AGENTS / "nyquist-auditor.md"
+
+PROVE_SKILL = SKILLS / "prove" / "SKILL.md"
+TRACE_SKILL = SKILLS / "trace" / "SKILL.md"
+
+# D-040 splits these agent files by ARTIFACT LIFETIME, not by file type. An
+# artifact that is re-read while the tree moves under it must cite by symbol;
+# one frozen against the tree it was written against may carry a line hint.
+# Both halves are pinned, because converting everything is as wrong as
+# converting nothing -- it would strip the locator off a verbatim excerpt.
+SYMBOL_ONLY_AGENTS = (COVERAGE_DIFF, CODEBASE_MAPPER, RESEARCHER)
+
+
+def test_the_grind2_prose_files_all_exist() -> None:
+    """Floor check: every assertion below is vacuous if the corpus is empty."""
+    for path in (
+        *SYMBOL_ONLY_AGENTS,
+        PATTERN_MAPPER,
+        NYQUIST_AUDITOR,
+        PROVE_SKILL,
+        TRACE_SKILL,
+    ):
+        assert path.is_file(), f"missing pinned prose file: {_rel(path)}"
+
+
+@pytest.mark.parametrize("path", SYMBOL_ONLY_AGENTS, ids=lambda p: p.name)
+def test_unowned_agents_mandate_the_symbol_cite_form(path: Path) -> None:
+    """D-040 / FR-004: these files still mandated `file:line` after GRIND-1."""
+    text = _read(path)
+    assert "`path#Symbol`" in text, (
+        f"{_rel(path)} does not mandate the `path#Symbol` cite form. FR-004 is "
+        f"a repo-wide placement rule -- converting the four stream agents while "
+        f"leaving their neighbours on `file:line` keeps the loop open on every "
+        f"artifact those neighbours produce."
+    )
+    assert "file:line" not in text, (
+        f"{_rel(path)} still mandates a `file:line` cite. The artifact this "
+        f"agent writes is re-read while the tree moves under it, so a line "
+        f"hint there rots into a false finding."
+    )
+
+
+@pytest.mark.parametrize("path", SYMBOL_ONLY_AGENTS, ids=lambda p: p.name)
+def test_unowned_agents_state_the_symbol_is_authoritative(path: Path) -> None:
+    """D-040: the validity rule, not merely the placement rule."""
+    text = _flat(path)
+    assert "symbol is authoritative" in text, (
+        f"{_rel(path)} does not state that the symbol decides validity. Without "
+        f"it a drifted line hint reads as a broken cite and the reader files a "
+        f"finding for a line that merely moved."
+    )
+    assert "a moved line alone produces no finding of any kind" in text, (
+        f"{_rel(path)} lost the no-finding-for-a-moved-line rule (FR-004)."
+    )
+    assert "cite-refresh sweep" in text, (
+        f"{_rel(path)} no longer prohibits unprompted cite-refresh sweeps -- a "
+        f"sweep manufactures churn across the whole tree."
+    )
+    assert "commit-pinned run artifact" in text, (
+        f"{_rel(path)} does not say where a line hint IS still permitted, so "
+        f"the placement rule reads as a blanket ban."
+    )
+
+
+@pytest.mark.parametrize("path", SYMBOL_ONLY_AGENTS, ids=lambda p: p.name)
+def test_unowned_agent_examples_carry_no_line_cites(path: Path) -> None:
+    """D-040's D-016 half: a worked example is what a reader actually copies."""
+    stale = _LINE_CITE_RE.findall(_read(path))
+    assert not stale, (
+        f"{_rel(path)} still shows line-numbered cite(s) {stale} in a worked "
+        f"example. Prose mandating `path#Symbol` beside an example emitting "
+        f"`path:line` is a contradiction, and the example wins."
+    )
+
+
+def test_coverage_diff_rules_the_carve_out_against_itself() -> None:
+    """D-040: coverage-diff is a live F2 stream feeding Foundry-Sync."""
+    text = _read(COVERAGE_DIFF)
+    assert "carve-out that permits a line hint does not reach" in text, (
+        "coverage-diff.md does not rule on whether its own findings record "
+        "qualifies for the commit-pinned run-artifact carve-out. It does not: "
+        "the record flows into Foundry-Sync and is re-read every GRIND cycle. "
+        "Leaving the ruling unstated is what let mandate and examples drift."
+    )
+    assert "Foundry-Sync" in text, (
+        "coverage-diff.md no longer names the sync path that makes its record "
+        "long-lived, which is the whole reason the carve-out does not apply."
+    )
+
+
+def test_coverage_diff_keeps_the_manifest_entry_format_intact() -> None:
+    """D-040 boundary: `source_file:symbol` is a validated input contract.
+
+    ``foundry_validate`` requires every ``coverage_list`` entry to be shaped
+    ``path/to/file.go:TestSymbolName``. That colon separates a path from a
+    SYMBOL, never from a line, so the placement rule has no quarrel with it --
+    and "convert every colon" would have broken a server-enforced contract.
+    """
+    text = _read(COVERAGE_DIFF)
+    assert "`source_file:symbol`" in text, (
+        "coverage-diff.md no longer documents the `source_file:symbol` shape "
+        "that foundry_validate enforces on every coverage_list entry."
+    )
+    assert "never from a line" in text, (
+        "coverage-diff.md does not explain why its `source_entry` colon is not "
+        "a line hint. Without that, the next FR-004 sweep 'fixes' a validated "
+        "input format and the migration stream stops parsing its own manifest."
+    )
+
+
+def test_coverage_diff_abolishes_its_severity_tier() -> None:
+    """D-041's axis, in a file D-040 opened: orphans were 'low severity'."""
+    text = _read(COVERAGE_DIFF)
+    assert "low severity" not in text, (
+        "coverage-diff.md still tiers a finding as 'low severity'. Every "
+        "stream agent's Rules block abolishes the severity axis; a live F2 "
+        "stream keeping one is the same contradiction D-041 was filed for."
+    )
+    assert "**No severity classification.**" in text, (
+        "coverage-diff.md has no rule abolishing severity, unlike its four "
+        "peer stream agents. The channel decides where a finding goes; a tier "
+        "decides nothing and only licenses skipping."
+    )
+
+
+def test_pattern_mapper_rules_its_carve_out_explicitly() -> None:
+    """D-040: PATTERNS.md is the one artifact where a line range is correct.
+
+    The lead's GRIND-1 concern was that converting start.md's description
+    without its producer would make command prose disagree with the agent that
+    writes the artifact. The resolution is a stated ruling on both sides, not a
+    silent conversion of one.
+    """
+    text = _flat(PATTERN_MAPPER)
+    assert "commit-pinned run artifact" in text, (
+        "pattern-mapper.md keeps `file:line` cites but never says under which "
+        "rule they are legitimate. An unexplained exception reads as an "
+        "oversight and the next FR-004 sweep deletes it."
+    )
+    assert "the body is the payload" in text, (
+        "pattern-mapper.md does not say WHY the range is safe here -- because "
+        "the excerpt body travels with the cite and is what gets mirrored."
+    )
+    assert "A drifted range is still never a finding." in text, (
+        "pattern-mapper.md's carve-out does not restate the no-finding rule. "
+        "The carve-out permits WRITING a line hint; it never licenses a "
+        "verifier to JUDGE one, and conflating those reopens the loop."
+    )
+
+
+def test_start_md_spot_check_greps_the_body_not_the_line() -> None:
+    """D-040: the F0.9 check is the consumer of pattern-mapper's ruling."""
+    text = _flat(START_MD)
+    assert "grepping **the excerpt's own text** in the cited file" in text, (
+        "start.md's Dimension 11d still verifies an excerpt by grepping the "
+        "cited file:line. That makes a moved line an F0.9 ERROR -- a verifier "
+        "judging the line component, which FR-004 forbids outright."
+    )
+    assert "Never make the line range the verdict" in text, (
+        "start.md does not state that the range is a locator rather than the "
+        "verdict, so the check and pattern-mapper.md's ruling still disagree."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-041 -- the skills' normative JSON schemas
+# ---------------------------------------------------------------------------
+
+# GRIND-1 converted these two skills' PROSE. Their machine-readable schemas
+# kept a required severity enum and a line field -- in documents that say their
+# output "can be passed directly to the foundry defect sync tools". A schema
+# outranks the prose beside it, so the abolished axis was still normative.
+SCHEMA_BEARING_SKILLS = (PROVE_SKILL, TRACE_SKILL)
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schemas_carry_no_severity_axis(path: Path) -> None:
+    """D-041: the reconciled vocabulary has no severity."""
+    text = _read(path)
+    assert '"severity"' not in text, (
+        f"{_rel(path)}'s findings schema still declares a `severity` property. "
+        f"Every agent file abolishes the axis; a normative schema that "
+        f"re-introduces it hands every stream a tier to skip work with."
+    )
+    assert '"by_severity"' not in text, (
+        f"{_rel(path)}'s summary block still rolls findings up by severity."
+    )
+    assert '"by_classification"' in text, (
+        f"{_rel(path)} does not roll findings up by classification. DEFECT vs "
+        f"OBSERVATION is the axis that replaced severity, and the summary has "
+        f"to count on the axis the records actually carry."
+    )
+    assert "adding one is a vocabulary violation" in text, (
+        f"{_rel(path)} removed the severity field but never says it must not "
+        f"come back. A silently-absent field gets re-added by the next author "
+        f"who misses it; a stated prohibition does not."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schemas_use_the_reconciled_vocabulary(path: Path) -> None:
+    """D-041: classification is DEFECT/OBSERVATION; type is a DEFECT_TYPES member."""
+    text = _read(path)
+    assert '"classification": {"type": "string", "enum": ["DEFECT", "OBSERVATION"]' in text, (
+        f"{_rel(path)}'s schema has no classification enum. The channel a "
+        f"finding goes down is the field that replaced severity, and it must "
+        f"be closed over exactly the two FINDING_CLASSES members."
+    )
+    for defect_type in ("MISSING", "WRONG", "THIN", "HOLLOW", "PARTIAL"):
+        assert f'"{defect_type}"' in text, (
+            f"{_rel(path)}'s type enum omits {defect_type}, so a stream "
+            f"emitting it writes a value the schema rejects."
+        )
+    assert "ARCHITECTURAL_PLACEMENT" in text and "MISPLACED" in text, (
+        f"{_rel(path)} does not record that MISPLACED folds onto "
+        f"ARCHITECTURAL_PLACEMENT. Both spellings are live in agent contracts."
+    )
+    assert "schemas/vocab.py#DEFECT_TYPES" in text, (
+        f"{_rel(path)} does not cite the vocabulary module as the source of "
+        f"truth, so this enum becomes a seventh copy free to drift."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schemas_require_the_new_axes(path: Path) -> None:
+    """D-041: an optional classification is a classification streams omit."""
+    text = _read(path)
+    assert '"required": ["id", "classification", "type", "file", "symbol", "description"]' in text, (
+        f"{_rel(path)}'s required list does not demand classification, type "
+        f"and symbol. `severity` was REQUIRED before this fix -- replacing a "
+        f"required field with optional ones weakens the contract instead of "
+        f"correcting it."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schemas_drop_the_line_field_for_a_symbol(path: Path) -> None:
+    """D-041: align the line field with the FR-004 placement rule."""
+    text = _read(path)
+    assert '"line": {"type": "integer"' not in text, (
+        f"{_rel(path)}'s findings schema still declares a `line` property. The "
+        f"file's own prose mandates `path#Symbol`; a schema slot for a line "
+        f"number tells a stream to do the opposite of what the prose requires."
+    )
+    assert '"symbol": {"type": "string"' in text, (
+        f"{_rel(path)}'s schema has no `symbol` property, so a stream told to "
+        f"cite `path#Symbol` has nowhere to put the half that is authoritative."
+    )
+    assert "carve-out that permits a line hint does not reach a findings record" in text, (
+        f"{_rel(path)} does not rule on whether its findings record qualifies "
+        f"for the commit-pinned run-artifact carve-out. It does not -- the "
+        f"record is passed to the defect sync tools and re-read for cycles."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_verdict_rules_key_on_classification(path: Path) -> None:
+    """D-041: the verdict was computed on the axis being abolished."""
+    text = _flat(path)
+    assert "**FAIL**: any finding classified `DEFECT`" in text, (
+        f"{_rel(path)}'s verdict rules still tier findings before deciding "
+        f"FAIL. Removing the schema field while the verdict rule keeps "
+        f"grading by importance leaves the severity axis fully operative."
+    )
+    assert "**WARN**: findings exist but every one is classified `OBSERVATION`" in text, (
+        f"{_rel(path)}'s WARN rule does not key on the observation channel."
+    )
+
+
+def test_prove_skill_closed_the_critical_path_exemption() -> None:
+    """D-041: 'not on the critical path' was severity under another name."""
+    text = _flat(PROVE_SKILL)
+    assert "there is no off-the-critical-path exemption" in text, (
+        "prove/SKILL.md's verdict rules downgraded a non-VERIFIED item to WARN "
+        "when it sat off the critical path. assayer.md's 'EVERY non-VERIFIED "
+        "verdict is a defect, no exceptions' admits no such exemption, and an "
+        "importance test by any other name is the axis D-041 removes."
+    )
+
+
+def test_trace_skill_states_plumber_findings_are_defects_not_a_tier() -> None:
+    """D-041: the prose twin of the schema's severity enum."""
+    text = _flat(TRACE_SKILL)
+    assert "high severity" not in text, (
+        "trace/SKILL.md still calls PL-N findings 'high severity'. Fixing the "
+        "schema while the prose two screens up asserts a tier leaves the file "
+        "contradicting itself, and a reader resolves that in its own favour."
+    )
+    assert "PL-N findings are defects, never observations" in text, (
+        "trace/SKILL.md no longer states the CHANNEL a broken-workflow finding "
+        "goes down. Deleting the severity claim without replacing it loses the "
+        "point the sentence was making."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-042 -- pathspec commits everywhere an agent commits
+# ---------------------------------------------------------------------------
+
+
+def test_nyquist_auditor_commits_with_a_pathspec() -> None:
+    """D-042 / FR-011 / CT-005: it mandated the bare form teammate.md forbids."""
+    text = _read(NYQUIST_AUDITOR)
+    assert 'git commit -m "test(nyquist): regression cover for {req-id}" -- <test-file>' in text, (
+        "nyquist-auditor.md's Step 7 does not commit with an explicit "
+        "pathspec. F5.5 shares one index with every other agent, so the bare "
+        "form captures whatever a peer has staged -- the exact failure "
+        "teammate.md's COMMIT PROTOCOL exists to prevent."
+    )
+    assert "NEVER run a bare `git commit -m" in text, (
+        "nyquist-auditor.md shows the pathspec form but never forbids the bare "
+        "one. An example without a prohibition is a suggestion."
+    )
+    assert "commits the ENTIRE index by git's documented default" in text, (
+        "nyquist-auditor.md does not say WHY a bare commit is unsafe. D-042's "
+        "failure mode was an agent following a form it did not understand."
+    )
+
+
+def test_nyquist_auditor_codifies_no_stash_and_no_bypass() -> None:
+    """AC-017: the no-stash rule and the absence of any bypass path."""
+    text = _read(NYQUIST_AUDITOR)
+    assert "Never run `git stash`, in any form." in text, (
+        "nyquist-auditor.md does not codify the no-stash rule. `git stash "
+        "--keep-index` silently drops the unstaged half of a partially-staged "
+        "file and takes every peer's uncommitted work with it."
+    )
+    assert HOOK_BYPASS_FLAG not in text, (
+        f"nyquist-auditor.md offers `{HOOK_BYPASS_FLAG}` somewhere. No protocol "
+        f"path may hand an agent a hook bypass: the shipped guard judges staged "
+        f"content only, so a correct pathspec commit already passes it."
+    )
+    assert "judges staged content only" in text, (
+        "nyquist-auditor.md does not explain that the guard reads the index "
+        "rather than the tree, which is the fact that makes bypassing it "
+        "unnecessary rather than merely forbidden."
+    )
+
+
+def test_start_md_evidence_strip_is_pathspec_scoped() -> None:
+    """FR-011 / CT-005: the F6 evidence-strip step was a bare commit too."""
+    text = _read(START_MD)
+    assert (
+        'git commit -m "chore(foundry): strip consumed run evidence" -- evidence/'
+        in text
+    ), (
+        "start.md's F6 evidence-strip step still runs a bare `git commit`. It "
+        "is the last commit of the run and it takes the whole shared index, so "
+        "anything still staged ships under a 'strip evidence' message."
+    )
+    assert "matches staged deletions the same way" in text, (
+        "start.md does not state that a pathspec still commits the `git rm` "
+        "deletions. Without that, a lead reads the pathspec as a risk to the "
+        "removal and drops it."
+    )

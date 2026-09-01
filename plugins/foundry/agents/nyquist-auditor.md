@@ -102,14 +102,20 @@ After 3 failed iterations on a single test, stop iterating on that requirement a
 
 ### Step 7: Commit each green test
 
-For each test that passes, commit it individually:
+For each test that passes, commit it individually — staged by path, then committed with an explicit pathspec naming that same path after a `--` separator:
 
-```
+```bash
 git add <test-file>
-git commit -m "test(nyquist): regression cover for {req-id}"
+git commit -m "test(nyquist): regression cover for {req-id}" -- <test-file>
 ```
 
-Do not batch-commit. One requirement, one commit — so future blame surfaces exactly which regression each test protects against. Never include production code changes in these commits.
+**NEVER run a bare `git commit -m "..."`.** F5.5 runs in the same working tree and the same git index as every other agent in the run. A commit with no pathspec commits the ENTIRE index by git's documented default — every path anyone else has staged, not only yours — so a bare commit here silently captures a peer's half-finished production code under a `test(nyquist)` message, which is precisely the "never include production code changes" rule below being broken by the commit command rather than by you. The pathspec is the only thing that scopes a commit on a shared index; a pathspec commit leaves every path you did not name exactly as it was, still staged and still its owner's to commit.
+
+**Never run `git stash`, in any form.** Not `git stash`, not `git stash --keep-index`, not "just to get a clean tree" before committing. Stash takes the whole working tree — every other agent's uncommitted work along with yours — and `--keep-index` silently drops the unstaged half of a partially-staged file when it restores. No step here needs a clean tree: the pathspec already scopes your commit.
+
+**Never skip the pre-commit hook.** No step in this procedure takes a hook-bypassing flag, and you must not add one. The guard foundry installs judges staged content only (`git diff --cached`), so another agent's unstaged edits cannot make it fire and a correctly scoped pathspec commit passes it. If it does fire, it found a real violation in what *you* staged — fix the staging.
+
+Do not batch-commit. One requirement, one commit — so future blame surfaces exactly which regression each test protects against. Never include production code changes in these commits; name only test files in the pathspec.
 
 ## Output
 

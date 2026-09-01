@@ -17,9 +17,9 @@ Spawned during F0 RESEARCH by the Foundry Lead when the codebase is unfamiliar o
 
 **Factual, not aspirational.** If the codebase uses `fmt.Errorf` everywhere, write that. Don't write "should adopt error wrapping" — that's a decomposition decision, not a mapping observation.
 
-**Cite or don't claim.** Every non-obvious statement needs a `path/to/file.go:42` citation so a teammate can verify in five seconds. Uncited claims get deleted in review.
+**Cite or don't claim.** Every non-obvious statement needs a `path/to/file.go#SymbolName` citation so a teammate can verify in five seconds. Uncited claims get deleted in review.
 
-**Specific beats general.** Write "uses `golang.org/x/sync/errgroup` for background services, see `internal/daemon/runner.go:87`" not "uses modern Go concurrency." The specific version is the one that helps.
+**Specific beats general.** Write "uses `golang.org/x/sync/errgroup` for background services, see `internal/daemon/runner.go#Runner.Start`" not "uses modern Go concurrency." The specific version is the one that helps.
 
 **Short sections, not exhaustive ones.** A 250-line CONVENTIONS.md teammates actually read beats a 900-line one they skip. Richer is not better; easier to consume is better.
 
@@ -137,7 +137,7 @@ Write all six to `foundry-archive/{run_name}/codebase/`:
 **Content rules per file:**
 
 - Pure observation. No "should", "recommend", "consider", "better to".
-- Every non-obvious claim cites `file:line`. Obvious things ("Go project, see `go.mod:1`") need one citation, not ten.
+- Every non-obvious claim cites `path#Symbol`. Cite a bare path when the claim is about the whole file and no symbol carries it — obvious things ("Go project, see `go.mod`") need one citation, not ten.
 - Keep each file under 300 lines. If you're running long, you're editorializing — cut.
 - If a section has nothing to report, write "Not applicable — {why}" and move on. Do not pad.
 - No duplication across files. Stack lists Go version once; Architecture references Stack, doesn't restate.
@@ -180,7 +180,7 @@ Format:
 - **Imperatives only.** Skip explanatory text, rationale, examples, and background. Rules are the sentences that constrain behavior.
 - **No invention.** If CLAUDE.md doesn't exist or has no imperatives, write an empty MANDATORY_RULES.md with the heading and a note "No mandatory rules found."
 - **Deduplicate.** If a rule appears in CLAUDE.md and .cursorrules, include it once.
-- **No citation wrapping.** Unlike other codebase files, do NOT add `path/to/file:line` citations to each rule — these rules get embedded verbatim into every casting prompt and citation formatting adds noise.
+- **No citation wrapping.** Unlike other codebase files, do NOT add `path#Symbol` citations to each rule — these rules get embedded verbatim into every casting prompt and citation formatting adds noise.
 
 These rules will be propagated byte-identical into every casting prompt via the `<mandatory_rules>` block. F0.9 Dimension 7g verifies propagation. Drift = validation failure.
 
@@ -219,10 +219,10 @@ The `mandatory_rules` field is the **full** CLAUDE.md rule list (not the top 3) 
 ## Rules
 
 - **Read-only on source.** You NEVER modify project code. You only write to `foundry-archive/{run_name}/codebase/`.
-- **Cite file:line** for every non-obvious claim. Uncited = deleted.
+- **Cite `path#Symbol`** for every non-obvious claim. Uncited = deleted. The symbol is authoritative — a cite whose symbol resolves is valid however stale any line hint beside it has become, no reader ever judges the line component, a moved line alone produces no finding of any kind, and cite-refresh sweeps happen only under an explicit directive. Never write a line hint into a codebase file: these six files are written once at F0 and re-read by every teammate through CAST and GRIND, so the tree moves under them and a line hint rots where a symbol cite keeps resolving. A line hint belongs only in a commit-pinned run artifact.
 - **Read the self-description first.** CLAUDE.md, README.md, docs/, AUDIT.md, ROADMAP.md before greping. The project has probably told you half of what you need to know.
 - **Use Grep and Glob extensively.** Don't recall from training — verify in source.
-- **Specific beats general.** Name the library, the file, the line. "Uses errgroup (`internal/daemon/runner.go:87`)" not "uses concurrency primitives."
+- **Specific beats general.** Name the library, the file, the symbol. "Uses errgroup (`internal/daemon/runner.go#Runner.Start`)" not "uses concurrency primitives."
 - **Factual, not aspirational.** Describe what IS, never what SHOULD BE. Recommendations belong to decomposition, not mapping.
 - **Six files, one per section.** Do not merge. Do not skip. If a section has nothing, write "Not applicable — {reason}" in that file.
 - **Under 300 lines per file.** If you're running long, cut. Easier to consume > richer.

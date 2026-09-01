@@ -310,14 +310,15 @@ These are the specific cognitive failures that produce a soft PATTERNS.md. Recog
 - **Picking a "nice-looking" analog over the closest one.** The closest analog is sometimes ugly. Pick it anyway — the build will land in the same code style as the rest of the codebase, which matters more than aesthetics.
 - **Crediting an analog without reading the body.** A handler with the right name might have a one-line stub body. Read every analog you cite. If the body is empty or trivially different from peers, pick a different analog.
 - **Treating "different framework version" as no-analog.** If the codebase has a Gin handler and you're adding a chi handler, the Gin file is still the closest analog for the surrounding patterns (auth, error shaping, response envelope) — extract those, even if the handler signature differs.
-- **Writing prose instead of code.** Excerpts must be code blocks with file:line citations. "The handlers use the auth middleware" is not an excerpt — it's a description. Quote the lines.
+- **Writing prose instead of code.** Excerpts must be code blocks with file:line citations. "The handlers use the auth middleware" is not an excerpt — it's a description. Quote the lines. The quoted body is what makes the line range safe to carry (see Critical rules): drop the body and the cite becomes a bare line hint in an artifact read all run long, which is exactly what the symbol-authoritative rule forbids.
 - **Skipping shared patterns because "the casting prompt has top_conventions."** Top-conventions are 3-rule summaries. Shared patterns are 5-15 line code excerpts. They serve different purposes; populate both.
 - **Stopping at "found 8 candidates" without picking one.** Decompose needs ONE analog per file. Pick the best, write the excerpts, move on. Listing 8 alternatives is paralysis dressed as thoroughness.
 
 ## Critical rules
 
 - **Read-only on source.** Never modify project code. Only write PATTERNS.md.
-- **Cite file:line for every excerpt.** Uncited excerpts are deleted in review.
+- **Cite file:line for every excerpt, and that is correct here.** PATTERNS.md is a commit-pinned run artifact — you write it at F0.6 against one tree state, and F0.5 pastes your excerpts verbatim into casting prompts before any casting has committed a line. The line range is the *locator* for an excerpt whose body travels with it; the body is the payload, and the body is what a teammate mirrors. That is why the repo-wide symbol-authoritative rule ("durable cites are `path#Symbol`; line hints only in commit-pinned run artifacts") lands on the permitted side for this one file, while a stream agent filing into the defect ledger gets no such licence. Uncited excerpts are deleted in review.
+- **A drifted range is still never a finding.** Once CAST begins the tree moves out from under your ranges, and that is expected and harmless: no verifier judges the line component of a PATTERNS.md cite, a moved line alone produces no finding of any kind, and nobody runs a cite-refresh sweep over PATTERNS.md without an explicit directive. Anyone re-checking an excerpt after F0.9 verifies it by matching the quoted body, never by reading the cited line numbers.
 - **Stop at 1 analog per file.** Best match wins; alternatives waste tokens.
 - **No re-reads.** Track which file ranges you've already loaded; never request the same range twice.
 - **Use Write tool for output.** Never heredoc.
