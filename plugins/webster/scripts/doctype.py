@@ -366,6 +366,8 @@ SECOND_PERSON = re.compile(r"(?i)\byou\b|\byour\b|\byours\b")
 ON_SCREEN_CUE = re.compile(
  r"(?i)\b(labell?ed|headed|titled|button|tab|menu|section|column|field|heading|panel|option"
  r"|marked|named|called|reads|says|shows)\b[^.]{0,30}$")
+# Two or more capitalised words ending at the match: the shape of a proper noun.
+PROPER_NOUN = re.compile(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)+$")
 CAPS_RUN = re.compile(r"\b[A-Z][A-Z0-9]{1,}\b(?:\s*(?:&|and|/)?\s*\b[A-Z][A-Z0-9]{1,}\b)+")
 
 
@@ -779,6 +781,12 @@ def check_lens(rel, text, audience, dt, env_vars):
             for m in FLAG.finditer(line):
                 named.append((n, f"`{m.group(1)}`", "a command-line flag"))
         for m in ARCH_HARD.finditer(line):
+            # "AWS Cloud Controller Manager" is the name of a thing, not a word for the
+            # machinery: an operator meets it in Kubernetes' own release notes. A capitalised
+            # word inside a run of capitalised words is part of a name, and the rule was
+            # reporting two provider pages for naming the component they install.
+            if m.group(1)[:1].isupper() and PROPER_NOUN.search(line, 0, m.end()):
+                continue
             named.append((n, m.group(1), "part of the architecture"))
 
     seen = set()

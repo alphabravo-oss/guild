@@ -1144,3 +1144,37 @@ def test_a_reference_page_may_not_name_the_architecture(run_script, docs_dir):
         f"'handler' is architecture on any page below developer, and a reference page is not "
         f"a place to put one.\n{outcome(result)}"
     )
+
+
+def test_a_proper_noun_holding_an_architecture_word_is_not_a_leak(run_script, docs_dir):
+    """"AWS Cloud Controller Manager" is the name of a thing (FR-017).
+
+    An operator meets it in Kubernetes' own release notes and installs it by that name. Two
+    provider pages were reported for naming the component they tell the reader to expect.
+    """
+    write_page(docs_dir, "aws.md", "title: AWS\ndoc_type: how-to\naudience: operator",
+               "# AWS\n\nPioneer applies the AWS Cloud Controller Manager to the new cluster.\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "part of the architecture" not in result.stdout, (
+        f"A capitalised word inside a run of capitalised words is part of a name, not a word "
+        f"for the machinery.\n{outcome(result)}"
+    )
+
+
+def test_the_bare_word_is_still_a_leak(run_script, docs_dir):
+    """The exemption is for names, not for the word (FR-017).
+
+    Pioneer's interface never shows "controller" to anyone, measured across its labels and its
+    error strings, so a page using it bare is introducing a word the reader will not meet.
+    """
+    write_page(docs_dir, "aws.md", "title: AWS\ndoc_type: how-to\naudience: operator",
+               "# AWS\n\nOnly providers with a healthy infrastructure controller are selectable.\n")
+
+    result = check(run_script, docs_dir)
+
+    assert "part of the architecture" in result.stdout, (
+        f"Exempting the bare word because some product name contains it would retire the rule.\n"
+        f"{outcome(result)}"
+    )
