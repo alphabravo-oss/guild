@@ -38,10 +38,26 @@
 # (tests/test_measure_run.py gained three cases). Recaptured here because
 # this log PINS a collection count: D-086/D-087 were the omission of
 # exactly this step.
+#
+# GRIND-16: the count moved 160 -> 167. D-105 routed gate verdicts to the
+# exit status at all three gate-evaluating entry points and D-106 gave
+# --matrix a roster guard, so tests/test_measure_run.py gained seven cases
+# (three for the exit contract including the MISSING-is-not-FAIL mapping,
+# four for the empty-roster refusal and its new closed-vocabulary token).
+# Four pre-existing cases in the same module were re-pointed rather than
+# added: they asserted the exit code D-105 fixed, two of them while
+# simultaneously asserting the verdict was FAIL. Recaptured for the same
+# reason as GRIND-12 — this log PINS a collection count.
+#
+# The deselected test_grand_vulture_reports_nfr_001s_two_baseline_numbers
+# now also asserts exit 1: those two baseline numbers (18 cycles, 168
+# defects) are BOTH out of band, which is the premise of NFR-001, and the
+# instrument has to say so. Its passing output is in the completion report,
+# per the deselection note above.
 
-........................................................................ [ 44%]
-.......................................s................................ [ 89%]
-.................                                                        [100%]
+........................................................................ [ 42%]
+.......................................s................................ [ 85%]
+........................                                                 [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
-160 passed, 1 skipped, 2 deselected in 3.71s
+SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/var/folders/kq/jm1bf9811z512rncmlpl7s200000gn/T/tmp.X6ktF5Tpuu/wt/.planning/phases/09-milestone-real-run-consolidation/runs
+167 passed, 1 skipped, 2 deselected in 4.86s
