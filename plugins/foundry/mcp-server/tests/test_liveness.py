@@ -1578,3 +1578,74 @@ def test_a_wrong_typed_manifest_does_not_disturb_the_stream_roster(run_env) -> N
     # No skips could be read, so every unconditional stream is still expected.
     assert {r["agent"] for r in result["agents"]} >= {"trace", "prove"}
     assert all(r["status"] == fs.STATUS_NO_LEDGER for r in result["agents"])
+
+
+# --------------------------------------------------------------------------- #
+# D-132 adjacent path — the SKIP LIST inside the manifest liveness owns
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "stream_skips",
+    [42, {"TRACE": "spec_format_version"}, "TRACE"],
+    ids=["a number", "an object keyed by stream", "a bare string"],
+)
+def test_a_wrong_typed_skip_list_degrades_instead_of_raising(
+    run_env, stream_skips
+) -> None:
+    """The rung below the one D-115 fixed, in the reader that "always guarded".
+
+    ``_skipped_stream_ids`` is the reader this module's own prose holds up as
+    the one that has always held the manifest shape guard — and it held it at
+    the CONTAINER only, exactly as D-115 held the manifest at the container
+    only. Each row is a different consequence of that:
+
+    ``42`` reached ``for entry in 42`` and raised ``TypeError: 'int' object is
+    not iterable`` straight out of Foundry-Liveness — the diagnostic a lead
+    reaches for precisely when a run has already gone wrong.
+
+    ``{"TRACE": "..."}`` is the quieter and worse failure, and the reason "no
+    raise" is not a sufficient assertion. Writing the skip list as a map from
+    stream to reason is an ordinary authoring slip; iterating a dict yields its
+    KEYS, so this parsed as a skip list containing TRACE and the tool silently
+    STOPPED REPORTING the trace stream. A liveness tool that hides an agent
+    because its input was misread is worse than one that crashes.
+
+    ``"TRACE"`` iterates its characters, none of which is a wire id, so today
+    it degrades to nothing by luck rather than by contract. It is here to pin
+    the contract, not because it ever broke.
+
+    D-132's fix routes this reader through the shared validator, so the shape
+    it tolerates is now the same shape both spawn doors accept — one policy,
+    four readers, rather than four readers agreeing by hand.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40, stream_skips=stream_skips)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert result["ok"] is True
+    # TRACE appears in every row, so a skip list read out of a corrupt document
+    # would have silently removed it from the roster.
+    assert {r["agent"] for r in result["agents"]} >= {"trace", "prove"}
+
+
+def test_a_well_formed_skip_list_still_reaches_the_roster(run_env) -> None:
+    """The guard must not cost the working path, which is the whole feature.
+
+    A validator wired in to stop a raise is worth nothing if it also stops the
+    ordinary document — and a skip list is exactly the shape most at risk of
+    that, because its entries are legitimately EITHER an object or a bare
+    string and the shape table has to say so on the record.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(
+        fdir,
+        minutes_ago=40,
+        stream_skips=[{"stream_id": "TRACE", "reason": "spec_format_version"}, "PROVE"],
+    )
+
+    agents = {r["agent"] for r in fs.foundry_liveness(project_root=project_root)["agents"]}
+
+    assert "trace" not in agents
+    assert "prove" not in agents

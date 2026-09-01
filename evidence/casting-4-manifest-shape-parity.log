@@ -1,0 +1,58 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_spawn_progress.py -q -s --no-header -p no:cacheprovider -k demo
+# evidence-for: FR-020, AC-025, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# D-132 — the ESCALATED class, rendered rather than asserted. Five nested
+# manifest shapes driven through BOTH spawn doors, ten cells.
+#
+# THE SAME TEN CELLS BEFORE THE FIX, driven through server.py's _DISPATCH:
+#
+#   castings="nope"          Spawn-Teammate RAISES AttributeError 'str'
+#                            Cast-Wave      tolerated
+#   castings=[1,2,3]         Spawn-Teammate RAISES AttributeError 'int'
+#                            Cast-Wave      tolerated
+#   castings=[null]          Spawn-Teammate RAISES AttributeError 'NoneType'
+#                            Cast-Wave      tolerated
+#   waves="nope"             Spawn-Teammate tolerated
+#                            Cast-Wave      RAISES AttributeError 'str'
+#   castings=[{"no_id":1}]   both tolerated
+#   TOTAL 4/10 RAISE, 0/10 name manifest.json
+#
+# D-115 guarded the manifest's top-level CONTAINER and stopped, so the RECORDS
+# inside it that every reader then indexes were never guarded. An AttributeError
+# reaching call_tool becomes a raw traceback, and this module's whole error
+# contract is a named {"ok": False, "error", "hint"} refusal (NFR-002 / AC-025).
+#
+# THE ASYMMETRY IS THE TELL (same as D-097): the two doors disagreed about the
+# same corrupt document. The tolerated half is arguably the worse half — a
+# structurally corrupt manifest was reported as a MISSING WAVE or a MISSING
+# CASTING, which sends the operator to rebuild wave groupings in a file whose
+# real problem is one rung above them.
+#
+# The fix is not five filters at five index sites; that is the escalated class
+# itself. It is ONE declaration (_MANIFEST_SHAPE) walked by ONE recursive
+# validator (_shape_problem) that all four manifest readers in the module
+# consult — so the two doors produce byte-identical text BY CONSTRUCTION rather
+# than by two hand-written guards agreeing with each other. The last column of
+# every row below is one string printed once because both doors returned it.
+#
+# The run directory is elided as <run> by the test so the render is byte-stable
+# under re-execution; the assertions in test_both_doors_refuse_a_nested_shape_
+# with_identical_text run against the real absolute path the operator receives.
+#
+
+D-132 — five nested manifest shapes x two spawn doors
+
+row                      spawn    wave     refusal text (identical at both doors)
+------------------------ -------- -------- ----------------------------------------------
+castings="nope"          ok=False ok=False manifest.json.castings is not a list — parsed as str: <run>/castings/manifest.json
+castings=[1,2,3]         ok=False ok=False manifest.json.castings[0] is not a JSON object — parsed as int: <run>/castings/manifest.json
+castings=[null]          ok=False ok=False manifest.json.castings[0] is not a JSON object — parsed as NoneType: <run>/castings/manifest.json
+waves="nope"             ok=False ok=False manifest.json.waves is not a list — parsed as str: <run>/castings/manifest.json
+castings=[{"no_id":1}]   ok=False ok=False manifest.json.castings[0].id is absent or null — manifest.json.castings[0] carries ['no_id'] and every reader of this manifest addresses its record by `id`: <run>/castings/manifest.json
+
+TOTAL 0/10 RAISE, 10/10 name manifest.json, 5/5 rows byte-identical across doors
+.
+1 passed, 69 deselected in 0.17s

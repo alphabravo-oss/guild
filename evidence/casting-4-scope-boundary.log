@@ -40,6 +40,16 @@
 # new entry point. D-114 and D-117 changed only the bodies of
 # _agent_liveness_record and foundry_liveness, so they add no name at all. The
 # boundary is still the same three tools.
+# GRIND cycle 19 (D-132) adds two more PRIVATE helpers — _shape_problem, the
+# recursive walker over a declared shape, and _manifest_shape_problem, the
+# string half both TOLERANT readers consult so they degrade on exactly the
+# evidence the two doors refuse on. _manifest_shape_error keeps its name and
+# its role as the refusal envelope. The module also grows two non-callable
+# module constants that do not appear below: _MANIFEST_SHAPE (the declared
+# structure) and _REQUIRED (its present-and-non-null sentinel).
+#
+# Still no new entry point. The public surface is the same three tools, and the
+# boundary this file records is unchanged.
 #
 _agent_id_for_casting
 _agent_liveness_record
@@ -49,12 +59,14 @@ _is_terminal
 _latest_teammate_dispatches
 _load_run_state
 _manifest_shape_error
+_manifest_shape_problem
 _missing_stream_records
 _missing_teammate_records
 _parse_progress_timestamp
 _progress_dir
 _progress_protocol_block
 _read_progress_ledger
+_shape_problem
 _skipped_stream_ids
 _step_key
 _teammate_model

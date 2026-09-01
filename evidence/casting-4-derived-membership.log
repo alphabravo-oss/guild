@@ -1,0 +1,63 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && PYTHONPATH=src:tests uv run --quiet --with pytest python -c "import test_spawn_progress as t, pathlib; from foundry_mcp.tools import foundry_spawn as fs; ps=sorted(t._manifest_paths_in(pathlib.Path(fs.__file__).read_text(encoding='utf-8'))); print(chr(10).join(f'{p:<26} declared={t._shape_covers(p)}' for p in ps))"
+# evidence-for: FR-008
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 120
+#
+# FR-008 — the ESCALATED class answered STRUCTURALLY, and the record of HOW
+# membership is derived rather than hand-kept.
+#
+# The class: "a hardening mechanism bound by hand to the site where a defect
+# was reported, instead of derived from the members the module or artifact set
+# actually contains." D-095, D-098, D-115 and now D-132 are its instances.
+# D-115's own fix is what recurred: it added a guard bound to the rung the
+# defect named (the top-level container) and the rung below it stayed open.
+#
+# So the fix cannot be "a validator for castings and waves", which is the same
+# hand-binding one rung sideways — it would have missed stream_skips (where
+# `42` raised TypeError out of Foundry-Liveness, from the reader this module's
+# own prose held up as the one that had ALWAYS guarded this), key_files, and
+# casting_ids (where `42` raised TypeError out of Cast-Wave). None of those
+# three were in the defect report; all three are the same class.
+#
+# HOW MEMBERSHIP IS DERIVED. The left column below is not typed anywhere. It is
+# parsed out of foundry_spawn.py's AST by _manifest_paths_in, which follows the
+# taint from the "manifest.json" string literal through assignment, aliasing,
+# iteration and comprehension to a fixed point — so it finds reads three hops
+# downstream of the literal (manifest_path -> manifest -> castings -> c), which
+# is where D-132's reads actually lived and where a one-hop scan sees nothing.
+# The right column asks _MANIFEST_SHAPE whether that path is declared.
+#
+# THE TEST THAT FAILS WHEN A READER BYPASSES THE VALIDATOR:
+#   tests/test_spawn_progress.py::test_every_manifest_key_the_module_indexes_is_declared
+# A reader that starts indexing an undeclared key turns a cell below False and
+# fails the suite. It cannot be satisfied by editing a list beside the code,
+# because there is no list beside the code — only the source and the shape.
+#
+# Its own adjacent-path proof, so the assertion cannot pass vacuously:
+#   tests/test_spawn_progress.py::test_the_scan_catches_a_reader_that_indexes_an_undeclared_key
+# feeds the scanner a synthetic reader that indexes manifest["teams"] three hops
+# from the literal and asserts all three undeclared paths are reported.
+#
+# `declared=True` via an explicitly-None element shape (stream_skips entries) is
+# a decision on the record, not an omission: _skipped_stream_ids accepts both a
+# mapping and a bare string by documented contract and isinstance-checks every
+# entry itself. Constraining those entries in the table turns three cells False.
+#
+# SCOPE. The subject is foundry_spawn.py, located through its own import rather
+# than a typed path. Four more modules index this same document with their own
+# top-rung-only guards — foundry_orchestrator.py, foundry_validate.py,
+# intent_coverage.py, scripts/validate_intent_coverage.py. Widening to them is
+# recorded as the structural proposal in foundry-archive/{run}/concerns.md; it
+# is not done here because those files are outside this packet's write surface
+# and castings 2 and 3 are editing them this cycle.
+#
+castings                   declared=True
+castings[].id              declared=True
+castings[].key_files       declared=True
+stream_skips               declared=True
+stream_skips[].id          declared=True
+stream_skips[].stream      declared=True
+stream_skips[].stream_id   declared=True
+waves                      declared=True
+waves[].casting_ids        declared=True
+waves[].wave               declared=True

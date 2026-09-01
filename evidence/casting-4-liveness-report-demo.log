@@ -25,6 +25,10 @@
 # the roster held three agents and needs_attention named two, neither of them
 # the one that was actually dead (AC-021, OT-010).
 #
+# GRIND cycle 19 (D-132) adds four tests to this file for the manifest
+# skip-list shape, so the -k deselect count below moves from 79 to 83. The
+# report itself is unchanged: none of those tests touches a progress ledger.
+#
 
 Foundry-Liveness — stall threshold 900s, progress cadence 300s
 
@@ -38,4 +42,4 @@ casting-gamma   stalled                 60m        60m           —  read floor
 needs_attention: ['casting-beta', 'casting-delta', 'casting-gamma']
 
 .
-1 passed, 79 deselected in 0.04s
+1 passed, 83 deselected in 0.04s

@@ -628,6 +628,13 @@ def _skipped_stream_ids(fdir: Path) -> set[str]:
     canonical spelling is mapped back to its wire id through
     ``vocab.WIRE_TO_CANONICAL`` rather than by lowercasing, because the two
     spellings are not related by case alone (``TEST-01`` / ``test01``).
+
+    Degrades to "no declared skips" on any shape this module's readers cannot
+    index, decided by the SHARED validator rather than by the private
+    ``isinstance(manifest, dict)`` this used to hold. That private check is the
+    reason ``stream_skips: 42`` reached ``for entry in 42`` and raised
+    ``TypeError`` out of Foundry-Liveness — from the very reader the module's
+    own prose held up as the one that had always guarded this (D-132).
     """
     try:
         manifest = json.loads(
@@ -635,7 +642,7 @@ def _skipped_stream_ids(fdir: Path) -> set[str]:
         )
     except (OSError, json.JSONDecodeError):
         return set()
-    if not isinstance(manifest, dict):
+    if _manifest_shape_problem(manifest) is not None:
         return set()
 
     canonical_to_wire = {
@@ -1091,32 +1098,148 @@ def foundry_liveness(
     return result
 
 
+#: Sentinel for a mapping key that must be PRESENT and non-null, whose value is
+#: otherwise unconstrained. ``castings[].id`` and ``waves[].wave`` are the two:
+#: every reader in this module locates its record by one of them, so an entry
+#: without one is not a record the readers can address, whatever else it holds.
+_REQUIRED = object()
+
+#: The manifest's structure AS THE READERS IN THIS MODULE INDEX IT. Declared
+#: ONCE, walked recursively by ``_shape_problem``, and consulted by all four
+#: manifest readers here — so a corrupt document produces the same named
+#: refusal at both spawn doors and the same silent degrade in both tolerant
+#: readers BY CONSTRUCTION, not by four guards agreeing with each other.
+#:
+#: This is the ESCALATED class (D-095 / D-098 / D-115 / D-132) answered
+#: structurally. D-115 guarded the top-level container and stopped, so the
+#: RECORDS the readers then index were never guarded: ``castings: "nope"``,
+#: ``[1,2,3]`` and ``[null]`` each reached ``c.get("id")`` and raised
+#: ``AttributeError`` out of Foundry-Spawn-Teammate while Foundry-Cast-Wave
+#: tolerated the identical document — the D-097 asymmetry tell, two doors
+#: disagreeing about one corrupt file. The fix is not a filter at the six
+#: index sites (that is the class); it is one declaration of the shape.
+#:
+#: Grammar, read by ``_shape_problem``:
+#:   ``[shape]``    a list; every element must satisfy the single inner shape
+#:   ``{k: shape}`` a mapping; each key is OPTIONAL, and when present and
+#:                  non-null its value must satisfy its shape
+#:   ``_REQUIRED``  the key must be present and non-null; value unconstrained
+#:   ``None``       unconstrained from here down — an EXPLICIT statement that
+#:                  the reader below this point is on its own. ``stream_skips``
+#:                  entries are None because ``_skipped_stream_ids`` accepts
+#:                  both a mapping and a bare string by documented contract and
+#:                  isinstance-checks each entry itself.
+#:
+#: Every key named here is one a reader in this module actually indexes, and
+#: ``test_every_manifest_key_the_module_indexes_is_declared`` derives that set
+#: from this file's AST and fails if the two ever disagree — so a reader that
+#: starts indexing a new key cannot land without declaring it, and this table
+#: cannot rot into a hand-kept list of the keys some past defect happened to
+#: name. That test is the derivation; the table is only its subject.
+_MANIFEST_SHAPE: dict = {
+    "castings": [{"id": _REQUIRED, "key_files": [None]}],
+    "waves": [{"wave": _REQUIRED, "casting_ids": [None]}],
+    "stream_skips": [None],
+}
+
+
+def _shape_problem(value: object, shape: object, path: str) -> str | None:
+    """The first named reason ``value`` does not satisfy ``shape``, else None.
+
+    Recursive over the shape, so depth is a property of the DECLARATION rather
+    than of this function: the rung below the one a defect was reported at is
+    covered the moment it is declared, which is precisely what a hand-written
+    ``isinstance`` chain at the reported rung cannot do.
+
+    ``path`` is the dotted key path being validated, carried down so the
+    message names WHICH rung failed. That is not cosmetic. The message this
+    replaces was ``"manifest.json is not a JSON object — parsed as {type}"``,
+    and reusing it one rung down produces the self-contradicting
+    ``"manifest.json is not a JSON object — parsed as dict"`` — a refusal that
+    sends the operator to look at a top-level object that is perfectly fine.
+    Each branch below therefore states the shape IT expected.
+    """
+    if shape is None:
+        return None
+
+    if isinstance(shape, list):
+        if not isinstance(value, list):
+            return f"{path} is not a list — parsed as {type(value).__name__}"
+        element = shape[0]
+        for index, item in enumerate(value):
+            problem = _shape_problem(item, element, f"{path}[{index}]")
+            if problem is not None:
+                return problem
+        return None
+
+    if not isinstance(value, dict):
+        return f"{path} is not a JSON object — parsed as {type(value).__name__}"
+    for key, sub in shape.items():
+        member = value.get(key)
+        if sub is _REQUIRED:
+            # No "parsed as" here, because there is nothing parsed to name —
+            # so the actionable equivalent is the keys the object DOES carry.
+            if member is None:
+                return (
+                    f"{path}.{key} is absent or null — {path} carries "
+                    f"{sorted(str(k) for k in value)} and every reader of this "
+                    f"manifest addresses its record by `{key}`"
+                )
+            continue
+        if member is None:
+            continue
+        problem = _shape_problem(member, sub, f"{path}.{key}")
+        if problem is not None:
+            return problem
+    return None
+
+
+def _manifest_shape_problem(manifest: object) -> str | None:
+    """The named reason a parsed manifest is unusable, or None.
+
+    The string half, mirroring ``foundry.py``'s ``_document_problem`` beside
+    its ``_artifact_guard``: the two TOLERANT readers here
+    (``_build_grind_cycle_context``, ``_skipped_stream_ids``) owe a degrade
+    rather than a refusal, and must decide on exactly the same evidence the
+    refusing doors use. Calling this rather than growing a private
+    ``isinstance`` check is what keeps all four readers on one policy.
+    """
+    return _shape_problem(manifest, _MANIFEST_SHAPE, "manifest.json")
+
+
 def _manifest_shape_error(manifest: object, manifest_path: Path) -> dict | None:
-    """Return a named refusal when a parsed manifest is not a JSON object.
+    """Return a named refusal when a parsed manifest is not usable, else None.
 
     ``json.JSONDecodeError`` catches only text that is not JSON at all. A
     manifest that is valid JSON of the WRONG TYPE — ``[1,2,3]``, ``null``, a
-    bare string — parses cleanly and then meets ``.get()``, which is an
-    ``AttributeError`` raised across the MCP boundary where this module owes a
-    named refusal. ``_skipped_stream_ids`` has always guarded this; both spawn
-    doors now share one policy rather than each growing its own, because a
-    manifest is malformed for the bulk path and the single path in exactly the
-    same way and the two refusals must not drift apart.
+    bare string, or (D-132) an object whose ``castings`` is a string, a list of
+    ints, or a list of nulls — parses cleanly and then meets ``.get()``, which
+    is an ``AttributeError`` raised across the MCP boundary where this module
+    owes a named refusal.
+
+    Both spawn doors call THIS function on the same document and produce the
+    same ``error``/``hint`` text, so the lead cannot learn two different
+    stories about one file depending on which door it walked through. Before
+    D-132 they disagreed on all five nested shapes: one raised, one returned
+    success or reported a MISSING WAVE for a structurally corrupt document,
+    which sends the operator to rebuild wave groupings in a manifest whose real
+    problem is one rung above them.
 
     Returns ``None`` when the shape is fine, so a caller reads
     ``if error: return error``.
     """
-    if isinstance(manifest, dict):
+    problem = _manifest_shape_problem(manifest)
+    if problem is None:
         return None
     return {
         "ok": False,
-        "error": (
-            f"manifest.json is not a JSON object — parsed as {type(manifest).__name__}: "
-            f"{manifest_path}"
-        ),
+        "error": f"{problem}: {manifest_path}",
         "hint": (
-            "Re-run F0.5 DECOMPOSE. The manifest must be a JSON object carrying "
-            "`castings` and `waves`, not a bare list, string or null."
+            "Re-run F0.5 DECOMPOSE. The manifest is a JSON object whose "
+            "`castings` and `waves` are lists of objects — each casting "
+            "carrying an `id`, each wave a `wave` number. The key path named "
+            "above is the rung that does not hold; the rest of the document "
+            "may be fine."
         ),
     }
 
@@ -1329,24 +1452,29 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     manifest_path = fdir / "castings" / "manifest.json"
     casting_keyfiles: set[str] = set()
     if manifest_path.exists():
+        # The third manifest reader in this module, and one of the two that
+        # must stay QUIET about a bad shape: a wrong-typed manifest produces
+        # the same unscoped context an unparseable one already produces, rather
+        # than a refusal, because this helper's contract is that it never fails
+        # a spawn. What it must NOT do is decide "bad shape" for itself. It did
+        # — `isinstance(manifest, dict)` guarded the container and then indexed
+        # the records inside it, so `castings: [1,2,3]` reached `c.get("id")`
+        # and raised AttributeError out of both spawn doors, PAST their own
+        # shape guards, from the helper that promises not to fail (D-132).
+        # Sharing the validator is what makes "unusable" mean one thing here
+        # and at the doors, so the doors can never refuse a document this
+        # accepts, nor accept one they refuse.
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            # The third manifest reader in this module, and the one that must
-            # stay QUIET about a bad shape: a wrong-typed manifest produces the
-            # same unscoped context an unparseable one already produces, rather
-            # than a refusal. A wrong-typed manifest that reached
-            # `.get()` here would raise out through both spawn doors, past
-            # their own shape guards, from a helper whose contract is that it
-            # never fails a spawn.
-            castings = manifest.get("castings", []) if isinstance(manifest, dict) else []
-            for c in castings:
+        except (OSError, json.JSONDecodeError):
+            manifest = None
+        if _manifest_shape_problem(manifest) is None:
+            for c in manifest.get("castings") or []:
                 if str(c.get("id")) == str(casting_id):
                     for f in (c.get("key_files") or []):
                         if isinstance(f, str) and f.strip():
                             casting_keyfiles.add(f.strip())
                     break
-        except json.JSONDecodeError:
-            pass
 
     # Two partitions of `changed` under one rule: every changed file lands in
     # exactly one of them. With key_files declared that is the mine/not-mine

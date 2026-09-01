@@ -27,6 +27,7 @@ Run with the rest of the suite: ``uv run --with pytest pytest`` from
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -1015,3 +1016,468 @@ def test_a_wrong_typed_manifest_cannot_reach_the_builder_through_a_door(
     assert result["ok"] is False
     assert "manifest.json" in result["error"]
     assert not (fdir / "spawns.log").exists()
+
+
+# --------------------------------------------------------------------------- #
+# D-132 — the RECORDS inside the container, one rung below D-115
+# --------------------------------------------------------------------------- #
+#
+# D-115 guarded the top-level container and stopped. A manifest that IS a JSON
+# object but whose `castings` is a string, a list of ints, or a list of nulls
+# parsed cleanly, passed that guard, and then met `c.get("id")` — an
+# AttributeError across the MCP boundary from a module whose whole error
+# contract is a named refusal. Driven through _DISPATCH before the fix, five
+# nested shapes at two doors gave 4/10 RAISE and 0/10 naming manifest.json.
+#
+# THE ASYMMETRY IS THE TELL, and it is what these tests pin. Cast-Wave
+# TOLERATED every castings-shaped corruption that made Spawn-Teammate raise,
+# and Spawn-Teammate tolerated the waves-shaped one that made Cast-Wave raise.
+# A tolerated corrupt manifest is arguably worse than the raise: Cast-Wave
+# reported "wave 1 not found in manifest" for a structurally corrupt document
+# and sent the operator to rebuild wave groupings that were never the problem.
+#
+# So the fix is not five filters at five index sites — that is the escalated
+# class itself, a hardening bound by hand to the site a defect was reported at.
+# It is ONE declaration of the shape (`_MANIFEST_SHAPE`) walked by ONE
+# recursive validator that all four manifest readers in the module consult.
+# `test_every_manifest_key_the_module_indexes_is_declared` is what holds that
+# property: it derives the indexed key paths from the module's own AST, so a
+# reader that starts indexing an undeclared key fails the suite rather than
+# opening the same hole one rung further down.
+
+#: (label, manifest body) for each nested shape D-132 drove. The label is the
+#: row name in the parity report, so evidence and tests use one vocabulary.
+NESTED_SHAPE_ROWS = [
+    ('castings="nope"', {"castings": "nope", "waves": [{"wave": 1, "casting_ids": [1]}]}),
+    ("castings=[1,2,3]", {"castings": [1, 2, 3], "waves": [{"wave": 1, "casting_ids": [1]}]}),
+    ("castings=[null]", {"castings": [None], "waves": [{"wave": 1, "casting_ids": [1]}]}),
+    ('waves="nope"', {"castings": [{"id": 1}], "waves": "nope"}),
+    ('castings=[{"no_id":1}]', {"castings": [{"no_id": 1}], "waves": [{"wave": 1, "casting_ids": [1]}]}),
+]
+
+
+@pytest.mark.parametrize(
+    "body", [body for _label, body in NESTED_SHAPE_ROWS],
+    ids=[label for label, _body in NESTED_SHAPE_ROWS],
+)
+def test_both_doors_refuse_a_nested_shape_with_identical_text(run_env, body) -> None:
+    """THE PARITY PIN. One validator, so one refusal, whichever door you enter.
+
+    Before D-132 these ten cells held four AttributeErrors, four silent
+    successes, one "casting_id not found" and one "wave not found" — the two
+    doors telling the lead different stories about the same corrupt file, which
+    is the D-097 asymmetry that says the hardening was bound to a site rather
+    than derived from the document. Byte equality of `error` AND `hint` is what
+    makes "both doors share one policy" a fact rather than a comment: two
+    hand-written guards can pass every other assertion here and still drift.
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, json.dumps(body))
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert single["ok"] is False and bulk["ok"] is False
+    assert single["error"] == bulk["error"]
+    assert single["hint"] == bulk["hint"]
+    assert "manifest.json" in single["error"]
+    assert "DECOMPOSE" in single["hint"]
+
+
+def test_demo_shape_parity_report(run_env) -> None:
+    """The 10-cell drive, RENDERED — the asymmetry gone, not merely coded.
+
+    Run it with ``-s`` to read the table:
+
+        uv run --with pytest pytest tests/test_spawn_progress.py -q -s -k demo
+
+    Mirrors ``test_liveness.py``'s demo_report: the parity test above asserts
+    equality, and this prints the table that lets a reader see WHAT the two
+    doors now agree on. The same ten cells before the fix:
+
+        castings="nope"         Spawn-Teammate RAISES AttributeError 'str'
+                                Cast-Wave      tolerated
+        castings=[1,2,3]        Spawn-Teammate RAISES AttributeError 'int'
+                                Cast-Wave      tolerated
+        castings=[null]         Spawn-Teammate RAISES AttributeError 'NoneType'
+                                Cast-Wave      tolerated
+        waves="nope"            Spawn-Teammate tolerated
+                                Cast-Wave      RAISES AttributeError 'str'
+        castings=[{"no_id":1}]  both tolerated
+        TOTAL 4/10 RAISE, 0/10 name manifest.json
+
+    The run directory is elided from the printed text so the render is
+    byte-stable under re-execution; the tests above assert against the real
+    absolute path, which is what the operator actually receives.
+    """
+    project_root, fdir = run_env
+    manifest_path = fdir / "castings" / "manifest.json"
+
+    def drive(call) -> tuple[str, str]:
+        try:
+            result = call()
+        except Exception as exc:  # noqa: BLE001 — the outcome under test
+            return "RAISE", f"{type(exc).__name__}: {exc}"
+        text = str(result.get("error", "")).replace(
+            str(manifest_path), "<run>/castings/manifest.json"
+        )
+        return f"ok={result['ok']}", text
+
+    print("\nD-132 — five nested manifest shapes x two spawn doors\n")
+    print(f"{'row':<24} {'spawn':<8} {'wave':<8} refusal text (identical at both doors)")
+    print(f"{'-' * 24} {'-' * 8} {'-' * 8} {'-' * 46}")
+
+    raises = named = identical = 0
+    for label, body in NESTED_SHAPE_ROWS:
+        _overwrite_manifest(fdir, json.dumps(body))
+        single_ok, single_text = drive(
+            lambda: fs.foundry_spawn_teammate(1, "cast", project_root)
+        )
+        bulk_ok, bulk_text = drive(lambda: fs.foundry_cast_wave(1, "cast", project_root))
+        raises += [single_ok, bulk_ok].count("RAISE")
+        named += sum("manifest.json" in t for t in (single_text, bulk_text))
+        identical += single_text == bulk_text
+        print(f"{label:<24} {single_ok:<8} {bulk_ok:<8} {single_text}")
+
+    cells = 2 * len(NESTED_SHAPE_ROWS)
+    print(
+        f"\nTOTAL {raises}/{cells} RAISE, {named}/{cells} name manifest.json, "
+        f"{identical}/{len(NESTED_SHAPE_ROWS)} rows byte-identical across doors"
+    )
+
+    assert (raises, named, identical) == (0, cells, len(NESTED_SHAPE_ROWS))
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_path"),
+    [
+        ({"castings": "nope"}, "manifest.json.castings"),
+        ({"castings": [1]}, "manifest.json.castings[0]"),
+        ({"castings": [{"no_id": 1}]}, "manifest.json.castings[0].id"),
+        ({"castings": [{"id": 1, "key_files": 7}]}, "manifest.json.castings[0].key_files"),
+        ({"waves": "nope"}, "manifest.json.waves"),
+        ({"waves": [{"wave": 1, "casting_ids": 42}]}, "manifest.json.waves[0].casting_ids"),
+    ],
+)
+def test_the_refusal_names_the_key_path_that_failed(run_env, body, expected_path) -> None:
+    """"The manifest is bad" is not actionable in a document with four rungs.
+
+    The operator has to be told WHICH rung, or the only available action is to
+    re-read the whole file. The last two rows are past the shapes D-132 itself
+    drove — `casting_ids: 42` raised `TypeError: 'int' object is not iterable`
+    out of Cast-Wave, and `key_files: "abc"` silently scoped a GRIND context to
+    the CHARACTERS of the string. Neither was in the defect report; both are
+    the same class, and both are closed by declaring the rung rather than by
+    guarding the two rungs that were reported.
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, json.dumps(body))
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert result["ok"] is False
+    assert expected_path in result["error"]
+
+
+def test_a_nested_failure_does_not_claim_the_document_is_not_an_object(run_env) -> None:
+    """The self-contradicting message, pinned so it cannot come back.
+
+    Reusing D-115's top-level wording one rung down produces "manifest.json is
+    not a JSON object — parsed as dict", which is false on its face and sends
+    the reader to inspect a container that is fine. Each rung states the shape
+    IT expected.
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, json.dumps({"castings": [1, 2, 3]}))
+
+    error = fs.foundry_spawn_teammate(1, "cast", project_root)["error"]
+
+    assert "parsed as dict" not in error
+    assert error.startswith("manifest.json.castings[0] is not a JSON object")
+
+
+def test_a_manifest_missing_a_key_entirely_is_not_a_shape_problem(run_env) -> None:
+    """Absent is not corrupt, and the validator must not conflate them.
+
+    `waves` is absent from a manifest the single door reads perfectly well, and
+    `stream_skips` is absent from nearly every real manifest. A validator that
+    demanded every declared key would refuse the ordinary document — which is
+    how a shape guard turns into an outage.
+    """
+    project_root, fdir = run_env
+    _overwrite_manifest(fdir, json.dumps({"castings": [{"id": 1}]}))
+
+    assert fs.foundry_spawn_teammate(1, "cast", project_root)["ok"] is True
+
+    # And the reverse: no castings key, but a wave the bulk door can read.
+    _overwrite_manifest(fdir, json.dumps({"waves": [{"wave": 1, "casting_ids": [1]}]}))
+
+    assert fs.foundry_cast_wave(1, "cast", project_root)["ok"] is True
+
+
+@pytest.mark.parametrize(
+    "body", [body for _label, body in NESTED_SHAPE_ROWS],
+    ids=[label for label, _body in NESTED_SHAPE_ROWS],
+)
+def test_the_grind_context_builder_degrades_on_every_nested_shape(grind_repo, body) -> None:
+    """The third reader, on the same evidence as the two doors.
+
+    Its contract is that it never fails a spawn, so it degrades rather than
+    refusing — but it must decide "unusable" the SAME way the doors do, or a
+    document the doors accept can still raise here, past their guards, from the
+    helper that promises not to fail. That is exactly what happened:
+    `castings: [1,2,3]` reached `c.get("id")` inside this builder.
+
+    The unscoped context an unparseable manifest already produces is the
+    yardstick, so the assertion is equality with that, not merely "no raise".
+    """
+    project_root, fdir = grind_repo
+
+    _overwrite_manifest(fdir, "{truncated")
+    degraded = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    _overwrite_manifest(fdir, json.dumps(body))
+    nested = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert nested == degraded
+    assert KEY_FILE in nested  # the diff is still reported, just unscoped
+
+
+# --------------------------------------------------------------------------- #
+# The derived-membership pin: the shape table cannot fall behind the readers
+# --------------------------------------------------------------------------- #
+#
+# Mirrors GUARDED_CYCLE_READERS in test_orchestrator_gates.py. That scan asks
+# "does every read of state.json's cycle go through a guarded reader?"; this one
+# cannot, because at D-132 both doors DID call the guard — they called it at the
+# top rung and then indexed the records below it. Presence of the guard was
+# never the property. COVERAGE of it is.
+#
+# So the question here is "is every manifest key path this module indexes
+# declared in the shape the validator walks?", and the key paths are parsed out
+# of the module on disk rather than listed beside it. Against the pre-fix source
+# the answer is no for all seven, because there was no shape at all.
+
+
+def _indexed(node: ast.AST, tainted: dict[str, str]) -> tuple[str, str] | None:
+    """``(base_path, key)`` when ``node`` indexes a manifest-derived name.
+
+    Both spellings, because a reader that reaches a member by ``m["k"]`` is
+    doing the same thing as one that reaches it by ``m.get("k")`` and must not
+    escape the scan by choosing the other syntax. Only ``Load`` subscripts:
+    ``entry["model"] = model`` builds a NEW document, it does not read this one.
+    """
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        base, key = node.func.value, node.args[0].value
+    elif (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.ctx, ast.Load)
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+    ):
+        base, key = node.value, node.slice.value
+    else:
+        return None
+    if isinstance(base, ast.Name) and base.id in tainted:
+        return tainted[base.id], key
+    return None
+
+
+def _expr_path(expr: ast.AST, tainted: dict[str, str]) -> str | None:
+    """The manifest key path ``expr`` evaluates to, or None.
+
+    Indexing first, bare reference second, so ``manifest.get("waves") or []``
+    resolves to ``waves`` rather than to the manifest root. The ``or []`` /
+    ``if isinstance(...) else []`` idioms this module uses are handled by
+    walking the subtree instead of matching a statement shape.
+    """
+    for node in ast.walk(expr):
+        hit = _indexed(node, tainted)
+        if hit is not None:
+            base, key = hit
+            return f"{base}.{key}" if base else key
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Name) and node.id in tainted:
+            return tainted[node.id]
+    return None
+
+
+#: Building a new container FROM manifest values yields a new document, not the
+#: manifest — `entry = {"casting_id": cid, ...}` must not inherit cid's path.
+_CONTAINER_NODES = (
+    ast.Dict, ast.List, ast.Set, ast.Tuple,
+    ast.DictComp, ast.ListComp, ast.SetComp, ast.GeneratorExp,
+)
+
+
+def _manifest_paths_in_function(fn: ast.AST) -> set[str]:
+    """Every manifest key path indexed inside one function.
+
+    Taint starts at the ``"manifest.json"`` literal and propagates by
+    assignment, aliasing, iteration and comprehension to a fixed point, so the
+    scan follows the module's real chain — ``manifest_path`` to ``manifest`` to
+    ``castings`` to ``c`` — rather than only recognising reads written directly
+    off the parsed document. D-132's own reads are three hops from the literal;
+    a scan that stopped at one hop would have reported the module clean.
+    """
+    tainted: dict[str, str] = {}
+    nodes = list(ast.walk(fn))
+    for _ in range(len(nodes) or 1):
+        before = dict(tainted)
+        for node in nodes:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+            ):
+                name = node.targets[0].id
+                if any(
+                    isinstance(n, ast.Constant) and n.value == "manifest.json"
+                    for n in ast.walk(node.value)
+                ):
+                    tainted[name] = ""
+                    continue
+                if isinstance(node.value, _CONTAINER_NODES):
+                    continue
+                path = _expr_path(node.value, tainted)
+                if path is not None:
+                    tainted.setdefault(name, path)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(
+                node.target, ast.Name
+            ):
+                path = _expr_path(node.iter, tainted)
+                if path is not None:
+                    tainted.setdefault(node.target.id, f"{path}[]")
+        if tainted == before:
+            break
+
+    found: set[str] = set()
+    for node in nodes:
+        hit = _indexed(node, tainted)
+        if hit is not None:
+            base, key = hit
+            found.add(f"{base}.{key}" if base else key)
+    return found
+
+
+def _manifest_paths_in(source: str) -> set[str]:
+    """Every manifest key path the source indexes, in any function."""
+    return {
+        path
+        for fn in ast.walk(ast.parse(source))
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for path in _manifest_paths_in_function(fn)
+    }
+
+
+def _shape_covers(path: str) -> bool:
+    """True when ``_MANIFEST_SHAPE`` declares ``path`` or explicitly frees it.
+
+    "Explicitly frees" is the ``None`` element shape: reaching one means the
+    table has STATED that the reader below it is on its own, which is a
+    decision someone made rather than a rung nobody thought about.
+    """
+    shape: object = fs._MANIFEST_SHAPE
+    for token in re.findall(r"\[\]|[^.\[\]]+", path):
+        if shape is None:
+            return True
+        if token == "[]":
+            if not isinstance(shape, list):
+                return False
+            shape = shape[0]
+            continue
+        if not isinstance(shape, dict) or token not in shape:
+            return False
+        shape = shape[token]
+    return True
+
+
+def test_every_manifest_key_the_module_indexes_is_declared() -> None:
+    """THE TEST THAT FAILS WHEN A READER BYPASSES THE VALIDATOR.
+
+    The subject is ``foundry_spawn.py``, located through its own import rather
+    than by a typed path. The boundary is the module and not the package —
+    unlike D-066, where stopping at ``tools/`` excluded the file most on the
+    request path for no reason that survived being written down, the boundary
+    here is the write surface of the packet that owns ``_MANIFEST_SHAPE``.
+    Four more modules index this same document with their own top-rung-only
+    guards (``foundry_orchestrator.py``, ``foundry_validate.py``,
+    ``intent_coverage.py``, ``scripts/validate_intent_coverage.py``); widening
+    to them is a real and recommended follow-up, logged to concerns.md, and it
+    is a change to files this casting is forbidden to touch while castings 2
+    and 3 are editing them.
+    """
+    paths = _manifest_paths_in(Path(fs.__file__).read_text(encoding="utf-8"))
+
+    # The scan must SEE something, or the assertion below passes vacuously —
+    # the failure mode of every derived-membership check.
+    assert {"castings[].id", "waves[].wave"} <= paths, (
+        f"the scan found {sorted(paths)}, which does not include the two reads "
+        f"D-132 was filed on. It has stopped following the module's taint "
+        f"chain and is no longer testing anything."
+    )
+
+    undeclared = sorted(p for p in paths if not _shape_covers(p))
+    assert not undeclared, (
+        f"{undeclared} are manifest key paths foundry_spawn.py indexes but "
+        f"_MANIFEST_SHAPE does not declare. Every such path is a rung the "
+        f"shared validator does not check and every reader therefore indexes "
+        f"unguarded — which is D-115 (container guarded, records not) and "
+        f"D-132 (records guarded, their members not) repeating one level "
+        f"further down. Declare the rung in _MANIFEST_SHAPE, or declare it "
+        f"None to state on the record that the reader guards itself. Do not "
+        f"delete the path from this assertion."
+    )
+
+
+def test_the_scan_catches_a_reader_that_indexes_an_undeclared_key() -> None:
+    """The detector's own adjacent path — proof it is not vacuously passing.
+
+    The path the defect was found on is a read written directly against the
+    parsed document. The ADJACENT path driven here is the one D-132 actually
+    lived on and a naive scan would miss: a read three hops downstream of the
+    literal, reached through a Path variable, a list member and a loop target.
+    Both shapes must be reported, or the assertion above is decorative.
+    """
+    source = '''
+def a_reader(fdir):
+    manifest_path = fdir / "castings" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    teams = manifest.get("teams") or []
+    for t in teams:
+        if t["roster"]:
+            return t.get("lead")
+    return manifest["castings"]
+'''
+    paths = _manifest_paths_in(source)
+
+    assert paths == {"teams", "teams[].roster", "teams[].lead", "castings"}
+    assert sorted(p for p in paths if not _shape_covers(p)) == [
+        "teams",
+        "teams[].lead",
+        "teams[].roster",
+    ]
+
+
+def test_the_shape_table_states_the_two_keys_the_readers_address_records_by() -> None:
+    """`id` and `wave` are REQUIRED, not merely typed, and that is the point.
+
+    Every reader in the module locates its record by one of them. An entry
+    without one is not addressable, so tolerating it produces the worst outcome
+    available: `castings: [{"no_id": 1}]` made Spawn-Teammate report
+    "casting_id 1 not found in manifest — available ids: [None]", which is a
+    named refusal about the WRONG THING. It sends the lead to look for a
+    missing casting in a manifest whose castings are all corrupt.
+    """
+    castings_entry = fs._MANIFEST_SHAPE["castings"][0]
+    waves_entry = fs._MANIFEST_SHAPE["waves"][0]
+
+    assert castings_entry["id"] is fs._REQUIRED
+    assert waves_entry["wave"] is fs._REQUIRED
