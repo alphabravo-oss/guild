@@ -23,9 +23,11 @@ One regression test per acceptance criterion:
 
 The safety property this file guards hardest is the one that is NOT stated as
 an AC but is the whole point of A-004: the split must never weaken the defect
-standard. ``test_undeclared_subject_is_never_refused`` and
-``test_denylist_outranks_observation_class`` are the two tests that fail if a
-future change lets a real defect slip into the non-blocking channel.
+standard. ``test_undeclared_subject_is_never_refused``,
+``test_denylist_outranks_observation_class`` and the D-093 promote-direction
+battery below are the tests that fail if a future change lets a real defect
+slip into the non-blocking channel — or, in the battery's case, if it lets one
+be blocked from the blocking channel, which costs exactly as much.
 """
 
 from __future__ import annotations
@@ -39,9 +41,11 @@ import pytest
 from foundry_mcp.schemas.vocab import (
     NEVER_DEMOTE_CLASSES,
     OBSERVATION_CLASSES,
+    observation_class as vocab_observation_class,
 )
 from foundry_mcp.tools.foundry import (
     allocate_record_id,
+    asserts_code_behaviour,
     foundry_add_defect,
     foundry_add_observation,
     foundry_add_verdict,
@@ -61,9 +65,85 @@ ENUMERATION = "The comment's list of streams omits flow_trace."
 
 # Matches DIRECTION_WORD as prose, but is a real behavioural defect. The gate
 # must never refuse this one on description alone.
+#
+# D-093: it used to, and this constant's own comment was the accusation — the
+# test below asserted the refusal it says must never happen. "returns" is what
+# now rescues it, and no denylist entry is involved.
 REAL_DEFECT_PROSE = "The handler below returns the wrong status code."
 
 SECURITY = "The comment claims the handler validates the CSRF token; it does not."
+
+# D-093's ten-case battery, verbatim from the drive PROVE re-ran at dc225f8.
+# Textbook security-property claims in the phrasings engineers actually write.
+# Eight of ten were demotable with the tripwire silent, and two of those were
+# additionally REFUSED by ``foundry_add_defect`` — classified DIRECTION_WORD on
+# the strength of the word "above" — so the stream could not file them at all.
+#
+# They are pinned as an INVARIANT ("this files as a defect"), never as a
+# mechanism: casting 1 widened vocab's denylist against the same battery in the
+# same cycle, and a test that asserted WHICH guard admitted them would pass for
+# the wrong reason the moment either half moved.
+SECURITY_BATTERY = [
+    pytest.param(
+        "The comment above validate_token() claims the token signature is "
+        "verified, but the function never checks the HMAC.",
+        id="hmac-signature",
+    ),
+    pytest.param(
+        "The comment below compare_digest says the comparison is "
+        "constant-time, but it uses == so it is not.",
+        id="constant-time-compare",
+    ),
+    pytest.param(
+        "The docstring states the endpoint is rate-limited; no rate limiting "
+        "exists in the handler.",
+        id="rate-limit",
+    ),
+    pytest.param(
+        "The comment claims the payload is validated before use, but no "
+        "validation runs — untrusted input reaches the shell.",
+        id="input-validation",
+    ),
+    pytest.param(
+        "The comment says the value is hashed before storage; it is stored in "
+        "plaintext.",
+        id="stored-plaintext",
+    ),
+    pytest.param(
+        "The comment says CORS is locked to the allowlist, but the header is "
+        "set to *.",
+        id="cors",
+    ),
+    pytest.param(
+        "The comment promises replay protection via a nonce, but the nonce is "
+        "never checked.",
+        id="nonce-replay",
+    ),
+    pytest.param(
+        "The comment claims the index is bounds-checked, but there is no "
+        "bounds check — a buffer overread.",
+        id="bounds-check",
+    ),
+    pytest.param(
+        "The comment above the handler claims authentication is enforced, but "
+        "no auth check runs.",
+        id="auth",
+    ),
+    pytest.param(
+        "The comment says the password is salted, but it is not.",
+        id="password-salt",
+    ),
+]
+
+# The battery's eleventh case, and the only one that proves the repair is
+# STRUCTURAL. It carries no security vocabulary at all, so no widening of
+# vocab's denylist can ever rescue it, and its prose classifies as
+# DIRECTION_WORD ("above" near "but the"). Before D-093's fix it was blocked;
+# only the promote-direction fail-safe lets it through.
+NO_SECURITY_VOCABULARY = (
+    "The comment above the cache helper says the dict is reused, but the "
+    "handler rebuilds it on every call and never stores the result."
+)
 
 
 @pytest.fixture(autouse=True)
@@ -207,19 +287,24 @@ def test_undeclared_subject_is_never_refused(run: Path, tmp_path: Path) -> None:
     even when its prose matches an observation regex.
 
     vocab.py: "target_kind ... its absence is a caller bug, not a licence to
-    demote." Refusing a defect IS a demotion. Without this rule the loose
-    DIRECTION_WORD pattern would swallow a real behavioural defect whose
-    description merely contains "below" near "wrong"."""
+    demote." Refusing a defect IS a demotion.
+
+    The fixture is textbook comment prose — DIRECTION_WORD on its face — so the
+    ONLY thing keeping it out of the observations channel is the missing
+    declaration. It used to be ``REAL_DEFECT_PROSE``, which stopped isolating
+    the declaration once D-093 made a substantive finding pass regardless: the
+    pair would have gone green for a second reason and stopped guarding this
+    one."""
     result = foundry_add_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
-        description=REAL_DEFECT_PROSE,
+        description=DIRECTION,
         project_root=str(tmp_path),
     )
     assert "error" not in result, result
     assert result["defect_id"] == "D-001"
-    assert _defects(run)[0]["description"] == REAL_DEFECT_PROSE
+    assert _defects(run)[0]["description"] == DIRECTION
 
 
 def test_same_prose_is_refused_once_declared_a_comment(
@@ -227,7 +312,38 @@ def test_same_prose_is_refused_once_declared_a_comment(
 ) -> None:
     """The mirror of the test above: the identical description IS refused once
     the caller declares the subject is a comment. Declaration is the whole
-    discriminator."""
+    discriminator — the two calls differ in exactly one argument."""
+    result = foundry_add_defect(
+        cycle=1,
+        source="trace",
+        defect_type="BROKEN",
+        description=DIRECTION,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert result["refused_class"] == "DIRECTION_WORD", result
+    assert _defects(run) == []
+
+
+# --- D-093 — the promote-direction fail-safe --------------------------------
+def test_a_substantive_finding_is_never_refused_however_its_prose_reads(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-093 root cause 2, in one line of prose.
+
+    ``REAL_DEFECT_PROSE`` is a real behavioural defect whose wording trips the
+    loose DIRECTION_WORD regex ("below" near "wrong"). The constant has carried
+    the comment "the gate must never refuse this one on description alone"
+    since the split shipped — while the test beside it asserted the gate DID
+    refuse it, on nothing but that description, the moment a caller declared
+    the subject a comment.
+
+    That inverted the effort's binding constraint: before the split
+    ``foundry_add_defect`` validated nothing and this filing succeeded, so the
+    verification loop's defect standard was measurably WEAKER at HEAD than
+    before the change meant to strengthen it. A declaration must be able to
+    route a finding to the right ledger; it must never be able to delete one.
+    """
     result = foundry_add_defect(
         cycle=1,
         source="trace",
@@ -236,7 +352,134 @@ def test_same_prose_is_refused_once_declared_a_comment(
         target_kind="comment",
         project_root=str(tmp_path),
     )
-    assert result["refused_class"] == "DIRECTION_WORD", result
+    assert "error" not in result, result
+    assert _defects(run)[0]["description"] == REAL_DEFECT_PROSE
+
+
+@pytest.mark.parametrize("description", SECURITY_BATTERY)
+def test_security_property_claims_always_file_as_defects(
+    run: Path, tmp_path: Path, description: str
+) -> None:
+    """OT-002, driven over the phrasings a stream actually writes.
+
+    "A comment claiming a security property the code does not implement is
+    filed as a DEFECT and cannot be demoted to observation." The suite went
+    green on this for eleven cycles while eight of these ten failed, because
+    every security assertion in this file reused ONE hand-tuned string
+    containing the literal "CSRF" — a token the denylist regex already knew.
+    Pinning a guard only where it already works is how a guard stays broken.
+
+    Each case declares ``target_kind="comment"``, which is the honest
+    declaration: the finding IS about a comment, one that lies. That
+    declaration is exactly what used to make the filing refusable.
+    """
+    result = foundry_add_defect(
+        cycle=1,
+        source="prove",
+        defect_type="WRONG",
+        description=description,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert "error" not in result, result
+    assert _defects(run)[0]["description"] == description
+
+
+@pytest.mark.parametrize("description", SECURITY_BATTERY)
+def test_the_fail_safe_alone_rescues_every_battery_case(description: str) -> None:
+    """…and it rescues them WITHOUT the denylist's help.
+
+    The test above would pass if either guard admitted the finding. This one
+    asserts the property that makes the repair structural: the promote-side
+    fail-safe recognises every case on its own, so a denylist that has never
+    heard of the next security noun cannot cost a defect. It is deliberately a
+    unit assertion on this module's own predicate — asserting anything about
+    ``never_demote_class`` here would pin a vocabulary another casting owns.
+    """
+    assert asserts_code_behaviour({"description": description}) is True
+
+
+def test_a_substantive_finding_with_no_security_vocabulary_still_files(
+    run: Path, tmp_path: Path
+) -> None:
+    """The case no widening of the denylist could ever have reached.
+
+    Not a security finding at all — a plain performance/correctness one — with
+    prose that classifies as DIRECTION_WORD. D-093's first root cause was that
+    vocab's denylist did not know words like "signature" and "plaintext", and
+    casting 1 widened it. This finding contains no such word to widen toward,
+    and it was blocked by the same mechanism. Only the second root cause's fix
+    lets it through, which is why this test is the one that fails if the
+    promote-direction guard is ever removed as redundant.
+    """
+    finding = {"description": NO_SECURITY_VOCABULARY, "target_kind": "comment"}
+    assert vocab_observation_class(finding) == "DIRECTION_WORD", (
+        "the fixture no longer trips an observation regex, so it no longer "
+        "exercises the promote-direction guard at all"
+    )
+
+    result = foundry_add_defect(
+        cycle=1,
+        source="assay",
+        defect_type="WRONG",
+        description=NO_SECURITY_VOCABULARY,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert "error" not in result, result
+    assert _defects(run)[0]["description"] == NO_SECURITY_VOCABULARY
+
+
+@pytest.mark.parametrize(
+    "description", [DRIFT, COUNT, DIRECTION, ENUMERATION]
+)
+def test_the_fail_safe_is_silent_on_real_comment_prose(description: str) -> None:
+    """The boundary that keeps AC-001 from being gutted by its own fix.
+
+    The promote-side guard is biased to over-match, and over-matching is the
+    safe direction — but a guard that matched EVERYTHING would refuse nothing
+    and quietly delete the observation channel. These four are the canonical
+    comment-prose findings AC-001 names; the guard must stay silent on all of
+    them, or the refusal above it can never fire again."""
+    assert asserts_code_behaviour({"description": description}) is False
+
+
+@pytest.mark.parametrize(
+    "finding", [{}, {"description": None}, {"description": 17}, {"description": []}]
+)
+def test_the_fail_safe_is_total_over_a_malformed_finding(finding: dict) -> None:
+    """Never raises, matching vocab's predicate contract: a missing or
+    wrong-typed description means "no match", not an exception across the MCP
+    boundary."""
+    assert asserts_code_behaviour(finding) is False
+
+
+def test_the_fail_safe_did_not_open_the_demotion_channel(
+    run: Path, tmp_path: Path
+) -> None:
+    """The no-regression half. Making the PROMOTE direction fail safe must not
+    relax the DEMOTE direction: a denylisted finding is still rejected as an
+    observation and still fires the audit tripwire, and ordinary comment prose
+    still records cleanly."""
+    denied = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=SECURITY,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert denied["denylist_class"] == "SECURITY_PROPERTY_CLAIM", denied
+    assert len(_observations(run)["tripwire"]) == 1
+
+    recorded = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=DRIFT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    assert recorded.get("observation_id"), recorded
+    assert len(_observations(run)["observations"]) == 1
 
 
 @pytest.mark.parametrize(

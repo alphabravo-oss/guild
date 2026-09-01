@@ -16,12 +16,13 @@ direction:
 
   * ``foundry_add_defect`` refuses a finding only when the caller has DECLARED
     the subject is a comment AND vocab names a comment-prose observation class
-    AND no denylist entry matches. Refusing a defect is itself a demotion, so
-    an undeclared subject is never refused — see the ``target_kind`` note in
-    ``schemas/vocab.py``: "its absence is a caller bug, not a licence to
-    demote". Without this, prose like "the handler below returns the wrong
-    status" would match the loose DIRECTION_WORD regex and a real defect would
-    be silently blocked.
+    AND no denylist entry matches AND the description asserts nothing about
+    what the CODE does (``asserts_code_behaviour``). Refusing a defect is
+    itself a demotion, so an undeclared subject is never refused — see the
+    ``target_kind`` note in ``schemas/vocab.py``: "its absence is a caller bug,
+    not a licence to demote". Without this, prose like "the handler below
+    returns the wrong status" would match the loose DIRECTION_WORD regex and a
+    real defect would be silently blocked.
   * ``foundry_add_observation`` rejects a finding when any denylist entry
     matches OR when the subject was not declared to be a comment, and fires the
     audit tripwire on the attempt (AC-002). It carries NO default for
@@ -37,6 +38,25 @@ before calling the writer silently bypasses the audit signal — which is exactl
 what ``foundry_sync_defects`` did, leaving the tripwire empty across every
 denylist scenario. Any path about to route a finding out of the defect ledger
 calls it first. See its docstring.
+
+THE PROMOTE-DIRECTION FAIL-SAFE (D-093)
+---------------------------------------
+vocab's precedence rule — a denylist match outranks an observation class —
+protects the DEMOTE direction only. Nothing protected the PROMOTE direction,
+where refusing a defect filing on an ``observation_class`` match turns a false
+positive there into a blocked real defect. Eight of ten textbook
+security-property claims were refused as DIRECTION_WORD or filed nowhere at
+all, because their prose contained "above" near "but the" and the denylist did
+not know the words "signature", "constant-time" or "plaintext".
+
+``asserts_code_behaviour`` is the counterpart guard vocab's docstring says
+callers owe that direction, and it is deliberately NOT a second security
+vocabulary: widening the denylist fixes the phrasings someone has already
+written down, not the next one. What makes a finding a defect is not which
+nouns it uses but that it asserts something about what the CODE does, so that
+is what this reads — and it is biased to over-match for the same reason the
+denylist is, since its false positive costs one comment-prose finding that
+stays a defect while its false negative would cost a real one.
 
 Vocabulary — every class name, stream id and defect type — comes from
 ``schemas/vocab.py`` and is never re-declared here. Alias folding
@@ -274,16 +294,128 @@ def _finding_mapping(
     }
 
 
+# The promote-direction fail-safe (D-093). See the module docstring.
+#
+# Grouped by the kind of assertion each term makes about the code, not by any
+# taxonomy of defects, because the point is coverage of how engineers actually
+# write "the code does / does not do X" — not of a category list.
+#
+# Two rules keep the list from degenerating into matching everything, and both
+# were found by driving the shipped drift phrasings through it:
+#
+#   1. VERBS ONLY, never the noun of the same stem. "the guard moved" and "no
+#      such handler" name a code element and are still pure comment prose, so
+#      `guard`, `handler` and their kin are absent — the ABSENCE branch below
+#      is where those nouns legitimately appear.
+#   2. INFLECTIONS ARE ENUMERATED, never `\w+`. The whole alternation sits
+#      inside `\b(?:...)\b`, so `write` does not fire on "that writer now sits
+#      at line 244" — but only because the pattern cannot itself consume the
+#      "r". `dispatch\w+`, `encrypt\w+` and `serializ\w+` each matched their
+#      own agent noun before they were spelled out.
+_CODE_ACTION_VERB = r"""(?:
+    # control flow and dispatch
+      returns? | returned | returning
+    | throws? | thrown | raises? | raised
+    | calls? | called | invokes? | invoked | dispatch (?:es|ed)
+    | runs? | ran | running | executes? | executed | fires? | fired
+    | handles? | handled
+
+    # what it does with data
+    | stores? | stored | persists? | persisted
+    | writes? | wrote | written | reads?
+    | parses? | parsed | serialis (?:e|es|ed) | serializ (?:e|es|ed)
+    | set \s+ (?:to|at) | sets | assigns? | assigned
+    | mutates? | mutated | increments? | rebuilds? | rebuilt
+    | uses? | used | applies | applied
+
+    # what it does about correctness and trust
+    | checks? | checked | verif (?:y|ies|ied) | validat (?:e|es|ed)
+    | enforc (?:e|es|ed)
+    | rejects? | rejected | accepts? | accepted | allows? | allowed
+    | sanitis (?:e|es|ed) | sanitiz (?:e|es|ed) | escap (?:e|es|ed)
+    | hash (?:es|ed) | encrypt (?:s|ed) | decrypt (?:s|ed)
+    | signs? | signed | salt (?:s|ed)
+    | limits? | limited | limiting | throttl (?:e|es|ed|ing)
+    | implement (?:s|ed)?
+)"""
+
+# The other half: a claimed behaviour is stated to be ABSENT. This is what
+# carries the phrasings that name no verb of their own — "but it is not",
+# "there is no bounds check" — and it is where most real security claims live.
+#
+# The lookahead on the negated-copula branch is the one deliberate NARROWING:
+# "X does not match / agree with / reflect Y" is a complaint that a comment
+# disagrees with the code, which is the definition of a comment-prose
+# observation (vocab's own `_MISMATCH` cue lists exactly those words), not an
+# assertion that the code misbehaves.
+_ABSENT_BEHAVIOUR = r"""(?:
+      \b never \b
+    | \b fails? \s+ to \b
+    | \b (?: is|are|was|were|does|do|did|has|have|can|will|would|could )
+        \s* n (?:o|') ? t \b
+        (?! \s* (?: match\w* | agree\w* | reflect\w* | correspond\w*
+                  | line \s+ up ) )
+    | \b no \s+ (?: \w+ \s+ ){0,2}
+        (?: check\w* | validation | guard\w* | limit\w* | handling | test\w*
+          | sanitis\w* | sanitiz\w* | escaping | encryption | hashing
+          | auth\w* | enforcement | implementation )
+    | \b there \s+ is \s+ no \b
+)"""
+
+# The verb group is anchored on BOTH sides; the absence group carries its own
+# anchors (and a lookahead that a trailing `\b` would sit awkwardly against).
+_CODE_BEHAVIOUR_RE = re.compile(
+    rf"\b{_CODE_ACTION_VERB}\b|{_ABSENT_BEHAVIOUR}",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def asserts_code_behaviour(finding: dict) -> bool:
+    """True when the finding asserts something about what the CODE does.
+
+    The promote-direction counterpart to vocab's never-demote denylist, and
+    the guard its module docstring says callers owe: "a caller that refuses a
+    defect filing on an observation-class match alone turns a false positive
+    here into a blocked real defect. Callers owe that direction a fail-safe of
+    their own."
+
+    A True result means the finding is NOT confined to comment prose, so no
+    comment-prose refusal may fire against it however its wording reads. It is
+    biased to OVER-match on purpose: a false positive files one stale-comment
+    finding as a defect (ordinary friction, and the thing US-001 merely wants
+    less of), while a false negative blocks a real defect (the failure mode
+    vocab.py calls unacceptable).
+
+    Exported because ``foundry_sync_defects``'s auto-demotion branch faces the
+    mirror of the same question and must not re-derive an answer to it.
+
+    Pure and total over a malformed mapping — a missing or non-``str``
+    description is simply no match, matching vocab's never-raise contract.
+    """
+    description = finding.get("description")
+    if not isinstance(description, str):
+        return False
+    return bool(_CODE_BEHAVIOUR_RE.search(description))
+
+
 def _observation_refusal(finding: dict) -> str | None:
     """Name the observation class a defect filing must be refused for, else None.
 
     Applies vocab's precedence rule — ``never_demote_class`` OUTRANKS
     ``observation_class``, so a finding matching both stays a DEFECT — on top
-    of the explicit-declaration rule above.
+    of the explicit-declaration rule above, and on top of the promote-direction
+    fail-safe: a finding that asserts what the code does is never refused, no
+    matter which observation regex its prose happened to trip.
+
+    The three guards are independent, and a defect can only be blocked if ALL
+    of them are wrong at once. That is the whole repair D-093 asked for; before
+    it, one loose regex was sufficient on its own.
     """
     if not _subject_is_declared_comment(finding):
         return None
     if never_demote_class(finding) is not None:
+        return None
+    if asserts_code_behaviour(finding):
         return None
     return observation_class(finding)
 
