@@ -1,0 +1,50 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_commit_guard.py -v --no-header -p no:cacheprovider
+# evidence-for: US-005, AC-015, AC-016, AC-017, FR-012
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# The real-git harness. Every test builds a throwaway repository under
+# tmp_path and runs the SHIPPED scripts against it, so each name below is
+# an assertion about git as it actually behaves, not about a mock.
+#
+# AC-015 / OT-005 are the first three: a pathspec commit records only its
+# own paths, it leaves a peer's staged file staged, and the bare-commit
+# contrast shows why the protocol needs the pathspec at all.
+# AC-016 is the guard block. The two tests naming the index as the content
+# source pin it from BOTH directions (staged-clean/disk-dirty must pass,
+# staged-dirty/disk-clean must block); the path-list tests alone cannot.
+# AC-017 / GI-002 are the last four: a static scan of the shipped sources
+# proving no executable line stashes or queries the working tree, so a
+# future edit reintroducing the anti-pattern fails this suite.
+
+============================= test session starts ==============================
+collecting ... collected 25 items
+
+tests/test_commit_guard.py::test_pathspec_commit_records_only_its_own_paths PASSED [  4%]
+tests/test_commit_guard.py::test_pathspec_commit_leaves_peer_files_staged PASSED [  8%]
+tests/test_commit_guard.py::test_bare_commit_captures_peer_files PASSED  [ 12%]
+tests/test_commit_guard.py::test_guard_allows_clean_staged_content PASSED [ 16%]
+tests/test_commit_guard.py::test_guard_ignores_peer_untracked_working_tree_file PASSED [ 20%]
+tests/test_commit_guard.py::test_guard_ignores_peer_unstaged_edit_to_tracked_file PASSED [ 24%]
+tests/test_commit_guard.py::test_guard_ignores_peer_staged_file_outside_the_pathspec PASSED [ 28%]
+tests/test_commit_guard.py::test_guard_reads_content_from_the_index_not_the_working_tree PASSED [ 32%]
+tests/test_commit_guard.py::test_guard_blocks_when_only_the_staged_blob_is_dirty PASSED [ 36%]
+tests/test_commit_guard.py::test_guard_blocks_staged_conflict_markers PASSED [ 40%]
+tests/test_commit_guard.py::test_guard_blocks_oversize_staged_blob PASSED [ 44%]
+tests/test_commit_guard.py::test_guard_allows_first_commit_on_unborn_branch PASSED [ 48%]
+tests/test_commit_guard.py::test_installer_is_idempotent PASSED          [ 52%]
+tests/test_commit_guard.py::test_installer_restores_a_modified_copy PASSED [ 56%]
+tests/test_commit_guard.py::test_installer_restores_lost_executable_bit PASSED [ 60%]
+tests/test_commit_guard.py::test_installer_honors_core_hookspath PASSED  [ 64%]
+tests/test_commit_guard.py::test_installer_backs_up_a_foreign_hook PASSED [ 68%]
+tests/test_commit_guard.py::test_installer_no_clobber_refuses_foreign_hook PASSED [ 72%]
+tests/test_commit_guard.py::test_installer_fails_on_non_git_target PASSED [ 76%]
+tests/test_commit_guard.py::test_installer_fails_on_missing_target PASSED [ 80%]
+tests/test_commit_guard.py::test_shipped_assets_exist_and_are_executable PASSED [ 84%]
+tests/test_commit_guard.py::test_guard_never_queries_the_working_tree PASSED [ 88%]
+tests/test_commit_guard.py::test_guard_actually_uses_the_cached_query PASSED [ 92%]
+tests/test_commit_guard.py::test_installer_never_stashes_or_reads_the_working_tree PASSED [ 96%]
+tests/test_commit_guard.py::test_installer_copies_rather_than_symlinks PASSED [100%]
+
+============================== 25 passed in 3.60s ==============================

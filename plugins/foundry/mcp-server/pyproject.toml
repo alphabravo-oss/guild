@@ -1,6 +1,6 @@
 [project]
 name = "foundry-mcp"
-version = "1.7.1"
+version = "1.8.0"
 description = "MCP server for the Foundry build-verify-fix loop. Phase gates, defect tracking, verification orchestration."
 # 3.12, not 3.11. display.py and foundry_orchestrator.py use backslash escapes
 # inside f-string expression parts (f"{'\\u2550' * n}"), which PEP 701 only
