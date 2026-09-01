@@ -610,7 +610,7 @@ def _run_git(args: list[str], cwd: Path) -> None:
     )
 
 
-def _build_divergent_spec_repo(tmp_path: Path) -> dict:
+def _build_divergent_spec_repo(tmp_path: Path, *, replay_body_only: bool = False) -> dict:
     """A repo whose stale ``specs/spec.md`` is v2.0 and whose RUN spec is v2.1.
 
     Returns the arguments ``foundry_accept_casting`` needs, plus the two spec
@@ -653,7 +653,13 @@ def _build_divergent_spec_repo(tmp_path: Path) -> dict:
         "# evidence-for: AC-023\n"
         "\n" + _EVIDENCE_BODY
     )
-    (project_root / "replay.txt").write_text(evidence_log, encoding="utf-8")
+    # replay_body_only mirrors what a REAL evidence command does: it emits the
+    # body alone, never the `# evidence-*:` header lines that only exist in the
+    # committed file. The default (full-file replay) mirrors conftest's
+    # use_cat_replay harness. Both must verify.
+    (project_root / "replay.txt").write_text(
+        _EVIDENCE_BODY if replay_body_only else evidence_log, encoding="utf-8"
+    )
     evidence_dir = project_root / "evidence"
     evidence_dir.mkdir()
     (evidence_dir / "casting-1-gate.log").write_text(evidence_log, encoding="utf-8")
@@ -787,6 +793,64 @@ def test_verify_evidence_reports_which_spec_drove_the_routing(tmp_path):
     assert engaged["verdict"] == "accepted", engaged
     assert engaged["spec_path"] == str(env["run_spec"])
     assert engaged["spec_format_version"] == "v2.1"
+
+
+def test_header_block_is_not_compared_against_command_output(tmp_path):
+    """A real evidence file verifies: its command emits the BODY, while the
+    committed file carries `# evidence-*:` header lines on top.
+
+    `_compare_byte_match` documents its `committed` argument as "the
+    evidence-file body" but was handed the whole file, so every correctly
+    formatted evidence log mismatched on its own header. The bug was invisible
+    because `casting_commit` was unreachable over MCP — this comparison had
+    never run outside the harness, whose replay file deliberately contains the
+    full evidence text.
+
+    Both conventions are pinned: this test covers body-only replay, and
+    `test_accept_casting_resolves_the_runs_actual_spec_path` above covers the
+    full-file replay the conftest harness uses."""
+    from foundry_mcp.tools.evidence import verify_evidence
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path, replay_body_only=True)
+    clear_active_run()
+    run_dir = tmp_path / "run-body-only"
+    run_dir.mkdir()
+
+    result = verify_evidence(
+        casting_id=1,
+        project_root=env["project_root"],
+        casting_commit=env["casting_commit"],
+        spec_path=env["run_spec"],
+        run_dir=run_dir,
+    )
+    assert result["verdict"] == "accepted", result
+    assert result["failure_token"] is None
+
+
+def test_strip_leading_header_block_keeps_the_body_verbatim():
+    """Only a LEADING run of comment/blank lines is dropped — interior blank
+    lines and any later `#` line are body content and must survive, or the
+    byte comparison would stop being exact."""
+    from foundry_mcp.tools.evidence import _strip_leading_header_block
+
+    text = (
+        "# evidence-cmd: pytest\n"
+        "# evidence-for: AC-1\n"
+        "\n"
+        "collected 2 items\n"
+        "\n"
+        "# a hash line that is real output\n"
+        "2 passed\n"
+    )
+    assert _strip_leading_header_block(text) == (
+        "collected 2 items\n"
+        "\n"
+        "# a hash line that is real output\n"
+        "2 passed\n"
+    )
+    # No header at all → unchanged.
+    assert _strip_leading_header_block("plain\noutput\n") == "plain\noutput\n"
 
 
 def test_missing_spec_path_is_visible_as_a_v20_downgrade(tmp_path):

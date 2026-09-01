@@ -384,6 +384,16 @@ _STUB_TIMESTAMP_LINE_RE = re.compile(
 )
 
 
+def _strip_leading_header_block(text: str) -> str:
+    """Drop the leading ``# evidence-*:`` comment block, keeping the body.
+
+    Unlike ``_strip_header_and_blank_lines`` this preserves the body verbatim
+    — interior blank lines and all — because the byte comparator's whole job
+    is an exact match on what the command emitted.
+    """
+    return _EVIDENCE_HEADER_BLOCK_RE.sub("", text, count=1)
+
+
 def _strip_header_and_blank_lines(text: str) -> list[str]:
     """Return body lines (header `# evidence-*:` comments and blanks dropped).
 
@@ -705,10 +715,24 @@ def _verify_one_evidence_file(
         )
 
     # Step 5: Byte-match comparison (volatile redaction applied to both).
+    #
+    # `_compare_byte_match` documents its `committed` parameter as "the
+    # evidence-file BODY", but was handed the whole file — header block
+    # included. Since a re-executed command emits only the body, every
+    # correctly-formatted evidence file mismatched on its own `# evidence-*:`
+    # header lines. It went unnoticed because `casting_commit` was unreachable
+    # over MCP, so this comparison had never run outside the test harness.
+    #
+    # The strip is applied SYMMETRICALLY, which is what keeps both conventions
+    # working: a real evidence file (committed header+body vs captured body)
+    # matches on the body, and the `use_cat_replay` harness (whose replay file
+    # deliberately holds the full rewritten evidence, so BOTH sides carry the
+    # header) still compares body against body. The regex only matches a
+    # LEADING run of `#` comment and blank lines, so it cannot eat content.
     try:
         matched, diff, redacted_log, redacted_captured = _compare_byte_match(
-            committed=log_text,
-            captured=captured,
+            committed=_strip_leading_header_block(log_text),
+            captured=_strip_leading_header_block(captured),
             volatile_patterns=header.get("volatile", []),
         )
     except ValueError as exc:
