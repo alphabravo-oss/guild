@@ -6,29 +6,31 @@
 # evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+
 
 ============================= test session starts ==============================
-platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpj71c2h/bin/python
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpzMUn6d/bin/python
 cachedir: .pytest_cache
 rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collecting ... collected 133 items / 116 deselected / 17 selected
+collecting ... collected 153 items / 134 deselected / 19 selected
 
 tests/test_protocol_prose.py::test_start_md_documents_the_liveness_tool PASSED [  5%]
-tests/test_protocol_prose.py::test_start_md_states_needs_attention_membership_as_the_tool_computes_it PASSED [ 11%]
-tests/test_protocol_prose.py::test_start_md_liveness_table_explains_the_terminal_status PASSED [ 17%]
-tests/test_protocol_prose.py::test_the_stream_ledger_ids_are_the_liveness_roster PASSED [ 23%]
-tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[assayer.md-prove] PASSED [ 29%]
-tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[flow-tracer.md-flow_trace] PASSED [ 35%]
-tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[research-auditor.md-research_audit] PASSED [ 41%]
-tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[tracer.md-trace] PASSED [ 47%]
-tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[assayer.md-prove] PASSED [ 52%]
-tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[flow-tracer.md-flow_trace] PASSED [ 58%]
-tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[research-auditor.md-research_audit] PASSED [ 64%]
-tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[tracer.md-trace] PASSED [ 70%]
-tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[assayer.md-prove] PASSED [ 76%]
-tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[flow-tracer.md-flow_trace] PASSED [ 82%]
-tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[research-auditor.md-research_audit] PASSED [ 88%]
-tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[tracer.md-trace] PASSED [ 94%]
-tests/test_protocol_prose.py::test_start_md_f2_roster_names_the_stream_progress_ledgers PASSED [100%]
+tests/test_protocol_prose.py::test_start_md_states_needs_attention_membership_as_the_tool_computes_it PASSED [ 10%]
+tests/test_protocol_prose.py::test_start_md_liveness_table_explains_the_terminal_status PASSED [ 15%]
+tests/test_protocol_prose.py::test_the_stream_ledger_ids_are_the_liveness_roster PASSED [ 21%]
+tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[assayer.md-prove] PASSED [ 26%]
+tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[flow-tracer.md-flow_trace] PASSED [ 31%]
+tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[research-auditor.md-research_audit] PASSED [ 36%]
+tests/test_protocol_prose.py::test_each_stream_agent_carries_the_progress_protocol[tracer.md-trace] PASSED [ 42%]
+tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[assayer.md-prove] PASSED [ 47%]
+tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[flow-tracer.md-flow_trace] PASSED [ 52%]
+tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[research-auditor.md-research_audit] PASSED [ 57%]
+tests/test_protocol_prose.py::test_stream_ledger_path_matches_what_liveness_reads[tracer.md-trace] PASSED [ 63%]
+tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[assayer.md-prove] PASSED [ 68%]
+tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[flow-tracer.md-flow_trace] PASSED [ 73%]
+tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[research-auditor.md-research_audit] PASSED [ 78%]
+tests/test_protocol_prose.py::test_stream_ledger_line_shape_matches_what_liveness_parses[tracer.md-trace] PASSED [ 84%]
+tests/test_protocol_prose.py::test_start_md_f2_roster_names_the_stream_progress_ledgers PASSED [ 89%]
+tests/test_protocol_prose.py::test_start_md_no_ledger_row_describes_both_producers PASSED [ 94%]
+tests/test_protocol_prose.py::test_start_md_no_ledger_row_names_both_producing_phases PASSED [100%]
 
-====================== 17 passed, 116 deselected in 0.03s ======================
+====================== 19 passed, 134 deselected in 0.42s ======================

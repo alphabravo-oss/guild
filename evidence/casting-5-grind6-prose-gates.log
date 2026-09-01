@@ -1,0 +1,36 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_protocol_prose.py -v -k "accept_casting_parameter or casting_commit or no_ledger or producing_phases or supersede or target_kind or statement_examples or single_caller or named_in_shipped_prose or required_argument or coverage_entry_shape or validator_enforcement"
+# evidence-for: US-001, US-004, AC-001, AC-003, AC-014, FR-004, FR-009, FR-010
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: cachedir: .*
+# evidence-volatile: rootdir: .*
+# evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+
+
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmp8mKP6Z/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collecting ... collected 153 items / 134 deselected / 19 selected
+
+tests/test_protocol_prose.py::test_start_md_acceptance_step_names_every_accept_casting_parameter PASSED [  5%]
+tests/test_protocol_prose.py::test_start_md_says_what_supplying_casting_commit_engages PASSED [ 10%]
+tests/test_protocol_prose.py::test_start_md_no_ledger_row_describes_both_producers PASSED [ 15%]
+tests/test_protocol_prose.py::test_start_md_no_ledger_row_names_both_producing_phases PASSED [ 21%]
+tests/test_protocol_prose.py::test_start_md_done_row_states_the_supersede_exception PASSED [ 26%]
+tests/test_protocol_prose.py::test_target_kind_is_a_real_parameter_on_both_filing_surfaces PASSED [ 31%]
+tests/test_protocol_prose.py::test_each_stream_agent_names_the_target_kind_parameter[assayer.md] PASSED [ 36%]
+tests/test_protocol_prose.py::test_each_stream_agent_names_the_target_kind_parameter[tracer.md] PASSED [ 42%]
+tests/test_protocol_prose.py::test_each_stream_agent_names_the_target_kind_parameter[flow-tracer.md] PASSED [ 47%]
+tests/test_protocol_prose.py::test_each_stream_agent_names_the_target_kind_parameter[research-auditor.md] PASSED [ 52%]
+tests/test_protocol_prose.py::test_start_md_f2_roster_names_the_target_kind_parameter PASSED [ 57%]
+tests/test_protocol_prose.py::test_teammate_ships_both_statement_examples PASSED [ 63%]
+tests/test_protocol_prose.py::test_teammate_statement_examples_survive_the_shipped_gate PASSED [ 68%]
+tests/test_protocol_prose.py::test_teammate_tells_a_single_caller_fixer_what_to_declare PASSED [ 73%]
+tests/test_protocol_prose.py::test_every_tool_named_in_shipped_prose_is_registered PASSED [ 78%]
+tests/test_protocol_prose.py::test_stream_completion_instructions_name_every_required_argument[trace] PASSED [ 84%]
+tests/test_protocol_prose.py::test_stream_completion_instructions_name_every_required_argument[sight] PASSED [ 89%]
+tests/test_protocol_prose.py::test_the_coverage_entry_shape_is_unenforced PASSED [ 94%]
+tests/test_protocol_prose.py::test_coverage_diff_does_not_claim_validator_enforcement PASSED [100%]
+
+====================== 19 passed, 134 deselected in 0.21s ======================

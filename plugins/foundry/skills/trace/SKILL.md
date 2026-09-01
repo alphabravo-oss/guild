@@ -239,9 +239,15 @@ When run standalone, write to `trace-reports/trace-{timestamp}.md`. When run fro
 
 **Foundry F2 TRACE stream (READ-ONLY):** DO NOT fix findings. DO NOT spawn
 agents. Only collect and document. Record findings via the `Foundry-Defect`
-MCP tool, then mark the stream complete via `Foundry-Mark-Stream-Complete`
-with `items_checked`, `items_total`, and `findings_count`. F3 GRIND converts
-findings into fix items.
+MCP tool, then mark the stream complete via `Foundry-Stream` with
+`stream: "trace"`, `cycle`, `items_checked`, `items_total`, and
+`findings_count`. `stream`, `cycle` and `items_checked` are all REQUIRED — a
+call omitting any of them is rejected at the MCP boundary, and a stream that
+cannot mark itself complete contributes nothing to the cycle's coverage
+roll-up, where its absence reads as no coverage rather than as a broken call.
+Take `cycle` from `Foundry-Next`: the roll-up is keyed by the server's own
+counter, and the value you pass is retained on the record for audit only. F3
+GRIND converts findings into fix items.
 
 ## MCP Validation (optional)
 

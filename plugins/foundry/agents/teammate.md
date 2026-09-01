@@ -580,7 +580,14 @@ grep -rn "<symbol>(" src/
 grep -rn "import.*<symbol>" src/
 ```
 
-"Nothing else calls it" is a legitimate statement when the grep supports it. Say that, and say which grep showed it.
+**When callers are exhausted, the other two axes are not.** `Foundry-Fix` REFUSES a statement that denies adjacency — "nothing else calls it", "no other callers", "none", "n/a" — and it refuses it wherever the denial sits in the sentence, so appending the grep that proves the symbol has one caller does not rescue it. The refusal is not pedantry: a fix with no adjacent path has no adjacent-path test to reference either, so a denial makes the two required fields contradict each other and the call could never have succeeded. Callers are one axis of three. A single-caller symbol still has transitions that reach it and work that runs beside it — name those, and let the grep be evidence *inside* the statement rather than the statement itself.
+
+```text
+REFUSED: Nothing else calls it — grep -rn "_helper(" src/ returns only the one call site.
+ACCEPTED: Two transitions reach _helper besides the defect's — the retry branch in run_retry and the shutdown path in close_pool — and it writes the shared cache the reaper thread scans concurrently. grep -rn "_helper(" src/ shows one direct caller, so callers are the exhausted axis rather than the whole neighbourhood.
+```
+
+Both lines above are driven through the shipped gate by `plugins/foundry/mcp-server/tests/test_protocol_prose.py`, so the REFUSED line stays refused and the ACCEPTED line stays accepted. Copy the second one's shape and your call lands.
 
 **The adjacent-path test reference.** Point at a test that drives a **NAMED** adjacent path — a different caller, a different transition, or a concurrent interaction than the one the defect was found on. Cite it as `path#Symbol` and name which adjacent path it exercises.
 

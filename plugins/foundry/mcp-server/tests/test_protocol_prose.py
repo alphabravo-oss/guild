@@ -45,14 +45,19 @@ clauses that carry the *ruling*, never on a whole sentence.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from foundry_mcp.schemas import vocab
+from foundry_mcp.tools import foundry_orchestrator as orch
 from foundry_mcp.tools import foundry_spawn as fs
+from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 
 # D-048: the vocabulary assertions below READ the real enum rather than
 # re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
@@ -976,17 +981,26 @@ def test_coverage_diff_rules_the_carve_out_against_itself() -> None:
 
 
 def test_coverage_diff_keeps_the_manifest_entry_format_intact() -> None:
-    """D-040 boundary: `source_file:symbol` is a validated input contract.
+    """D-040 boundary: `source_file:symbol` is the manifest's own spelling.
 
-    ``foundry_validate`` requires every ``coverage_list`` entry to be shaped
-    ``path/to/file.go:TestSymbolName``. That colon separates a path from a
-    SYMBOL, never from a line, so the placement rule has no quarrel with it --
-    and "convert every colon" would have broken a server-enforced contract.
+    D-073 corrected this docstring, which repeated the file's error. The prose
+    used to say the shape is one "which the manifest validator requires
+    verbatim", and this docstring said ``foundry_validate`` "requires every
+    coverage_list entry to be shaped path/to/file.go:TestSymbolName". Neither
+    is true: Dimension 8's only per-entry check is ``isinstance(entry, str)``
+    (the shape appears in an issue DETAIL string, never in a condition), so a
+    bare ``"foo"`` validates. ``test_the_coverage_entry_shape_is_unenforced``
+    below drives that and is what keeps the claim honest.
+
+    The colon argument survives intact and on its own merits -- that colon
+    separates a path from a SYMBOL, never from a line, so the FR-004 placement
+    rule has no quarrel with it and "convert every colon" would still have
+    broken the manifest's spelling. What is gone is the appeal to enforcement.
     """
     text = _read(COVERAGE_DIFF)
     assert "`source_file:symbol`" in text, (
         "coverage-diff.md no longer documents the `source_file:symbol` shape "
-        "that foundry_validate enforces on every coverage_list entry."
+        "a coverage_list entry is spelled in."
     )
     assert "never from a line" in text, (
         "coverage-diff.md does not explain why its `source_entry` colon is not "
@@ -1587,17 +1601,24 @@ def test_start_md_states_needs_attention_membership_as_the_tool_computes_it() ->
 
 
 def test_start_md_liveness_table_explains_the_terminal_status() -> None:
-    """D-052: `done` is not just a sixth row, it is the row with a reason."""
+    """D-052: `done` is not just a sixth row, it is the row with a reason.
+
+    D-067 narrowed what this may assert. The original second assertion was the
+    bare literal ``"outranks every age check"``, written when the precedence
+    WAS unconditional. 9c1e69d then made it conditional (``superseded``), and
+    the bare literal went on defending the stale sentence -- a fixer rewriting
+    the row to state the real rule broke a green test and was pushed back
+    toward the wrong wording. A pin that outlives its behaviour is worse than
+    no pin, so the precedence is now asserted TOGETHER with its exception in
+    ``test_start_md_done_row_states_the_supersede_exception`` below, and this
+    test keeps only the part that is still unconditionally true: the row names
+    the ledger field that produces the status.
+    """
     text = _flat(START_MD)
     assert f'`"{fs.TERMINAL_FIELD}": true`' in text, (
         "start.md's liveness table documents the `done` status without naming "
         "the ledger field that produces it, so a lead reading a `done` row "
         "cannot tell what the agent actually did to earn it."
-    )
-    assert "outranks every age check" in text, (
-        "start.md does not state that `done` is terminal regardless of age. "
-        "That precedence is the whole fix: without it a lead reads a 3600s-old "
-        "`done` agent as a stalled one."
     )
 
 
@@ -1788,4 +1809,788 @@ def test_start_md_f2_roster_names_the_stream_progress_ledgers() -> None:
         "start.md's F2 roster does not state that the progress protocol needs "
         "no per-run configuration, so a lead may re-introduce the injection "
         "step the durable placement exists to retire."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 6 -- prose that named a server surface the server does not have
+#
+# Seven defects, one class: shipped protocol prose describing a tool, a
+# parameter or a rule that the shipped Python does not implement that way.
+# D-061 (casting_commit never named, so the evidence gate never engaged),
+# D-064/D-065 (the no_ledger row describes one of two producers and is false
+# for the other), D-067 (the `done` row states a precedence that is now
+# conditional), D-068 (target_kind never named, so the comment-prose refusal
+# is unreachable), D-070 (teammate.md blesses a statement Foundry-Fix
+# hard-refuses), D-072 (two skills call a tool that does not exist), D-073
+# (coverage-diff.md claims a validator check that was never written).
+#
+# Every pin below is DERIVED from the shipped code -- the tool registry, a
+# schema's properties, a producer's real record shape, a gate driven over the
+# prose's own example. D-067 is why: a hand-typed literal pin defended a stale
+# sentence for four cycles and pushed the fixer back toward the wrong wording.
+# A pin that cannot notice the behaviour moving is not a pin.
+# ---------------------------------------------------------------------------
+
+
+def _tool_schema(name: str) -> dict:
+    """Return one registered tool's inputSchema, via the real ``list_tools``.
+
+    Mirrors ``test_fix_gate.py``'s idiom. Going through ``list_tools()``
+    rather than reading the module source is what makes these assertions
+    track the schema a client actually receives.
+    """
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    match = next((t for t in tools if t.name == name), None)
+    assert match is not None, (
+        f"{name} is not a registered MCP tool. Registered: "
+        f"{sorted(t.name for t in tools)}."
+    )
+    return match.inputSchema
+
+
+def _registered_tool_names() -> set[str]:
+    from foundry_mcp import server as foundry_server
+
+    return {t.name for t in asyncio.run(foundry_server.list_tools())}
+
+
+# ---------------------------------------------------------------------------
+# D-061 -- the acceptance step that never named casting_commit
+# ---------------------------------------------------------------------------
+
+# The numbered acceptance list plus the paragraph under it. Bounded so a
+# `casting_commit` mention anywhere ELSE in a 650-line file cannot satisfy the
+# assertion -- the defect was precisely that the parameter was documented in a
+# nested schema description no lead ever reads while the step they DO follow
+# omitted it.
+_ACCEPTANCE_HEADING = "**Acceptance check per casting:**"
+_ACCEPTANCE_END = "### F2: INSPECT"
+
+
+def _acceptance_block() -> str:
+    text = _read(START_MD)
+    start = text.find(_ACCEPTANCE_HEADING)
+    assert start != -1, (
+        f"start.md has no {_ACCEPTANCE_HEADING!r} section. That block is the "
+        f"literal sequence the lead follows to accept a casting; without it "
+        f"there is nothing for this module to pin."
+    )
+    end = text.find(_ACCEPTANCE_END, start)
+    assert end != -1, "start.md's acceptance block is not followed by the F2 section."
+    return " ".join(text[start:end].split())
+
+
+def test_start_md_acceptance_step_names_every_accept_casting_parameter() -> None:
+    """D-061: the gate's reachable half had no carrier in the protocol.
+
+    ``Foundry-Accept-Casting`` has always accepted ``casting_commit`` and gates
+    the ENTIRE evidence block on ``casting_commit is not None``. The string
+    appeared in zero markdown files anywhere under plugins/foundry, and
+    start.md's acceptance step -- the literal call the lead copies -- listed
+    four arguments. So EVID-01 and EVID-02 never ran on a real acceptance, and
+    the run that shipped FR-017 accepted six castings with `evidence_provenance`
+    absent from all six, which start.md's own rule calls the structural signal
+    that the gate did not run.
+
+    Derived from the schema's property names rather than a hand-typed
+    ``"casting_commit"``: a parameter added to the tool and left out of the
+    protocol step is the same defect one rename later, and this is what makes
+    that fail here instead of shipping.
+    """
+    block = _acceptance_block()
+    documented = sorted(_tool_schema("Foundry-Accept-Casting")["properties"])
+
+    # Asserted against the CALL's own argument list, not the surrounding
+    # paragraph. Mutation-checked: a version of this test that searched the
+    # whole block stayed green when `casting_commit` was deleted from the call
+    # and left in the prose around it -- which is the defect almost exactly,
+    # since start.md's call line is the thing a lead copies and the schema
+    # description a lead never reads already documented the parameter.
+    call = re.search(r"`Foundry-Accept-Casting\(([^`]*)\)`", block)
+    assert call is not None, (
+        "start.md's acceptance block no longer contains a literal "
+        "`Foundry-Accept-Casting(...)` call. The step the lead copies IS the "
+        "call; prose describing it is not a substitute."
+    )
+    args = call.group(1)
+    missing = [p for p in documented if p not in args]
+    assert not missing, (
+        f"start.md's `Foundry-Accept-Casting(...)` call does not pass "
+        f"{missing}, which the tool accepts. A parameter absent from the call "
+        f"is a parameter no lead passes -- and an optional one that gates a "
+        f"whole verification phase is then dead in every real run while the "
+        f"gate still returns ok:true. Add it to the call, and say in the block "
+        f"where its value comes from."
+    )
+
+
+def test_start_md_says_what_supplying_casting_commit_engages() -> None:
+    """D-061: naming the argument is not enough -- it must say what it buys.
+
+    ``casting_commit`` is optional in the schema purely as a
+    backwards-compatibility shim. Nothing in the tool's own description
+    mentions evidence re-execution, so a lead who sees an optional parameter
+    with no stated consequence omits it, and the silent-skip path is the one
+    every run took.
+    """
+    block = _acceptance_block()
+    for token in ("EVID-01", "EVID-02", "evidence_provenance"):
+        assert token in block, (
+            f"start.md's acceptance step never mentions {token!r}. Supplying "
+            f"casting_commit is what engages server-side evidence "
+            f"re-execution and per-requirement binding; omitting it skips "
+            f"both SILENTLY and still returns ok:true. A lead who is not told "
+            f"that reads the parameter as optional in the ordinary sense."
+        )
+
+
+# ---------------------------------------------------------------------------
+# D-064 / D-065 -- one status, two producers, two record shapes
+# ---------------------------------------------------------------------------
+
+_LIVENESS_HEADING = "## TEAMMATE LIVENESS"
+_LIVENESS_END = "## CONTEXT MANAGEMENT"
+
+
+def _liveness_section() -> str:
+    text = _read(START_MD)
+    start = text.find(_LIVENESS_HEADING)
+    assert start != -1, f"start.md has no {_LIVENESS_HEADING!r} section."
+    end = text.find(_LIVENESS_END, start)
+    assert end != -1, "start.md's liveness section is not followed by CONTEXT MANAGEMENT."
+    return " ".join(text[start:end].split())
+
+
+def _both_no_ledger_shapes(tmp_path: Path) -> tuple[dict, dict]:
+    """Build one real record from each ``no_ledger`` producer.
+
+    Not a fixture and not hand-written dicts: the whole point is that these
+    come out of the shipped functions, so a producer that starts or stops
+    carrying a field moves the assertion with it.
+    """
+    now = datetime.now(timezone.utc)
+    fdir = tmp_path / "foundry-archive" / "d65-shapes"
+    fdir.mkdir(parents=True, exist_ok=True)
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": fs.INSPECT_PHASE,
+                "phase_times": {
+                    fs.INSPECT_PHASE: {
+                        "started_at": (now - timedelta(hours=3)).isoformat()
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_rel = f"foundry-archive/{fdir.name}"
+    streams = fs._missing_stream_records(
+        fdir, now, fs.STALL_THRESHOLD_SECONDS, run_rel
+    )
+    teammates = fs._missing_teammate_records(
+        {
+            fs._agent_id_for_casting("1"): {
+                "moment": now - timedelta(hours=1),
+                "record": {"phase": "grind"},
+            }
+        },
+        now,
+        run_rel,
+    )
+    assert streams and teammates, (
+        "one of the two no_ledger producers returned nothing, so the shape "
+        "comparison below would be vacuous."
+    )
+    return streams[0], teammates[0]
+
+
+def test_start_md_no_ledger_row_describes_both_producers(tmp_path: Path) -> None:
+    """D-064 / D-065: the row made a universal claim false for most rows.
+
+    9c1e69d gave ``foundry_liveness`` a SECOND ``no_ledger`` producer --
+    ``_missing_teammate_records``, for F1/F3 dispatched teammates -- beside the
+    existing F2 stream producer. start.md's row was not updated and still said
+    "The run is in F2 and expects this stream agent to be writing ... Carries
+    that stream's `progress_protocol` block on the record." Driven on the live
+    thunder-viper run at F3, all six no_ledger rows were teammate rows and
+    `progress_protocol` was absent from 6 of 6: a lead following the row was
+    told to append a block that existed on no row it was holding.
+
+    The asymmetry is deliberate on the code's side --
+    ``_missing_teammate_records``' own docstring says so -- so the pin is the
+    SYMMETRIC DIFFERENCE of the two real record shapes. Every field that
+    distinguishes the producers must be named in the prose. A producer that
+    grows or drops a distinguishing field fails here rather than quietly
+    making the row wrong again.
+    """
+    stream_row, teammate_row = _both_no_ledger_shapes(tmp_path)
+    assert stream_row["status"] == teammate_row["status"] == fs.STATUS_NO_LEDGER
+
+    section = _liveness_section()
+
+    distinguishing = sorted(set(stream_row) ^ set(teammate_row))
+    assert distinguishing, (
+        "the two no_ledger producers now emit identical field sets, so the "
+        "two-shape prose may be obsolete -- re-read start.md before deleting "
+        "anything, but this assertion has stopped meaning what it says."
+    )
+    missing = [field for field in distinguishing if field not in section]
+    assert not missing, (
+        f"start.md's liveness section never names {missing}. Those fields are "
+        f"exactly what tells the two `{fs.STATUS_NO_LEDGER}` producers apart "
+        f"({sorted(set(stream_row) - set(teammate_row))} on a stream row, "
+        f"{sorted(set(teammate_row) - set(stream_row))} on a teammate row). A "
+        f"lead who cannot tell which shape they are holding follows the wrong "
+        f"remedy -- which is D-065 exactly."
+    )
+
+
+def test_start_md_no_ledger_row_names_both_producing_phases() -> None:
+    """D-064: the row named F2 only, and the teammate case is F1/F3.
+
+    Derived from ``INSPECT_PHASE`` and ``TEAMMATE_DISPATCH_PHASES`` so a
+    routing change cannot leave the prose behind.
+    """
+    section = _liveness_section()
+    for phase in (fs.INSPECT_PHASE, *sorted(fs.TEAMMATE_DISPATCH_PHASES)):
+        assert phase in section, (
+            f"start.md's liveness section never mentions {phase}, which is one "
+            f"of the phases that produces a `{fs.STATUS_NO_LEDGER}` row "
+            f"(streams in {fs.INSPECT_PHASE}, teammates in "
+            f"{sorted(fs.TEAMMATE_DISPATCH_PHASES)}). Naming only one of them "
+            f"is what made the row false for the other."
+        )
+    assert "instructions" in section, (
+        "start.md's liveness section never points at the response's "
+        "`instructions` field. That field is where foundry_liveness puts the "
+        "kind-keyed remedy -- the teammate row carries no progress_protocol "
+        "block, so `instructions` is the only place its remedy exists."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-067 -- the `done` precedence, and its supersede exception
+# ---------------------------------------------------------------------------
+
+
+def _activate(project_root: Path, run_name: str) -> Path:
+    fdir = project_root / "foundry-archive" / run_name
+    fdir.mkdir(parents=True, exist_ok=True)
+    foundry_state.set_active_run(run_name)
+    return fdir
+
+
+def _write_terminal_ledger(fdir: Path, agent: str, age_seconds: float) -> None:
+    moment = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+    pdir = fdir / fs.PROGRESS_DIR_NAME
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / f"{agent}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": moment.isoformat(),
+                "phase": "grind",
+                "step": "fix applied",
+                fs.TERMINAL_FIELD: True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_dispatch(fdir: Path, casting_id: int, age_seconds: float) -> None:
+    moment = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+    with (fdir / "spawns.log").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": moment.isoformat(),
+                    "casting_id": casting_id,
+                    "phase": "grind",
+                    "prompt_path": f"castings/casting-{casting_id}-prompt.md",
+                }
+            )
+            + "\n"
+        )
+
+
+def _liveness_status(project_root: Path, fdir: Path, agent: str) -> str:
+    (fdir / "state.json").write_text(json.dumps({"phase": "F3"}), encoding="utf-8")
+    result = fs.foundry_liveness(project_root=str(project_root))
+    by_agent = {r["agent"]: r for r in result["agents"]}
+    assert agent in by_agent, f"{agent} absent from {sorted(by_agent)}"
+    return by_agent[agent]["status"]
+
+
+def test_start_md_done_row_states_the_supersede_exception(tmp_path: Path) -> None:
+    """D-067: the precedence became conditional and the row did not.
+
+    9c1e69d added ``superseded = dispatch is not None and dispatch["moment"] >
+    last["moment"]`` and gated the terminal branch on ``not superseded``. The
+    row kept the unqualified sentence "it outranks every age check", and the
+    pin that defended it was the bare literal -- so the prose and the pin were
+    wrong together and a fixer correcting either one broke the other.
+
+    Both halves are asserted here on purpose. The prose must state the
+    precedence AND its exception; the matched pair below proves the exception
+    is real, so if the supersede branch is ever removed this test names the
+    prose that must lose its exception clause rather than leaving a false
+    qualification behind. That is the property the old pin lacked: it tracks
+    the RULE, not one fragment of one sentence.
+    """
+    section = _liveness_section()
+    assert "outranks every age check" in section, (
+        "start.md's `done` row no longer states the precedence at all. With no "
+        "precedence a lead reads a 3600s-old finished agent as a stalled one, "
+        "which is D-052. The fix for D-067 was to QUALIFY this sentence, not "
+        "to delete it."
+    )
+    assert "unless" in section.lower(), (
+        "start.md's `done` row states the precedence unconditionally. It is "
+        "conditional: a dispatch newer than the terminal line overrules it "
+        "(foundry_spawn.py#_agent_record, the `superseded` branch). An "
+        "unqualified sentence is what D-067 filed."
+    )
+
+    agent = fs._agent_id_for_casting("1")
+    try:
+        # Control: the last dispatch PRECEDES the terminal line, so the agent
+        # finished the work it was last asked for. Terminal wins.
+        root = tmp_path / "control"
+        fdir = _activate(root, "d67-control")
+        _write_terminal_ledger(fdir, agent, age_seconds=5000)
+        _write_dispatch(fdir, 1, age_seconds=9000)
+        assert _liveness_status(root, fdir, agent) == fs.STATUS_DONE, (
+            "a terminal line with no NEWER dispatch no longer reports `done`. "
+            "The precedence start.md states has been lost in the code."
+        )
+    finally:
+        foundry_state.clear_active_run()
+
+    try:
+        # Superseded: the run dispatched this agent again AFTER it wrote
+        # `done`, so the terminal line retires the old work, not the agent.
+        root = tmp_path / "superseded"
+        fdir = _activate(root, "d67-superseded")
+        _write_terminal_ledger(fdir, agent, age_seconds=5000)
+        _write_dispatch(fdir, 1, age_seconds=3000)
+        status = _liveness_status(root, fdir, agent)
+        assert status != fs.STATUS_DONE, (
+            f"a terminal line followed by a NEWER dispatch reported `{status}`"
+            f" -- expected anything but `{fs.STATUS_DONE}`. If the supersede "
+            f"branch was deliberately removed, start.md's `done` row must lose "
+            f"its 'unless' clause in the same change; a false qualification is "
+            f"as bad as the false absolute D-067 filed."
+        )
+    finally:
+        foundry_state.clear_active_run()
+
+
+# ---------------------------------------------------------------------------
+# D-068 -- target_kind, the refusal's only carrier
+# ---------------------------------------------------------------------------
+
+# The filing surfaces the four stream agents call. Both accept `target_kind`;
+# the refusal in `foundry_add_defect` fires ONLY on a declared
+# `target_kind == "comment"`, so prose that never names the field leaves the
+# whole comment-prose channel unreachable.
+_FILING_TOOLS = ("Foundry-Defect", "Foundry-Sync")
+_TARGET_KIND = "target_kind"
+
+
+def test_target_kind_is_a_real_parameter_on_both_filing_surfaces() -> None:
+    """Floor check: the pins below are vacuous if the field was renamed.
+
+    ``Foundry-Defect`` carries it as a top-level property; ``Foundry-Sync``
+    carries it per-item inside the defects array. Both are read so a rename on
+    either surface fails here, naming the prose that must follow it.
+    """
+    defect_props = _tool_schema("Foundry-Defect")["properties"]
+    assert _TARGET_KIND in defect_props, (
+        f"Foundry-Defect no longer advertises {_TARGET_KIND!r}. If the field "
+        f"was renamed, rename it in the four stream agent files and start.md's "
+        f"F2 roster in the same change -- the prose is the field's only carrier."
+    )
+    # The array property is located by SHAPE, not by name: it is spelled
+    # `findings` on the wire while the agent prose and the ledger call the same
+    # records defects, and hardcoding either spelling makes this floor check
+    # fail for a reason that has nothing to do with target_kind.
+    sync_props = _tool_schema("Foundry-Sync")["properties"]
+    arrays = [
+        name
+        for name, prop in sync_props.items()
+        if prop.get("type") == "array" and isinstance(prop.get("items"), dict)
+    ]
+    assert len(arrays) == 1, (
+        f"Foundry-Sync now has {arrays} array properties; this check assumed "
+        f"exactly one (the per-finding records). Point it at the right one."
+    )
+    sync_item_props = sync_props[arrays[0]]["items"]["properties"]
+    assert _TARGET_KIND in sync_item_props, (
+        f"Foundry-Sync's per-finding items no longer advertise "
+        f"{_TARGET_KIND!r}, so a stream syncing a batch has no way to declare "
+        f"a comment subject and the refusal cannot engage on that path."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_names_the_target_kind_parameter(path: Path) -> None:
+    """D-068: four files promised a refusal none of them could reach.
+
+    All four already carry "``Foundry-Defect`` and ``Foundry-Sync`` refuse it
+    as a defect server-side". That refusal fires only when the CALLER declares
+    ``target_kind == "comment"`` -- a deliberate fail-safe, since refusing a
+    defect is itself a demotion and an undeclared subject must never be
+    demoted. ``schemas/vocab.py`` states the resulting obligation outright:
+    "Callers MUST populate this -- its absence is a caller bug, not a licence
+    to demote." Nothing carried that MUST. The parameter appeared in ZERO
+    markdown files under plugins/foundry, so across six cycles and 67 filed
+    defects not one record carried it and observations.json was never created.
+
+    This is the same shape as D-020 and D-061: a working mechanism with no
+    documented caller. The prose is the carrier, so the prose is what is pinned.
+    """
+    text = _read(path)
+    assert _TARGET_KIND in text, (
+        f"{_rel(path)} never names the `{_TARGET_KIND}` parameter, yet it "
+        f"promises that Foundry-Defect and Foundry-Sync refuse comment prose "
+        f"server-side. That refusal reads this field and nothing else, so as "
+        f"written the promise is false in practice: every finding this stream "
+        f"files lands in defects.json regardless of the split above it."
+    )
+    flat = _flat(path)
+    assert '"comment"' in text or "`comment`" in text, (
+        f"{_rel(path)} names `{_TARGET_KIND}` without giving the value that "
+        f"engages the refusal. Only the literal 'comment' demotes; any other "
+        f"value pins the finding as a defect."
+    )
+    for tool in _FILING_TOOLS:
+        assert f"`{tool}`" in flat, (
+            f"{_rel(path)}'s filing instruction does not name `{tool}`, so the "
+            f"obligation to populate `{_TARGET_KIND}` is not bound to the call "
+            f"that must carry it."
+        )
+
+
+def test_start_md_f2_roster_names_the_target_kind_parameter() -> None:
+    """D-068: the roster half, mirroring GI-001's four-files-plus-roster shape."""
+    text = _read(START_MD)
+    assert _TARGET_KIND in text, (
+        f"start.md's F2 roster never names `{_TARGET_KIND}`. The roster is "
+        f"where the lead learns what the streams must send; without it the "
+        f"comment-prose refusal has no carrier at the roster level either."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-070 -- teammate.md blessed a statement the Foundry-Fix gate refuses
+# ---------------------------------------------------------------------------
+
+# teammate.md's worked examples, labelled so this module can drive them. The
+# label is the contract: prose that drops it silently un-pins itself, which
+# `test_teammate_ships_both_statement_examples` below is what catches.
+_STATEMENT_EXAMPLE_RE = re.compile(r"^(REFUSED|ACCEPTED): (.+)$", re.M)
+
+
+def _statement_examples() -> list[tuple[str, str]]:
+    return _STATEMENT_EXAMPLE_RE.findall(_read(TEAMMATE))
+
+
+def test_teammate_ships_both_statement_examples() -> None:
+    """Floor check: the drive below asserts nothing if the examples vanished."""
+    labels = {label for label, _ in _statement_examples()}
+    assert labels == {"REFUSED", "ACCEPTED"}, (
+        f"teammate.md's adjacent-path section carries examples labelled "
+        f"{sorted(labels)}; both REFUSED and ACCEPTED are required. They are "
+        f"the only worked statements a GRIND teammate has, and the test below "
+        f"is what proves they still behave as labelled."
+    )
+
+
+def test_teammate_statement_examples_survive_the_shipped_gate() -> None:
+    """D-070: shipped prose and the shipped gate contradicted each other.
+
+    teammate.md told the teammate: "'Nothing else calls it' is a legitimate
+    statement when the grep supports it. Say that, and say which grep showed
+    it." ``_STATEMENT_NON_ANSWERS``' fourth pattern is
+    ``re.compile(r"\\bnothing\\s+else\\b", re.I)`` -- UNANCHORED, so appending
+    the grep the prose asked for does not help. Driven at the MCP boundary,
+    both the bare sentence and the sentence-plus-grep were REFUSED, and the
+    teammate was left with no instruction for what to write instead. That
+    fires in GRIND, the phase where every defect must close, on the one
+    legitimate case where a symbol has a single caller.
+
+    Existence-only pins covered this block and neither noticed, because they
+    assert the section is present and never that its example survives the
+    gate. This drives teammate.md's OWN sentences through the real
+    ``_statement_problem``, so the file cannot bless a refused form or warn
+    against an accepted one.
+    """
+    for label, statement in _statement_examples():
+        problem = orch._statement_problem(statement, "", "")
+        if label == "REFUSED":
+            assert problem is not None, (
+                f"teammate.md labels this statement REFUSED, but the shipped "
+                f"gate ACCEPTS it: {statement!r}. Either the gate loosened or "
+                f"the example drifted -- a teammate warned off a working form "
+                f"writes something worse instead."
+            )
+        else:
+            assert problem is None, (
+                f"teammate.md offers this statement as ACCEPTED and the "
+                f"shipped gate refuses it: {statement!r} -- {problem}. A "
+                f"teammate copying the file's own example cannot close its "
+                f"defect, which is D-070 exactly."
+            )
+
+
+def test_teammate_tells_a_single_caller_fixer_what_to_declare() -> None:
+    """D-070: the refusal needed a remedy, not just a prohibition.
+
+    "Who else calls this" is one of three axes the same section demands. When
+    callers are genuinely exhausted the other two are not, and that is the
+    instruction the file was missing -- without it a teammate blocked by the
+    gate has nowhere to go.
+    """
+    flat = _flat(TEAMMATE)
+    assert "Nothing else calls it\" is a legitimate statement" not in flat, (
+        "teammate.md still blesses \"Nothing else calls it\" as a legitimate "
+        "adjacent-path statement. Foundry-Fix hard-refuses it, with or without "
+        "the grep the sentence promises will rescue it."
+    )
+    assert "transitions" in flat and "concurrently" in flat, (
+        "teammate.md no longer points a single-caller fixer at the other two "
+        "axes (transitions, concurrent work). Prohibiting the denial without "
+        "naming the alternative leaves the teammate stuck in the phase where "
+        "every defect must close."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-072 -- prose naming a tool that does not exist
+# ---------------------------------------------------------------------------
+
+# Every markdown surface that instructs an agent or the lead to CALL a tool.
+# Same corpus shape as the `source:` sweep above, plus references/.
+_TOOL_CALLING_PROSE = (
+    sorted(AGENTS.glob("*.md"))
+    + sorted(COMMANDS.glob("*.md"))
+    + sorted(REFERENCES.glob("*.md"))
+    + sorted(FOUNDRY_ROOT.glob("skills/*/SKILL.md"))
+)
+
+# A `Foundry-`/`Forge-` tool token as shipped prose writes one. Trailing
+# hyphens are stripped so `Foundry-Stream-based` does not read as a tool name.
+_TOOL_TOKEN_RE = re.compile(r"\b(?:Foundry|Forge)-[A-Z][A-Za-z]*(?:-[A-Z][A-Za-z]*)*")
+
+
+def test_every_tool_named_in_shipped_prose_is_registered() -> None:
+    """D-072: two skills instructed a call to a tool that does not exist.
+
+    ``skills/trace/SKILL.md`` and ``skills/sight/SKILL.md`` both told their
+    stream to "mark the stream complete via `Foundry-Mark-Stream-Complete`".
+    No such tool is registered -- the real one is ``Foundry-Stream`` -- so
+    neither stream could ever record a completion, and the per-cycle coverage
+    roll-up those records feed stayed empty for both. Their absence reads as
+    no coverage rather than as a broken call, which is why it survived.
+
+    This is the same class as D-061 and D-068 and the sharpest instance of it:
+    there the parameter was omitted, here the NAME is wrong. The sweep is
+    derived from the live registry over every markdown surface that instructs
+    a call, so it would have caught this the day it was written and covers the
+    whole class going forward.
+    """
+    registered = _registered_tool_names()
+    unknown: dict[str, list[str]] = {}
+    for path in _TOOL_CALLING_PROSE:
+        bad = sorted(
+            {
+                token
+                for token in _TOOL_TOKEN_RE.findall(_read(path))
+                if token not in registered
+            }
+        )
+        if bad:
+            unknown[_rel(path)] = bad
+    assert not unknown, (
+        f"shipped prose names tool(s) the MCP server does not register: "
+        f"{unknown}. Registered tools are "
+        f"{sorted(n for n in registered if n.startswith(('Foundry-', 'Forge-')))}. "
+        f"An unregistered name is not a soft failure -- the call never "
+        f"reaches a handler, so the instructed step silently does nothing."
+    )
+
+
+def test_the_tool_name_sweep_reads_real_prose() -> None:
+    """Floor check: a regex that matches nothing forbids nothing."""
+    found = {
+        token
+        for path in _TOOL_CALLING_PROSE
+        for token in _TOOL_TOKEN_RE.findall(_read(path))
+    }
+    for expected in ("Foundry-Defect", "Foundry-Stream", "Foundry-Accept-Casting"):
+        assert expected in found, (
+            f"the tool-name sweep did not match {expected!r} anywhere in "
+            f"{len(_TOOL_CALLING_PROSE)} prose files. The regex no longer "
+            f"matches the shape shipped prose writes tool names in, so the "
+            f"guard has gone vacuous."
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    (FOUNDRY_ROOT / "skills" / "trace" / "SKILL.md",
+     FOUNDRY_ROOT / "skills" / "sight" / "SKILL.md"),
+    ids=lambda p: p.parent.name,
+)
+def test_stream_completion_instructions_name_every_required_argument(path: Path) -> None:
+    """D-072's second half: the right tool called with an invalid argument set.
+
+    Correcting only the NAME still yields a call jsonschema rejects at the MCP
+    boundary. ``Foundry-Stream`` requires ``stream``, ``cycle`` and
+    ``items_checked``; the trace instruction passed no ``stream`` and no
+    ``cycle``, the sight instruction no ``cycle``. Both halves had to land
+    together, and the required list is read from the schema so a new required
+    field fails here instead of shipping an uncallable instruction.
+    """
+    required = sorted(_tool_schema("Foundry-Stream")["required"])
+    flat = _flat(path)
+    assert "`Foundry-Stream`" in flat, (
+        f"{_rel(path)} no longer names `Foundry-Stream` as the tool that marks "
+        f"its stream complete."
+    )
+
+    # Scoped to the call CLAUSE -- the "via `Foundry-Stream` with X, Y, Z"
+    # sentence -- and matched as an ARGUMENT rather than as a word. Two
+    # mutation results shaped this. A version searching the whole file for
+    # `cycle` stayed green after the argument was deleted, because
+    # skills/sight/SKILL.md says "cycle" nine times in unrelated prose
+    # ("console-logs-cycle-{N}", "the next GRIND cycle"). A version reading a
+    # 400-char window then stayed green when `stream` was deleted from the
+    # trace call, because the NEXT sentence ("`stream`, `cycle` and
+    # `items_checked` are all REQUIRED") re-mentions it -- prose ABOUT the
+    # parameters standing in for the parameters, which is D-061's shape
+    # exactly. Cutting at the sentence end is what keeps the assertion on the
+    # arguments the instruction actually tells the agent to pass.
+    windows = []
+    for m in re.finditer(r"`Foundry-Stream`", flat):
+        tail = flat[m.end() : m.end() + 400]
+        stop = tail.find(". ")
+        windows.append(tail if stop == -1 else tail[:stop])
+    assert windows, f"{_rel(path)} names no `Foundry-Stream` call to scope to."
+
+    def _documents(window: str, field: str) -> bool:
+        return any(
+            span == field or span.startswith((f"{field}=", f"{field}:"))
+            for span in re.findall(r"`([^`]+)`", window)
+        )
+
+    best_missing = min(
+        ([f for f in required if not _documents(w, f)] for w in windows),
+        key=len,
+    )
+    assert not best_missing, (
+        f"{_rel(path)}'s `Foundry-Stream` instruction does not pass "
+        f"{best_missing}, which the tool REQUIRES ({required}). A call "
+        f"omitting a required field is rejected by jsonschema at the MCP "
+        f"boundary, so the stream records no coverage for the cycle -- and its "
+        f"absence from the roll-up reads as no coverage rather than as a "
+        f"broken call, which is why D-072 survived so long."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-073 -- a cite-policy rollout that asserted a validator check nobody wrote
+# ---------------------------------------------------------------------------
+
+
+def test_the_coverage_entry_shape_is_unenforced(tmp_path: Path) -> None:
+    """D-073: coverage-diff.md claimed enforcement that does not exist.
+
+    Commit b33d1c4, this effort's own cite-policy rollout, wrote into
+    coverage-diff.md that the ``source_file:symbol`` shape is one "which the
+    manifest validator requires verbatim". Dimension 8 iterates the
+    coverage_list and its only per-entry check is ``isinstance(entry, str)``;
+    the shape appears in an issue DETAIL string, never in a condition. A bare
+    ``"foo"`` is a perfectly valid entry as far as the validator is concerned.
+
+    This matters because FR-004 makes the cite policy turn on which forms are
+    MECHANICALLY guaranteed -- an agent told a shape is validator-enforced
+    trusts an unchecked field, and there is no resolution guard here of the
+    kind AC-006 provides for `#Symbol` cites. So the fix was to soften the
+    sentence, and this is what keeps the softened version honest: if the shape
+    check is ever added, this test goes red and coverage-diff.md may claim
+    enforcement again.
+    """
+    run_name = "d73-coverage-shape"
+    fdir = tmp_path / foundry_state.ARCHIVE_DIR / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "spec_type": "MIGRATION",
+                "castings": [
+                    {
+                        "id": 1,
+                        "title": "Colonless coverage entry",
+                        "spec_text": "",
+                        "observable_truths": ["a", "b", "c"],
+                        "key_files": ["src/one.go"],
+                        "must_haves": {
+                            "truths": ["ports the thing"],
+                            "artifacts": [{"path": "src/one.go"}],
+                            "key_links": [],
+                            # No colon, no path, no symbol -- and accepted.
+                            "coverage_list": ["foo"],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (fdir / "spec.md").write_text("", encoding="utf-8")
+
+    foundry_state.set_active_run(run_name)
+    try:
+        result = foundry_validate_castings(str(tmp_path))
+    finally:
+        foundry_state.clear_active_run()
+
+    issues = result["dimensions"]["migration_coverage"]["issues"]
+    shape_issues = [i for i in issues if i.get("issue") == "invalid_coverage_entry"]
+    assert not shape_issues, (
+        f"Dimension 8 now rejects the colonless coverage_list entry 'foo' "
+        f"({shape_issues}). If a shape check was deliberately added, "
+        f"coverage-diff.md's softened sentence may assert enforcement again -- "
+        f"update the prose in the same change rather than leaving the file "
+        f"understating a guarantee it now has."
+    )
+
+
+def test_coverage_diff_does_not_claim_validator_enforcement() -> None:
+    """D-073: the colon argument stands; the appeal to enforcement does not.
+
+    The sentence's own reasoning leaned on the false half -- the colon form is
+    safe from line drift BECAUSE the validator pins it verbatim. The colon
+    argument is sound on its own merits, so the fix keeps it and drops the
+    claim, and says plainly that nothing checks the shape.
+    """
+    flat = _flat(COVERAGE_DIFF)
+    assert "the manifest validator requires verbatim" not in flat, (
+        "coverage-diff.md still claims the manifest validator requires the "
+        "`source_file:symbol` shape verbatim. Dimension 8 checks only that "
+        "each entry is a string (see "
+        "test_the_coverage_entry_shape_is_unenforced), so the claim is false "
+        "and an agent that trusts it trusts an unchecked field."
+    )
+    assert "only that each `coverage_list` entry is a string" in flat, (
+        "coverage-diff.md does not say what the validator ACTUALLY checks. "
+        "Dropping the false claim without stating the real guarantee leaves "
+        "the next reader to re-derive it, and the last one who tried wrote "
+        "the claim this test exists to prevent."
     )
