@@ -33,12 +33,20 @@ from pathlib import Path
 from typing import Any
 
 try:  # Installed (uvx/pip) case — package is already importable.
-    from foundry_mcp.schemas.vocab import CANONICAL_STREAM_IDS, canonical_stream_id
+    from foundry_mcp.schemas.vocab import (
+        CANONICAL_STREAM_IDS,
+        canonical_defect_source,
+        canonical_stream_id,
+    )
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
-    from foundry_mcp.schemas.vocab import CANONICAL_STREAM_IDS, canonical_stream_id
+    from foundry_mcp.schemas.vocab import (
+        CANONICAL_STREAM_IDS,
+        canonical_defect_source,
+        canonical_stream_id,
+    )
 
 
 # Derived, never re-typed — foundry_mcp.schemas.vocab is the single source of
@@ -306,7 +314,19 @@ def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
             fts.append("PHASE9_DEFECTS_FILE_MALFORMED"); continue
         # Case half of FR-018: persisted values are lowercase wire ids,
         # the roster is UPPERCASE. Accumulate under the canonical id.
-        stream = canonical_stream_id(raw)
+        #
+        # Resolved against the DEFECT-SOURCE vocabulary, not the stream
+        # roster. D-091: this read `canonical_stream_id`, which knows only
+        # the nine stream wire ids, while the field being read is `source`,
+        # whose vocabulary is vocab.DEFECT_SOURCE_IDS — the same nine plus
+        # `assay` and `temper`. Every ASSAY- and TEMPER-filed defect was
+        # therefore dropped from the counts AND reported as
+        # PHASE9_UNKNOWN_STREAM, so the yield gate was evaluated on a
+        # truncated total and the run emitted a failure token naming a value
+        # its own protocol declares legal. PHASE9_UNKNOWN_STREAM is now
+        # reserved for values outside DEFECT_SOURCE_IDS, which is what it
+        # always claimed to mean.
+        stream = canonical_defect_source(raw)
         if stream is None:
             fts.append(f"PHASE9_UNKNOWN_STREAM:{raw}"); continue
         counts[stream] = counts.get(stream, 0) + 1

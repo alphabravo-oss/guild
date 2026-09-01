@@ -1,0 +1,43 @@
+# evidence-cmd: D=$(mktemp -d); F=plugins/foundry/mcp-server/tests/fixtures/measure_run; mkdir -p "$D/legal" "$D/unknown"; cp $F/defects_all_sources.json "$D/legal/defects.json"; cp $F/defects_unknown_stream.json "$D/unknown/defects.json"; printf "=== D-091: every source Foundry-Defect accepts is COUNTED, not discarded ===\n"; python3 plugins/foundry/scripts/measure-run.py "$D/legal" | python3 -c "import json,sys; p=json.load(sys.stdin); print(\"per_stream_defects:\", json.dumps(p[\"per_stream_defects\"], sort_keys=True)); print(\"counted:\", sum(p[\"per_stream_defects\"].values()), \"of 12 ledger records\"); print(\"failure_tokens:\", p[\"failure_tokens\"])"; printf "\n=== a source OUTSIDE the vocabulary is still named, never coerced ===\n"; python3 plugins/foundry/scripts/measure-run.py "$D/unknown" | python3 -c "import json,sys; p=json.load(sys.stdin); print(\"per_stream_defects:\", json.dumps(p[\"per_stream_defects\"], sort_keys=True)); print(\"failure_tokens:\", p[\"failure_tokens\"])"; rm -rf "$D"
+# evidence-for: FR-018, AC-024
+#
+# D-091 — a defect record's `source` is resolved against the DEFECT-SOURCE
+# vocabulary, not the stream roster.
+#
+# FR-018's key/case half was fixed in wave 1 (`stream` -> `source`, UPPER vs
+# lower). A VOCABULARY half survived it: the field being read is `source`,
+# whose vocabulary is vocab.DEFECT_SOURCE_IDS (11 values, byte-equal to
+# server.py's live Foundry-Defect `source` enum), and it was resolved through
+# canonical_stream_id, which knows only the nine STREAM wire ids. ASSAY and
+# TEMPER adjudicate rather than verify, so they file defects but never file a
+# stream coverage record and are correctly absent from the 15-id roster — the
+# repair is a SIBLING table (DEFECT_SOURCE_TO_CANONICAL), not an extension of
+# the stream one, because widening the roster would have made the roll-up
+# artifact accept coverage from two things that never produce any.
+#
+# Pre-fix, on this run's own archive: the ledger held 93 records
+# {trace: 12, prove: 78, assay: 1, test: 2} while per_stream_defects summed to
+# 92 and failure_tokens carried PHASE9_UNKNOWN_STREAM:assay — a token naming a
+# value the protocol declares legal. _yield_band_verdict() sums
+# per_stream_defects, so the yield gate was evaluated on the truncated total.
+#
+# Driven here against COMMITTED fixtures rather than foundry-archive/, which
+# is git-ignored and therefore absent from the gate's re-execution worktree.
+# The first fixture carries all nine stream wire ids, both non-stream filers,
+# and one canonical spelling that has no wire id (INTENT-01) — the NFR-002
+# no-narrowing case that the suite caught when a first draft of the resolver
+# derived its identity set from the mapping's values.
+#
+# The second half pins the refusal: PHASE9_UNKNOWN_STREAM still fires for a
+# value outside DEFECT_SOURCE_IDS, which is what it always claimed to mean.
+# PHASE9_WALL_CLOCK_UNAVAILABLE and PHASE9_CYCLE_COUNT_INVALID are expected —
+# these bare fixture dirs carry no handoff log and no state.json.
+
+=== D-091: every source Foundry-Defect accepts is COUNTED, not discarded ===
+per_stream_defects: {"ASSAY": 1, "COVERAGE_DIFF": 1, "FLOW_TRACE": 1, "INTENT-01": 1, "PROBE-01": 1, "PROVE": 1, "RESEARCH_AUDIT": 1, "SIGHT": 1, "TEMPER": 1, "TEST": 1, "TEST-01": 1, "TRACE": 1}
+counted: 12 of 12 ledger records
+failure_tokens: ['PHASE9_WALL_CLOCK_UNAVAILABLE', 'PHASE9_CYCLE_COUNT_INVALID']
+
+=== a source OUTSIDE the vocabulary is still named, never coerced ===
+per_stream_defects: {}
+failure_tokens: ['PHASE9_WALL_CLOCK_UNAVAILABLE', 'PHASE9_CYCLE_COUNT_INVALID', 'PHASE9_UNKNOWN_STREAM:BOGUS_STREAM']

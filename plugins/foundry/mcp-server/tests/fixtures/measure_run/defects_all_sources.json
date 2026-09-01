@@ -1,0 +1,16 @@
+{
+  "defects": [
+    {"id": "D-001", "source": "trace", "status": "open", "summary": "stream wire id"},
+    {"id": "D-002", "source": "prove", "status": "open", "summary": "stream wire id"},
+    {"id": "D-003", "source": "sight", "status": "open", "summary": "stream wire id"},
+    {"id": "D-004", "source": "test", "status": "open", "summary": "stream wire id"},
+    {"id": "D-005", "source": "probe", "status": "open", "summary": "stream wire id"},
+    {"id": "D-006", "source": "research_audit", "status": "open", "summary": "stream wire id"},
+    {"id": "D-007", "source": "flow_trace", "status": "open", "summary": "stream wire id"},
+    {"id": "D-008", "source": "coverage_diff", "status": "open", "summary": "stream wire id"},
+    {"id": "D-009", "source": "test01", "status": "open", "summary": "stream wire id"},
+    {"id": "D-010", "source": "assay", "status": "open", "summary": "non-stream filer (D-091)"},
+    {"id": "D-011", "source": "temper", "status": "open", "summary": "non-stream filer (D-091)"},
+    {"id": "D-012", "source": "INTENT-01", "status": "open", "summary": "canonical spelling, no wire id"}
+  ]
+}

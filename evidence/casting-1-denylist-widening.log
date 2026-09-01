@@ -1,0 +1,62 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys; sys.path[:0] = ["tests", "src"]; import test_vocab as t; from foundry_mcp.schemas import vocab as v; print("== D-090/D-093: every realistic security-property claim stays a DEFECT =="); [print("  %-20s %s" % (label, v.never_demote_class({"description": desc, "target_kind": "comment"}))) for label, desc in t.SECURITY_CLAIM_BATTERY]; print(); print("== D-090: every unresolvable-cite phrasing stays a DEFECT =="); [print("  %-22s %s" % (v.never_demote_class({"description": d, "target_kind": "comment"}), d)) for d in t.UNRESOLVABLE_CITE_PHRASINGS]; print(); print("== the floor: ordinary prose is still demotable to an observation =="); [print("  never_demote=%-5s observation=%-16s %s" % (v.never_demote_class({"description": d, "target_kind": "comment"}), v.observation_class({"description": d, "target_kind": "comment"}), d)) for d in t.NON_SECURITY_PROSE]'
+# evidence-for: FR-013, AC-002
+# evidence-timeout: 300
+#
+# D-090 + D-093 root cause 1 — the never-demote denylist now matches the
+# vocabulary real findings are written in.
+#
+# The pre-fix predicates enumerated specific security nouns and omitted both
+# the bare word "security" and the terms most claims actually use. A ten-case
+# battery of textbook security-property claims found EIGHT demotable with the
+# audit tripwire SILENT, and _UNRESOLVABLE_RE covered "resolves to nothing"
+# but none of the three spellings a stream really writes. That is the
+# module's own stated-unacceptable failure mode (vocab.py docstring: "a false
+# denylist hit costs one observation that stays a defect, while a false miss
+# would demote a real security or spec-behaviour finding").
+#
+# The battery is IMPORTED from tests/test_vocab.py rather than re-typed here,
+# so this log and the suite cannot disagree about what was driven.
+#
+# The third section is the floor. Over-matching is tolerated by design, but a
+# denylist that swallowed ordinary prose would abolish the observations
+# ledger, so the widening is pinned from both sides: the four comment-prose
+# observation classes must still route to OBSERVATION.
+#
+# NOT in scope here: root cause 2 of D-093 (the promote direction, where
+# tools/foundry.py#_observation_refusal refused a defect on a description
+# heuristic alone). That is casting 3's fix, landing this same cycle; these
+# widened predicates are the contract it relies on.
+
+== D-090/D-093: every realistic security-property claim stays a DEFECT ==
+  hmac-signature       SECURITY_PROPERTY_CLAIM
+  constant-time        SECURITY_PROPERTY_CLAIM
+  rate-limit           SECURITY_PROPERTY_CLAIM
+  input-validation     SECURITY_PROPERTY_CLAIM
+  hashed-plaintext     SECURITY_PROPERTY_CLAIM
+  cors                 SECURITY_PROPERTY_CLAIM
+  nonce-replay         SECURITY_PROPERTY_CLAIM
+  bounds-overread      SECURITY_PROPERTY_CLAIM
+  authentication       SECURITY_PROPERTY_CLAIM
+  password             SECURITY_PROPERTY_CLAIM
+  bare-security-word   SECURITY_PROPERTY_CLAIM
+  timing-attack        SECURITY_PROPERTY_CLAIM
+
+== D-090: every unresolvable-cite phrasing stays a DEFECT ==
+  UNRESOLVABLE_CITE      The cite resolves to no symbol anywhere in the tree.
+  UNRESOLVABLE_CITE      There is no symbol named _save_json in that module.
+  UNRESOLVABLE_CITE      The cite names a symbol that does not exist.
+  UNRESOLVABLE_CITE      The symbol is missing from the file the cite names.
+  UNRESOLVABLE_CITE      The cited function no longer exists.
+  UNRESOLVABLE_CITE      The cite does not resolve.
+  UNRESOLVABLE_CITE      The symbol resolves to nothing.
+  UNRESOLVABLE_CITE      A dangling cite.
+
+== the floor: ordinary prose is still demotable to an observation ==
+  never_demote=None  observation=None             The handler returns 500 when the upstream times out.
+  never_demote=None  observation=None             The retry loop sleeps for a fixed interval instead of backing off.
+  never_demote=None  observation=None             This helper rebuilds the lookup dict on every call.
+  never_demote=None  observation=PROSE_COUNT      The docstring says 8 items but there are 9 now.
+  never_demote=None  observation=DIRECTION_WORD   The comment says the helper is defined above, but it moved.
+  never_demote=None  observation=ENUMERATION      The comment's list of streams omits flow_trace.
+  never_demote=None  observation=LINE_DRIFT_CITE  The cite points at line 71 but the helper now starts at line 88.
+  never_demote=None  observation=None             The summary prints the cycle count before the phase name.

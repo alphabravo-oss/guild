@@ -825,6 +825,115 @@ def test_legacy_stream_key_still_counted(
     assert json.loads(stdout)["per_stream_defects"] == {"TRACE": 1}
 
 
+def test_assay_and_temper_sourced_defects_are_counted_not_discarded(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-091 / FR-018 — a defect `source` is resolved against the SOURCE
+    vocabulary, not the stream roster.
+
+    The key/case half of FR-018 was fixed; a VOCABULARY half survived it. The
+    field being read is `source`, whose vocabulary is vocab.DEFECT_SOURCE_IDS
+    (11 values, byte-equal to server.py's live Foundry-Defect `source` enum).
+    It was resolved through ``canonical_stream_id``, which knows only the nine
+    STREAM wire ids — ASSAY and TEMPER are adjudicators, not verification
+    streams, so they are correctly absent from the roster. Each such record was
+    therefore dropped from the counts AND reported as PHASE9_UNKNOWN_STREAM: a
+    failure token naming a value the protocol declares legal.
+
+    Both halves matter to NFR-001. ``_yield_band_verdict`` sums
+    per_stream_defects, so the yield gate was evaluated on a truncated total;
+    and grand-vulture's baseline holds only prove/test/trace sources, so the
+    BASELINE measured clean while the comparison side under-counted — an
+    instrument manufacturing the exact "defect finding dropped" signal the
+    effort's global bar treats as proof the change is wrong.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps(
+            {
+                "defects": [
+                    {"id": "D-001", "source": "prove", "type": "THIN"},
+                    {"id": "D-002", "source": "trace", "type": "MISSING"},
+                    {"id": "D-003", "source": "assay", "type": "WRONG"},
+                    {"id": "D-004", "source": "temper", "type": "HOLLOW"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {
+        "PROVE": 1,
+        "TRACE": 1,
+        "ASSAY": 1,
+        "TEMPER": 1,
+    }, payload["per_stream_defects"]
+    # The ledger's own total is what the yield gate must see.
+    assert sum(payload["per_stream_defects"].values()) == 4
+    assert payload["failure_tokens"] == [], (
+        "a legal defect source is being reported as an unknown stream"
+    )
+
+
+def test_a_source_outside_the_defect_vocabulary_is_still_unknown(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """PHASE9_UNKNOWN_STREAM keeps meaning what it always claimed to.
+
+    The D-091 repair widens the resolver to the right vocabulary; it must not
+    turn the refusal off. A value outside DEFECT_SOURCE_IDS is still named and
+    still discarded — never coerced onto a known source.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps(
+            {
+                "defects": [
+                    {"id": "D-001", "source": "prove", "type": "THIN"},
+                    {"id": "D-002", "source": "haruspex", "type": "WRONG"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    # A named token is a rejection — Test 25's contract for the roll-up reader,
+    # and the defect reader owes the same.
+    assert exit_code != 0
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {"PROVE": 1}
+    assert payload["failure_tokens"] == ["PHASE9_UNKNOWN_STREAM:haruspex"]
+
+
+def test_the_defect_reader_uses_the_defect_source_resolver() -> None:
+    """The key link, pinned at the source rather than only through behaviour.
+
+    ``_read_defects_per_stream`` must call ``canonical_defect_source``. The
+    roll-up reader keeps ``canonical_stream_id``, because a roll-up genuinely
+    IS per-stream coverage and ASSAY files none — the two resolvers are
+    siblings and each site must read its own vocabulary.
+    """
+    import inspect
+
+    measure_run_module = _load_measure_run_module()
+    source = inspect.getsource(measure_run_module._read_defects_per_stream)
+    assert "canonical_defect_source(" in source, (
+        "the defect reader no longer resolves `source` against the defect-source "
+        "vocabulary; D-091 is back"
+    )
+    assert "canonical_stream_id(" not in source, (
+        "the defect reader resolves a defect `source` through the STREAM "
+        "resolver, which drops every assay- and temper-filed defect (D-091)"
+    )
+    rollup = inspect.getsource(measure_run_module._read_stream_rollup)
+    assert "canonical_stream_id(" in rollup, (
+        "the roll-up reader must keep the STREAM resolver — its keys are "
+        "streams reporting coverage, not defect filers"
+    )
+
+
 # ---------------------------------------------------------------------------
 # D-034 — the gates must operate on a REAL run archive (FR-018 / AC-024).
 #

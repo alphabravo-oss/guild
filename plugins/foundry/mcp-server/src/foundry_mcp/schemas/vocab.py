@@ -55,8 +55,18 @@ The fields read are:
     line_hint_stale bool  caller-supplied line-hint comparison outcome.
 
 `description`-driven matching is heuristic by nature — these are prose
-classes, not machine types. The safety of the scheme does not rest on the
-observation regexes being exhaustive; it rests on the precedence rule below.
+classes, not machine types.
+
+An earlier revision of this docstring argued the scheme's safety "does not
+rest on the [prose] regexes being exhaustive; it rests on the precedence rule
+below." D-093 showed that is true in only one direction. The precedence rule
+protects the DEMOTE direction: a denylist hit keeps a finding a defect no
+matter what the observation regexes say. It says nothing about the PROMOTE
+direction, where a caller that refuses a defect filing on an observation-class
+match alone turns a false positive here into a blocked real defect. Callers
+owe that direction a fail-safe of their own; this module owes both directions
+predicates that match the vocabulary real findings are written in, which is
+what D-090 and D-093 widened the denylist to do.
 
 PRECEDENCE RULE (AC-002 — the never-weaken guarantee)
 -----------------------------------------------------
@@ -139,6 +149,40 @@ WIRE_TO_CANONICAL: Mapping[str, str] = MappingProxyType(
 # dropping a value the surface accepts today.
 # Extend only via phase-level RFC.
 DEFECT_SOURCE_IDS = frozenset(STREAM_WIRE_IDS | {"assay", "temper"})  # 11 items
+
+# The two legal defect sources that are NOT verification streams. ASSAY
+# adjudicates and TEMPER probes; both file defects, neither ever files a
+# stream coverage record, so their absence from CANONICAL_STREAM_IDS is
+# correct rather than an omission.
+NON_STREAM_DEFECT_SOURCES = frozenset(DEFECT_SOURCE_IDS - STREAM_WIRE_IDS)  # 2 items
+
+# Total over DEFECT_SOURCE_IDS — the resolver for a defect record's `source`.
+#
+# D-091: this table is a SIBLING of WIRE_TO_CANONICAL, not an extension of it.
+# The two vocabularies answer different questions — "which stream reported
+# coverage" (9 wire ids) versus "who filed this defect" (11 sources) — and
+# measure-run.py resolved the second against the first, so every `assay`- and
+# `temper`-filed defect was discarded from per_stream_defects AND reported as
+# PHASE9_UNKNOWN_STREAM, a failure token naming a value this protocol declares
+# legal. Streams keep their canonical stream id; the two non-stream filers map
+# to their own UPPERCASE names, which are deliberately NOT members of
+# CANONICAL_STREAM_IDS.
+DEFECT_SOURCE_TO_CANONICAL: Mapping[str, str] = MappingProxyType(
+    {
+        **WIRE_TO_CANONICAL,
+        **{source: source.upper() for source in sorted(NON_STREAM_DEFECT_SOURCES)},
+    }
+)
+
+# The spellings `canonical_defect_source` accepts by identity. NOT
+# DEFECT_SOURCE_TO_CANONICAL.values(): only nine canonical stream ids have a
+# wire spelling, so deriving from the mapping's values would REJECT the six
+# that do not (EVID-01, EVID-02, INTV-01, TYPE-01, TYPE-02, INTENT-01) even
+# though canonical_stream_id accepts them today. NFR-002 forbids that
+# narrowing — a defect archive already records those ids verbatim.
+_CANONICAL_DEFECT_SOURCES = frozenset(
+    CANONICAL_STREAM_IDS | {source.upper() for source in NON_STREAM_DEFECT_SOURCES}
+)  # 17 items
 
 # ---------------------------------------------------------------------------
 # Defect vocabularies.
@@ -333,6 +377,23 @@ _ENUMERATION_RE = _near(_ENUM_CUE, f"{_MISMATCH}|{_OMISSION}")
 # Denylist patterns. Deliberately broad — see the precedence rule in the
 # module docstring: over-matching costs an observation, under-matching would
 # demote a real security or spec-behaviour finding.
+#
+# D-090 / D-093 widened this set after a ten-case battery of textbook
+# security-property claims found EIGHT of them demotable with the tripwire
+# silent. The original enumerated specific security nouns and omitted both the
+# word "security" itself and the vocabulary most real claims are written in —
+# signature, HMAC, constant-time, plaintext, rate limit, CORS, nonce, bounds
+# check. That is the module's own unacceptable failure mode, so the terms
+# below are grouped by the property they assert rather than by any attack
+# taxonomy: a claim about a property IS in scope even when no attack is named.
+#
+# Boundedness is what keeps this from degenerating into matching everything:
+# the whole alternation sits inside `\b(?:...)\b`, so a term appearing inside
+# an identifier does not match (`validate_report` and `compare_digest` are
+# both misses — `_` is a word character, so the trailing \b fails). Terms that
+# are ordinary English on their own are required to appear in their security
+# sense as a phrase (`untrusted input`, `input validation`, `timing attack`)
+# rather than bare.
 _SECURITY_RE = re.compile(
     r"""\b(?:
         auth (?:n|z|entication|orization|orisation)?
@@ -351,6 +412,39 @@ _SECURITY_RE = re.compile(
       | (?:access|bearer|session|auth|csrf|api) \s+ tokens?
       | sandbox \s+ (?:escape|bypass) | privilege \s+ escalation
       | arbitrary \s+ (?:code|command|file)
+
+      # --- D-090: the bare word the original omitted -------------------
+      | securit (?:y|ies)
+
+      # --- D-093: message authenticity and secrecy ---------------------
+      | signatures? | signed | unsigned | hmac | macs? | digests?
+      | hash (?:ed|ing)                      # not bare "hash" — see Foundry-Spec-Hash
+      | salted | salting
+      | plain [-\s]? text | cleartext
+      | integrity | tamper\w*
+
+      # --- D-093: timing and side channels -----------------------------
+      | constant [-\s]? time
+      | timing \s+ (?:attack|leak|side [-\s]? channel)
+      | side [-\s]? channel
+
+      # --- D-093: trusting unchecked input -----------------------------
+      | untrusted \s+ (?:input|data|user|source|value)
+      | unvalidated | input \s+ validation
+      | validat (?:e|es|ed|ing|ion|or)
+
+      # --- D-093: availability and origin controls ---------------------
+      | rate [-\s]? limit\w* | throttl\w*
+      | cors | same [-\s]? origin
+
+      # --- D-093: freshness -------------------------------------------
+      | nonces? | replay \s+ (?:attack|protection|prevention)
+
+      # --- D-093: memory safety ----------------------------------------
+      | bounds [-\s]? check\w* | bounds \s+ (?:are|is) \s+ check\w*
+      | out [-\s]? of [-\s]? bounds
+      | overflow\w* | underflow\w* | overread | overrun
+      | buffer \s+ over\w+
     )\b""",
     re.IGNORECASE | re.VERBOSE,
 )
@@ -365,10 +459,22 @@ _SPEC_CLAIM_RE = re.compile(
     r"|acceptance\s+criteri(?:on|a)|must_haves?)\b",
     re.IGNORECASE,
 )
+# D-090 widened this too. It covered "resolves to nothing" but not the three
+# ways a stream actually writes the same fact — "resolves to no symbol", "no
+# symbol named X", "the symbol does not exist" — so a cite that names nothing
+# was demotable. The subject nouns are enumerated (symbol/function/method/
+# class/definition) rather than left open so that ordinary absence prose ("the
+# guard is missing") is still an ordinary finding and not a cite complaint.
+_SYMBOL_NOUN = r"(?:symbol|function|method|class|definition|identifier)"
 _UNRESOLVABLE_RE = re.compile(
     r"(?:does\s+not\s+resolve|doesn't\s+resolve|cannot\s+be\s+resolved"
     r"|can't\s+be\s+resolved|unresolvable|unresolved\s+(?:cite|symbol|reference)"
     r"|no\s+such\s+symbol|symbol\s+not\s+found|resolves?\s+to\s+nothing"
+    rf"|resolves?\s+to\s+no\s+{_SYMBOL_NOUN}"
+    rf"|no\s+{_SYMBOL_NOUN}\s+(?:named|called|by\s+that\s+name)"
+    rf"|{_SYMBOL_NOUN}\s+(?:that\s+|which\s+)?"
+    r"(?:does\s+not\s+exist|doesn't\s+exist|is\s+missing|no\s+longer\s+exists)"
+    rf"|{_SYMBOL_NOUN}\s+missing\s+from"
     r"|dangling\s+(?:cite|reference|symbol))",
     re.IGNORECASE,
 )
@@ -511,3 +617,22 @@ def canonical_stream_id(value: str) -> str | None:
     if value in CANONICAL_STREAM_IDS:
         return value
     return WIRE_TO_CANONICAL.get(value)
+
+
+def canonical_defect_source(value: str) -> str | None:
+    """Canonical UPPERCASE name for a defect record's `source`, else None.
+
+    `canonical_stream_id` is the WRONG resolver for this field and D-091 is
+    what that costs: it knows only the nine stream wire ids, so an `assay`- or
+    `temper`-filed defect resolves to None and a caller that treats None as
+    "unknown value" both drops the record and reports a legal source as
+    unknown. Resolve a `source` here and a stream there.
+
+    Identity on an already-canonical spelling. Never raises, and never coerces
+    an unknown value onto a known source.
+    """
+    if not isinstance(value, str):
+        return None
+    if value in _CANONICAL_DEFECT_SOURCES:
+        return value
+    return DEFECT_SOURCE_TO_CANONICAL.get(value)

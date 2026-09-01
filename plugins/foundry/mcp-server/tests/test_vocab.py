@@ -444,3 +444,262 @@ def test_bash_twin_deleted() -> None:
         f"{BASH_TWIN} must be deleted — the MCP server is the single "
         "implementation (GI-003)"
     )
+
+
+# ---------------------------------------------------------------------------
+# D-090 / D-093 — the denylist matches the vocabulary real findings use.
+#
+# The pre-fix predicates enumerated specific security nouns and omitted the
+# word "security" itself. A ten-case battery of textbook security-property
+# claims found EIGHT demotable with the tripwire silent — the module's own
+# stated-unacceptable failure mode. The suite did not catch it because
+# test_observations.py exercises exactly ONE security string, hand-written to
+# contain "CSRF", a literal the regex already held. These cases are therefore
+# written as PROSE A STREAM WOULD ACTUALLY FILE, not as keyword probes.
+# ---------------------------------------------------------------------------
+
+# (label, description) — the OT-002 battery, verbatim from the D-093 drive.
+SECURITY_CLAIM_BATTERY = [
+    (
+        "hmac-signature",
+        "The comment above validate_token() claims the token signature is "
+        "verified, but the function never checks the HMAC.",
+    ),
+    (
+        "constant-time",
+        "The comment below compare_digest says the comparison is "
+        "constant-time, but it uses == so it is not.",
+    ),
+    (
+        "rate-limit",
+        "The docstring states the endpoint is rate-limited; no rate limiting "
+        "exists in the handler.",
+    ),
+    (
+        "input-validation",
+        "The comment claims the payload is validated before use, but no "
+        "validation runs — untrusted input reaches the shell.",
+    ),
+    (
+        "hashed-plaintext",
+        "The comment says the value is hashed before storage; it is stored "
+        "in plaintext.",
+    ),
+    (
+        "cors",
+        "The comment says CORS is locked to the allowlist, but the header is "
+        "set to *.",
+    ),
+    (
+        "nonce-replay",
+        "The comment promises replay protection via a nonce, but the nonce is "
+        "never checked.",
+    ),
+    (
+        "bounds-overread",
+        "The comment claims the index is bounds-checked, but there is no "
+        "bounds check — a buffer overread.",
+    ),
+    (
+        "authentication",
+        "The comment above the handler claims authentication is enforced, but "
+        "no auth check runs.",
+    ),
+    (
+        "password",
+        "The comment says the password is salted, but it is not.",
+    ),
+    # D-090's own phrasings: the bare category word, and timing.
+    (
+        "bare-security-word",
+        "The comment asserts a security property the code does not implement.",
+    ),
+    (
+        "timing-attack",
+        "The comment says the compare is safe, but it opens a timing attack.",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label,description", SECURITY_CLAIM_BATTERY, ids=[c[0] for c in SECURITY_CLAIM_BATTERY]
+)
+def test_every_realistic_security_claim_is_a_denylist_match(
+    label: str, description: str
+) -> None:
+    """AC-002 / OT-002 — a security-property claim can NEVER be demoted.
+
+    Asserted through ``never_demote_class`` and not only the predicate: the
+    demotion decision a caller makes is the dispatcher's answer, and a claim
+    that matches the predicate but loses the dispatch would still be demoted.
+    """
+    finding = {"description": description, "spec_ref": "", "target_kind": "comment"}
+    assert vocab.is_security_property_claim(finding), (
+        f"{label}: is_security_property_claim missed a textbook security claim "
+        f"— {description!r}"
+    )
+    assert vocab.never_demote_class(finding) == vocab.SECURITY_PROPERTY_CLAIM, (
+        f"{label}: the denylist did not fire, so this claim is demotable to an "
+        f"observation with the audit tripwire silent (AC-002)"
+    )
+
+
+UNRESOLVABLE_CITE_PHRASINGS = [
+    "The cite resolves to no symbol anywhere in the tree.",
+    "There is no symbol named _save_json in that module.",
+    "The cite names a symbol that does not exist.",
+    "The symbol is missing from the file the cite names.",
+    "The cited function no longer exists.",
+    # Pre-existing phrasings — pinned so the widening cannot drop one.
+    "The cite does not resolve.",
+    "The symbol resolves to nothing.",
+    "A dangling cite.",
+]
+
+
+@pytest.mark.parametrize("description", UNRESOLVABLE_CITE_PHRASINGS)
+def test_every_unresolvable_cite_phrasing_is_a_denylist_match(
+    description: str,
+) -> None:
+    """AC-002 / AC-006 — a cite naming nothing is a defect, however phrased.
+
+    The pre-fix pattern covered "resolves to nothing" but none of the three
+    spellings a stream actually writes, so an unresolvable cite was demotable.
+    """
+    finding = {"description": description, "spec_ref": "", "target_kind": "comment"}
+    assert vocab.is_unresolvable_cite(finding), (
+        f"is_unresolvable_cite missed {description!r}"
+    )
+    assert vocab.never_demote_class(finding) == vocab.UNRESOLVABLE_CITE
+
+
+# Ordinary engineering prose carrying NO security or cite-resolution claim.
+# Over-matching is tolerated by design (it costs one observation that stays a
+# defect), but a denylist that matched everything would abolish the
+# observations ledger entirely, so the widening owes a floor as well as a
+# ceiling. Every string below is one a real run would file.
+NON_SECURITY_PROSE = [
+    "The handler returns 500 when the upstream times out.",
+    "The retry loop sleeps for a fixed interval instead of backing off.",
+    "This helper rebuilds the lookup dict on every call.",
+    "The docstring says 8 items but there are 9 now.",
+    "The comment says the helper is defined above, but it moved.",
+    "The comment's list of streams omits flow_trace.",
+    "The cite points at line 71 but the helper now starts at line 88.",
+    "The summary prints the cycle count before the phase name.",
+]
+
+
+@pytest.mark.parametrize("description", NON_SECURITY_PROSE)
+def test_ordinary_prose_is_not_a_security_or_cite_claim(description: str) -> None:
+    """The widening has a floor: it did not degenerate into matching all prose."""
+    finding = {"description": description}
+    assert not vocab.is_security_property_claim(finding), (
+        f"the security denylist now matches ordinary prose: {description!r}"
+    )
+    assert not vocab.is_unresolvable_cite(finding), (
+        f"the unresolvable-cite denylist now matches ordinary prose: {description!r}"
+    )
+
+
+def test_the_four_observation_cases_are_still_demotable() -> None:
+    """The widening must not have swept the observation ledger's own inputs.
+
+    These are the exact strings the split exists to route to observations. If
+    a widened denylist claimed one, comment-prose findings would go back to
+    being defects and the whole FR-023 separation would be inert.
+    """
+    for class_name, description in OBSERVATION_CASES.items():
+        finding = {"description": description, "target_kind": "comment"}
+        assert vocab.never_demote_class(finding) is None, (
+            f"the {class_name} case is no longer demotable: {description!r}"
+        )
+        assert vocab.observation_class(finding) == class_name
+
+
+def test_a_security_term_inside_an_identifier_does_not_match() -> None:
+    """The `\\b(?:...)\\b` bound is what keeps the widening honest.
+
+    A term appearing inside a symbol name is a CITE, not a claim: "the comment
+    above validate_report is stale" is line-drift prose about a function that
+    happens to be named for validation, and demoting it is correct.
+    """
+    finding = {
+        "description": (
+            "The comment above validate_report cites line 40 but the writer "
+            "now sits at line 52."
+        ),
+        "target_kind": "comment",
+    }
+    assert not vocab.is_security_property_claim(finding)
+    assert vocab.never_demote_class(finding) is None
+    assert vocab.observation_class(finding) == vocab.LINE_DRIFT_CITE
+
+
+# ---------------------------------------------------------------------------
+# D-091 — a defect `source` is resolved against the SOURCE vocabulary.
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_defect_source_is_total_over_the_defect_source_vocabulary() -> None:
+    """Every value Foundry-Defect accepts as a `source` must resolve.
+
+    ``canonical_stream_id`` is the wrong resolver for this field: it knows
+    only the nine stream wire ids, so `assay` and `temper` — both members of
+    DEFECT_SOURCE_IDS and both carried by server.py's live `source` enum —
+    resolved to None. measure-run.py then discarded those records and reported
+    them as PHASE9_UNKNOWN_STREAM.
+    """
+    for source in vocab.DEFECT_SOURCE_IDS:
+        assert vocab.canonical_defect_source(source) is not None, (
+            f"{source!r} is a legal defect source that does not resolve"
+        )
+    assert vocab.canonical_defect_source("assay") == "ASSAY"
+    assert vocab.canonical_defect_source("temper") == "TEMPER"
+
+
+def test_the_two_non_stream_filers_are_not_stream_ids() -> None:
+    """ASSAY and TEMPER file defects but never file stream coverage.
+
+    Their absence from the 15-id roster is the correct modelling, which is why
+    the repair is a sibling table rather than an extension of the stream one —
+    widening CANONICAL_STREAM_IDS would have made the roll-up artifact accept
+    coverage records from two things that never produce them.
+    """
+    assert vocab.NON_STREAM_DEFECT_SOURCES == frozenset({"assay", "temper"})
+    assert not vocab.NON_STREAM_DEFECT_SOURCES & vocab.STREAM_WIRE_IDS
+    for wire in vocab.NON_STREAM_DEFECT_SOURCES:
+        assert vocab.canonical_stream_id(wire) is None, (
+            f"{wire!r} must not resolve as a stream — it files no coverage"
+        )
+        assert vocab.canonical_defect_source(wire) not in vocab.CANONICAL_STREAM_IDS
+
+
+def test_canonical_defect_source_narrows_nothing_canonical_stream_id_accepts() -> None:
+    """NFR-002 — the new resolver is a strict superset of the old one.
+
+    Only nine canonical stream ids have a wire spelling, so deriving the
+    identity set from the mapping's values would have REJECTED the six that do
+    not (EVID-01, EVID-02, INTV-01, TYPE-01, TYPE-02, INTENT-01) even though a
+    real archive records them verbatim. Caught by the suite when it did.
+    """
+    for value in vocab.CANONICAL_STREAM_IDS | vocab.STREAM_WIRE_IDS:
+        assert (
+            vocab.canonical_defect_source(value) == vocab.canonical_stream_id(value)
+        ), f"{value!r} resolves differently through the two resolvers"
+
+
+def test_canonical_defect_source_never_coerces_an_unknown_value() -> None:
+    for unknown in ("bogus", "TRACE-99", "", "Assay", "sight ", 17, None):
+        assert vocab.canonical_defect_source(unknown) is None, unknown  # type: ignore[arg-type]
+
+
+def test_defect_source_mapping_is_total_and_lands_in_known_names() -> None:
+    """The mapping's contract, mirroring WIRE_TO_CANONICAL's own pin."""
+    assert set(vocab.DEFECT_SOURCE_TO_CANONICAL) == set(vocab.DEFECT_SOURCE_IDS)
+    for wire, canonical in vocab.DEFECT_SOURCE_TO_CANONICAL.items():
+        if wire in vocab.STREAM_WIRE_IDS:
+            assert canonical in vocab.CANONICAL_STREAM_IDS
+            assert canonical == vocab.WIRE_TO_CANONICAL[wire]
+        else:
+            assert canonical == wire.upper()

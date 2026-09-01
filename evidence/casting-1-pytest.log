@@ -30,9 +30,18 @@
 # attempt to redact one line of that preamble, and with --quiet no such line
 # is ever emitted. Body below regenerated in a COLD `git worktree add
 # --detach`, which is the only environment EVID-01 ever runs this in.
+#
+# GRIND-12: the count moved 122 -> 160. D-090 and D-093 widened the
+# never-demote denylist (tests/test_vocab.py gained the OT-002 security
+# battery, the unresolvable-cite phrasings and the over-match floor) and
+# D-091 gave the defect reader its own source vocabulary
+# (tests/test_measure_run.py gained three cases). Recaptured here because
+# this log PINS a collection count: D-086/D-087 were the omission of
+# exactly this step.
 
-........................................................................ [ 58%]
-....s..............................................                      [100%]
+........................................................................ [ 44%]
+.......................................s................................ [ 89%]
+.................                                                        [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/var/folders/kq/jm1bf9811z512rncmlpl7s200000gn/T/tmp.uc9RsCTQL3/cold/.planning/phases/09-milestone-real-run-consolidation/runs
-122 passed, 1 skipped, 2 deselected in 4.07s
+SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
+160 passed, 1 skipped, 2 deselected in 3.71s
