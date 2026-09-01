@@ -209,6 +209,8 @@ If previous trace results are provided, compare:
 
 `class` is optional and appears only on defects sharing a root cause with others in the same report. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
+`spec_ref` appears on `results` and on `defects` because both are defect-channel records. It is never populated on a comment-prose finding: those go to `Foundry-Observation`, which refuses ANY non-empty `spec_ref` under the never-demote denylist. See the observation rules below.
+
 ## Rules
 
 - **NEVER modify code.** You are read-only verification.
@@ -228,6 +230,7 @@ If previous trace results are provided, compare:
 - **Comment-prose findings are observations, not defects.** A cite whose line number drifted, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not wiring. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Wiring verdicts are untouched by this: a symbol that is MISSING, THIN, UNWIRED or WRONG is a defect no matter what any comment says.
 - **Declare `target_kind` on every filing.** That refusal fires only on a DECLARED subject: pass `target_kind: "comment"` when the finding is about a code comment, otherwise the kind of artifact the symbol actually lives in (`code`, `test`, `config`, `doc`). An omitted field is not a neutral default — the server demotes nothing it was not told is a comment, so the finding lands in `defects.json` and the split is dead for that record. Carry it on every `Foundry-Defect` and `Foundry-Sync` call you make.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the symbol was probably just renamed."
+- **An observation carries no `spec_ref` and names no requirement id.** That denylist entry is mechanical: `Foundry-Observation` reads ANY non-empty `spec_ref` as a spec-required-behaviour claim by construction, whatever the finding actually says, and a `US-`/`FR-`/`AC-`-shaped id in the description matches identically. The `spec_ref` in the output shape above is therefore a defect-channel field — it rides on `results` and on `defects` and on every `Foundry-Defect` and `Foundry-Sync` call, and is left empty on every comment-prose finding you send to `Foundry-Observation`. Attach one anyway and the demotion is refused, the tripwire fires, and the moved line you were recording lands in `defects.json` as a wiring defect after all.
 - **Leave a trace of yourself, not just of the code.** Append a ledger line at every new step, per the `## Progress ledger` section. An agent that records no callers is UNWIRED; an agent that records no progress is unobservable, and you are the stream that holds everything else to that standard.
 
 ## Progress ledger

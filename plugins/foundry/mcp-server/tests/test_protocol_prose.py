@@ -2832,3 +2832,303 @@ def test_coverage_diff_does_not_claim_validator_enforcement() -> None:
         "the next reader to re-derive it, and the last one who tried wrote "
         "the claim this test exists to prevent."
     )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 8 -- D-084: the rule that decides WHICH channel a finding lands in
+# ---------------------------------------------------------------------------
+#
+# D-068 got `target_kind` into the five carriers, so a stream could finally
+# reach the comment-prose refusal. D-084 is the half that decides whether the
+# refusal ACCEPTS: `vocab.is_spec_required_behaviour_claim` returns True on a
+# non-empty `spec_ref` as its FIRST statement, with no inspection of what the
+# finding says, and again on a requirement id anywhere in the description. A
+# non-empty `spec_ref` is therefore a never-demote denylist match BY ITSELF.
+#
+# That behaviour is deliberate -- `Foundry-Observation`'s live tool
+# description ends "Citing a requirement in spec_ref is by construction enough
+# to keep a finding a defect", and test_observations.py pins it -- so it is
+# not a code defect. The defect was that the PRIMARY CARRIER never said it.
+# Across all five carriers the string `spec_ref` appeared ZERO times outside
+# example JSON, where tracer.md and research-auditor.md showed it as a field
+# to populate on every finding. A stream following its own file to the letter
+# attached a `spec_ref` to a line-drift finding, was refused, fired a false
+# audit tripwire, filed the finding as a defect, and never learned why -- the
+# backlog US-001 exists to stop, re-entering through the report format.
+#
+# This is the D-078 shape (tool behaviour real, describing surface silent) at
+# the carrier GI-001 names, so the prose is what is pinned -- and the pin is
+# DERIVED: the field name is read from the shipped tool registry, the
+# predicate is driven rather than described, and the "documented shape trips
+# it" claim is read out of the agent files' own JSON examples.
+
+_SPEC_REF = "spec_ref"
+
+# The bolded imperative opening the new rule in all five carriers. Bullets are
+# located by it so the assertions are BULLET-scoped: tracer.md and
+# research-auditor.md already contained `spec_ref` in their example JSON, so a
+# file-wide `in text` pin would have been vacuous for half the corpus -- which
+# is precisely how the rule stayed unwritten for eight cycles.
+_SPEC_REF_RULE = "An observation carries no `spec_ref` and names no requirement id."
+
+# The exact finding D-084 drove over the real MCP boundary, varying ONLY
+# spec_ref. Held as one constant so the three-way below differs in nothing
+# else.
+_DRIFT_FINDING = {
+    "description": (
+        "The comment above _mark_phase cites foundry.py:230 but that writer "
+        "now sits at line 244."
+    ),
+    "target_kind": "comment",
+}
+
+
+def _rules_bullet(path: Path, imperative: str) -> str:
+    """The one Rules bullet opening with `imperative`, flattened and bounded.
+
+    Bounded at the NEXT bullet so a token living in a neighbouring rule -- or
+    in an example JSON block elsewhere in the file -- cannot satisfy a pin
+    about this one. Flattened first, because where a markdown reflow put the
+    line break is not a property this module has any business pinning.
+    """
+    flat = _flat(path)
+    marker = f"- **{imperative}**"
+    start = flat.find(marker)
+    if start == -1:
+        return ""
+    tail = flat[start + len(marker) :]
+    stop = tail.find("- **")
+    return marker + (tail if stop == -1 else tail[:stop])
+
+
+def _example_records(path: Path) -> list[dict]:
+    """Every JSON object nested anywhere in a file's normative examples.
+
+    The fences are anchored (``^```json`` ... ``^``` ``) because an unanchored
+    non-greedy match stops at the first ``` INSIDE a block and hands back
+    unparseable text.
+    """
+    found: list[dict] = []
+    for block in re.findall(r"^```json\n(.*?)^```$", _read(path), re.S | re.M):
+        stack: list[object] = [json.loads(block)]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                found.append(node)
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+    return found
+
+
+def test_spec_ref_is_a_real_parameter_on_every_filing_surface() -> None:
+    """Floor check: every pin below is vacuous if the field was renamed.
+
+    Mirrors the ``target_kind`` floor check above, and for the same reason --
+    the prose is the field's only carrier, so a rename on the wire has to fail
+    HERE, naming the five files that must follow it.
+    """
+    for tool in ("Foundry-Defect", "Foundry-Observation"):
+        assert _SPEC_REF in _tool_schema(tool)["properties"], (
+            f"{tool} no longer advertises {_SPEC_REF!r}. If the field was "
+            f"renamed, rename it in the four stream agent files and start.md's "
+            f"F2 roster in the same change."
+        )
+    # Located by SHAPE, exactly as the target_kind floor check locates it: the
+    # array is spelled `findings` on the wire while the prose and the ledger
+    # both call the records defects.
+    sync_props = _tool_schema("Foundry-Sync")["properties"]
+    arrays = [
+        name
+        for name, prop in sync_props.items()
+        if prop.get("type") == "array" and isinstance(prop.get("items"), dict)
+    ]
+    assert len(arrays) == 1, (
+        f"Foundry-Sync now has {arrays} array properties; this check assumed "
+        f"exactly one (the per-finding records). Point it at the right one."
+    )
+    assert _SPEC_REF in sync_props[arrays[0]]["items"]["properties"], (
+        f"Foundry-Sync's per-finding items no longer advertise {_SPEC_REF!r}, "
+        f"so a stream syncing a batch has no way to cite a requirement and the "
+        f"rule the five carriers state is about a field that no longer exists."
+    )
+
+
+def test_a_bare_spec_ref_is_by_itself_a_never_demote_match() -> None:
+    """D-084's drive, over the real dispatchers rather than a description of them.
+
+    One unchanged description, varying only ``spec_ref``. Without it the
+    finding is a textbook observation; with a requirement cited it is refused
+    and the tripwire fires. Nothing about the finding's CONTENT changed
+    between the two, which is the whole point -- and the fact the carriers now
+    have to state.
+    """
+    clean = dict(_DRIFT_FINDING)
+    assert vocab.never_demote_class(clean) is None, (
+        f"a comment-prose finding with no {_SPEC_REF} is no longer demotable. "
+        f"The five carriers now instruct streams to file exactly this shape as "
+        f"an observation; if the denylist rejects it, the instruction is wrong."
+    )
+    assert vocab.observation_class(clean) == vocab.LINE_DRIFT_CITE, (
+        f"the canonical line-drift finding no longer classifies as "
+        f"{vocab.LINE_DRIFT_CITE}; this drive no longer exercises the split."
+    )
+
+    for ref in ("FR-004", "US-002", "research/k8s.md#testing"):
+        cited = dict(_DRIFT_FINDING, spec_ref=ref)
+        assert (
+            vocab.never_demote_class(cited) == vocab.SPEC_REQUIRED_BEHAVIOUR_CLAIM
+        ), (
+            f"{_SPEC_REF}={ref!r} no longer makes this finding undemotable. If "
+            f"the predicate was deliberately narrowed so a bare {_SPEC_REF} is "
+            f"no longer a claim by itself, the five carriers say it still is -- "
+            f"soften them in the same change, and re-check "
+            f"test_observations.py, which pins the boundary behaviour."
+        )
+
+
+def test_a_requirement_id_in_the_description_is_undemotable_too() -> None:
+    """The rule's second half: the denylist also reads the DESCRIPTION.
+
+    Stating only the ``spec_ref`` half would leave a stream free to write the
+    requirement into its prose instead and hit the same refusal, so both
+    halves are stated in all five carriers and both are driven here.
+    """
+    cited = dict(
+        _DRIFT_FINDING,
+        description=_DRIFT_FINDING["description"] + " (see FR-004)",
+    )
+    assert _SPEC_REF not in cited, "this case must isolate the description branch"
+    assert (
+        vocab.never_demote_class(cited) == vocab.SPEC_REQUIRED_BEHAVIOUR_CLAIM
+    ), (
+        "a requirement id inside the description is no longer a never-demote "
+        "match. All five carriers instruct streams to keep requirement ids out "
+        "of an observation's description on the strength of this branch."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_states_the_spec_ref_rule(path: Path) -> None:
+    """D-084: the denylist named a category no stream could evaluate.
+
+    All four already say the denylist covers "a spec-required-behaviour
+    claim". None said that a bare ``spec_ref`` IS one -- so a stream had no
+    way to know the phrase reaches any finding that cites a requirement, and
+    its own report shape attaches one by default.
+    """
+    bullet = _rules_bullet(path, _SPEC_REF_RULE)
+    assert bullet, (
+        f"{_rel(path)} has no `{_SPEC_REF_RULE}` rule in its Rules block. The "
+        f"denylist rule beside it names 'a spec-required-behaviour claim' "
+        f"without saying what makes a finding one, so a stream attaches a "
+        f"{_SPEC_REF} to a line-drift finding, is refused, fires a false audit "
+        f"tripwire, and files the finding as a defect it never learns about."
+    )
+    assert f"`{_SPEC_REF}`" in bullet, (
+        f"{_rel(path)}'s observation rule does not name the `{_SPEC_REF}` "
+        f"field. The field IS the rule -- naming the category without the "
+        f"field is the state D-084 was filed against."
+    )
+    assert "requirement id" in bullet, (
+        f"{_rel(path)}'s observation rule states only the {_SPEC_REF} half. "
+        f"The denylist reads the description too, so a stream told only to "
+        f"clear the field will write the requirement into its prose and hit "
+        f"the identical refusal."
+    )
+    assert "by construction" in bullet, (
+        f"{_rel(path)}'s observation rule does not say the match is MECHANICAL. "
+        f"A stream that reads it as a judgement call will reason that its "
+        f"line-drift finding is not really a behaviour claim, attach the cite, "
+        f"and be refused anyway."
+    )
+    assert "tripwire" in bullet, (
+        f"{_rel(path)}'s observation rule does not state the consequence. The "
+        f"tripwire is an AUDIT signal the lead reviews, so a stream firing one "
+        f"by accident costs more than the refused call."
+    )
+    for tool in ("`Foundry-Observation`", "`Foundry-Defect`"):
+        assert tool in bullet, (
+            f"{_rel(path)}'s observation rule does not name {tool}, so the rule "
+            f"is not bound to a call. Both surfaces take {_SPEC_REF}; the rule "
+            f"is which one it belongs on."
+        )
+
+
+def test_start_md_f2_roster_states_the_spec_ref_rule() -> None:
+    """D-084: the roster half, mirroring GI-001's four-files-plus-roster shape."""
+    text = _read(START_MD)
+    flat = _flat(START_MD)
+    assert _SPEC_REF in text, (
+        f"start.md's F2 roster never names `{_SPEC_REF}`. The roster is where "
+        f"the lead learns what the streams must send, and it is also where the "
+        f"lead learns to read a SPEC_REQUIRED_BEHAVIOUR_CLAIM tripwire over a "
+        f"comment-prose description as a filing bug rather than as a finding."
+    )
+    for phrase in ("by construction", "tripwire", "`Foundry-Observation`"):
+        assert phrase in flat, (
+            f"start.md's F2 roster does not state {phrase!r} in its "
+            f"{_SPEC_REF} ruling, so the roster carries a weaker rule than the "
+            f"four agent files it binds."
+        )
+    assert "no per-run configuration" in flat, (
+        "start.md's F2 roster no longer states that these rules need no "
+        "per-run configuration (AC-003)."
+    )
+
+
+def test_documented_shapes_that_carry_a_spec_ref_are_undemotable() -> None:
+    """The motivating fact, read out of the agent files' OWN examples.
+
+    This is what made D-084 a live trap rather than a documentation gap: the
+    shapes the streams are told to emit populate `spec_ref`, and every such
+    record is refused at `Foundry-Observation` by construction. Read from the
+    files so that a stream shape gaining a `spec_ref` in future is covered the
+    moment it lands, with nobody remembering to add it here.
+    """
+    cited = [
+        (_rel(path), record)
+        for path in STREAM_AGENTS
+        for record in _example_records(path)
+        if str(record.get(_SPEC_REF, "")).strip()
+    ]
+    assert cited, (
+        f"no stream agent's example JSON carries a non-empty {_SPEC_REF} any "
+        f"more. If the field was removed from the shapes rather than QUALIFIED, "
+        f"that is the wrong fix -- {_SPEC_REF} is required on defect findings; "
+        f"it is observations that must leave it empty."
+    )
+    for rel, record in cited:
+        assert vocab.is_spec_required_behaviour_claim(record), (
+            f"{rel} documents a record with {_SPEC_REF}="
+            f"{record.get(_SPEC_REF)!r} that the denylist does NOT match. The "
+            f"file's observation rule tells streams that citing a requirement "
+            f"keeps a finding in the defect ledger by construction; if that is "
+            f"no longer true for a shape the file itself ships, the rule and "
+            f"the example disagree."
+        )
+
+
+@pytest.mark.parametrize(
+    "path", (TRACER, RESEARCH_AUDITOR), ids=lambda p: p.name
+)
+def test_shapes_carrying_a_spec_ref_qualify_it_at_the_example(path: Path) -> None:
+    """D-016's discipline applied to D-084: examples must visibly agree.
+
+    These are the two files whose example JSON shows `spec_ref` as a field on
+    a finding. Left unqualified, the shape reads as "populate this on every
+    finding" -- which is exactly what a stream did before filing a comment-
+    prose observation and being refused. The Rules block alone is not enough:
+    the reader who copies the shape may never reach it.
+    """
+    flat = _flat(path)
+    assert f"`{_SPEC_REF}` appears on" in flat, (
+        f"{_rel(path)}'s example JSON carries `{_SPEC_REF}` without saying "
+        f"which channel it belongs to. Qualify the field at the shape -- do "
+        f"not delete it, it is required on defect findings."
+    )
+    assert "never populated on a comment-prose finding" in flat, (
+        f"{_rel(path)} does not rule out `{_SPEC_REF}` on an observation at "
+        f"the point the shape is shown, so the shape still reads as a field to "
+        f"populate on every finding."
+    )

@@ -1,0 +1,28 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_protocol_prose.py -v -k "spec_ref or requirement_id_in_the_description or documented_shapes or qualify_it_at_the_example"
+# evidence-for: US-001, AC-001, AC-003, FR-003
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: cachedir: .*
+# evidence-volatile: rootdir: .*
+# evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+
+
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpd425eh/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collecting ... collected 165 items / 154 deselected / 11 selected
+
+tests/test_protocol_prose.py::test_spec_ref_is_a_real_parameter_on_every_filing_surface PASSED [  9%]
+tests/test_protocol_prose.py::test_a_bare_spec_ref_is_by_itself_a_never_demote_match PASSED [ 18%]
+tests/test_protocol_prose.py::test_a_requirement_id_in_the_description_is_undemotable_too PASSED [ 27%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_spec_ref_rule[assayer.md] PASSED [ 36%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_spec_ref_rule[tracer.md] PASSED [ 45%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_spec_ref_rule[flow-tracer.md] PASSED [ 54%]
+tests/test_protocol_prose.py::test_each_stream_agent_states_the_spec_ref_rule[research-auditor.md] PASSED [ 63%]
+tests/test_protocol_prose.py::test_start_md_f2_roster_states_the_spec_ref_rule PASSED [ 72%]
+tests/test_protocol_prose.py::test_documented_shapes_that_carry_a_spec_ref_are_undemotable PASSED [ 81%]
+tests/test_protocol_prose.py::test_shapes_carrying_a_spec_ref_qualify_it_at_the_example[tracer.md] PASSED [ 90%]
+tests/test_protocol_prose.py::test_shapes_carrying_a_spec_ref_qualify_it_at_the_example[research-auditor.md] PASSED [100%]
+
+====================== 11 passed, 154 deselected in 0.20s ======================

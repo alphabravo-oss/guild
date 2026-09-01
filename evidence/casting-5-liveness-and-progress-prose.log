@@ -6,12 +6,12 @@
 # evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+
 
 ============================= test session starts ==============================
-platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpicrwcf/bin/python
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpXJp0LM/bin/python
 cachedir: .pytest_cache
 rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collecting ... collected 154 items / 135 deselected / 19 selected
+collecting ... collected 165 items / 146 deselected / 19 selected
 
 tests/test_protocol_prose.py::test_start_md_documents_the_liveness_tool PASSED [  5%]
 tests/test_protocol_prose.py::test_start_md_states_needs_attention_membership_as_the_tool_computes_it PASSED [ 10%]
@@ -33,4 +33,4 @@ tests/test_protocol_prose.py::test_start_md_f2_roster_names_the_stream_progress_
 tests/test_protocol_prose.py::test_start_md_no_ledger_row_describes_both_producers PASSED [ 94%]
 tests/test_protocol_prose.py::test_start_md_no_ledger_row_names_both_producing_phases PASSED [100%]
 
-====================== 19 passed, 135 deselected in 0.04s ======================
+====================== 19 passed, 146 deselected in 0.04s ======================
