@@ -1,13 +1,17 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_vocab.py tests/test_migrate_archive.py tests/test_measure_run.py -q -p no:cacheprovider --deselect tests/test_migrate_archive.py::test_grand_vulture_migration --deselect tests/test_measure_run.py::test_grand_vulture_reports_nfr_001s_two_baseline_numbers
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_vocab.py tests/test_migrate_archive.py tests/test_measure_run.py tests/test_findings_schemas.py -q -p no:cacheprovider --deselect tests/test_migrate_archive.py::test_grand_vulture_migration --deselect tests/test_measure_run.py::test_grand_vulture_reports_nfr_001s_two_baseline_numbers
 # evidence-for: US-006, US-007, FR-013, FR-016, FR-018, FR-021, NFR-003, AC-022, AC-024, AC-026
 # evidence-volatile: /[^ ]*/\.planning/[^ ]*
 # evidence-volatile: \d+\.\d+s
-# evidence-volatile: Installed \d+ packages in \d+ms
 # evidence-timeout: 300
 #
 # The wave-1 test surface: vocab module (FR-013), archive migration
 # (FR-021/NFR-003/AC-026), instrumentation repair (FR-018/AC-024) and the
 # bash-twin retirement (FR-016/AC-022, pinned by test_bash_twin_deleted).
+# tests/test_findings_schemas.py joins the selection at GRIND-7: D-071 found
+# schemas/findings.py to be a SEVENTH copy of the vocabularies FR-013
+# reconciled, so the pin that a skill and the validator it names cannot
+# disagree belongs to this log's FR-013 binding.
+#
 # The two grand-vulture tests are DESELECTED here because they read the
 # git-ignored foundry-archive/grand-vulture, which is absent from an
 # isolated re-execution worktree; their passing output is recorded in the
@@ -15,9 +19,20 @@
 # committed synthetic fixtures under tests/fixtures/migrate_archive/ —
 # pre_change for the six steps, clean_last_cycle for D-060's ordinary case
 # (a clean final INSPECT whose marker cycle exceeds every defect cycle).
+#
+# D-075: `--quiet` sits between `uv run` and the program, which is the only
+# position that suppresses uv's own cold-worktree preamble (the venv-creation
+# and package-install lines, plus the VIRTUAL_ENV mismatch warning). pytest's
+# own -q does nothing for uv, and `# evidence-volatile:` cannot help because
+# it SUBSTITUTES matches and never deletes lines — the preamble is 0 lines in
+# a warm tree and 5+ in a cold one. The `Installed \d+ packages in \d+ms`
+# volatile line the pre-fix header carried is therefore dropped: it was an
+# attempt to redact one line of that preamble, and with --quiet no such line
+# is ever emitted. Body below regenerated in a COLD `git worktree add
+# --detach`, which is the only environment EVID-01 ever runs this in.
 
-........................................................................ [ 77%]
-.s...................                                                    [100%]
+........................................................................ [ 58%]
+....s..............................................                      [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
-92 passed, 1 skipped, 2 deselected in 3.42s
+SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/var/folders/kq/jm1bf9811z512rncmlpl7s200000gn/T/tmp.uc9RsCTQL3/cold/.planning/phases/09-milestone-real-run-consolidation/runs
+122 passed, 1 skipped, 2 deselected in 4.07s

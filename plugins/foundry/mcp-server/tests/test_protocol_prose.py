@@ -1964,6 +1964,48 @@ def _liveness_section() -> str:
     return " ".join(text[start:end].split())
 
 
+def _liveness_row(status: str) -> str:
+    """Return the one liveness-table row whose first cell is ``status``.
+
+    D-079: asserting a row's rule against the whole SECTION is what made the
+    previous `done` pin defeatable. PROVE deleted the row's exception clause
+    outright and added one unrelated sentence containing the word "unless"
+    elsewhere in the section, and the pin stayed green. A qualifier only
+    qualifies the claim it sits next to, so it has to be asserted in the cell
+    that makes the claim -- never in the section that contains it.
+    """
+    text = _read(START_MD)
+    start = text.find(_LIVENESS_HEADING)
+    assert start != -1, f"start.md has no {_LIVENESS_HEADING!r} section."
+    end = text.find(_LIVENESS_END, start)
+    assert end != -1, "start.md's liveness section is not followed by CONTEXT MANAGEMENT."
+
+    prefix = f"| `{status}` |"
+    rows = [
+        line for line in text[start:end].splitlines() if line.startswith(prefix)
+    ]
+    assert len(rows) == 1, (
+        f"start.md's liveness table has {len(rows)} rows beginning {prefix!r}, "
+        f"expected exactly 1. Every status in the vocabulary gets one row, and "
+        f"a lead reading two rows for one status cannot tell which rule applies."
+    )
+    return rows[0]
+
+
+def _statuses_named_in(cell: str) -> set[str]:
+    """Return the liveness statuses written as code spans inside ``cell``.
+
+    Same filter as ``_statuses_named_after``: a code span that is not a member
+    of the real vocabulary is not a status, and a MISSPELLED one is dropped
+    rather than accepted, so a typo turns a set comparison red.
+    """
+    return {
+        token
+        for token in _CODE_SPAN_RE.findall(cell)
+        if token in fs.PROGRESS_STATUSES
+    }
+
+
 def _both_no_ledger_shapes(tmp_path: Path) -> tuple[dict, dict]:
     """Build one real record from each ``no_ledger`` producer.
 
@@ -2118,12 +2160,59 @@ def _write_dispatch(fdir: Path, casting_id: int, age_seconds: float) -> None:
         )
 
 
-def _liveness_status(project_root: Path, fdir: Path, agent: str) -> str:
+def _liveness_row_for(project_root: Path, fdir: Path, agent: str) -> dict:
     (fdir / "state.json").write_text(json.dumps({"phase": "F3"}), encoding="utf-8")
     result = fs.foundry_liveness(project_root=str(project_root))
     by_agent = {r["agent"]: r for r in result["agents"]}
     assert agent in by_agent, f"{agent} absent from {sorted(by_agent)}"
-    return by_agent[agent]["status"]
+    return by_agent[agent]
+
+
+def _terminal_ledger_cases(tmp_path: Path) -> dict[str, dict]:
+    """Drive every case a ledger ending in a terminal line can produce.
+
+    The four cases are the cross product of the ``superseded`` branch's two
+    real conditions (foundry_spawn.py#_agent_liveness_record):
+
+        superseded = dispatch is not None and dispatch["moment"] > last["moment"]
+
+    where ``dispatch`` is ``overdue.get(...)`` and ``overdue`` is filtered to
+    dispatches at least ``threshold`` old (foundry_spawn.py#foundry_liveness).
+    So a dispatch overrules a terminal line only when it is BOTH newer than
+    that line AND already past the threshold -- and the case that separates
+    the two conditions is "newer but young", which still reports `done`.
+
+    Everything the pin below asserts about start.md's prose is computed from
+    these four real records. Nothing is typed twice.
+    """
+    agent = fs._agent_id_for_casting("1")
+    ledger_age = 5 * fs.STALL_THRESHOLD_SECONDS
+    cases = {
+        # No dispatch at all: the plain precedence, D-052's original ruling.
+        "no dispatch": None,
+        # Dispatched, but BEFORE the terminal line -- the agent finished the
+        # work it was last asked for, so terminal still wins.
+        "dispatch older than the terminal line": 9 * fs.STALL_THRESHOLD_SECONDS,
+        # Dispatched AFTER the terminal line but younger than the threshold.
+        # This is the case D-080 filed: the prose promised an overrule here
+        # and the code does not perform one.
+        "newer dispatch inside the threshold": fs.STALL_THRESHOLD_SECONDS * 0.01,
+        # Dispatched after the terminal line AND overdue -- both conditions.
+        "newer dispatch past the threshold": 3 * fs.STALL_THRESHOLD_SECONDS,
+    }
+
+    rows: dict[str, dict] = {}
+    for index, (label, dispatch_age) in enumerate(cases.items()):
+        root = tmp_path / f"case{index}"
+        fdir = _activate(root, f"d80-case{index}")
+        try:
+            _write_terminal_ledger(fdir, agent, age_seconds=ledger_age)
+            if dispatch_age is not None:
+                _write_dispatch(fdir, 1, age_seconds=dispatch_age)
+            rows[label] = _liveness_row_for(root, fdir, agent)
+        finally:
+            foundry_state.clear_active_run()
+    return rows
 
 
 def test_start_md_done_row_states_the_supersede_exception(tmp_path: Path) -> None:
@@ -2135,59 +2224,101 @@ def test_start_md_done_row_states_the_supersede_exception(tmp_path: Path) -> Non
     pin that defended it was the bare literal -- so the prose and the pin were
     wrong together and a fixer correcting either one broke the other.
 
-    Both halves are asserted here on purpose. The prose must state the
-    precedence AND its exception; the matched pair below proves the exception
-    is real, so if the supersede branch is ever removed this test names the
-    prose that must lose its exception clause rather than leaving a false
-    qualification behind. That is the property the old pin lacked: it tracks
-    the RULE, not one fragment of one sentence.
+    D-079 then found the replacement pin defeatable in the same shape it was
+    written to close. Its prose half was two literals -- ``"outranks every age
+    check" in section`` and ``"unless" in section.lower()`` -- and the second
+    was a bare token searched against the WHOLE liveness section. PROVE deleted
+    the exception clause from the `done` row outright, restoring D-067's stale
+    absolute, appended one unrelated sentence containing the word "unless"
+    elsewhere in the section, and the test passed green.
+
+    So both weaknesses are fixed here. Every assertion is SCOPED to the `done`
+    row's own cell -- a qualifier only qualifies the claim beside it -- and
+    every required token is COMPUTED from the four real records in
+    ``_terminal_ledger_cases``, never typed:
+
+      * the field set the prose must name is the symmetric difference between
+        the "newer but young" row and the "newer and overdue" row, which is
+        exactly what the age condition adds;
+      * the statuses the row may name are exactly the statuses the four drives
+        actually produced.
+
+    A code change on either side moves the requirement with it: drop the
+    overdue filter and the young case stops reporting `done`, collapsing the
+    difference and firing the guard below; make `no_progress` reachable and the
+    status-set comparison names the prose that must learn about it.
+
+    One literal survives on purpose. "outranks every age check" is the sentence
+    D-052 bought, and no derivation can check an English claim of precedence --
+    the drives prove the claim is TRUE, and the literal proves it is still
+    STATED. Scoped to the row, it is not the defect D-079 filed.
     """
-    section = _liveness_section()
-    assert "outranks every age check" in section, (
+    rows = _terminal_ledger_cases(tmp_path)
+    row = _liveness_row(fs.STATUS_DONE)
+
+    # --- what the code actually does, established before reading any prose ---
+    observed = {label: record["status"] for label, record in rows.items()}
+    overruled = "newer dispatch past the threshold"
+    young = "newer dispatch inside the threshold"
+
+    assert observed[overruled] != fs.STATUS_DONE, (
+        f"a terminal line followed by a newer, overdue dispatch reported "
+        f"`{observed[overruled]}` -- expected anything but `{fs.STATUS_DONE}`. "
+        f"If the supersede branch was deliberately removed, start.md's `done` "
+        f"row must lose its exception clause in the same change; a false "
+        f"qualification is as bad as the false absolute D-067 filed."
+    )
+    for label in ("no dispatch", "dispatch older than the terminal line", young):
+        assert observed[label] == fs.STATUS_DONE, (
+            f"the case '{label}' reported `{observed[label]}`, not "
+            f"`{fs.STATUS_DONE}`. All three are cases where the terminal line "
+            f"still wins, and start.md's row promises they do: the precedence "
+            f"itself (D-052), a dispatch that preceded the line, and a "
+            f"re-dispatch younger than the threshold (D-080). A code change "
+            f"that overrules any of them must rewrite the row in the same pass."
+        )
+
+    # --- the prose must state the precedence, and state it conditionally ---
+    assert "outranks every age check" in row, (
         "start.md's `done` row no longer states the precedence at all. With no "
         "precedence a lead reads a 3600s-old finished agent as a stalled one, "
         "which is D-052. The fix for D-067 was to QUALIFY this sentence, not "
         "to delete it."
     )
-    assert "unless" in section.lower(), (
-        "start.md's `done` row states the precedence unconditionally. It is "
-        "conditional: a dispatch newer than the terminal line overrules it "
-        "(foundry_spawn.py#_agent_record, the `superseded` branch). An "
-        "unqualified sentence is what D-067 filed."
+
+    discriminators = sorted(set(rows[overruled]) ^ set(rows[young]))
+    assert discriminators, (
+        f"the overruled row and the young-dispatch row now carry identical "
+        f"field sets, so nothing on a row tells the lead which of the two "
+        f"supersede conditions it is looking at. Either the threshold filter "
+        f"on `overdue` was removed -- in which case start.md's `done` row must "
+        f"lose its age qualifier in the same change -- or the dispatch "
+        f"annotation was, in which case the row must stop pointing at fields "
+        f"it no longer has. Re-read the row before touching this assertion."
+    )
+    unnamed = [field for field in discriminators if f"`{field}`" not in row]
+    assert not unnamed, (
+        f"start.md's `done` row never names {unnamed}. Those fields are exactly "
+        f"what the SECOND supersede condition adds to a row (present on "
+        f"{sorted(set(rows[overruled]) - set(rows[young]))}, absent on "
+        f"{sorted(set(rows[young]) - set(rows[overruled]))}), and a row that "
+        f"states only the first condition promises an overrule the tool does "
+        f"not perform -- D-080 exactly. An agent re-dispatched inside the "
+        f"threshold still reports `{fs.STATUS_DONE}`."
     )
 
-    agent = fs._agent_id_for_casting("1")
-    try:
-        # Control: the last dispatch PRECEDES the terminal line, so the agent
-        # finished the work it was last asked for. Terminal wins.
-        root = tmp_path / "control"
-        fdir = _activate(root, "d67-control")
-        _write_terminal_ledger(fdir, agent, age_seconds=5000)
-        _write_dispatch(fdir, 1, age_seconds=9000)
-        assert _liveness_status(root, fdir, agent) == fs.STATUS_DONE, (
-            "a terminal line with no NEWER dispatch no longer reports `done`. "
-            "The precedence start.md states has been lost in the code."
-        )
-    finally:
-        foundry_state.clear_active_run()
-
-    try:
-        # Superseded: the run dispatched this agent again AFTER it wrote
-        # `done`, so the terminal line retires the old work, not the agent.
-        root = tmp_path / "superseded"
-        fdir = _activate(root, "d67-superseded")
-        _write_terminal_ledger(fdir, agent, age_seconds=5000)
-        _write_dispatch(fdir, 1, age_seconds=3000)
-        status = _liveness_status(root, fdir, agent)
-        assert status != fs.STATUS_DONE, (
-            f"a terminal line followed by a NEWER dispatch reported `{status}`"
-            f" -- expected anything but `{fs.STATUS_DONE}`. If the supersede "
-            f"branch was deliberately removed, start.md's `done` row must lose "
-            f"its 'unless' clause in the same change; a false qualification is "
-            f"as bad as the false absolute D-067 filed."
-        )
-    finally:
-        foundry_state.clear_active_run()
+    # --- the remedy may name only the statuses the drives actually reached ---
+    named = _statuses_named_in(row)
+    reachable = set(observed.values())
+    assert named == reachable, (
+        f"start.md's `done` row names {sorted(named)}; a ledger ending in a "
+        f"terminal line can only ever report {sorted(reachable)}. Naming a "
+        f"status it cannot reach sends the lead hunting for a row that will "
+        f"never appear -- the row claimed `{fs.STATUS_NO_PROGRESS}` for six "
+        f"cycles, and an overruled agent's last line always predates a "
+        f"dispatch that is already past the threshold, so the "
+        f"`{fs.STATUS_STALLED}` branch is reached first every time."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2506,6 +2637,113 @@ def test_stream_completion_instructions_name_every_required_argument(path: Path)
 # ---------------------------------------------------------------------------
 # D-073 -- a cite-policy rollout that asserted a validator check nobody wrote
 # ---------------------------------------------------------------------------
+
+
+def _drive_dimension8(
+    tmp_path: Path,
+    run_name: str,
+    coverage_list: list[str],
+    source_inventory: list[str] | None = None,
+) -> list[dict]:
+    """Run the real migration validator and return Dimension 8's issues.
+
+    Builds a genuine MIGRATION manifest and calls ``foundry_validate_castings``
+    -- no stubbing of the check under test, because the claim in the prose is
+    about what the shipped validator does.
+    """
+    fdir = tmp_path / foundry_state.ARCHIVE_DIR / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    manifest: dict = {
+        "spec_type": "MIGRATION",
+        "castings": [
+            {
+                "id": 1,
+                "title": "Coverage entry shape",
+                "spec_text": "",
+                "observable_truths": ["a", "b", "c"],
+                "key_files": ["src/one.go"],
+                "must_haves": {
+                    "truths": ["ports the thing"],
+                    "artifacts": [{"path": "src/one.go"}],
+                    "key_links": [],
+                    "coverage_list": coverage_list,
+                },
+            }
+        ],
+    }
+    if source_inventory is not None:
+        manifest["source_inventory"] = source_inventory
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (fdir / "spec.md").write_text("", encoding="utf-8")
+
+    foundry_state.set_active_run(run_name)
+    try:
+        result = foundry_validate_castings(str(tmp_path))
+    finally:
+        foundry_state.clear_active_run()
+    return result["dimensions"]["migration_coverage"]["issues"]
+
+
+def test_a_respelled_coverage_entry_is_caught_only_under_an_inventory(
+    tmp_path: Path,
+) -> None:
+    """D-081: "caught nowhere in the pipeline" is false in one branch.
+
+    D-073's fix replaced one false claim with a narrower one that is still
+    false when a manifest declares a ``source_inventory``. Dimension 8 then
+    cross-checks the coverage entries against that inventory
+    (foundry_validate.py#foundry_validate_castings), so a re-spelled entry
+    orphans its inventory counterpart and the counterpart is flagged. The
+    claim held only for manifests with no inventory, and the prose stated it
+    unconditionally.
+
+    Both branches are driven here because the qualifier is the whole point:
+    without the no-inventory half, a later fixer reading only the flagged case
+    would "correct" the prose back into claiming a guarantee that most
+    manifests do not have. The token the prose must use is taken from the
+    issue the validator really emitted, not typed.
+    """
+    inventory_entry = "src/one.go:TestAlpha"
+    respelled = "src/one.go:TestAlpah"
+
+    without = _drive_dimension8(tmp_path, "d81-no-inventory", [respelled])
+    assert not without, (
+        f"a re-spelled coverage entry was flagged with no `source_inventory` "
+        f"declared ({without}). coverage-diff.md says a manifest without an "
+        f"inventory gets no spelling check at all -- if one was added, that "
+        f"sentence must be rewritten in the same change."
+    )
+
+    with_inventory = _drive_dimension8(
+        tmp_path, "d81-inventory", [respelled], source_inventory=[inventory_entry]
+    )
+    flagged = [issue for issue in with_inventory if issue.get("entry") == inventory_entry]
+    assert flagged, (
+        f"a re-spelled coverage entry left `{inventory_entry}` unclaimed and "
+        f"the declared `source_inventory` did not flag it ({with_inventory}). "
+        f"That branch is the ONLY thing that catches a re-spelling, so if it "
+        f"was removed coverage-diff.md may go back to saying a re-spelled "
+        f"entry is caught nowhere -- update the prose rather than leaving it "
+        f"describing a check that no longer runs."
+    )
+
+    flat = _flat(COVERAGE_DIFF)
+    for token in ("source_inventory", flagged[0]["issue"]):
+        assert token in flat, (
+            f"coverage-diff.md never names `{token}`. The re-spelling claim is "
+            f"conditional on it: with an inventory declared the validator "
+            f"emits `{flagged[0]['issue']}` for the orphaned counterpart, and "
+            f"an agent told the shape is checked nowhere will not go looking "
+            f"for the one issue that would have caught its typo."
+        )
+    assert "caught nowhere in the pipeline. A **re-spelled**" in flat, (
+        "coverage-diff.md states the 'caught nowhere' claim without splitting "
+        "the colonless case from the re-spelled one. Colonless is caught "
+        "nowhere unconditionally; re-spelled is caught under a declared "
+        "`source_inventory`. One unqualified sentence covering both is D-081."
+    )
 
 
 def test_the_coverage_entry_shape_is_unenforced(tmp_path: Path) -> None:

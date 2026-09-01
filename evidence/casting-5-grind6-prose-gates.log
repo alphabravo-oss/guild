@@ -6,12 +6,12 @@
 # evidence-volatile: platform \S+ -- Python \S+, pytest-\S+, pluggy-\S+ -- \S+
 
 ============================= test session starts ==============================
-platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmp8mKP6Z/bin/python
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpEkalyh/bin/python
 cachedir: .pytest_cache
 rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collecting ... collected 153 items / 134 deselected / 19 selected
+collecting ... collected 154 items / 135 deselected / 19 selected
 
 tests/test_protocol_prose.py::test_start_md_acceptance_step_names_every_accept_casting_parameter PASSED [  5%]
 tests/test_protocol_prose.py::test_start_md_says_what_supplying_casting_commit_engages PASSED [ 10%]
@@ -33,4 +33,4 @@ tests/test_protocol_prose.py::test_stream_completion_instructions_name_every_req
 tests/test_protocol_prose.py::test_the_coverage_entry_shape_is_unenforced PASSED [ 94%]
 tests/test_protocol_prose.py::test_coverage_diff_does_not_claim_validator_enforcement PASSED [100%]
 
-====================== 19 passed, 134 deselected in 0.21s ======================
+====================== 19 passed, 135 deselected in 0.22s ======================
