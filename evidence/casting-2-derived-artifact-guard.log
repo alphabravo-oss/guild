@@ -91,4 +91,4 @@
    <pkg>/schemas/oserror_decode.py    ['oserror_decode.py::_load_manifest:5 leaks UnicodeDecodeError']
 
 == the three package-wide assertions, driven ==
-5 passed, 206 deselected in 0.93s
+5 passed, 247 deselected in 0.99s

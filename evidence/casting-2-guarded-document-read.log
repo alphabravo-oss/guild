@@ -84,4 +84,4 @@
    Foundry-Cast-Wave        ok=True  read-fault reported=False
 
 == the decode rule over the installed package, and over planted copies ==
-4 passed, 207 deselected in 0.40s
+4 passed, 248 deselected in 0.37s

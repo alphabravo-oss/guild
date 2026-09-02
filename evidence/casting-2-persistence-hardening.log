@@ -21,6 +21,7 @@
 # The driver is a helper in the test module, so this demonstration and the
 # assertions that pin it cannot drift apart.
 #
+
 == PRE-fix: raw json.loads(read_text()), no shape check, no guard ==
    artifact                 truncated     list          null          string      
    state.json               BRICKS 3/6    BRICKS 3/6    BRICKS 3/6    BRICKS 3/6  
@@ -41,6 +42,6 @@
    castings/manifest.json   names 6/6     names 6/6     names 6/6     names 6/6   
    -> 0 of 24 brick at least one tool, 24 of 24 name the offending file
 == the pins ==
-........................................................................ [ 91%]
-.......                                                                  [100%]
-79 passed, 164 deselected in 0.77s
+........................................................................ [ 90%]
+........                                                                 [100%]
+80 passed, 207 deselected in 0.82s

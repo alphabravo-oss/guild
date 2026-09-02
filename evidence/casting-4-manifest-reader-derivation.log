@@ -84,15 +84,9 @@ AXIS 3 — WHICH READERS (taint from the literal, across calls and
 
 VERDICT — reaches inside a manifest record with nobody having
           established its shape:
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#_append_to_manifest_evidence_provenance
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_check_sight_required
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_trace_skip_check
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#foundry_gate
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#_fingerprint_inputs
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#foundry_validate_castings
 
 NOT LISTED, and not by exemption — these pass the same rule:
   foundry_spawn.py                    (routes through the validator)
   scripts/validate_intent_coverage.py (isinstance-guards the rung it indexes)
 .
-1 passed, 91 deselected in 0.56s
+1 passed, 91 deselected in 0.53s

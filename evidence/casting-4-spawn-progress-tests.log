@@ -242,7 +242,7 @@ tests/test_spawn_progress.py::test_the_read_scan_does_not_accept_a_guard_in_the_
 tests/test_spawn_progress.py::test_the_manifest_scan_looks_in_both_shipped_source_trees PASSED [ 80%]
 tests/test_spawn_progress.py::test_the_record_rungs_come_out_of_the_shape_table PASSED [ 81%]
 tests/test_spawn_progress.py::test_the_locked_validator_names_are_still_the_ones_the_scan_looks_for PASSED [ 82%]
-tests/test_spawn_progress.py::test_every_manifest_record_reader_in_the_package_establishes_the_shape FAILED [ 83%]
+tests/test_spawn_progress.py::test_every_manifest_record_reader_in_the_package_establishes_the_shape PASSED [ 83%]
 tests/test_spawn_progress.py::test_the_manifest_scan_catches_a_reader_planted_in_a_new_module PASSED [ 84%]
 tests/test_spawn_progress.py::test_a_planted_reader_is_cleared_by_either_route_and_by_neither_alone PASSED [ 85%]
 tests/test_spawn_progress.py::test_the_scan_follows_the_manifest_through_a_call PASSED [ 86%]
@@ -259,61 +259,4 @@ tests/test_spawn_progress.py::test_an_unresolvable_handler_name_is_reported_not_
 tests/test_spawn_progress.py::test_render_decode_read_derivation PASSED  [ 98%]
 tests/test_spawn_progress.py::test_render_manifest_reader_derivation PASSED [100%]
 
-=================================== FAILURES ===================================
-____ test_every_manifest_record_reader_in_the_package_establishes_the_shape ____
-
-    def test_every_manifest_record_reader_in_the_package_establishes_the_shape() -> None:
-        """D-134, as a property of every module that reads castings/manifest.json.
-    
-        RED at 9b12e0f on SIX functions, not the two the report named — and the
-        four the hand search missed are the argument for the scan. Every one was
-        driven and every one raises ``AttributeError`` across the MCP boundary on
-        ``{"castings": [1,2,3]}`` or ``{"castings": "nope"}``:
-    
-          foundry_orchestrator.py#_check_sight_required   Foundry-Next  (reported)
-          foundry_orchestrator.py#foundry_gate            Foundry-Gate  (found)
-          foundry_orchestrator.py#_trace_skip_check       Foundry-Next's TRACE-skip
-                                                                        (found)
-          foundry_validate.py#foundry_validate_castings   Foundry-Validate-Castings
-                                                                        (reported)
-          foundry_validate.py#_fingerprint_inputs         same door, one call deeper
-                                                                        (found)
-          evidence.py#_append_to_manifest_evidence_provenance
-                                                          evidence verification
-                                                                        (found)
-    
-        ``scripts/validate_intent_coverage.py#load_manifest_casting_ids`` reads the
-        same document and is NOT here, because it isinstance-guards the rung it
-        indexes — recognised by the rule, not by an allow-list. There is no
-        allow-list to add anything to.
-        """
-        offenders = [o for p in _scanned_modules() for o in _unestablished_record_indexes(p)]
-    
->       assert not offenders, (
-            "these reach INSIDE a castings/manifest.json record without "
-            "establishing its shape first, so a manifest whose `castings` or "
-            "`waves` is a string, a list of ints or a list of nulls meets `.get()` "
-            "and raises AttributeError across the MCP boundary — a traceback "
-            "naming no file, from doors whose whole error contract is a named "
-            "refusal:\n  " + "\n  ".join(offenders) + "\n"
-            "Call foundry_spawn's `_manifest_shape_error` (a refusing door) or "
-            "`_manifest_shape_problem` (a tolerant reader) before indexing, or "
-            "isinstance-guard the record you index. A caller that establishes the "
-            "shape covers the helpers it hands the document to, so guarding the "
-            "door usually clears everything below it. There is no allow-list here: "
-            "the guarded readers pass on their own merits."
-        )
-E       AssertionError: these reach INSIDE a castings/manifest.json record without establishing its shape first, so a manifest whose `castings` or `waves` is a string, a list of ints or a list of nulls meets `.get()` and raises AttributeError across the MCP boundary — a traceback naming no file, from doors whose whole error contract is a named refusal:
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#_append_to_manifest_evidence_provenance
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_check_sight_required
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_trace_skip_check
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#foundry_gate
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#_fingerprint_inputs
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#foundry_validate_castings
-E         Call foundry_spawn's `_manifest_shape_error` (a refusing door) or `_manifest_shape_problem` (a tolerant reader) before indexing, or isinstance-guard the record you index. A caller that establishes the shape covers the helpers it hands the document to, so guarding the door usually clears everything below it. There is no allow-list here: the guarded readers pass on their own merits.
-E       assert not ['plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#_append_to_manifest_evidence_provenance', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_check_sight_required', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_trace_skip_check', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#foundry_gate', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#_fingerprint_inputs', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#foundry_validate_castings']
-
-tests/test_spawn_progress.py:2304: AssertionError
-=========================== short test summary info ============================
-FAILED tests/test_spawn_progress.py::test_every_manifest_record_reader_in_the_package_establishes_the_shape
-========================= 1 failed, 91 passed in 3.85s =========================
+============================== 92 passed in 3.79s ==============================

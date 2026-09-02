@@ -60,12 +60,13 @@
 # snapshot IS the thing the claim is about. The replacement emits a fixed
 # string carrying no counts, hashes or line numbers, so it cannot go stale when
 # a later cycle edits server.py.
+
 == a raw cycle read now sits in server.py: the package ROOT, not tools/ ==
   tools/ directory literal (D-066) -> []
   derived over the package     -> ['server.py::_sneaky_cycle_reader:955']
 == and the guard itself, on the same mutated tree ==
 E       assert not ['server.py::_sneaky_cycle_reader:955']
-1 failed, 207 deselected in 0.43s
+1 failed, 251 deselected in 0.44s
 == server.py restored: byte-identical to the pre-mutation snapshot, appended reader gone ==
 == both tests green on the unmutated tree ==
-2 passed, 206 deselected in 0.45s
+2 passed, 250 deselected in 0.40s

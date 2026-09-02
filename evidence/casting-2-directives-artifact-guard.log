@@ -37,12 +37,13 @@
 # readable directive still clears with count 1 and still writes
 # directives-cleared.md, and every *.json member was already NAMED before this
 # change and still is (NFR-002 -- the fix widens, it narrows nothing).
-== D-129: corrupt one artifact at a time; who reports it by name? ==
-   artifact                 PRE-fix      post-fix
-   --------                 -------      --------
-   defects.json             NAMED        NAMED
-   directives.md            invisible    NAMED
-   spec.md                  invisible    NAMED
+
+== corrupt one artifact at a time; which rule reports it by name? ==
+   artifact                           *.json      D-129       D-138
+   --------                           ------      -----       -----
+   defects.json                       NAMED       NAMED       NAMED
+   directives.md                      invisible   NAMED       NAMED
+   spec.md                            invisible   NAMED       NAMED
 
 == the repro, end to end through the real tools ==
    readable  Foundry-Next  directive visible ......... True
@@ -62,4 +63,4 @@
    readable  archive carries the directive text .... True
 
 == the pins, driven ==
-6 passed, 202 deselected in 0.24s
+5 passed, 247 deselected in 0.26s
