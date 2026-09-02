@@ -35,77 +35,79 @@
 
 <table>
 <tr>
-<td width="25%" align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>📐</h2>
 <b><a href="plugins/forge">forge</a></b><br/>
 <sub>Interviews you.<br/>Emits a locked spec.</sub><br/><br/>
 <code>/forge:plan</code>
 </td>
-<td width="25%" align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🏭</h2>
 <b><a href="plugins/foundry">foundry</a></b><br/>
 <sub>Builds the spec.<br/>Fully autonomous.</sub><br/><br/>
 <code>/foundry:start</code>
 </td>
-<td width="25%" align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>⚗️</h2>
 <b><a href="plugins/crucible">crucible</a></b><br/>
 <sub>Foundry, mini.<br/>No MCP, no interview.</sub><br/><br/>
 <code>/crucible:build</code>
 </td>
-<td width="25%" align="center" valign="top">
+</tr>
+<tr>
+<td width="33%" align="center" valign="top">
 <h2>🤖</h2>
 <b><a href="plugins/crew">crew</a></b><br/>
 <sub>Owns the outcome.<br/>Five agents, one job.</sub><br/><br/>
 <code>/crew:do</code>
 </td>
-</tr>
-<tr>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🧭</h2>
 <b><a href="plugins/adhoc">adhoc</a></b><br/>
 <sub>Blocks citations<br/>it never verified.</sub><br/><br/>
 <code>always on</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>⚡</h2>
 <b><a href="plugins/tldr">tldr</a></b><br/>
 <sub>Action first.<br/>No preamble.</sub><br/><br/>
 <code>always on</code>
 </td>
-<td align="center" valign="top">
+</tr>
+<tr>
+<td width="33%" align="center" valign="top">
 <h2>🔍</h2>
 <b><a href="plugins/holmes">holmes</a></b><br/>
 <sub>Shaped right,<br/>or accreted?</sub><br/><br/>
 <code>/holmes:review</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>👁️</h2>
 <b><a href="plugins/ux-review">ux-review</a></b><br/>
 <sub>Drives the app.<br/>Doesn't read code.</sub><br/><br/>
 <code>/ux-review:run</code>
 </td>
-</tr>
-<tr>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🎨</h2>
 <b><a href="plugins/damu">damu</a></b><br/>
 <sub>De-AI my UI.<br/>19 slop signatures.</sub><br/><br/>
 <code>/damu:remediate</code>
 </td>
-<td align="center" valign="top">
+</tr>
+<tr>
+<td width="33%" align="center" valign="top">
 <h2>🧹</h2>
 <b><a href="plugins/tidy">tidy</a></b><br/>
 <sub>7-track cleanup.<br/>HIGH-confidence only.</sub><br/><br/>
 <code>/tidy:run</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🎭</h2>
 <b><a href="plugins/e2e">e2e</a></b><br/>
 <sub>Describe the flow.<br/>Get a passing spec.</sub><br/><br/>
 <code>/e2e:write</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🕸️</h2>
 <b><a href="plugins/weave">weave</a></b><br/>
 <sub>Authors Workflow<br/>scripts on demand.</sub><br/><br/>
@@ -113,13 +115,13 @@
 </td>
 </tr>
 <tr>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>📖</h2>
 <b><a href="plugins/webster">webster</a></b><br/>
 <sub>Harvester-shaped docs<br/>that cite their sources.</sub><br/><br/>
 <code>/webster:plan</code>
 </td>
-<td colspan="3"></td>
+<td colspan="2"></td>
 </tr>
 </table>
 
