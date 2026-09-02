@@ -86,11 +86,10 @@
 # disappear — so a matcher that stops recognising `read_text` fails BY NAME
 # rather than reporting a clean package (D-142).
 #
-
 SUBJECT   every decode site in both shipped source trees, membership
           derived by rglob from the package's own __file__ (D-146)
-          /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server/src/foundry_mcp 
-          /Users/rayjanoka/ab/code/guild/plugins/foundry/scripts 
+          plugins/foundry/mcp-server/src/foundry_mcp 
+          plugins/foundry/scripts 
 READS     6 decode sites found in 30 modules
 OFFENDERS 0 not covered for the decode family
 UNRESOLVED handler spellings: none
@@ -112,4 +111,4 @@ A FRESH MEMBER PLANTED IN EACH SHAPE THIS MODULE HAS WORN:
 
 VERDICT — reads a file's text with the decode family uncovered:
 .
-1 passed, 112 deselected in 0.38s
+1 passed, 115 deselected in 0.37s

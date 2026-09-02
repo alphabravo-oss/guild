@@ -3,17 +3,16 @@
 # evidence-volatile: rootdir: \S+
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/b593f94e-e88b-444d-bfde-c9e6fb4f6ce0/scratchpad/wt-lead/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 206 items
+collected 221 items
 
-tests/test_evidence.py ................................................. [ 23%]
-........................................................................ [ 58%]
-........................................................................ [ 93%]
-.............                                                            [100%]
+tests/test_evidence.py ................................................. [ 22%]
+........................................................................ [ 54%]
+........................................................................ [ 87%]
+............................                                             [100%]
 
-============================= 206 passed in 55.83s =============================
+============================= 221 passed in 57.07s =============================
