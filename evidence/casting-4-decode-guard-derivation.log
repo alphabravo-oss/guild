@@ -51,11 +51,40 @@
 # `properly_guarded` is absent from the offender list on its own merits — the
 # thing it is guarded by is its own try/except, not an entry on a list.
 #
-# "2 file reads found" is not a shrinking scan; it is the two spawns.log
-# APPENDS, which are the only read_text/open calls left in the module now that
-# every read routes through the primitive. The assertion that the scan must
-# see something is what turns a future zero into a failure instead of a green
-# test asserting nothing.
+# GRIND-21 / D-146 — THE SAME RULE, NOW OVER THE SHIPPED SOURCE. The scan
+# above was bound to `Path(fs.__file__)`: one module, derived over its every
+# read, and blind to every other module in the package. Its three sibling
+# structural rules all derived membership over `_package_modules`; this one did
+# not, and PROVE proved the difference by planting an unguarded `read_text` in
+# a NEW subpackage, in foundry_validate.py and in foundry_orchestrator.py, all
+# three GREEN against the full 1756-test suite. Membership now comes from the
+# same `_scanned_roots` rglob the manifest rule uses, over both shipped trees.
+#
+# THE PREDICATE IS DERIVED TOO, AND THAT IS THE HALF THE CLASS RETREATED INTO.
+# Going package-wide with `open` as a bare NAME reported 41 sites, of which
+# eighteen cannot decode a byte: append-only log writes, a `"rb"` handle, and
+# `"a+"` handles opened only to hold an flock. So each axis is asked of Python
+# rather than read off the source's punctuation —
+#
+#   which stream a mode yields   a scratch file is opened in that very mode and
+#                                the object inspected: isinstance(h,
+#                                io.TextIOBase) and h.readable()
+#   whether an errors= handler   the handler is fetched from the codecs
+#   raises                       registry and handed a real UnicodeDecodeError
+#   whether an attribute reads   it is called on a text handle over an
+#                                undecodable byte and watched
+#   where an argument sits       inspect.signature, because open(p,"r") puts
+#                                the mode at index 1 and p.open("r") at index 0
+#
+# — and a mode or errors= value that is not a literal is REPORTED and counted
+# as a member, never skipped.
+#
+# The module's own two spawns.log APPENDS therefore leave this rule: they are
+# mode "a", which Python says is a text stream that is not readable. The scan
+# is anchored on foundry_state.py#read_text_file instead — the guarded
+# primitive, and the one `read_text` in the package that cannot legitimately
+# disappear — so a matcher that stops recognising `read_text` fails BY NAME
+# rather than reporting a clean package (D-142).
 #
 
 SUBJECT   every read in foundry_spawn.py, located by the module's own import

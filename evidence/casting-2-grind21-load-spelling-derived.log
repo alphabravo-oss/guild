@@ -1,0 +1,97 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, tempfile; sys.path[:0]=["tests","src"]; from pathlib import Path; import test_orchestrator_gates as t; print(t.render_load_spelling_table(Path(tempfile.mkdtemp())))' && echo "" && echo "== the three axes that decided membership by spelling, now resolved ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "resolves_the or unresolvable_load_spelling or resolves_handler_names or load_spelling_table" 2>&1 | grep -E "passed|failed"
+# evidence-for: NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-147 — ONE AXIS OF THE RULE WAS DERIVED AND THE OTHER WAS A STRING.
+#
+# The D-137 decode rule resolves what a HANDLER catches to a real exception
+# class and asks `issubclass` — genuinely derived, and its own commit message
+# says so: "what a handler catches is resolved to a real exception class ...
+# Not a name comparison." The EXPRESSION axis right beside it asked whether the
+# callee was spelled `json.something`:
+#
+#     isinstance(func.value, ast.Name) and func.value.id == "json"
+#
+# So two writings of one operation were invisible. Driven against the shipped
+# scan at d8215c5: `import json as j` + `j.loads(p.read_text(...))` with NO
+# handler at all -> CLEAN; `from json import loads` + `loads(...)` with no
+# handler -> CLEAN; the plain spelling -> REPORTED. A module that aliases its
+# import escapes the rule entirely, handler or not. And the alias is not a
+# hypothetical spelling: `foundry_orchestrator.py` carries a LIVE
+# `import json as _json`. It is used only for `dumps` today, so there is no
+# live raise — but the next `_json.loads(path.read_text(...))` written in that
+# function is invisible on the day it is written, which is the ST-003 property
+# under test.
+#
+# THE FIX IS THE SAME MOVE THE HANDLER AXIS ALREADY MADE: the callee is
+# resolved through the module's own namespace — builtins, the real module
+# object when importable, its `import X as Y` statements, and now its
+# `from X import Y` statements too — and asked whether it IS `json.load` or
+# `json.loads`. Not what it is called. A callee this resolver cannot see whose
+# last segment is a loader's name is treated as a member and carries its
+# spelling into the report, which is the same contract the handler axis holds:
+# an unrecognised member ANNOUNCES itself rather than quietly widening the gap.
+#
+# SECOND GAP, SAME RULE: a handler that catches everything and RE-RAISES its
+# own type (`except Exception as e: raise Boom(...) from e`) was counted as
+# COVERING the site, while the operation still crosses the MCP boundary — as
+# something the caller has no handler for at all. A converting handler now
+# contributes nothing to `caught` and names itself in the report.
+#
+# THIRD SHAPE, found while fixing the first two: the read and the decode need
+# not share an expression. `text = p.read_text()` under `except
+# FileNotFoundError`, then `json.loads(text)` under `except
+# json.JSONDecodeError`, is one operation spelled apart — between them naming
+# two exception types and covering neither of the read's. Each rung is now
+# judged against the handlers that enclose IT. That widening found a live site
+# a hand search had missed, in `scripts/validate_intent_coverage.py`, on top of
+# the one D-141 named in `validate-test-observations.py`.
+#
+# THE SWEEP D-147 ASKS FOR, over the other scans in this file that matched a
+# spelling by string:
+#   DERIVED NOW  the rename rule's `func.value.id == "os"` (resolved against
+#                `os.replace` / `os.rename` / `os.renames` as objects, so
+#                `import os as o` is a member); the ledger rule's
+#                `func.id == "ledger_transaction"` (resolved against the real
+#                function, so `import ... as _tx` is a member). Both keep the
+#                bare-name fallback for a module this resolver cannot import,
+#                which is the conservative direction and the only one available
+#                when there is no namespace to ask.
+#   GENUINELY A LITERAL, with the reason:
+#     "state.json" / "cycle"   a FILENAME and a JSON KEY. Neither is a symbol;
+#                              there is no namespace to resolve either through.
+#                              Anchored instead by `seen` (D-142), which fails
+#                              by name if either spelling moves.
+#     read_text / read_bytes   attribute names on values whose type is unknown
+#                              at parse time. Same anchor.
+#     `open`                   a builtin; resolvable in principle, but aliasing
+#                              a builtin is not a spelling this codebase can
+#                              produce. Same anchor.
+#     "flock"                  a module whose lock this misses is REPORTED as
+#                              an offender — over-reporting, which is loud.
+#     "_artifact_guard"        a same-module private name; a rename makes every
+#                              entry point report as missing. Also loud.
+#     `.replace` unresolved    cannot be promoted: `text.replace("a","b")` would
+#                              be every second line. The `os.` qualifier stays
+#                              as the fallback only.
+== D-147: the handler axis was derived and the load axis was a string ==
+
+   the operation, spelled                 old rule  derived rule
+   ----------------------                 --------  ------------
+   json.loads(read_text)      (control)   REPORTED  REPORTED
+   import json as j           no handler  clean     REPORTED
+   from json import loads     no handler  clean     REPORTED
+   read and decode split      half each   clean     REPORTED
+   except Exception: raise Boom()         clean     REPORTED
+   both rungs answered        (control)   clean     clean
+
+-- the live alias this was filed against --
+   foundry_orchestrator.py carries `import json as _json`: True
+
+-- and an unresolvable spelling ANNOUNCES itself rather than passing --
+   ['mystery.py::_load:4 leaks OSError+UnicodeDecodeError+JSONDecodeError [unresolved load spelling: codec.loads]']
+
+== the three axes that decided membership by spelling, now resolved ==
+6 passed, 267 deselected in 0.26s

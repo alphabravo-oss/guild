@@ -61,7 +61,6 @@
 # REPORTED as `unreadable_splits` rather than raising UnicodeDecodeError out of
 # Forge-Spec-Check[spec]. It was named neither in the prior fix's test comment
 # nor in concerns.md, which is how it survived.
-
 == an operator's state.json at each door: refuse, or repair in silence? ==
    state.json holds                 Check                  Start                  Status
    ----------------                 -----                  -----                  ------
@@ -72,4 +71,4 @@
 
 == D-140 assertions, driven ==
 ................                                                         [100%]
-16 passed, 236 deselected in 0.24s
+16 passed, 257 deselected in 0.28s

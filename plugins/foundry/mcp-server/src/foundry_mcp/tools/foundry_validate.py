@@ -19,7 +19,12 @@ from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
 # foundry_orchestrator, which foundry_spawn imports and which therefore reaches
 # the same validator through a lazy in-function import.
 from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
-from foundry_mcp.tools.foundry_state import get_run_dir, read_document
+from foundry_mcp.tools.foundry_state import (
+    document_refusal,
+    get_run_dir,
+    read_document,
+    read_text_file,
+)
 
 
 def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
@@ -168,7 +173,16 @@ def foundry_validate_castings(
             if candidate.exists():
                 spec_path = candidate
 
-    spec_text = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+    # D-145: this read is the one that leaves the run directory. When the run
+    # dir holds no spec.md the fallback above resolves `state["spec_path"]`
+    # against the project root — which is the LIVE shape of this very run — and
+    # `_artifact_guard`'s rglob could not reach the result, so an unguarded
+    # `read_text` here raised UnicodeDecodeError across the MCP boundary.
+    # `read_text_file` is total ("" for an absent file, which is what the old
+    # `if exists()` produced) and NAMES the file when it cannot be read.
+    spec_text, spec_problem = read_text_file(spec_path)
+    if spec_problem is not None:
+        return {"passed": False, **document_refusal(spec_path, spec_problem)}
     spec_req_ids = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", spec_text))
 
     # Check for research artifacts
@@ -424,7 +438,14 @@ def foundry_validate_castings(
             )
             continue
 
-        prompt_text = prompt_path.read_text(encoding="utf-8")
+        # D-145's second unguarded read in this module. It is covered TODAY
+        # only because a casting prompt happens to live inside the run dir,
+        # where the artifact guard's rglob reaches it — which is a fact about
+        # where the file sits, not a property of this reader. Made total, so
+        # the reader holds on its own merits wherever the path resolves.
+        prompt_text, prompt_problem = read_text_file(prompt_path)
+        if prompt_problem is not None:
+            return {"passed": False, **document_refusal(prompt_path, prompt_problem)}
 
         if not prompt_text.strip():
             dim7_issues.append({

@@ -67,6 +67,7 @@ import importlib
 import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -100,6 +101,24 @@ from tests.test_observations import (
     NO_SECURITY_VOCABULARY,
     SECURITY_BATTERY,
 )
+
+# D-141 — THE TWO SHIPPED SOURCE TREES, DERIVED ONCE.
+#
+# The decode-guard rule below was rooted at `Path(foundry_mcp.__file__).parent`,
+# the installed package alone, so `plugins/foundry/scripts/` -- the hyphenated,
+# non-importable sibling tree that ships measure-run.py, migrate-archive.py and
+# validate-test-observations.py -- was structurally outside it. Three real,
+# documented, tested CLIs therefore still held the exact
+# `except (OSError, json.JSONDecodeError)` shape D-137 was filed to close
+# package-wide, and the rule reported the tree clean.
+#
+# D-134's manifest scan had already met and solved this, so the root derivation
+# is IMPORTED rather than re-derived here. Two scans over the same two trees
+# must not be able to disagree about what "the shipped source" is; a second copy
+# would drift the day one of them moved, which is this whole defect class. If
+# `test_spawn_progress` renames it, the ImportError says so by name -- which is
+# the loud failure, not the silent one.
+from tests.test_spawn_progress import _scanned_modules, _scanned_roots
 
 
 # --------------------------------------------------------------------------- #
@@ -2381,8 +2400,32 @@ def _package_modules(root: Path) -> list[Path]:
     return sorted(root.rglob("*.py"))
 
 
-def _raw_state_cycle_reads(path: Path) -> list[str]:
-    """Every read of the state file's ``cycle`` outside a guarded reader.
+def _scan(modules: list[Path], rule) -> tuple[list[str], list[str]]:
+    """Run one ``(seen, offenders)`` rule over a corpus and union both halves.
+
+    D-142's shape, applied uniformly. ``seen`` is a list of ``module#function``
+    strings naming every site the rule's recogniser identified as a MEMBER of
+    the class it polices -- offending or not -- and it exists because
+    ``assert not offenders`` is green in two different worlds: the one where
+    the corpus is clean, and the one where the derivation has quietly stopped
+    recognising the corpus's spelling. A rule whose scan reports zero members
+    is not passing; it is blind, and the caller asserts against ``seen`` to
+    tell the two apart by name.
+
+    ``test_spawn_progress`` applies the identical change to the manifest-scan
+    family; the tuple shape is the agreed contract between the two files.
+    """
+    seen: list[str] = []
+    offenders: list[str] = []
+    for path in modules:
+        module_seen, module_offenders = rule(path)
+        seen.extend(module_seen)
+        offenders.extend(module_offenders)
+    return sorted(set(seen)), sorted(set(offenders))
+
+
+def _raw_state_cycle_reads(path: Path) -> tuple[list[str], list[str]]:
+    """``(cycle readers seen, offenders)`` for one module.
 
     Parsed from the file on disk rather than from a list maintained beside it,
     so the guard cannot be satisfied by updating a copy and forgetting a call
@@ -2391,13 +2434,21 @@ def _raw_state_cycle_reads(path: Path) -> list[str]:
 
     Only ``Load`` subscripts count: ``state["cycle"] = _current_cycle(fdir) + 1``
     is the boundary increment writing the counter, not a reader bypassing it.
+
+    D-142: the GUARDED readers are recognised and reported in the first
+    element, and skipped only when deciding who OFFENDS. The old shape
+    ``continue``d past them before looking at anything, so the two functions
+    that definitionally hold this rule's shape -- ``_current_cycle`` and
+    ``_server_cycle``, where every read of the counter now lives -- were the
+    two the scan could not see, and ``assert not offenders`` stayed green when
+    ``_mentions_state_json`` stopped recognising the package's spelling (a
+    ``"state.json"`` hoisted into a module constant empties it outright).
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    seen: list[str] = []
     offenders: list[str] = []
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if fn.name in GUARDED_CYCLE_READERS:
             continue
         state_names = {
             target.id
@@ -2439,11 +2490,15 @@ def _raw_state_cycle_reads(path: Path) -> list[str]:
                 base = node.value
             if base is None:
                 continue
-            if (isinstance(base, ast.Name) and base.id in state_names) or (
-                _mentions_state_json(base)
+            if not (
+                (isinstance(base, ast.Name) and base.id in state_names)
+                or _mentions_state_json(base)
             ):
+                continue
+            seen.append(f"{path.name}#{fn.name}")
+            if fn.name not in GUARDED_CYCLE_READERS:
                 offenders.append(f"{path.name}::{fn.name}:{node.lineno}")
-    return sorted(set(offenders))
+    return sorted(set(seen)), sorted(set(offenders))
 
 
 def test_every_state_cycle_read_goes_through_a_guarded_reader():
@@ -2499,7 +2554,24 @@ def test_every_state_cycle_read_goes_through_a_guarded_reader():
         f"directories is D-066, the same defect one level up."
     )
 
-    offenders = sorted(o for p in modules for o in _raw_state_cycle_reads(p))
+    seen, offenders = _scan(modules, _raw_state_cycle_reads)
+    # D-142's anchor. `assert not offenders` alone is green when the package is
+    # clean AND when `_mentions_state_json` has stopped recognising the
+    # package's spelling -- hoist the "state.json" literal into a module
+    # constant and every binding this scan tracks vanishes with it. The two
+    # TOTAL readers are where every read of the counter now lives, so they are
+    # the sites this derivation must still see, by name.
+    assert {
+        "foundry.py#_server_cycle",
+        "foundry_orchestrator.py#_current_cycle",
+    } <= set(seen), (
+        f"the scan recognised {seen} as state-cycle readers, which does not "
+        f"include the two TOTAL readers the whole package routes through. The "
+        f"derivation has gone blind (the `state.json` binding or the `cycle` "
+        f"index is spelled some way this scan no longer tracks), so the "
+        f"offender assertion below is vacuous. Fix the recogniser -- do not "
+        f"weaken this anchor."
+    )
     assert not offenders, (
         f"{offenders} read state.json's 'cycle' directly instead of through a "
         f"guarded reader ({sorted(GUARDED_CYCLE_READERS)}). A raw read hands on "
@@ -2509,6 +2581,22 @@ def test_every_state_cycle_read_goes_through_a_guarded_reader():
         f"_current_cycle -- do not shrink this assertion or add to the "
         f"allow-list, which exists for TOTAL readers only."
     )
+
+
+def test_a_blind_state_cycle_recogniser_fails_the_rule_by_name(monkeypatch):
+    """D-142's regression: the anchor must FAIL when the derivation sees nothing.
+
+    The probe that filed D-142 replaced each per-module scan with one that
+    returns nothing and watched every rule stay green. This drives that probe
+    as a test: taint the recogniser so it can no longer see the package's
+    `state.json` spelling, and the rule above must fail on its `seen` anchor
+    rather than passing for the wrong reason.
+    """
+    import tests.test_orchestrator_gates as gates
+
+    monkeypatch.setattr(gates, "_mentions_state_json", lambda node: False)
+    with pytest.raises(AssertionError, match="derivation has gone blind"):
+        gates.test_every_state_cycle_read_goes_through_a_guarded_reader()
 
 
 def test_guard_catches_raw_reads_outside_the_tools_subpackage(tmp_path):
@@ -2551,11 +2639,16 @@ def test_guard_catches_raw_reads_outside_the_tools_subpackage(tmp_path):
         "sub/in_a_subpackage.py",
     ]
 
-    # ...and the detector names both, at the line the read is on.
-    offenders = sorted(o for p in modules for o in _raw_state_cycle_reads(p))
+    # ...and the detector names both, at the line the read is on — and reports
+    # both as members it SAW, which is what the package-wide anchor rests on.
+    seen, offenders = _scan(modules, _raw_state_cycle_reads)
     assert offenders == [
         "at_package_root.py::_sneaky_cycle_reader:6",
         "in_a_subpackage.py::_sneaky_cycle_reader:6",
+    ]
+    assert seen == [
+        "at_package_root.py#_sneaky_cycle_reader",
+        "in_a_subpackage.py#_sneaky_cycle_reader",
     ]
 
 
@@ -3750,11 +3843,16 @@ def test_the_forgery_table_shows_the_forgery_and_the_refusal():
 # nothing (the conservative direction -- it can only over-report) and it is
 # carried into the failure message so a name this resolver cannot see
 # announces itself instead of quietly widening the gap.
-_DOCUMENT_LOAD_RAISES: tuple[type[BaseException], ...] = (
-    OSError,
-    UnicodeDecodeError,
-    json.JSONDecodeError,
-)
+#: Split by RUNG, because the two rungs can sit under different handlers when
+#: the read and the decode are written as two statements (D-141's fourth site:
+#: `calls_text = p.read_text()` under `except FileNotFoundError`, then
+#: `json.loads(calls_text)` under `except json.JSONDecodeError`). Each rung is
+#: then judged against the handlers that actually enclose IT, rather than
+#: against a union that would call the pair covered because between them they
+#: name two exception types.
+_READ_RAISES: tuple[type[BaseException], ...] = (OSError, UnicodeDecodeError)
+_DECODE_RAISES: tuple[type[BaseException], ...] = (json.JSONDecodeError,)
+_DOCUMENT_LOAD_RAISES: tuple[type[BaseException], ...] = _READ_RAISES + _DECODE_RAISES
 
 # How a document reaches `json.loads`. A load over anything else -- a JSONL
 # line, a subprocess's stdout -- is not a DOCUMENT load and is not this class.
@@ -3772,6 +3870,10 @@ def _module_namespace(path: Path, tree: ast.Module) -> dict:
       * the modules the file's own ``import X [as Y]`` statements name, which
         is what resolves the dotted ``json.JSONDecodeError`` spelling in a file
         that is not itself importable
+      * the objects its ``from X import Y [as Z]`` statements bind, which is
+        what resolves a bare ``loads`` or a bare ``JSONDecodeError`` in a file
+        that is not itself importable (D-147: the alias was the spelling the
+        load axis could not see)
 
     Every layer is read off the source or the package; none is typed here.
     """
@@ -3783,16 +3885,34 @@ def _module_namespace(path: Path, tree: ast.Module) -> dict:
     except Exception:
         pass
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Import):
-            continue
-        for alias in node.names:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                try:
+                    namespace.setdefault(
+                        alias.asname or alias.name.split(".")[0],
+                        importlib.import_module(alias.name),
+                    )
+                except Exception:
+                    pass
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            # Relative imports are skipped deliberately: they only occur inside
+            # the package, where the importable-module layer above has already
+            # bound every name the module can see. A `from . import x` here
+            # would need the importing module's own package context, which is
+            # exactly what that layer supplies.
             try:
-                namespace.setdefault(
-                    alias.asname or alias.name.split(".")[0],
-                    importlib.import_module(alias.name),
-                )
+                module = importlib.import_module(node.module)
             except Exception:
-                pass
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                try:
+                    namespace.setdefault(
+                        alias.asname or alias.name, getattr(module, alias.name)
+                    )
+                except AttributeError:
+                    pass
     return namespace
 
 
@@ -3841,22 +3961,73 @@ def _handler_classes(
     return resolved, unresolved
 
 
+def _handler_body_statements(handler: ast.ExceptHandler) -> list[ast.AST]:
+    """Every node in the handler's own body, nested definitions excluded.
+
+    A ``raise`` inside a function DEFINED in the handler does not run when the
+    handler runs, so descending into it would report a handler that converts
+    nothing.
+    """
+    out: list[ast.AST] = []
+
+    def walk(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            out.append(child)
+            walk(child)
+
+    for stmt in handler.body:
+        out.append(stmt)
+        walk(stmt)
+    return out
+
+
+def _handler_reraises(handler: ast.ExceptHandler) -> bool:
+    """True when this handler's body raises, so the site still leaks.
+
+    D-147's second gap. ``except Exception as e: raise Boom(...) from e``
+    catches everything the load can raise and was therefore counted as
+    COVERING it — while the operation still raises across the MCP boundary,
+    only under a different type. A bare ``raise`` is the same fact stated more
+    plainly. Either way the caller gets an exception, which is the property
+    this rule exists to deny, so a converting handler covers nothing.
+    """
+    return any(
+        isinstance(node, ast.Raise) for node in _handler_body_statements(handler)
+    )
+
+
 def _uncovered_by(
-    handlers: list[ast.ExceptHandler], namespace: dict
+    handlers: list[ast.ExceptHandler],
+    namespace: dict,
+    raises: tuple[type[BaseException], ...] = _DOCUMENT_LOAD_RAISES,
 ) -> tuple[list[str], list[str]]:
     """Which of a document load's raises these handlers leave uncaught.
 
-    Returns ``(uncovered exception names, unresolvable handler spellings)``.
+    Returns ``(uncovered exception names, unresolvable/converting handler
+    spellings)``. A handler that RE-RAISES contributes nothing to ``caught``
+    and announces itself in the second list, exactly as an unresolvable
+    handler name does — the two are the same failure from the caller's seat:
+    an exception still crosses the boundary.
     """
     caught: list[type[BaseException]] = []
     unresolved: list[str] = []
     for handler in handlers:
         classes, missing = _handler_classes(handler, namespace)
-        caught.extend(classes)
         unresolved.extend(missing)
+        if _handler_reraises(handler):
+            unresolved.append(
+                "re-raises: "
+                + (ast.unparse(handler.type) if handler.type is not None else "except:")
+            )
+            continue
+        caught.extend(classes)
     uncovered = [
         raised.__name__
-        for raised in _DOCUMENT_LOAD_RAISES
+        for raised in raises
         if not any(issubclass(raised, caught_cls) for caught_cls in caught)
     ]
     return uncovered, sorted(set(unresolved))
@@ -3874,19 +4045,74 @@ def _reads_a_file(node: ast.AST) -> bool:
     return False
 
 
-def _is_document_load(node: ast.AST) -> bool:
-    """True for ``json.load(s)`` applied to something read off disk."""
+#: The loaders themselves, as OBJECTS rather than as spellings.
+#:
+#: D-147 — THE HANDLER AXIS WAS DERIVED AND THE EXPRESSION AXIS WAS NOT.
+#: This rule used to ask whether the callee was SPELLED ``json.loads``:
+#: ``isinstance(func.value, ast.Name) and func.value.id == "json"``. So
+#: ``import json as j`` + ``j.loads(p.read_text(...))`` with NO handler at all
+#: was reported CLEAN, and so was ``from json import loads`` + ``loads(...)``.
+#: The alias is not hypothetical — ``foundry_orchestrator.py`` carries a live
+#: ``import json as _json`` — and the next ``_json.loads(path.read_text(...))``
+#: written under it would have been invisible on the day it was written. That
+#: is the escalated class living inside the guard: membership decided by a
+#: string the author happened to type. The callee is now RESOLVED through the
+#: module's own namespace and asked whether it IS one of these objects, the
+#: same way ``_handler_classes`` resolves an exception name and asks
+#: ``issubclass``.
+_DOCUMENT_LOADERS = (json.load, json.loads)
+
+#: The last segment of every spelling a document loader can wear. Derived from
+#: the loader objects, so a loader added above brings its own segment. Used
+#: ONLY to decide what to REPORT when the callee cannot be resolved — never to
+#: decide membership, which is the resolved-object test.
+_LOADER_SEGMENTS = frozenset(fn.__name__ for fn in _DOCUMENT_LOADERS)  # 2 segments
+
+_UNRESOLVED = object()
+
+
+def _resolve_dotted(node: ast.AST, namespace: dict) -> tuple[object, str]:
+    """``(object, spelling)`` for a name or an attribute chain of any depth.
+
+    The same three-layer namespace the handler axis resolves against, so
+    ``json.loads``, ``j.loads`` (aliased import) and a bare ``loads``
+    (``from json import loads``) all land on the same function object.
+    """
+    if isinstance(node, ast.Name):
+        return namespace.get(node.id, _UNRESOLVED), node.id
+    if isinstance(node, ast.Attribute):
+        owner, spelling = _resolve_dotted(node.value, namespace)
+        spelling = f"{spelling}.{node.attr}"
+        if owner is _UNRESOLVED:
+            return _UNRESOLVED, spelling
+        return getattr(owner, node.attr, _UNRESOLVED), spelling
+    return _UNRESOLVED, type(node).__name__
+
+
+def _document_loader_call(node: ast.AST, namespace: dict) -> tuple[bool, str | None]:
+    """``(is a document loader call, unresolved spelling)`` for one node.
+
+    ``is a document loader call`` is true when the callee RESOLVES to one of
+    ``_DOCUMENT_LOADERS``. A callee this resolver cannot see, whose last
+    segment is nonetheless a loader's name, is ALSO treated as a member and
+    carries its spelling out to the report — the conservative direction, and
+    the same contract the handler axis holds: an unrecognised member announces
+    itself rather than quietly widening the gap.
+    """
     if not isinstance(node, ast.Call):
-        return False
-    func = node.func
-    if not (
-        isinstance(func, ast.Attribute)
-        and func.attr in ("load", "loads")
-        and isinstance(func.value, ast.Name)
-        and func.value.id == "json"
-    ):
-        return False
-    return _reads_a_file(node)
+        return False, None
+    obj, spelling = _resolve_dotted(node.func, namespace)
+    if obj is not _UNRESOLVED:
+        return any(obj is loader for loader in _DOCUMENT_LOADERS), None
+    if spelling.rsplit(".", 1)[-1] in _LOADER_SEGMENTS:
+        return True, spelling
+    return False, None
+
+
+def _is_document_load(node: ast.AST, namespace: dict) -> bool:
+    """True for a resolved ``json.load(s)`` applied to something read off disk."""
+    is_loader, _ = _document_loader_call(node, namespace)
+    return is_loader and _reads_a_file(node)
 
 
 def _walk_guarded(node: ast.AST, fn: str, handlers: tuple, visit) -> None:
@@ -3917,8 +4143,17 @@ def _walk_guarded(node: ast.AST, fn: str, handlers: tuple, visit) -> None:
         _walk_guarded(child, fn, handlers, visit)
 
 
-def _unguarded_document_loads(path: Path) -> list[str]:
-    """Every document load that can raise at its caller, and what it leaks.
+def _is_file_read(node: ast.AST) -> bool:
+    """True for the CALL that reads a file, not for every node above it."""
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _FILE_READ_METHODS:
+        return True
+    return isinstance(node.func, ast.Name) and node.func.id == "open"
+
+
+def _unguarded_document_loads(path: Path) -> tuple[list[str], list[str]]:
+    """``(reads seen, offenders)`` for one module.
 
     D-130's shape, derived from the site rather than from a list of known
     copies: `json.loads(path.read_text(...))` whose enclosing handlers do not
@@ -3929,28 +4164,96 @@ def _unguarded_document_loads(path: Path) -> list[str]:
 
     Each offender carries the exceptions it leaks, so the report says what is
     wrong rather than only where.
+
+    D-142 — WHAT THE FIRST ELEMENT IS FOR. This used to return offenders
+    alone, so `assert not offenders` was green both when the package was clean
+    AND when the recogniser had silently stopped recognising the package's
+    spelling. The members of this class are the READS: "the read and the
+    decode are one operation" is the sentence the whole rule is built on, so
+    every file read is a site this rule has an opinion about, and
+    ``foundry_state.py#read_text_file`` -- where all fourteen D-137 sites
+    converged -- must appear in it or the derivation has gone blind.
+
+    D-141/D-147 — THE READ AND THE LOAD NEED NOT SHARE AN EXPRESSION. A name
+    bound to a file read and handed to a loader two statements later is the
+    same operation spelled apart, and each rung is judged against the handlers
+    that enclose IT: the read must answer OSError + UnicodeDecodeError where
+    it sits, the decode must answer JSONDecodeError where IT sits. A union
+    would call `except FileNotFoundError` + `except json.JSONDecodeError` a
+    covered pair, which is verbatim the shape
+    ``validate-test-observations.py`` held.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    seen: list[str] = []
     offenders: list[str] = []
     namespace = _module_namespace(path, tree)
+    # function -> {name bound to a file read: the handlers enclosing that read}
+    read_bindings: dict[str, dict[str, tuple]] = {}
 
-    def visit(node: ast.AST, fn: str, handlers: tuple) -> None:
-        if not _is_document_load(node):
-            return
-        uncovered, unresolved = _uncovered_by(list(handlers), namespace)
+    def report(
+        fn: str,
+        lineno: int,
+        uncovered: list[str],
+        unresolved: list[str],
+        spelling: str | None,
+    ) -> None:
         if not uncovered:
             return
-        note = f" [unresolved handler names: {unresolved}]" if unresolved else ""
+        note = f" [unresolved handler names: {sorted(set(unresolved))}]" if unresolved else ""
+        # Carried in its OWN bracket, because "this handler names something I
+        # cannot resolve" and "this CALLEE is something I cannot resolve" are
+        # different unrecognised members and an operator reading the report
+        # must not have to guess which axis went blind.
+        note += f" [unresolved load spelling: {spelling}]" if spelling else ""
         offenders.append(
-            f"{path.name}::{fn}:{node.lineno} leaks {'+'.join(uncovered)}{note}"
+            f"{path.name}::{fn}:{lineno} leaks {'+'.join(uncovered)}{note}"
+        )
+
+    def visit(node: ast.AST, fn: str, handlers: tuple) -> None:
+        if _is_file_read(node):
+            seen.append(f"{path.name}#{fn}")
+        if isinstance(node, ast.Assign) and _reads_a_file(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    read_bindings.setdefault(fn, {})[target.id] = handlers
+            return
+        is_loader, spelling = _document_loader_call(node, namespace)
+        if not is_loader:
+            return
+        if _reads_a_file(node):
+            uncovered, unresolved = _uncovered_by(list(handlers), namespace)
+            report(fn, node.lineno, uncovered, unresolved, spelling)
+            return
+        bound = read_bindings.get(fn, {})
+        argument = node.args[0] if node.args else None
+        if not (isinstance(argument, ast.Name) and argument.id in bound):
+            return  # a JSONL line, a subprocess's stdout — not a DOCUMENT load
+        read_uncovered, read_unresolved = _uncovered_by(
+            list(bound[argument.id]), namespace, _READ_RAISES
+        )
+        decode_uncovered, decode_unresolved = _uncovered_by(
+            list(handlers), namespace, _DECODE_RAISES
+        )
+        report(
+            fn,
+            node.lineno,
+            read_uncovered + decode_uncovered,
+            read_unresolved + decode_unresolved,
+            spelling,
         )
 
     _walk_guarded(tree, "<module>", (), visit)
-    return sorted(set(offenders))
+    return sorted(set(seen)), sorted(set(offenders))
 
 
-def _unlocked_artifact_renames(path: Path) -> list[str]:
-    """Every tmp+rename in a module that owns no locking discipline.
+#: The module-level move primitives, as OBJECTS. ``Path.rename`` is deliberately
+#: absent: it is reached as a method on a value, never as a resolvable name, so
+#: the attribute match below is the only thing that can see it.
+_RENAME_PRIMITIVES = (os.replace, os.rename, os.renames)
+
+
+def _unlocked_artifact_renames(path: Path) -> tuple[list[str], list[str]]:
+    """``(renames seen, offenders)`` — the tmp+rename sites, and the unlocked ones.
 
     D-103's shape: `tmp = path.with_suffix(".tmp"); tmp.write_text(...);
     tmp.rename(path)`. The sidecar name is SHARED by every concurrent writer of
@@ -3961,17 +4264,24 @@ def _unlocked_artifact_renames(path: Path) -> list[str]:
 
     Derived from whether the module itself takes an exclusive lock, not from
     which modules are known to be safe.
+
+    D-142: the rename sites are collected WHETHER OR NOT the module locks, and
+    the lock only decides which of them offend. The old shape returned ``[]``
+    the moment it saw a ``flock`` anywhere in the file, so the two modules that
+    carry the write primitive -- the very ones whose rename idiom this rule
+    tracks -- contributed nothing the caller could anchor on, and a rename
+    hoisted behind a helper would have emptied the scan in silence.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    namespace = _module_namespace(path, tree)
     holds_a_lock = any(
         isinstance(n, ast.Call)
         and isinstance(n.func, ast.Attribute)
         and n.func.attr == "flock"
         for n in ast.walk(tree)
     )
-    if holds_a_lock:
-        return []
 
+    seen: list[str] = []
     offenders: list[str] = []
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -3979,15 +4289,30 @@ def _unlocked_artifact_renames(path: Path) -> list[str]:
         for node in ast.walk(fn):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
-            is_rename = node.func.attr == "rename"
+            # `Path.rename` is a method on a value whose type is unknowable at
+            # parse time, so the attribute name is all there is to match. The
+            # MODULE-level primitives are not: D-147's axis applied here, they
+            # are resolved through the namespace and compared as objects, so
+            # `import os as o` + `o.replace(tmp, path)` is a member. The `os.`
+            # string check survives only as the fallback for a module this
+            # resolver cannot import, because a bare `.replace` cannot be
+            # promoted -- `text.replace("a", "b")` would be every second line.
+            resolved, _spelling = _resolve_dotted(node.func, namespace)
+            is_rename = node.func.attr == "rename" or any(
+                resolved is primitive for primitive in _RENAME_PRIMITIVES
+            )
             is_replace = (
-                node.func.attr == "replace"
+                resolved is _UNRESOLVED
+                and node.func.attr == "replace"
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "os"
             )
-            if is_rename or is_replace:
+            if not (is_rename or is_replace):
+                continue
+            seen.append(f"{path.name}#{fn.name}")
+            if not holds_a_lock:
                 offenders.append(f"{path.name}::{fn.name}:{node.lineno}")
-    return sorted(set(offenders))
+    return sorted(set(seen)), sorted(set(offenders))
 
 
 def _iteration_sources(node: ast.AST) -> list[ast.AST]:
@@ -3999,8 +4324,27 @@ def _iteration_sources(node: ast.AST) -> list[ast.AST]:
     return []
 
 
-def _raw_ledger_iterations(path: Path) -> list[str]:
-    """Every direct iteration over a ``ledger_transaction`` record binding.
+def _opens_a_ledger_transaction(func: ast.AST, namespace: dict) -> bool:
+    """True when this callee IS the locked ledger primitive.
+
+    D-147's axis, applied to the third rule that matched a spelling by string.
+    The callee is resolved through the module's own namespace and compared as
+    an OBJECT, so ``from foundry_mcp.tools.foundry import ledger_transaction as
+    _tx`` is a member of this rule the day it is written. A callee this
+    resolver cannot see (a synthetic module under tmp_path, or one that will
+    not import) falls back to the bare name -- the conservative direction, and
+    the only one available when there is no namespace to ask.
+    """
+    from foundry_mcp.tools.foundry import ledger_transaction
+
+    resolved, spelling = _resolve_dotted(func, namespace)
+    if resolved is not _UNRESOLVED:
+        return resolved is ledger_transaction
+    return spelling.rsplit(".", 1)[-1] == ledger_transaction.__name__
+
+
+def _raw_ledger_iterations(path: Path) -> tuple[list[str], list[str]]:
+    """``(transaction bindings seen, offenders)`` for one module.
 
     D-128's shape. ``ledger_transaction`` USED to yield the ledger's list
     verbatim, malformed historical records included, and
@@ -4027,8 +4371,17 @@ def _raw_ledger_iterations(path: Path) -> list[str]:
 
     Whole-list operations (``append``, ``len``, ``allocate_record_id``) do not
     touch elements and are untouched by this rule.
+
+    D-142: the FIRST element is every function this scan recognised as opening
+    a transaction at all. ``foundry_sync_defects`` and
+    ``foundry_mark_defect_fixed`` -- the two sites D-128 was filed on -- still
+    open one, so they must appear there; if the ``with ledger_transaction(...)
+    as records`` idiom moves behind a helper the scan sees nothing, and
+    ``assert not offenders`` alone would call that clean.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    namespace = _module_namespace(path, tree)
+    seen: list[str] = []
     offenders: list[str] = []
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -4040,17 +4393,17 @@ def _raw_ledger_iterations(path: Path) -> list[str]:
                 item.optional_vars.id
                 for item in block.items
                 if isinstance(item.context_expr, ast.Call)
-                and isinstance(item.context_expr.func, ast.Name)
-                and item.context_expr.func.id == "ledger_transaction"
                 and isinstance(item.optional_vars, ast.Name)
+                and _opens_a_ledger_transaction(item.context_expr.func, namespace)
             }
             if not bindings:
                 continue
+            seen.append(f"{path.name}#{fn.name}")
             for inner in ast.walk(block):
                 for source in _iteration_sources(inner):
                     if isinstance(source, ast.Name) and source.id in bindings:
                         offenders.append(f"{path.name}::{fn.name}:{source.lineno}")
-    return sorted(set(offenders))
+    return sorted(set(seen)), sorted(set(offenders))
 
 
 #: The names that convert a LedgerShapeError into the house refusal. Derived
@@ -4288,7 +4641,7 @@ def test_every_ledger_key_container_shape_is_covered_by_the_parity_drive():
 
 
 def test_no_document_load_can_raise_across_the_mcp_boundary():
-    """D-130, asserted as a property of the whole installed package.
+    """D-130, asserted as a property of BOTH shipped source trees.
 
     Before the fix this reported forge_spec.py::_load_json:32 -- the third
     `_load_json` copy, reachable over MCP through Forge-Spec-Start/Check/Status
@@ -4298,12 +4651,51 @@ def test_no_document_load_can_raise_across_the_mcp_boundary():
     (Foundry-Validate-Castings) and validation.py::validate_report
     (Validate-Report). That the scan found four the hand search missed is the
     argument for the scan.
-    """
-    pkg = Path(foundry_mcp.__file__).resolve().parent
-    modules = _package_modules(pkg)
-    assert modules, f"no modules discovered under {pkg}"
 
-    offenders = sorted(o for p in modules for o in _unguarded_document_loads(p))
+    D-141 — AND THE ROOT WAS THE NEXT PLACE THE CLASS WENT. The corpus was
+    `Path(foundry_mcp.__file__).parent`, the installed package alone, so the
+    three CLIs in `plugins/foundry/scripts/` were never asked. All three held
+    the majority D-137 spelling and two of them were driven raising
+    UnicodeDecodeError on one non-UTF-8 byte. The corpus is now the same two
+    trees D-134's manifest rule already derives, imported from it so the two
+    cannot disagree.
+    """
+    modules = _scanned_modules()
+    assert modules, f"no modules discovered under {_scanned_roots()}"
+
+    # THE ROOT ANCHOR. Every member of this class now routes through the
+    # canonical primitive, so the scripts tree contributes no members of its
+    # own -- and a corpus that silently narrowed back to the package would
+    # therefore look identical from the member side alone. Name the tree.
+    scripts_root = _scanned_roots()[-1]
+    assert scripts_root.is_dir() and scripts_root.name == "scripts", scripts_root
+    in_scripts = sorted(p.name for p in modules if p.parent == scripts_root)
+    assert {
+        "measure-run.py",
+        "migrate-archive.py",
+        "validate-test-observations.py",
+    } <= set(in_scripts), (
+        f"the corpus reaches {in_scripts} under {scripts_root}, which does not "
+        f"include the three shipped CLIs D-141 was filed on. The root "
+        f"derivation has narrowed and this rule is no longer asked about the "
+        f"tree the run actually ships."
+    )
+
+    seen, offenders = _scan(modules, _unguarded_document_loads)
+    # THE MEMBER ANCHOR. The members of this class are the READS -- "the read
+    # and the decode are one operation" is the sentence the rule is built on.
+    # All fourteen D-137 sites converged on `foundry_state.read_text_file`, so
+    # that is the site this derivation must still recognise; if
+    # `_FILE_READ_METHODS` or `_is_file_read` stops matching the package's
+    # spelling, `seen` empties and this fails by name instead of the offender
+    # assertion passing for the wrong reason (D-142).
+    assert "foundry_state.py#read_text_file" in seen, (
+        f"the scan recognised {len(seen)} document reads and none of them is "
+        f"the canonical primitive every guarded site routes through, so the "
+        f"read recogniser has gone blind and the assertion below is vacuous: "
+        f"{seen}"
+    )
+
     assert not offenders, (
         f"{offenders} load a JSON document off disk without handling the decode "
         f"failure, so a corrupt or truncated artifact raises out of the tool "
@@ -4316,6 +4708,49 @@ def test_no_document_load_can_raise_across_the_mcp_boundary():
     )
 
 
+def test_a_blind_read_recogniser_fails_the_decode_rule_by_name(monkeypatch):
+    """D-142's regression for the decode rule, driven as the probe drove it.
+
+    With the read recogniser returning nothing -- exactly what a refactor that
+    hoists the read behind a new spelling does -- the rule must fail on its
+    member anchor, not pass on an empty offender list.
+    """
+    import tests.test_orchestrator_gates as gates
+
+    monkeypatch.setattr(gates, "_is_file_read", lambda node: False)
+    monkeypatch.setattr(gates, "_reads_a_file", lambda node: False)
+    with pytest.raises(AssertionError, match="read recogniser has gone blind"):
+        gates.test_no_document_load_can_raise_across_the_mcp_boundary()
+
+
+def test_a_planted_loader_under_the_scripts_root_is_reported(tmp_path):
+    """D-141 adjacent-path test: a NEW file in the SECOND tree is a member.
+
+    The path the defect was filed on is "an existing CLI in
+    plugins/foundry/scripts". The adjacent path this drives is a file that
+    does not exist yet, in that same non-importable tree -- the position the
+    package-only root could never reach. Hermetic: it builds a synthetic
+    two-root layout under tmp_path rather than writing into the repo, because
+    two other castings are running this suite against the real tree
+    concurrently.
+
+    The claim this makes together with the root anchor above: the corpus is
+    `rglob("*.py")` over both derived roots, that derivation demonstrably
+    reaches the real scripts directory, and the recogniser reports the shape
+    wherever it is written -- hyphenated, non-importable filename included.
+    """
+    scripts = tmp_path / "plugins" / "foundry" / "scripts"
+    scripts.mkdir(parents=True)
+    planted = scripts / "brand-new-cli.py"
+    planted.write_text(_PLANTED_OSERROR_DECODE_LOADER, encoding="utf-8")
+
+    modules = sorted(scripts.rglob("*.py"))
+    assert modules == [planted], modules
+    seen, offenders = _scan(modules, _unguarded_document_loads)
+    assert offenders == ["brand-new-cli.py::_load_manifest:5 leaks UnicodeDecodeError"]
+    assert seen == ["brand-new-cli.py#_load_manifest"]
+
+
 def test_no_module_renames_onto_a_run_artifact_without_a_lock():
     """D-103, as a package property.
 
@@ -4326,7 +4761,19 @@ def test_no_module_renames_onto_a_run_artifact_without_a_lock():
     foundry.py's discipline; it mirrored the tmp+rename and not the flock.
     """
     pkg = Path(foundry_mcp.__file__).resolve().parent
-    offenders = sorted(o for p in _package_modules(pkg) for o in _unlocked_artifact_renames(p))
+    seen, offenders = _scan(_package_modules(pkg), _unlocked_artifact_renames)
+    # D-142's anchor: the two modules that OWN the write primitive must be
+    # recognised as renaming, or the rename idiom has moved behind a spelling
+    # this scan no longer tracks and `assert not offenders` means nothing.
+    assert {
+        "foundry.py#_atomic_rename_write",
+        "foundry_orchestrator.py#_save_json",
+    } <= set(seen), (
+        f"the scan recognised {seen} as tmp+rename sites, which does not "
+        f"include the package's own two write primitives. The rename "
+        f"derivation has gone blind, so the offender assertion below is "
+        f"vacuous."
+    )
     assert not offenders, (
         f"{offenders} rename a tmp sidecar into place in a module that takes no "
         f"exclusive lock. The sidecar name is shared by every concurrent writer "
@@ -4346,7 +4793,19 @@ def test_no_ledger_scan_bypasses_the_malformed_record_filter():
     made of).
     """
     pkg = Path(foundry_mcp.__file__).resolve().parent
-    offenders = sorted(o for p in _package_modules(pkg) for o in _raw_ledger_iterations(p))
+    seen, offenders = _scan(_package_modules(pkg), _raw_ledger_iterations)
+    # D-142's anchor: the two doors D-128 was filed on still open transactions,
+    # so the scan must still see them. It sees them through the
+    # `with ledger_transaction(...) as records` idiom alone; move that behind a
+    # helper and the scan empties while every planted copy still passes.
+    assert {
+        "foundry_orchestrator.py#foundry_sync_defects",
+        "foundry_orchestrator.py#foundry_mark_defect_fixed",
+    } <= set(seen), (
+        f"the scan recognised {seen} as ledger-transaction openers, which does "
+        f"not include the two doors this defect was filed on. The derivation "
+        f"has gone blind, so the offender assertion below is vacuous."
+    )
     assert not offenders, (
         f"{offenders} iterate a ledger_transaction record binding directly. The "
         f"transaction yields the ledger VERBATIM, malformed historical records "
@@ -4355,6 +4814,37 @@ def test_no_ledger_scan_bypasses_the_malformed_record_filter():
         f"Iterate `_dict_records(<binding>)`; an inline isinstance is another "
         f"copy of the same filter, which is the defect class itself."
     )
+
+
+@pytest.mark.parametrize(
+    "rule,blinded,test_name",
+    [
+        (
+            "_unlocked_artifact_renames",
+            (lambda path: ([], [])),
+            "test_no_module_renames_onto_a_run_artifact_without_a_lock",
+        ),
+        (
+            "_raw_ledger_iterations",
+            (lambda path: ([], [])),
+            "test_no_ledger_scan_bypasses_the_malformed_record_filter",
+        ),
+    ],
+    ids=["renames", "ledger"],
+)
+def test_a_blind_scan_fails_its_own_rule_by_name(monkeypatch, rule, blinded, test_name):
+    """D-142's probe, run as a test against the two remaining package rules.
+
+    The probe that filed D-142 replaced each per-module scan with
+    ``lambda p: []`` and watched all four rules stay green. Replaced now with
+    ``lambda p: ([], [])`` -- a scan that recognises nothing -- each rule must
+    fail on its own member anchor and name the derivation, not the corpus.
+    """
+    import tests.test_orchestrator_gates as gates
+
+    monkeypatch.setattr(gates, rule, blinded)
+    with pytest.raises(AssertionError, match="derivation has gone blind"):
+        getattr(gates, test_name)()
 
 
 # --------------------------------------------------------------------------- #
@@ -5000,6 +5490,67 @@ _PLANTED_COVERED_LOADER = (
     "    except (OSError, ValueError):\n"
     "        return {}\n"
 )
+# D-147's plants: the three spellings of the SAME operation the string match
+# `func.value.id == "json"` reported clean, every one of them with NO handler
+# at all. The alias is not hypothetical — foundry_orchestrator.py carries a
+# live `import json as _json`.
+_PLANTED_ALIASED_LOADER = (
+    "import json as j\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    return j.loads(path.read_text(encoding='utf-8'))\n"
+)
+_PLANTED_FROM_IMPORT_LOADER = (
+    "from json import loads\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    return loads(path.read_text(encoding='utf-8'))\n"
+)
+# ...and the read split from its decode across two statements, each under a
+# handler that answers the OTHER rung. This is verbatim
+# validate-test-observations.py's --tool-call-log shape (D-141's fourth site).
+_PLANTED_SPLIT_LOADER = (
+    "import json\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    try:\n"
+    "        text = path.read_text()\n"
+    "    except FileNotFoundError:\n"
+    "        return {}\n"
+    "    else:\n"
+    "        try:\n"
+    "            return json.loads(text)\n"
+    "        except json.JSONDecodeError:\n"
+    "            return {}\n"
+)
+# The control for the split rule: both rungs answered where each one sits.
+_PLANTED_COVERED_SPLIT_LOADER = (
+    "import json\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    try:\n"
+    "        text = path.read_text()\n"
+    "    except (OSError, UnicodeDecodeError):\n"
+    "        return {}\n"
+    "    try:\n"
+    "        return json.loads(text)\n"
+    "    except json.JSONDecodeError:\n"
+    "        return {}\n"
+)
+# D-147's second gap: a handler that catches EVERYTHING and re-raises its own
+# type was counted as covering, while the operation still crosses the boundary.
+_PLANTED_RERAISING_LOADER = (
+    "import json\n"
+    "\n"
+    "class Boom(Exception):\n"
+    "    pass\n"
+    "\n"
+    "def _load_manifest(path):\n"
+    "    try:\n"
+    "        return json.loads(path.read_text(encoding='utf-8'))\n"
+    "    except Exception as e:\n"
+    "        raise Boom('unreadable') from e\n"
+)
 
 
 def _plant(tmp_path: Path, name: str, source: str) -> Path:
@@ -5015,18 +5566,33 @@ def render_derived_guard_table(tmp_path: Path) -> str:
     Membership is derived over the package on both axes, so the planted copies
     go in positions a directory literal would have missed — the package ROOT
     (server.py's position, which owns _DISPATCH) and a NON-tools subpackage.
-    """
-    pkg = Path(foundry_mcp.__file__).resolve().parent
-    modules = _package_modules(pkg)
 
+    D-141 adds the SECOND SHIPPED TREE to the same picture, and D-147 adds the
+    two load spellings the string match could not see. Each row prints what
+    the scan SAW as well as what it reported, because a rule that saw nothing
+    is the failure D-142 was filed on and it must not read as a clean row.
+    """
+    decode_seen, decode_offenders = _scan(_scanned_modules(), _unguarded_document_loads)
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    rename_seen, rename_offenders = _scan(_package_modules(pkg), _unlocked_artifact_renames)
+    ledger_seen, ledger_offenders = _scan(_package_modules(pkg), _raw_ledger_iterations)
+
+    # Each row names the MEMBER the rule must still be able to see, not a
+    # count of them: a count drifts every time a peer casting adds a read, and
+    # a log body that changes for reasons unrelated to its claim cannot be
+    # re-executed. "clean" and "blind" print differently here, which is the
+    # whole of D-142.
     out = [
-        "== the three rules over the installed package, after this casting's fixes ==",
-        "   unguarded document loads      : %s" % (
-            sorted(o for p in modules for o in _unguarded_document_loads(p)) or "none"),
-        "   unlocked artifact renames     : %s" % (
-            sorted(o for p in modules for o in _unlocked_artifact_renames(p)) or "none"),
-        "   raw ledger iterations         : %s" % (
-            sorted(o for p in modules for o in _raw_ledger_iterations(p)) or "none"),
+        "== the three rules over the shipped source, after this casting's fixes ==",
+        "   unguarded document loads      : %s   (sees %s: %s)" % (
+            decode_offenders or "none", "foundry_state.py#read_text_file",
+            "foundry_state.py#read_text_file" in decode_seen),
+        "   unlocked artifact renames     : %s   (sees %s: %s)" % (
+            rename_offenders or "none", "foundry.py#_atomic_rename_write",
+            "foundry.py#_atomic_rename_write" in rename_seen),
+        "   raw ledger iterations         : %s   (sees %s: %s)" % (
+            ledger_offenders or "none", "foundry_orchestrator.py#foundry_sync_defects",
+            "foundry_orchestrator.py#foundry_sync_defects" in ledger_seen),
         "",
         "== and a FRESH copy planted where a directory literal could not see it ==",
         "   %-34s %s" % ("planted at", "what the derived scan reports"),
@@ -5043,11 +5609,24 @@ def render_derived_guard_table(tmp_path: Path) -> str:
          _unguarded_document_loads),
         ("<pkg>/schemas/oserror_decode.py", _PLANTED_OSERROR_DECODE_LOADER,
          _unguarded_document_loads),
+        # D-141/D-147 — the second shipped tree, and the three spellings the
+        # string match called clean: an aliased import, a from-import, and a
+        # read split from its decode across two statements.
+        ("<scripts>/brand-new-cli.py", _PLANTED_OSERROR_DECODE_LOADER,
+         _unguarded_document_loads),
+        ("<pkg root>/aliased.py", _PLANTED_ALIASED_LOADER, _unguarded_document_loads),
+        ("<pkg root>/from_import.py", _PLANTED_FROM_IMPORT_LOADER,
+         _unguarded_document_loads),
+        ("<pkg root>/split.py", _PLANTED_SPLIT_LOADER, _unguarded_document_loads),
     ]
     for label, source, rule in plants:
-        relative = label.replace("<pkg root>/", "").replace("<pkg>/", "")
+        relative = (
+            label.replace("<pkg root>/", "")
+            .replace("<pkg>/", "")
+            .replace("<scripts>/", "scripts/")
+        )
         module = _plant(tmp_path, relative, source)
-        found = rule(module)
+        found = rule(module)[1]
         out.append("   %-34s %s" % (label, found or "MISSED"))
     return "\n".join(out)
 
@@ -5148,15 +5727,20 @@ def test_the_artifact_guard_table_shows_the_blind_spot_and_the_fix(run_env):
 def test_the_derived_guard_table_catches_a_fresh_copy_anywhere(tmp_path):
     """The structural claim, asserted rather than described.
 
-    Each planted copy is a verbatim reproduction of the shape one of the four
-    prior fixes closed, written in a module none of them touched. All five are
+    Each planted copy is a verbatim reproduction of the shape one of the prior
+    fixes closed, written in a module none of them touched. All of them are
     named. This is what "unrepresentable" means here: not that today's copies
     are gone, but that tomorrow's cannot arrive unannounced.
     """
     table = render_derived_guard_table(tmp_path)
     assert "MISSED" not in table, table
-    # The package itself is clean, or the planted-copy claim proves nothing.
+    # The shipped source itself is clean, or the planted-copy claim proves
+    # nothing...
     assert table.count("none") == 3, table
+    # ...and each rule SAW its anchor while reporting none, or "clean" and
+    # "blind" would read identically here (D-142).
+    assert table.count("sees ") == 3, table
+    assert ": False)" not in table, table
 
 
 _D137_BAD_MANIFEST = (
@@ -5268,16 +5852,21 @@ def test_the_planted_copies_are_the_shapes_the_prior_fixes_closed(tmp_path):
     writer = _plant(tmp_path, "b.py", _PLANTED_WRITER)
     scan = _plant(tmp_path, "c.py", _PLANTED_LEDGER_SCAN)
 
-    assert _unguarded_document_loads(loader) == [
+    assert _unguarded_document_loads(loader)[1] == [
         "a.py::_load_json:7 leaks OSError+UnicodeDecodeError+JSONDecodeError"
     ]
-    assert _unlocked_artifact_renames(writer) == ["b.py::_save_json:6"]
-    assert _raw_ledger_iterations(scan) == ["c.py::sync:3"]
+    assert _unlocked_artifact_renames(writer)[1] == ["b.py::_save_json:6"]
+    assert _raw_ledger_iterations(scan)[1] == ["c.py::sync:3"]
     # ...and each rule is silent on the other two shapes: three rules, three
     # distinct classes, no rule standing in for another.
-    assert _unguarded_document_loads(writer) == []
-    assert _unlocked_artifact_renames(loader) == []
-    assert _raw_ledger_iterations(loader) == []
+    assert _unguarded_document_loads(writer)[1] == []
+    assert _unlocked_artifact_renames(loader)[1] == []
+    assert _raw_ledger_iterations(loader)[1] == []
+    # Each rule SAW its own plant, which is what makes "silent on the other
+    # two" a statement about the rules and not about an empty scan (D-142).
+    assert _unguarded_document_loads(loader)[0] == ["a.py#_load_json"]
+    assert _unlocked_artifact_renames(writer)[0] == ["b.py#_save_json"]
+    assert _raw_ledger_iterations(scan)[0] == ["c.py#sync"]
 
 
 def test_a_jsondecodeerror_only_handler_over_a_read_is_an_offender(tmp_path):
@@ -5304,17 +5893,86 @@ def test_a_jsondecodeerror_only_handler_over_a_read_is_an_offender(tmp_path):
     with_oserror = _plant(tmp_path, "e.py", _PLANTED_OSERROR_DECODE_LOADER)
     covered = _plant(tmp_path, "f.py", _PLANTED_COVERED_LOADER)
 
-    assert _unguarded_document_loads(decode_only) == [
+    assert _unguarded_document_loads(decode_only)[1] == [
         "d.py::_load_manifest:5 leaks OSError+UnicodeDecodeError"
     ]
     # Adding OSError closes the open() failure and leaves the bytes uncovered —
     # which is the majority spelling among the fourteen sites, and exactly the
     # residual a name-matching rule cannot see.
-    assert _unguarded_document_loads(with_oserror) == [
+    assert _unguarded_document_loads(with_oserror)[1] == [
         "e.py::_load_manifest:5 leaks UnicodeDecodeError"
     ]
-    # ValueError IS UnicodeDecodeError's parent, so this one genuinely holds.
-    assert _unguarded_document_loads(covered) == []
+    # ValueError IS UnicodeDecodeError's parent, so this one genuinely holds —
+    # and the rule still SAW the read, which is what separates "covered" from
+    # "not recognised".
+    seen, offenders = _unguarded_document_loads(covered)
+    assert offenders == []
+    assert seen == ["f.py#_load_manifest"]
+
+
+def test_the_decode_rule_resolves_the_load_spelling_rather_than_matching_it(tmp_path):
+    """D-147, asserted directly: the expression axis is derived too.
+
+    The handler axis resolved a name to a real exception class and asked
+    ``issubclass``; the expression axis asked whether the callee was SPELLED
+    ``json.something``. So three writings of one operation — an aliased
+    import, a from-import, and a read split from its decode — were reported
+    CLEAN with no handler at all, while the plain spelling was reported. A
+    module that aliased its import escaped the rule entirely.
+
+    Every arm below carries NO adequate handler, so a rule that sees the
+    operation must report it; one that matches the string cannot.
+    """
+    aliased = _plant(tmp_path, "h.py", _PLANTED_ALIASED_LOADER)
+    from_import = _plant(tmp_path, "i.py", _PLANTED_FROM_IMPORT_LOADER)
+    split = _plant(tmp_path, "j.py", _PLANTED_SPLIT_LOADER)
+    covered_split = _plant(tmp_path, "k.py", _PLANTED_COVERED_SPLIT_LOADER)
+    reraising = _plant(tmp_path, "l.py", _PLANTED_RERAISING_LOADER)
+
+    leaks = "leaks OSError+UnicodeDecodeError+JSONDecodeError"
+    # `import json as j` — the live spelling foundry_orchestrator.py already
+    # carries, on the day someone writes a load under it.
+    assert _unguarded_document_loads(aliased)[1] == [f"h.py::_load_manifest:4 {leaks}"]
+    # `from json import loads` — no dotted owner to match a string against.
+    assert _unguarded_document_loads(from_import)[1] == [f"i.py::_load_manifest:4 {leaks}"]
+    # The read and the decode two statements apart, each under a handler that
+    # answers the OTHER rung: `except FileNotFoundError` leaves the read's
+    # OSError and UnicodeDecodeError open even though a JSONDecodeError
+    # handler sits below it. Judged per rung, not by the union.
+    assert _unguarded_document_loads(split)[1] == [
+        "j.py::_load_manifest:10 leaks OSError+UnicodeDecodeError"
+    ]
+    # ...and the control that keeps the split rule narrow: each rung answered
+    # where it sits is genuinely covered.
+    assert _unguarded_document_loads(covered_split)[1] == []
+    # D-147's second gap: catching everything and raising a NEW type is not
+    # covering — the operation still crosses the boundary, as something the
+    # caller has no handler for. The converting handler names itself.
+    reraise_offenders = _unguarded_document_loads(reraising)[1]
+    assert len(reraise_offenders) == 1, reraise_offenders
+    assert leaks in reraise_offenders[0], reraise_offenders
+    assert "re-raises: Exception" in reraise_offenders[0], reraise_offenders
+
+
+def test_an_unresolvable_load_spelling_is_reported_not_skipped(tmp_path):
+    """The load axis fails toward REPORTING, exactly as the handler axis does.
+
+    A callee this resolver cannot see, whose last segment is nonetheless a
+    loader's name, is treated as a member and carries its spelling into the
+    message. Silent acceptance is the failure mode the whole D-137/D-147 line
+    exists to remove, and it must not be reintroduced one axis over.
+    """
+    mystery = _plant(
+        tmp_path,
+        "m.py",
+        "from some_vendor_lib import codec\n"
+        "\n"
+        "def _load(path):\n"
+        "    return codec.loads(path.read_text(encoding='utf-8'))\n",
+    )
+    offenders = _unguarded_document_loads(mystery)[1]
+    assert len(offenders) == 1, offenders
+    assert "unresolved load spelling: codec.loads" in offenders[0], offenders
 
 
 def test_the_decode_rule_resolves_handler_names_rather_than_matching_them(tmp_path):
@@ -5337,7 +5995,614 @@ def test_the_decode_rule_resolves_handler_names_rather_than_matching_them(tmp_pa
         "    except SomeVendorError:\n"
         "        return {}\n",
     )
-    offenders = _unguarded_document_loads(exotic)
+    offenders = _unguarded_document_loads(exotic)[1]
     assert len(offenders) == 1, offenders
     assert "leaks OSError+UnicodeDecodeError+JSONDecodeError" in offenders[0]
     assert "unresolved handler names: ['SomeVendorError']" in offenders[0], offenders
+
+
+# --------------------------------------------------------------------------- #
+# D-145 (NFR-002) — THE RUN'S DECLARED EXTERNAL INPUTS ARE GUARD MEMBERS TOO.
+#
+# THE HARM, driven through the real _DISPATCH at d8215c5: a run whose
+# state.json declares `spec_path` OUTSIDE the run directory — which is the live
+# shape of thunder-viper itself, "forge-specs/foundry-run-process-fixes/spec.md"
+# against foundry-archive/thunder-viper/ — and one non-UTF-8 byte in that file.
+# Foundry-Validate-Castings *** RAISED UnicodeDecodeError across the MCP
+# boundary, while `_run_artifact_problems(fdir)` returned [] with the broken
+# file sitting at <root>/forge-specs/probe/spec.md. Every in-run-dir case was
+# correctly refused by name; this was the residue the rglob could not reach.
+#
+# TWO HALVES, AND WHY BOTH. The reader is made total (`read_text_file` +
+# `document_refusal`), so it holds wherever the path resolves. And the GUARD's
+# membership is widened, so the answer is not "this reader remembered" but
+# "every door refuses by name, because the run's inputs are what the guard is
+# about". The widening is derived over the STATE DOCUMENT — every string leaf
+# that resolves to an existing file — rather than over the key `spec_path`,
+# because naming that key would close this instance and leave the next declared
+# input outside the guard on the day it is added.
+# --------------------------------------------------------------------------- #
+
+_BAD_UTF8_SPEC = b"# Spec\n\nAC-001: the caf\xe9 requirement\n"
+
+
+def _external_spec_run(tmp_path: Path, spec_relative: str, spec_bytes: bytes,
+                       state_key: str = "spec_path") -> tuple[str, Path]:
+    """A run whose spec is DECLARED in state.json and lives outside the run dir."""
+    root = tmp_path / "proj"
+    fdir = root / "foundry-archive" / "d145"
+    (fdir / "castings").mkdir(parents=True)
+    spec = root / spec_relative
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_bytes(spec_bytes)
+    (fdir / "state.json").write_text(
+        json.dumps({"phase": "F0.9", "cycle": 0, state_key: spec_relative}),
+        encoding="utf-8",
+    )
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "castings": [{"id": 1, "title": "t", "key_files": ["a.py"]}],
+            "waves": [{"wave": 1, "casting_ids": [1]}],
+        }),
+        encoding="utf-8",
+    )
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        "# casting 1\n<spec_requirements>\nAC-001\n</spec_requirements>\n",
+        encoding="utf-8",
+    )
+    foundry_state.set_active_run("d145")
+    return str(root), fdir
+
+
+def test_a_corrupt_spec_outside_the_run_dir_is_refused_not_raised(tmp_path, monkeypatch):
+    """D-145 on the defect path: the door that raised now refuses by name."""
+    from foundry_mcp import server as srv
+
+    root, fdir = _external_spec_run(tmp_path, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC)
+    try:
+        monkeypatch.setattr(srv, "_project_root", root)
+        # The guard SEES it now — the assertion the driving evidence inverted.
+        problems = fo._run_artifact_problems(fdir)
+        assert any("spec.md" in p for p in problems), problems
+
+        result = srv._DISPATCH["Foundry-Validate-Castings"]({})
+        assert result["passed"] is False, result
+        assert "spec.md" in result["error"], result
+        assert result.get("hint"), result
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_the_same_spec_read_healthy_still_passes_the_door(tmp_path, monkeypatch):
+    """The control that keeps the refusal NARROW.
+
+    Without it the widened guard could refuse every run that declares a spec
+    outside its own directory — which is every run this repo has — and the
+    "fix" would be an outage.
+    """
+    from foundry_mcp import server as srv
+
+    root, fdir = _external_spec_run(
+        tmp_path, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC.replace(b"caf\xe9", b"cafe")
+    )
+    try:
+        monkeypatch.setattr(srv, "_project_root", root)
+        assert fo._run_artifact_problems(fdir) == []
+        result = srv._DISPATCH["Foundry-Validate-Castings"]({})
+        assert "could not be read" not in str(result.get("error", "")), result
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_the_external_input_membership_is_derived_over_the_state_document(tmp_path):
+    """The axis, asserted: a NEW declared key is a member the day it is written.
+
+    This is the difference between the fix and the instance. `spec_path` is
+    nowhere in `_declared_external_inputs`; what the derivation knows is that a
+    string leaf of state.json which resolves to an existing FILE outside the
+    run dir is an input this run declared. Plant the corrupt file under a key
+    nobody has ever heard of and the guard must still name it — that is the
+    "NEW unbound member" test for this mechanism.
+    """
+    root, fdir = _external_spec_run(
+        tmp_path, "inputs/context.txt", _BAD_UTF8_SPEC, state_key="operator_context_path"
+    )
+    try:
+        declared = fo._declared_external_inputs(fdir)
+        assert [p.name for p in declared] == ["context.txt"], declared
+        problems = fo._run_artifact_problems(fdir)
+        assert any("context.txt" in p for p in problems), problems
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_declared_leaves_that_name_no_file_are_not_members(tmp_path):
+    """...and the derivation stays narrow, or it would report the whole run.
+
+    state.json's ordinary leaves are phase tokens, run names and spec TYPES,
+    none of which name a file; a leaf that names a DIRECTORY is a container,
+    judged by what a reader opens inside it. Neither may become a problem, or
+    the guard cries wolf at every door and gets disabled.
+    """
+    root = tmp_path / "proj"
+    fdir = root / "foundry-archive" / "d145b"
+    fdir.mkdir(parents=True)
+    (root / "forge-specs").mkdir()
+    (fdir / "state.json").write_text(
+        json.dumps({
+            "phase": "F2",
+            "run": "d145b",
+            "spec_type": "GREENFIELD",
+            "cycle": 3,
+            "no_ui": True,
+            "some_dir": "forge-specs",
+            "nested": {"deep": ["also-not-a-file"]},
+        }),
+        encoding="utf-8",
+    )
+    foundry_state.set_active_run("d145b")
+    try:
+        assert fo._declared_external_inputs(fdir) == []
+        assert fo._run_artifact_problems(fdir) == []
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_the_external_input_reader_is_total_on_its_own_merits(tmp_path, monkeypatch):
+    """D-145 adjacent-path test (AC-013).
+
+    The path the defect was found on is Foundry-Validate-Castings reaching the
+    external spec through `_artifact_guard`. The ADJACENT path this drives is
+    the same file through a DIFFERENT caller — `_spec_requirement_ids`, which
+    the DONE gate's requirement count and P3 verdict synthesis both run through,
+    and which never calls the artifact guard at all. It read the spec under
+    `except OSError`, which does not name UnicodeDecodeError. Both readers must
+    hold without the guard above them, because "a guard runs first" is a fact
+    about one call site and not a property of the reader.
+    """
+    root, fdir = _external_spec_run(tmp_path, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC)
+    try:
+        monkeypatch.setattr(fo, "_resolve_spec_path", lambda pr: Path(root) / "forge-specs/probe/spec.md")
+        assert fo._spec_requirement_ids(root) == []
+        assert fo._count_spec_requirements(root) == 0
+    finally:
+        foundry_state.clear_active_run()
+
+
+# --------------------------------------------------------------------------- #
+# D-141 (ST-003 / NFR-002) — THE DECODE GUARD REACHES THE SECOND SHIPPED TREE.
+#
+# D-137 closed fourteen sites inside `src/foundry_mcp` and its package-wide scan
+# was rooted at `Path(foundry_mcp.__file__).parent`. `plugins/foundry/scripts/`
+# is shipped source that reads run artifacts and is NOT importable as part of
+# the package (hyphenated filenames), so it sat structurally outside that root
+# and three real, documented, tested CLIs kept the exact
+# `except (json.JSONDecodeError, OSError, FileNotFoundError)` shape the fix had
+# just removed everywhere else. Driven cold at d8215c5 from a worktree,
+# `migrate-archive.py#_load_json` and `measure-run.py#_load_json` both RAISED
+# UnicodeDecodeError on `{"a": "caf\xe9"}`.
+#
+# The root is now imported from D-134's manifest rule, which had already met
+# this boundary and derived past it — not re-typed here, and not a path added by
+# hand to a list. `test_no_document_load_can_raise_across_the_mcp_boundary`
+# carries the corpus anchor; these drive the operator-visible half.
+# --------------------------------------------------------------------------- #
+
+_BAD_UTF8_DOCUMENT = b'{"a": "caf\xe9"}'
+
+
+def _shipped_cli(name: str) -> Path:
+    """One of the three CLIs, located through the SAME derivation the scan uses."""
+    return _scanned_roots()[-1] / name
+
+
+def _load_cli_module(name: str):
+    """Import a hyphenated, non-importable CLI by path, as its own tests do."""
+    import importlib.util
+
+    path = _shipped_cli(name)
+    spec = importlib.util.spec_from_file_location(f"_{name.replace('-', '_')}_ut", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("script", ["measure-run.py", "migrate-archive.py"])
+def test_the_shipped_cli_loaders_do_not_raise_on_a_non_utf8_document(tmp_path, script):
+    """D-141's two driven sites, as a regression rather than a transcript.
+
+    Both `_load_json` copies are byte-identical and both raised. Their contract
+    was always "None on missing/malformed"; a non-UTF-8 byte is malformed, and
+    it is now answered as such instead of leaving the function by exception.
+    """
+    document = tmp_path / "defects.json"
+    document.write_bytes(_BAD_UTF8_DOCUMENT)
+    module = _load_cli_module(script)
+
+    assert module._load_json(document) is None
+    # ...and the narrow control: a healthy document still parses.
+    document.write_bytes(b'{"a": "cafe"}')
+    assert module._load_json(document) == {"a": "cafe"}
+    # ...and an absent one is still "absent", never confused with "corrupt".
+    assert module._load_json(tmp_path / "nope.json") is None
+
+
+def test_the_shipped_clis_all_read_through_the_one_primitive():
+    """The KEY LINK, asserted: no CLI re-decides the raise set for itself.
+
+    Three scripts each carried their own tolerant loader and each named its own
+    handler set; that is the copy-per-site the whole D-137 line is made of. The
+    assertion is on the import, because a script that imports the primitive and
+    then writes a fresh `except` beside it is caught by the decode scan, while a
+    script that never imports it is the one that can drift.
+    """
+    for name in ("measure-run.py", "migrate-archive.py", "validate-test-observations.py"):
+        source = _shipped_cli(name).read_text(encoding="utf-8")
+        assert "from foundry_mcp.tools.foundry_state import" in source, name
+
+
+def test_the_shipped_clis_refuse_a_non_utf8_input_without_a_traceback(tmp_path):
+    """The operator-visible half, driven through the real process boundary.
+
+    A CLI that raises prints a traceback naming no file and exits 1 by
+    accident; a CLI that refuses names the input. Each script is invoked the
+    way its own tests invoke it — `sys.executable script args` — so the
+    sys.path bootstrap is exercised too, not assumed.
+    """
+    import subprocess
+
+    fdir = tmp_path / "foundry-archive" / "d141"
+    fdir.mkdir(parents=True)
+    (fdir / "defects.json").write_bytes(_BAD_UTF8_DOCUMENT)
+    (fdir / "state.json").write_text(json.dumps({"cycle": 2}), encoding="utf-8")
+    observation = tmp_path / "observation.json"
+    observation.write_bytes(_BAD_UTF8_DOCUMENT)
+
+    drives = [
+        ("measure-run.py", [str(fdir)]),
+        ("migrate-archive.py", [str(fdir)]),
+        ("validate-test-observations.py", [str(observation)]),
+    ]
+    for name, args in drives:
+        proc = subprocess.run(
+            [sys.executable, str(_shipped_cli(name)), *args],
+            capture_output=True, text=True, timeout=60,
+        )
+        combined = proc.stdout + proc.stderr
+        assert "Traceback" not in combined, (name, combined)
+        assert "UnicodeDecodeError" not in proc.stderr, (name, proc.stderr)
+        assert proc.returncode in (0, 1), (name, proc.returncode, combined)
+
+
+# D-147's sweep: the two OTHER axes in this file that decided membership by
+# matching a spelling, derived the same way the load axis now is. Everything
+# still matched by string is listed in the fix report with the reason it is
+# genuinely a literal (a filename and a JSON key have no namespace to resolve
+# through; `read_text` is an attribute on a value of unknown type; `flock` and
+# `_artifact_guard` fail toward over-reporting, which is loud).
+_PLANTED_ALIASED_RENAME = (
+    "import os as o\n"
+    "\n"
+    "def _save_json(path, data):\n"
+    "    tmp = path.with_suffix('.tmp')\n"
+    "    tmp.write_text('{}')\n"
+    "    o.replace(tmp, path)\n"
+)
+_PLANTED_ALIASED_LEDGER_SCAN = (
+    "from foundry_mcp.tools.foundry import ledger_transaction as _tx\n"
+    "\n"
+    "def sync(defects_path):\n"
+    "    with _tx(defects_path, 'defects') as records:\n"
+    "        return [d for d in records if d.get('status') == 'fixed']\n"
+)
+
+
+def test_the_rename_rule_resolves_the_move_primitive_rather_than_matching_it(tmp_path):
+    """D-147 adjacent-path test: the same axis, one rule over.
+
+    The path the defect was reported on is `_is_document_load`'s
+    `func.value.id == "json"`. The ADJACENT path this drives is the rename
+    rule's `func.value.id == "os"` — a different rule, a different module
+    literal, the same silent hole: alias the import and the site disappears.
+    `os.replace` is now compared as an object.
+    """
+    aliased = _plant(tmp_path, "n.py", _PLANTED_ALIASED_RENAME)
+    seen, offenders = _unlocked_artifact_renames(aliased)
+    assert offenders == ["n.py::_save_json:6"], offenders
+    assert seen == ["n.py#_save_json"], seen
+
+
+def test_the_ledger_rule_resolves_the_primitive_rather_than_matching_it(tmp_path):
+    """...and the third axis, on a module that really imports the primitive.
+
+    `_tx` is `ledger_transaction`, so the binding is a member; the bare-name
+    fallback stays for a module this resolver cannot import, which is what the
+    synthetic `c.py` plant exercises.
+    """
+    aliased = _plant(tmp_path, "o.py", _PLANTED_ALIASED_LEDGER_SCAN)
+    seen, offenders = _raw_ledger_iterations(aliased)
+    assert offenders == ["o.py::sync:5"], offenders
+    assert seen == ["o.py#sync"], seen
+
+
+def render_shipped_tree_decode_table(tmp_path: Path) -> str:
+    """D-141 pre/post: one non-UTF-8 byte through the three shipped CLIs.
+
+    The PRE arm reproduces the handler set all three scripts held, verbatim,
+    rather than describing it — so the log shows the raise instead of
+    asserting it happened once.
+    """
+    import subprocess
+
+    def old_load(p: Path):
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, FileNotFoundError):
+            return None
+
+    document = tmp_path / "defects.json"
+    document.write_bytes(_BAD_UTF8_DOCUMENT)
+
+    scripts_root = _scanned_roots()[-1]
+    out = [
+        "== D-141: the decode rule's ROOT stopped at the installed package ==",
+        "",
+        "-- the two shipped source trees, both derived from foundry_mcp.__file__ --",
+    ]
+    # Named, not counted: a module count drifts every time a peer casting adds
+    # a file, and a log whose body changes for reasons unrelated to its claim
+    # is a log nobody can re-execute. What matters is that the second root is
+    # REACHED and that the three CLIs D-141 names are inside it.
+    for root in _scanned_roots():
+        found = sorted(p.name for p in root.rglob("*.py"))
+        out.append(
+            f"   {root.name:24s} is_dir={root.is_dir()}  non-empty={bool(found)}"
+        )
+    out.append(f"   the second root holds    : {sorted(p.name for p in scripts_root.glob('*.py'))}")
+    out += [
+        "",
+        "-- the handler set all three CLIs held, driven on one non-UTF-8 byte --",
+    ]
+    try:
+        old_load(document)
+        out.append("   the 3-script shape : returned (no raise)")
+    except Exception as exc:
+        out.append(f"   the 3-script shape : RAISES {type(exc).__name__}")
+
+    out += ["", "-- the same byte through the shipped loaders, post-fix --"]
+    for name in ("measure-run.py", "migrate-archive.py"):
+        module = _load_cli_module(name)
+        out.append(f"   {name:26s} _load_json -> {module._load_json(document)!r}")
+
+    out += ["", "-- and through the real process boundary, each CLI's own entry --"]
+    fdir = tmp_path / "foundry-archive" / "d141"
+    fdir.mkdir(parents=True, exist_ok=True)
+    (fdir / "defects.json").write_bytes(_BAD_UTF8_DOCUMENT)
+    (fdir / "state.json").write_text(json.dumps({"cycle": 2}), encoding="utf-8")
+    observation = tmp_path / "observation.json"
+    observation.write_bytes(_BAD_UTF8_DOCUMENT)
+    for name, args in (
+        ("measure-run.py", [str(fdir)]),
+        ("migrate-archive.py", [str(fdir)]),
+        ("validate-test-observations.py", [str(observation)]),
+    ):
+        proc = subprocess.run(
+            [sys.executable, str(scripts_root / name), *args],
+            capture_output=True, text=True, timeout=60,
+        )
+        combined = proc.stdout + proc.stderr
+        out.append(
+            f"   {name:30s} exit={proc.returncode}  traceback="
+            f"{'Traceback' in combined}  names-a-token="
+            f"{'MALFORMED' in combined or 'SCHEMA_INVALID' in combined}"
+        )
+    return "\n".join(out)
+
+
+def test_the_shipped_tree_decode_table_shows_the_raise_and_the_refusal(tmp_path):
+    """D-141's drive, ASSERTED so the log is a claim and not a picture."""
+    table = render_shipped_tree_decode_table(tmp_path)
+    assert "scripts                  is_dir=True" in table, table
+    assert "the 3-script shape : RAISES UnicodeDecodeError" in table, table
+    assert table.count("_load_json -> None") == 2, table
+    assert "traceback=True" not in table, table
+    assert table.count("names-a-token=True") == 3, table
+
+
+def render_external_input_guard_table(tmp_path: Path) -> str:
+    """D-145 pre/post: a corrupt spec DECLARED outside the run directory."""
+    from foundry_mcp import server as srv
+
+    def old_read(p: Path) -> str:
+        return p.read_text(encoding="utf-8") if p.exists() else ""
+
+    out = ["== D-145: the run's spec lives OUTSIDE the run directory =="]
+    root, fdir = _external_spec_run(tmp_path / "pre", "forge-specs/probe/spec.md", _BAD_UTF8_SPEC)
+    spec = Path(root) / "forge-specs/probe/spec.md"
+    out += [
+        "",
+        f"   state.json declares spec_path : forge-specs/probe/spec.md",
+        f"   ...which resolves OUTSIDE     : {spec.resolve().is_relative_to(fdir.resolve()) is False}",
+        "",
+        "-- the reader's old shape, driven on one non-UTF-8 byte --",
+    ]
+    try:
+        old_read(spec)
+        out.append("   spec_path.read_text : returned (no raise)")
+    except Exception as exc:
+        out.append(f"   spec_path.read_text : RAISES {type(exc).__name__}")
+
+    out += ["", "-- what the artifact guard saw, before and after --"]
+    out.append(f"   rglob over the run dir alone  : {[]}")
+    out.append(
+        f"   ...plus the run's declared inputs: "
+        f"{[p.split(' could')[0] for p in fo._run_artifact_problems(fdir)]}"
+    )
+
+    out += ["", "-- and the door itself, through the real _DISPATCH --"]
+    real_root = srv._project_root
+    try:
+        srv._project_root = root
+        result = srv._DISPATCH["Foundry-Validate-Castings"]({})
+        out.append(
+            f"   Foundry-Validate-Castings  passed={result.get('passed')}  "
+            f"names the file={'spec.md' in str(result.get('error', ''))}  "
+            f"hint={bool(result.get('hint'))}"
+        )
+        out.append(f"      {str(result.get('error', '')).split(': /')[0]}")
+    except Exception as exc:
+        out.append(f"   Foundry-Validate-Castings  RAISED {type(exc).__name__} across MCP")
+    finally:
+        srv._project_root = real_root
+        foundry_state.clear_active_run()
+
+    out += ["", "-- control: the same run with a healthy spec is untouched --"]
+    good_root, good_fdir = _external_spec_run(
+        tmp_path / "post", "forge-specs/probe/spec.md",
+        _BAD_UTF8_SPEC.replace(b"caf\xe9", b"cafe"),
+    )
+    try:
+        srv._project_root = good_root
+        result = srv._DISPATCH["Foundry-Validate-Castings"]({})
+        out.append(f"   guard problems = {fo._run_artifact_problems(good_fdir)}")
+        out.append(
+            f"   Foundry-Validate-Castings  read-fault reported="
+            f"{'could not be read' in str(result.get('error', ''))}"
+        )
+    finally:
+        srv._project_root = real_root
+        foundry_state.clear_active_run()
+
+    out += ["", "-- and the membership is DERIVED over state.json, not over a key --"]
+    new_root, new_fdir = _external_spec_run(
+        tmp_path / "newkey", "inputs/context.txt", _BAD_UTF8_SPEC,
+        state_key="operator_context_path",
+    )
+    try:
+        out.append(
+            f"   a key nobody has heard of -> "
+            f"{[p.name for p in fo._declared_external_inputs(new_fdir)]} reported="
+            f"{[p.split(' could')[0] for p in fo._run_artifact_problems(new_fdir)]}"
+        )
+    finally:
+        foundry_state.clear_active_run()
+    return "\n".join(out)
+
+
+def test_the_external_input_guard_table_shows_the_raise_and_the_refusal(tmp_path):
+    """D-145's drive, ASSERTED so the log is a claim and not a picture."""
+    table = render_external_input_guard_table(tmp_path)
+    assert "...which resolves OUTSIDE     : True" in table, table
+    assert "spec_path.read_text : RAISES UnicodeDecodeError" in table, table
+    assert "RAISED" not in table.split("-- control:")[0].replace(
+        "spec_path.read_text : RAISES UnicodeDecodeError", ""), table
+    assert "names the file=True" in table, table
+    assert "guard problems = []" in table, table
+    assert "read-fault reported=False" in table, table
+    assert "['context.txt'] reported=['context.txt']" in table, table
+
+
+def render_load_spelling_table(tmp_path: Path) -> str:
+    """D-147 pre/post: what the string match saw, and what resolution sees.
+
+    The PRE arm is the shipped predicate reproduced verbatim — `func.value.id
+    == "json"` — rather than described, so the log shows the miss instead of
+    asserting it happened once.
+    """
+    def old_is_document_load(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and func.attr in ("load", "loads")
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "json"
+        ):
+            return False
+        return _reads_a_file(node)
+
+    def old_uncovered_by(handlers: list, namespace: dict) -> list[str]:
+        """The pre-fix coverage check: a handler that RE-RAISES still counted."""
+        caught: list[type[BaseException]] = []
+        for handler in handlers:
+            caught.extend(_handler_classes(handler, namespace)[0])
+        return [
+            raised.__name__
+            for raised in _DOCUMENT_LOAD_RAISES
+            if not any(issubclass(raised, cls) for cls in caught)
+        ]
+
+    def old_scan(path: Path) -> list[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        namespace = _module_namespace(path, tree)
+        hits: list[str] = []
+
+        def visit(node, fn, handlers):
+            if not old_is_document_load(node):
+                return
+            if old_uncovered_by(list(handlers), namespace):
+                hits.append(f"{path.name}::{fn}:{node.lineno}")
+
+        _walk_guarded(tree, "<module>", (), visit)
+        return sorted(set(hits))
+
+    shapes = [
+        ("json.loads(read_text)      (control)", _PLANTED_DECODE_ONLY_LOADER),
+        ("import json as j           no handler", _PLANTED_ALIASED_LOADER),
+        ("from json import loads     no handler", _PLANTED_FROM_IMPORT_LOADER),
+        ("read and decode split      half each", _PLANTED_SPLIT_LOADER),
+        ("except Exception: raise Boom()      ", _PLANTED_RERAISING_LOADER),
+        ("both rungs answered        (control)", _PLANTED_COVERED_SPLIT_LOADER),
+    ]
+    out = [
+        "== D-147: the handler axis was derived and the load axis was a string ==",
+        "",
+        "   %-38s %-9s %s" % ("the operation, spelled", "old rule", "derived rule"),
+        "   %-38s %-9s %s" % ("-" * 22, "-" * 8, "-" * 12),
+    ]
+    for i, (label, source) in enumerate(shapes):
+        module = _plant(tmp_path, f"spelling{i}.py", source)
+        old = "REPORTED" if old_scan(module) else "clean"
+        new = "REPORTED" if _unguarded_document_loads(module)[1] else "clean"
+        out.append("   %-38s %-9s %s" % (label, old, new))
+    out += [
+        "",
+        "-- the live alias this was filed against --",
+        "   foundry_orchestrator.py carries `import json as _json`: %s" % (
+            "import json as _json"
+            in (Path(fo.__file__).read_text(encoding="utf-8"))
+        ),
+        "",
+        "-- and an unresolvable spelling ANNOUNCES itself rather than passing --",
+    ]
+    mystery = _plant(
+        tmp_path,
+        "mystery.py",
+        "from some_vendor_lib import codec\n"
+        "\n"
+        "def _load(path):\n"
+        "    return codec.loads(path.read_text(encoding='utf-8'))\n",
+    )
+    out.append("   %s" % _unguarded_document_loads(mystery)[1])
+    return "\n".join(out)
+
+
+def test_the_load_spelling_table_shows_the_miss_and_the_fix(tmp_path):
+    """D-147's drive, ASSERTED so the log is a claim and not a picture."""
+    table = render_load_spelling_table(tmp_path)
+    # The control the old rule DID see, so the misses below are about the
+    # spelling and not about the rule being off.
+    control = next(r for r in table.split("\n") if "json.loads(read_text)" in r)
+    assert control.count("REPORTED") == 2, control
+    # Three spellings the string match called clean, every one now reported.
+    for label in ("import json as j", "from json import loads",
+                  "read and decode split", "except Exception: raise Boom()"):
+        row = next(r for r in table.split("\n") if label in r)
+        assert "clean" in row and "REPORTED" in row, row
+    # ...and the narrow control: both rungs answered is clean under both rules.
+    both = next(r for r in table.split("\n") if "both rungs answered" in r)
+    assert both.count("clean") == 2, both
+    assert "carries `import json as _json`: True" in table, table
+    assert "unresolved load spelling: codec.loads" in table, table

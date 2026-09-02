@@ -6,11 +6,18 @@
 #
 # D-134 — THE MANIFEST-SHAPE VALIDATOR'S MEMBERSHIP, DERIVED OVER THE PACKAGE.
 #
-# THIS IS A RED RULE AS SHIPPED, AND THAT IS THE DELIVERABLE. The six readers
-# named in the VERDICT block below are live instances of the escalated class;
-# the rule exists to make them visible and to stay red until they close.
-# `test_every_manifest_record_reader_in_the_package_establishes_the_shape` is
-# the assertion, and it is the single failing test in the suite at this commit.
+# THE RULE WAS RED WHEN IT LANDED AND IS GREEN NOW. The six readers it named
+# have since been routed through the validator, so the VERDICT block below is
+# empty — which is exactly the state D-142 says an offender-only rule cannot be
+# trusted in, because an empty verdict is also what a blind derivation prints.
+# The SEEN block is the answer: it names every reader the scan RECOGNISED, and
+# `test_every_manifest_record_reader_in_the_package_establishes_the_shape` now
+# asserts that the seven readers D-134 was FILED ON are still among them.
+# `test_a_blinded_derivation_fails_every_manifest_rule_by_name` drives the
+# proof: with `_has_literal_taint` replaced by one that recognises nothing —
+# the single primitive every literal decision in this scan now routes through —
+# all four rules fail BY NAME, where all four passed under that same probe
+# before.
 #
 # THE HARM, driven live against the real _DISPATCH with
 # castings/manifest.json = {"castings": "nope"} and {"castings": [1,2,3]}:
@@ -55,10 +62,26 @@
 #                  exception written for it.
 #   which readers  taint from the "manifest.json" literal, propagated ACROSS
 #                  CALLS (foundry_validate.py#_fingerprint_inputs indexes a
-#                  document it never loaded) and through path-building helpers
+#                  document it never loaded), through path-building helpers
 #                  (evidence.py#_resolve_manifest_path owns the literal and its
-#                  callers never see one). A scan following only the literal
-#                  reports both of those modules clean.
+#                  callers never see one), and — since GRIND-21, D-148 — back
+#                  OUT of a helper's RETURN. A scan following only the literal
+#                  reports the first two modules clean; a scan that does not
+#                  follow returns calls `for c in _rows(manifest): c.get("id")`
+#                  clean at one hop and at two, while `castings: "nope"` makes
+#                  `_rows` hand back a string whose characters meet `.get`.
+#
+#                  The return rule is a DESCENT test, which is what keeps it
+#                  from becoming the laundering the narrow `_returned_path` was
+#                  written to avoid: a helper propagates only when the path it
+#                  hands back is strictly BELOW what it was handed. `_rows` is
+#                  given the document root and returns `castings`, so it
+#                  descends; a shared `load(path)` returns the same rung it was
+#                  given, so it never propagates and its other callers are not
+#                  poisoned. That property is driven directly by
+#                  test_following_a_return_still_does_not_launder_a_shared_loader,
+#                  which BINDS the path to a name first so the loader really
+#                  does carry taint on its parameter.
 #
 # THE ALLOW-LIST IS EMPTY. scripts/validate_intent_coverage.py's
 # load_manifest_casting_ids reads the same document and is not an offender

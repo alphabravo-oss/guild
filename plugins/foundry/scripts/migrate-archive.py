@@ -44,6 +44,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
         WIRE_TO_CANONICAL,
         canonical_stream_id,
     )
+    from foundry_mcp.tools.foundry_state import read_json, read_text_file
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
@@ -53,6 +54,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         WIRE_TO_CANONICAL,
         canonical_stream_id,
     )
+    from foundry_mcp.tools.foundry_state import read_json, read_text_file
 
 
 # The schema generation this tool brings an archive to. Bump when a migration
@@ -97,11 +99,17 @@ class _Malformed(Exception):
 
 
 def _load_json(path: Path) -> Any:
-    """Read+parse a JSON file; return None on missing/malformed."""
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, FileNotFoundError):
-        return None
+    """Read+parse a JSON file; return None on missing/malformed.
+
+    D-141: byte-identical to measure-run.py's copy, and it leaked the same
+    exception for the same reason -- ``(json.JSONDecodeError, OSError,
+    FileNotFoundError)`` does not name UnicodeDecodeError, which
+    ``read_text`` raises BEFORE ``json.loads`` is ever reached. Driven live
+    on ``{"a": "caf\\xe9"}``, this raised out of the CLI. The raise set is
+    now closed once, in ``foundry_state.read_json``, for both scripts and for
+    every module in the package.
+    """
+    return read_json(path)[0]
 
 
 def _save_json(path: Path, data: Any) -> None:
@@ -242,9 +250,10 @@ def _read_stream_marker(run_dir: Path, wire_stream: str) -> dict[str, int] | Non
     path = run_dir / f".{wire_stream}-complete"
     if not path.exists():
         return None
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+    # D-141: `except OSError` alone leaks UnicodeDecodeError. A stream marker
+    # is a run artifact and is read the same way every other one is.
+    text, problem = read_text_file(path)
+    if problem is not None:
         return None
     found: dict[str, int] = {}
     for token in text.split():

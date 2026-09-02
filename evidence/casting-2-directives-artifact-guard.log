@@ -37,7 +37,6 @@
 # readable directive still clears with count 1 and still writes
 # directives-cleared.md, and every *.json member was already NAMED before this
 # change and still is (NFR-002 -- the fix widens, it narrows nothing).
-
 == corrupt one artifact at a time; which rule reports it by name? ==
    artifact                           *.json      D-129       D-138
    --------                           ------      -----       -----
@@ -63,4 +62,4 @@
    readable  archive carries the directive text .... True
 
 == the pins, driven ==
-5 passed, 247 deselected in 0.26s
+5 passed, 268 deselected in 0.25s

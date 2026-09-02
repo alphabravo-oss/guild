@@ -51,6 +51,5 @@
 # door noticed, nor get two accounts of one broken file -- and it is asserted
 # over every non-list container shape (`{...}`, a string, an int), with the
 # file byte-identical afterward on each.
-
-............                                                             [100%]
-12 passed, 240 deselected in 0.51s
+..............                                                           [100%]
+14 passed, 259 deselected in 0.52s

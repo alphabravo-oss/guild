@@ -28,6 +28,7 @@ from foundry_mcp.schemas.vocab import (
 )
 from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry_state import (
+    ARCHIVE_DIR,
     clear_active_run,
     get_run_dir,
     read_document,
@@ -307,7 +308,12 @@ def _document_transaction(path: Path) -> Iterator[dict]:
     lock_path = path.with_name(path.name + ".lock")
     with _ARTIFACT_LOCK:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+        # The lock handle exists for its FILE DESCRIPTOR and nothing else --
+        # `flock` below is its only use, and no byte of this file is ever read
+        # or written through it. Opened in binary because that is what is true:
+        # a text handle claims a decode that never happens, and a claim a
+        # reader has to disprove is the same cost as one that is wrong.
+        with open(lock_path, "ab+") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
                 data = _load_json(path)
@@ -507,6 +513,69 @@ def _artifact_problem(path: Path, relative: tuple[str, ...] = ()) -> str | None:
 # The fix is not "also check directives.md" — naming that file here is the
 # escalated class, and the next non-JSON artifact would repeat it. The glob
 # derives the members; the decoder table says how to read each type.
+def _string_leaves(value: object) -> Iterator[str]:
+    """Every string anywhere in a parsed JSON document, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _string_leaves(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_leaves(item)
+
+
+# D-145 — THE RUN'S INPUTS ARE NOT ALL INSIDE THE RUN DIRECTORY.
+#
+# `_run_artifact_problems` rglobbed the run dir and nothing else, so a file the
+# run DECLARES and every door then READS was structurally outside every guard
+# in this module. The spec is that file: `foundry_validate_castings` falls back
+# to `Path(project_root) / state["spec_path"]` when the run dir holds no
+# spec.md, and this very run's state.json carries
+# "forge-specs/foundry-run-process-fixes/spec.md" — outside
+# foundry-archive/thunder-viper/. Driven through the real _DISPATCH, one
+# non-UTF-8 byte in that file raised UnicodeDecodeError across the MCP boundary
+# while `_run_artifact_problems(fdir)` returned [] with the broken file sitting
+# right there. The in-run-dir cases were all correctly refused; this was
+# precisely the residue the rglob could not reach.
+#
+# THE AXIS IS DERIVED FROM THE STATE DOCUMENT, NOT FROM A KEY NAMED HERE.
+# Naming `spec_path` would close this instance and leave the next declared
+# input — a context file, a research root, a migration source — outside the
+# guard on the day it is added, which is the escalated class exactly. Every
+# STRING LEAF of state.json that resolves to an existing FILE is an input this
+# run declared, so a key added to state.json is policed the day it is written
+# and no reader has to remember to enrol it. A leaf that names no file is not
+# an input and needs no classification; a leaf that names a DIRECTORY is a
+# container, judged by what a reader opens inside it, not by itself.
+def _declared_external_inputs(fdir: Path) -> list[Path]:
+    """Every file OUTSIDE the run dir that the run's own state.json declares.
+
+    Resolved against the project root, which is derived from ``fdir`` rather
+    than passed in: ``get_run_dir`` builds ``<project_root>/<ARCHIVE_DIR>/<run>``,
+    so the root is two levels up — and the ``ARCHIVE_DIR`` check below is what
+    makes that a fact about the path rather than an assumption about it.
+    """
+    if fdir.parent.name != ARCHIVE_DIR or len(fdir.parents) < 2:
+        return []
+    project_root = fdir.parents[1]
+    inside = fdir.resolve()
+    found: dict[Path, None] = {}
+    for leaf in _string_leaves(_load_json(fdir / "state.json")):
+        if not leaf:
+            continue
+        try:
+            candidate = (project_root / leaf).resolve()
+            if not candidate.is_file():
+                continue
+        except (OSError, ValueError):  # a leaf that is not a usable path at all
+            continue
+        if candidate == inside or inside in candidate.parents:
+            continue  # already a member through the rglob below
+        found.setdefault(candidate, None)
+    return sorted(found)
+
+
 def _run_artifact_problems(fdir: Path) -> list[str]:
     """Named problems for every unreadable run artifact, in stable order.
 
@@ -516,6 +585,11 @@ def _run_artifact_problems(fdir: Path) -> list[str]:
     where a reader will open a file (D-140: ``state.json`` as a directory
     passed the old ``is_file()`` filter, so the guard saw nothing and the write
     raised IsADirectoryError instead of refusing by name).
+
+    ...plus the run's DECLARED EXTERNAL INPUTS (D-145), because "the artifacts
+    this run reads" and "the files under this run's directory" were never the
+    same set, and the guard runs at the top of every MCP entry point precisely
+    so no individual reader has to remember to look.
     """
     if not fdir or not fdir.exists():
         return []
@@ -524,6 +598,9 @@ def _run_artifact_problems(fdir: Path) -> list[str]:
         if candidate.is_dir() and not candidate.suffix:
             continue
         if (problem := _artifact_problem(candidate, candidate.relative_to(fdir).parts)):
+            problems.append(problem)
+    for external in _declared_external_inputs(fdir):
+        if (problem := _artifact_problem(external)):
             problems.append(problem)
     return problems
 
@@ -637,9 +714,12 @@ def _spec_requirement_ids(project_root: str) -> list[str]:
     spec_path = _resolve_spec_path(project_root)
     if spec_path is None:
         return []
-    try:
-        text = spec_path.read_text(encoding="utf-8")
-    except OSError:
+    # D-137's residual, one rung out from the loads: `except OSError` does not
+    # name UnicodeDecodeError, so one non-UTF-8 byte in the spec raised out of
+    # the DONE gate's requirement count. The spec is the external input D-145
+    # brings inside the artifact guard, and this is its second reader.
+    text, problem = read_text_file(spec_path)
+    if problem is not None:
         return []
     return sorted(set(_REQ_ID_RE.findall(text)))
 
@@ -4432,10 +4512,11 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
     if validate_passed_marker.exists():
         entry = phase_times.get("F0.9")
         if entry and "validate_passed_at" not in entry:
-            try:
-                entry["validate_passed_at"] = validate_passed_marker.read_text(encoding="utf-8").strip() or now
-            except OSError:
-                entry["validate_passed_at"] = now
+            # `except OSError` left UnicodeDecodeError open on a marker file
+            # the operator can corrupt as easily as any other (D-137's shape).
+            # `_read_text` is total and degrades to "", which the `or now`
+            # below already answers.
+            entry["validate_passed_at"] = _read_text(validate_passed_marker).strip() or now
             changed = True
 
     if changed:
@@ -5651,16 +5732,21 @@ def foundry_get_context(
     all_reqs = verdicts.get("requirements", [])
     verified = sum(1 for r in all_reqs if r.get("verdict") == "VERIFIED")
 
+    # Both reads carried NO handler at all, so a non-UTF-8 byte in either
+    # markdown artifact raised UnicodeDecodeError straight out of
+    # Foundry-Context. `_artifact_guard` names them at the top of this door
+    # already; `_read_text` is what makes the reader itself total rather than
+    # relying on a guard several statements above it (D-137's shape).
     findings_excerpt = ""
     findings_path = fdir / "forge-findings.md"
     if findings_path.exists():
-        text = findings_path.read_text(encoding="utf-8")
+        text = _read_text(findings_path)
         findings_excerpt = text[:2000] + ("..." if len(text) > 2000 else "")
 
     lessons_excerpt = ""
     lessons_path = fdir / "lessons.md"
     if lessons_path.exists():
-        text = lessons_path.read_text(encoding="utf-8")
+        text = _read_text(lessons_path)
         lessons_excerpt = text[:2000] + ("..." if len(text) > 2000 else "")
 
     teams = _check_active_teams(project_root)

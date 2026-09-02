@@ -22,7 +22,6 @@
 # The indented row is refused slightly conservatively: it is inert under the
 # parser TODAY (which keys on str.startswith), but a body smuggling one is
 # asking for exactly that reading, and the cost of declining it is a rephrase.
-
 == D-101: a MENTION of the token is not a REQUEST for an override ==
    PRE-fix   post-fix  directive text
    -------   --------  --------------
@@ -57,4 +56,4 @@
 
 == the pins ==
 ...........................................................              [100%]
-59 passed, 356 deselected in 0.30s
+59 passed, 377 deselected in 0.34s

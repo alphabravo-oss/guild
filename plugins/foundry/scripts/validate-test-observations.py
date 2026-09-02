@@ -47,6 +47,27 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# D-141 — EVERY READ OF AN INPUT DOCUMENT GOES THROUGH THE ONE PRIMITIVE.
+#
+# Three reads in this file (the observation document, --spec, --tool-call-log)
+# each named their own handler set, and none of them named UnicodeDecodeError:
+# `read_text` raises it BEFORE `json.loads` is ever reached, so one non-UTF-8
+# byte in an input raised straight out of the CLI with a traceback naming no
+# file -- the identical residual D-137 closed at fourteen sites inside the
+# package, recurring in the sibling tree the package-wide scan could not see.
+#
+# The bootstrap mirrors measure-run.py's and migrate-archive.py's exactly:
+# installed first, then src/ on sys.path for a dev checkout.
+# `foundry_state` imports json and pathlib and nothing from its own package,
+# so the "stdlib only" character of these CLIs is unchanged.
+try:  # Installed (uvx/pip) case — package is already importable.
+    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
+    _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
+    if _SRC.is_dir() and str(_SRC) not in sys.path:
+        sys.path.insert(0, str(_SRC))
+    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+
 
 # ---------------------------------------------------------------------------
 # Constants — closed vocabularies
@@ -439,15 +460,19 @@ def validate_test_observations(
     failures: list[str] = []
 
     # ----- Step 1: JSON parse -----
-    try:
-        observation = json.loads(observation_path.read_text())
-    except FileNotFoundError as e:
+    # D-141: one call, one raise set. `problem` NAMES THE FILE, so the operator
+    # learns which input to repair instead of receiving a traceback; absence
+    # keeps its own distinct token, because "you pointed me at nothing" and
+    # "what you pointed me at is broken" send them to look at different things.
+    if not observation_path.exists():
         print(
-            f"TEST_OBSERVATION_SCHEMA_INVALID: observation file missing: {e}"
+            f"TEST_OBSERVATION_SCHEMA_INVALID: observation file missing: "
+            f"{observation_path}"
         )
         return 1
-    except json.JSONDecodeError as e:
-        print(f"TEST_OBSERVATION_SCHEMA_INVALID: malformed JSON: {e}")
+    observation, problem = read_json(observation_path)
+    if problem is not None:
+        print(f"TEST_OBSERVATION_SCHEMA_INVALID: malformed JSON: {problem}")
         return 1
     if not isinstance(observation, dict):
         print(
@@ -479,14 +504,18 @@ def validate_test_observations(
     spec_requirement_ids: set[str] = set()
     contract_surface_tokens: frozenset[str] = frozenset()
     if spec_path is not None:
-        try:
-            spec_text = spec_path.read_text()
-        except FileNotFoundError:
+        if not spec_path.exists():
             failures.append(
                 f"TEST_OBSERVATION_SCHEMA_INVALID: --spec path missing: "
                 f"{spec_path}"
             )
             spec_text = ""
+        else:
+            spec_text, spec_problem = read_text_file(spec_path)
+            if spec_problem is not None:
+                failures.append(
+                    f"TEST_OBSERVATION_SCHEMA_INVALID: --spec {spec_problem}"
+                )
         if spec_text:
             # Extract <spec_requirements> block first; fall back to whole-spec
             # grep when the block is absent (legacy v2.0 specs may not carry
@@ -687,21 +716,23 @@ def validate_test_observations(
 
     # ----- Step 8: code-blind tool-call audit -----
     if tool_call_log_path is not None:
-        try:
-            calls_text = tool_call_log_path.read_text()
-        except FileNotFoundError as e:
+        # D-141's fourth site, and the one whose shape the decode scan could
+        # not see at all: the read and the decode were two statements under two
+        # handlers, `except FileNotFoundError` and `except json.JSONDecodeError`
+        # — between them naming two exception types and covering neither the
+        # OSError nor the UnicodeDecodeError the read itself raises.
+        if not tool_call_log_path.exists():
             failures.append(
                 f"TEST_OBSERVATION_SCHEMA_INVALID: --tool-call-log path "
-                f"missing: {e}"
+                f"missing: {tool_call_log_path}"
             )
-            calls = []
+            calls: Any = []
         else:
-            try:
-                calls = json.loads(calls_text)
-            except json.JSONDecodeError as e:
+            calls, log_problem = read_json(tool_call_log_path)
+            if log_problem is not None:
                 failures.append(
                     "TEST_OBSERVATION_SCHEMA_INVALID: --tool-call-log "
-                    f"unreadable JSON: {e}"
+                    f"unreadable JSON: {log_problem}"
                 )
                 calls = []
         if not isinstance(calls, list):

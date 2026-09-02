@@ -1,0 +1,73 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, tempfile; sys.path[:0]=["tests","src"]; from pathlib import Path; import test_orchestrator_gates as t; print(t.render_external_input_guard_table(Path(tempfile.mkdtemp())))' && echo "" && echo "== the door, the derivation, and the reader that holds without the guard ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "external or corrupt_spec or declared_leaves or spec_read_healthy" 2>&1 | grep -E "passed|failed"
+# evidence-for: NFR-002, FR-020
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-145 — THE GUARD'S MEMBERSHIP STOPPED AT THE RUN DIRECTORY, AND THE RUN'S
+# SPEC DOES NOT LIVE THERE.
+#
+# `_artifact_guard` runs at the top of every orchestrator entry point precisely
+# so no individual reader has to remember to check. Its membership was
+# `fdir.rglob("*")` — derived over the run directory on both axes, and blind to
+# everything outside it. `foundry_validate_castings` falls back to
+# `Path(project_root) / state["spec_path"]` when the run dir holds no spec.md
+# and then read it unguarded, so a file the run DECLARES and every door then
+# reads was outside every guard in the module.
+#
+# This is not a hypothetical path: thunder-viper's own state.json carries
+# spec_path "forge-specs/foundry-run-process-fixes/spec.md", outside
+# foundry-archive/thunder-viper/. Driven through the real _DISPATCH at d8215c5,
+# one non-UTF-8 byte in that file RAISED UnicodeDecodeError across the MCP
+# boundary while `_run_artifact_problems(fdir)` returned [] with the broken
+# file sitting right there. Every in-run-dir case was correctly refused by
+# name; this was exactly the residue the rglob could not reach.
+#
+# TWO HALVES, AND WHY BOTH ARE NEEDED.
+#
+#   The READER is made total. `spec_path.read_text` and the second unguarded
+#   read in the same module (`prompt_path.read_text`, covered today only
+#   because a casting prompt happens to sit inside the run dir) now go through
+#   `foundry_state.read_text_file` and return `document_refusal`. "A guard runs
+#   first" is a fact about one call site, not a property of a reader — and
+#   `_spec_requirement_ids`, which the DONE gate's requirement count runs
+#   through, reads the same external file and never calls the guard at all.
+#
+#   The GUARD's membership is widened, so the answer is not "this reader
+#   remembered" but "every door refuses by name". And the widening is DERIVED
+#   OVER THE STATE DOCUMENT, not over the key: every string leaf of state.json
+#   that resolves to an existing FILE is an input this run declared. Naming
+#   `spec_path` would close this instance and leave the next declared input —
+#   a context file, a research root, a migration source — outside the guard on
+#   the day it is added, which is the escalated class exactly. The table's last
+#   row plants a key nobody has ever heard of and the guard names it anyway.
+#
+# The project root is derived from `fdir` rather than passed in, and the
+# ARCHIVE_DIR check is what makes that a fact about the path instead of an
+# assumption about it. The control rows keep the refusal narrow: a run whose
+# declared spec is healthy — which is every run this repo has — is untouched.
+== D-145: the run's spec lives OUTSIDE the run directory ==
+
+   state.json declares spec_path : forge-specs/probe/spec.md
+   ...which resolves OUTSIDE     : True
+
+-- the reader's old shape, driven on one non-UTF-8 byte --
+   spec_path.read_text : RAISES UnicodeDecodeError
+
+-- what the artifact guard saw, before and after --
+   rglob over the run dir alone  : []
+   ...plus the run's declared inputs: ['spec.md']
+
+-- and the door itself, through the real _DISPATCH --
+   Foundry-Validate-Castings  passed=False  names the file=True  hint=True
+      Run artifacts cannot be read: spec.md could not be read (UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 23: invalid continuation byte). The run's state is unreadable, so this tool refuses rather than acting on a document it had to guess at.
+
+-- control: the same run with a healthy spec is untouched --
+   guard problems = []
+   Foundry-Validate-Castings  read-fault reported=False
+
+-- and the membership is DERIVED over state.json, not over a key --
+   a key nobody has heard of -> ['context.txt'] reported=['context.txt']
+
+== the door, the derivation, and the reader that holds without the guard ==
+6 passed, 267 deselected in 0.25s

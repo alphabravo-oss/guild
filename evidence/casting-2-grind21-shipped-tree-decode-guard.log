@@ -1,0 +1,69 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys, tempfile; sys.path[:0]=["tests","src"]; from pathlib import Path; import test_orchestrator_gates as t; print(t.render_shipped_tree_decode_table(Path(tempfile.mkdtemp())))' && echo "" && echo "== the decode rule over BOTH shipped trees, and a copy planted in the second ==" && uv run --quiet --with pytest pytest tests/test_orchestrator_gates.py -q -p no:cacheprovider -k "document_load or shipped_cli or cli_loaders or clis_ or planted_loader_under_the_scripts or shipped_tree_decode_table" 2>&1 | grep -E "passed|failed"
+# evidence-for: NFR-002, FR-020
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages in \d+ms
+# evidence-timeout: 300
+#
+# D-141 — THE RULE WAS DERIVED OVER THE PACKAGE IT COULD REACH, NOT OVER THE
+# TREE THE RUN ACTUALLY SHIPS.
+#
+# D-137 closed fourteen `json.loads(path.read_text(...))` sites across seven
+# modules and left behind a package-wide scan to make the class
+# unrepresentable. That scan was rooted at `Path(foundry_mcp.__file__).parent`
+# — the installed package, and only that. `plugins/foundry/scripts/` is the
+# SIBLING tree: shipped source, documented, tested, hyphenated filenames and
+# therefore not importable as part of the package, and it holds three CLIs that
+# read run artifacts. It was structurally outside the root, so all three kept
+# the exact handler set the fix had just removed everywhere else:
+#
+#     except (json.JSONDecodeError, OSError, FileNotFoundError)
+#
+# which names three exception types and covers neither of the two that a
+# `read_text` actually raises first. Driven live from a d8215c5 worktree,
+# `migrate-archive.py#_load_json` and `measure-run.py#_load_json` both RAISED
+# UnicodeDecodeError on one non-UTF-8 byte. That is D-134's own escalated-class
+# shape recurring one directory over: derived over the scanned package rather
+# than over every reader in the tree the run ships.
+#
+# THE FIX IS THE ROOT, NOT THE THREE FILES. Adding the CLIs to a list would be
+# the class itself. D-134's manifest rule had already met this boundary and
+# derived past it — `_scanned_roots()` locates BOTH trees from the package's
+# own `__file__` — so that derivation is now IMPORTED by the decode rule rather
+# than re-typed beside it. Two scans over the same two trees must not be able
+# to disagree about what "the shipped source" is.
+#
+# AND THE READS THEMSELVES GO THROUGH THE ONE PRIMITIVE. Each script carried
+# its own tolerant loader naming its own handler set; that copy-per-site is
+# what the whole line is made of. All three now import
+# `foundry_mcp.tools.foundry_state`, which imports json and pathlib and nothing
+# from its own package, so the CLIs' "stdlib only, no runtime deps" character
+# is unchanged. The fourth site — `validate-test-observations.py`'s
+# --tool-call-log, where the read and the decode were two statements under two
+# handlers — is the one the scan could not see AT ALL until the rule learned to
+# follow a read across its binding.
+#
+# WHAT THE TABLE SHOWS: both roots reached and named; the shape all three CLIs
+# held, raising; the same byte returning None through the fixed loaders; and
+# each CLI driven through the real process boundary, exiting on a NAMED token
+# with no traceback.
+== D-141: the decode rule's ROOT stopped at the installed package ==
+
+-- the two shipped source trees, both derived from foundry_mcp.__file__ --
+   foundry_mcp              is_dir=True  non-empty=True
+   scripts                  is_dir=True  non-empty=True
+   the second root holds    : ['measure-run.py', 'migrate-archive.py', 'validate-intent-coverage.py', 'validate-test-observations.py']
+
+-- the handler set all three CLIs held, driven on one non-UTF-8 byte --
+   the 3-script shape : RAISES UnicodeDecodeError
+
+-- the same byte through the shipped loaders, post-fix --
+   measure-run.py             _load_json -> None
+   migrate-archive.py         _load_json -> None
+
+-- and through the real process boundary, each CLI's own entry --
+   measure-run.py                 exit=1  traceback=False  names-a-token=True
+   migrate-archive.py             exit=1  traceback=False  names-a-token=True
+   validate-test-observations.py  exit=1  traceback=False  names-a-token=True
+
+== the decode rule over BOTH shipped trees, and a copy planted in the second ==
+7 passed, 266 deselected in 1.30s

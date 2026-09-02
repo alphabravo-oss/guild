@@ -901,6 +901,14 @@ def validate_intent_coverage(
     # Advisory shape: only fires when --tool-call-log passed (mirror of
     # Phase 7 advisory pattern).
     if tool_call_log_path is not None:
+        # D-141: the read and the decode sat two statements apart under two
+        # handlers, `except FileNotFoundError` and `except json.JSONDecodeError`
+        # — between them naming two exception types and covering neither the
+        # OSError nor the UnicodeDecodeError the READ itself raises, which is
+        # the D-137 residual one rung out from the sites that fix closed.
+        # `read_text_file` is the canonical answer and this module already
+        # imports its sibling; the local handler is widened rather than
+        # rewritten because this file belongs to another casting's boundary.
         try:
             calls_text = tool_call_log_path.read_text(encoding="utf-8")
         except FileNotFoundError as e:
@@ -909,6 +917,12 @@ def validate_intent_coverage(
                 f"missing: {e}"
             )
             calls: Any = []
+        except (OSError, UnicodeDecodeError) as e:
+            failures.append(
+                f"INTENT_COVERAGE_SCHEMA_INVALID: --tool-call-log could not be "
+                f"read ({type(e).__name__}: {e})"
+            )
+            calls = []
         else:
             try:
                 calls = json.loads(calls_text)

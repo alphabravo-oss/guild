@@ -73,11 +73,10 @@
 #     from outside its lock (foundry.py's _save_json has six such callers).
 #     Rule (b) binds a renaming module to owning a lock, not every call to
 #     reaching the writer through it. foundry.py is casting 3's this cycle.
-
-== the three rules over the installed package, after this casting's fixes ==
-   unguarded document loads      : none
-   unlocked artifact renames     : none
-   raw ledger iterations         : none
+== the three rules over the shipped source, after this casting's fixes ==
+   unguarded document loads      : none   (sees foundry_state.py#read_text_file: True)
+   unlocked artifact renames     : none   (sees foundry.py#_atomic_rename_write: True)
+   raw ledger iterations         : none   (sees foundry_orchestrator.py#foundry_sync_defects: True)
 
 == and a FRESH copy planted where a directory literal could not see it ==
    planted at                         what the derived scan reports
@@ -89,6 +88,10 @@
    <pkg root>/regressed.py            ['regressed.py::sync:3']
    <pkg root>/decode_only.py          ['decode_only.py::_load_manifest:5 leaks OSError+UnicodeDecodeError']
    <pkg>/schemas/oserror_decode.py    ['oserror_decode.py::_load_manifest:5 leaks UnicodeDecodeError']
+   <scripts>/brand-new-cli.py         ['brand-new-cli.py::_load_manifest:5 leaks UnicodeDecodeError']
+   <pkg root>/aliased.py              ['aliased.py::_load_manifest:4 leaks OSError+UnicodeDecodeError+JSONDecodeError']
+   <pkg root>/from_import.py          ['from_import.py::_load_manifest:4 leaks OSError+UnicodeDecodeError+JSONDecodeError']
+   <pkg root>/split.py                ['split.py::_load_manifest:10 leaks OSError+UnicodeDecodeError']
 
 == the three package-wide assertions, driven ==
-5 passed, 247 deselected in 0.99s
+5 passed, 268 deselected in 1.22s

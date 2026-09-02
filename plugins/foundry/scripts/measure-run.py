@@ -18,6 +18,16 @@ script was one of six independently re-typed copies of the same vocabulary.
 vocab is stdlib-only and imports nothing from foundry_mcp.tools, so this
 script keeps its "stdlib only; no runtime deps" contract.
 
+Every read of a run artifact goes through foundry_mcp.tools.foundry_state
+(D-141), for the same reason and on the same terms: that module imports json
+and pathlib and nothing else -- not even from its own package -- so it costs
+this script's stdlib-only contract nothing, and it is where the raise set of a
+document read is decided ONCE. This script's own `_load_json` used to name
+`(json.JSONDecodeError, OSError, FileNotFoundError)`, which is the majority
+spelling of the fourteen sites D-137 closed inside the package and leaks
+UnicodeDecodeError exactly as they did -- driven live, one non-UTF-8 byte in a
+run artifact raised straight out of this CLI.
+
 Four artifacts are read per run, and each is optional in the way a REAL archive
 makes it optional (FR-018 / AC-024 — the gates must operate on real data):
 defects.json (what streams found), stream-rollup.json (what they checked, keyed
@@ -43,6 +53,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_defect_source,
         canonical_stream_id,
     )
+    from foundry_mcp.tools.foundry_state import read_json, read_text_file
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
@@ -52,6 +63,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_defect_source,
         canonical_stream_id,
     )
+    from foundry_mcp.tools.foundry_state import read_json, read_text_file
 
 
 # Derived, never re-typed — foundry_mcp.schemas.vocab is the single source of
@@ -149,11 +161,17 @@ def _parse_iso8601(stamp: Any) -> datetime | None:
 
 
 def _load_json(path: Path) -> Any:
-    """Read+parse a JSON file; return None on missing/malformed."""
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, FileNotFoundError):
-        return None
+    """Read+parse a JSON file; return None on missing/malformed.
+
+    D-141: the handler set is no longer re-decided here. ``read_json`` closes
+    OSError, UnicodeDecodeError and the parse in ONE call -- the read and the
+    decode are one operation, and every seam between them is a place a hand-
+    written ``except`` has historically failed to cover. The returned
+    ``problem`` is discarded on purpose: this reader's whole contract is
+    "None on missing/malformed", and its callers turn that into the named
+    PHASE9_* failure tokens they own.
+    """
+    return read_json(path)[0]
 
 
 def _read_cohort_json(run_dir: Path, strict: bool) -> tuple[str | None, str, list[str]]:
@@ -191,10 +209,13 @@ def _read_handoffs_wall_clock(run_dir: Path) -> tuple[float, list[str]]:
     path = run_dir / "handoffs.jsonl"
     if not path.exists():
         return 0.0, UNAVAIL
-    try:
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except OSError:
+    # D-141: `except OSError` alone leaks UnicodeDecodeError, which is the same
+    # residual one rung up from `_load_json`'s. handoffs.jsonl is a run
+    # artifact like any other, so it is read the same way.
+    text, problem = read_text_file(path)
+    if problem is not None:
         return 0.0, UNAVAIL
+    lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines:
         return 0.0, UNAVAIL
     first_ts = last_ts = None
@@ -366,10 +387,10 @@ def _read_context_pct(
     path = run_dir / "context-at-f2.txt"
     if not path.exists():
         return None, miss
-    try:
-        text = path.read_text(encoding="utf-8").strip()
-    except OSError:
+    raw, problem = read_text_file(path)
+    if problem is not None:
         return None, miss
+    text = raw.strip()
     if not text:
         return None, miss
     try:
