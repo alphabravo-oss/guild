@@ -574,44 +574,108 @@ def _composed_redaction_problem(
 # still differ after digit-stripping, because a relocated path changes its
 # words, not just its numbers.
 #
+# WHAT IDENTIFIES THE FIELD is the second axis, and it is what D-156 was filed
+# on. `varies_in` says WHICH HALF of a token the environment owns; it does not
+# say HOW MUCH may vary, and a grammar whose membership test is "the token
+# starts with a slash" hands the environment the entire non-digit half of an
+# arbitrary string. The registry stated the governing principle itself, on
+# ``process_id``: "the key is part of the grammar. `exit=0` against `exit=1` is
+# an assignment too and is REFUSED — what makes a pid environmental is that it
+# is a pid, not that it has an `=` in it." By that principle what makes a path
+# environmental is that it is a ROOTDIR or an INTERPRETER PATH, not that it has
+# a `/` in it.
+#
+# So every grammar now declares a KEY — the text that identifies the token as
+# an instance of this field — and where that key lives:
+#
+#   key=None   the token identifies ITSELF. A duration wears its `s`, a pid
+#              wears its `pid=`, a timestamp wears the ISO shape. `token`
+#              fullmatching both sides IS the membership test.
+#   key=<re>   the token is shapeless on its own, so the identifier sits in
+#              the span BESIDE it and must match on BOTH sides. This is the
+#              path family: nothing about `/x/y/z` says whether it is where
+#              the run happened or what the command reported.
+#
+# DERIVED, NOT REMEMBERED. Cold-driven at 1e07a4c over all 77 committed logs
+# from a clean detached worktree, the corpus produces 16 path disagreements
+# across 10 logs, and EVERY ONE of them is keyed:
+#
+#     rootdir: <path>                              9 disagreements, 9 logs
+#     platform … -- Python … -- <path>             6 disagreements, 6 logs
+#     <path containing /.planning/>                1 disagreement,  1 log
+#
+# Not one is a bare path. `absolute_path`'s `token=/\S*` was therefore strictly
+# WIDER than every witness it cited — the derivation gap D-156 names — and the
+# three forgeries PROVE drove through it (`/var/run/failed/report.txt` against
+# `…/passed/…`, `/FAILED` against `/PASSED`, `/deadbeefcafe1234` against
+# `/0badc0de99887766`) are all UNKEYED. Splitting the one wide entry into the
+# three keyed entries the corpus actually witnesses refuses all three by name
+# and keeps all 16 real disagreements green.
+#
+# WHY NOT A SEGMENT-POSITION RULE. The rule proposed with the defect — admit
+# only a head-prefix (root) substitution, require the tail after the last
+# common segment to be byte-identical — was measured against the same cold
+# corpus before being rejected: 7 of the 9 distinct real pairs are INTERIOR
+# single-segment substitutions (`…/builds-v0/.tmphgnUSu/bin/python` against
+# `…/.tmpvRAwWQ/…`, six logs; `…/scratchpad/wt-head/plugins/…` against
+# `…/wt-base/…`, six logs), so that rule refuses ten currently-green logs. It
+# also cannot refuse forgeries 2 and 3, which have no common tail at all. The
+# interior swap `wt-head`→`wt-base` and the forgery `failed`→`passed` are the
+# same shape; no rule over segment counts, positions or character classes
+# separates them. The KEY separates them, which is why the key is the bound.
+#
 # EVERY GRAMMAR CARRIES A LIVE WITNESS, or the registry sweep names it. Two
 # witness kinds, both real artifacts in the tree rather than a maintainer's
 # memory: ``corpus``, meaning some committed log's own declared pattern erases
-# a token of this shape from its own body, and ``protocol``, meaning
-# ``plugins/foundry/agents/teammate.md`` ships this pattern as an example it
-# tells evidence authors to declare. ``test_every_declared_grammar_has_a_live_witness``
-# walks the registry itself — not a hand-copied list — and reports by name any
-# grammar whose witness has gone dead, so a grammar cannot outlive the reason
-# it was admitted.
+# a token of this shape — UNDER THIS GRAMMAR'S KEY — from its own body, and
+# ``protocol``, meaning ``plugins/foundry/agents/teammate.md`` ships this
+# pattern as an example it tells evidence authors to declare.
+# ``test_every_declared_grammar_has_a_live_witness`` walks the registry itself
+# — not a hand-copied list — and reports by name any grammar whose witness has
+# gone dead, so a grammar cannot outlive the reason it was admitted.
 #
-# STATED RESIDUAL, scoped this time to what actually ships rather than to the
-# one instance that was easiest to describe. D-143's ruling was that a limit is
-# a limit only when its DECLARED scope is its REAL scope, so this names the
-# whole of it, including the part that is uncomfortable.
+# AND NO GRAMMAR IS WIDER THAN ITS WITNESS. The sweep used to check only that
+# a witness EXISTS, which is how a `/\S*` token kept a witness that was really
+# a `rootdir:` path. Each entry therefore carries two driven pairs, both walked
+# by the registry sweep rather than by a hand-written test per grammar:
 #
-# A disagreement inside a token that matches a declared grammar IN THAT
-# GRAMMAR'S OWN DIRECTION OF VARIATION is admitted. Concretely, and these are
-# the real attacks, not a euphemism for them:
+#   witness_pair  a REAL disagreement from the cold corpus run, which the
+#                 grammar must ADMIT — so no grammar is narrower than its
+#                 witness and a rewrite that broke the corpus fails by name.
+#   falsifier     the SAME disagreement with the grammar's identifier removed
+#                 (the key stripped, or the unit stripped off the token),
+#                 which the whole registry must REFUSE — so no grammar is
+#                 wider than its identifier.
 #
-#   1. A fabricated duration against a real one — `4.86s` against `9.91s`.
-#      Refusing this would refuse 37 of the corpus's 50 differing token pairs.
-#   2. A VERDICT WORD PLACED IN A PATH SEGMENT — a committed log citing
-#      `/logs/passed/run` against a command printing `/logs/failed/run`. Both
-#      are absolute paths, both differ outside their digits, so the path
-#      grammar reads it as a relocation and lets it through. This is the same
-#      family D-143 was filed on, one spelling further out, and it is NOT
-#      closed. It cannot be closed by shape: the corpus relocates paths by
-#      exactly one alphabetic segment (`.tmphgnUSu` against `.tmpLS4FNM`) and
-#      by whole roots (`/Users/rayjanoka/…` against `/private/tmp/…`), so no
-#      rule over segment counts, positions or character classes separates a
-#      moved directory from a swapped word. Separating them needs a list of
-#      verdict words, which is the remembered-membership shape this whole class
-#      keeps recurring as. Recorded for the lead rather than hand-listed here.
+# STATED RESIDUAL, scoped to what actually ships rather than to the one
+# instance that was easiest to describe. D-143's ruling was that a limit is a
+# limit only when its DECLARED scope is its REAL scope, so this names the whole
+# of it, including the part that is uncomfortable.
 #
-# What is NOT in the residual, and was in the last one: every verdict, count,
-# ratio, percentage, exit code, assignment and hyphenated word standing on its
-# own, plus every count embedded in a path — `/tmp/out/1650/x` against
-# `/tmp/out/1631/x` is refused, and so is `/tmp/run-1650/x`.
+# A disagreement is admitted when it wears a declared field's identifier and
+# varies in that field's own direction. Concretely, and these are the real
+# attacks, not a euphemism for them:
+#
+#   1. A fabricated duration against a real one — `4.86s` against `9.91s`, and
+#      equally `4.86s` against `99999999.0s`. The key bounds WHICH field may
+#      vary; within a field the magnitude is the environment's and no shape
+#      rule bounds it without a remembered constant. Refusing this would refuse
+#      44 of the corpus's 60 differing token pairs. The same holds for `pid=`
+#      and for the ISO date.
+#   2. A path that wears a real key. A committed log citing
+#      `rootdir: /logs/passed/run` against a command printing
+#      `rootdir: /logs/failed/run` is admitted, because `wt-head` against
+#      `wt-base` under that same key is a real corpus pair of exactly that
+#      shape. The bound is the key, not the value: an attacker needs the REAL
+#      command to print a verdict word inside its rootdir or its interpreter
+#      path. The same holds for a token carrying the literal `/.planning/`,
+#      whose anchor is in the token rather than beside it.
+#
+# What is NOT in the residual, and was in the last one: an UNKEYED path. All
+# three of PROVE's forgeries, every verdict, count, ratio, percentage, exit
+# code, assignment and hyphenated word standing on its own, and every count
+# embedded in a path — `/tmp/out/1650/x` against `/tmp/out/1631/x` is refused,
+# and so is `/tmp/run-1650/x`, key or no key.
 # ---------------------------------------------------------------------------
 _DIGIT_RUN_RE: re.Pattern[str] = re.compile(r"\d+")
 
@@ -636,20 +700,41 @@ class _EnvironmentalGrammar:
     half must be byte-identical across the two sides. See the block comment
     above for why the two halves are not symmetric.
 
+    ``key`` is what IDENTIFIES a token as an instance of this field, and it is
+    the bound on how much may vary (D-156). ``None`` means the token is
+    self-identifying — a duration wears its ``s``, a pid its ``pid=`` — so
+    ``token`` fullmatching both sides is the whole membership test. A compiled
+    pattern means the identifier sits in the span BESIDE the token, and it must
+    match the text preceding the token on BOTH sides. Nothing about ``/x/y/z``
+    says whether it is where the run happened or what the command reported, so
+    every path grammar is keyed.
+
     ``witness_kind`` / ``witness`` record what keeps this entry alive:
     ``corpus`` names a committed evidence log whose own declared pattern erases
-    a token of this shape from its own body, ``protocol`` names the literal
-    ``# evidence-volatile:`` example ``agents/teammate.md`` ships. ``sample``
-    is a real token of the shape, used by the witness sweep to prove the
-    grammar and its witness still describe the same thing.
+    a token of this shape, under this key, from its own body; ``protocol``
+    names the literal ``# evidence-volatile:`` example ``agents/teammate.md``
+    ships.
+
+    ``witness_pair`` is ``(key_context, side_a, side_b)`` — a REAL disagreement
+    this grammar must ADMIT, taken from the cold corpus run rather than
+    invented. ``falsifier`` is the same triple with the grammar's identifier
+    removed, which the whole registry must REFUSE. The registry sweep drives
+    both, so an entry cannot be narrower OR wider than what witnesses it.
     """
 
     token: re.Pattern[str]
     varies_in: str
+    key: re.Pattern[str] | None
     witness_kind: str
     witness: str
-    sample: str
+    witness_pair: tuple[str, str, str]
+    falsifier: tuple[str, str, str]
     note: str
+
+    @property
+    def sample(self) -> str:
+        """One real token of this shape — the ``a`` side of the witness pair."""
+        return self.witness_pair[1]
 
 
 #: The closed allowlist of environmental shapes. Refusal is the default: a
@@ -664,56 +749,125 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
         varies_in="digits",
+        key=None,  # the `s` unit is in the token
         witness_kind="corpus",
         witness="casting-1-pytest.log",
-        sample="4.86s",
+        witness_pair=("", "0.47s", "0.76s"),
+        falsifier=("", "0.47", "0.76"),  # strip the unit: a bare ratio-less number
         note=(
-            "wall-clock seconds. 37 of the corpus's 50 differing token pairs, "
-            "and the shape 42 of the 65 logs declare volatile. The decimal "
+            "wall-clock seconds. 44 of the corpus's 60 differing token pairs, "
+            "and the shape 52 of the 77 logs declare volatile. The decimal "
             "point is required because every second-valued duration in the "
-            "corpus carries one; a bare `\\d+s` has no witness."
+            "corpus carries one; a bare `\\d+s` has no witness. Magnitude is "
+            "unbounded WITHIN the unit and that is residual 1 above."
         ),
     ),
     "duration_millis": _EnvironmentalGrammar(
         token=re.compile(r"\d+(?:\.\d+)?(?:ms|us|µs|ns)"),
         varies_in="digits",
+        key=None,  # the unit suffix is in the token
         witness_kind="protocol",
         witness=r"# evidence-volatile: \b\d+ms\b",
-        sample="12ms",
+        witness_pair=("", "12ms", "15ms"),
+        falsifier=("", "12", "15"),
         note=(
-            "sub-second latencies. 31 logs DECLARE `Installed \\d+ packages "
-            "in \\d+ms`, but the witness sweep showed no committed body "
+            "sub-second latencies. 40 logs DECLARE an `Installed \\d+ packages "
+            "in \\d+ms` shape, but the witness sweep showed no committed body "
             "actually carries one — uv prints that line only on a cold cache, "
             "so the declaration is precautionary and the corpus has never "
             "varied a millisecond value. The live witness is therefore the "
             "protocol, not the corpus. Kept because teammate.md tells authors "
-            "to declare this shape and the narrowness controls exercise it."
+            "to declare this shape and the narrowness controls exercise it. "
+            "Note the unit is part of the identity: `12ms` against `12ns` has "
+            "different digit skeletons and is REFUSED."
         ),
     ),
-    "absolute_path": _EnvironmentalGrammar(
+    "pytest_rootdir": _EnvironmentalGrammar(
         token=re.compile(r"/\S*"),
         varies_in="text",
+        key=re.compile(r"(?:^|\s)rootdir:$"),
+        witness_kind="corpus",
+        witness="casting-3-observations.log",
+        witness_pair=(
+            "rootdir:",
+            "/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
+            "/tmp/wt/casting-3/plugins/foundry/mcp-server",
+        ),
+        falsifier=(
+            "",  # the SAME relocation with no key beside it
+            "/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
+            "/tmp/wt/casting-3/plugins/foundry/mcp-server",
+        ),
+        note=(
+            "where pytest thinks the project is. 9 of the corpus's 16 path "
+            "disagreements, under the `rootdir: .*` (6 logs) and "
+            "`rootdir: \\S+` (4 logs) declarations. The gate ALWAYS re-executes "
+            "inside a worktree it creates, so this line differs on every "
+            "honest verification and the whole corpus depends on it."
+        ),
+    ),
+    "pytest_platform_interpreter": _EnvironmentalGrammar(
+        token=re.compile(r"/\S*"),
+        varies_in="text",
+        key=re.compile(r"(?:^|\s)platform \S+ -- Python \S+.* --$"),
+        witness_kind="corpus",
+        witness="casting-5-protocol-prose.log",
+        witness_pair=(
+            "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 --",
+            "/Users/rayjanoka/.cache/uv/builds-v0/.tmphgnUSu/bin/python",
+            "/Users/rayjanoka/.cache/uv/builds-v0/.tmpvRAwWQ/bin/python",
+        ),
+        falsifier=(
+            "",
+            "/Users/rayjanoka/.cache/uv/builds-v0/.tmphgnUSu/bin/python",
+            "/Users/rayjanoka/.cache/uv/builds-v0/.tmpvRAwWQ/bin/python",
+        ),
+        note=(
+            "the interpreter pytest -v reports, which under uv is a per-build "
+            "temp directory: 6 of the 16 path disagreements, one per log that "
+            "declares the whole `platform … --` line. The varying segment is "
+            "INTERIOR (`.tmphgnUSu` against `.tmpvRAwWQ`), which is why the "
+            "bound is this key and not a rule about where in the path the "
+            "disagreement sits — see the block comment."
+        ),
+    ),
+    "planning_root": _EnvironmentalGrammar(
+        token=re.compile(r"/\S*/\.planning/\S*"),
+        varies_in="text",
+        key=None,  # the `/.planning/` anchor is in the token
         witness_kind="corpus",
         witness="casting-1-pytest.log",
-        sample="/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
+        witness_pair=(
+            "",
+            "/private/var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09",
+            "/private/tmp/scratch/clone/.planning/phases/09",
+        ),
+        falsifier=(
+            "",  # the same relocation with the anchor removed
+            "/private/var/folders/kq/T/tmp.X6ktF5/wt/phases/09",
+            "/private/tmp/scratch/clone/phases/09",
+        ),
         note=(
-            "where the run happened: rootdir and cachedir roots, uv build "
-            "dirs, the .planning root. 13 of the corpus's 50 differing token "
-            "pairs. Anchored at `/` because every path the corpus varies is "
-            "absolute — a RELATIVE path such as `out/1650/summary.json` is "
-            "not admitted, and `0/1650` is not a path at all."
+            "the milestone planning corpus root, printed by a skip message in "
+            "test_measure_run. 1 of the 16 path disagreements, under the one "
+            "`/[^ ]*/\\.planning/[^ ]*` declaration. Self-keyed: the pattern "
+            "erases the bare token with nothing beside it, so the anchor has "
+            "to be IN the token or this field has no identifier at all."
         ),
     ),
     "process_id": _EnvironmentalGrammar(
         token=re.compile(r"pid=\d+", re.IGNORECASE),
         varies_in="digits",
+        key=None,  # `pid=` is in the token
         witness_kind="protocol",
         witness=r"# evidence-volatile: pid=\d+",
-        sample="pid=1234",
+        witness_pair=("", "pid=1234", "pid=5678"),
+        falsifier=("", "1234", "5678"),
         note=(
             "the key is part of the grammar. `exit=0` against `exit=1` is an "
             "assignment too and is REFUSED — what makes a pid environmental "
-            "is that it is a pid, not that it has an `=` in it."
+            "is that it is a pid, not that it has an `=` in it. This entry is "
+            "the principle the path family was rebuilt on (D-156)."
         ),
     ),
     "iso_timestamp": _EnvironmentalGrammar(
@@ -722,16 +876,19 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
             r"(?:Z|[+-]\d{2}:?\d{2})?)?"
         ),
         varies_in="digits",
+        key=None,  # the ISO shape is in the token
         witness_kind="protocol",
         witness=r"# evidence-volatile: 20\d{2}-\d{2}-\d{2}T",
-        sample="2026-08-14T10:23:45",
+        witness_pair=("", "2026-08-14T10:23:45", "2026-09-01T04:11:02"),
+        falsifier=("", "20260814", "20260901"),  # the separators are the identity
         note=(
             "wall-clock date, with or without a time. The date alone is "
             "admitted because the corpus's own decoy shape is `20\\d{2}-"
-            "\\d{2}-\\d{2}`."
+            "\\d{2}-\\d{2}`. A date against a date-and-time has different "
+            "digit skeletons and is REFUSED — the shape is the identity."
         ),
     ),
-}  # 5 grammars
+}  # 7 grammars
 
 
 def _digit_skeleton(token: str) -> str:
@@ -745,7 +902,12 @@ def _digit_skeleton(token: str) -> str:
     return _DIGIT_RUN_RE.sub("", token)
 
 
-def _environmental_field(token_a: str, token_b: str) -> tuple[str | None, str]:
+def _environmental_field(
+    token_a: str,
+    token_b: str,
+    key_context_a: str = "",
+    key_context_b: str = "",
+) -> tuple[str | None, str]:
     """Classify a disagreeing token pair against the grammar allowlist.
 
     Returns ``(grammar_name, note)``. A non-None name means the environment is
@@ -756,12 +918,33 @@ def _environmental_field(token_a: str, token_b: str) -> tuple[str | None, str]:
 
     Both sides must match the SAME grammar. A token pair that changes shape —
     a duration on one side, a path on the other — is not one field varying.
+
+    ``key_context_a`` / ``key_context_b`` are the text of the erased span
+    PRECEDING this token on each side, whitespace-normalised. A grammar whose
+    ``key`` is not None is only reachable when that key matches BOTH contexts:
+    a path is environmental because it is a rootdir or an interpreter path, not
+    because it has a `/` in it (D-156). Defaulting both to the empty string is
+    deliberate — a caller that has no context to offer gets the UNKEYED
+    registry, which is the refusing direction.
     """
     closest = ""
     for name, grammar in _ENVIRONMENTAL_GRAMMARS.items():
         if not (
             grammar.token.fullmatch(token_a) and grammar.token.fullmatch(token_b)
         ):
+            continue
+        if grammar.key is not None and not (
+            grammar.key.search(key_context_a) and grammar.key.search(key_context_b)
+        ):
+            # Right shape, wrong field — or no field at all. Reported rather
+            # than skipped so a keyed grammar that ALMOST matched says why.
+            closest = (
+                f"both sides are {name!r}-shaped, but this field is identified "
+                f"by {grammar.key.pattern!r} beside the token and the erased "
+                f"span reads {key_context_a!r} / {key_context_b!r} there. What "
+                f"makes a path environmental is that it is a rootdir or an "
+                f"interpreter path, not that it starts with a slash"
+            )
             continue
         if grammar.varies_in not in _KNOWN_VARIATION_SITES:
             # An unrecognised member of the one axis this rule turns on. Report
@@ -808,6 +991,14 @@ def _field_disagreement_problem(
     Refusal is the default (D-143). Every differing token is walked, not just
     the first, so the refusal reports the whole disagreement rather than the
     one token that happened to be leftmost.
+
+    Each token is classified WITH the text that precedes it in its own span,
+    which is where a keyed field's identifier lives (D-156): the span
+    ``rootdir: /x/y`` offers ``rootdir:`` as the context for its second token,
+    and a span that is a bare path offers nothing, which is the refusing
+    direction. The contexts are rebuilt from the same ``split()`` the token
+    walk uses, so the text a grammar keys on is exactly the text that was
+    erased beside the token.
     """
     tokens_a, tokens_b = span_a.split(), span_b.split()
     verdict: str | None = None
@@ -820,10 +1011,15 @@ def _field_disagreement_problem(
         )
     else:
         unclassified: list[str] = []
-        for token_a, token_b in zip(tokens_a, tokens_b):
+        for index, (token_a, token_b) in enumerate(zip(tokens_a, tokens_b)):
             if token_a == token_b:
                 continue
-            grammar, note = _environmental_field(token_a, token_b)
+            grammar, note = _environmental_field(
+                token_a,
+                token_b,
+                " ".join(tokens_a[:index]),
+                " ".join(tokens_b[:index]),
+            )
             if grammar is not None:
                 continue
             unclassified.append(

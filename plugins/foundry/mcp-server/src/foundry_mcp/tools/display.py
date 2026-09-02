@@ -778,18 +778,97 @@ _FORMATTERS: dict[str, callable] = {
 }
 
 
+# ── The named-refusal guarantee ──────────────────────────────────────────────
+#
+# D-157 — THE HANDLER REFUSED AND THE SCREEN SAID "?".
+#
+# `foundry_next_action` runs `_artifact_guard` first and, on a run whose
+# DECLARED EXTERNAL INPUT (the spec at state.json's `spec_path`, outside the run
+# dir) is undecodable, it returned the house refusal naming the file, the cause
+# and the repair hint. What the operator SAW was a 109-character banner with a
+# literal '?' for the phase and 'Action: ?' for the imperative, because
+# `_fmt_foundry_next_action` reads `display` / `instructions` / `phase` /
+# `action` and a refusal carries none of them. A normal-priority directive filed
+# before the corruption vanished from the same render with nothing said about
+# why (FR-019 / AC-004). The refusal existed at every layer except the one a
+# human reads.
+#
+# AND IT WAS NEVER ONE FORMATTER. Driven across the whole table with one house
+# refusal, FIVE of the twenty-two dropped it outright -- Foundry-Next,
+# Foundry-Context (the adjacent door on the same fixture), Foundry-Init,
+# Validate-Report and Verify-Citations -- while the other seventeen each carry
+# their own hand-written `if r.get("error")` branch. That is the escalated class
+# living inside the renderer: whether a refusal reaches the screen was decided
+# once per formatter, so a formatter added tomorrow decides it again, and a
+# formatter that forgets fails in silence.
+#
+# So the guarantee is stated ONCE, here, as a POST-CONDITION over whatever the
+# formatter produced: a result that NAMES a refusal is rendered CARRYING that
+# refusal, or the router renders the house refusal block itself. Membership is
+# read off the RESULT ("does it name a refusal"), not off a list of formatters,
+# so no formatter can sit outside it -- and the seventeen that already render
+# their own refusal are untouched, because their output already contains the
+# text. Over-rendering is recoverable; under-rendering is this defect.
+#
+# The JSON fallback is deliberately outside the check: it emits the whole result
+# verbatim, so it cannot drop anything, and `call_tool`'s outermost net depends
+# on an unformatted refusal staying machine-readable JSON.
+
+#: The keys a handler names a refusal in. `error` is the house shape (an `error`
+#: naming the offending value, a `hint` naming the action); `reason` is the
+#: gate's variant -- `foundry_gate` renames the guard's `error` into `reason`
+#: and keeps `hint`/`corrupt_artifacts`, so a refusal reaches the renderer under
+#: either key and a check that knew only one of them would be half a guarantee.
+_REFUSAL_TEXT_KEYS = ("error", "reason")  # 2 keys
+
+
+def _named_refusal(result: object) -> str | None:
+    """The refusal text a handler named, or None when it named none."""
+    if not isinstance(result, dict):
+        return None
+    for key in _REFUSAL_TEXT_KEYS:
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _house_refusal_display(tool_name: str, result: dict, refusal: str) -> str:
+    """The house refusal, rendered for a tool whose formatter dropped it.
+
+    Same three rungs the refusal dict carries: what is wrong, WHICH files, and
+    what to do about it -- so the operator learns the file to repair instead of
+    reading a banner about a phase the tool never got far enough to know.
+    """
+    lines = [f"  {_RED}{refusal}{_RESET}"]
+    corrupt = result.get("corrupt_artifacts")
+    if isinstance(corrupt, list):
+        for artifact in corrupt:
+            lines.append(f"    {_BYELLOW}{artifact}{_RESET}")
+    hint = result.get("hint")
+    if isinstance(hint, str) and hint.strip():
+        lines.append(f"  {_DIM}{hint}{_RESET}")
+    return _foundry_display(f"F O U N D R Y  {_BRED}{tool_name} refused{_RESET}", lines)
+
+
 def format_result(tool_name: str, result: dict) -> str:
     """Format a tool result for display.
 
     Returns a visually formatted string if a formatter exists for the tool,
-    otherwise falls back to indented JSON.
+    otherwise falls back to indented JSON. A refusal the handler named always
+    survives to the output -- see the note above.
     """
     formatter = _FORMATTERS.get(tool_name)
 
     if formatter:
         try:
-            return formatter(result)
+            rendered = formatter(result)
         except Exception:
             pass  # Fall through to JSON
+        else:
+            refusal = _named_refusal(result)
+            if refusal is not None and refusal not in rendered:
+                return _house_refusal_display(tool_name, result, refusal)
+            return rendered
 
     return json.dumps(result, indent=2)

@@ -120,6 +120,12 @@ from tests.test_observations import (
 # the loud failure, not the silent one.
 from tests.test_spawn_progress import _scanned_modules, _scanned_roots
 
+# D-157 — the operator's own surface. Every assertion about "the run refused by
+# name" that stops at the handler's dict is an assertion about a layer no human
+# reads: the refusal died between `foundry_next_action` and the screen. The
+# renderer is imported here so the drives below can assert the whole chain.
+from foundry_mcp.tools.display import format_result
+
 
 # --------------------------------------------------------------------------- #
 # Fixtures & helpers
@@ -3275,6 +3281,16 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
     The handler set is read from server.py's ``_DISPATCH`` and filtered to the
     ones this module defines, so an orchestrator tool added tomorrow is
     enrolled the day it is dispatched rather than the day someone remembers.
+
+    D-157 — "A GUARD IS CALLED" AND "THE GUARD HAS THIS MEMBER" ARE TWO CLAIMS.
+    This test asserted only the first, so a guard whose membership had narrowed
+    back to the run directory would satisfy it at every door while every door
+    went on acting on an unreadable declared EXTERNAL input. The membership is
+    therefore asserted here too, structurally: the guard each door runs must be
+    the one that reaches `_declared_external_inputs`. The behavioural half --
+    each door driven on a corrupt external input and required to refuse BY NAME,
+    all the way through the rendering -- is
+    `test_every_orchestrator_door_refuses_a_corrupt_declared_external_input`.
     """
     entry_points = _dispatched_orchestrator_handlers()
     assert len(entry_points) >= 12, entry_points
@@ -3286,17 +3302,33 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
-    missing = [
-        name for name in entry_points
-        if not any(
+    def calls(name: str, callee: str) -> bool:
+        return any(
             isinstance(n, ast.Call)
             and isinstance(n.func, ast.Name)
-            and n.func.id == "_artifact_guard"
+            and n.func.id == callee
             for n in ast.walk(bodies[name])
         )
-    ]
+
+    missing = [name for name in entry_points if not calls(name, "_artifact_guard")]
     assert missing == [], (
         f"orchestrator MCP entry points that never run _artifact_guard: {missing}"
+    )
+
+    # ...and the guard they run is the one that ASKS ABOUT THE EXTERNAL INPUTS.
+    # Traced through the source rather than assumed, so severing the link at
+    # either rung -- the guard dropping the problems call, or the problems scan
+    # dropping the external-input scan -- fails here by name at every door at
+    # once, which is the level the class lives at.
+    assert calls("_artifact_guard", "_run_artifact_problems"), (
+        "_artifact_guard no longer runs _run_artifact_problems, so what every "
+        "door above calls is not the guard this rule is about."
+    )
+    assert calls("_run_artifact_problems", "_declared_external_inputs"), (
+        "_run_artifact_problems no longer reaches _declared_external_inputs, so "
+        "the guard's membership has narrowed back to the run directory and the "
+        "run's DECLARED EXTERNAL INPUTS -- the spec at state.json's spec_path "
+        "among them -- are outside every door's guard again (D-145, D-157)."
     )
 
 
@@ -4174,6 +4206,24 @@ def _unguarded_document_loads(path: Path) -> tuple[list[str], list[str]]:
     ``foundry_state.py#read_text_file`` -- where all fourteen D-137 sites
     converged -- must appear in it or the derivation has gone blind.
 
+    D-153 — THE RULE HAS TWO RECOGNISERS AND ONLY ONE OF THEM WAS ANCHORED.
+    "The read and the decode are one operation" cuts both ways: this rule
+    decides membership on a READ axis (``_is_file_read`` / ``_reads_a_file``)
+    AND on a LOAD axis (``_document_loader_call`` / ``_resolve_dotted``), and
+    ``seen`` was keyed on the read axis alone. Blind the LOAD recogniser --
+    monkeypatch ``_document_loader_call`` to ``(False, None)``, which is what a
+    package that drifts to orjson, or to a wrapper this resolver cannot import,
+    does to it -- and ``seen`` stayed full of reads, ``offenders`` emptied
+    because no site was classified as a load at all, and the rule reported a
+    clean package while seeing zero of the operation it polices. The plant
+    tests do not close it: a plant proves the recogniser sees a PLANTED
+    spelling, not that it still sees the REAL package's. So BOTH axes report
+    into ``seen``, and each anchor names a site only its own axis can produce:
+    ``foundry_state.py#read_text_file`` reads and never loads,
+    ``foundry_state.py#read_json`` loads and never reads (its read is one call
+    down, inside ``read_text_file``). Blinding either axis now empties its own
+    anchor and the rule fails by name.
+
     D-141/D-147 — THE READ AND THE LOAD NEED NOT SHARE AN EXPRESSION. A name
     bound to a file read and handed to a loader two statements later is the
     same operation spelled apart, and each rung is judged against the handlers
@@ -4220,6 +4270,13 @@ def _unguarded_document_loads(path: Path) -> tuple[list[str], list[str]]:
         is_loader, spelling = _document_loader_call(node, namespace)
         if not is_loader:
             return
+        # D-153: the LOAD axis reports its members too, whether or not this
+        # particular load turns out to be a DOCUMENT load. What can go blind is
+        # the recogniser -- "is this callee a loader" -- and it is that question
+        # the anchor has to be able to see answered `yes` somewhere in the real
+        # package. Which loads are then judged is the rule; which loads are SEEN
+        # is the derivation, and the two must be separately observable.
+        seen.append(f"{path.name}#{fn}")
         if _reads_a_file(node):
             uncovered, unresolved = _uncovered_by(list(handlers), namespace)
             report(fn, node.lineno, uncovered, unresolved, spelling)
@@ -4250,6 +4307,41 @@ def _unguarded_document_loads(path: Path) -> tuple[list[str], list[str]]:
 #: absent: it is reached as a method on a value, never as a resolvable name, so
 #: the attribute match below is the only thing that can see it.
 _RENAME_PRIMITIVES = (os.replace, os.rename, os.renames)
+
+
+def _is_artifact_rename(node: ast.AST, namespace: dict) -> bool:
+    """True when this call IS a move primitive — the rename rule's membership.
+
+    `Path.rename` is a method on a value whose type is unknowable at parse
+    time, so the attribute name is all there is to match. The MODULE-level
+    primitives are not: D-147's axis applied here, they are resolved through
+    the namespace and compared as objects, so `import os as o` +
+    `o.replace(tmp, path)` is a member. The `os.` string check survives only as
+    the fallback for a module this resolver cannot import, because a bare
+    `.replace` cannot be promoted -- `text.replace("a", "b")` would be every
+    second line.
+
+    D-153 — LIFTED OUT OF THE LOOP SO IT CAN BE BLINDED ON ITS OWN. This lived
+    inline inside the scan, which meant the only taint a test could apply was
+    to the WHOLE scan (`lambda p: ([], [])`). That proves the rule notices an
+    empty result; it does not prove the rule notices its RECOGNISER going
+    blind while the scan still runs, which is the failure D-153 was filed on
+    one rule over. Every rule in this file now names its membership recogniser,
+    and `test_a_blind_recogniser_fails_its_own_rule_by_name` drives each.
+    """
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return False
+    resolved, _spelling = _resolve_dotted(node.func, namespace)
+    is_rename = node.func.attr == "rename" or any(
+        resolved is primitive for primitive in _RENAME_PRIMITIVES
+    )
+    is_replace = (
+        resolved is _UNRESOLVED
+        and node.func.attr == "replace"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+    )
+    return is_rename or is_replace
 
 
 def _unlocked_artifact_renames(path: Path) -> tuple[list[str], list[str]]:
@@ -4287,27 +4379,7 @@ def _unlocked_artifact_renames(path: Path) -> tuple[list[str], list[str]]:
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for node in ast.walk(fn):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            # `Path.rename` is a method on a value whose type is unknowable at
-            # parse time, so the attribute name is all there is to match. The
-            # MODULE-level primitives are not: D-147's axis applied here, they
-            # are resolved through the namespace and compared as objects, so
-            # `import os as o` + `o.replace(tmp, path)` is a member. The `os.`
-            # string check survives only as the fallback for a module this
-            # resolver cannot import, because a bare `.replace` cannot be
-            # promoted -- `text.replace("a", "b")` would be every second line.
-            resolved, _spelling = _resolve_dotted(node.func, namespace)
-            is_rename = node.func.attr == "rename" or any(
-                resolved is primitive for primitive in _RENAME_PRIMITIVES
-            )
-            is_replace = (
-                resolved is _UNRESOLVED
-                and node.func.attr == "replace"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "os"
-            )
-            if not (is_rename or is_replace):
+            if not _is_artifact_rename(node, namespace):
                 continue
             seen.append(f"{path.name}#{fn.name}")
             if not holds_a_lock:
@@ -4695,6 +4767,24 @@ def test_no_document_load_can_raise_across_the_mcp_boundary():
         f"read recogniser has gone blind and the assertion below is vacuous: "
         f"{seen}"
     )
+    # THE LOAD ANCHOR (D-153). The rule polices document LOADS, and until now
+    # `seen` was keyed on READS alone -- so blinding `_document_loader_call`
+    # left `seen` full, `offenders` empty, and this test GREEN over a package in
+    # which the scan classified not one site as a load. `read_json` is the
+    # primitive every guarded load in the package routes through and it does not
+    # read a file itself (its read is one call down, in `read_text_file`), so it
+    # is a member ONLY the load axis can produce. If the package's load spelling
+    # drifts past what `_document_loader_call` / `_resolve_dotted` recognise --
+    # orjson, a wrapper the resolver cannot import, a loader that is not
+    # `json.load(s)` by object identity -- this empties and says so.
+    assert "foundry_state.py#read_json" in seen, (
+        f"the scan classified no site in the package as a document LOAD, so the "
+        f"load recogniser has gone blind: every module reads clean because "
+        f"nothing is a load, not because nothing leaks. `read_json` is the "
+        f"primitive every guarded load routes through and it must be in here. "
+        f"Fix `_document_loader_call` / `_resolve_dotted` -- do not weaken this "
+        f"anchor. Saw: {seen}"
+    )
 
     assert not offenders, (
         f"{offenders} load a JSON document off disk without handling the decode "
@@ -4708,18 +4798,53 @@ def test_no_document_load_can_raise_across_the_mcp_boundary():
     )
 
 
-def test_a_blind_read_recogniser_fails_the_decode_rule_by_name(monkeypatch):
+#: The decode rule's two membership recognisers, each with the taint that
+#: blinds it and the anchor phrase it must fail on. Written as a table because
+#: D-153 was exactly a rule with two recognisers and one anchor: a per-axis
+#: table cannot grow a third axis without growing a row, whereas a hand-written
+#: test per axis grows only when someone remembers.
+_DECODE_RULE_AXES = [
+    (
+        "read",
+        {"_is_file_read": (lambda node: False),
+         "_reads_a_file": (lambda node: False)},
+        "read recogniser has gone blind",
+    ),
+    (
+        "load",
+        {"_document_loader_call": (lambda node, ns: (False, None)),
+         "_is_document_load": (lambda node, ns: False)},
+        "load recogniser has gone blind",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "axis,taints,phrase", _DECODE_RULE_AXES, ids=[a[0] for a in _DECODE_RULE_AXES]
+)
+def test_a_blind_read_recogniser_fails_the_decode_rule_by_name(
+    monkeypatch, axis, taints, phrase
+):
     """D-142's regression for the decode rule, driven as the probe drove it.
 
-    With the read recogniser returning nothing -- exactly what a refactor that
-    hoists the read behind a new spelling does -- the rule must fail on its
-    member anchor, not pass on an empty offender list.
+    With a recogniser returning nothing -- exactly what a refactor that hoists
+    the read behind a new spelling, or a package that drifts to a loader this
+    resolver cannot import, does -- the rule must fail on that axis's member
+    anchor, not pass on an empty offender list.
+
+    D-153 ADDED THE LOAD ROW, AND IT IS THE ROW THAT WAS MISSING. Re-driven at
+    1e07a4c, this test blinded the READ axis only. Blind the LOAD axis instead
+    and the rule stayed GREEN: `seen` was keyed on reads, so the member anchor
+    held while `offenders` emptied for the worst possible reason -- no site in
+    the package was classified as a document load at all. Both axes are driven
+    now, and each must fail naming ITS OWN recogniser, because "the rule went
+    blind" and "which half of it went blind" are different repairs.
     """
     import tests.test_orchestrator_gates as gates
 
-    monkeypatch.setattr(gates, "_is_file_read", lambda node: False)
-    monkeypatch.setattr(gates, "_reads_a_file", lambda node: False)
-    with pytest.raises(AssertionError, match="read recogniser has gone blind"):
+    for name, blinded in taints.items():
+        monkeypatch.setattr(gates, name, blinded)
+    with pytest.raises(AssertionError, match=phrase):
         gates.test_no_document_load_can_raise_across_the_mcp_boundary()
 
 
@@ -6167,6 +6292,314 @@ def test_the_external_input_reader_is_total_on_its_own_merits(tmp_path, monkeypa
         assert fo._count_spec_requirements(root) == 0
     finally:
         foundry_state.clear_active_run()
+
+
+# --------------------------------------------------------------------------- #
+# D-157 (FR-019 / AC-004 / FR-020 / AC-025 / NFR-002 / ST-003) — A REFUSAL THE
+# HANDLER NAMED MUST REACH THE OPERATOR'S SCREEN.
+#
+# THE HARM, driven at 1e07a4c. Same fixture as D-145 above: the run's ONE
+# declared external input made undecodable, the run-directory copy left healthy.
+# `Foundry-Validate-Castings` declines naming both artifact and cause.
+# `Foundry-Next` returns is_error=false and renders 109 characters -- the banner
+# with a literal '?' for the phase and 'Action: ?' for the imperative -- naming
+# no artifact, no cause, no hint. A normal-priority directive filed BEFORE the
+# corruption renders on the healthy arm and is GONE on the corrupt one, with no
+# statement that anything is wrong (FR-019 / AC-004).
+#
+# WHERE IT ACTUALLY WAS, and it is not where the report guessed. Every
+# orchestrator door DOES run `_artifact_guard`, and the guard's membership DOES
+# include the declared external input -- `foundry_next_action:4547` returns the
+# refusal dict naming spec.md, with hint and corrupt_artifacts, on this exact
+# fixture. The refusal died one hop later, in `display._fmt_foundry_next_action`,
+# which reads `display` / `instructions` / `phase` / `action` and renders '?' for
+# each when a refusal carries none of them.
+#
+# AND IT WAS NEVER ONE FORMATTER (ST-003). Driven across the whole table with
+# one house refusal, FIVE of the twenty-two dropped it: Foundry-Next,
+# Foundry-Context -- the ADJACENT door this defect names -- Foundry-Init,
+# Validate-Report and Verify-Citations. The other seventeen each carry their own
+# hand-written `if r.get("error")` branch. Whether a refusal reached the screen
+# was decided once per formatter, which is the class exactly: the hardening was
+# bound at each site instead of derived over every member.
+#
+# THE FIX IS AT THE ROUTER, as a post-condition over whatever the formatter
+# produced (`display.format_result`): a result that NAMES a refusal is rendered
+# CARRYING that refusal, or the router renders the house block itself. The tests
+# below assert the property over `_FORMATTERS` -- present and future -- rather
+# than over the five names found today.
+# --------------------------------------------------------------------------- #
+
+
+def _dispatched_orchestrator_doors() -> dict[str, str]:
+    """``{tool name: handler function}`` for every orchestrator door on _DISPATCH.
+
+    The same derivation `test_every_orchestrator_entry_point_runs_the_artifact_guard`
+    uses, kept as one reading of `server.py` so the structural assertion and the
+    behavioural drive below cannot disagree about which doors exist.
+    """
+    import foundry_mcp.server as foundry_server
+
+    doors = _dispatched_functions(Path(foundry_server.__file__).resolve())
+    return {
+        tool: fn for fn, tool in doors.items()
+        if getattr(getattr(fo, fn, None), "__module__", "") == fo.__name__
+    }
+
+
+def _minimal_declared_args(tool: str) -> dict:
+    """The smallest argument set a tool's OWN declared schema calls required.
+
+    Synthesized from the declaration the server publishes, never typed per
+    tool: a door that grows a required field is still driven the day it grows
+    one. A hand-kept argument table beside the drive is the same "remember to
+    enrol it" failure every rule in this file exists to close.
+    """
+    import asyncio
+
+    import foundry_mcp.server as foundry_server
+
+    schemas = {t.name: (t.inputSchema or {}) for t in asyncio.run(foundry_server.list_tools())}
+    schema = schemas[tool]
+    properties = schema.get("properties", {}) or {}
+    filler = {"string": "x", "integer": 1, "number": 1,
+              "boolean": False, "array": [], "object": {}}
+    args = {}
+    for name in schema.get("required", []) or []:
+        declared = properties.get(name, {}) or {}
+        if declared.get("enum"):
+            args[name] = declared["enum"][0]
+        elif name in ("items_checked", "items_total"):
+            # The stream door refuses items_checked<=0 by its own rule, and this
+            # drive is about the ARTIFACT guard, not that one.
+            args[name] = 1
+        else:
+            args[name] = filler.get(declared.get("type", "string"), "x")
+    return args
+
+
+def _corrupt_external_input_door_drive(tmp_path: Path, tool: str) -> tuple[dict, str]:
+    """Drive one door on its OWN fresh corrupt-external-input run.
+
+    A fresh root per door because these doors write: a door that failed to
+    refuse would mutate the run the next door then reads, and the second
+    failure would be blamed on the wrong door.
+    """
+    from foundry_mcp import server as srv
+
+    root, _fdir = _external_spec_run(
+        tmp_path / tool, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC
+    )
+    saved = srv._project_root
+    srv._project_root = root
+    try:
+        result = srv._DISPATCH[tool](_minimal_declared_args(tool))
+    finally:
+        srv._project_root = saved
+        foundry_state.clear_active_run()
+    return result, format_result(tool, result)
+
+
+def test_every_orchestrator_door_refuses_a_corrupt_declared_external_input(tmp_path):
+    """D-157's fix surface: the guard's MEMBERSHIP asserted PER DOOR.
+
+    `test_every_orchestrator_entry_point_runs_the_artifact_guard` asserts that
+    each door CALLS the guard. That is not the same claim as "each door refuses
+    by name when the run's declared EXTERNAL input is the broken one" -- a guard
+    whose membership had narrowed back to the run directory would satisfy the
+    structural test at every door while every door went on acting on a document
+    it had to guess at. So this drives the real _DISPATCH, per door, on the
+    external-input fixture, and asserts the whole chain the operator depends on:
+    the response names the artifact, and the RENDERING of that response names it
+    too (D-157: the second half is where it was actually lost).
+    """
+    doors = _dispatched_orchestrator_doors()
+    assert len(doors) >= 12, doors
+
+    silent = []
+    for tool in sorted(doors):
+        result, rendered = _corrupt_external_input_door_drive(tmp_path, tool)
+        # `error` is the house key; `reason` is the gate's variant of the same
+        # refusal. Both are read, so a door is never scored blind for choosing
+        # the shape its own result type already had.
+        text = " ".join(str(result.get(key, "")) for key in ("error", "reason"))
+        corrupt = result.get("corrupt_artifacts") or []
+        if not (
+            "spec.md" in text
+            and any("spec.md" in str(p) for p in corrupt)
+            and "spec.md" in rendered
+        ):
+            silent.append(
+                f"{tool} -> named={'spec.md' in text} "
+                f"corrupt_artifacts={corrupt} rendered_names_it={'spec.md' in rendered}"
+            )
+
+    assert silent == [], (
+        f"these doors consume the run's DECLARED EXTERNAL INPUT and do not "
+        f"refuse by name when it cannot be read: {silent}. Every entry point "
+        f"must go through the same guard AND the refusal must survive to the "
+        f"rendering, or the operator gets a banner with a '?' in it while the "
+        f"run's own spec sits on disk unreadable."
+    )
+
+
+def test_no_formatter_can_drop_a_named_refusal():
+    """ST-003's class assertion for D-157, over the WHOLE formatter table.
+
+    The reported path is Foundry-Next. Five of the twenty-two formatters drop a
+    named refusal on their own -- Foundry-Next, Foundry-Context, Foundry-Init,
+    Validate-Report, Verify-Citations -- so a fix bound to Foundry-Next would
+    have left four live and formatter twenty-three free to decide it again.
+    Membership is every entry of `_FORMATTERS`, derived, so a formatter added
+    tomorrow is a member the day it is registered.
+    """
+    from foundry_mcp.tools import display
+
+    refusal = {
+        "error": (
+            "Run artifacts cannot be read: spec.md could not be read "
+            "(UnicodeDecodeError: invalid continuation byte)."
+        ),
+        "hint": "Repair or delete the named file(s) in the run directory.",
+        "corrupt_artifacts": ["spec.md could not be read (UnicodeDecodeError: ...)"],
+    }
+    assert display._FORMATTERS, "the formatter table is empty -- this rule is vacuous"
+
+    dropped = [
+        tool for tool in sorted(display._FORMATTERS)
+        if refusal["error"] not in display.format_result(tool, dict(refusal))
+    ]
+    assert dropped == [], (
+        f"{dropped} render a result that NAMES a refusal without carrying the "
+        f"refusal, so the handler declined and the operator was not told. The "
+        f"guarantee belongs to `format_result`, not to each formatter -- do not "
+        f"fix this by adding an `if r.get('error')` branch to the named tools."
+    )
+    # ...and the anchor: the rule must still SEE the members it polices, so a
+    # `format_result` that started returning the refusal for everything (or a
+    # table that emptied) cannot make the assertion above pass vacuously.
+    per_formatter = [
+        tool for tool, fmt in sorted(display._FORMATTERS.items())
+        if refusal["error"] not in fmt(dict(refusal))
+    ]
+    assert per_formatter, (
+        "no formatter in the table drops a refusal on its own any more, so this "
+        "rule is no longer exercising the router's guarantee. If every formatter "
+        "now renders its own refusal, delete this anchor deliberately -- do not "
+        "let it pass by accident."
+    )
+
+
+def test_a_new_formatter_that_drops_a_refusal_is_still_rendered(monkeypatch):
+    """The NEW unbound member. A formatter nobody has written yet.
+
+    This is the difference between the fix and the instance: register a
+    formatter that ignores `error` entirely -- the shape all five offenders had
+    -- and the refusal must still reach the screen, because the guarantee is the
+    router's and not the formatter's.
+    """
+    from foundry_mcp.tools import display
+
+    monkeypatch.setitem(
+        display._FORMATTERS, "Foundry-Brand-New-Tool", lambda r: "nothing to see here"
+    )
+    rendered = display.format_result(
+        "Foundry-Brand-New-Tool",
+        {"error": "state.json could not be read (UnicodeDecodeError: x)",
+         "hint": "Repair it.", "corrupt_artifacts": ["state.json"]},
+    )
+    assert "state.json could not be read" in rendered, rendered
+    assert "Repair it." in rendered, rendered
+    assert "Foundry-Brand-New-Tool refused" in rendered, rendered
+
+
+def test_a_result_that_names_no_refusal_is_left_exactly_as_the_formatter_rendered_it():
+    """...and the guarantee stays NARROW, or it is an outage.
+
+    Every healthy result must render byte-identically to what its own formatter
+    produced. A post-condition that fired on success would replace the whole
+    display layer with an error box.
+    """
+    from foundry_mcp.tools import display
+
+    healthy = {
+        "Foundry-Next": {"display": "BANNER", "instructions": "do the thing"},
+        "Foundry-Phase": {"phase": "F2", "message": "moved"},
+        "Foundry-Gate": {"phase": "F2", "passed": True, "checklist": []},
+        "Foundry-Init": {"run_name": "r", "spec_path": "s", "castings": 1},
+    }
+    for tool, result in healthy.items():
+        assert display.format_result(tool, dict(result)) == display._FORMATTERS[tool](
+            dict(result)
+        ), tool
+
+
+def test_foundry_next_names_the_corrupt_external_spec_instead_of_a_question_mark(tmp_path):
+    """D-157's regression, exactly as the defect states it.
+
+    Undecodable declared external spec -> Foundry-Next returns the house named
+    refusal with corrupt_artifacts naming spec.md, and the RENDERING says so.
+    Never a '?' banner. The previously filed directive's absence is explained by
+    the refusal, which is the second half AC-004 asks for: content the run had
+    already recorded does not silently disappear.
+    """
+    from foundry_mcp import server as srv
+
+    root, fdir = _external_spec_run(
+        tmp_path, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC.replace(b"caf\xe9", b"cafe")
+    )
+    saved = srv._project_root
+    srv._project_root = root
+    try:
+        # The directive is filed while everything is readable, and the healthy
+        # arm proves it is visible -- so its disappearance below is about the
+        # corruption and not about the directive never having been there.
+        _seed_directive(root, _NORMAL_DIRECTIVE, priority="normal")
+        healthy = srv._DISPATCH["Foundry-Next"]({})
+        healthy_render = format_result("Foundry-Next", healthy)
+        assert _NORMAL_DIRECTIVE in healthy_render, healthy_render
+        assert "error" not in healthy, healthy
+
+        (Path(root) / "forge-specs/probe/spec.md").write_bytes(_BAD_UTF8_SPEC)
+
+        corrupt = srv._DISPATCH["Foundry-Next"]({})
+        corrupt_render = format_result("Foundry-Next", corrupt)
+    finally:
+        srv._project_root = saved
+        foundry_state.clear_active_run()
+
+    assert "error" in corrupt, corrupt
+    assert "spec.md" in corrupt["error"], corrupt["error"]
+    assert any("spec.md" in p for p in corrupt["corrupt_artifacts"]), corrupt
+    assert corrupt.get("hint"), corrupt
+
+    # The operator's own surface: the file is named, and the '?' banner is gone.
+    assert "spec.md" in corrupt_render, corrupt_render
+    assert "Action:  ?" not in corrupt_render, corrupt_render
+    # AC-004: the directive is not silently dropped -- its absence is explained.
+    assert _NORMAL_DIRECTIVE not in corrupt_render
+    assert "could not be read" in corrupt_render, corrupt_render
+
+
+def test_foundry_gate_and_foundry_context_tell_the_same_story_on_the_same_fixture(tmp_path):
+    """D-157 adjacent-path test (AC-013).
+
+    The path the defect was reported on is Foundry-Next's guidance render. The
+    ADJACENT paths this drives are the two OTHER consumers of the same declared
+    external input named in the defect: Foundry-Gate, which renames the guard's
+    `error` into its own `reason` key, and Foundry-Context, which was the second
+    formatter dropping the refusal outright. Different doors, different result
+    shapes, one story -- an operator must not be able to tell which door noticed.
+    """
+    stories = {}
+    for tool in ("Foundry-Gate", "Foundry-Context", "Foundry-Next"):
+        result, rendered = _corrupt_external_input_door_drive(tmp_path, tool)
+        assert any("spec.md" in str(p) for p in result.get("corrupt_artifacts") or []), (
+            tool, result,
+        )
+        assert "spec.md" in rendered, (tool, rendered)
+        stories[tool] = tuple(sorted(result.get("corrupt_artifacts") or []))
+    assert len(set(stories.values())) == 1, stories
 
 
 # --------------------------------------------------------------------------- #

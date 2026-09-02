@@ -2706,28 +2706,39 @@ def test_each_d143_shape_really_did_buy_a_byte_match(
 _TEAMMATE_PROTOCOL = REPO_ROOT / "plugins/foundry/agents/teammate.md"
 
 
-def _corpus_witness_tokens() -> set:
-    """Every token the shipped corpus's own declarations can erase.
+def _corpus_witness_fields() -> set:
+    """Every ``(key_context, token)`` the shipped corpus's declarations erase.
 
     Derived: each committed log's declared patterns applied to that log's own
-    body, matches tokenized the way the guard tokenizes them. This is what
-    "the corpus exercises this grammar" means mechanically — no hand-copied
-    list of which log proves what.
+    body, matches tokenized the way the guard tokenizes them, and each token
+    paired with the span text PRECEDING it — which is exactly the pair
+    ``_field_disagreement_problem`` hands the registry. This is what "the
+    corpus exercises this grammar" means mechanically — no hand-copied list of
+    which log proves what.
+
+    D-156: the context half is the whole point. Before it, six grammars could
+    share one witness because every one of them fullmatched the same `/x/y`
+    token; the sweep confirmed a witness EXISTS without confirming the grammar
+    was no WIDER than it. A `rootdir:` path and an interpreter path are the
+    same token and different fields, and only the context tells them apart.
     """
     import re as _re
 
-    tokens = set()
+    fields = set()
     evidence_dir = REPO_ROOT / "evidence"
     for log in sorted(evidence_dir.glob("*.log")):
         text = log.read_text(encoding="utf-8")
         body = evidence._strip_leading_header_block(text)
         for pattern in evidence._parse_evidence_header(text).get("volatile", []):
             try:
-                for match in _re.finditer(pattern, body):
-                    tokens.update(match.group(0).split())
+                matches = list(_re.finditer(pattern, body))
             except _re.error:
                 continue
-    return tokens
+            for match in matches:
+                tokens = match.group(0).split()
+                for index, token in enumerate(tokens):
+                    fields.add((" ".join(tokens[:index]), token))
+    return fields
 
 
 def _grammar_witness_sweep() -> tuple:
@@ -2738,8 +2749,15 @@ def _grammar_witness_sweep() -> tuple:
     someone remembers to extend a list here. ``offenders`` are the grammars
     whose declared witness no longer exercises them — a dead grammar, which is
     how an allowlist silently widens.
+
+    D-156 added the KEY to the corpus rung: a grammar that identifies its field
+    by the text beside the token must find a committed span that carries that
+    key, not merely a token of the right shape. Six of the seven entries
+    fullmatch `/x/y`; without the key half, one rootdir line would witness them
+    all and a grammar could be arbitrarily wider than the thing keeping it
+    alive.
     """
-    corpus_tokens = _corpus_witness_tokens()
+    corpus_fields = _corpus_witness_fields()
     protocol_text = (
         _TEAMMATE_PROTOCOL.read_text(encoding="utf-8")
         if _TEAMMATE_PROTOCOL.exists()
@@ -2755,11 +2773,18 @@ def _grammar_witness_sweep() -> tuple:
             continue
         if grammar.witness_kind == "corpus":
             if not any(
-                grammar.token.fullmatch(tok) for tok in corpus_tokens
+                grammar.token.fullmatch(tok)
+                and (grammar.key is None or grammar.key.search(context))
+                for context, tok in corpus_fields
             ):
                 offenders.append(
                     f"{name}: declares a corpus witness, but no committed "
                     f"evidence log's own patterns erase a token of this shape"
+                    + (
+                        f" under the key {grammar.key.pattern!r}"
+                        if grammar.key is not None
+                        else ""
+                    )
                 )
         elif grammar.witness_kind == "protocol":
             if grammar.witness not in protocol_text:
@@ -2807,9 +2832,11 @@ def test_a_grammar_with_no_live_witness_is_reported_by_name(monkeypatch):
     planted["build_number"] = evidence._EnvironmentalGrammar(
         token=re.compile(r"build#\d+"),
         varies_in="digits",
+        key=None,
         witness_kind="protocol",
         witness="# evidence-volatile: build#[0-9]+  (never shipped)",
-        sample="build#42",
+        witness_pair=("", "build#42", "build#43"),
+        falsifier=("", "42", "43"),
         note="planted by the test; nothing in the tree witnesses it",
     )
     monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
@@ -2843,9 +2870,11 @@ def test_an_unreadable_variation_site_is_reported_not_admitted(monkeypatch):
     planted["duration_seconds"] = evidence._EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
         varies_in="whenever",
+        key=None,
         witness_kind="corpus",
         witness="casting-1-pytest.log",
-        sample="4.86s",
+        witness_pair=("", "4.86s", "4.91s"),
+        falsifier=("", "4.86", "4.91"),
         note="planted",
     )
     monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
@@ -2884,33 +2913,35 @@ def test_an_unrecognised_shape_is_refused_by_default(token_a, token_b):
     )
 
 
-def test_the_stated_residual_is_still_exactly_this_wide():
-    """The KNOWN limit, pinned in the suite rather than buried in a comment.
+#: D-156's three end-to-end forgeries, plus the residual the cycle-21 suite had
+#: pinned as admitted. Under the `/\S*` grammar every one of these rode out of
+#: the comparison; under the keyed grammars a bare path token is not a field.
+_BARE_PATH_FORGERIES = [
+    pytest.param("/logs/passed/run", "/logs/failed/run", id="verdict-word-in-a-segment"),
+    pytest.param(
+        "/var/run/failed/report.txt", "/var/run/passed/report.txt", id="d156-forgery-1"
+    ),
+    pytest.param("/FAILED", "/PASSED", id="d156-forgery-2"),
+    pytest.param("/deadbeefcafe1234", "/0badc0de99887766", id="d156-forgery-3"),
+    pytest.param("/logs/1650/run", "/logs/1631/run", id="count-in-a-segment"),
+    pytest.param("/logs/run-1650", "/logs/run-1631", id="count-in-a-word-segment"),
+]
 
-    D-143's ruling was that the previous residual was written narrowly (a
-    percentage) while the shipped rule admitted eight shapes. So this one is
-    pinned where it can be read: a verdict word placed inside an absolute path
-    segment is STILL admitted, because the corpus relocates paths by exactly
-    one alphabetic segment and no rule over shape separates that from a swapped
-    word.
 
-    If a future change closes it, this test goes red — which is the point. Do
-    not delete the assertion; update it together with the RESIDUAL block in
-    ``evidence.py`` so the declared scope keeps matching the shipped scope.
+@pytest.mark.parametrize("token_a,token_b", _BARE_PATH_FORGERIES)
+def test_a_bare_path_token_is_not_a_field_whatever_it_carries(token_a, token_b):
+    """D-156: what made the old residual a residual was the grammar, not the corpus.
+
+    The cycle-21 suite pinned "a verdict word inside an absolute path segment
+    is still admitted" as a known limit. PROVE-21 refuted the limit from the
+    registry's own principle (what makes a pid environmental is that it is a
+    pid, not that it has an `=` in it): the corpus declares only KEYED path
+    variation, so a path is a field only where a key identifies it. A bare
+    slash-token is therefore refused, and there is no residual left to pin.
     """
-    grammar, _ = evidence._environmental_field("/logs/passed/run", "/logs/failed/run")
-    assert grammar == "absolute_path", (
-        "the stated residual has changed. Update the RESIDUAL block in "
-        "evidence.py and this test together — a limit is only a limit while "
-        "what it declares matches what it ships"
-    )
-    # The neighbouring shapes it must NOT be confused with are closed.
-    for a, b in (
-        ("/logs/1650/run", "/logs/1631/run"),
-        ("/logs/run-1650", "/logs/run-1631"),
-        ("passed", "failed"),
-    ):
-        assert evidence._environmental_field(a, b)[0] is None, (a, b)
+    grammar, why = evidence._environmental_field(token_a, token_b)
+    assert grammar is None, (token_a, token_b, grammar)
+    assert "starts with a slash" in why, why
 
 
 # --------------------------------------------------------------------------- #
@@ -3092,25 +3123,74 @@ def _module_name(path: Path) -> str:
     return ".".join(parts)
 
 
-def _writes_to_stdout(node: ast.AST) -> bool:
+def _stdout_objects() -> tuple:
+    """The objects that ARE the process's stdout, read off ``sys`` itself."""
+    return (sys.stdout, sys.__stdout__)
+
+
+def _stderr_objects() -> tuple:
+    return (sys.stderr, sys.__stderr__)
+
+
+def _resolves_to_stdout(node: ast.AST, namespace: dict) -> bool:
+    """True when ``node`` names the real stdout under ANY spelling.
+
+    D-158: the earlier recogniser matched the literal ``sys.`` — the same bug
+    D-147 fixed in the decode rule one packet earlier. Now the expression is
+    RESOLVED through the module's namespace (the decode rule's own resolver),
+    so ``sys.stdout``, ``s.stdout`` under ``import sys as s``, a bare
+    ``stdout`` under ``from sys import stdout``, ``getattr(sys, "stdout")``
+    and ``sys.__stdout__`` all land on the same object — while a
+    ``subprocess`` result's ``.stdout`` resolves to nothing and stays quiet,
+    which is the false-positive family the literal was protecting against.
+    """
+    from tests.test_orchestrator_gates import _UNRESOLVED, _resolve_dotted
+
+    if isinstance(node, ast.Call):
+        callee, _ = _resolve_dotted(node.func, namespace)
+        if callee is getattr and len(node.args) >= 2:
+            owner, _ = _resolve_dotted(node.args[0], namespace)
+            attr = node.args[1]
+            if owner is sys and isinstance(attr, ast.Constant):
+                return any(
+                    getattr(sys, str(attr.value), None) is o for o in _stdout_objects()
+                )
+        return False
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        obj, _ = _resolve_dotted(node, namespace)
+        return obj is not _UNRESOLVED and any(obj is o for o in _stdout_objects())
+    return False
+
+
+def _writes_to_stdout(node: ast.AST, namespace: dict) -> bool:
     """True when this expression writes to the process's real stdout.
 
-    Two spellings, and only two: a ``print()`` whose ``file=`` is absent or is
-    anything other than ``sys.stderr``, and a direct reference to ``sys.stdout``
-    or ``sys.__stdout__``. The ``sys.`` qualifier is load-bearing — an earlier
-    cut of this recogniser keyed on any attribute named ``stdout`` and reported
-    six false members, every one of them a ``subprocess`` result's ``.stdout``.
+    Every spelling is decided by RESOLUTION, not by matching text: a
+    ``print()`` whose ``file=`` is absent or resolves to anything other than
+    stderr; any expression resolving to the stdout object (see
+    ``_resolves_to_stdout``); ``os.write`` / ``os.fdopen`` on descriptor 1,
+    resolved through the namespace so ``import os as o`` is the same call.
+    A ``logging.StreamHandler(<stdout expr>)`` is caught by its argument.
     """
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        if node.func.id == "print":
-            target = next(
-                (ast.unparse(k.value) for k in node.keywords if k.arg == "file"),
-                None,
-            )
-            return target not in ("sys.stderr", "sys.__stderr__")
-    if isinstance(node, ast.Attribute) and node.attr in ("stdout", "__stdout__"):
-        return isinstance(node.value, ast.Name) and node.value.id == "sys"
-    return False
+    from tests.test_orchestrator_gates import _UNRESOLVED, _resolve_dotted
+
+    if isinstance(node, ast.Call):
+        callee, _ = _resolve_dotted(node.func, namespace)
+        if callee is print:
+            target = next((k.value for k in node.keywords if k.arg == "file"), None)
+            if target is None:
+                return True
+            obj, _ = _resolve_dotted(target, namespace)
+            return not (obj is not _UNRESOLVED and any(obj is e for e in _stderr_objects()))
+        if callee in (os.write, os.fdopen) and node.args:
+            fd = node.args[0]
+            if isinstance(fd, ast.Constant) and fd.value == 1:
+                return True
+            # ``os.write(sys.stdout.fileno(), ...)`` — the descriptor is
+            # derived from the stdout object somewhere inside the argument.
+            return any(_resolves_to_stdout(n, namespace) for n in ast.walk(fd))
+        return _resolves_to_stdout(node, namespace)
+    return _resolves_to_stdout(node, namespace)
 
 
 def _loud_functions(path: Path) -> set:
@@ -3124,7 +3204,10 @@ def _loud_functions(path: Path) -> set:
 
     ``"<module>"`` stands for module-level statements, which run on import.
     """
+    from tests.test_orchestrator_gates import _module_namespace
+
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    namespace = _module_namespace(path, tree)
     functions, calls, loud = {}, {}, set()
     for fn in ast.walk(tree):
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -3136,7 +3219,7 @@ def _loud_functions(path: Path) -> set:
                 if isinstance(c, ast.Call)
                 and isinstance(c.func, (ast.Name, ast.Attribute))
             }
-            if any(_writes_to_stdout(n) for n in body):
+            if any(_writes_to_stdout(n, namespace) for n in body):
                 loud.add(fn.name)
     nested = {
         n.name
@@ -3149,7 +3232,7 @@ def _loud_functions(path: Path) -> set:
         n for n in tree.body
         if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     ]
-    if any(_writes_to_stdout(x) for n in top_level for x in ast.walk(n)):
+    if any(_writes_to_stdout(x, namespace) for n in top_level for x in ast.walk(n)):
         loud.add("<module>")
     # Backward closure: a caller of a loud function is loud.
     changed = True
@@ -3349,6 +3432,81 @@ def test_a_redirected_cli_entry_point_is_not_an_offender(tmp_path, monkeypatch):
     )
 
 
+def test_a_function_level_import_without_a_redirect_is_reported(tmp_path, monkeypatch):
+    """D-154: the anchor for the rule's one clearing predicate.
+
+    ``_redirect_guarded`` is the whole difference between "cleared" and "not
+    looked at" for a loud name imported inside a function. The module-level
+    plant never consults it (``enclosing`` is empty there), so a predicate
+    blinded toward acceptance left the suite green. This plant imports the
+    loud name INSIDE a function that does NOT redirect — the exact mirror of
+    the control above — and must be reported by name.
+    """
+    pkg = tmp_path / "foundry_mcp"
+    (pkg / "scripts").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "scripts" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "scripts" / "cli.py").write_text(
+        "def report():\n    print('human readable')\n\n"
+        "def main(argv):\n    report()\n    return 0\n",
+        encoding="utf-8",
+    )
+    (pkg / "server.py").write_text(
+        "def run():\n"
+        "    from foundry_mcp.scripts.cli import main\n"
+        "    return main([])\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "_SERVER_PKG", pkg, raising=False)
+    seen, offenders = _protocol_stdout_scan()
+    assert "foundry_mcp.scripts.cli#main" in seen, seen
+    assert any("cli#main" in o and "without a redirect_stdout" in o for o in offenders), (
+        f"a function-level import with no redirect went unreported: {offenders}"
+    )
+
+
+#: D-158's invisible spellings, each a way of reaching the real stdout that a
+#: literal ``sys.`` match cannot see, plus the subprocess control that must
+#: stay quiet. Every one is decided by resolving the expression, not by text.
+_STDOUT_SPELLINGS = [
+    pytest.param("import os\ndef f():\n    os.write(1, b'x')\n", True, id="os-write-fd-1"),
+    pytest.param(
+        "from sys import stdout\ndef f():\n    stdout.write('x')\n", True, id="from-sys-import"
+    ),
+    pytest.param(
+        "import sys as s\ndef f():\n    s.stdout.write('x')\n", True, id="import-sys-as"
+    ),
+    pytest.param(
+        "import sys\ndef f():\n    getattr(sys, 'stdout').write('x')\n", True, id="getattr"
+    ),
+    pytest.param(
+        "import os, logging\ndef f():\n    logging.StreamHandler(os.fdopen(1, 'w'))\n",
+        True, id="fdopen-1",
+    ),
+    pytest.param(
+        "import os, sys\ndef f():\n    os.write(sys.stdout.fileno(), b'x')\n",
+        True, id="os-write-fileno",
+    ),
+    pytest.param(
+        "import sys\ndef f():\n    print('x', file=sys.stderr)\n", False, id="print-to-stderr"
+    ),
+    pytest.param(
+        "import subprocess\ndef f():\n    r = subprocess.run(['x'], capture_output=True)\n"
+        "    return r.stdout\n",
+        False, id="subprocess-result-stdout-is-quiet",
+    ),
+    pytest.param("import logging\ndef f():\n    logging.StreamHandler()\n", False, id="stream-handler-default-stderr"),
+]
+
+
+@pytest.mark.parametrize("source,loud", _STDOUT_SPELLINGS)
+def test_the_stdout_rule_resolves_the_spelling_rather_than_matching_it(tmp_path, source, loud):
+    """D-158: what reaches stdout is decided by what the name RESOLVES to."""
+    module = tmp_path / "planted.py"
+    module.write_text(source, encoding="utf-8")
+    assert ("f" in _loud_functions(module)) is loud, (source, _loud_functions(module))
+
+
 def test_the_dispatched_evidence_path_emits_nothing_on_stdout(tmp_path, capsys):
     """D-149 at the surface a client actually meets.
 
@@ -3516,11 +3674,19 @@ def test_no_module_declares_its_own_requirement_id_grammar():
     seven copies must still be SCANNED, so a ``_package_modules`` that stopped
     reaching them fails by name rather than reporting a clean zero.
     """
+    # D-155: the roots are the SHARED derivation every package-wide rule uses,
+    # not a package-only literal. `plugins/foundry/scripts/` is a shipped
+    # tree the package cannot import; `_scanned_modules` parses it from disk,
+    # and `validate-test-observations.py` was the copy this rule could not
+    # see while it started from `_SERVER_PKG` alone.
+    from tests.test_spawn_progress import _scanned_modules
+
     filed_on = [
         "foundry_handoff.py", "evidence.py", "foundry_validate.py",
         "foundry_orchestrator.py", "foundry.py", "vocab.py",
+        "validate-test-observations.py",
     ]
-    modules = _package_modules(_SERVER_PKG)
+    modules = _scanned_modules()
     names = {p.name for p in modules}
     missing = [m for m in filed_on if m not in names]
     assert missing == [], f"the scan no longer reaches {missing}"
@@ -3595,14 +3761,25 @@ def test_the_canonical_grammar_never_narrows_what_was_counted_before():
 def test_every_id_prefix_in_a_real_spec_is_classified():
     """A new ID family must be REPORTED, never silently dropped.
 
-    Scans every shipped forge spec for ``XX-NNN``-shaped tokens and partitions
-    the prefixes across the two declared sets. A prefix in NEITHER is the
-    failure this exists to surface: it is exactly how OT- and GI- went missing
-    for the whole of this run, matching nothing and complaining about nothing.
+    Scans a spec corpus for ``XX-NNN``-shaped tokens and partitions the
+    prefixes across the two declared sets. A prefix in NEITHER is the failure
+    this exists to surface: it is exactly how OT- and GI- went missing for the
+    whole of this run, matching nothing and complaining about nothing.
+
+    D-162: the corpus is COMMITTED, so this never skips. ``forge-specs/`` is
+    git-ignored (``.gitignore``), so a guard that read only the real specs was
+    switched off in every clean checkout — including the worktree the evidence
+    gate re-executes in, which is how the log for the evidence gate itself
+    came to pin a count only the author's tree could produce (D-160). The
+    committed fixtures carry every family forge emits; the real specs are
+    scanned too whenever they happen to be present, as extra witnesses.
     """
-    specs = sorted((REPO_ROOT / "forge-specs").glob("*/spec.md"))
-    if not specs:
-        pytest.skip("no forge specs in this checkout")
+    fixtures = sorted((Path(__file__).parent / "fixtures" / "specs").glob("*.md"))
+    specs = fixtures + sorted((REPO_ROOT / "forge-specs").glob("*/spec.md"))
+    assert any(p.name == "spec_every_id_family.md" for p in fixtures), (
+        "the committed every-family fixture is gone — the guard would be "
+        "vacuous over whatever is left"
+    )
     known = vocab.REQUIREMENT_ID_PREFIXES | vocab.NON_REQUIREMENT_ID_PREFIXES
     unclassified = {}
     # Two or more capitals, and not preceded by a letter, digit or hyphen.
@@ -3611,11 +3788,21 @@ def test_every_id_prefix_in_a_real_spec_is_classified():
     # without it `LEAD-RULING-5` yields "RULING" and the prose "cycle N to N-1"
     # yields "N", and a test that reports those reports nothing anyone acts on.
     family = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,6})-\d+(?:\.\d+)?\b")
+    witnessed: set = set()
     for spec in specs:
         text = spec.read_text(encoding="utf-8", errors="replace")
         for token in family.findall(text):
+            if spec in fixtures:
+                witnessed.add(token)
             if token not in known:
                 unclassified.setdefault(token, spec.name)
+    # Non-vacuity: the committed corpus must exercise every requirement family
+    # except the three foundry-only ones retained under NFR-002, which no forge
+    # spec has ever emitted and which therefore have no witness by design.
+    unwitnessed = vocab.REQUIREMENT_ID_PREFIXES - witnessed - {"VC", "IR", "TR"}
+    assert unwitnessed == set(), (
+        f"requirement families with no committed witness: {sorted(unwitnessed)}"
+    )
     assert unclassified == {}, (
         f"ID prefixes classified as neither requirement nor non-requirement: "
         f"{unclassified}. Add each to REQUIREMENT_ID_PREFIXES or to "

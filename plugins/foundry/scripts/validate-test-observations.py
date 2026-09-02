@@ -61,11 +61,13 @@ from typing import Any
 # `foundry_state` imports json and pathlib and nothing from its own package,
 # so the "stdlib only" character of these CLIs is unchanged.
 try:  # Installed (uvx/pip) case — package is already importable.
+    from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
     from foundry_mcp.tools.foundry_state import read_json, read_text_file
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
+    from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
     from foundry_mcp.tools.foundry_state import read_json, read_text_file
 
 
@@ -235,15 +237,13 @@ VALUE_NOT_SHAPE_JACCARD_THRESHOLD = 0.7
 # Regexes — single-source-of-truth from evidence.py byte-equivalent
 # ---------------------------------------------------------------------------
 
-# Reuse evidence.py's regex byte-equivalent — single source of truth across
-# Phases 4/5/7. Inlined rather than imported because this script is invoked
-# standalone via subprocess; the MCP server is not necessarily installed in
-# the validator's environment. The Phase 8 INTENT-01 grep contract relies
-# on this regex matching the same FR-N/US-N IDs as Phase 5's
-# # evidence-for: parser does.
-# Byte-equivalent to:
-#   plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py:_REQUIREMENT_ID_RE
-_REQUIREMENT_ID_RE = re.compile(r"\b(?:US|FR)-\d+\b")
+# The requirement-ID grammar is declared ONCE, in foundry_mcp.schemas.vocab
+# (D-150), and imported through the same bootstrap the document reads use.
+# This script carried its own two-family copy (US|FR) until D-155: the
+# "byte-equivalent to evidence.py" comment it wore was false the moment
+# evidence.py widened, which is what a copy always becomes. The Phase 8
+# INTENT-01 grep contract still holds -- both sides read the one pattern.
+_REQUIREMENT_ID_RE = REQUIREMENT_ID_RE
 
 # Header parser for `# tests-spec: FR-N, US-M` lines on first non-blank
 # line of generated test files. Byte-equivalent shape to evidence.py's
