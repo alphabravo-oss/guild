@@ -1,0 +1,82 @@
+{
+  "defects": [
+    {
+      "id": "D-001",
+      "cycle": 0,
+      "source": "trace",
+      "type": "MISSING",
+      "description": "handler is never called from the router",
+      "spec_ref": "AC-001",
+      "symbol": "handle_login",
+      "file": "src/api/login.py",
+      "status": "fixed",
+      "fixed_in_cycle": 2,
+      "created_at": "2026-08-28T19:06:32.879321+00:00"
+    },
+    {
+      "id": "D-002",
+      "cycle": 0,
+      "source": "prove",
+      "type": "THIN",
+      "description": "validator accepts any payload shape",
+      "spec_ref": "AC-002",
+      "symbol": "validate",
+      "file": "src/api/validate.py",
+      "status": "fixed",
+      "fixed_in_cycle": 2,
+      "created_at": "2026-08-28T19:07:11.101002+00:00"
+    },
+    {
+      "id": "D-003",
+      "cycle": 2,
+      "source": "prove",
+      "type": "FALSE_DOCUMENTED_CONTRACT",
+      "description": "docstring documents a return shape the function never produces; type entered through the unvalidated sync path and is outside the reconciled vocabulary",
+      "spec_ref": "AC-003",
+      "symbol": "render",
+      "file": "src/ui/render.py",
+      "status": "fixed",
+      "fixed_in_cycle": 5,
+      "created_at": "2026-08-29T01:22:04.550918+00:00"
+    },
+    {
+      "id": "D-004",
+      "cycle": 2,
+      "source": "test01",
+      "type": "FAIL",
+      "description": "derived hypothesis strategy fails on the empty-mapping branch",
+      "spec_ref": "CT-001",
+      "symbol": "strategy_for",
+      "file": "tests/test_derived.py",
+      "status": "fixed",
+      "fixed_in_cycle": 5,
+      "created_at": "2026-08-29T01:44:19.773310+00:00"
+    },
+    {
+      "id": "D-005",
+      "cycle": 5,
+      "source": "prove",
+      "type": "WRONG",
+      "description": "retry backoff multiplies instead of adding",
+      "spec_ref": "AC-005",
+      "symbol": "backoff",
+      "file": "src/net/retry.py",
+      "status": "fixed",
+      "fixed_in_cycle": 6,
+      "created_at": "2026-08-29T09:02:55.204411+00:00"
+    },
+    {
+      "id": "D-006",
+      "cycle": 5,
+      "source": "legacy_stream",
+      "type": "TEST_RECORD_SCOPE",
+      "description": "source and type both fall outside the reconciled vocabulary and must survive migration verbatim",
+      "spec_ref": "",
+      "symbol": "",
+      "file": "",
+      "status": "open",
+      "fixed_in_cycle": null,
+      "created_at": "2026-08-29T09:31:40.008127+00:00"
+    }
+  ]
+}

@@ -58,7 +58,7 @@ For each source entry:
 For each destination file listed in any casting's `key_files`:
 1. List every `func Test*` (or language-equivalent test symbol) in the file
 2. For each found symbol, check if it corresponds to any source entry in the coverage lists
-3. If a destination symbol has no corresponding source entry, flag as `ORPHAN_DESTINATION` — low severity, but report it
+3. If a destination symbol has no corresponding source entry, flag as `ORPHAN_DESTINATION` and report it
 
 ### Step 5: Verbatim behavior sanity check
 For each matched source→destination pair, do a lightweight sanity check:
@@ -109,13 +109,18 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
 }
 ```
 
+**Every cite in that shape is `path#Symbol`, exactly as the cite rule below requires** — no field in a coverage record carries a line number. The run-artifact carve-out that permits a line hint does not reach a coverage record: this JSON flows into `Foundry-Sync` and is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false COVERAGE_INCOMPLETE while a symbol cite keeps resolving.
+
+`source_entry` and `expected_destination` are the exception that proves the rule, not a carve-out: they echo a `coverage_list` entry's own `source_file:symbol` shape. That colon separates a path from a **symbol**, never from a line, so it is already a symbol reference and nothing about it can drift as code moves — which is why the FR-004 placement rule has no quarrel with it and why "convert every colon" would be wrong here. The argument stands on the shape itself, NOT on enforcement: `foundry_validate.py` checks only that each `coverage_list` entry is a string, so a colonless entry is caught nowhere in the pipeline. A **re-spelled** entry has one catcher and only one — when the manifest declares a `source_inventory`, Dimension 8 cross-checks the coverage entries against it, and the counterpart the re-spelling stopped claiming is reported as `uncovered_source_entry`. That check fires on the inventory entry left uncovered, never on the misspelling itself, and a manifest with no `source_inventory` gets no check at all. Assume nothing is watching the spelling unless you have read an inventory in the manifest. Reproduce those two values byte-for-byte as the manifest spells them, because the manifest is the only thing that spells them; write every other cite as `path#Symbol`.
+
 `COVERAGE_INCOMPLETE` and `THIN_MIGRATION` defects flow into `Foundry-Sync` and feed F3 GRIND.
 
 ## Rules
 
 - **NEVER modify code.** You are read-only.
-- **Every defect needs a file:line citation.** Source entry + expected destination + specific failure mode.
+- **Every defect needs a citation, written by symbol.** Cite `path#Symbol` — source entry + expected destination + specific failure mode. The symbol is authoritative: a cite whose symbol resolves is valid however stale any line hint beside it has become. Never judge the line component, a moved line alone produces no finding of any kind, and cite-refresh sweeps happen only under an explicit directive. A line hint (`path:123`) belongs only in a commit-pinned run artifact, and a coverage record is not one.
 - **If spec_type is not MIGRATION, skip this stream entirely.** Don't run speculatively.
 - **THIN_MIGRATION is not a free pass** — teammates can't argue "I consolidated 3 legacy tests into 1 v2 test." If they did, the casting spec text must explicitly say so under `destination_naming_rule`. Otherwise each source entry gets its own destination.
-- **Orphans are suspicious but not always wrong.** A teammate may add setup/teardown helper funcs that look like Test* but aren't ports. Report as low severity, let the assayer final-judge at F4.
+- **Orphans are suspicious but not always wrong.** A teammate may add setup/teardown helper funcs that look like Test* but aren't ports. Report every one in the `orphans` array and let the assayer final-judge at F4.
+- **No severity classification.** Do not label a finding critical/major/minor, and do not rank findings by importance anywhere in your report. Every defect is a defect and GRIND fixes them all; the `orphans` array is a separate channel from `defects`, not a weaker tier of it.
 - **No semantic equivalence checks here.** Existence + name match + assertion count. Full equivalence is the assayer's job.

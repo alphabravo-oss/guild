@@ -18,7 +18,7 @@
 <a href="https://github.com/alphabravo-oss/guild/stargazers"><img src="https://img.shields.io/github/stars/alphabravo-oss/guild?style=flat-square&color=FFC107" alt="Stars"/></a>
 <a href="https://github.com/alphabravo-oss/guild/issues"><img src="https://img.shields.io/github/issues/alphabravo-oss/guild?style=flat-square&color=607D8B" alt="Issues"/></a>
 <img src="https://img.shields.io/github/last-commit/alphabravo-oss/guild?style=flat-square&color=607D8B" alt="Last commit"/>
-<img src="https://img.shields.io/badge/agents-43-00897B?style=flat-square" alt="43 agents"/>
+<img src="https://img.shields.io/badge/agents-44-00897B?style=flat-square" alt="44 agents"/>
 <img src="https://img.shields.io/badge/commands-60-6D4C41?style=flat-square" alt="60 commands"/>
 
 <br/>
@@ -56,7 +56,7 @@
 <td width="25%" align="center" valign="top">
 <h2>🤖</h2>
 <b><a href="plugins/crew">crew</a></b><br/>
-<sub>Owns the outcome.<br/>Five agents, one persona.</sub><br/><br/>
+<sub>Owns the outcome.<br/>Five agents, one job.</sub><br/><br/>
 <code>/crew:do</code>
 </td>
 </tr>
@@ -124,7 +124,7 @@
 </table>
 
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.8.0-F57C00?style=flat-square" alt="foundry 4.8.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.9.0-F57C00?style=flat-square" alt="foundry 4.9.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
 
 
 </div>
@@ -252,13 +252,17 @@ Decompose authors every teammate prompt **once**, freezes it, and validates it a
 | `F0.9` | **11-dimension gate — before any code is written** |
 | `F1` | Parallel wave build; cited evidence **re-run server-side** |
 | `F2` | Up to **8 inspect streams** in parallel |
-| `F3` | Grind every defect to zero, re-inspect |
+| `F3` | Grind every defect to zero, re-inspect; a class that recurs three cycles running **escalates to one structural packet** |
 | `F4` | Fresh-eyes assay with stub detection |
+| `F5` | `--temper` — micro-domain stress testing, same grind loop |
+| `F5.5` | `--nyquist` — regression tests for every verified requirement that lacks one |
 
 **The 8 streams:** `TRACE` (LSP upstream wiring) · `FLOW_TRACE` (downstream) · `PROVE` (spec-to-code) · `RESEARCH_AUDIT` · `COVERAGE_DIFF` · `SIGHT` (browser) · `TEST/PROBE` · `TEST_OBSERVATIONS` (derives property tests from the contracts table, runs them **code-blind**)
 
 > [!IMPORTANT]
-> Hand-fabricated evidence cannot pass. When a teammate cites `$ pytest tests/foo.py`, Foundry re-runs it server-side and stamps provenance — and each artifact binds to a specific requirement ID.
+> Hand-fabricated evidence cannot pass. When a teammate cites `$ pytest tests/foo.py`, Foundry re-runs it server-side in a clean worktree and stamps provenance — each artifact binds to a specific requirement ID, and a "volatile" pattern that would erase the verdict is refused rather than redacted.
+
+**Findings have two channels.** Behaviour and security findings are defects. Comment prose — a stale line hint, a count, a direction word — goes to a typed observations ledger instead, and the server refuses to file it the other way. A security-property claim can never be demoted; trying trips a persisted audit signal.
 
 → [Full docs](plugins/foundry)
 
@@ -343,7 +347,7 @@ flowchart LR
 
 | Plugin | State |
 |---|---|
-| foundry | `foundry-archive/{run}/` — every prompt, acceptance check, and handoff. Full audit trail. |
+| foundry | `foundry-archive/{run}/` — every prompt, acceptance check, handoff, the defect ledger, the observations ledger, per-agent progress ledgers, and per-cycle stream roll-ups. Full audit trail; `migrate-archive.py` upgrades older archives in place. |
 | forge | `docs/specs/{slug}/spec.md` + `flow-delta.json` on brownfield runs |
 | adhoc / tldr | dotfiles in `~/.claude/` — survive `/clear` and compaction. adhoc logs every gate decision to `.adhoc-citations-log.jsonl` |
 | crew | `.crew/runs/` for resume |
@@ -352,9 +356,30 @@ flowchart LR
 </details>
 
 <details>
-<summary><b>🆕 What's new since v4.2.0</b></summary>
+<summary><b>🆕 What's new</b></summary>
 
 <br/>
+
+### foundry 4.9.0 — the run stops manufacturing its own work
+
+Built from two real runs' archives (`deployment-interconnect`, `interconnect-lifecycle-followups`) where ~70 of 137 defects were comment prose and the same defect class was re-found one axis at a time for five cycles. Every item is additive; nothing the loop catches got weaker.
+
+| Adds | Where |
+|---|---|
+| Observation/defect split — comment prose has its own typed ledger; both filing doors refuse it as a defect; security and spec-behaviour claims can **never** be demoted (denylist + audit tripwire) | `Foundry-Defect` · `Foundry-Observation` · `Foundry-Sync` · all four stream agents · F0 seeded directive |
+| `path#Symbol` cites — a resolvable symbol passes despite a stale `:line`; an unresolvable one is a defect; line drift is not a finding class | `Foundry-Accept-Casting` |
+| Server-side cycle counter; escalation after three consecutive cycles of one class → **one structural packet**, with a directive override that reports its decision | `Foundry-Fix` · `Foundry-Tasks` · `Foundry-Next` |
+| `Foundry-Fix` refuses without an adjacent-path statement and an adjacent-path test | `Foundry-Fix` · teammate GRIND protocol |
+| Index-judging pre-commit guard shipped as an asset and installed into every target repo; pathspec-scoped commits; no-stash rule | `install-commit-guard.sh` · `Foundry-Init` |
+| One vocabulary module — stream ids, defect types (incl. `PARTIAL`), sources, and requirement-ID families (`GI`/`OT`/`CT`/`ST`/`LR` were invisible before) | `schemas/vocab.py`, read by every door |
+| Per-cycle stream roll-up (partial PROVE tranches accumulate; ≥95% judged once at streams-complete); `Foundry-Liveness` tells a slow agent from a dead one | `Foundry-Stream` · `Foundry-Liveness` |
+| Evidence gate reachable over MCP (`casting_commit`), resolving the run's real spec; redactions may not erase a disagreement; volatile fields are a corpus-derived allowlist | `Foundry-Accept-Casting` · `evidence.py` |
+| Every run artefact read through one guarded primitive; malformed ledgers, manifests, directives and planning state **refuse by name** at every door instead of raising or silently repairing — enforced by package-wide AST scans with plant and blind tests | MCP server, both shipped trees |
+| `scripts/foundry.sh` retired; `migrate-archive.py` upgrades old archives idempotently; `measure-run.py` reports real cycle/defect-yield metrics | scripts |
+
+Shipped by run `thunder-viper` (162 defects, 22 cycles, 1,917 tests). Its own retrospective — TEMPER did not converge on its own — is the next work request.
+
+### Since v4.2.0
 
 > [!NOTE]
 > All eight are **verified by synthetic-fixture suite, not by ablation cohort.** Milestone-level proof of combined defect-rate drop is tracked as Phase 9 / RUN-01.

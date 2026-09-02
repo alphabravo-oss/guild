@@ -341,18 +341,20 @@ Update the task status via TaskUpdate:
   - Any deviations you applied (Rules 1-3) and what you fixed
   - Any concerns you logged (Rule 4), including any approach-altering insights
   - Build/test status (pass/fail with details if fail)
-  - **Requirement citations (required).** For every requirement ID in your `<spec_requirements>` block (US-N, FR-N, NFR-N, AC-N, etc.), cite the exact file:line where you implemented it. The lead runs `Foundry-Accept-Casting` which mechanically verifies each requirement ID has a file:line citation within 300 characters of the ID mention — **missing citations = casting rejected, you will be re-dispatched.** Use this format:
+  - **Requirement citations (required).** For every requirement ID in your `<spec_requirements>` block (US-N, FR-N, NFR-N, AC-N, etc.), cite the exact `path#Symbol` where you implemented it — the symbol, not a line range. The lead runs `Foundry-Accept-Casting` which mechanically verifies each requirement ID has a citation within 300 characters of the ID mention and resolves every symbol you name — **missing or unresolvable citations = casting rejected, you will be re-dispatched.** Use this format:
 
     ```
     ## Requirement Citations
-    - US-N: src/api/auth/login.ts:42-78 (login endpoint with bcrypt)
-    - US-M: src/components/LoginForm.tsx:15-50 (form + submit handler)
-    - FR-K: src/api/auth/login.ts:65 (rate limit check)
-    - AC-L: src/api/auth/__tests__/login.test.ts:20-40 (AC verified by test)
+    - US-N: src/api/auth/login.ts#loginHandler (login endpoint with bcrypt)
+    - US-M: src/components/LoginForm.tsx#LoginForm (form + submit handler)
+    - FR-K: src/api/auth/login.ts#checkRateLimit (rate limit check)
+    - AC-L: src/api/auth/__tests__/login.test.ts#rejects_after_five_attempts (AC verified by test)
     ```
-    (Template placeholders — substitute your casting's actual numeric IDs.)
+    (Template placeholders — substitute your casting's actual numeric IDs and real symbol names.)
 
-    Every ID. No exceptions. If a requirement spans multiple files, cite all of them. If a requirement is "verified by test," cite the test file:line. If you did not implement a requirement in your slice, say so explicitly and explain why — the lead will treat that as a scope-flag and re-dispatch.
+    Every ID. No exceptions. If a requirement spans multiple files, cite all of them. If a requirement is "verified by test," cite the test's `path#Symbol`. If you did not implement a requirement in your slice, say so explicitly and explain why — the lead will treat that as a scope-flag and re-dispatch.
+
+    **The symbol is authoritative.** A cite whose symbol resolves is valid however far the code has moved inside the file, so no verifier judges the line component and a moved line alone produces no finding of any kind. A line hint (`path:123`) is permitted only in a commit-pinned run artifact — an evidence log, a stream report, a casting prompt — because those are frozen against one commit. Never write one into a comment you commit into source: cite `path#Symbol` there, and when the reader needs the shape, quote a short snippet instead of a line number. Never run a cite-refresh sweep without an explicit directive.
 
   - **Evidence Files (required when `<spec_requirements>` is non-empty).**
     For every behavior change your task introduces, capture the demonstrating
@@ -561,7 +563,38 @@ Run the same check that originally found the defect:
 - **SIGHT defect:** If possible, check that the UI element now works as described
 - **TEST defect:** Run the specific test that failed and confirm it passes
 
-### Step 7: Self-check
+### Step 7: DECLARE — the adjacent paths, and a test that drives one
+
+`Foundry-Fix` will not mark the defect fixed on the strength of the defect path alone. Before you call it, produce both of the following. They are required fields on the call; the server refuses the transition without them and names which one is missing.
+
+**The adjacent-path statement.** Name, concretely, what else touches the code you just changed:
+
+- **Who else calls this** — every other caller of the function or symbol you edited, not just the one the defect came in through.
+- **What else transitions here** — every other state, route, or branch that reaches this code.
+- **What runs concurrently** — anything sharing the tree, the index, a lock, a cache, or a connection with it.
+
+Get this from evidence, not memory — the same greps as the Blast Radius procedure:
+
+```bash
+grep -rn "<symbol>(" src/
+grep -rn "import.*<symbol>" src/
+```
+
+**When callers are exhausted, the other two axes are not.** `Foundry-Fix` REFUSES a statement that LEADS with a denial of adjacency — "nothing else calls it", "no other callers", "none", "n/a" — and appending the grep that proves the symbol has one caller does not rescue it, because the denial is still the first thing the statement says. A denial LATER in the sentence is judged differently, and the rule is positional: a bound comes after what it bounds. Once you have named real adjacent paths you may close the radius with a trailing "and no other module calls it" and the call lands; what the gate refuses is a denial that bounded nothing. The refusal is not pedantry: a fix with no adjacent path has no adjacent-path test to reference either, so an unbounded denial makes the two required fields contradict each other and the call could never have succeeded. Callers are one axis of three. A single-caller symbol still has transitions that reach it and work that runs beside it — name those, and let the grep be evidence *inside* the statement rather than the statement itself.
+
+```text
+REFUSED: Nothing else calls it — grep -rn "_helper(" src/ returns only the one call site.
+ACCEPTED: Two transitions reach _helper besides the defect's — the retry branch in run_retry and the shutdown path in close_pool — and it writes the shared cache the reaper thread scans concurrently. grep -rn "_helper(" src/ shows one direct caller, so callers are the exhausted axis rather than the whole neighbourhood.
+ACCEPTED: _helper is reached by the retry branch in run_retry and the shutdown path in close_pool, and no other module calls it, so those two are the whole radius.
+```
+
+The third line is the enumerate-then-close form, and it carries the same denial the first line is refused for — the difference is that by the time it arrives, two real adjacent paths have been named for it to bound. Every line above is driven through the shipped gate by `plugins/foundry/mcp-server/tests/test_protocol_prose.py`, so the REFUSED line stays refused and both ACCEPTED lines stay accepted. Copy either accepted shape and your call lands.
+
+**The adjacent-path test reference.** Point at a test that drives a **NAMED** adjacent path — a different caller, a different transition, or a concurrent interaction than the one the defect was found on. Cite it as `path#Symbol` and name which adjacent path it exercises.
+
+The defect's own regression test does not satisfy this. It re-walks the path you already fixed; the whole point is to prove the fix did not break the neighbours it did not walk. If no such test exists, write one — that is part of the fix, not extra credit.
+
+### Step 8: Self-check
 
 Run the full self-check from the Self-Check section. Build + tests must pass. Your fix must not break anything else.
 
@@ -671,6 +704,8 @@ If you have exhausted your 3 attempts and self-check still fails, log the remain
 
 After each task passes self-check (or after you have exhausted your fix attempts and logged the remainder), commit your work.
 
+You share one working tree and one git index with every other teammate in the wave. Nothing about a commit here is private: the index you stage into is the same index they stage into. Both steps below exist to keep your commit yours.
+
 ### Step 1: Stage files individually
 
 Stage ONLY the files your task created or modified. Use explicit file paths:
@@ -683,21 +718,39 @@ git add src/lib/validators/auth.ts
 
 **NEVER** use `git add .` or `git add -A`. These commands stage everything in the working directory, including other teammates' uncommitted work, temporary files, and build artifacts. Staging another teammate's half-finished work into your commit will corrupt the build.
 
-### Step 2: Commit with a descriptive message
+**Every new file must be `git add`ed here.** A path git does not already track is invisible to the pathspec commit in Step 2 unless it is in the index first — the commit succeeds and silently omits the file.
+
+### Step 2: Commit with an explicit pathspec
+
+Name your casting's `key_files` after a `--` separator. The pathspec is what scopes the commit:
 
 ```bash
-git commit -m "feat(foundry): [concise description of what this task accomplished]"
+git commit -m "feat(foundry): implement login endpoint with bcrypt password hashing" -- \
+  src/api/auth/login.ts \
+  src/components/LoginForm.tsx \
+  src/lib/validators/auth.ts
 ```
 
-Examples:
-- `git commit -m "feat(foundry): implement login endpoint with bcrypt password hashing"`
-- `git commit -m "feat(foundry): add project list page with real-time search filtering"`
-- `git commit -m "fix(foundry): resolve null pointer in notification dispatch"`
+**NEVER run a bare `git commit -m "..."`.** A commit with no pathspec commits the ENTIRE index by git's documented default — every path any teammate has staged, not only yours. On a shared index that means your commit silently captures a peer's half-finished work under your message, and the peer then finds their change already committed by someone else, in a commit they cannot cleanly undo. The pathspec is not a nicety; it is the only thing that scopes a commit on a shared index.
+
+A pathspec commit leaves every path you did not name exactly as it was — still staged, still the other teammate's to commit. That is the behavior you want.
+
+**Name deletes and renames in the pathspec too.** A deleted path is still a path: `git rm` it (or `git add` the deletion), then list it. A rename is two paths — list the old path and the new one, or the commit records half a rename.
 
 Use `feat(foundry):` for CAST tasks (building new functionality).
 Use `fix(foundry):` for GRIND tasks (fixing defects).
 
-### Step 3: Record the commit hash
+Examples:
+- `git commit -m "feat(foundry): add project list page with real-time search filtering" -- src/pages/Projects.tsx src/lib/search.ts`
+- `git commit -m "fix(foundry): resolve null pointer in notification dispatch" -- src/services/notify.ts`
+
+### Step 3: Never stash, never skip the hook
+
+**Never run `git stash`, in any form.** Not `git stash`, not `git stash --keep-index`, not "just to get a clean tree" around a commit or a hook. Stash takes the whole working tree — your peers' uncommitted work along with yours — and `--keep-index` silently drops the unstaged half of a partially-staged file when it restores. No step in this protocol needs a clean tree: the pathspec in Step 2 already scopes your commit, and the guard below already ignores everything you did not stage.
+
+**Never skip the pre-commit hook.** No step in this protocol takes a hook-bypassing flag on `git commit`, and you must not add one. The guard foundry installs judges staged content only (`git diff --cached`), so a peer's unstaged edits in the shared tree cannot make it fire, and a correctly scoped pathspec commit passes it. If the guard does fire, it found a real violation in what *you* staged — fix the staging, never the hook.
+
+### Step 4: Record the commit hash
 
 After committing, capture the hash:
 
@@ -706,6 +759,14 @@ git rev-parse --short HEAD
 ```
 
 Include this hash in your task completion report so the Lead can track exactly which commit delivered which task.
+
+Then confirm the commit is scoped to your files:
+
+```bash
+git show --stat --name-only HEAD
+```
+
+Every path listed must be one of your casting's `key_files`. If a peer's file appears, the commit was not pathspec-scoped — report it in your completion message immediately rather than rewriting shared history.
 
 ---
 
@@ -752,7 +813,7 @@ The discipline:
 4. **Confirm hypotheses** before you fix (competing hypotheses in GRIND).
 5. **Deviate** only within the rules (auto-fix bugs, add critical functionality, fix blockers, log concerns).
 6. **Check** your own work (files exist, build passes, tests pass, research honored).
-7. **Commit** atomically (individual file staging, descriptive message, hash captured).
+7. **Commit** atomically (individual file staging, pathspec-scoped commit over your `key_files`, hash captured).
 8. **Report** completion with full requirement citations.
 9. **Repeat** until all tasks are done or you are told to stop.
 

@@ -9,16 +9,44 @@ All operations are local file reads/writes. Zero API calls. Zero cost.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.schemas.vocab import (
+    DEFECT_SOURCE_IDS,
+    DEFECT_TYPES,
+    REQUIREMENT_ID_RE,
+    STREAM_WIRE_IDS,
+    canonical_defect_type,
+    observation_class,
+)
+from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry_state import (
+    ARCHIVE_DIR,
     clear_active_run,
     get_run_dir,
+    read_document,
+    read_text_file,
 )
+
+# D-127: the house rule is that a tool never raises across the MCP boundary, it
+# returns {error, hint}. A ledger whose record container is the wrong shape is
+# discovered INSIDE the locked primitive, several frames below the entry point,
+# and trusting each entry point to remember a pre-flight check for it is what
+# D-127 cost: this module's two ledger writers did not, so Foundry-Sync and
+# Foundry-Fix shipped call_tool's unhandled-error banner instead of the house
+# refusal — the very refusal shape D-095/D-096 were filed to establish.
+#
+# A module-top import, not the lazy one used for foundry_spawn: THIS module
+# imports foundry.py (never the reverse), so there is no cycle to open.
+from foundry_mcp.tools.foundry import ledger_refusals
 from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
 
 # ANSI colors — shared with display.py
@@ -123,28 +151,543 @@ def agent_model(subagent_type: str, baseline: str = "") -> dict:
     return {"model": resolved} if resolved else {}
 
 
+# --------------------------------------------------------------------------- #
+# Run-artifact persistence (D-098 / D-103).
+#
+# Two failure classes, one layer, because they are the two halves of the same
+# gap: the READ edge raised, and the window between the read and the write lost
+# writes.
+#
+# READS. ``_load_json`` was ``json.loads(path.read_text())`` with no try/except
+# and no shape check, and ``server.py``'s ``call_tool`` had none either — so a
+# corrupt ``state.json`` raised out of Foundry-Next, the mandatory handshake
+# before every phase transition, and the operator could not even read state to
+# diagnose it. A 24-combination matrix over 6 artifacts x {truncated, [], null,
+# "a string"} bricked a tool 24 times and named the offending file zero times.
+# The counterpart one rung down was D-059: ``_current_cycle`` guarded the VALUE
+# while nothing guarded the CONTAINER.
+#
+# The fix is split so that tolerance binds every reader with no per-site edit,
+# and naming happens where a human is listening:
+#   ``_read_document``  — the tolerant core: (data, named problem).
+#   ``_load_json``      — total. {} for missing/unreadable/malformed. NEVER
+#                         raises, so all of this module's readers are safe by
+#                         construction rather than by 33 remembered try/excepts.
+#   ``_artifact_guard`` — the named refusal, at the MCP entry points. Tolerance
+#                         alone would silently read a corrupt state.json as
+#                         cycle 0; the guard is what makes the file's name reach
+#                         the operator. ``test_orchestrator_gates`` derives the
+#                         entry-point set from server.py's _DISPATCH and fails on
+#                         the next one added without it.
+#
+# WRITES. ``_save_json`` is atomic per write, but every caller read, mutated and
+# wrote as three separate steps, and the tmp sidecar name was shared: a real
+# 4-process x 40-call drive on ``foundry_mark_stream`` SILENTLY LOST 107 of 160
+# tranches (67%) and raised 98 FileNotFoundError as one process renamed the
+# shared tmp out from under another. That is the DESIGNED path — F2 runs 4-8
+# parallel streams each calling Foundry-Stream as it finishes — and CT-003
+# requires partial records be "accepted and stored as they arrive".
+#   ``_save_json``            — unique tmp per writer, so no peer can rename it.
+#   ``_document_transaction`` — the locked read-modify-write every run-artifact
+#                               writer uses. RE-ENTRANT per path, which is not a
+#                               nicety: ``foundry_mark_phase_complete`` already
+#                               nests a state.json RMW inside ``_update_phase``'s
+#                               (that nesting was itself a latent lost update).
+#
+# This mirrors ``foundry.py``'s ``ledger_transaction`` BY CONVENTION, not by
+# import: that primitive yields a list under a collection key, which fits
+# defects.json and observations.json but not state.json / stream-rollup.json /
+# escalation.json, whose payload is the document itself. The refusal shape and
+# locking discipline are deliberately identical so a later consolidation is
+# mechanical. The flock — not the RLock — is what binds across MODULES: two
+# separate open() calls contend even inside one process, and verdicts.json has
+# a writer in each module.
+# --------------------------------------------------------------------------- #
+
+# Threads inside one server process; the flock sidecar covers a second server
+# process on the same repo. Re-entrant so a nested transaction on the same
+# thread cannot deadlock against itself.
+_ARTIFACT_LOCK = threading.RLock()
+
+# path -> in-flight document, per thread. A nested transaction on a path already
+# open on this thread yields the SAME dict and defers the write to the outermost
+# exit, so nesting composes instead of deadlocking on our own flock.
+_ARTIFACT_TX = threading.local()
+
+
+#: D-137 — this module's ``_read_document`` was one of TWO byte-identical
+#: bodies, and the second copy is the shape four prior fixes in this file left
+#: behind every time. It is now the CANONICAL primitive in ``foundry_state``,
+#: the package's leaf module, imported here under the same private name so
+#: every existing caller and test keeps resolving. ``foundry.py`` keeps its own
+#: body because THIS module imports THAT one (reading back would close a cycle
+#: in the import graph) — and it passes the package-wide decode scan on its own
+#: merits, which is the only reason it is allowed to stay.
+_read_document = read_document
+
+
+def _document_problem(path: Path) -> str | None:
+    """The named reason ``path`` is not a readable JSON object, or None."""
+    return _read_document(path)[1]
+
+
 def _load_json(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    """Total, tolerant read of a run artifact. Returns {} rather than raising.
+
+    Every malformed-container shape — truncated, ``[]``, ``null``, ``42``,
+    ``"a string"``, non-UTF-8 — reads as an empty document, so no reader in
+    this module can raise across the MCP boundary. Callers that must TELL the
+    operator which file is broken use ``_artifact_guard`` / ``_document_problem``
+    rather than inspecting the return value, which cannot distinguish "absent"
+    from "corrupt" by design.
+    """
+    return _read_document(path)[0]
+
+
+def _read_text(path: Path) -> str:
+    """Tolerant text read of a run artifact. "" rather than raising.
+
+    ``directives.md`` is not JSON, so it needs the same container guard: a
+    non-UTF-8 byte in it raised UnicodeDecodeError straight out of
+    ``_read_directives`` and therefore out of Foundry-Next.
+    """
+    return read_text_file(path)[0]
 
 
 def _save_json(path: Path, data: dict) -> None:
-    """Atomic JSON write — write to .tmp then rename."""
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.rename(path)
+    """Atomic JSON write — write to a UNIQUE .tmp, then rename.
+
+    The tmp name carries pid and thread id. The old ``path.with_suffix(".tmp")``
+    was shared by every concurrent writer of the same artifact, so a peer's
+    rename could move this call's half-written payload into place, or delete it
+    mid-write (the 98 FileNotFoundError in the D-103 drive).
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.rename(path)
+    finally:
+        # A failed write must not leave a stray sidecar behind; the rename
+        # consumes it on the success path, so this only fires on error.
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
+@contextmanager
+def _document_transaction(path: Path) -> Iterator[dict]:
+    """Exclusive read-modify-write over a run-artifact JSON document.
+
+    Yields the document as a dict. Mutate it in place; it is written back
+    through ``_save_json`` on clean exit. An exception inside the block
+    propagates and NOTHING is written, so a failed mutation cannot leave a
+    half-updated artifact.
+
+    Re-entrant per path: a nested transaction on a path this thread already
+    holds yields the same in-flight dict and defers the write to the outermost
+    exit. Without that, ``foundry_mark_phase_complete``'s existing nested
+    state.json write would block forever on its own flock.
+
+    A block that mutates NOTHING writes nothing: the document is snapshotted on
+    entry and compared on exit. That keeps a no-op caller byte-identical on disk
+    (verdict synthesis must not rewrite verdicts.json when every requirement
+    already has a row), keeps mtimes honest, and means a corrupt artifact a
+    caller only read is left intact rather than silently replaced by ``{}``.
+
+    A malformed document otherwise reads as ``{}`` (``_load_json``'s tolerance)
+    rather than raising, so a writer is never bricked by one. Callers that must
+    refuse instead run ``_artifact_guard`` first.
+    """
+    held = getattr(_ARTIFACT_TX, "docs", None)
+    if held is None:
+        held = _ARTIFACT_TX.docs = {}
+    key = str(path)
+    if key in held:
+        # Already open on this thread — same document, one write at the end.
+        yield held[key]
+        return
+
+    lock_path = path.with_name(path.name + ".lock")
+    with _ARTIFACT_LOCK:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # The lock handle exists for its FILE DESCRIPTOR and nothing else --
+        # `flock` below is its only use, and no byte of this file is ever read
+        # or written through it. Opened in binary because that is what is true:
+        # a text handle claims a decode that never happens, and a claim a
+        # reader has to disprove is the same cost as one that is wrong.
+        with open(lock_path, "ab+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                data = _load_json(path)
+                before = json.dumps(data, indent=2, sort_keys=True)
+                held[key] = data
+                yield data
+                if json.dumps(data, indent=2, sort_keys=True) != before:
+                    _save_json(path, data)
+            finally:
+                held.pop(key, None)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _text_problem(path: Path) -> str | None:
+    """The named reason ``path`` is not readable UTF-8 text, or None.
+
+    The non-JSON rung of the same ladder ``_document_problem`` occupies. An
+    absent file is not a problem; an undecodable one is, and it must be named.
+
+    Both rungs now share ONE read (D-137): ``read_document`` is
+    ``read_text_file`` plus the decode, so a text artifact and a JSON artifact
+    cannot disagree about whether the same file is readable.
+    """
+    return read_text_file(path)[1]
+
+
+# D-138 — A DERIVED GUARD IS ONLY AS TOTAL AS ITS LEAST-DERIVED AXIS.
+#
+# This table used to be `{".json": ..., ".md": ...}` and a suffix outside it was
+# skipped with a bare `continue`. That is the escalated class living inside the
+# fix written to make the escalated class unrepresentable: membership was
+# derived on the axis the defect was reported on (WHICH FILES in the top level)
+# and hand-bound on the two axes it was not (WHICH SUFFIXES decode, and WHICH
+# subdirectory files count — exactly one, appended by name).
+#
+# What that cost: `handoffs.jsonl` and `spawns.log` are artifacts foundry writes
+# ITSELF, both present in every live run dir, both outside the table. A run dir
+# holding a corrupt spawns.log returned NO problems, Foundry-Next named nothing,
+# and Foundry-Liveness raised UnicodeDecodeError across the MCP boundary — D-098
+# and D-129's harm re-created on an unenrolled file TYPE.
+#
+# All three axes are derived now:
+#
+#   WHICH FILES  — `rglob`, not `glob`. Every artifact under the run dir,
+#                  at any depth. `castings/manifest.json` is no longer appended
+#                  by name, and neither are traces/, proofs/, assay/, temper/
+#                  or test_observations/, which were not members at all.
+#
+#   WHICH TYPES  — derived from CONTENT, not from a suffix table. An unknown
+#                  suffix is no longer skipped: every artifact must at minimum
+#                  decode as UTF-8 unless its own bytes say it is binary. So
+#                  .jsonl, .log and the extensionless markers are covered the
+#                  day they are written, with nothing to enrol.
+#
+#   WHICH RUNGS  — `.json` keeps a STRICTER rung on top of the text floor (it
+#                  must also be a JSON mapping). That is the one remaining
+#                  suffix key, and it is not a membership gate: a suffix absent
+#                  from it falls THROUGH to the floor rather than out of the
+#                  scan. This is the property the old table lacked, and the
+#                  whole difference between an extension point and a hole.
+
+#: Suffixes carrying a rung ABOVE "must be readable UTF-8". Not a membership
+#: list — see the note above. Adding one TIGHTENS the check for that suffix;
+#: removing one leaves the artifact on the text floor, never unchecked.
+_STRICT_ARTIFACT_DECODERS = {
+    ".json": _document_problem,
+}
+
+#: Leading bytes of the binary artifact types a run directory legitimately
+#: holds — SIGHT screenshots, the odd PDF or archive.
+#:
+#: THE DIRECTION OF THIS TABLE IS THE WHOLE POINT. It is an EXEMPTION list, so
+#: an unrecognised type falls INTO the guard and is REPORTED, never out of it
+#: and skipped. That is the opposite of the suffix table it replaces, whose
+#: unrecognised members hit a bare `continue` — and it is what D-138 asks for
+#: in as many words: a new artifact type must announce itself rather than be
+#: passed over. Over-reporting is recoverable (the operator moves the file);
+#: under-reporting is D-098, D-129 and D-138.
+#:
+#: A CONTENT SNIFF WAS TRIED HERE FIRST AND IS WRONG. "A NUL byte in the first
+#: 8000 means binary" is git's heuristic, and it reads a text artifact whose
+#: CORRUPTION contains a NUL as a binary file to be skipped — silently losing
+#: exactly the artifact this guard exists to name. Driven: a `.trace-clean-at`
+#: overwritten with b"\xe9\x00..." came back clean.
+_BINARY_ARTIFACT_SIGNATURES = (
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF8",
+    b"BM",
+    b"RIFF",
+    b"%PDF-",
+    b"PK\x03\x04",
+    b"\x1f\x8b",
+)
+
+
+def _is_compiled_python(head: bytes) -> bool:
+    """True for a CPython ``.pyc`` header, of ANY interpreter version.
+
+    Not a prefix, so it cannot live in the signature tuple above. CPython's
+    magic is ``<2-byte version little-endian> + b"\\r\\n"``, an invariant across
+    versions (``importlib.util.MAGIC_NUMBER`` is this interpreter's value of
+    it) — which matters because a run directory holds ``.pyc`` written by
+    whatever interpreters have touched it: the live thunder-viper dir carries
+    cpython-311 and cpython-314 side by side.
+
+    Real run directories DO hold these. Measured before this was added: 13
+    reported artifacts in thunder-viper and 317 in grand-vulture, every one a
+    ``__pycache__`` entry — a guard that refuses on those does not harden
+    Foundry-Next, it bricks it.
+    """
+    return len(head) >= 4 and head[2:4] == b"\r\n"
+
+
+def _is_binary_artifact(path: Path) -> bool:
+    """True when ``path``'s header says it is a binary artifact, not text.
+
+    An unreadable file is NOT binary — it falls through to the text check,
+    which names it. Neither is a file of a binary type nobody enrolled: it is
+    reported, which is the direction this table is built to fail in.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(max(len(s) for s in _BINARY_ARTIFACT_SIGNATURES))
+    except OSError:
+        return False
+    return head.startswith(_BINARY_ARTIFACT_SIGNATURES) or _is_compiled_python(head)
+
+
+def _manifest_shape_problem_lazy(manifest: object) -> str | None:
+    """D-132's shared nested-shape validator, reached without an import cycle.
+
+    ``foundry_spawn`` imports THIS module at module top, so reading back at
+    module scope would close the graph. The lazy in-function import is the
+    house pattern already used by ``foundry_sync_defects`` for ``foundry.py``.
+
+    D-134: the validator's membership used to be derived over ``foundry_spawn``
+    's OWN functions rather than over every reader of castings/manifest.json in
+    the package — so the four doors in that module were guarded while
+    ``_check_sight_required``, ``_trace_skip_check``, ``foundry_gate`` and both
+    ``foundry_validate`` readers indexed the same records with a top-rung-only
+    guard. ``castings: "nope"`` met ``.get()`` and raised AttributeError out of
+    Foundry-Next, the mandatory handshake before EVERY phase transition.
+    """
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
+    return _manifest_shape_problem(manifest)
+
+
+#: The rung BELOW "is this a readable JSON object", for the artifacts that have
+#: one: keyed by path relative to the run dir, because that is what identifies
+#: an artifact rather than its type. Like ``_STRICT_ARTIFACT_DECODERS`` this
+#: TIGHTENS; an artifact absent from it still gets the full JSON-object and
+#: text floors, so it is an extension point and never a hole.
+#:
+#: This is what makes D-134's refusal reach the operator in the house shape:
+#: `_artifact_guard` runs at the top of every MCP entry point, so a manifest
+#: whose records are unusable is named in `corrupt_artifacts` at every door at
+#: once, rather than at each reader that happens to remember to look.
+_ARTIFACT_RECORD_RUNGS = {
+    ("castings", "manifest.json"): _manifest_shape_problem_lazy,
+}
+
+
+def _artifact_problem(path: Path, relative: tuple[str, ...] = ()) -> str | None:
+    """The named reason this artifact is unreadable, or None.
+
+    One decision per artifact, taken from the artifact rather than from a table
+    of the types someone remembered.
+    """
+    strict = _STRICT_ARTIFACT_DECODERS.get(path.suffix.lower())
+    if strict is not None:
+        if (problem := strict(path)):
+            return problem
+        rung = _ARTIFACT_RECORD_RUNGS.get(relative)
+        return rung(_load_json(path)) if rung is not None else None
+    if _is_binary_artifact(path):
+        return None
+    return _text_problem(path)
+
+
+# Artifacts whose corruption the guard reports. DERIVED, not a hand-kept list:
+# every top-level file in the run dir with a decoder, plus the castings
+# manifest. A new artifact is covered the moment it is written, which is the
+# property the hand-kept marker lists in this module have repeatedly failed to
+# hold.
+#
+# D-129 — the glob was `*.json` alone, and that was the whole defect. D-098
+# made `_read_text` tolerant so an undecodable directives.md stopped RAISING
+# out of Foundry-Next, and added NO guard half: the file was simply read as
+# EMPTY. So one stray non-UTF-8 byte silently voided a LIVE URGENT directive
+# ("STOP the cast wave, the spec changed"), Foundry-Next reported
+# directives=null with the text and the filename appearing nowhere, and
+# Foundry-Clear then reported {"ok": true, "cleared_count": 0}, TRUNCATED the
+# file and wrote no archive record. Destroyed data, reported as success.
+#
+# The fix is not "also check directives.md" — naming that file here is the
+# escalated class, and the next non-JSON artifact would repeat it. The glob
+# derives the members; the decoder table says how to read each type.
+def _string_leaves(value: object) -> Iterator[str]:
+    """Every string anywhere in a parsed JSON document, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _string_leaves(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_leaves(item)
+
+
+# D-145 — THE RUN'S INPUTS ARE NOT ALL INSIDE THE RUN DIRECTORY.
+#
+# `_run_artifact_problems` rglobbed the run dir and nothing else, so a file the
+# run DECLARES and every door then READS was structurally outside every guard
+# in this module. The spec is that file: `foundry_validate_castings` falls back
+# to `Path(project_root) / state["spec_path"]` when the run dir holds no
+# spec.md, and this very run's state.json carries
+# "forge-specs/foundry-run-process-fixes/spec.md" — outside
+# foundry-archive/thunder-viper/. Driven through the real _DISPATCH, one
+# non-UTF-8 byte in that file raised UnicodeDecodeError across the MCP boundary
+# while `_run_artifact_problems(fdir)` returned [] with the broken file sitting
+# right there. The in-run-dir cases were all correctly refused; this was
+# precisely the residue the rglob could not reach.
+#
+# THE AXIS IS DERIVED FROM THE STATE DOCUMENT, NOT FROM A KEY NAMED HERE.
+# Naming `spec_path` would close this instance and leave the next declared
+# input — a context file, a research root, a migration source — outside the
+# guard on the day it is added, which is the escalated class exactly. Every
+# STRING LEAF of state.json that resolves to an existing FILE is an input this
+# run declared, so a key added to state.json is policed the day it is written
+# and no reader has to remember to enrol it. A leaf that names no file is not
+# an input and needs no classification; a leaf that names a DIRECTORY is a
+# container, judged by what a reader opens inside it, not by itself.
+def _declared_external_inputs(fdir: Path) -> list[Path]:
+    """Every file OUTSIDE the run dir that the run's own state.json declares.
+
+    Resolved against the project root, which is derived from ``fdir`` rather
+    than passed in: ``get_run_dir`` builds ``<project_root>/<ARCHIVE_DIR>/<run>``,
+    so the root is two levels up — and the ``ARCHIVE_DIR`` check below is what
+    makes that a fact about the path rather than an assumption about it.
+    """
+    if fdir.parent.name != ARCHIVE_DIR or len(fdir.parents) < 2:
+        return []
+    project_root = fdir.parents[1]
+    inside = fdir.resolve()
+    found: dict[Path, None] = {}
+    for leaf in _string_leaves(_load_json(fdir / "state.json")):
+        if not leaf:
+            continue
+        try:
+            candidate = (project_root / leaf).resolve()
+            if not candidate.is_file():
+                continue
+        except (OSError, ValueError):  # a leaf that is not a usable path at all
+            continue
+        if candidate == inside or inside in candidate.parents:
+            continue  # already a member through the rglob below
+        found.setdefault(candidate, None)
+    return sorted(found)
+
+
+def _run_artifact_problems(fdir: Path) -> list[str]:
+    """Named problems for every unreadable run artifact, in stable order.
+
+    Membership is the whole tree (``rglob``), not the top level plus one
+    hand-named manifest. A DIRECTORY is a container and is walked past — except
+    one occupying a name that carries a suffix, which is a directory sitting
+    where a reader will open a file (D-140: ``state.json`` as a directory
+    passed the old ``is_file()`` filter, so the guard saw nothing and the write
+    raised IsADirectoryError instead of refusing by name).
+
+    ...plus the run's DECLARED EXTERNAL INPUTS (D-145), because "the artifacts
+    this run reads" and "the files under this run's directory" were never the
+    same set, and the guard runs at the top of every MCP entry point precisely
+    so no individual reader has to remember to look.
+    """
+    if not fdir or not fdir.exists():
+        return []
+    problems: list[str] = []
+    for candidate in sorted(fdir.rglob("*")):
+        if candidate.is_dir() and not candidate.suffix:
+            continue
+        if (problem := _artifact_problem(candidate, candidate.relative_to(fdir).parts)):
+            problems.append(problem)
+    for external in _declared_external_inputs(fdir):
+        if (problem := _artifact_problem(external)):
+            problems.append(problem)
+    return problems
+
+
+def _artifact_guard(fdir: Path) -> dict | None:
+    """Named refusal when a run artifact cannot be read, else None.
+
+    The house refusal shape: ``error`` names the offending FILES and what is
+    wrong with each, ``hint`` names the action. Called at the top of the MCP
+    entry points so the operator learns which file to repair instead of
+    receiving a traceback from the handshake that was supposed to tell them.
+    """
+    problems = _run_artifact_problems(fdir)
+    if not problems:
+        return None
+    return {
+        "error": (
+            "Run artifacts cannot be read: " + "; ".join(problems) + ". "
+            "The run's state is unreadable, so this tool refuses rather than "
+            "acting on a document it had to guess at."
+        ),
+        "hint": (
+            "Repair or delete the named file(s) in the run directory, then "
+            "retry. A deleted artifact is re-created empty; a corrupt one is "
+            "not silently overwritten."
+        ),
+        "corrupt_artifacts": problems,
+    }
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# --------------------------------------------------------------------------- #
+# Server-owned cycle counter (FR-005 / ST-001 / AC-008).
+#
+# Before this, ``state.json["cycle"]`` was written once as 0 by foundry_init and
+# never incremented by any code path, so every cycle number in the data model
+# was an integer the LEAD asserted as a tool argument. grand-vulture's state.json
+# reads "cycle": 0 while its defects.json spans caller-asserted cycles 0-17.
+#
+# The counter now advances as an effect of handling the F3 GRIND -> F2 INSPECT
+# boundary in ``foundry_mark_phase_complete`` (the ``inspect_start`` token). It
+# is the key for the per-cycle stream roll-up (FR-014) and for the per-class
+# consecutive-cycle escalation count (FR-006), both of which are meaningless
+# against a caller-asserted number. Tools that used to trust a caller-supplied
+# ``cycle`` for persistence now stamp this value instead.
+# --------------------------------------------------------------------------- #
+
+
+def _current_cycle(fdir: Path) -> int:
+    """Return the server-owned cycle counter. Never caller-supplied.
+
+    Returns 0 for a missing, absent, or malformed value so every reader gets a
+    usable integer rather than having to guard the state file's shape.
+
+    "Every reader" is enforced, not aspirational: no other function in this
+    package may read ``state.json["cycle"]`` directly. Four once did (D-059),
+    and a raw read hands on whatever the file holds — a str/None/list/dict
+    raised an unhandled TypeError out of Foundry-Next, the mandatory handshake
+    before every phase transition and gate, while -3 and 2.5 propagated
+    silently into responses and onto every row of a synthesized verdict.
+    ``test_orchestrator_gates.test_every_state_cycle_read_goes_through_a_
+    guarded_reader`` derives the reader set from the source and fails on the
+    next one added.
+    """
+    value = _load_json(fdir / "state.json").get("cycle", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
 # Single compiled source of truth for the requirement-ID grammar. Used by
 # BOTH the requirement count and the requirement-ID list so the P3 verdict
 # synthesis writes exactly one row per ID the DONE gate's verdict_coverage
 # check counts (analog note 3: do not fork a second regex/path resolver).
-_REQ_ID_RE = re.compile(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b")
+# D-150: the requirement-ID families are declared ONCE, in the vocabulary
+# module, and read from there. This was a hand-typed literal, one of six copies
+# across four modules, and every copy knew the same seven families and not
+# OT- or GI- — 15 of this spec's 71 IDs. So the DONE gate's requirement count
+# and the verdict-coverage synthesis below it could not see an observable truth
+# at all, and no evidence could ever bind to one. NFR-002: the canonical
+# pattern is a strict SUPERSET of what this copy matched, so nothing that was
+# counted before stops being counted.
+_REQ_ID_RE = REQUIREMENT_ID_RE
 
 
 def _resolve_spec_path(project_root: str) -> Path | None:
@@ -170,19 +713,29 @@ def _resolve_spec_path(project_root: str) -> Path | None:
 
 
 def _spec_requirement_ids(project_root: str) -> list[str]:
-    """Return the sorted unique requirement IDs (US/FR/NFR/AC/VC/IR/TR-N).
+    """Return the sorted unique requirement IDs the vocabulary declares.
 
     The id source for P3 verdict synthesis. Uses the SAME path resolution
     and regex as ``_count_spec_requirements`` (which now delegates here) so
     synthesizing one VERIFIED row per id keeps ``verdict_coverage`` in
     lock-step with the DONE gate's ``_count_spec_requirements`` read.
+
+    D-150: which FAMILIES count is no longer decided here. It was a literal
+    naming seven of them, and this spec has 71 IDs of which 15 are the two it
+    did not name — so an observable truth could not be counted, could not be
+    verified, and could not have evidence bound to it. The families are one
+    declaration in ``schemas.vocab`` now, and it is a strict superset of what
+    this copy matched (NFR-002: nothing counted before stops being counted).
     """
     spec_path = _resolve_spec_path(project_root)
     if spec_path is None:
         return []
-    try:
-        text = spec_path.read_text(encoding="utf-8")
-    except OSError:
+    # D-137's residual, one rung out from the loads: `except OSError` does not
+    # name UnicodeDecodeError, so one non-UTF-8 byte in the spec raised out of
+    # the DONE gate's requirement count. The spec is the external input D-145
+    # brings inside the artifact guard, and this is its second reader.
+    text, problem = read_text_file(spec_path)
+    if problem is not None:
         return []
     return sorted(set(_REQ_ID_RE.findall(text)))
 
@@ -192,41 +745,74 @@ def _count_spec_requirements(project_root: str) -> int:
     return len(_spec_requirement_ids(project_root))
 
 
+def _marker_counts(marker: Path) -> dict | None:
+    """Parse a ``.{stream}-complete`` marker's ``key=value`` body.
+
+    Returns ``{"items_checked", "items_total", "findings"}`` with ``findings``
+    possibly None (the key absent), or None when the marker cannot be read.
+    Kept as the load path for archives written before the per-cycle roll-up
+    existed — those runs have markers and no ``stream-rollup.json``.
+    """
+    if not marker.exists():
+        return None
+    # D-098: UnicodeDecodeError is a ValueError, not an OSError, so a marker
+    # with one non-UTF-8 byte raised straight through the old `except OSError`.
+    # An unreadable marker still yields the zero-counts record rather than None:
+    # None means "no marker", and a PRESENT marker whose numbers cannot be read
+    # must fail the coverage threshold, not skip it.
+    text = _read_text(marker)
+    counts: dict = {"items_checked": 0, "items_total": 0, "findings": None}
+    for line in text.splitlines():
+        for key in ("items_checked", "items_total", "findings"):
+            if line.startswith(f"{key}="):
+                try:
+                    counts[key] = int(line.split("=", 1)[1].strip())
+                except (ValueError, IndexError):
+                    pass
+    return counts
+
+
 def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     """True when the recorded PROVE stream is clean: 0 findings AND >=95%
-    requirement coverage.
+    requirement coverage across THIS cycle's records.
 
-    Reads the aggregate counts ``foundry_mark_stream`` stamps into
-    ``.prove-complete`` (which stores ONLY aggregate counts, not
-    per-requirement verdicts — the reason P3 must synthesize). Mirrors the
-    >=95% coverage threshold enforced at stream-mark time.
+    Coverage is read from the per-cycle roll-up (FR-014) so a PROVE run
+    delivered as several partial tranches is judged on its cycle TOTAL rather
+    than on whichever tranche happened to be written last. Archives predating
+    the roll-up fall back to the marker's aggregate counts.
+
+    A spec that parses to ZERO requirements is never clean (FR-020 / AC-025).
+    Previously the >=95% check was skipped when ``spec_count == 0``, so any
+    ``.prove-complete`` with ``findings=0`` on an unresolvable or unparseable
+    spec drove the F4 auto-VERIFY path — manufacturing a passing run out of a
+    spec nothing had actually been proved against.
     """
     marker = fdir / ".prove-complete"
     if not marker.exists():
         return False
-    try:
-        text = marker.read_text(encoding="utf-8")
-    except OSError:
+    totals = _rollup_totals(fdir, _current_cycle(fdir), "prove") or _marker_counts(marker)
+    if totals is None:
         return False
-    items_checked = 0
-    findings: int | None = None
-    for line in text.splitlines():
-        if line.startswith("items_checked="):
-            try:
-                items_checked = int(line.split("=", 1)[1].strip())
-            except (ValueError, IndexError):
-                pass
-        elif line.startswith("findings="):
-            try:
-                findings = int(line.split("=", 1)[1].strip())
-            except (ValueError, IndexError):
-                pass
-    if findings is None or findings != 0:
+    if totals.get("findings") is None or totals["findings"] != 0:
         return False
     spec_count = _count_spec_requirements(project_root)
-    if spec_count > 0 and items_checked < spec_count * 0.95:
+    if spec_count <= 0:
+        return False
+    if totals["items_checked"] < spec_count * 0.95:
         return False
     return True
+
+
+# CLOSED VOCABULARY — the verdict axis (FR-013 / CT-002). A requirement's
+# verdict is either VERIFIED or one of the canonical defect types; that is the
+# whole set, and it is DERIVED from schemas/vocab.py rather than hand-typed.
+# server.py's Foundry-Verdict enum was a hand-typed baseline copy that rejected
+# MISPLACED — a verdict agents/assayer.md mandates and commands/start.md routes
+# into this very tool, so a verdict the protocol tells an agent to emit was
+# unrepresentable on the surface that records it. "VERIFIED" is the one member
+# that is not a defect type, which is why it is the one literal here.
+# Extend the defect half via schemas/vocab.py, never here.
+VERDICT_VALUES = frozenset({"VERIFIED"}) | DEFECT_TYPES
 
 
 def _synthesize_clean_prove_verdicts(
@@ -245,34 +831,36 @@ def _synthesize_clean_prove_verdicts(
     if not ids:
         return 0
     verdicts_path = fdir / "verdicts.json"
-    verdicts = _load_json(verdicts_path)
-    requirements = verdicts.get("requirements")
-    if not isinstance(requirements, list):
-        requirements = []
-    existing_ids = {r.get("id") for r in requirements if isinstance(r, dict)}
     now = _now()
     synthesized = 0
-    for rid in ids:
-        if rid in existing_ids:
-            continue
-        requirements.append(
-            {
-                "id": rid,
-                "verdict": "VERIFIED",
-                "evidence": (
-                    "Auto-verified on clean PROVE "
-                    "(≥95% coverage, 0 findings)."
-                ),
-                "spec_text_cited": "",
-                "code_location": "",
-                "cycle": cycle,
-                "recorded_at": now,
-            }
-        )
-        synthesized += 1
-    if synthesized:
+    # D-103: verdicts.json is read-modify-written here AND by
+    # foundry.py#foundry_add_verdict. Serializing this side removes the
+    # orchestrator's contribution to the race; the flock is what would bind the
+    # other side too, once that writer takes it (logged as a concern).
+    with _document_transaction(verdicts_path) as verdicts:
+        requirements = verdicts.get("requirements")
+        if not isinstance(requirements, list):
+            requirements = []
+        existing_ids = {r.get("id") for r in requirements if isinstance(r, dict)}
+        for rid in ids:
+            if rid in existing_ids:
+                continue
+            requirements.append(
+                {
+                    "id": rid,
+                    "verdict": "VERIFIED",
+                    "evidence": (
+                        "Auto-verified on clean PROVE "
+                        "(≥95% coverage, 0 findings)."
+                    ),
+                    "spec_text_cited": "",
+                    "code_location": "",
+                    "cycle": cycle,
+                    "recorded_at": now,
+                }
+            )
+            synthesized += 1
         verdicts["requirements"] = requirements
-        _save_json(verdicts_path, verdicts)
     return synthesized
 
 
@@ -337,17 +925,151 @@ def _nyquist_transition(from_phase: str) -> dict:
 # --- Phase gate ---
 
 
+def _done_preconditions(fdir: Path, project_root: str) -> dict:
+    """Evaluate the substantive preconditions for entering F6 DONE.
+
+    Returns ``{"passed": bool, "reason": str, "hint": str, "checklist": [...]}``.
+
+    WHY THIS IS A FUNCTION (AC-011 / D-037)
+    ---------------------------------------
+    These checks lived inline in ``foundry_gate``'s "done" branch, and
+    ``foundry_mark_phase_complete("done")`` — the call that actually writes F6
+    and archives the run — read NONE of them. It was an unconditional
+    ``_update_phase`` + ``clear_active_run``. Driven: a run reached DONE with
+    six open escalated-class defects and zero verdicts, straight past a gate
+    that would have refused it, because consulting the gate was a convention
+    the lead was trusted to follow rather than something the transition did.
+    AC-011 says "the RUN cannot reach DONE while any escalated-class defect
+    remains open" — that is a property of the transition, not of an advisory
+    query about the transition.
+
+    So there is one evaluation and two callers. Re-implementing the checks at
+    the transition would have satisfied the same test today and drifted from
+    the gate by the next cycle, which is the shape of the defect being fixed
+    here, not a fix for it.
+
+    Deliberately EXCLUDED, because they are ``foundry_gate``'s call-ordering
+    protocol rather than preconditions of being done:
+
+      - the ``.next-action-called`` handshake, which the transition has
+        already consumed by the time it asks (re-checking it here would refuse
+        every done transition on a token nobody re-armed);
+      - the ``.gate-passed`` stamp, which records that an advisory gate ran.
+
+    That exclusion is the whole discipline of this helper: it enforces exactly
+    the gate's checks, no more.
+    """
+    passed = True
+    reason = ""
+    hint = ""
+    checklist: list[dict] = []
+
+    verdicts = _load_json(fdir / "verdicts.json")
+    verdict_list = verdicts.get("requirements", [])
+    non_verified = sum(1 for r in verdict_list if r.get("verdict") != "VERIFIED")
+    defects = _load_json(fdir / "defects.json")
+    open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
+    teams_result = _check_active_teams(project_root)
+    spec_count = _count_spec_requirements(project_root)
+
+    # FR-020 / AC-025 — the auto-VERIFY hole, closed at the gate.
+    #
+    # Every other check below is vacuously satisfied by a spec that parses
+    # to ZERO requirements: no requirement can be non-VERIFIED, and the
+    # verdict_coverage check guarded itself with `spec_count > 0` and so
+    # skipped. A run whose spec is unresolvable or carries no tagged
+    # requirement IDs therefore sailed through DONE having proved nothing.
+    # Stated first so a more specific failure below still claims `reason`.
+    if spec_count <= 0:
+        passed = False
+        reason = (
+            "The spec parses to ZERO requirement IDs — nothing has been "
+            "verified, so DONE is vacuous."
+        )
+        hint = (
+            "Check that the run's spec resolves (foundry-archive/{run}/spec.md, "
+            "else state.json's spec_path) and that it carries tagged "
+            "requirement IDs (US-N / FR-N / NFR-N / AC-N / VC-N / IR-N / TR-N)."
+        )
+
+    if non_verified > 0:
+        passed = False
+        reason = f"{non_verified} requirement(s) not VERIFIED — THIN/PARTIAL are defects, not follow-ups"
+        hint = "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented."
+    if open_count > 0:
+        passed = False
+        reason = f"{open_count} open defect(s) remain"
+
+    # AC-011 / ST-003: escalation NEVER waives closure. Swapping N
+    # per-instance packets for one structural packet changes the shape of
+    # the work, not whether every instance must reach fixed. Stated as its
+    # own named check so the guarantee is visible in the checklist rather
+    # than merely implied by the open-defect count above.
+    escalated_open = _escalated_classes(fdir, project_root)
+    if escalated_open:
+        passed = False
+        reason = (
+            f"{len(escalated_open)} escalated defect class(es) still have open "
+            f"instances: {', '.join(sorted(escalated_open))}"
+        )
+        hint = (
+            "A structural fix must still close every defect of the class. "
+            "Escalation is not a waiver."
+        )
+    checklist.append({
+        "check": f"escalated_classes_closed (open classes={len(escalated_open)})",
+        "ok": not escalated_open,
+        "classes": sorted(escalated_open),
+    })
+
+    if teams_result["active"]:
+        passed = False
+        reason = f"Active teams: {', '.join(teams_result['teams'])}"
+
+    verdict_count = len(verdict_list)
+    verdicts_complete = True
+    if spec_count > 0 and verdict_count < spec_count:
+        passed = False
+        skipped = spec_count - verdict_count
+        reason = f"Only {verdict_count} verdicts but spec has {spec_count} requirements. {skipped} skipped."
+        hint = "ASSAY must write ALL verdicts to verdicts.json — including THIN/PARTIAL, not just VERIFIED."
+        verdicts_complete = False
+
+    checklist.append({
+        "check": f"spec_requirements_parsed (count={spec_count})",
+        "ok": spec_count > 0,
+    })
+    checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
+    checklist.append({"check": f"zero_defects (open={open_count})", "ok": open_count == 0})
+    checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
+    checklist.append({"check": f"verdict_coverage ({verdict_count}/{spec_count})", "ok": verdicts_complete})
+
+    return {"passed": passed, "reason": reason, "hint": hint, "checklist": checklist}
+
+
 def foundry_gate(
     phase: str,
     project_root: str = ".",
 ) -> dict:
     """Check if preconditions are met to enter a phase."""
+    # D-134: the shared nested-shape validator, lazily imported because
+    # foundry_spawn imports this module at module top.
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"phase": phase, "passed": False, "reason": "No active foundry run", "hint": "Call Foundry-Init first"}
 
     if not fdir.exists():
         return {"phase": phase, "passed": False, "reason": "foundry directory not found", "hint": "Run foundry_init first"}
+    if (corrupt := _artifact_guard(fdir)):
+        return {
+            "phase": phase,
+            "passed": False,
+            "reason": corrupt["error"],
+            "hint": corrupt["hint"],
+            "corrupt_artifacts": corrupt["corrupt_artifacts"],
+        }
 
     checklist: list[dict] = []
     passed = True
@@ -371,6 +1093,9 @@ def foundry_gate(
         if not manifest.exists():
             return {"phase": phase, "passed": False, "reason": "No manifest.json", "hint": "Run DECOMPOSE first to create castings"}
         data = _load_json(manifest)
+        if (records := _manifest_shape_problem(data)) is not None:
+            return {"phase": phase, "passed": False, "reason": records,
+                    "hint": "Re-run F0.5 DECOMPOSE — the manifest's records are unusable"}
         count = len(data.get("castings", []))
         checklist.append({"check": "manifest_exists", "ok": True})
         if count < 1:
@@ -382,6 +1107,9 @@ def foundry_gate(
         if not manifest.exists():
             return {"phase": phase, "passed": False, "reason": "No manifest.json", "hint": "Run foundry_init and add castings"}
         data = _load_json(manifest)
+        if (records := _manifest_shape_problem(data)) is not None:
+            return {"phase": phase, "passed": False, "reason": records,
+                    "hint": "Re-run F0.5 DECOMPOSE — the manifest's records are unusable"}
         count = len(data.get("castings", []))
         checklist.append({"check": "manifest_exists", "ok": True})
         if count < 1:
@@ -539,43 +1267,28 @@ def foundry_gate(
             hint = "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done')."
         checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
 
-    elif phase == "done":
-        verdicts = _load_json(fdir / "verdicts.json")
-        verdict_list = verdicts.get("requirements", [])
-        non_verified = sum(1 for r in verdict_list if r.get("verdict") != "VERIFIED")
-        defects = _load_json(fdir / "defects.json")
-        open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
-        teams_result = _check_active_teams(project_root)
-
-        if non_verified > 0:
-            passed = False
-            reason = f"{non_verified} requirement(s) not VERIFIED \u2014 THIN/PARTIAL are defects, not follow-ups"
-            hint = "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented."
-        if open_count > 0:
-            passed = False
-            reason = f"{open_count} open defect(s) remain"
-        if teams_result["active"]:
-            passed = False
-            reason = f"Active teams: {', '.join(teams_result['teams'])}"
-
-        spec_count = _count_spec_requirements(project_root)
-        verdict_count = len(verdict_list)
-        verdicts_complete = True
-        if spec_count > 0 and verdict_count < spec_count:
-            passed = False
-            skipped = spec_count - verdict_count
-            reason = f"Only {verdict_count} verdicts but spec has {spec_count} requirements. {skipped} skipped."
-            hint = "ASSAY must write ALL verdicts to verdicts.json \u2014 including THIN/PARTIAL, not just VERIFIED."
-            verdicts_complete = False
-
-        checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
-        checklist.append({"check": f"zero_defects (open={open_count})", "ok": open_count == 0})
-        checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
-        checklist.append({"check": f"verdict_coverage ({verdict_count}/{spec_count})", "ok": verdicts_complete})
+    elif phase in ("done", "nyquist_done"):
+        # Every check lives in _done_preconditions, which the transitions that
+        # actually enter F6 call too (AC-011 / D-037 / D-043 / D-044). This
+        # branch is the advisory half of one shared evaluation, not a second
+        # opinion.
+        #
+        # BOTH terminal tokens land here. F6 has two doors — Foundry-Phase
+        # "done" and, on a --nyquist run, "nyquist_done" — and only the first
+        # had a gate case at all, so a lead following start.md:578
+        # (Foundry-Gate("done") -> Foundry-Phase("nyquist_done")) was gating a
+        # token other than the one it was about to call. There is one
+        # definition of "the run may finish"; asking about either door asks it.
+        outcome = _done_preconditions(fdir, project_root)
+        passed = outcome["passed"]
+        reason = outcome["reason"]
+        hint = outcome["hint"]
+        checklist.extend(outcome["checklist"])
 
     else:
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
-                "hint": "Valid phases: cast, inspect, grind, assay, temper, nyquist, done"}
+                "hint": ("Valid phases: validate, cast, inspect, grind, assay, "
+                         "temper, nyquist, nyquist_done, done")}
 
     result = {"phase": phase, "passed": passed, "checklist": checklist}
     if not passed:
@@ -598,31 +1311,168 @@ def foundry_gate(
 
 # --- Stream markers ---
 
-# CLOSED VOCABULARY — verification streams recordable via Foundry-Stream.
-# Single source of truth for the runtime guard AND the MCP tool's JSON-Schema
-# enum (server.py derives its enum from this set), so the two sites cannot
-# drift — the AC-013 defect was exactly that drift: the schema advertised
-# streams the runtime rejected. coverage_diff joined per D-008: the phase
-# guide (plugins/foundry/commands/start.md, F2 INSPECT stream roster)
-# defines COVERAGE_DIFF as an F2 INSPECT stream for MIGRATION runs, and the
-# agent contract (plugins/foundry/agents/coverage-diff.md) emits
-# "stream": "coverage_diff" — rejecting a name an agent contract declares
-# was the same validator/contract disagreement (GI-003) this vocabulary
-# repairs. Recordable is NOT required: the required-stream computation
-# in _check_streams_complete is intentionally independent.
-# Extend only via phase-level RFC.
-VALID_STREAMS = frozenset(
-    {
-        "trace",
-        "prove",
-        "sight",
-        "test",
-        "probe",
-        "research_audit",
-        "flow_trace",
-        "coverage_diff",
+# Verification streams recordable via Foundry-Stream.
+#
+# FR-013 / CT-002: this is no longer a declaration, it is a READ of the one
+# canonical vocabulary module. The set used to be re-typed here, in server.py's
+# JSON-Schema enum, in foundry_sync_defects' local `valid_sources`, in two
+# display loops and in the marker-clear lists — six copies that drifted
+# independently (the schema advertised streams the runtime rejected; the sync
+# coercion set disagreed with both). Every one of those sites now reads
+# schemas/vocab.py.
+#
+# The name is retained as an alias because it is part of this module's public
+# surface. Recordable is NOT required: the required-stream computation in
+# _check_streams_complete is intentionally independent.
+VALID_STREAMS = STREAM_WIRE_IDS
+
+
+# --------------------------------------------------------------------------- #
+# Per-cycle stream roll-up (FR-014 / CT-003 / AC-020 / OT-009).
+#
+# The `.{stream}-complete` marker is a single file OVERWRITTEN on every record,
+# so it can only ever carry the last write. That is why the old drop-warning
+# compared against "the previous write of this file" rather than against cycle
+# N-1, and why a PROVE run delivered as two partial tranches lost the first one.
+#
+# The roll-up is the accumulation surface the marker cannot be: records are
+# appended under the SERVER cycle counter, partial records are accepted and
+# stored as they arrive, coverage thresholds are evaluated exactly once per
+# cycle at the streams-complete check (where the full picture exists), and drop
+# warnings compare cycle N's total against cycle N-1's total.
+#
+# Accumulation rule across the records of one cycle:
+#   items_checked, findings -> SUM  (each record covers a disjoint tranche)
+#   items_total             -> MAX  (every tranche reports the same population
+#                                    denominator; summing would multiply it)
+# --------------------------------------------------------------------------- #
+
+ROLLUP_FILENAME = "stream-rollup.json"
+
+
+def _rollup_totals(fdir: Path, cycle: int, stream: str) -> dict | None:
+    """Return this cycle's accumulated totals for one stream, or None.
+
+    None means the cycle has no record for that stream at all \u2014 distinct from
+    a recorded zero, which callers must be able to tell apart.
+    """
+    data = _load_json(fdir / ROLLUP_FILENAME)
+    entry = data.get("cycles", {}).get(str(cycle), {}).get(stream)
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "items_checked": entry.get("items_checked", 0),
+        "items_total": entry.get("items_total", 0),
+        "findings": entry.get("findings", 0),
+        "records": len(entry.get("records", [])),
     }
-)
+
+
+def _record_stream_rollup(
+    fdir: Path,
+    cycle: int,
+    stream: str,
+    items_checked: int,
+    items_total: int,
+    findings_count: int,
+    declared_cycle: int,
+) -> dict:
+    """Append one (possibly partial) stream record to the cycle's roll-up.
+
+    ``declared_cycle`` is what the caller asserted; it is retained per record
+    for audit but is NEVER the key \u2014 the key is the server counter (FR-005).
+    Returns the cycle's totals AFTER this record.
+    """
+    path = fdir / ROLLUP_FILENAME
+    # D-103: THE concurrency site. F2 runs 4-8 parallel streams and each calls
+    # Foundry-Stream as it finishes, so the read-modify-write here is the
+    # designed path, not an edge case. Unlocked, a 4-process x 40-call drive
+    # lost 107 of 160 tranches — a direct violation of CT-003's "accepted and
+    # stored as they arrive".
+    with _document_transaction(path) as data:
+        cycles = data.setdefault("cycles", {})
+        if not isinstance(cycles, dict):
+            cycles = data["cycles"] = {}
+        bucket = cycles.setdefault(str(cycle), {})
+        entry = bucket.setdefault(
+            stream, {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
+        )
+
+        entry["records"].append(
+            {
+                "recorded_at": _now(),
+                "items_checked": items_checked,
+                "items_total": items_total,
+                "findings": findings_count,
+                "declared_cycle": declared_cycle,
+            }
+        )
+        entry["items_checked"] = entry.get("items_checked", 0) + items_checked
+        entry["items_total"] = max(entry.get("items_total", 0), items_total)
+        entry["findings"] = entry.get("findings", 0) + findings_count
+
+        data["updated_at"] = _now()
+    return {
+        "items_checked": entry["items_checked"],
+        "items_total": entry["items_total"],
+        "findings": entry["findings"],
+        "records": len(entry["records"]),
+    }
+
+
+def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) -> dict | None:
+    """Evaluate this stream's per-cycle coverage threshold, once, on the total.
+
+    Returns a named shortfall dict, or None when the stream either has no
+    threshold or clears it. Called from ``_check_streams_complete`` \u2014 the
+    streams-complete check is the single point where the whole cycle's records
+    are in hand (CT-003). ``foundry_mark_stream`` deliberately does NOT
+    evaluate it: a partial tranche must be stored, not refused.
+
+    Falls back to the marker's aggregate counts when this cycle has no roll-up
+    entry, exactly as ``_prove_is_clean`` does. Without the fallback an archive
+    written before the roll-up existed — or one whose roll-up was lost — had a
+    marker the streams-complete check counted as PRESENT while the threshold
+    silently evaluated nothing, so 40% coverage passed. "No numbers" must mean
+    "read them from the marker", never "assume the threshold is met".
+    """
+    totals = _rollup_totals(fdir, cycle, stream) or _marker_counts(
+        fdir / f".{stream}-complete"
+    )
+    if totals is None:
+        return None
+    checked = totals["items_checked"]
+
+    if stream == "prove":
+        spec_count = _count_spec_requirements(project_root)
+        if spec_count > 0 and checked < spec_count * 0.95:
+            return {
+                "stream": "prove",
+                "checked": checked,
+                "required": spec_count,
+                "coverage": f"{checked / spec_count * 100:.0f}%",
+                "reason": (
+                    f"PROVE checked {checked} requirements across cycle {cycle} but the "
+                    f"spec has {spec_count}. Coverage is {checked / spec_count * 100:.0f}% "
+                    "\u2014 must be \u226595%."
+                ),
+            }
+        return None
+
+    if stream == "trace":
+        declared = totals["items_total"]
+        if declared > 0 and checked < declared * 0.95:
+            return {
+                "stream": "trace",
+                "checked": checked,
+                "required": declared,
+                "coverage": f"{checked / declared * 100:.0f}%",
+                "reason": (
+                    f"TRACE checked {checked}/{declared} symbols across cycle {cycle} "
+                    f"({checked / declared * 100:.0f}%). Must check \u226595% of declared symbols."
+                ),
+            }
+    return None
 
 
 def foundry_mark_stream(
@@ -633,13 +1483,22 @@ def foundry_mark_stream(
     findings_count: int = 0,
     project_root: str = ".",
 ) -> dict:
-    """Mark a verification stream as complete for this cycle."""
-    if stream not in VALID_STREAMS:
-        return {"error": f"Invalid stream: {stream}. Must be one of: {', '.join(sorted(VALID_STREAMS))}"}
+    """Record a verification stream's coverage for this cycle.
+
+    Partial records are ACCEPTED and stored (CT-003 / AC-020). The >=95%
+    coverage thresholds are no longer enforced here \u2014 enforcing them at record
+    time discarded the tranche entirely, so a PROVE run split across two calls
+    lost its first half. They are evaluated once per cycle in
+    ``_check_streams_complete`` against the cycle TOTAL instead.
+    """
+    if stream not in STREAM_WIRE_IDS:
+        return {"error": f"Invalid stream: {stream}. Must be one of: {', '.join(sorted(STREAM_WIRE_IDS))}"}
 
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
 
     if items_checked <= 0:
         return {
@@ -649,52 +1508,87 @@ def foundry_mark_stream(
                      "sight: pages/elements exercised. test: tests run. "
                      "probe: endpoints hit. research_audit: recommendations audited. "
                      "flow_trace: flow-delta packets verified. "
-                     "coverage_diff: coverage_list source items diffed.",
+                     "coverage_diff: coverage_list source items diffed. "
+                     "test01: derived spec-test hypotheses executed.",
             "hint": "If the stream genuinely checked 0 items, the scope may be wrong.",
         }
 
-    if stream == "prove" and items_total > 0:
-        spec_count = _count_spec_requirements(project_root)
-        if spec_count > 0 and items_checked < spec_count * 0.95:
-            return {
-                "error": f"PROVE checked {items_checked} requirements but spec has {spec_count}. "
-                         f"Coverage is {items_checked/spec_count*100:.0f}% \u2014 must be \u226595%.",
-                "hint": "Re-run PROVE and check ALL requirements in the spec. No skipping.",
-                "spec_requirements": spec_count,
-                "checked": items_checked,
-            }
-
-    if stream == "trace" and items_total > 0 and items_checked < items_total * 0.95:
+    # D-100: the counts accumulate by ADDITION across a cycle's tranches, so a
+    # negative value does not record a tranche — it ERASES earlier ones. The
+    # guard above refused items_checked <= 0 while findings_count had no lower
+    # bound at all, and that asymmetry was load-bearing:
+    # mark_stream("prove", 2, findings=9) then mark_stream("prove", 1,
+    # findings=-9) cancels the cycle's findings to 0 and flips _prove_is_clean
+    # False -> True. On TRACE the same cancellation stamps .trace-clean-at —
+    # the anchor that lets a LATER cycle skip the TRACE stream outright.
+    if findings_count < 0:
         return {
-            "error": f"TRACE checked {items_checked}/{items_total} symbols ({items_checked/items_total*100:.0f}%). "
-                     "Must check \u226595% of declared symbols.",
-            "hint": "Re-run TRACE on unchecked symbols.",
+            "error": (
+                f"Cannot record {stream} with findings_count={findings_count}. "
+                "A cycle's findings accumulate across tranches, so a negative "
+                "count would erase findings an earlier record of this cycle "
+                "already reported."
+            ),
+            "hint": "Report the findings THIS tranche produced — zero or more, never negative.",
         }
 
-    coverage_pct = f"{items_checked / items_total * 100:.0f}%" if items_total > 0 else "N/A"
+    if items_total < 0:
+        return {
+            "error": (
+                f"Cannot record {stream} with items_total={items_total}. "
+                "The population a tranche was drawn from cannot be negative."
+            ),
+            "hint": "Report the size of the population, or 0 when this stream has no fixed denominator.",
+        }
+
+    # The near-miss beside the same guard: 1667% coverage was accepted in
+    # silence and trivially satisfied the >=95% gate. Judged PER RECORD, where
+    # "checked more than exist" is unambiguous — the cycle TOTAL is deliberately
+    # not judged here, because a legitimate re-record of a cycle would trip it
+    # and CT-003 requires tranches be stored, not refused.
+    if items_total > 0 and items_checked > items_total:
+        return {
+            "error": (
+                f"Cannot record {stream} with items_checked={items_checked} against "
+                f"items_total={items_total}: a tranche cannot check more items than "
+                "the population it declares."
+            ),
+            "hint": "Either items_checked is overstated or items_total understates the population.",
+        }
+
+    # The roll-up is keyed by the SERVER counter, never by the caller's `cycle`
+    # (FR-005). The caller's value is kept on the record for audit only.
+    server_cycle = _current_cycle(fdir)
+    prev_totals = _rollup_totals(fdir, server_cycle - 1, stream) if server_cycle > 0 else None
+    totals = _record_stream_rollup(
+        fdir, server_cycle, stream, items_checked, items_total, findings_count, cycle
+    )
+
+    # Drop warning: cycle N's TOTAL against cycle N-1's TOTAL (CT-003). The
+    # old comparison read the previous write of this same marker file, which
+    # made a second partial tranche in the SAME cycle look like a collapse.
+    coverage_warning = ""
+    if prev_totals is not None and prev_totals["items_checked"] > 0:
+        if totals["items_checked"] < prev_totals["items_checked"] * 0.7:
+            coverage_warning = (
+                f"Coverage dropped: {stream} checked {totals['items_checked']} items in "
+                f"cycle {server_cycle} vs {prev_totals['items_checked']} in cycle "
+                f"{server_cycle - 1}. Are you rushing?"
+            )
+
+    coverage_pct = (
+        f"{totals['items_checked'] / totals['items_total'] * 100:.0f}%"
+        if totals["items_total"] > 0
+        else "N/A"
+    )
 
     marker = fdir / f".{stream}-complete"
-    coverage_warning = ""
-    if marker.exists():
-        prev_text = marker.read_text(encoding="utf-8")
-        for line in prev_text.split("\n"):
-            if line.startswith("items_checked="):
-                try:
-                    prev_checked = int(line.split("=")[1])
-                    if items_checked < prev_checked * 0.7:
-                        coverage_warning = (
-                            f"Coverage dropped: checked {items_checked} items vs "
-                            f"{prev_checked} in previous cycle. Are you rushing?"
-                        )
-                except (ValueError, IndexError):
-                    pass
-
     marker.write_text(
-        f"{_now()} cycle={cycle}\n"
-        f"items_checked={items_checked}\n"
-        f"items_total={items_total}\n"
+        f"{_now()} cycle={server_cycle}\n"
+        f"items_checked={totals['items_checked']}\n"
+        f"items_total={totals['items_total']}\n"
         f"coverage={coverage_pct}\n"
-        f"findings={findings_count}\n",
+        f"findings={totals['findings']}\n",
         encoding="utf-8",
     )
 
@@ -702,7 +1596,7 @@ def foundry_mark_stream(
     # current HEAD SHA. Future F2 entries can compare HEAD vs this SHA
     # restricted to manifest key_files — if no overlap, skip TRACE.
     # Deterministic, verbatim the same as re-running LSP: topology unchanged.
-    if stream == "trace" and findings_count == 0:
+    if stream == "trace" and totals["findings"] == 0:
         import subprocess
         try:
             rev = subprocess.run(
@@ -715,8 +1609,8 @@ def foundry_mark_stream(
                     _json.dumps({
                         "head_sha": rev.stdout.strip(),
                         "stamped_at": _now(),
-                        "cycle": cycle,
-                        "items_checked": items_checked,
+                        "cycle": server_cycle,
+                        "items_checked": totals["items_checked"],
                     }),
                     encoding="utf-8",
                 )
@@ -726,14 +1620,29 @@ def foundry_mark_stream(
     result: dict = {
         "ok": True,
         "stream": stream,
-        "cycle": cycle,
-        "items_checked": items_checked,
-        "items_total": items_total,
+        "cycle": server_cycle,
+        "declared_cycle": cycle,
+        "items_checked": totals["items_checked"],
+        "items_total": totals["items_total"],
         "coverage": coverage_pct,
-        "findings": findings_count,
+        "findings": totals["findings"],
+        "records_this_cycle": totals["records"],
+        "recorded": {
+            "items_checked": items_checked,
+            "items_total": items_total,
+            "findings": findings_count,
+        },
     }
-    if coverage_warning:
-        result["warning"] = coverage_warning
+
+    # A shortfall is REPORTED here so the lead sees it immediately, but it does
+    # not refuse the record — the threshold is enforced once per cycle at the
+    # streams-complete check (CT-003), where a later tranche can still clear it.
+    shortfall = _coverage_shortfall(fdir, project_root, stream, server_cycle)
+    warnings = [w for w in (coverage_warning, shortfall["reason"] if shortfall else "") if w]
+    if shortfall:
+        result["coverage_shortfall"] = shortfall
+    if warnings:
+        result["warning"] = " | ".join(warnings)
 
     return result
 
@@ -752,15 +1661,20 @@ def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     marker = fdir / ".trace-clean-at"
     if not marker.exists():
         return {"skip": False, "reason": "no prior clean TRACE to compare against"}
-    try:
-        marker_data = json.loads(marker.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    marker_data, marker_problem = read_document(marker)
+    if marker_problem is not None:
         return {"skip": False, "reason": "unreadable .trace-clean-at marker"}
     clean_sha = marker_data.get("head_sha", "")
     if not clean_sha:
         return {"skip": False, "reason": "no head_sha recorded"}
 
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
     manifest = _load_json(fdir / "castings" / "manifest.json")
+    # D-134: same shared validator as every other reader of this document, so
+    # "unusable" means one thing across the package.
+    if _manifest_shape_problem(manifest) is not None:
+        return {"skip": False, "reason": "castings/manifest.json records are unreadable"}
     key_files: set[str] = set()
     for c in manifest.get("castings", []):
         for f in (c.get("key_files") or []):
@@ -832,34 +1746,63 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
 
 
 def _check_streams_complete(project_root: str) -> dict:
-    """Check if all required verification streams have completed."""
+    """Check if all required verification streams have completed for this cycle.
+
+    Two behaviours land here.
+
+    SIGHT (FR-020 / AC-025). ``sight`` used to be appended UNCONDITIONALLY
+    whenever ``manifest.no_ui`` was false — which is the default — so a run with
+    zero frontend files in scope still had to produce a sight marker it had no
+    way to earn. That is the grand-vulture deadlock: a fully clean cycle-17
+    INSPECT blocked on ``sight``. The requirement is now driven by the same
+    ``_check_sight_required`` evidence the inspect gate already uses (do any
+    casting key_files actually carry a UI extension?), which also collapses the
+    ``no_ui`` divergence between state.json and castings/manifest.json — the
+    flag is read from the manifest here and from state.json elsewhere, and
+    foundry_init writes both. A UI run is unaffected: frontend files in scope
+    still make sight required, and still make it BLOCKED when no url is set.
+
+    COVERAGE (FR-014 / CT-003 / AC-020). The >=95% PROVE and TRACE thresholds
+    are evaluated HERE, once per cycle, against the cycle's roll-up total —
+    the one point where every tranche of a partially-delivered stream is in
+    hand. A stream that recorded but fell short is reported in ``missing`` (so
+    every existing caller keeps blocking on it) and detailed in ``shortfalls``.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
-        return {"complete": False, "missing": "all", "required": []}
+        return {"complete": False, "missing": "all", "required": [], "shortfalls": []}
     manifest = fdir / "castings" / "manifest.json"
 
     required = ["trace", "prove", "test"]
 
-    no_ui = False
     url = ""
     if manifest.exists():
-        mdata = _load_json(manifest)
-        no_ui = mdata.get("no_ui", False)
-        url = mdata.get("target_url", "")
+        url = _load_json(manifest).get("target_url", "")
 
-    if not no_ui:
+    if _check_sight_required(project_root).get("required"):
         required.append("sight")
-    else:
-        sight = _check_sight_required(project_root)
-        if sight.get("required"):
-            required.append("sight")
 
     if url:
         required.append("probe")
 
     missing = [s for s in required if not (fdir / f".{s}-complete").exists()]
 
-    return {"complete": len(missing) == 0, "missing": " ".join(missing), "required": required}
+    cycle = _current_cycle(fdir)
+    shortfalls = []
+    for s in required:
+        if s in missing:
+            continue
+        shortfall = _coverage_shortfall(fdir, project_root, s, cycle)
+        if shortfall:
+            shortfalls.append(shortfall)
+            missing.append(s)
+
+    return {
+        "complete": len(missing) == 0,
+        "missing": " ".join(missing),
+        "required": required,
+        "shortfalls": shortfalls,
+    }
 
 
 # --- Phase lifecycle markers ---
@@ -890,43 +1833,76 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
     even though those sub-phases did elapse in wall time.
     """
     state_path = fdir / "state.json"
-    state = _load_json(state_path)
     now = _now()
 
-    phase_times = state.get("phase_times", {})
-    for entry in phase_times.values():
-        _finalize_open_phase_entry(entry, now)
+    with _document_transaction(state_path) as state:
+        phase_times = state.get("phase_times", {})
+        if not isinstance(phase_times, dict):
+            phase_times = {}
+        for entry in phase_times.values():
+            _finalize_open_phase_entry(entry, now)
 
-    phase_times[new_phase] = {"started_at": now}
+        phase_times[new_phase] = {"started_at": now}
 
-    state["phase"] = new_phase
-    state["updated_at"] = now
-    state["phase_times"] = phase_times
-    history = state.get("phase_history", [])
-    history.append({"phase": new_phase, "entered_at": now})
-    state["phase_history"] = history
+        state["phase"] = new_phase
+        state["updated_at"] = now
+        state["phase_times"] = phase_times
+        history = state.get("phase_history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append({"phase": new_phase, "entered_at": now})
+        state["phase_history"] = history
 
-    if new_phase == "F6":
-        state["ended_at"] = now
-        started = state.get("started_at", "")
-        if started:
-            try:
-                start = datetime.fromisoformat(started)
-                end = datetime.fromisoformat(now)
-                delta = end - start
-                hours = int(delta.total_seconds() // 3600)
-                mins = int((delta.total_seconds() % 3600) // 60)
-                secs = int(delta.total_seconds() % 60)
-                state["total_duration"] = f"{hours}h {mins}m {secs}s"
-            except ValueError:
-                pass
-
-    _save_json(state_path, state)
+        if new_phase == "F6":
+            state["ended_at"] = now
+            started = state.get("started_at", "")
+            if started:
+                try:
+                    start = datetime.fromisoformat(started)
+                    end = datetime.fromisoformat(now)
+                    delta = end - start
+                    hours = int(delta.total_seconds() // 3600)
+                    mins = int((delta.total_seconds() % 3600) // 60)
+                    secs = int(delta.total_seconds() % 60)
+                    state["total_duration"] = f"{hours}h {mins}m {secs}s"
+                except (ValueError, TypeError):
+                    pass
 
     # P4 (ST-002): a real phase advance supersedes any pending gate-passed
     # guidance marker. Clear it so the next Foundry-Next emits the NEW phase's
     # fresh imperative rather than a stale "gate already passed" note.
     (fdir / ".gate-passed").unlink(missing_ok=True)
+
+
+# CLOSED VOCABULARY — every phase token ``foundry_mark_phase_complete`` handles,
+# in lifecycle order. The handler is the authority for this one (unlike the wire
+# vocabularies, which come from schemas/vocab.py): a token means something only
+# because a branch below implements it.
+#
+# server.py's Foundry-Phase enum is the second copy, and it had drifted in BOTH
+# directions at once — advertising research_done / decompose_done /
+# validate_done, which this handler has no branch for and refuses, while
+# OMITTING inspect_start, the one token whose branch advances the cycle counter.
+# The MCP SDK validates arguments against the advertised enum BEFORE dispatch,
+# so that omission made the counter unable to leave 0 over MCP however this
+# handler behaved.
+#
+# Adding a token here without a branch below (or vice versa, or without the
+# schema entry) fails the drift guard in tests/test_orchestrator_gates.py, which
+# derives the accepted set from this function's own AST and asserts all three
+# copies are equal.
+PHASE_TOKENS = (
+    "start_cast",
+    "cast",
+    "inspect_start",
+    "inspect_clean",
+    "grind_start",
+    "assay_fail",
+    "temper",
+    "nyquist",
+    "nyquist_done",
+    "done",
+)
 
 
 def foundry_mark_phase_complete(
@@ -937,6 +1913,8 @@ def foundry_mark_phase_complete(
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
 
     nac = fdir / ".next-action-called"
     if not nac.exists():
@@ -988,9 +1966,52 @@ def foundry_mark_phase_complete(
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
 
+    elif phase == "inspect_start":
+        # ST-001 / FR-005 / AC-008 — the GRIND -> INSPECT boundary.
+        #
+        # This token did not exist. The guidance engine told the lead to
+        # "update state to F2" with no tool that does it, so a run looping
+        # GRIND -> INSPECT never left F3 in state.json and the cycle counter
+        # never moved: grand-vulture recorded "cycle": 0 across 18 cycles while
+        # its defects carried lead-asserted cycles 0-17.
+        #
+        # The increment is an EFFECT of handling the boundary crossing, not a
+        # value any caller supplies: this handler takes no cycle argument and
+        # consults none. Only F3 -> F2 advances it — the F1 -> F2 entry from
+        # CAST is the run's first INSPECT, not a new cycle.
+        state_path = fdir / "state.json"
+        # D-103: read-phase, advance-phase and increment are ONE critical
+        # section. They used to be three separate read-modify-writes over the
+        # same file (the increment re-read state.json AFTER _update_phase had
+        # written it), so a concurrent writer landing between them lost either
+        # the phase or the counter. _update_phase nests inside this transaction
+        # and mutates the same in-flight document — which is what the
+        # re-entrancy in _document_transaction exists for.
+        with _document_transaction(state_path) as state:
+            prev_phase = state.get("phase", "")
+            _update_phase(fdir, "F2")
+            if prev_phase == "F3":
+                # _current_cycle still reads from disk, and that is correct
+                # here: the flock guarantees no peer is mid-write and this
+                # transaction has not flushed, so disk still holds the
+                # pre-increment counter. Keeping the read on the ONE guarded
+                # reader is what D-059's derived-membership test requires.
+                state["cycle"] = _current_cycle(fdir) + 1
+                state["updated_at"] = _now()
+        cycle = _current_cycle(fdir)
+        return {
+            "ok": True,
+            "phase": "F2",
+            "cycle": cycle,
+            "message": (
+                f"GRIND complete → phase is now F2 (INSPECT), cycle {cycle}. "
+                "Run the FULL stream set again — no spot checking."
+            ),
+        }
+
     elif phase == "grind_start":
-        # Every recordable stream marker is cleared (derived from
-        # VALID_STREAMS so new streams cannot go stale across GRIND cycles),
+        # Every recordable stream marker is cleared (derived from the canonical
+        # stream vocabulary so new streams cannot go stale across GRIND cycles),
         # not just the required subset — completion state must stay honest.
         stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
         for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
@@ -1022,22 +2043,74 @@ def foundry_mark_phase_complete(
         # Leave F5.5 for F6. Distinct from the "temper" shape, which exits via
         # "done", because NYQUIST has its own completion semantics: auditors
         # can escalate ESCALATE_IMPL_BUG back into GRIND, so "the phase ran"
-        # and "the run is finished" are separate facts. The DONE gate still
-        # runs first — this token records the exit, it does not waive the
-        # verdict / open-defect preconditions.
+        # and "the run is finished" are separate facts.
+        #
+        # AC-011 / D-043 / D-044 — F6 HAS TWO DOORS AND BOTH ARE LOCKED.
+        #
+        # This comment used to assert "The DONE gate still runs first" while
+        # the branch below it was an unconditional _update_phase +
+        # clear_active_run consulting nothing: the claim rested entirely on the
+        # lead following guidance prose. D-037 bound _done_preconditions to the
+        # `done` branch and left this sibling terminal branch unbound, so the
+        # fix covered one door of two — and on a --nyquist run, which
+        # commands/start.md:578 routes through this token, it was the door the
+        # run would actually use. Driven at the MCP boundary: a state with six
+        # open escalated-class defects and no verdicts.json at all was refused
+        # by Foundry-Phase("done") and admitted by Foundry-Phase("nyquist_done")
+        # in the same breath.
+        #
+        # AC-011 constrains THE RUN — "the run cannot reach DONE while any
+        # escalated-class defect remains open" — with no exception for how F6
+        # is entered. So this calls the same _done_preconditions the `done`
+        # branch and the gate call, on the same terms. Not a copy of the
+        # checks: a second implementation of "done" is the drift that produced
+        # this defect, not a fix for it.
+        outcome = _done_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return {
+                "error": f"Cannot leave NYQUIST for DONE — {outcome['reason']}",
+                "hint": (
+                    outcome["hint"]
+                    or "Call Foundry-Gate(phase='nyquist_done') for the full checklist."
+                ),
+                "checklist": outcome["checklist"],
+            }
         _update_phase(fdir, "F6")
         clear_active_run()
         return {"ok": True, "phase": "F6",
                 "message": "NYQUIST complete → phase is now F6 (DONE). Run archived."}
 
     elif phase == "done":
+        # AC-011 / D-037 — the transition, not just the gate, enforces closure.
+        #
+        # This branch was an unconditional _update_phase + clear_active_run: it
+        # read no verdicts, no open defects and no escalated classes, so the
+        # careful checks in foundry_gate("done") were advisory and a run
+        # reached F6 with six open escalated-class defects and zero verdicts by
+        # simply not calling the gate. AC-011 constrains the RUN ("the run
+        # cannot reach DONE"), which is this call.
+        #
+        # It consults _done_preconditions — the SAME evaluation foundry_gate
+        # runs, exactly its checks and no others. A precondition the gate does
+        # not enforce must not be invented here: the transition and the gate
+        # disagreeing about what "done" means is the failure this is fixing.
+        outcome = _done_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return {
+                "error": f"Cannot mark the run DONE — {outcome['reason']}",
+                "hint": (
+                    outcome["hint"]
+                    or "Call Foundry-Gate(phase='done') for the full checklist."
+                ),
+                "checklist": outcome["checklist"],
+            }
         _update_phase(fdir, "F6")
         # Clear the active run — session is done with this run
         clear_active_run()
         return {"ok": True, "phase": "F6", "message": "Phase is now F6 (DONE). Run archived. Start a new run with foundry_init."}
 
     else:
-        return {"error": f"Invalid phase: {phase}. Valid: cast, inspect_clean, grind_start, assay_fail, temper, nyquist, nyquist_done, done"}
+        return {"error": f"Invalid phase: {phase}. Valid: {', '.join(PHASE_TOKENS)}"}
 
 
 # --- Team lifecycle ---
@@ -1233,26 +2306,36 @@ def foundry_register_team(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init first."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     state_path = fdir / "state.json"
-    state = _load_json(state_path)
+    # D-103: the roster check and the roster write are one critical section \u2014
+    # two concurrent registrations both passed the "no active teams" check
+    # against the same snapshot and the second write dropped the first.
+    refusal: dict | None = None
+    total_teams = 0
+    with _document_transaction(state_path) as state:
+        teams = state.get("active_teams", [])
+        if not isinstance(teams, list):
+            teams = []
 
-    teams = state.get("active_teams", [])
+        teams_dir = Path.home() / ".claude" / "teams"
+        still_active = [t for t in teams if t != team_name and (teams_dir / t).is_dir()]
+        if still_active:
+            refusal = {
+                "error": f"Cannot register '{team_name}' \u2014 active teams exist: {', '.join(still_active)}",
+                "hint": "Shut down existing teammates (SendMessage + TeamDelete) and Foundry-Team-Down before creating a new team. One team at a time.",
+                "active_teams": still_active,
+            }
+        else:
+            if team_name not in teams:
+                teams.append(team_name)
+            state["active_teams"] = teams
+            total_teams = len(teams)
 
-    teams_dir = Path.home() / ".claude" / "teams"
-    still_active = [t for t in teams if t != team_name and (teams_dir / t).is_dir()]
-    if still_active:
-        return {
-            "error": f"Cannot register '{team_name}' \u2014 active teams exist: {', '.join(still_active)}",
-            "hint": "Shut down existing teammates (SendMessage + TeamDelete) and Foundry-Team-Down before creating a new team. One team at a time.",
-            "active_teams": still_active,
-        }
-
-    if team_name not in teams:
-        teams.append(team_name)
-    state["active_teams"] = teams
-    _save_json(state_path, state)
-
-    return {"ok": True, "registered": team_name, "total_teams": len(teams)}
+    if refusal:
+        return refusal
+    return {"ok": True, "registered": team_name, "total_teams": total_teams}
 
 
 def foundry_unregister_team(
@@ -1274,6 +2357,8 @@ def foundry_unregister_team(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
 
     # ── Phase 1: Verify TeamDelete was called ────────────────────────
     teams_dir = Path.home() / ".claude" / "teams"
@@ -1334,11 +2419,12 @@ def foundry_unregister_team(
 
     # ── Phase 4: Unregister from foundry state ───────────────────────
     state_path = fdir / "state.json"
-    state = _load_json(state_path)
-    teams = state.get("active_teams", [])
-    teams = [t for t in teams if t != team_name]
-    state["active_teams"] = teams
-    _save_json(state_path, state)
+    with _document_transaction(state_path) as state:
+        teams = state.get("active_teams", [])
+        if not isinstance(teams, list):
+            teams = []
+        teams = [t for t in teams if t != team_name]
+        state["active_teams"] = teams
 
     return {
         "ok": True,
@@ -1362,7 +2448,15 @@ def _check_sight_required(project_root: str) -> dict:
     if not manifest.exists():
         return {"required": False}
 
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
     data = _load_json(manifest)
+    # D-134: the records, not just the container. `castings: "nope"` used to
+    # meet `.get()` two lines down and raise AttributeError out of Foundry-Next.
+    # The guard at every MCP door names the file; this keeps the reader itself
+    # total for the paths that reach it without one.
+    if _manifest_shape_problem(data) is not None:
+        return {"required": False, "reason": "castings/manifest.json records are unreadable"}
     ui_exts = {".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html", ".astro"}
 
     ui_files = []
@@ -1387,99 +2481,1849 @@ def _check_sight_required(project_root: str) -> dict:
     return {"required": True, "blocked": False, "url": url, "ui_files": len(ui_files)}
 
 
+# --------------------------------------------------------------------------- #
+# Recurring-class escalation (FR-006 / FR-007 / FR-008 / FR-024,
+# ST-002 / ST-003, AC-009 / AC-010 / AC-011, OT-003).
+#
+# grand-vulture ran FALSE_DOCUMENTED_CONTRACT for eight consecutive cycles
+# (9-16), 42 defects, because foundry_defects_to_tasks groups by LOCATION
+# (file or symbol) rather than by cause: one systemic class spread over 11
+# files became 11 unrelated packets, each fixed per-instance, the class itself
+# never addressed. The three-cycle rule would have caught it at cycle 11.
+#
+# The consecutive-cycle count is DERIVED from defects.json rather than kept as
+# an incremental counter. Every defect record already carries its filing cycle
+# and (optionally) its class, so the derivation covers defects filed through
+# EVERY path — Foundry-Sync, Foundry-Defect, and migrated archives alike —
+# without a counter that can desync from the ledger it describes. Only the
+# operator-supplied parts (the recorded structural proposal) are persisted.
+# --------------------------------------------------------------------------- #
+
+ESCALATION_FILENAME = "escalation.json"
+
+# ST-002 / FR-006 / A-012: escalation fires on the THIRD consecutive cycle in
+# which new defects of a class are filed. Two consecutive cycles do not fire it.
+ESCALATION_CYCLES = 3
+
+# FR-007 / A-013: the optional stream-declared field on a defect record. Stream
+# agents already emit systemic_patterns[] that nothing consumed; this is the
+# key they write when instances share a root cause.
+DEFECT_CLASS_FIELD = "class"
+
+# FR-024 (Flexible — implementer-tunable): the fallback used when a stream
+# declares no class. A-013/A-033 specify "type + file-cluster", and either the
+# declared class or this fallback can accumulate the three-cycle count.
+#
+# THE TUNING KNOB IS THIS CONSTANT: the number of leading path segments that
+# define one file cluster. The choice is a balance:
+#   depth 0  = type only        -> over-clusters; unrelated subsystems merge
+#   depth 2  = "src/api", ...   -> a class spread across sibling modules of one
+#                                  subsystem still clusters, while frontend and
+#                                  backend defects of the same type stay apart
+#   full dir = "src/api/auth"   -> under-clusters; the grand-vulture failure
+#                                  mode, where every file is its own class and
+#                                  escalation can never accumulate
+# 2 is the middle that groups a subsystem. Raise it for a deep monorepo, lower
+# it for a flat one.
+FALLBACK_CLUSTER_DEPTH = 2
+
+# AC-010 / FR-008 / ST-003: the explicit directive that restores per-instance
+# packets. Bare token overrides every class; "escalation-override: <class>"
+# overrides exactly that class.
+ESCALATION_OVERRIDE_TOKEN = "escalation-override"
+
+# D-101: the override is a MARKER GRAMMAR on its own line, not a substring.
+#
+# The old test was `ESCALATION_OVERRIDE_TOKEN not in text.lower()` followed by
+# `return scoped or {"*"}`, so a directive that FORBADE the override
+# de-escalated everything: Foundry-Directive("Never apply an
+# escalation-override. I want real structural fixes.") produced {"*"} and
+# emptied the escalated set — semantics exactly inverted from operator intent,
+# with no signal. It also fired on "the escalation-overrides list is empty" and
+# on the token in uppercase prose. ST-003 makes the override an EXPLICIT
+# directive action, and a substring match is not explicit.
+#
+# Recognised forms, each as a whole line (an optional markdown bullet or blank
+# space may precede it, nothing may follow it):
+#     escalation-override: <class>     — de-escalate exactly that class
+#     escalation-override: *           — de-escalate every class
+#     escalation-override              — de-escalate every class
+# Anything else mentioning the token is prose and does nothing.
+# D-133 — two residual holes in the same grammar, both "invisible rather than
+# refused", and one root under them.
+#
+# (1) THE VALUE. The group was `(\S+)`, so a class key containing a SPACE could
+#     never be overridden — and FR-007 makes `class` free text that a stream
+#     writes. Driven: the class "SHARED RESOURCE LEAK" escalates;
+#     Foundry-Directive("escalation-override: SHARED RESOURCE LEAK") returned
+#     ok:true "injected", `_escalation_overrides()` returned set(), and the
+#     class stayed escalated. Worse than inert: `_structural_proposal`
+#     interpolates the class key into the instruction it hands the lead, so
+#     the tool was telling the operator to send a string it could not read.
+#     The value now runs to end of line and may be quoted.
+#
+# (2) THE PREFIX. `[\s>]*` admitted the blockquote character, so QUOTING an
+#     escalation packet into a directive — "> escalation-override: X", even
+#     buried at line 8 of a 9-line note — silently de-escalated the class. A
+#     quotation reports what someone else wrote; it is never a request. The
+#     quoted form is still MATCHED, by its own pattern, so that it can be
+#     reported as ignored rather than vanish.
+#
+# (3) THE ROOT. Nothing reported an override either way. See `_override_report`.
+_OVERRIDE_LINE_PREFIX = r"^[ \t]*(?:[-*+][ \t]*)?"
+_OVERRIDE_QUOTED_PREFIX = r"^[ \t]*>[ \t>]*(?:[-*+][ \t]*)?"
+_OVERRIDE_SCOPED_RE = re.compile(
+    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}\s*[:=][ \t]*(\S.*?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_OVERRIDE_BARE_RE = re.compile(
+    rf"{_OVERRIDE_LINE_PREFIX}{ESCALATION_OVERRIDE_TOKEN}[ \t]*[:=]?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Recognised ONLY to be reported as ignored — never to honour.
+_OVERRIDE_QUOTED_RE = re.compile(
+    rf"{_OVERRIDE_QUOTED_PREFIX}{ESCALATION_OVERRIDE_TOKEN}"
+    rf"(?:[ \t]*[:=][ \t]*\S.*?)?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# The scoped form's value spelled as "every class" rather than a class key.
+_OVERRIDE_ALL_VALUES = frozenset({"*", "all", "any", "every"})  # 4 spellings
+
+# Quote characters a class key may be wrapped in. A quoted key keeps its inner
+# punctuation verbatim — that is what quoting it is FOR — while a bare key
+# keeps the D-101 trailing-punctuation strip so "escalation-override: AUTH."
+# still names AUTH.
+_OVERRIDE_QUOTES = ('"', "'", "`")
+
+
+def _override_value(raw: str) -> str:
+    """The class key a scoped marker names, unwrapped and trimmed."""
+    return _override_value_quoting(raw)[0]
+
+
+def _override_value_quoting(raw: str) -> tuple[str, bool]:
+    """The class key a scoped marker names, and whether it was QUOTE-WRAPPED.
+
+    D-139: the two halves used to be one function that returned only the value,
+    so the wildcard test ran on the ALREADY-UNWRAPPED string and quoting could
+    not protect a class key spelled like a wildcard. ``escalation-override:
+    "all"`` read back as ``{"*"}`` — every escalated class — when the operator
+    had named the single class ``all``. Driven end to end with two escalated
+    classes, ``AUTH_CONTRACT`` and ``all``: sending the tool's own rendered
+    instruction de-escalated BOTH.
+
+    Whether the key was quoted is what distinguishes "this value IS the
+    wildcard spelling" from "this value is a class key that LOOKS like one",
+    and it is only knowable before the quotes come off. That is what quoting a
+    key is FOR.
+    """
+    value = raw.strip()
+    for quote in _OVERRIDE_QUOTES:
+        if len(value) >= 2 and value.startswith(quote) and value.endswith(quote):
+            return value[1:-1].strip(), True
+    return value.strip(" .,;:'\"`"), False
+
+
+def _fallback_class(defect: dict) -> str:
+    """The ``type + file-cluster`` key, computed IGNORING any declared class.
+
+    Kept separate from ``_defect_class`` because D-102 needs both keys for the
+    same record: the declared identity, and the cluster it would have landed in
+    had no stream declared one.
+    """
+    dtype = canonical_defect_type(defect.get("type", "")) or defect.get("type") or "UNTYPED"
+    path = defect.get("file") or ""
+    segments = [p for p in str(path).replace("\\", "/").split("/") if p][:-1]
+    cluster = "/".join(segments[:FALLBACK_CLUSTER_DEPTH]) if segments else ""
+    return f"{dtype}@{cluster or '-'}"
+
+
+def _defect_class(defect: dict) -> str:
+    """Return the class key a defect belongs to.
+
+    The stream-declared ``class`` field when present (FR-007), otherwise the
+    tunable ``type + file-cluster`` fallback (FR-024). Either can accumulate
+    the three-cycle count (ST-002 / A-033).
+    """
+    declared = defect.get(DEFECT_CLASS_FIELD)
+    if isinstance(declared, str) and declared.strip():
+        return declared.strip()
+    return _fallback_class(defect)
+
+
+def _resolve_defect_classes(defects: list) -> dict[int, str]:
+    """Assign every defect a class key such that the buckets stay a PARTITION.
+
+    D-102 / FR-024 (implementer-tunable). ``class`` is OPTIONAL, so one stream
+    omitting it on an otherwise identical finding used to split a real cluster
+    in two: three defects on one file, same type, cycles 1/2/3, of which two
+    carried class "SHARED", bucketed as SHARED{1,3} and MISSING@src{2}. Neither
+    reached three consecutive cycles, so a class that genuinely recurred three
+    straight cycles escaped escalation in silence. ST-002 says EITHER the
+    declared field or the fallback accumulates the count — a mixed cluster
+    accumulated in neither.
+
+    THE RULE: an UNDECLARED defect joins the declared class that owns its
+    fallback cluster.
+
+      1. Declared defects keep their declared class, always. A stream that
+         named a class meant it, and two differently-declared classes are never
+         merged just because they share a file.
+      2. Each fallback cluster maps to the declared classes seen on defects in
+         that cluster. When exactly ONE declared class owns the cluster, the
+         cluster's undeclared defects join it.
+      3. When a cluster is owned by two or more declared classes the mapping is
+         ambiguous, so undeclared defects stay in their own fallback bucket.
+         Guessing between rival declared classes would invent a cluster no
+         stream asserted; refusing to guess only costs the accumulation the old
+         code was already failing to make.
+
+    Returns ``{id(defect): class_key}`` — keyed by identity so two structurally
+    identical dicts are still two records.
+    """
+    owners: dict[str, set[str]] = {}
+    for d in defects:
+        if not isinstance(d, dict) or not _class_declared(d):
+            continue
+        owners.setdefault(_fallback_class(d), set()).add(_defect_class(d))
+
+    resolved: dict[int, str] = {}
+    for d in defects:
+        if not isinstance(d, dict):
+            continue
+        if _class_declared(d):
+            resolved[id(d)] = _defect_class(d)
+            continue
+        cluster = _fallback_class(d)
+        claimants = owners.get(cluster, set())
+        resolved[id(d)] = next(iter(claimants)) if len(claimants) == 1 else cluster
+    return resolved
+
+
+def _class_declared(defect: dict) -> bool:
+    declared = defect.get(DEFECT_CLASS_FIELD)
+    return isinstance(declared, str) and bool(declared.strip())
+
+
+def _consecutive_run(cycles: set[int]) -> tuple[int, int | None]:
+    """Longest run of consecutive cycles, and the cycle that run ends on."""
+    if not cycles:
+        return 0, None
+    best_len, best_end = 0, None
+    run_len, prev = 0, None
+    for c in sorted(cycles):
+        run_len = run_len + 1 if prev is not None and c == prev + 1 else 1
+        prev = c
+        if run_len > best_len:
+            best_len, best_end = run_len, c
+    return best_len, best_end
+
+
+def _directives_text(project_root: str) -> str:
+    """Every active directive's body, urgent first, as one block of text."""
+    directives = _read_directives(project_root)
+    return "\n".join(directives.get("urgent", []) + directives.get("normal", []))
+
+
+def _override_markers(text: str) -> dict:
+    """Every escalation-override marker in ``text``, and how each was read.
+
+    Returns ``{"overrides": set[str], "scoped": list[str], "quoted":
+    list[str]}``. ``overrides`` is ``{"*"}`` for the every-class forms. The
+    quoted markers are NOT in ``overrides`` — they are carried so the decision
+    to ignore them can be reported instead of being silent.
+    """
+    scoped: list[str] = []
+    override_all = False
+    for match in _OVERRIDE_SCOPED_RE.finditer(text):
+        value, was_quoted = _override_value_quoting(match.group(1))
+        if not value:
+            continue
+        # D-139: the wildcard test runs on the RAW quoting, before the quotes
+        # come off. A bare `all` is the every-class spelling; a quoted `"all"`
+        # names the class whose key is the word "all".
+        if not was_quoted and value.lower() in _OVERRIDE_ALL_VALUES:
+            override_all = True
+        else:
+            scoped.append(value)
+
+    if _OVERRIDE_BARE_RE.search(text):
+        override_all = True
+
+    quoted = [m.group(0).strip() for m in _OVERRIDE_QUOTED_RE.finditer(text)]
+
+    return {
+        "overrides": {"*"} if override_all else set(scoped),
+        "scoped": sorted(set(scoped)),
+        "quoted": quoted,
+    }
+
+
+def _escalation_overrides(project_root: str) -> set[str]:
+    """Class keys the human has explicitly de-escalated, or {"*"} for all.
+
+    Recognises ONLY the line-anchored marker grammar (D-101), and only
+    UNQUOTED (D-133). A directive that merely mentions the token — including
+    one forbidding its use, and including one quoting an escalation packet
+    back — returns the empty set, so escalation stays on.
+    """
+    return _override_markers(_directives_text(project_root))["overrides"]
+
+
+def _escalated_classes(
+    fdir: Path, project_root: str, *, apply_overrides: bool = True
+) -> dict[str, dict]:
+    """Classes that have recurred for ESCALATION_CYCLES consecutive cycles.
+
+    A class qualifies while it still has OPEN defects: once every defect of the
+    class closes, the class is cleared (ST-003) and stops producing a
+    structural packet. Escalation therefore never waives closure — it changes
+    the SHAPE of the work, not whether it must be done (AC-011).
+
+    ``apply_overrides=False`` answers "what WOULD be escalated if the human had
+    sent no override?" — which is the only way to report what an override
+    actually did (D-133). Every production caller leaves it True.
+    """
+    defects = _load_json(fdir / "defects.json").get("defects", [])
+    overrides = _escalation_overrides(project_root) if apply_overrides else set()
+    recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+
+    # D-102: resolve every record's class in ONE pass over the whole ledger, so
+    # a cluster split across declared and undeclared records still accumulates
+    # as one class. Per-record `_defect_class` cannot see the ledger, and that
+    # blindness is what let a mixed cluster escape.
+    resolved = _resolve_defect_classes(defects)
+
+    buckets: dict[str, dict] = {}
+    for d in defects:
+        if not isinstance(d, dict):
+            continue
+        key = resolved[id(d)]
+        bucket = buckets.setdefault(
+            key,
+            {
+                "class": key,
+                "cycles": set(),
+                "declared": False,
+                "open": [],
+                "total": 0,
+                "files": set(),
+                "symbols": set(),
+                "spec_refs": set(),
+                "sources": set(),
+            },
+        )
+        bucket["total"] += 1
+        bucket["declared"] = bucket["declared"] or _class_declared(d)
+        # A filing cycle and a regression-reopen cycle both count: a class
+        # reopening IS the class recurring, which is what escalation exists to
+        # catch. Non-integer values are ignored rather than guessed at.
+        for field in ("cycle", "reopened_in_cycle"):
+            value = d.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                bucket["cycles"].add(value)
+        if d.get("file"):
+            bucket["files"].add(d["file"])
+        if d.get("symbol"):
+            bucket["symbols"].add(d["symbol"])
+        if d.get("spec_ref"):
+            bucket["spec_refs"].add(d["spec_ref"])
+        if d.get("source"):
+            bucket["sources"].add(d["source"])
+        if d.get("status") == "open":
+            bucket["open"].append(d)
+
+    escalated: dict[str, dict] = {}
+    for key, bucket in buckets.items():
+        if not bucket["open"]:
+            continue
+        if "*" in overrides or key in overrides:
+            continue
+        run_len, run_end = _consecutive_run(bucket["cycles"])
+        if run_len < ESCALATION_CYCLES:
+            continue
+        escalated[key] = {
+            "class": key,
+            "declared": bucket["declared"],
+            "cycles": sorted(bucket["cycles"]),
+            "consecutive_cycles": run_len,
+            "escalated_at_cycle": run_end,
+            "defect_ids": [d["id"] for d in bucket["open"]],
+            "open_count": len(bucket["open"]),
+            "total_count": bucket["total"],
+            "files": sorted(bucket["files"]),
+            "symbols": sorted(bucket["symbols"]),
+            "spec_refs": sorted(bucket["spec_refs"]),
+            "sources": sorted(bucket["sources"]),
+            "proposal": (recorded.get(key) or {}).get("proposal", ""),
+        }
+    return escalated
+
+
+def _override_instruction(class_key: str) -> str:
+    """The exact directive text that de-escalates ``class_key``.
+
+    RENDERED and verified against the reader, never typed beside it. D-133's
+    first hole was `_structural_proposal` interpolating a class key into an
+    instruction the grammar could not parse back — the tool telling the
+    operator to send a string that could not work.
+
+    D-139: it then verified ONLY THE BARE BRANCH and returned the quoted
+    fallback unverified — so for the class keys spelled like a wildcard (`all`,
+    `any`, `every`) the tool printed a restore marker it would not honour, and
+    the mis-read was not a no-op but an over-broad WILDCARD: following the
+    tool's own printed instruction to restore per-instance packets for the
+    single class named `all` de-escalated EVERY escalated class. Broader than
+    AC-010 licenses, which is "restores per-instance packets" for the class
+    NAMED.
+
+    Every branch is verified now, and the candidates are DERIVED from the quote
+    characters the reader itself recognises rather than typed here — a quote
+    style the reader learns to accept becomes a candidate the same day. A key
+    that survives none of them returns None, because a caller that prints
+    nothing is strictly better than one that prints an instruction the reader
+    will act on differently.
+    """
+    candidates = [f"{ESCALATION_OVERRIDE_TOKEN}: {class_key}"]
+    candidates += [
+        f"{ESCALATION_OVERRIDE_TOKEN}: {q}{class_key}{q}" for q in _OVERRIDE_QUOTES
+    ]
+    for candidate in candidates:
+        if _override_markers(candidate)["overrides"] == {class_key}:
+            return candidate
+    return None
+
+
+def _override_offer(class_key: str) -> str:
+    """The restore offer to print for ``class_key``, or why there is none.
+
+    Both places that offer the operator a way back to per-instance packets go
+    through here, so neither can print an unverified marker — and a class key
+    no marker can name says so, rather than being handed an instruction that
+    would act on something else (D-139).
+    """
+    instruction = _override_instruction(class_key)
+    if instruction is None:
+        return (
+            f"no override marker can name the class {class_key!r} — the "
+            f"directive grammar cannot read that spelling back as this class, "
+            f"so the class needs renaming before it can be overridden"
+        )
+    return f"Foundry-Directive('{instruction}')"
+
+
+def _override_report(fdir: Path, project_root: str) -> dict:
+    """Every escalation-override DECISION, reported rather than left silent.
+
+    D-133's COMMON ROOT, and the reason its other two halves stayed invisible
+    for a whole cycle. Nothing reported an override in either direction:
+    ``foundry_inject_directive`` returned ok:true "Directive injected" and
+    named no recognised override, and the consumer in ``_escalated_classes``
+    silently ``continue``d past the class it dropped. So all four outcomes —
+    the override worked, the class key was mistyped, the key carried a space
+    the grammar could not read, the marker was quoted out of an escalation
+    packet — produced BYTE-IDENTICAL output. An operator had no way to tell a
+    working override from a dead one except by watching what the next
+    Foundry-Tasks emitted, which is the shape of every defect in this class.
+
+    Four decisions, each named:
+      * de_escalated — the marker matched an escalated class, which is now off
+      * unmatched    — a marker was read, and no escalated class has that key
+      * quoted       — a marker was seen and IGNORED because it was quoted
+      * escalated_classes — what is escalated with no override applied, so an
+                       unmatched key can be compared against real ones
+    """
+    markers = _override_markers(_directives_text(project_root))
+    candidates = set(_escalated_classes(fdir, project_root, apply_overrides=False))
+    overrides = markers["overrides"]
+    wildcard = "*" in overrides
+
+    de_escalated = sorted(candidates) if wildcard else sorted(overrides & candidates)
+    unmatched = [] if wildcard else sorted(overrides - candidates)
+
+    known = (
+        f"currently escalated: {', '.join(sorted(candidates))}"
+        if candidates
+        else "no class is currently escalated"
+    )
+
+    decisions: list[str] = []
+    if wildcard:
+        decisions.append(
+            f"escalation-override (every class) — de-escalated "
+            f"{len(de_escalated)} class(es): "
+            + (", ".join(de_escalated) if de_escalated else f"none ({known})")
+        )
+    for key in de_escalated if not wildcard else []:
+        decisions.append(f"escalation-override: {key!r} — de-escalated")
+    for key in unmatched:
+        decisions.append(
+            f"escalation-override: {key!r} — matched NO escalated class ({known}). "
+            f"The class key is free text a stream declares; it must match "
+            f"EXACTLY, spaces included."
+        )
+    for line in markers["quoted"]:
+        decisions.append(
+            f"{line!r} — IGNORED: a blockquoted marker is a quotation of what "
+            f"someone else wrote, not a request. Repeat it unquoted to apply it."
+        )
+
+    return {
+        "decisions": decisions,
+        "de_escalated": de_escalated,
+        "unmatched": unmatched,
+        "quoted_ignored": markers["quoted"],
+        "escalated_classes": sorted(candidates),
+    }
+
+
+def _structural_proposal(info: dict) -> str:
+    """Compose the structural-fix proposal recorded on the class's packet.
+
+    FR-008 / ST-003: an escalated class gets ONE packet carrying a recorded
+    proposal, not N per-instance packets. The proposal states the evidence that
+    made this systemic — which cycles it recurred in, how wide it spreads — and
+    names the obligation that every instance still closes (AC-011).
+    """
+    origin = "stream-declared" if info["declared"] else "clustered by type + file"
+    spread = f"{len(info['files'])} file(s)" if info["files"] else "no file attribution"
+    if info["symbols"]:
+        spread += f", {len(info['symbols'])} symbol(s)"
+    cycles = ", ".join(str(c) for c in info["cycles"])
+    return (
+        f"STRUCTURAL FIX REQUIRED — defect class '{info['class']}' ({origin}) has "
+        f"recurred for {info['consecutive_cycles']} consecutive cycles "
+        f"(cycles seen: {cycles}) and still has {info['open_count']} open "
+        f"instance(s) across {spread}. Per-instance fixes have not held. Find the "
+        f"single root cause these instances share and fix it there, then confirm "
+        f"every listed defect closes as a consequence. Closure is NOT waived: all "
+        f"of {', '.join(info['defect_ids'])} must reach fixed. If this class is "
+        f"genuinely not systemic, the lead can restore per-instance packets with "
+        f"{_override_offer(info['class'])}."
+    )
+
+
+def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None:
+    """Persist each escalated class's proposal so it survives the tool call.
+
+    ST-003 requires the proposal to be RECORDED on the class's single packet;
+    keeping it only in the returned task list would lose it the moment the lead
+    moved on.
+    """
+    path = fdir / ESCALATION_FILENAME
+    with _document_transaction(path) as data:
+        classes = data.setdefault("classes", {})
+        if not isinstance(classes, dict):
+            classes = data["classes"] = {}
+        for key, info in escalated.items():
+            entry = classes.setdefault(key, {})
+            entry["proposal"] = info["proposal"]
+            entry["escalated_at_cycle"] = info["escalated_at_cycle"]
+            entry["consecutive_cycles"] = info["consecutive_cycles"]
+            entry["defect_ids"] = info["defect_ids"]
+            entry["recorded_at"] = _now()
+        data["updated_at"] = _now()
+
+
 # --- Defect lifecycle ---
 
 
+# FR-010 / AC-013 — ONE normalisation layer for "is this the defect's own path?"
+#
+# Both ladders below ask that question, and both used to answer it with raw
+# string equality against the two fields a defect record happens to carry. Two
+# defects came out of that in one cycle and they are the same shape twice: a
+# comparison site left on bytes while the protocol writes something richer.
+#
+#   D-088  `symbol` carries the durable `path#Symbol` cite form FR-004/AC-005
+#          mandate and the four stream agent files instruct — 26 of this run's
+#          own 87 records (30%) spell it that way. `_test_ref_name` reduces a
+#          reference to a BARE leaf, so the own-symbol rule compared a bare
+#          leaf to a path-qualified string and could NEVER be equal: AC-013's
+#          distinctness rule was dead for 30% of real filings, and honouring
+#          the cite policy was what disabled the fix gate. Driven as a matched
+#          pair (same defect, same reference, only the symbol's shape moved):
+#          `evict_stale` -> REFUSED, `src/auth/sweeper.py#evict_stale` ->
+#          ACCEPTED.
+#   D-089  a test INSIDE the defect's own file (`aaa/aaa.py::test_x`) cleared
+#          the own-file rule, which compared the WHOLE reference to the WHOLE
+#          path, so the `::test_x` suffix was enough to walk past it. And in
+#          the other direction `./adjaa/aaa.py::test_x` — a legitimate relative
+#          spelling of a genuinely adjacent path — was refused as "a separator
+#          that delimits nothing", identically to a reference that really did
+#          dangle. Normalisation therefore runs BEFORE the shape ladder, or the
+#          adjacent-path answer cannot be written in the form a teammate types.
+#
+# Every comparison site is bound to these helpers — the reference's file, the
+# reference's name, the statement's own-file and own-symbol restatements, and
+# the paths a statement names — so a future edit cannot leave one of them on
+# raw equality again. That binding is the point: this run's repeated failure is
+# never one bad rule, it is one rule fixed in a single copy.
+#
+# Lexical, never filesystem. `citation.symbol_cite_resolves` exists and is
+# deliberately NOT used here, for the same reason the reference ladder refuses
+# to stat anything (see its comment below): the run's tests live in a target
+# repo at paths this server cannot resolve, and a false refusal blocks a real
+# fix behind an unfalsifiable gate. Parsing is shared with the cite grammar
+# (`citation.iter_symbol_cites`) rather than re-typed, so `path#Symbol` means
+# one thing in this repo.
+_LINE_HINT_SUFFIX = re.compile(r":\d+(?:-\d+)?$")
+_LEADING_RELATIVE = re.compile(r"^(?:\.{1,2}[/\\])+")
+#: Trailing sentence punctuation on a path lifted out of prose — `tools/.` is
+#: the directory plus a full stop, not a path segment named ".".
+_PATH_TRAILING_PUNCT = ".,;:!?)'\""
+
+
+def _strip_line_hint(value: str) -> str:
+    """Drop a trailing ``:42`` / ``:42-68`` hint. AC-007: never compared."""
+    return _LINE_HINT_SUFFIX.sub("", value.strip())
+
+
+def _normalize_path(value: str) -> str:
+    """Fold a path to the single form every own-path comparison judges.
+
+    Drops a line hint and trailing sentence punctuation, folds ``\\`` to ``/``,
+    drops a leading ``./`` or ``../``, collapses doubled slashes, drops a
+    trailing slash, and casefolds. ``./src/Auth/Session.py:42`` and
+    ``src/auth/session.py`` are the same path to this gate, and D-089 is what
+    happens when they are not.
+    """
+    path = _strip_line_hint(value).rstrip(_PATH_TRAILING_PUNCT)
+    path = path.replace("\\", "/")
+    path = _LEADING_RELATIVE.sub("", path)
+    path = re.sub(r"/{2,}", "/", path)
+    return path.rstrip("/").casefold()
+
+
+def _own_symbol_name(own_symbol: str) -> str:
+    """The BARE symbol a ``symbol`` field names, whatever shape it was written in.
+
+    ``src/auth/sweeper.py#evict_stale`` -> ``evict_stale``; ``evict_stale`` ->
+    ``evict_stale``. D-088: the second spelling was judged and the first was
+    not, though FR-004 asks every stream to write the first.
+    """
+    raw = _strip_line_hint(own_symbol)
+    if not raw:
+        return ""
+    cites = iter_symbol_cites(raw)
+    if cites:
+        return cites[0]["symbol"]
+    # A cite whose extension the grammar does not whitelist still splits at the
+    # separator the protocol reserves for exactly this.
+    if "#" in raw:
+        raw = raw.rsplit("#", 1)[1]
+    return _strip_line_hint(raw)
+
+
+def _own_paths(own_file: str, own_symbol: str) -> set[str]:
+    """Every normalised path the defect's own location names.
+
+    The ``file`` field is one. A ``path#Symbol`` ``symbol`` field carries
+    another — and on the records where ``file`` was left empty it is the only
+    one there is, which is why both fields are read rather than just the
+    obvious one.
+    """
+    paths = {_normalize_path(own_file)} if own_file.strip() else set()
+    for cite in iter_symbol_cites(_strip_line_hint(own_symbol)):
+        paths.add(_normalize_path(cite["file"]))
+    paths.discard("")
+    return paths
+
+
+def _normalize_ref(ref: str) -> str:
+    """Strip a leading ``./`` / ``../`` from a reference before it is judged.
+
+    D-089's second half. The empty-segment rule reads a relative prefix as a
+    dangling separator, so ``./adjaa/aaa.py::test_x`` was refused identically
+    to ``./test`` — the relative spelling of a real adjacent path could not be
+    written at all. Only the leading prefix is touched: ``./test`` still fails,
+    now on the rule that actually applies to it (it names no location).
+    """
+    return _LEADING_RELATIVE.sub("", ref.strip())
+
+
+def _ref_file_component(ref: str) -> str:
+    """The FILE a reference names, or a bare qualified-name head.
+
+    ``aaa/aaa.py::test_x`` -> ``aaa/aaa.py``; ``src/auth/s.py#refresh`` ->
+    ``src/auth/s.py``; ``auth::sweeper::tests::x`` -> ``auth``, which is not a
+    file and simply matches no own path.
+    """
+    head = ref.split("::", 1)[0]
+    if "#" in head:
+        head = head.split("#", 1)[0]
+    return head
+
+
+# AC-013 / FR-010 — what makes an `adjacent_path_test` a REAL reference.
+#
+# The gate examined only the statement, by exact equality against the defect's
+# own symbol, and never looked at the test reference at all. Driven and
+# accepted before this: "n/a", "TODO", "tested it manually", and a test named
+# for the defect's own symbol. A-018 asks for "a reference to a test exercising
+# at least one adjacent path" — a string that references no test satisfies the
+# gate's letter and none of its purpose.
+#
+# Structural rules, each decidable from the string alone, each killing values
+# observed being accepted:
+#
+#   1. A reference is a LOCATOR, not a sentence — no internal whitespace.
+#      Kills "tested it manually".
+#   2. It must carry a locator separator (:: / \ # or .). Kills "TODO".
+#   3. It must name a test — a "test" or "spec" token somewhere. Kills "n/a",
+#      which clears rule 2 on its slash while referencing nothing.
+#   4. Every locator segment must be non-empty — no leading separator, no
+#      trailing separator, no doubled separator. Kills "tests/", ".test",
+#      "test.", "./test" and "spec.", each of which clears rules 2 and 3 on a
+#      separator that delimits nothing (D-050).
+#   5. The LEAF must survive normalisation as a name. Take the last part after
+#      the qualified-name separators, drop one trailing file extension, strip
+#      test/spec scaffolding affixes, and what remains must be a name of at
+#      least _TEST_REF_MIN_NAME_CHARS characters that is not a placeholder
+#      token. Kills "src/foo.py::test_" (strips to nothing), "x.test",
+#      "a.spec", "t.test", "test/x" (one-character names), and
+#      "manual-test/none", "foo.test.bar", "no.test.exists" (placeholder and
+#      negation names) — all of which cleared rules 1-4 (D-050).
+#
+# Then one semantic rule, mirroring the statement check's existing philosophy
+# (exact equality is the one thing decidable here): the reference must not name
+# ONLY the path the defect was found on.
+#
+# Deliberately NOT a filesystem existence check. The run's tests live in the
+# target repo at paths this server cannot resolve reliably — monorepo roots,
+# language-specific discovery, tests generated at build time — and a false
+# refusal here blocks a real fix behind an unfalsifiable gate. These rules
+# reject non-answers; they do not certify that the test exists or passes.
+#
+# Kept deliberately language-agnostic: foundry runs against Go, JS and Rust
+# repos, so `path::name`, `path/to/file.ext`, `Class#method` and dotted module
+# paths all clear every rule. Each rule was checked against the cross-language
+# accept fixture in tests/test_fix_gate.py before being added — a rule that
+# refuses `auth::sweeper::tests::evicts_stale_sessions` or
+# `src/auth/__tests__/sweeper.test.ts` is a worse defect than the one it fixes.
+_TEST_REF_LOCATOR_CHARS = ("::", "/", "\\", "#", ".")
+_TEST_REF_NAMES_A_TEST = re.compile(r"test|spec", re.IGNORECASE)
+# The separators that split a QUALIFIED NAME into parts. `.` is excluded: it
+# separates a file extension and a dotted module path alike, so the leaf of
+# `src/auth/sweeper.spec.ts` is the whole `sweeper.spec.ts`, normalised below.
+_TEST_REF_PART_SEPARATORS = ("::", "#", "/", "\\")
+# Scaffolding affixes stripped before judging a test's NAME and before
+# comparing it to the defect's own symbol, so `test_refresh_session` is
+# recognised as naming `refresh_session` and `sweeper.test` as naming
+# `sweeper`. `.` joined `_` and `-` here for the dotted JS/TS convention.
+_TEST_NAME_AFFIX = re.compile(
+    r"^(?:tests?|specs?|it)[_\-.]+|[_\-.]+(?:tests?|specs?)$", re.IGNORECASE
+)
+# One trailing file extension, dropped before affix stripping: `.py`, `.go`,
+# `.ts`, `.rb`. Bounded at 6 characters so a dotted module path's final
+# component is not mistaken for an extension.
+_TEST_REF_EXTENSION = re.compile(r"\.[A-Za-z0-9]{1,6}$")
+_TEST_REF_MIN_NAME_CHARS = 2
+# Names that reference nothing. Every one of these was driven through the gate
+# and accepted (D-050): `manual-test/none`, `foo.test.bar`, `no.test.exists`.
+# Single characters are covered by _TEST_REF_MIN_NAME_CHARS and are not
+# repeated here.
+_PLACEHOLDER_NAMES = frozenset({
+    "aa", "xx", "xxx", "asdf", "blah",
+    "foo", "bar", "baz", "qux", "quux",
+    "na", "nil", "null", "none", "no", "not", "nope", "nothing", "nada",
+    "tbd", "todo", "fixme", "wip", "pending", "unknown", "unclear",
+    "manual", "manually", "dummy", "fake", "placeholder", "example",
+    "sample", "temp", "tmp",
+})  # 34 names
+
+
+def _locator_segments(ref: str) -> list[str]:
+    """Split ``ref`` on every locator separator, ``::`` counting as one."""
+    sentinel = "\x00"
+    normalized = ref.replace("::", sentinel)
+    for sep in ("/", "\\", "#", "."):
+        normalized = normalized.replace(sep, sentinel)
+    return normalized.split(sentinel)
+
+
+def _test_ref_name(ref: str) -> str:
+    """The bare NAME a reference resolves to, or "" if it names nothing.
+
+    Leaf of the qualified name, minus one trailing file extension, minus
+    test/spec scaffolding affixes. ``tests/test_auth.py`` -> ``auth``;
+    ``src/auth/sweeper.spec.ts`` -> ``sweeper``; ``src/foo.py::test_`` -> "".
+    """
+    leaf = ref
+    for sep in _TEST_REF_PART_SEPARATORS:
+        if sep in leaf:
+            leaf = leaf.rsplit(sep, 1)[1]
+    leaf = _TEST_REF_EXTENSION.sub("", leaf)
+    # Repeat to a fixed point so `sweeper.test` and `spec_helper_test` both
+    # reduce, and a doubly-affixed name does not keep half its scaffolding.
+    for _ in range(4):
+        stripped = _TEST_NAME_AFFIX.sub("", leaf)
+        if stripped == leaf:
+            break
+        leaf = stripped
+    return leaf
+
+
+# FR-010's load-bearing word: the test must drive a NAMED adjacent path — one
+# the STATEMENT named. A-017 defines the statement as "who else calls this /
+# what else transitions here / what runs concurrently", so the two declarations
+# are a matched pair: the statement names the paths, the reference drives one
+# of them.
+#
+# D-092: that coupling did not exist. `_test_ref_problem` took (ref, own_symbol,
+# own_file) — the statement was not a parameter and was never read when judging
+# the reference — so `foundry_mark_defect_fixed` ran two INDEPENDENT checks and
+# never related them. Driven through server.py#_DISPATCH["Foundry-Fix"] against
+# a defect on `refresh_session`: statement "login_handler also calls this and
+# the sweeper runs concurrently", reference
+# "tests/test_billing.py::test_invoice_totals_round_half_up" -> ACCEPTED. The
+# statement named two adjacent paths and the referenced test drove neither.
+#
+# The rule is deliberately the weakest one that closes that: share ONE token
+# and the reference is accepted. Refusing a real answer is this gate's
+# characteristic failure — it is what D-076 and D-085 both were, and it fires
+# in GRIND where the teammate has no way around it — so every judgement call
+# here is resolved toward accepting:
+#
+#   * ANY overlap accepts. Not a majority, not the leading token, one token.
+#   * It is the LAST rung, reached only after the whole structural ladder and
+#     only when the statement itself cleared its own ladder (see the caller):
+#     relating a refused statement would report the reference as unlinked when
+#     the real problem is the statement the caller is already being told about.
+#   * It judges only a reference that names a test FUNCTION. A reference that
+#     names a whole test FILE names a container, and a container's name is not
+#     a claim about which path is driven — judging it would be asserting
+#     something the reference never said. That is the same ceiling the rules
+#     above keep ("these reject non-answers; they do not certify"), and it is
+#     why `tests/test_auth.py` stays acceptable against any statement.
+#
+# The tokens compared are the discriminating ones: locator scaffolding and the
+# filler that appears in a path and in a sentence without linking them is
+# dropped, because an overlap on "test" or "the" is not evidence of anything.
+_LINKAGE_MIN_TOKEN_CHARS = 3
+_LINKAGE_TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+_LINKAGE_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+# Words a locator and a sentence share without the sharing meaning anything:
+# test scaffolding, the conventional source directories, this gate's own
+# vocabulary (every statement says "calls"/"path"/"concurrently"), and ordinary
+# English filler. Dropping a word makes the rule STRICTER, so this set is kept
+# to words that genuinely carry no linkage rather than extended for tidiness.
+_LINKAGE_STOPWORDS = frozenset({
+    # locator scaffolding and conventional roots
+    "test", "tests", "testing", "spec", "specs", "src", "lib", "pkg",
+    "internal", "cmd", "app", "main", "index",
+    # this gate's own vocabulary — present in nearly every statement
+    "path", "paths", "adjacent", "defect", "defects", "call", "calls",
+    "called", "caller", "callers", "run", "runs", "running", "concurrent",
+    "concurrently", "transition", "transitions", "code", "file", "files",
+    "function", "functions", "method", "methods", "module", "modules",
+    "line", "lines", "name", "named", "names", "check", "checks", "fix",
+    "fixed", "branch", "case", "cases",
+    # ordinary English filler
+    "the", "and", "but", "for", "not", "are", "was", "were", "has", "have",
+    "had", "its", "this", "that", "these", "those", "there", "their", "they",
+    "them", "with", "from", "into", "onto", "also", "both", "all", "any",
+    "some", "more", "most", "only", "just", "then", "than", "when", "where",
+    "which", "while", "who", "what", "how", "why", "does", "did", "done",
+    "can", "will", "would", "should", "could", "been", "being", "one", "two",
+    "still", "same", "other", "others", "another", "each", "every", "via",
+    "per", "out", "off", "yet", "now", "new", "old", "use", "used", "uses",
+    "using", "here", "else", "way", "ways", "thing", "things",
+})  # 127 words
+
+
+def _content_tokens(text: str) -> set[str]:
+    """The discriminating word-parts of ``text``, casefolded.
+
+    Splits on every non-alphanumeric character and again at camelCase
+    boundaries, so ``TestSweeperEvictsStale`` and ``test_sweeper_evicts_stale``
+    yield the same set. Scaffolding, filler and anything under
+    ``_LINKAGE_MIN_TOKEN_CHARS`` characters is dropped.
+    """
+    parts: list[str] = []
+    for chunk in _LINKAGE_TOKEN_SPLIT.split(text):
+        if chunk:
+            parts.extend(_LINKAGE_CAMEL_BOUNDARY.split(chunk))
+    return {
+        folded
+        for folded in (part.casefold() for part in parts)
+        if len(folded) >= _LINKAGE_MIN_TOKEN_CHARS
+        and folded not in _LINKAGE_STOPWORDS
+    }
+
+
+def _ref_names_a_test_function(ref: str) -> bool:
+    """True when the reference singles out a test INSIDE a file.
+
+    The leaf of the qualified name carries no file extension:
+    ``tests/test_auth.py::test_sweeper`` and ``auth::sweeper::tests::evicts``
+    do, ``tests/test_auth.py`` and ``sweeper.spec.ts`` do not.
+    """
+    leaf = ref
+    for sep in _TEST_REF_PART_SEPARATORS:
+        if sep in leaf:
+            leaf = leaf.rsplit(sep, 1)[1]
+    return _TEST_REF_EXTENSION.search(leaf) is None
+
+
+def _linkage_problem(ref: str, statement: str) -> str | None:
+    """D-092: name why ``ref`` drives no path ``statement`` named, else None.
+
+    A pure string relation between two caller-supplied fields — no I/O, and no
+    claim that either names anything real. See the block above for why every
+    branch here resolves toward accepting.
+    """
+    if not statement or not _ref_names_a_test_function(ref):
+        return None
+    ref_tokens = _content_tokens(ref)
+    statement_tokens = _content_tokens(statement)
+    if not ref_tokens or not statement_tokens or (ref_tokens & statement_tokens):
+        return None
+    named = ", ".join(sorted(statement_tokens)[:8])
+    drives = ", ".join(sorted(ref_tokens)[:8])
+    return (
+        f"{ref!r} drives none of the paths the statement named. The statement "
+        f"names {named}; the reference names {drives}. FR-010 asks for a test "
+        "that drives a NAMED adjacent path — one the adjacent_path_statement "
+        "named — so reference the test that drives one of those, or name the "
+        "path this test actually drives in the statement"
+    )
+
+
+def _test_ref_problem(
+    ref: str,
+    own_symbol: str,
+    own_file: str,
+    statement: str = "",
+) -> str | None:
+    """Name why ``ref`` is not a usable adjacent-path test reference, else None.
+
+    Returns a reason string suitable for a named refusal. Never raises: every
+    branch is a pure string test over the caller's own input. ``statement`` is
+    the caller's adjacent-path statement when it has already cleared its own
+    ladder, and enables the linkage rung (D-092); passing "" skips that rung.
+
+    The refusals quote the caller's OWN spelling. Normalisation (D-089) decides
+    the verdict and must never decide what the caller is shown, or a teammate
+    reads a refusal about a string they did not write.
+    """
+    if any(ch.isspace() for ch in ref):
+        return (
+            f"{ref!r} is prose, not a test reference. Give a locator such as "
+            "tests/test_auth.py::test_sweeper_evicts_stale_sessions."
+        )
+    # D-089: the relative prefix is dropped BEFORE the shape ladder, so
+    # `./adjaa/aaa.py::test_x` is judged as the locator it is. `./test` still
+    # fails — on the locator rule immediately below, which is the rule that
+    # actually applies to it.
+    normalized_ref = _normalize_ref(ref)
+    if not any(sep in normalized_ref for sep in _TEST_REF_LOCATOR_CHARS):
+        return (
+            f"{ref!r} names no location. A test reference carries a path or a "
+            "qualified name (path/to/test_file.py::test_name)."
+        )
+    if not _TEST_REF_NAMES_A_TEST.search(normalized_ref):
+        return (
+            f"{ref!r} does not name a test. The reference must point at a test "
+            "file or test function."
+        )
+    if any(seg == "" for seg in _locator_segments(normalized_ref)):
+        return (
+            f"{ref!r} has a separator that delimits nothing — a dangling or "
+            "doubled '/', '.' or '::'. A reference names a test, not a "
+            "directory or an extension on its own."
+        )
+
+    # The only FILE the reference names is the one the defect was found in —
+    # whether it stops there or singles out a test within it. D-089: this
+    # compared the whole reference to the whole path, so `aaa/aaa.py` was
+    # refused and `aaa/aaa.py::test_aaa_adjacent`, a test in the defect's own
+    # file, walked straight past on the strength of its suffix.
+    own_paths = _own_paths(own_file, own_symbol)
+    ref_file = _normalize_path(_ref_file_component(normalized_ref))
+    if own_paths and ref_file and ref_file in own_paths:
+        return (
+            f"{ref!r} names no file but the defect's own ({own_file or ref_file}), "
+            "so it drives no path adjacent to the one the defect was found on. "
+            "AC-013 asks for a test on a DIFFERENT caller, transition or "
+            "concurrent interaction — reference the test that drives it, or "
+            "name it as a qualified name rather than a path into this file."
+        )
+
+    name = _test_ref_name(normalized_ref)
+    if not name:
+        return (
+            f"{ref!r} is test scaffolding with no test name attached — it "
+            "strips to nothing. Name the test, not the prefix."
+        )
+    if len(name) < _TEST_REF_MIN_NAME_CHARS:
+        return (
+            f"{ref!r} resolves to {name!r}, which names nothing specific. The "
+            "reference must identify a test, not a single letter beside the "
+            "word 'test'."
+        )
+    if name.casefold() in _PLACEHOLDER_NAMES:
+        return (
+            f"{ref!r} resolves to the placeholder {name!r}, which references "
+            "no test. A-018 asks for a test that EXERCISES an adjacent path; "
+            "a well-formed string that points at nothing is the same "
+            "non-answer as 'n/a'."
+        )
+
+    # Compare the reference's NAME to the defect's own symbol. Exact equality
+    # only, so a test like test_refresh_session_from_login_handler (a genuinely
+    # adjacent caller) still passes while test_refresh_session does not.
+    #
+    # D-088: both sides are normalised to a bare name first. `own_symbol` was
+    # compared verbatim, so a record spelling it as `path/f.py#evict_stale` —
+    # the durable form FR-004 mandates and 30% of this run's records use —
+    # could never equal a bare leaf, and this rule was inert for exactly the
+    # spelling the protocol asks for.
+    own_name = _own_symbol_name(own_symbol)
+    if own_name and name.casefold() == own_name.casefold():
+        return (
+            f"{ref!r} names a test for the defect's own symbol "
+            f"({own_symbol}). AC-013 requires a test driving a NAMED "
+            "adjacent path — a DIFFERENT caller, transition, or concurrent "
+            "interaction than the one the defect was found on."
+        )
+
+    # Last rung (D-092): the reference must drive a path the STATEMENT named.
+    # Reached only for a statement that already cleared its own ladder.
+    return _linkage_problem(ref, statement)
+
+
+# FR-009 / AC-013 — what makes an `adjacent_path_statement` a REAL answer.
+#
+# D-050: the test-reference ladder above was built and the statement side was
+# left exactly as cycle 2 found it — one check, exact equality against the
+# defect's own symbol. Driven and ACCEPTED after that fix landed: 'x', 'none',
+# 'n/a', 'no adjacent paths', 'the same path', 'nothing', '-', '0'. A
+# declaration that there IS no adjacent path satisfied a gate whose entire
+# purpose is to make the fixer name one.
+#
+# A-017 asks the statement to name "who else calls this / what else transitions
+# here / what runs concurrently". Three rules, in the order a caller most needs
+# to hear them:
+#
+#   1. It must not restate the defect's own path — its own symbol or its own
+#      file (the pre-existing rule, now covering both), nor say so in words:
+#      "the same path", "same as the defect".
+#   1b. D-085 is that literal rule's own over-correction, and it is D-076 one
+#      pattern over. The literal form matched on "same" ALONE, so a statement
+#      whose SUBJECT is a shared resource —
+#
+#          "The same index.lock is taken by the pathspec commit path and by
+#           foundry_validate's git query, which is the concurrent interaction."
+#
+#      — was told it "declares that there is no adjacent path", which is the
+#      opposite of what it says. Two distinct real paths meeting at one lock,
+#      one file or one record is "what runs concurrently" answered exactly:
+#      sharing the resource IS the adjacency. Moving the resource off the front
+#      of the sentence was always accepted ("The pathspec commit path and
+#      foundry_validate's git query both take index.lock…"), and that is what
+#      proved the rule lexical rather than semantic — same two paths, same
+#      claim, only the first word moved. The NOUN AFTER "same" is what carries
+#      the restatement, so that is what the pattern reads.
+#   2. It must not LEAD with a negation. A statement that opens by asserting no
+#      other path exists is a refusal to answer, not an answer; note the gate is
+#      already unsatisfiable in that case, because a fixer with no adjacent path
+#      has no adjacent-path test to reference either. These patterns are
+#      ^-anchored, so `test_no_duplicate_ids` inside a longer statement is
+#      untouched.
+#   2b. A negation LATER in the statement is refused only when it has bounded
+#      nothing — see `_unbounded_denial` below. This is D-076, and it is rule
+#      2's over-correction: the two adjacency patterns used to be UNANCHORED
+#      whole-string searches sitting in the tuple above under a comment
+#      claiming "Anchored patterns only", which was false of exactly those two.
+#      They therefore refused the MOST rigorous form of the answer A-017 asks
+#      for — an enumeration followed by a clause CLOSING it:
+#
+#          "_current_cycle is also called by foundry_get_context and
+#           _format_status_display; no other module reads state.json directly,
+#           so those two are the adjacent callers."
+#
+#      That names two real adjacent callers and then states the radius is
+#      closed, and the gate rejected it as "declares that there is no adjacent
+#      path" — in GRIND, the phase where every defect must close. The property
+#      that separates it from a genuine non-answer is positional and is true of
+#      the language rather than of punctuation: A BOUND COMES AFTER WHAT IT
+#      BOUNDS. So a trailing denial is an answer when something was named
+#      before it, and a refusal when nothing was.
+#   3. It must carry enough substance to have named something —
+#      _STATEMENT_MIN_WORDS words of at least two letters. Kills 'x', '-', '0',
+#      'none', 'n/a', 'nothing', 'no adjacent paths' and 'the same path' on
+#      length alone, and is the floor rules 2 and 2b sit on top of.
+#
+# Like the reference rules, these reject non-answers; they cannot certify that
+# the named path is real. That is the ceiling of what a string check can do,
+# and the run's own INSPECT streams are what verify the rest. Rule 1's literal
+# form shows the ceiling plainly: it catches the restatement that OPENS on
+# those two nouns and never caught one buried mid-sentence ("It is the same
+# file as the defect" is accepted here, at HEAD and before it). Widening it
+# back toward that case is what refuses real answers, which is D-085, so the
+# missed non-answer is the side to err on.
+_STATEMENT_MIN_WORDS = 4
+_STATEMENT_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]+")
+_STATEMENT_NON_ANSWERS = (
+    # Leading negation: "no other callers", "none", "nothing else touches it",
+    # "there are no adjacent paths", "not applicable".
+    re.compile(r"^(?:there\s+(?:are|is)\s+)?(?:no|none|not|nothing|never)\b", re.I),
+    # Rule 1's literal form: "the same path", "same as the defect". Narrowed
+    # from `^(?:the\s+)?same\b` by D-085 — see rule 1b above. It sits in this
+    # tuple for the anchoring it needs, not because it is a negation; the two
+    # nouns are what restate the defect's own path.
+    re.compile(r"^(?:the\s+)?same\s+(?:path|as)\b", re.I),
+    re.compile(r"^n\s*/?\s*a$", re.I),
+)
+# Rule 2b (D-076). A negation of adjacency ANYWHERE in the statement. These are
+# deliberately unanchored — a bound is not expected at the start — and are
+# judged by `_unbounded_denial`, never by a bare whole-string search.
+_STATEMENT_ADJACENCY_DENIALS = (
+    re.compile(r"\bno\s+(?:other|adjacent|additional|further)\b", re.I),
+    re.compile(r"\bnothing\s+else\b", re.I),
+)
+
+
+def _unbounded_denial(normalized: str) -> bool:
+    """True when a denial of adjacency has named nothing for it to bound.
+
+    D-076. The test is the text BEFORE the first denial: a statement that
+    enumerated callers and then closed the radius has cleared the same
+    substance floor rule 3 applies to the whole statement, while "I found no
+    other callers" and "the grep shows no other callers" have not — they open
+    with a subject and a verb and then decline to answer.
+
+    Deliberately positional and not a clause tokenizer: splitting English on
+    punctuation would have to guess at the '.' inside ``state.json`` and at how
+    deep a comma nests, and would still accept "Also, no other module calls
+    this" on one word of filler. Counting the words a denial had available to
+    bound needs neither guess.
+    """
+    starts = [
+        match.start()
+        for match in (pattern.search(normalized) for pattern in _STATEMENT_ADJACENCY_DENIALS)
+        if match is not None
+    ]
+    if not starts:
+        return False
+    bounded = _STATEMENT_WORD.findall(normalized[: min(starts)])
+    return len(bounded) < _STATEMENT_MIN_WORDS
+
+
+# A path NAMED inside a statement: anything carrying a directory separator, or
+# a bare filename with an extension. Used only to ask D-089's question — "is
+# every path this statement names the defect's own?" — which is a property of
+# the WHOLE declaration and so cannot refuse a statement that also names
+# something else. A token this over-matches (`e.g`, `tools/.`) can only make
+# the rule fire LESS, which is the direction to be wrong in.
+_STATEMENT_NAMED_PATH = re.compile(
+    r"(?:[\w.\-]+[/\\])+[\w.\-]*"
+    r"|[\w\-]+\.[A-Za-z0-9]{1,6}\b"
+)
+
+
+def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | None:
+    """Name why ``statement`` is not a usable adjacent-path statement, else None."""
+    normalized = " ".join(statement.split())
+    folded = normalized.casefold()
+    # D-088: both own-path comparisons read the normalised forms, so a record
+    # whose `symbol` is spelled `path/f.py#refresh_session` is judged the same
+    # as one spelled `refresh_session`. The statement side is normalised only
+    # when it is a single token — running the cite parser over prose would let
+    # a statement that MENTIONS a cite and then names a real adjacent caller
+    # compare equal to the defect's own symbol, which is a false refusal and
+    # the failure mode this gate has already had twice.
+    own_name = _own_symbol_name(own_symbol)
+    own_paths = _own_paths(own_file, own_symbol)
+    single_token = " " not in normalized
+    statement_name = _own_symbol_name(normalized) if single_token else normalized
+
+    if own_name and statement_name.casefold() == own_name.casefold():
+        return (
+            f"it just names the defect's own symbol ({own_symbol}). An "
+            "adjacent path is a DIFFERENT caller, transition, or "
+            "concurrent interaction than the one the defect was found on"
+        )
+    if own_paths and single_token and _normalize_path(normalized) in own_paths:
+        return (
+            f"it just names the defect's own file ({own_file or normalized}), "
+            "which is the path the defect was found on rather than one "
+            "adjacent to it"
+        )
+    for pattern in _STATEMENT_NON_ANSWERS:
+        if pattern.search(normalized):
+            return (
+                f"{normalized!r} declares that there is no adjacent path. That "
+                "is a refusal to answer, not an answer — and a fix with no "
+                "adjacent path has no adjacent-path test to reference either. "
+                "Name who ELSE calls this, what else transitions here, or what "
+                "runs concurrently"
+            )
+    if _unbounded_denial(normalized):
+        # D-076: name the REMEDY, which is not "delete the denial". Closing the
+        # radius is the strongest form of the answer — it just has to come
+        # after the answer it closes.
+        return (
+            f"{normalized!r} denies that an adjacent path exists without first "
+            "naming one, so the denial bounds nothing. A closing clause like "
+            '"no other module reads it" is welcome — and is the most rigorous '
+            "form of the answer — but it belongs AFTER the enumeration it "
+            "closes. Name who ELSE calls this, what else transitions here, or "
+            "what runs concurrently, and then bound it"
+        )
+    if len(_STATEMENT_WORD.findall(normalized)) < _STATEMENT_MIN_WORDS:
+        return (
+            f"{normalized!r} is too thin to have named a path. State who else "
+            "calls this, what else transitions here, or what runs concurrently "
+            f"— at least {_STATEMENT_MIN_WORDS} words naming real callers, "
+            "transitions or concurrent work"
+        )
+
+    # Last rung (D-089): every path the statement names is the defect's own, so
+    # however many words it spent, it named no path beside the one the defect
+    # was found on. Deliberately a SUBSET test over the whole declaration and
+    # not a search: a statement that names the own file alongside another path
+    # — "login_handler in src/auth/session.py also calls this" — names a real
+    # adjacent caller and is accepted. The lexical `same` pattern above is
+    # untouched; widening THAT is D-085, and this rule reaches the mid-sentence
+    # restatement it deliberately cannot without reading phrases.
+    named_paths = {
+        _normalize_path(match) for match in _STATEMENT_NAMED_PATH.findall(normalized)
+    }
+    named_paths.discard("")
+    if own_paths and named_paths and named_paths <= own_paths:
+        return (
+            f"the only path it names is the defect's own ({own_file or own_symbol}). "
+            "Name who ELSE calls this, what else transitions here, or what runs "
+            "concurrently — a path beside the one the defect was found on, not "
+            "the one it was found on restated"
+        )
+    return None
+
+
+@ledger_refusals
 def foundry_mark_defect_fixed(
     defect_id: str,
     cycle: int,
+    adjacent_path_statement: str = "",
+    adjacent_path_test: str = "",
     project_root: str = ".",
 ) -> dict:
-    """Mark a defect as fixed in this cycle."""
+    """Mark a defect as fixed, declaring the fix's blast radius.
+
+    FR-009 / CT-001 / ST-004. This call validated NOTHING before — it matched
+    the first id and flipped status, which is how fixes kept opening
+    regressions their own tests could not see. Two declarations are now
+    preconditions of the transition:
+
+      adjacent_path_statement — who ELSE calls this, what else transitions
+          here, what runs concurrently (A-017).
+      adjacent_path_test — a reference to a test that drives at least one
+          NAMED adjacent path: a different caller, transition, or concurrent
+          interaction than the path the defect was found on (A-018 / FR-010).
+
+    A call missing either is refused with a message naming each missing field,
+    in the same shape as the acceptance gate's rejections. The declarations are
+    persisted on the defect record, so the blast radius a fix claimed to have
+    considered is auditable after the fact.
+
+    Both declarations are also checked for CONTENT, not merely presence: the
+    statement must not restate the defect's own symbol, and the test reference
+    must look like a test reference and must not name only the defect's own
+    path (see ``_test_ref_problem``). A presence-only gate accepted "n/a" and
+    "tested it manually", which is the gate passing while the guarantee it
+    exists for does not hold. Every failing field is named in one refusal.
+
+    The whole read-modify-write runs inside ``ledger_transaction`` (FR-020 /
+    AC-025). It used to be an UNLOCKED load / mutate / save while every other
+    writer of defects.json held that lock, so a fix landing between a peer's
+    read and write was silently discarded by the peer's ``.tmp`` rename — the
+    call returned ok and the defect stayed open. Concurrent fixes are the norm
+    in GRIND, not an edge case: a whole wave of teammates closes defects in
+    parallel against one ledger.
+
+    ``fixed_in_cycle`` is stamped from the SERVER counter (FR-005 / ST-001);
+    the caller's ``cycle`` is retained as ``declared_fixed_cycle`` for audit
+    only. Escalation reads these numbers back, and it accumulated against
+    lead-asserted cycles while the server counter sat at 0.
+    """
+    from foundry_mcp.tools.foundry import _dict_records, ledger_transaction
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     defects_path = fdir / "defects.json"
-    data = _load_json(defects_path)
 
-    found = False
-    for d in data.get("defects", []):
-        if d["id"] == defect_id:
-            d["status"] = "fixed"
-            d["fixed_in_cycle"] = cycle
-            found = True
-            break
+    statement = (adjacent_path_statement or "").strip()
+    test_ref = (adjacent_path_test or "").strip()
+    server_cycle = _current_cycle(fdir)
 
-    if not found:
-        return {"error": f"Defect {defect_id} not found"}
+    # Every branch runs INSIDE the transaction: the not-found and adjacency
+    # checks both read the target record, so evaluating them outside would
+    # re-open the same read-then-write window this lock exists to close. A
+    # refusal mutates nothing, and writing back an unmodified document is a
+    # no-op.
+    refusal: dict | None = None
+    open_count = 0
+    with ledger_transaction(defects_path, "defects") as records:
+        target = None
+        # D-128: this door's inline `isinstance(d, dict)` was CORRECT and was
+        # still an instance of the class — a hand-applied copy of the filter
+        # `_dict_records` exists to hold once. The batch door's identical scan
+        # had no copy at all, which is how one door tolerated a malformed
+        # record while the other lost the caller's filing to an AttributeError.
+        for d in _dict_records(records):
+            if d.get("id") == defect_id:
+                target = d
+                break
 
-    _save_json(defects_path, data)
+        missing = []
+        if not statement:
+            missing.append("adjacent_path_statement")
+        if not test_ref:
+            missing.append("adjacent_path_test")
+        own_symbol = (target.get("symbol") or "").strip() if target else ""
+        own_file = (target.get("file") or "").strip() if target else ""
+
+        # Present-but-inadequate declarations, gathered so ONE refusal names
+        # every field that failed (CT-001's "naming each missing field" applies
+        # to a junk declaration exactly as it does to an absent one — a caller
+        # who supplied two non-answers should be told about both, not sent back
+        # twice).
+        invalid: list[dict] = []
+        statement_is_usable = False
+        if statement:
+            # ST-004 / AC-013: the declared path must be ADJACENT — distinct
+            # from the path the defect itself was found on — and it must
+            # actually be a declaration. The check here was exact equality
+            # against the defect's own symbol and nothing else, so 'x', 'none',
+            # 'no adjacent paths' and 'the same path' all closed defects
+            # (D-050). See `_statement_problem` for the ladder.
+            problem = _statement_problem(statement, own_symbol, own_file)
+            if problem is not None:
+                invalid.append({
+                    "field": "adjacent_path_statement",
+                    "reason": problem,
+                })
+            else:
+                statement_is_usable = True
+        if test_ref:
+            # D-092: the two declarations are a matched PAIR — the statement
+            # names the adjacent paths, the reference drives one of them — so
+            # the statement is an INPUT to judging the reference, not a
+            # separate verdict beside it. It is withheld when it failed its own
+            # ladder: a caller told "your reference drives none of the paths
+            # your statement named" about a statement that named none would be
+            # sent after the wrong problem.
+            problem = _test_ref_problem(
+                test_ref,
+                own_symbol,
+                own_file,
+                statement=statement if statement_is_usable else "",
+            )
+            if problem is not None:
+                invalid.append({"field": "adjacent_path_test", "reason": problem})
+
+        if target is None:
+            refusal = {"error": f"Defect {defect_id} not found"}
+        elif missing:
+            refusal = {
+                "error": (
+                    f"Cannot mark {defect_id} fixed — missing required field(s): "
+                    f"{', '.join(missing)}. adjacent_path_statement must name who else "
+                    "calls this, what else transitions here, or what runs concurrently. "
+                    "adjacent_path_test must reference a test that drives at least one "
+                    "of those adjacent paths."
+                ),
+                "missing_fields": missing,
+                "hint": (
+                    "Write the adjacent-path test first, then re-call Foundry-Fix with "
+                    "both declarations. A fix whose blast radius is undeclared is how a "
+                    "defect closes and a regression opens in the same cycle."
+                ),
+            }
+        elif invalid:
+            fields = [item["field"] for item in invalid]
+            refusal = {
+                "error": (
+                    f"Cannot mark {defect_id} fixed — unusable declaration(s): "
+                    + "; ".join(f"{item['field']} — {item['reason']}" for item in invalid)
+                    + "."
+                ),
+                # Same key the absent-field refusal uses, so a caller has one
+                # place to read "which fields must I supply or repair".
+                "missing_fields": fields,
+                "invalid_fields": invalid,
+                "hint": (
+                    "Name a second path that touches this code, then reference the "
+                    "test that drives THAT path — a locator such as "
+                    "tests/test_auth.py::test_sweeper_evicts_stale_sessions, not a "
+                    "note to yourself."
+                ),
+            }
+        else:
+            target["status"] = "fixed"
+            target["fixed_in_cycle"] = server_cycle
+            target["declared_fixed_cycle"] = cycle
+            target["adjacent_path_statement"] = statement
+            target["adjacent_path_test"] = test_ref
+
+        open_count = sum(
+            1 for d in _dict_records(records) if d.get("status") == "open"
+        )
+
+    if refusal is not None:
+        return refusal
 
     forge_log = fdir / "forge-log.md"
     if forge_log.exists():
         with open(forge_log, "a", encoding="utf-8") as f:
-            f.write(f"\n**{defect_id} FIXED** in cycle {cycle} ({_now()})\n\n")
+            f.write(f"\n**{defect_id} FIXED** in cycle {server_cycle} ({_now()})\n")
+            f.write(f"- **Adjacent paths:** {statement}\n")
+            f.write(f"- **Adjacent-path test:** {test_ref}\n\n")
 
-    open_count = sum(1 for d in data["defects"] if d.get("status") == "open")
-    return {"ok": True, "defect_id": defect_id, "fixed_in_cycle": cycle, "remaining_open": open_count}
+    return {
+        "ok": True,
+        "defect_id": defect_id,
+        "fixed_in_cycle": server_cycle,
+        "declared_cycle": cycle,
+        "adjacent_path_statement": statement,
+        "adjacent_path_test": test_ref,
+        "remaining_open": open_count,
+    }
 
 
+# --------------------------------------------------------------------------- #
+# Cross-casting seam: the two helpers tools/foundry.py owns.
+#
+# Both are imported LAZILY and deliberately unguarded. Importing them at module
+# top would make `import foundry_mcp.server` fail outright while the sibling
+# casting that owns tools/foundry.py is still in flight, taking every other
+# tool in this server down with it; swallowing the ImportError would instead
+# hide a real wiring break behind a silent fallback. A lazy import fails loudly
+# at exactly the one call site that needs the symbol, naming it.
+#
+# There must be ONE writer for each of these. Do not add a local ledger writer
+# or a local ID mint here \u2014 that duplication is what FR-013 and FR-020 exist to
+# remove.
+# --------------------------------------------------------------------------- #
+
+
+def _mint_defect_id(records: list) -> str:
+    """Allocate a defect ID that is unique under concurrent filing (FR-020).
+
+    Replaces the positional ``D-{len(defects) + 1:03d}`` mint, which hands the
+    SAME id to two streams that read the same ledger snapshot, re-issues a live
+    id whenever a record is removed, and wraps silently past D-999 \u2014 the AC-025
+    race. ``allocate_record_id`` takes the highest existing suffix instead, and
+    its uniqueness comes from the surrounding ``ledger_transaction`` lock, which
+    is why every call below sits inside one.
+    """
+    from foundry_mcp.tools.foundry import allocate_record_id
+
+    return allocate_record_id(records, prefix="D")
+
+
+def _route_to_observations(
+    finding: dict, cycle: int, klass: str, project_root: str
+) -> dict:
+    """Record a refused comment-prose finding in the observations ledger.
+
+    ``observations.json`` and its writer are owned by tools/foundry.py \u2014 there
+    is one ledger writer, not one per filing path \u2014 and observations are NEVER
+    mixed into defects.json. The writer re-runs the never-demote denylist
+    itself and can refuse; the caller must honour that refusal by keeping the
+    finding a defect (AC-002 is a never-weaken guarantee, so the fail-safe
+    direction is always "stays a defect").
+    """
+    from foundry_mcp.tools.foundry import foundry_add_observation
+
+    return foundry_add_observation(
+        cycle=cycle,
+        source=finding.get("source", ""),
+        description=finding.get("description", ""),
+        classification=klass,
+        target_kind=(finding.get("target_kind") or "comment"),
+        spec_ref=finding.get("spec_ref", ""),
+        symbol=finding.get("symbol", ""),
+        file_path=finding.get("file", ""),
+        project_root=project_root,
+    )
+
+
+# D-049 / CT-002 / AC-019 — what makes an incoming finding the SAME defect
+# coming back.
+#
+# The matcher was `symbol == fixed.symbol OR description == fixed.description`,
+# and a hit reopened the old record, DISCARDED the incoming finding entirely,
+# and returned ok:true. Two drives at the MCP boundary:
+#
+#   - A prove/MISSING/FR-003 finding on symbol `submit_form` ("no CSRF
+#     validation on the POST branch") was absorbed into a fixed
+#     trace/UNWIRED/FR-001 record on the same symbol. added=0, reopened=1, one
+#     record on disk still carrying the OLD source, type, spec_ref and
+#     description. The new finding's four content fields were thrown away and
+#     the caller was told the call succeeded.
+#   - Description equality ALONE reopened a fixed defect across a different
+#     file AND a different symbol.
+#
+# CT-002's contract is "records accepted and attributed to their true source"
+# and AC-019's is "source attribution is preserved verbatim". Neither can hold
+# for a record that was never written — this is worse than the source coercion
+# the same function was fixed for, because coercion at least leaves a row.
+#
+# A regression is the same defect RECURRING, so identity is a conjunction:
+#
+#   1. No non-empty field may CONFLICT. A different symbol, file, type or
+#      spec_ref means a different defect however much else agrees — that is
+#      what killed the cross-file description match.
+#   2. At least _REGRESSION_MIN_AGREEMENTS non-empty fields must AGREE. One
+#      lone signal is a coincidence, not an identity — that is what killed the
+#      same-symbol-different-everything match.
+#
+# Empty on either side is neither agreement nor conflict: an absent field
+# carries no information and must not be allowed to manufacture either verdict
+# (two records that both omit `file` have not thereby agreed about anything).
+#
+# Deliberately conservative, and its failure direction is the safe one: a
+# genuine regression whose description was reworded between cycles is filed as
+# a NEW defect — a record that exists, correctly attributed, at the cost of a
+# `regressions` count that under-reports. The old failure direction was
+# silent data loss on the highest-volume filing path in the protocol.
+_REGRESSION_IDENTITY_FIELDS = ("symbol", "file", "type", "spec_ref", "description")
+_REGRESSION_MIN_AGREEMENTS = 2
+
+
+def _identity_value(raw) -> str:
+    """Normalise an identity field for comparison: whitespace-folded, casefolded."""
+    if not isinstance(raw, str):
+        raw = "" if raw is None else str(raw)
+    return " ".join(raw.split()).casefold()
+
+
+def _is_regression_of(finding: dict, norm: dict, fixed_record: dict) -> bool:
+    """Is ``finding`` the previously-fixed ``fixed_record`` recurring?
+
+    See the block comment above for why this is a conjunction rather than the
+    disjunction it replaces. ``norm`` carries the batch validator's canonical
+    defect type so the incoming type is compared on the same footing as the
+    stored one (MISPLACED and ARCHITECTURAL_PLACEMENT are one type under two
+    spellings, and comparing raw would read them as a conflict).
+    """
+    agreements = 0
+    for field in _REGRESSION_IDENTITY_FIELDS:
+        if field == "type":
+            incoming = _identity_value(norm.get("type"))
+            existing = _identity_value(
+                canonical_defect_type(fixed_record.get("type") or "") or ""
+            )
+        else:
+            incoming = _identity_value(finding.get(field))
+            existing = _identity_value(fixed_record.get(field))
+        if not incoming or not existing:
+            # Absent on either side: no information, so neither an agreement
+            # nor a conflict.
+            continue
+        if incoming != existing:
+            return False
+        agreements += 1
+    return agreements >= _REGRESSION_MIN_AGREEMENTS
+
+
+@ledger_refusals
 def foundry_sync_defects(
     cycle: int,
     findings: list[dict],
     project_root: str = ".",
 ) -> dict:
-    """Sync new findings against existing defects. Detects regressions."""
+    """Sync new findings against existing defects. Detects regressions.
+
+    FR-013 / CT-002 / NFR-002. This was the unvalidated door into the ledger:
+    43 of grand-vulture's 168 defects (26%) entered through it. ``source`` was
+    matched against a local set that agreed with neither the tool schema nor
+    the stream vocabulary, and anything outside it was silently rewritten to
+    "trace" \u2014 so a research_audit or coverage_diff finding was persisted as if
+    TRACE had found it, and the run's evidence pointed at the wrong stream.
+    ``type`` was written straight through with no validation at all.
+
+    Both fields are now checked against the canonical vocabulary and the
+    recorded source survives verbatim. Per A-035 the coercion was a bug, not a
+    contract: values the old code accepted only by rewriting them are refused
+    with a named error. NFR-002's no-narrowing guarantee covers calls that are
+    valid under the reconciled vocabulary, and every such call still works.
+
+    Validation is ALL-OR-NOTHING. A batch with one bad finding is refused whole
+    rather than partly applied, so the caller never has to guess which of its
+    findings landed.
+    """
+    from foundry_mcp.tools.foundry import (
+        _dict_records,
+        asserts_code_behaviour,
+        ledger_transaction,
+        record_denylist_tripwire,
+    )
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     defects_path = fdir / "defects.json"
-    data = _load_json(defects_path)
-    if "defects" not in data:
-        data["defects"] = []
 
-    fixed = [d for d in data["defects"] if d.get("status") == "fixed"]
+    # --- Validate the whole batch before writing anything ------------------
+    refusals: list[dict] = []
+    normalized: list[dict] = []
+    for i, finding in enumerate(findings):
+        source = finding.get("source", "")
+        if not isinstance(source, str) or not source.strip():
+            refusals.append({
+                "index": i,
+                "field": "source",
+                "value": source,
+                "reason": (
+                    "source is required \u2014 an unattributed finding used to be "
+                    "recorded as 'trace', which is the mis-attribution this "
+                    "check exists to stop. Must be one of: "
+                    f"{', '.join(sorted(DEFECT_SOURCE_IDS))}"
+                ),
+            })
+        elif source.strip() not in DEFECT_SOURCE_IDS:
+            refusals.append({
+                "index": i,
+                "field": "source",
+                "value": source,
+                "reason": (
+                    f"Unknown source: {source}. Must be one of: "
+                    f"{', '.join(sorted(DEFECT_SOURCE_IDS))}"
+                ),
+            })
+
+        raw_type = finding.get("type") or "MISSING"
+        canonical = canonical_defect_type(raw_type)
+        if canonical is None:
+            refusals.append({
+                "index": i,
+                "field": "type",
+                "value": raw_type,
+                "reason": (
+                    f"Unknown defect_type: {raw_type}. Must be one of: "
+                    f"{', '.join(sorted(DEFECT_TYPES))}"
+                ),
+            })
+
+        normalized.append({"source": source.strip() if isinstance(source, str) else source,
+                           "type": canonical})
+
+    if refusals:
+        return {
+            "error": (
+                f"Refused {len(refusals)} finding(s) \u2014 no findings were recorded. "
+                + "; ".join(f"findings[{r['index']}].{r['field']}: {r['reason']}" for r in refusals)
+            ),
+            "refusals": refusals,
+            "hint": (
+                "Fix the named fields and re-send the whole batch. Values are "
+                "never coerced onto a known member \u2014 a finding attributed to the "
+                "wrong stream is worse than a finding refused."
+            ),
+        }
+
+    # The cycle a defect is stamped with is the SERVER's (FR-005). A
+    # caller-asserted cycle cannot be trusted for persistence: the whole
+    # three-cycle escalation rule reads these numbers back.
+    server_cycle = _current_cycle(fdir)
+
     reopened = 0
     added = 0
+    observations = 0
     regressions: list[str] = []
+    observed: list[dict] = []
+    tripwires: list[dict] = []
 
-    for finding in findings:
-        symbol = finding.get("symbol", "")
-        desc = finding.get("description", "")
+    # One exclusive critical section over defects.json for the whole batch.
+    # AC-025's uniqueness guarantee comes from THIS lock: allocate_record_id is
+    # pure, so minting inside the transaction is what stops two concurrent
+    # filers reading the same snapshot and claiming the same id.
+    with ledger_transaction(defects_path, "defects") as records:
+        # D-128 — the half of D-097 that was never applied.
+        #
+        # `_dict_records` was added to foundry.py BY D-097, with the docstring
+        # "Tolerating it in ONE place is what keeps the two halves of the same
+        # scan consistent", and then applied to the single door only. This
+        # batch door kept its raw `d.get(...)` over every historical record.
+        # Driven with {"defects": [{"id":"D-001",...}, "not-a-dict"]}:
+        # Foundry-Defect persisted D-002 and preserved the malformed record,
+        # Foundry-Defects read clean, and Foundry-Sync raised AttributeError
+        # 'str' object has no attribute 'get'. The raise lands AFTER the
+        # in-transaction list is mutated, so `_save_json` never runs, the
+        # filing the stream just made is GONE, and the escaped traceback names
+        # no file -- the one row breaking D-095/D-098's 21/24 named-refusal
+        # bar.
+        #
+        # THE PRIMITIVE NOW CLOSES THIS TOO. D-127 landed in foundry.py during
+        # this same cycle and moved the filter INSIDE `ledger_transaction`,
+        # which yields mapping records only and re-inserts the non-dicts by
+        # index before the write. So this call is idempotent today rather than
+        # load-bearing, and it is kept deliberately on both counts: it is what
+        # the scan in test_orchestrator_gates.py asserts (an orchestrator that
+        # iterates the binding directly has bypassed the guarantee however
+        # careful its body is), and it keeps this door's correctness legible
+        # here instead of resting silently on a sibling module's internals.
+        # Two guards on one class from both sides is the shape the escalated
+        # class asks for; one guard in a file this casting may not edit is not.
+        fixed = [d for d in _dict_records(records) if d.get("status") == "fixed"]
 
-        match_id = None
-        for fd in fixed:
-            fd_sym = fd.get("symbol", "")
-            fd_desc = fd.get("description", "")
-            if symbol and fd_sym and symbol == fd_sym:
-                match_id = fd["id"]
-                break
-            if desc and fd_desc and desc == fd_desc:
-                match_id = fd["id"]
-                break
+        for finding, norm in zip(findings, normalized):
+            symbol = finding.get("symbol", "")
+            desc = finding.get("description", "")
 
-        if match_id:
-            for d in data["defects"]:
-                if d["id"] == match_id:
-                    d["status"] = "open"
-                    d["regression"] = True
-                    d["reopened_in_cycle"] = cycle
-                    d["fixed_in_cycle"] = None
+            match_id = None
+            for fd in fixed:
+                if _is_regression_of(finding, norm, fd):
+                    match_id = fd["id"]
                     break
-            reopened += 1
-            regressions.append(match_id)
-        else:
-            defect_id = f"D-{len(data['defects']) + 1:03d}"
-            source = finding.get("source", "inspect")
-            valid_sources = {"trace", "prove", "sight", "test", "assay", "temper"}
-            if source not in valid_sources:
-                source = "trace"
+
+            if match_id:
+                for d in _dict_records(records):
+                    if d.get("id") == match_id:
+                        d["status"] = "open"
+                        d["regression"] = True
+                        d["reopened_in_cycle"] = server_cycle
+                        d["fixed_in_cycle"] = None
+                        break
+                reopened += 1
+                regressions.append(match_id)
+                continue
+
+            # Comment-prose findings are OBSERVATIONS, not defects, and are
+            # refused from this ledger. Four rules apply, in this order, and
+            # they are the SAME rules the Foundry-Defect filing path applies —
+            # two filing paths that disagree about what a defect is would be a
+            # worse bug than the one being fixed:
+            #
+            #   1. The subject must be a DECLARED comment. An absent
+            #      target_kind does not license a demotion: vocab's
+            #      is_non_comment only matches a target_kind that is present
+            #      and non-"comment", so absence has to be handled here or the
+            #      NON_COMMENT denylist entry silently never fires.
+            #   2. A denylist match OUTRANKS an observation match (vocab's
+            #      precedence rule) — a security claim, a spec-required-
+            #      behaviour claim or an unresolvable cite stays a defect even
+            #      when its prose reads like drift.
+            #   3. A finding that ASSERTS WHAT THE CODE DOES is not confined to
+            #      comment prose, so no comment-prose refusal may fire against
+            #      it however its wording reads (D-094).
+            #   4. Only then does the observation class decide.
+            #
+            # If the ledger writer refuses the demotion anyway, its refusal
+            # wins and the finding stays a defect too: AC-002 is a never-weaken
+            # guarantee, so every branch fails safe toward "defect".
+            declared_comment = (
+                isinstance(finding.get("target_kind"), str)
+                and finding["target_kind"].strip().lower() == "comment"
+            )
+            if declared_comment:
+                # D-036 — the denylist decision AND its audit signal are ONE
+                # exported call.
+                #
+                # This read `never_demote_class(finding) is None` and skipped
+                # the whole branch on a match. The finding correctly stayed a
+                # defect, but nothing downstream ran, so
+                # `record_denylist_tripwire` — which tools/foundry.py exports
+                # precisely for this call site, and whose own docstring names
+                # it — never fired on the Sync path. Live-proved: a
+                # SECURITY_PROPERTY_CLAIM comment finding filed through
+                # Foundry-Sync stayed a defect (the enforcement half, correct)
+                # and left observations.json's `tripwire` empty (the audit
+                # half, dead). An audit signal that fires only for the filing
+                # path that did not need auditing is not a control.
+                #
+                # Calling the helper makes the same decision the local check
+                # made and writes the signal as it does. Its NON_COMMENT
+                # fallback cannot fire under this guard — the helper's
+                # `_subject_is_declared_comment` is the same predicate as
+                # `declared_comment` above — so a non-None return means, still
+                # and only, "a denylist entry matched: keep this a defect".
+                #
+                # It is scoped to declared_comment deliberately. A finding with
+                # no `target_kind` is not attempting a demotion (Sync has no
+                # classification argument, so target_kind is the only demotion
+                # signal on this path), and auditing those would fire a
+                # NON_COMMENT tripwire on every ordinary defect and bury the
+                # real ones.
+                denied = record_denylist_tripwire(
+                    fdir, finding, cycle=server_cycle, source=norm["source"]
+                )
+                if denied is not None:
+                    tripwires.append(denied)
+                elif asserts_code_behaviour(finding):
+                    # D-094 — the promote-direction fail-safe, wired at the
+                    # one point `_observation_refusal` applies it on the
+                    # Foundry-Defect path: AFTER the denylist (so a denylisted
+                    # finding still trips the audit signal above) and BEFORE
+                    # the observation class (so a behavioural claim is never
+                    # demoted on the strength of its prose).
+                    #
+                    # a5d715a added this guard and wired it into
+                    # `_observation_refusal`, which only `foundry_add_defect`
+                    # calls, while its docstring named this branch as the
+                    # second consumer it was exported for. That wiring was
+                    # never made, so the two filing paths disagreed about what
+                    # a defect is: `foundry_add_defect` filed
+                    # NO_SECURITY_VOCABULARY as D-001, and the same finding
+                    # through Foundry-Sync was silently demoted to an
+                    # observation — with no tripwire either, since no denylist
+                    # entry matches it. A stream that files through the wrong
+                    # door lost a real defect and was told the call succeeded.
+                    #
+                    # Imported, never re-derived: a fail-safe with two copies
+                    # is a fail-safe that drifts, and the disagreement above is
+                    # what that costs.
+                    #
+                    # There is nothing to DO here — falling out of the branch
+                    # is the decision. The finding drops through to the defect
+                    # append below, which is exactly what the promote path's
+                    # `return None` means.
+                    pass
+                else:
+                    klass = observation_class(finding)
+                    if klass is not None:
+                        outcome = _route_to_observations(
+                            finding, server_cycle, klass, project_root
+                        )
+                        if not outcome.get("error"):
+                            observations += 1
+                            observed.append(
+                                {"classification": klass, "description": desc[:120]}
+                            )
+                            continue
+                        tripwires.append({
+                            "description": desc[:120],
+                            "attempted_class": klass,
+                            "refusal": outcome.get("error", ""),
+                            "tripwire": outcome.get("tripwire", ""),
+                        })
 
             defect = {
-                "id": defect_id,
-                "cycle": cycle,
-                "source": source,
-                "type": finding.get("type", "MISSING"),
+                "id": _mint_defect_id(records),
+                "cycle": server_cycle,
+                # D-119: the caller's asserted cycle is persisted beside the
+                # server's, never instead of it. The two filing doors used to
+                # disagree about WHICH cycle a record belonged to whenever the
+                # counter was malformed — one fell back to the caller's value,
+                # this one resolved to 0 — so the same findings filed through
+                # different doors produced different cycle runs, and a class
+                # that recurred three straight cycles escaped escalation while
+                # the AC-011 DONE guard passed. Both doors now resolve to 0 and
+                # both record what the caller claimed, so the divergence is
+                # visible to migrate/escalation tooling instead of silent.
+                "declared_cycle": cycle,
+                "source": norm["source"],
+                "type": norm["type"],
                 "description": desc,
                 "spec_ref": finding.get("spec_ref", ""),
                 "symbol": symbol,
@@ -1488,54 +4332,113 @@ def foundry_sync_defects(
                 "fixed_in_cycle": None,
                 "created_at": _now(),
             }
-            data["defects"].append(defect)
+            # FR-007: the optional stream-declared class travels with the
+            # record; escalation keys on it when present.
+            declared_class = finding.get(DEFECT_CLASS_FIELD)
+            if isinstance(declared_class, str) and declared_class.strip():
+                defect[DEFECT_CLASS_FIELD] = declared_class.strip()
+            records.append(defect)
             added += 1
 
-    _save_json(defects_path, data)
+        total_open = sum(1 for d in _dict_records(records) if d.get("status") == "open")
 
     if regressions:
         forge_log = fdir / "forge-log.md"
         if forge_log.exists():
             with open(forge_log, "a", encoding="utf-8") as f:
-                f.write(f"\n### REGRESSIONS in cycle {cycle}\n")
+                f.write(f"\n### REGRESSIONS in cycle {server_cycle}\n")
                 for r in regressions:
                     f.write(f"- **{r}** reopened \u2014 fix was fragile\n")
                 f.write("\n")
 
-    return {
+    result = {
         "ok": True,
-        "cycle": cycle,
+        "cycle": server_cycle,
+        "declared_cycle": cycle,
         "added": added,
         "reopened": reopened,
+        "observations": observations,
+        "observed": observed,
         "regressions": regressions,
-        "total_open": sum(1 for d in data["defects"] if d.get("status") == "open"),
+        "total_open": total_open,
     }
+    if tripwires:
+        result["denylist_tripwires"] = tripwires
+    return result
 
 
 def foundry_defects_to_tasks(
     project_root: str = ".",
 ) -> dict:
-    """Convert ALL open defects to grouped task descriptions for GRIND."""
+    """Convert ALL open defects to grouped task descriptions for GRIND.
+
+    FR-008 / ST-003 / AC-010. Defects of an ESCALATED class are lifted out of
+    the location grouping and emitted as exactly ONE structural-fix packet per
+    class, carrying a recorded proposal. Every other defect groups by location
+    exactly as before — escalation changes the shape of one class's work and
+    nothing else. An explicit ``escalation-override`` directive de-escalates a
+    class, at which point its defects fall straight back into the per-instance
+    grouping (AC-010).
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     data = _load_json(fdir / "defects.json")
     open_defects = [d for d in data.get("defects", []) if d.get("status") == "open"]
 
     if not open_defects:
-        return {"ok": True, "tasks": [], "count": 0}
+        return {"ok": True, "tasks": [], "count": 0, "escalated_classes": []}
+
+    escalated = _escalated_classes(fdir, project_root)
+    for key, info in escalated.items():
+        info["proposal"] = info.get("proposal") or _structural_proposal(info)
+    if escalated:
+        _record_escalation_proposals(fdir, escalated)
+
+    escalated_ids = {did for info in escalated.values() for did in info["defect_ids"]}
+
+    tasks = []
+
+    # One packet per escalated class, emitted first so it leads the GRIND wave.
+    for key in sorted(escalated):
+        info = escalated[key]
+        members = [d for d in open_defects if d["id"] in set(info["defect_ids"])]
+        tasks.append({
+            "structural": True,
+            "defect_class": key,
+            "class_declared": info["declared"],
+            "consecutive_cycles": info["consecutive_cycles"],
+            "cycles_seen": info["cycles"],
+            "proposal": info["proposal"],
+            "defect_ids": info["defect_ids"],
+            "description": info["proposal"],
+            "instances": [
+                {"id": d["id"], "description": d.get("description", ""),
+                 "file": d.get("file", ""), "symbol": d.get("symbol", "")}
+                for d in members
+            ],
+            "files": info["files"],
+            "symbols": info["symbols"],
+            "spec_refs": info["spec_refs"],
+            "regression": any(d.get("regression") for d in members),
+            "source": info["sources"][0] if info["sources"] else "unknown",
+        })
 
     MAX_PER_GROUP = 3
     groups: dict[str, list[dict]] = {}
     for d in open_defects:
+        if d["id"] in escalated_ids:
+            continue
         key = d.get("file") or d.get("symbol") or d["id"]
         groups.setdefault(key, []).append(d)
 
-    tasks = []
     for key, defects in groups.items():
         for i in range(0, len(defects), MAX_PER_GROUP):
             chunk = defects[i:i + MAX_PER_GROUP]
             task = {
+                "structural": False,
                 "defect_ids": [d["id"] for d in chunk],
                 "description": "; ".join(d["description"] for d in chunk),
                 "files": list({d["file"] for d in chunk if d.get("file")}),
@@ -1548,7 +4451,13 @@ def foundry_defects_to_tasks(
 
     (fdir / ".tasks-generated").write_text(f"{_now()} count={len(tasks)}\n", encoding="utf-8")
 
-    return {"ok": True, "tasks": tasks, "count": len(tasks)}
+    return {
+        "ok": True,
+        "tasks": tasks,
+        "count": len(tasks),
+        "escalated_classes": sorted(escalated),
+        "structural_tasks": sum(1 for t in tasks if t["structural"]),
+    }
 
 
 # --- The big one: next action ---
@@ -1576,8 +4485,19 @@ def _stamp_subphase_transitions(fdir: Path) -> None:
     state_path = fdir / "state.json"
     if not state_path.exists():
         return
-    state = _load_json(state_path)
+    with _document_transaction(state_path) as state:
+        _stamp_subphases_in(state, fdir)
+
+
+def _stamp_subphases_in(state: dict, fdir: Path) -> None:
+    """The sub-phase stamping itself, over an already-open state document.
+
+    Split out so the read-modify-write runs inside ``_document_transaction``
+    (D-103) without indenting the whole body a level.
+    """
     phase_times = state.get("phase_times", {})
+    if not isinstance(phase_times, dict):
+        phase_times = {}
     now = _now()
     changed = False
 
@@ -1608,15 +4528,15 @@ def _stamp_subphase_transitions(fdir: Path) -> None:
     if validate_passed_marker.exists():
         entry = phase_times.get("F0.9")
         if entry and "validate_passed_at" not in entry:
-            try:
-                entry["validate_passed_at"] = validate_passed_marker.read_text(encoding="utf-8").strip() or now
-            except OSError:
-                entry["validate_passed_at"] = now
+            # `except OSError` left UnicodeDecodeError open on a marker file
+            # the operator can corrupt as easily as any other (D-137's shape).
+            # `_read_text` is total and degrades to "", which the `or now`
+            # below already answers.
+            entry["validate_passed_at"] = _read_text(validate_passed_marker).strip() or now
             changed = True
 
     if changed:
         state["phase_times"] = phase_times
-        _save_json(state_path, state)
 
 
 def foundry_next_action(
@@ -1624,6 +4544,8 @@ def foundry_next_action(
 ) -> dict:
     """Determine what the lead should do next based on current foundry state."""
     fdir_stamp = get_run_dir(project_root)
+    if fdir_stamp and (corrupt := _artifact_guard(fdir_stamp)):
+        return corrupt
     trace_skip_decision: dict | None = None
     if fdir_stamp and fdir_stamp.exists():
         _stamp_subphase_transitions(fdir_stamp)
@@ -1642,10 +4564,7 @@ def foundry_next_action(
         if expected_gate:
             gp_marker = fdir_stamp / ".gate-passed"
             if gp_marker.exists():
-                try:
-                    gp_data = json.loads(gp_marker.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    gp_data = {}
+                gp_data = read_document(gp_marker)[0]
                 if gp_data.get("phase") == expected_gate:
                     result["gate_advanced"] = {
                         "passed_gate": expected_gate,
@@ -1713,12 +4632,38 @@ def foundry_next_action(
             "urgent": directives["urgent"],
             "normal": directives["normal"],
         }
+        # FR-019: urgent and normal directives are BOTH rendered. This used to
+        # be `if urgent ... elif normal ...`, so a single urgent directive
+        # suppressed every standing normal directive for the rest of the run \u2014
+        # the human's steering silently stopped reaching the lead. Priority
+        # still orders the block; it no longer discards.
+        blocks = []
         if directives["urgent"]:
             urgent_text = " | ".join(directives["urgent"])
-            directive_block = f"\n\nHUMAN DIRECTIVE (urgent): {urgent_text}\n\nIncorporate the above into your current action."
-        elif directives["normal"]:
+            blocks.append(
+                f"HUMAN DIRECTIVE (urgent): {urgent_text}\n\n"
+                "Incorporate the above into your current action."
+            )
+        if directives["normal"]:
             normal_text = " | ".join(directives["normal"])
-            directive_block = f"\n\nHUMAN DIRECTIVE: {normal_text} \u2014 incorporate into your approach."
+            blocks.append(
+                f"HUMAN DIRECTIVE: {normal_text} \u2014 incorporate into your approach."
+            )
+        if blocks:
+            directive_block = "\n\n" + "\n\n".join(blocks)
+
+    # D-133: every escalation-override decision is reported in the lead's own
+    # output too, not only at the injecting call. A directive is standing text
+    # — the lead that reads it may be a different session from the one that
+    # sent it, and a marker that matched no escalated class must not look
+    # identical to one that de-escalated three.
+    if fdir_stall and fdir_stall.exists():
+        override = _override_report(fdir_stall, project_root)
+        if override["decisions"]:
+            result["escalation_overrides"] = override
+            directive_block += "\n\nESCALATION-OVERRIDE DECISIONS:\n- " + "\n- ".join(
+                override["decisions"]
+            )
 
     critical_rules = (
         "\n\nCRITICAL RULES:"
@@ -1765,8 +4710,7 @@ def foundry_next_action(
     # Context budget tracking
     fdir_cb = get_run_dir(project_root)
     if fdir_cb and fdir_cb.exists():
-        state_cb = _load_json(fdir_cb / "state.json")
-        cycle = state_cb.get("cycle", 0)
+        cycle = _current_cycle(fdir_cb)
         # Estimate context usage based on cycle count
         if cycle >= 3:
             usage = "critical"
@@ -1860,7 +4804,15 @@ _ACTION_IMPERATIVES = {
         "  - IF teammates are currently running: WAIT for all to complete, then TeamDelete + Foundry-Team-Down + "
         "Foundry-Phase(phase='cast'). Do NOT call Foundry-Next while waiting \u2014 it will re-emit this action."
     ),
-    "transition_to_inspect": "YOUR NEXT CALL: Foundry-Gate(phase='inspect')",
+    "transition_to_inspect": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Gate(phase='inspect')\n"
+        "  (2) Foundry-Phase(phase='inspect_start') — crossing GRIND → INSPECT is "
+        "what advances the server-side cycle counter. Every stream record, defect "
+        "and roll-up entry after this point is stamped with the NEW cycle, so "
+        "skipping this call silently files the next cycle's evidence under the "
+        "last one and the recurring-class escalation never accumulates."
+    ),
     "run_streams": (
         "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel message. Stream-specific rules:\n"
         "All four streams spawn as BACKGROUND Agents (run_in_background=true) so SIGHT can run "
@@ -1897,7 +4849,7 @@ _ACTION_IMPERATIVES = {
         "YOUR NEXT ACTION depends on GRIND state:\n"
         "  - IF no GRIND team registered yet: follow the transition_to_grind sequence.\n"
         "  - IF teammates are running: WAIT. When all report complete, TeamDelete + Foundry-Team-Down + "
-        "update state to F2 + re-run INSPECT."
+        "Foundry-Phase(phase='inspect_start') + re-run INSPECT."
     ),
     "transition_to_assay": (
         "YOUR NEXT CALLS (in order):\n"
@@ -1946,7 +4898,7 @@ def _format_status_display(project_root: str) -> str:
     phase = state.get("phase", "F0")
     phase_times = state.get("phase_times", {})
     started = state.get("started_at", "")
-    cycle = state.get("cycle", 0)
+    cycle = _current_cycle(fdir)
 
     elapsed = ""
     if started:
@@ -2035,7 +4987,10 @@ def _format_status_display(project_root: str) -> str:
         req_streams = streams.get("required", [])
         missing_s = streams.get("missing", "").split()
         stream_icons = []
-        for s in ["trace", "prove", "sight", "test", "probe"]:
+        # FR-013: the rendered order comes from the canonical vocabulary, not
+        # from a sixth hand-typed copy of the stream names that silently hid
+        # any stream someone forgot to add here.
+        for s in sorted(STREAM_WIRE_IDS):
             if s in req_streams:
                 if s not in missing_s:
                     stream_icons.append(f"[{_GREEN}\u2713{_RESET}]{s}")
@@ -2055,6 +5010,35 @@ def _format_status_display(project_root: str) -> str:
     lines.append(FOUNDRY_SEP)
 
     return "\n".join(lines)
+
+
+def _escalation_notice(fdir: Path, project_root: str) -> str:
+    """One sentence naming any escalated class, for the guidance instructions.
+
+    FR-008 / AC-010: the lead has to know a class escalated BEFORE it dispatches
+    the GRIND wave, because the packet shape it is about to hand out changed.
+    Empty string when nothing is escalated, so the surrounding instructions read
+    identically on a normal cycle.
+    """
+    escalated = _escalated_classes(fdir, project_root)
+    if not escalated:
+        return ""
+    names = ", ".join(sorted(escalated))
+    # Each restore instruction is rendered per class and verified to round-trip
+    # (D-133), rather than offering a "<class>" placeholder the operator has to
+    # fill in with a key the grammar may not read back.
+    restores = "; ".join(
+        _override_offer(key)
+        for key in sorted(escalated)
+    )
+    return (
+        f" ESCALATED: {len(escalated)} defect class(es) have recurred for "
+        f"{ESCALATION_CYCLES}+ consecutive cycles ({names}). Foundry-Tasks will "
+        "emit ONE structural-fix packet per escalated class instead of "
+        "per-instance packets — dispatch that packet as a single task and do not "
+        "split it back apart. Every listed defect must still close. To restore "
+        f"per-instance packets: {restores}."
+    )
 
 
 def _compute_next_action(project_root: str) -> dict:
@@ -2227,13 +5211,18 @@ def _compute_next_action(project_root: str) -> dict:
                 "phase": "F2",
                 "action": "transition_to_grind",
                 "instructions": (
-                    f"INSPECT complete: {open_count} open defect(s) found. "
-                    "Call Foundry-Tasks to generate task list, "
+                    f"INSPECT complete: {open_count} open defect(s) found."
+                    + _escalation_notice(fdir, project_root)
+                    + " Call Foundry-Tasks to generate task list, "
                     "then Foundry-Gate(phase='grind'), then update state to F3. "
                     "Call Foundry-Phase(phase='grind_start') to clear markers. "
                     "Create grind team, assign tasks."
                 ),
-                "details": {"open_defects": open_count, "agent_config": GRIND_AGENT_CONFIG},
+                "details": {
+                    "open_defects": open_count,
+                    "agent_config": GRIND_AGENT_CONFIG,
+                    "escalation": _escalated_classes(fdir, project_root),
+                },
             }
 
         return {
@@ -2255,8 +5244,11 @@ def _compute_next_action(project_root: str) -> dict:
                 "instructions": (
                     f"GRIND phase: {open_count} defect(s) to fix. "
                     "Teammates are fixing. Wait for completion. "
-                    "After each fix, call Foundry-Fix(defect_id, cycle). "
-                    "When all done: shut down team, update state to F2, run full INSPECT again."
+                    "After each fix, call Foundry-Fix(defect_id, cycle, "
+                    "adjacent_path_statement, adjacent_path_test) — the two "
+                    "declarations are required and the call is refused without them. "
+                    "When all done: shut down team, Foundry-Phase(phase='inspect_start'), "
+                    "run full INSPECT again."
                 ),
                 "details": {"open_defects": open_count, "agent_config": GRIND_AGENT_CONFIG},
             }
@@ -2265,8 +5257,11 @@ def _compute_next_action(project_root: str) -> dict:
             "action": "transition_to_inspect",
             "instructions": (
                 "GRIND complete: all defects fixed. Shut down grind team, "
-                "Foundry-Team-Down, update state to F2. "
-                "Run FULL INSPECT again (all streams). No spot checking."
+                "Foundry-Team-Down, then Foundry-Phase(phase='inspect_start') to "
+                "cross back into F2 — that call is what advances the run's cycle "
+                "counter, so skipping it leaves every subsequent record stamped "
+                "with the previous cycle. Run FULL INSPECT again (all streams). "
+                "No spot checking."
             ),
             "details": {
                 "agent_configs": {
@@ -2310,7 +5305,7 @@ def _compute_next_action(project_root: str) -> dict:
         # requirement ID BEFORE emitting the auto-pass so the two gates agree.
         if _prove_is_clean(fdir, project_root):
             _synthesize_clean_prove_verdicts(
-                fdir, project_root, cycle=state.get("cycle", 0)
+                fdir, project_root, cycle=_current_cycle(fdir)
             )
 
         temper = state.get("temper", False)
@@ -2411,6 +5406,135 @@ def _compute_next_action(project_root: str) -> dict:
 # --- Directives (non-blocking human steering) ---
 
 
+# --------------------------------------------------------------------------- #
+# The directives.md marker grammar (D-104).
+#
+# ONE definition, read by both sides: `_read_directives` splits the file on
+# these prefixes, and `foundry_inject_directive` refuses a body that contains
+# one. Two hand-kept copies of the same grammar is how the forgery worked in
+# the first place \u2014 the writer did not know what the reader would treat as
+# structure, so a priority="normal" body carrying a line beginning
+# `### [URGENT]` was parsed back out as a SECOND, urgent directive, overriding
+# the priority argument. Directive text was trusted end to end; combined with
+# D-101 that let any normal-priority prose forge urgency and de-escalate
+# classes.
+# --------------------------------------------------------------------------- #
+
+_DIRECTIVE_HEADER_URGENT = "### [URGENT]"
+_DIRECTIVE_HEADER_NORMAL = "### [DIRECTIVE]"
+_DIRECTIVE_HEADERS = (_DIRECTIVE_HEADER_URGENT, _DIRECTIVE_HEADER_NORMAL)  # 2 markers
+
+# The bootstrap text of an empty directives.md. ONE definition: the injector
+# wrote it and the clearer wrote it back, as two separate string literals, so
+# "is this file empty of directives?" could not be asked without re-typing a
+# third copy — and D-129's conservation guard below has to ask exactly that.
+_DIRECTIVES_PREAMBLE = (
+    "# Foundry Directives\n\n"
+    "Human steering inputs — read at every phase transition.\n\n"
+)
+
+
+def _directive_header_count(text: str) -> int:
+    """How many priority headers the parser can see in ``text``."""
+    return sum(
+        1
+        for line in text.split("\n")
+        if any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+    )
+
+
+def _unaccounted_directive_text(path: Path, parsed: dict) -> str | None:
+    """Content Foundry-Clear would destroy without archiving it, or None.
+
+    D-129's second half, and the reason the guard alone is not enough. The
+    encoding rung is closed upstream: an undecodable directives.md is now a
+    NAMED refusal from ``_artifact_guard`` at every door. But the harm —
+    "reports success, truncates the file, writes no archive record" — is
+    reachable without any encoding fault at all. Hand-edit a ``###`` to a
+    ``##`` and the parser sees no header, returns no directives, and the
+    clearer truncates a file full of live human steering.
+
+    So the destructive write carries its own conservation check: Foundry-Clear
+    may only destroy what it could account for.
+
+      * No header the parser recognises — the whole file is preamble. Truncating
+        rewrites the preamble verbatim, so it is safe if that is genuinely all
+        the file holds, and a refusal otherwise.
+      * Headers present — every one of them must have produced a directive the
+        archive will carry. A count that does not match means text is sitting
+        in the file that the archive would not receive.
+
+    Returns the unaccounted text (for the refusal to quote), or None when the
+    file is fully accounted for.
+
+    D-136 — CONSERVE CHARACTERS, NOT HEADERS. This compared the header COUNT to
+    the parsed-directive count, which is blind to text the parser drops BEFORE
+    the first recognised header: with a second, well-formed directive present
+    the two counts reconcile and the check passes. Driven on the ordinary
+    live-run case (one urgent + one normal, then the same `### [URGENT]` ->
+    `## [URGENT]` hand-edit the shipped test itself exercises): Foundry-Clear
+    returned ok with cleared_count=1, the urgent directive was GONE from
+    directives.md, and directives-cleared.md recorded only the normal one. That
+    is D-129's filed harm word for word -- "reports success, truncates the
+    file, writes no archive record" -- surviving the fix meant to end it,
+    because the conservation check was bound to the fixture the defect was
+    reported on (ONE directive) instead of derived from what the file holds.
+    A one-directive fixture cannot distinguish the two rules; the two-directive
+    fixture is the regression test.
+
+    The rule now subtracts, rather than counts. Everything the archive WILL
+    carry is removed from the file's text once each -- the preamble, every line
+    the parser reads as STRUCTURE, and every directive body it actually parsed.
+    Whatever is still standing is text no archive record would carry, whatever
+    else in the file parsed cleanly.
+    """
+    if not path.exists():
+        return None
+    text = _read_text(path)
+
+    remainder = text
+    if remainder.startswith(_DIRECTIVES_PREAMBLE):
+        remainder = remainder[len(_DIRECTIVES_PREAMBLE):]
+
+    # Structure, not content: a line the parser reads as a priority header is
+    # consumed by the parse and is not part of any directive's body.
+    remainder = "\n".join(
+        line
+        for line in remainder.split("\n")
+        if not any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+    )
+
+    # Longest first, so a directive that is a SUBSTRING of another cannot
+    # consume the other's text and leave a mangled remainder behind.
+    bodies = sorted(
+        (b for b in (*parsed.get("urgent", []), *parsed.get("normal", [])) if b),
+        key=len,
+        reverse=True,
+    )
+    for body in bodies:
+        remainder = remainder.replace(body, "", 1)
+
+    return remainder.strip() or None
+
+
+def _forged_header_lines(directive: str) -> list[str]:
+    """Body lines that `_read_directives` would parse as a priority header.
+
+    Both the raw line and its left-stripped form are checked: the parser keys
+    on `str.startswith`, so an indented marker is inert TODAY, but a body that
+    smuggles one is asking for exactly the reading this refuses, and the cost
+    of declining it is a rephrase.
+    """
+    return [
+        line
+        for line in directive.split("\n")
+        if any(
+            line.startswith(h) or line.lstrip().startswith(h)
+            for h in _DIRECTIVE_HEADERS
+        )
+    ]
+
+
 def foundry_inject_directive(
     directive: str,
     priority: str = "normal",
@@ -2420,35 +5544,139 @@ def foundry_inject_directive(
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
+
+    # D-104: refuse rather than escape. Escaping would silently alter the text
+    # the human wrote, and a directive is a human instruction \u2014 the house
+    # pattern for "this input cannot be honoured as given" is a named refusal
+    # that quotes the offending value and says what to do instead.
+    forged = _forged_header_lines(directive)
+    if forged:
+        return {
+            "error": (
+                "Directive body contains a line that would be read back as a "
+                "priority header, which would split it into a second directive "
+                "and override priority=" + repr(priority) + ": "
+                + "; ".join(repr(line) for line in forged[:3])
+                + ". Lines beginning "
+                + " or ".join(repr(h) for h in _DIRECTIVE_HEADERS)
+                + " are structure in directives.md, not content."
+            ),
+            "hint": (
+                "Reword those lines \u2014 drop the leading '### ' or the square "
+                "brackets. To file an urgent directive, pass priority='urgent'."
+            ),
+            "forged_header_lines": forged,
+        }
 
     directives_path = fdir / "directives.md"
     if not directives_path.exists():
-        directives_path.write_text(
-            "# Foundry Directives\n\nHuman steering inputs \u2014 read at every phase transition.\n\n",
-            encoding="utf-8",
-        )
+        directives_path.write_text(_DIRECTIVES_PREAMBLE, encoding="utf-8")
 
     with open(directives_path, "a", encoding="utf-8") as f:
-        marker = "URGENT" if priority == "urgent" else "DIRECTIVE"
-        f.write(f"\n### [{marker}] {_now()}\n\n{directive}\n")
+        header = _DIRECTIVE_HEADER_URGENT if priority == "urgent" else _DIRECTIVE_HEADER_NORMAL
+        f.write(f"\n{header} {_now()}\n\n{directive}\n")
 
-    return {"ok": True, "priority": priority, "message": "Directive injected \u2014 lead will read it at next phase transition"}
+    result = {
+        "ok": True,
+        "priority": priority,
+        "message": "Directive injected \u2014 lead will read it at next phase transition",
+    }
+
+    # D-133: report the override decision HERE, at the call that made it. The
+    # operator learns immediately whether the marker they just sent was read,
+    # matched nothing, or was ignored as quoted \u2014 instead of discovering it by
+    # watching what the next Foundry-Tasks emits.
+    override = _override_report(fdir, project_root)
+    if override["decisions"]:
+        result["escalation_override"] = override
+        result["message"] += " | escalation-override: " + "; ".join(
+            override["decisions"]
+        )
+    return result
+
+
+DIRECTIVES_CLEARED_FILENAME = "directives-cleared.md"
 
 
 def foundry_clear_directives(
     project_root: str = ".",
 ) -> dict:
-    """Clear all directives after they've been addressed."""
+    """Clear active directives, preserving a record of what was cleared.
+
+    FR-019. This used to truncate directives.md outright, leaving no record of
+    what the human had asked for or whether it was ever honoured \u2014 the run's
+    steering history was destroyed by the act of acknowledging it. The cleared
+    text is now appended to ``directives-cleared.md`` first, so the audit trail
+    survives and a later reader can check a directive against the work.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run."}
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
     directives_path = fdir / "directives.md"
+
+    active = _read_directives(project_root)
+    urgent = active.get("urgent", [])
+    normal = active.get("normal", [])
+    cleared_count = len(urgent) + len(normal)
+
+    # D-129: refuse rather than destroy. FR-019 makes preserving a record this
+    # tool's whole contract, and a truncate that outruns the archive breaks it
+    # silently — the operator is told "No active directives to clear" while the
+    # directives are being deleted.
+    if (unaccounted := _unaccounted_directive_text(directives_path, active)) is not None:
+        return {
+            "error": (
+                f"directives.md holds {len(unaccounted)} characters of text that "
+                f"this tool could not parse as directives, so clearing it would "
+                f"DESTROY content no archive record would carry. Refused. "
+                f"Unparsed text begins: {unaccounted[:160]!r}"
+            ),
+            "hint": (
+                "The file's header grammar is broken — a directive block opens "
+                + " or ".join(repr(h) for h in _DIRECTIVE_HEADERS)
+                + " at the start of a line. Repair the headers (or move the text "
+                "somewhere safe and reset the file) and retry. Nothing was "
+                "cleared and nothing was written."
+            ),
+            "unaccounted_characters": len(unaccounted),
+            "cleared_count": 0,
+        }
+
+    if cleared_count:
+        archive = fdir / DIRECTIVES_CLEARED_FILENAME
+        if not archive.exists():
+            archive.write_text(
+                "# Cleared Directives\n\nEvery directive Foundry-Clear has retired, "
+                "with the time it was cleared. Nothing here is deleted.\n",
+                encoding="utf-8",
+            )
+        with open(archive, "a", encoding="utf-8") as f:
+            f.write(f"\n## Cleared {_now()}\n\n")
+            for text in urgent:
+                f.write(f"- **[URGENT]** {text}\n")
+            for text in normal:
+                f.write(f"- **[DIRECTIVE]** {text}\n")
+
     if directives_path.exists():
-        directives_path.write_text(
-            "# Foundry Directives\n\nHuman steering inputs \u2014 read at every phase transition.\n\n",
-            encoding="utf-8",
-        )
-    return {"ok": True, "message": "Directives cleared"}
+        directives_path.write_text(_DIRECTIVES_PREAMBLE, encoding="utf-8")
+
+    return {
+        "ok": True,
+        "cleared_count": cleared_count,
+        "urgent_cleared": len(urgent),
+        "normal_cleared": len(normal),
+        "record": str(fdir / DIRECTIVES_CLEARED_FILENAME) if cleared_count else "",
+        "message": (
+            f"{cleared_count} directive(s) cleared \u2014 recorded in "
+            f"{DIRECTIVES_CLEARED_FILENAME}"
+            if cleared_count
+            else "No active directives to clear"
+        ),
+    }
 
 
 def _read_directives(project_root: str) -> dict:
@@ -2461,7 +5689,9 @@ def _read_directives(project_root: str) -> dict:
     if not directives_path.exists():
         return {"has_directives": False, "urgent": [], "normal": [], "raw_text": ""}
 
-    text = directives_path.read_text(encoding="utf-8")
+    # D-098: a non-UTF-8 byte in directives.md raised UnicodeDecodeError out of
+    # here and therefore out of Foundry-Next, the mandatory handshake.
+    text = _read_text(directives_path)
 
     urgent: list[str] = []
     normal: list[str] = []
@@ -2469,13 +5699,13 @@ def _read_directives(project_root: str) -> dict:
     current_text: list[str] = []
 
     for line in text.split("\n"):
-        if line.startswith("### [URGENT]"):
+        if line.startswith(_DIRECTIVE_HEADER_URGENT):
             if current_priority and current_text:
                 target = urgent if current_priority == "urgent" else normal
                 target.append("\n".join(current_text).strip())
             current_priority = "urgent"
             current_text = []
-        elif line.startswith("### [DIRECTIVE]"):
+        elif line.startswith(_DIRECTIVE_HEADER_NORMAL):
             if current_priority and current_text:
                 target = urgent if current_priority == "urgent" else normal
                 target.append("\n".join(current_text).strip())
@@ -2503,6 +5733,8 @@ def foundry_get_context(
 
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run. Call Foundry-Init or foundry_init(resume='run-name').", "initialized": False}
+    if (corrupt := _artifact_guard(fdir)):
+        return {**corrupt, "initialized": False}
 
     state = _load_json(fdir / "state.json")
     defects = _load_json(fdir / "defects.json")
@@ -2516,16 +5748,21 @@ def foundry_get_context(
     all_reqs = verdicts.get("requirements", [])
     verified = sum(1 for r in all_reqs if r.get("verdict") == "VERIFIED")
 
+    # Both reads carried NO handler at all, so a non-UTF-8 byte in either
+    # markdown artifact raised UnicodeDecodeError straight out of
+    # Foundry-Context. `_artifact_guard` names them at the top of this door
+    # already; `_read_text` is what makes the reader itself total rather than
+    # relying on a guard several statements above it (D-137's shape).
     findings_excerpt = ""
     findings_path = fdir / "forge-findings.md"
     if findings_path.exists():
-        text = findings_path.read_text(encoding="utf-8")
+        text = _read_text(findings_path)
         findings_excerpt = text[:2000] + ("..." if len(text) > 2000 else "")
 
     lessons_excerpt = ""
     lessons_path = fdir / "lessons.md"
     if lessons_path.exists():
-        text = lessons_path.read_text(encoding="utf-8")
+        text = _read_text(lessons_path)
         lessons_excerpt = text[:2000] + ("..." if len(text) > 2000 else "")
 
     teams = _check_active_teams(project_root)
@@ -2536,7 +5773,7 @@ def foundry_get_context(
         "initialized": True,
         "state": {
             "phase": state.get("phase", "unknown"),
-            "cycle": state.get("cycle", 0),
+            "cycle": _current_cycle(fdir),
             "spec_path": state.get("spec_path", ""),
             "temper": state.get("temper", False),
             "nyquist": state.get("nyquist", False),

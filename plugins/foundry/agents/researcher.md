@@ -116,7 +116,7 @@ Copy verbatim any locked decisions from the spec that constrain this domain. If 
 [minimal working example teammates can adapt]
 ```
 
-Cite source: [URL / file:line / "adapted from training"]
+Cite source: [URL / path#Symbol / "adapted from training"]
 
 ## Sources
 
@@ -148,6 +148,7 @@ After writing RESEARCH.md, return a short JSON summary to the lead:
 
 - **Honor locked decisions.** If the spec says "use X", research X. Don't bring up Y.
 - **Codebase first, web second.** Always check for existing local patterns before recommending new libraries.
+- **Cite local code by symbol.** A pointer into this repo is `path#Symbol`, never `path:line`. The symbol is authoritative — a cite whose symbol resolves is valid however stale any line hint beside it has become, no reader ever judges the line component, a moved line alone produces no finding of any kind, and cite-refresh sweeps happen only under an explicit directive. RESEARCH.md is written once at F0 and re-read by teammates and by the research auditor through every CAST and GRIND cycle, so the tree moves under it; a line hint belongs only in a commit-pinned run artifact, and this is not one.
 - **Confidence is mandatory.** No claim goes in RESEARCH.md without a level.
 - **Short code examples only.** Enough to adapt, not a full tutorial. Link to sources for deep reading.
 - **Be prescriptive.** "Use X" not "X or Y are both options."

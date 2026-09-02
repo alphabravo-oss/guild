@@ -81,7 +81,7 @@ For EACH checklist item, in order:
 
 5. **Verdict** — one of (defined in `rules/audit-reference.md`):
    - **VERIFIED**: Code does what spec says. You traced the full chain with concrete
-     inputs. Cite file:line.
+     inputs. Cite `path#Symbol`.
    - **THIN**: Technically implemented but minimal. Observable truths from the queue
      item are unsatisfied. Feature "exists" but a real user would be disappointed.
    - **HOLLOW**: Code exists but doesn't do real work — empty body, stub, TODO,
@@ -95,7 +95,7 @@ For EACH checklist item, in order:
    - **WRONG**: Implementation actively contradicts the spec.
 
 6. **Evidence required for each verdict**: spec text (quoted), your pre-code
-   expectation, file:line, what the code actually does, the gap.
+   expectation, the `path#Symbol` cite, what the code actually does, the gap.
 
 Do not batch-verify. Each requirement gets individual verification with its own
 evidence. Do not stop or summarize early — verify EVERY item.
@@ -180,7 +180,7 @@ Read audit reports AFTER completing your own verification (fresh eyes first):
 When run standalone, write to `prove-reports/prove-{timestamp}.md`. When run from foundry, the assayer agent records verdicts via the `Foundry-Verdict` MCP tool. Required sections:
 
 - **Summary**: total items, count per verdict, systemic pattern count, % truly implemented
-- **Verification Checklist**: every VC-N with source, verdict, implementation file:line,
+- **Verification Checklist**: every VC-N with source, verdict, implementation `path#Symbol`,
   evidence. Do not truncate.
 - **Findings** (CR-N): each non-VERIFIED item consolidated — type, related VC items,
   spec text, what code does, user impact, files, fix direction
@@ -265,28 +265,33 @@ the `foundry_add_verdict` MCP tool for defect tracking.
         "type": "object",
         "properties": {
           "id": {"type": "string", "description": "Finding ID (CR-N, SP-N)"},
-          "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
-          "category": {"type": "string", "description": "missing|hollow|partial|thin|letter-only|wrong|systemic"},
-          "file": {"type": "string", "description": "Primary file path"},
-          "line": {"type": "integer", "description": "Line number (if applicable)"},
+          "classification": {"type": "string", "enum": ["DEFECT", "OBSERVATION"],
+            "description": "Channel, not a tier. Comment-prose findings are OBSERVATION; every other finding is a DEFECT. The never-demote denylist overrides this field."},
+          "type": {"type": "string",
+            "enum": ["MISSING", "WRONG", "THIN", "HOLLOW", "PARTIAL", "UNWIRED",
+                     "BROKEN", "FAIL", "ARCHITECTURAL_PLACEMENT", "RESEARCH_DEVIATION",
+                     "COVERAGE_INCOMPLETE", "THIN_MIGRATION"],
+            "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
+          "class": {"type": "string",
+            "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+          "file": {"type": "string", "description": "Bare path. Never carries a line number."},
+          "symbol": {"type": "string", "description": "The symbol the finding is about. With `file` this is the `path#Symbol` cite."},
           "description": {"type": "string", "description": "What's wrong, with spec text quoted"},
           "spec_reference": {"type": "string", "description": "VC-N item or spec section cited"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "severity", "category", "file", "description"]
+        "required": ["id", "classification", "type", "file", "symbol", "description"]
       }
     },
     "summary": {
       "type": "object",
       "properties": {
         "total": {"type": "integer"},
-        "by_severity": {
+        "by_classification": {
           "type": "object",
           "properties": {
-            "critical": {"type": "integer"},
-            "high": {"type": "integer"},
-            "medium": {"type": "integer"},
-            "low": {"type": "integer"}
+            "DEFECT": {"type": "integer"},
+            "OBSERVATION": {"type": "integer"}
           }
         },
         "verdict": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]}
@@ -296,10 +301,14 @@ the `foundry_add_verdict` MCP tool for defect tracking.
 }
 ```
 
+**There is no `severity` field, and adding one is a vocabulary violation.** Every non-VERIFIED verdict is a defect and every defect gets fixed, so a tier has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. `type` and `classification` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` and `#FINDING_CLASSES` — a value outside them is rejected server-side rather than coerced onto something known.
+
+**There is no `line` field either.** A finding cites `path#Symbol` — `file` bare, `symbol` beside it. The symbol is authoritative, and the commit-pinned-run-artifact carve-out that permits a line hint does not reach a findings record: this JSON can be passed straight to the foundry defect sync tools and is then re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
+
 **Verdict rules:**
-- **FAIL**: any non-VERIFIED item on the critical path
-- **WARN**: non-VERIFIED items exist but none on the critical path
-- **PASS**: all items VERIFIED (verify this isn't a false positive)
+- **FAIL**: any finding classified `DEFECT` — there is no off-the-critical-path exemption, because that was the severity axis wearing a different name
+- **WARN**: findings exist but every one is classified `OBSERVATION`
+- **PASS**: no findings at all — all items VERIFIED (verify this isn't a false positive)
 
 ## Spec Citations
 
@@ -312,7 +321,7 @@ Every verdict MUST cite the exact spec section it verifies against. Use the form
 ```
 VC-7: "Users can filter credentials by type" [SPEC:US-3.AC-1]
 Expectation: GET /credentials?type=postgres returns filtered list
-Code: handler.go:52 — ListCredentials reads query param, passes to repo filter
+Code: handler.go#ListCredentials — reads query param, passes to repo filter
 Verdict: VERIFIED — filter works for valid types, returns empty array for unknown types
 ```
 
@@ -337,4 +346,10 @@ guarantee valid pointers into the provided document.
 - **Spec-anchored** — every finding references exact spec text with `[SPEC:...]` citations
 - **Fresh eyes** — read spec and code BEFORE any audit reports
 - **Exhaustive** — verify every item, no batching or skipping
-- **Evidence-based** — every verdict cites file:line and describes what the code does
+- **Evidence-based** — every verdict cites `path#Symbol` and describes what the code does
+- **The symbol is authoritative** — a cite whose symbol resolves is valid however stale any
+  line hint beside it has become. No verdict ever turns on the line component, a moved line
+  alone produces no finding of any kind, and cite-refresh sweeps happen only under an
+  explicit directive. Durable cites are symbol-only, optionally with a quoted snippet; a
+  line hint belongs only in a commit-pinned run artifact, where it is frozen against the
+  one commit it was written at.

@@ -596,7 +596,7 @@ foundry report (F6: DONE).
 **Foundry SIGHT stream mode (READ-ONLY):**
 - **DO NOT fix findings. DO NOT spawn agents. This phase is READ-ONLY.** Fixes happen in F3 GRIND.
 - Convert findings into defect entries via the foundry MCP `Foundry-Defect` tool (one call per finding) — or write them directly to `foundry-archive/{run}/defects.json` if running outside an MCP session.
-- Mark the stream complete via the foundry MCP `Foundry-Mark-Stream-Complete` tool with `stream='sight'` and `items_checked=<count>`.
+- Mark the stream complete via the foundry MCP `Foundry-Stream` tool with `stream='sight'`, `cycle=<the run's current cycle, from Foundry-Next>` and `items_checked=<count>`. All three are REQUIRED — a call omitting any one is rejected at the MCP boundary and this stream records no coverage for the cycle at all. The roll-up is keyed by the server's own cycle counter; the value you pass is retained on the record for audit only.
 - Include minor UX suggestions as additional defects for GRIND.
 - Append major UX suggestions to the backlog file.
 - Flow: SIGHT audit (you are here) → INSPECT aggregation → GRIND fixes → next cycle.
@@ -623,5 +623,5 @@ Override with `--headless` or `--headed` flags.
 | Reference design/URL (parity mode) | Defect entries (foundry mode) |
 | Playwright MCP (browser + devtools) | Console log file alongside the audit report |
 | Active foundry spec (for suggestion feasibility) | Suggestion backlog (foundry mode only) |
-| Foundry run state (cycle, target URL) | `Foundry-Mark-Stream-Complete` signal (foundry mode) |
+| Foundry run state (cycle, target URL) | `Foundry-Stream` completion record (foundry mode) |
 | Prior console logs (check regressions) | |

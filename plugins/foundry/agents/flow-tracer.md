@@ -138,7 +138,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
     {
       "packet_id": "P2",
       "produced_symbol": "status.Collector.collectDeployments",
-      "file": "internal/status/collector.go:586",
+      "file": "internal/status/collector.go",
       "verdict": "SOURCED",
       "upstream_refs_found": ["kubeClient", "apps/v1.Deployment"],
       "body_excerpt": "cs, err := c.kubeClient(); ... AppsV1().Deployments('').List(...)"
@@ -146,7 +146,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
     {
       "packet_id": "P6",
       "produced_symbol": "web.dashboard.handleWorkloads",
-      "file": "internal/web/server.go:219",
+      "file": "internal/web/server.go",
       "verdict": "DISCONNECTED",
       "missing_upstream": "pageData.Deployments (from P3)",
       "body_excerpt": "d.renderPage(w, 'workloads.html', '/workloads', 'Workloads')  // no reference to .Deployments"
@@ -157,6 +157,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
       "type": "DISCONNECTED",
       "packet_id": "P6",
       "produced_symbol": "web.dashboard.handleWorkloads",
+      "class": "handlers-render-without-reading-collected-state",
       "description": "Handler renders workloads.html but never reads ClusterStatus.Deployments; the template will receive an empty slice regardless of what the collector produces.",
       "fix_hint": "pageData already embeds *ClusterStatus so .Deployments is accessible in the template — but handler should confirm the field is populated before render"
     }
@@ -164,13 +165,17 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
   "orphan_warnings": [
     {
       "symbol": "web.ControlPlanePod",
-      "file": "internal/status/collector.go:51",
+      "file": "internal/status/collector.go",
       "reason": "Produced but not declared in any packet. May be teammate-introduced scope creep."
     }
   ],
   "regressions": []
 }
 ```
+
+**Every cite in that shape is `path#Symbol`, exactly as the chain rules require** — `file` is the bare path because `produced_symbol` already carries the symbol, and no field carries a line number. The run-artifact carve-out that permits a line hint does not reach a walk record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
+
+`class` is optional, and appears only where several packets fail from one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling never escalates.
 
 ## Verdicts
 
@@ -191,8 +196,41 @@ Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `C
 - **LSP over grep for symbol resolution.** Use Serena. Grep is permitted as a fallback only when LSP is unavailable AND the result is explicitly labelled degraded — set `"evidence": "degraded-grep"` on every result you derive that way. A grep-derived result can never carry `SOURCED`: without LSP you did not verify the packet, so its verdict is `NOT_VERIFIED` with `"cause": "SERENA_UNAVAILABLE"`, whatever the grep appeared to show.
 - **Forward direction only.** `tracer` covers upstream. You cover downstream. Don't duplicate its work.
 - **Record body excerpts for non-SOURCED verdicts.** The Foundry lead needs them to route defects correctly; fix_hint prose is not enough.
+- **Cite by symbol.** Every record carries a `path#Symbol` cite — the bare path in `file`, the symbol in `produced_symbol`. The symbol is authoritative: a cite whose symbol resolves is valid however stale a line hint beside it has become. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive. A line hint belongs only in a commit-pinned run artifact, and a walk record re-read cycle after cycle is not one.
+- **Name the class when packets share a root cause.** Four DISCONNECTED packets all missing the same upstream field are one class, not four — put it in each record's `class` field, spelled identically (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class buy one structural fix instead of four repeated point fixes; unnamed, escalation never sees the pattern. Omit it when a packet fails alone.
 - **Orphan warnings are NOT defects.** V3 allows helper functions and private types within a hop. Warnings surface teammate creativity for human review, but do not block.
 - **NEVER emit `SOURCED` for a packet you did not actually walk.** `SOURCED` claims all four levels passed against real Serena responses. If the tools never answered, you did not verify the packet — the verdict is `NOT_VERIFIED`, never `SOURCED`. No exceptions, no deferrals, no "the code looked right."
 - **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected packet. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
-- **No severity tiers.** Every defect is a defect. GRIND fixes them all.
+- **No severity tiers.** Every defect is a defect. GRIND fixes them all. Channel, not severity, decides where a finding goes — the next two rules are the whole of it.
+- **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a prose count, a direction word, a stale enumeration — comment prose. It goes to the run's `observations.json` ledger, never the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. The symbol is authoritative, so a moved line alone produces no finding of any kind. Chain verdicts are untouched: a packet that is not `SOURCED` is still a defect.
+- **Declare `target_kind` on every filing.** `"comment"` when the finding is about a code comment, otherwise the real subject (`code`, `test`, `config`, `doc`). That refusal reads this field and nothing else, so an omitted one is not a neutral default — it files comment prose as a packet defect. Every `Foundry-Defect` and `Foundry-Sync` call carries it.
+- **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no demotion into `orphan_warnings` or any other non-blocking channel.
+- **An observation carries no `spec_ref` and names no requirement id.** That denylist entry is mechanical: `Foundry-Observation` reads ANY non-empty `spec_ref` as a spec-required-behaviour claim by construction, with no inspection of what the finding says, and a `US-`/`FR-`/`AC-`-shaped id inside the description matches the same way. Your walk record has no `spec_ref` field, but `Foundry-Defect`, `Foundry-Sync` and `Foundry-Observation` all take one on the wire — populate it when you file a packet defect, leave it empty when you file comment prose. Attach one to an observation and the demotion is refused, the tripwire fires, and the moved line you were recording terminates as a packet defect after all.
 - **No sub-agents.** Verify in-process using your tools.
+- **Keep your own chain intact.** Append a ledger line at every new step, per the `## Progress ledger` section. A walk nobody can observe terminates prematurely for the lead exactly the way `CHAIN_BROKEN` does for the code.
+
+## Progress ledger
+
+A silent walk is an unobservable walk. Append one JSON object per line to `foundry-archive/{run}/progress/flow_trace.jsonl` — **named for your wire id, `flow_trace`, not for this agent file**, because that is the id `Foundry-Liveness` expects the FLOW_TRACE stream to write.
+
+```
+{"timestamp": "2026-08-31T19:04:22+00:00", "phase": "inspect", "step": "delta loaded, 12 packets"}
+```
+
+- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.
+- `phase` — `inspect`.
+- `step` — where you have actually got to, in a few words.
+
+Append with a shell redirect (`>>`), never a rewrite; create `progress/` if it is absent. One line when you start, one at every new step — Serena gate cleared, delta and graph loaded, each packet walked, orphans checked, `Foundry-Sync` called — and never more than 5 minutes of work between lines.
+
+`step` carries the signal. No line for 15 minutes reports `stalled`; lines with an unchanged `step` for 15 minutes report `no_progress` — alive, not advancing. Move `step` when the walk moves. Padding the ledger to look busy is a fabricated chain, and fabrication is the one thing this stream exists to catch.
+
+**Your LAST line declares you finished** — same three fields plus `"done": true`:
+
+```
+{"timestamp": "2026-08-31T20:11:07+00:00", "phase": "inspect", "step": "5 defects synced", "done": true}
+```
+
+Skip it and you cross the 15-minute threshold and report `stalled` for the rest of the run. Write it and you report `done` and drop out of `needs_attention`.
+
+A failed append never blocks the walk: swallow the error, carry on.

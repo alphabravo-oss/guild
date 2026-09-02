@@ -12,7 +12,27 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from foundry_mcp.tools.foundry_state import get_run_dir
+# D-150: the requirement-ID families are declared ONCE, in the vocabulary
+# module. This file held THREE hand-typed copies of the same literal, all
+# knowing the same seven families and none knowing GI- or OT-, so a spec's
+# invariants and observable truths were invisible to requirement coverage:
+# never counted as spec requirements, and never counted as covered by a
+# casting that cites them. NFR-002: the canonical pattern is a strict
+# SUPERSET, so no ID that matched before stops matching.
+from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
+from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
+# D-134: the SHARED nested-shape validator, so "unusable manifest" means one
+# thing in every module that reads castings/manifest.json. A module-top import
+# is safe here — validate -> spawn -> orchestrator has no cycle — unlike in
+# foundry_orchestrator, which foundry_spawn imports and which therefore reaches
+# the same validator through a lazy in-function import.
+from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+from foundry_mcp.tools.foundry_state import (
+    document_refusal,
+    get_run_dir,
+    read_document,
+    read_text_file,
+)
 
 
 def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
@@ -38,6 +58,8 @@ def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
     ).hexdigest()[:16]
 
     castings_fp: dict[str, dict] = {}
+    if _manifest_shape_problem(manifest) is not None:
+        return {"spec_hash": spec_hash, "manifest_hash": manifest_hash, "castings": {}}
     for c in manifest.get("castings", []):
         cid = str(c.get("id"))
         prompt_path = fdir / "castings" / f"casting-{cid}-prompt.md"
@@ -55,10 +77,7 @@ def _load_validate_cache(fdir: Path) -> dict:
     cache_path = fdir / ".validate-cache.json"
     if not cache_path.exists():
         return {}
-    try:
-        return json.loads(cache_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
+    return read_document(cache_path)[0]
 
 
 def _save_validate_cache(fdir: Path, cache: dict) -> None:
@@ -97,11 +116,39 @@ def foundry_validate_castings(
     if not fdir:
         return {"passed": False, "error": "No active foundry run"}
 
+    if (corrupt := _artifact_guard(fdir)):
+        return {"passed": False, **corrupt}
+
     manifest_path = fdir / "castings" / "manifest.json"
     if not manifest_path.exists():
         return {"passed": False, "error": "No manifest.json found"}
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # D-130's class, found by the package-wide scan. Both reads below were
+    # `json.loads(...read_text(...))`, so a corrupt manifest.json or state.json
+    # raised out of Foundry-Validate-Castings instead of naming the file. The
+    # guard above reports both by name; these loads are now total.
+    manifest = _load_json(manifest_path)
+    # D-134: the RECORDS, not just the container. `_load_json` guards the
+    # document being a dict and `.get("castings", [])` guards the key being
+    # present — neither guards what the members inside are, so a manifest whose
+    # `castings` is a string reached `c.get(...)` below and raised
+    # AttributeError out of Foundry-Validate-Castings. The house refusal names
+    # the file and carries `corrupt_artifacts`, the way every other artifact
+    # refusal on this surface does.
+    if (records := _manifest_shape_problem(manifest)) is not None:
+        return {
+            "passed": False,
+            "error": (
+                f"Run artifacts cannot be read: {records}. This tool refuses "
+                f"rather than acting on a document it had to guess at."
+            ),
+            "hint": (
+                "Re-run F0.5 DECOMPOSE. The manifest is a JSON object whose "
+                "`castings` and `waves` are lists of objects — each casting "
+                "carrying an `id`, each wave a `wave` number."
+            ),
+            "corrupt_artifacts": [records],
+        }
     castings = manifest.get("castings", [])
     spec_type = (manifest.get("spec_type") or "GREENFIELD").upper()
 
@@ -126,7 +173,7 @@ def foundry_validate_castings(
 
     # Load spec to extract requirements
     spec_path = fdir / "spec.md"
-    state = json.loads((fdir / "state.json").read_text(encoding="utf-8")) if (fdir / "state.json").exists() else {}
+    state = _load_json(fdir / "state.json")
     if not spec_path.exists():
         sp = state.get("spec_path", "")
         if sp:
@@ -134,8 +181,17 @@ def foundry_validate_castings(
             if candidate.exists():
                 spec_path = candidate
 
-    spec_text = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
-    spec_req_ids = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", spec_text))
+    # D-145: this read is the one that leaves the run directory. When the run
+    # dir holds no spec.md the fallback above resolves `state["spec_path"]`
+    # against the project root — which is the LIVE shape of this very run — and
+    # `_artifact_guard`'s rglob could not reach the result, so an unguarded
+    # `read_text` here raised UnicodeDecodeError across the MCP boundary.
+    # `read_text_file` is total ("" for an absent file, which is what the old
+    # `if exists()` produced) and NAMES the file when it cannot be read.
+    spec_text, spec_problem = read_text_file(spec_path)
+    if spec_problem is not None:
+        return {"passed": False, **document_refusal(spec_path, spec_problem)}
+    spec_req_ids = set(REQUIREMENT_ID_RE.findall(spec_text))
 
     # Check for research artifacts
     research_dir = fdir / "research"
@@ -149,11 +205,11 @@ def foundry_validate_castings(
     covered_reqs: set[str] = set()
     for c in castings:
         spec_text_field = c.get("spec_text", "")
-        casting_reqs = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", spec_text_field))
+        casting_reqs = set(REQUIREMENT_ID_RE.findall(spec_text_field))
         covered_reqs.update(casting_reqs)
         # Also check observable truths text
         for truth in c.get("observable_truths", []):
-            truth_reqs = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", truth))
+            truth_reqs = set(REQUIREMENT_ID_RE.findall(truth))
             covered_reqs.update(truth_reqs)
 
     uncovered = spec_req_ids - covered_reqs
@@ -390,7 +446,14 @@ def foundry_validate_castings(
             )
             continue
 
-        prompt_text = prompt_path.read_text(encoding="utf-8")
+        # D-145's second unguarded read in this module. It is covered TODAY
+        # only because a casting prompt happens to live inside the run dir,
+        # where the artifact guard's rglob reaches it — which is a fact about
+        # where the file sits, not a property of this reader. Made total, so
+        # the reader holds on its own merits wherever the path resolves.
+        prompt_text, prompt_problem = read_text_file(prompt_path)
+        if prompt_problem is not None:
+            return {"passed": False, **document_refusal(prompt_path, prompt_problem)}
 
         if not prompt_text.strip():
             dim7_issues.append({

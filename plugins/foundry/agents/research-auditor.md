@@ -72,8 +72,8 @@ For each RA-N item:
 | N/A                  | Recommendation doesn't apply to any in-scope files                   |
 | HONORED_WITH_OVERRIDE | Deviation exists but concerns.md documents a justified override     |
 
-5. **Record evidence.** Every HONORED verdict needs a file:line citation. Every IGNORED/CONFLICT needs:
-   - The file:line where the deviation occurs
+5. **Record evidence.** Every HONORED verdict needs a `path#Symbol` citation. Every IGNORED/CONFLICT needs:
+   - The `path#Symbol` where the deviation occurs
    - The specific code that violates the recommendation
    - What the research said should happen instead
 
@@ -108,7 +108,7 @@ Output a single JSON result:
       "source": "foundry-archive/{run}/research/kubernetes-deployments.md",
       "recommendation": "Use client-go typed DeploymentsGetter",
       "verdict": "HONORED",
-      "evidence": "internal/status/collector.go:142 uses clientset.AppsV1().Deployments(ns).List(ctx, listOpts)"
+      "evidence": "internal/status/collector.go#Collector.collectDeployments uses clientset.AppsV1().Deployments(ns).List(ctx, listOpts)"
     }
   ],
   "defects": [
@@ -116,7 +116,8 @@ Output a single JSON result:
       "type": "RESEARCH_DEVIATION",
       "recommendation_id": "RA-7",
       "recommendation": "Use k8s.io/client-go/kubernetes/fake for tests",
-      "file": "internal/status/collector_test.go:23",
+      "file": "internal/status/collector_test.go#TestCollectDeployments",
+      "class": "hand-rolled-mocks-instead-of-the-fake-package",
       "description": "Test uses hand-rolled mock client struct; research explicitly says use fake package. The fake client supports the same interface and handles watch/list edge cases the mock doesn't.",
       "spec_ref": "research/kubernetes-deployments.md#testing"
     }
@@ -124,15 +125,55 @@ Output a single JSON result:
 }
 ```
 
+**Every cite in that shape is `path#Symbol`, exactly as the evidence rule below requires** — no `evidence` or `file` value carries a line number. The run-artifact carve-out that permits a line hint does not reach an audit record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false deviation while a symbol cite keeps resolving.
+
+`class` is optional and appears only where several deviations share one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+
+`spec_ref` appears on `defects` because those are defect-channel records, and the `research/...#anchor` form above is still a non-empty `spec_ref`. It is never populated on a comment-prose finding: those go to `Foundry-Observation`, which refuses ANY non-empty `spec_ref` under the never-demote denylist. See the observation rules below.
+
 Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GRIND.
 
 ## Rules
 
 - **NEVER modify code.** You are read-only verification.
-- **Every verdict needs evidence.** HONORED requires a file:line citation. IGNORED/CONFLICT requires a file:line citation AND a clear statement of what was expected vs what was found.
+- **Every verdict needs evidence, cited by symbol.** HONORED requires a `path#Symbol` citation; IGNORED/CONFLICT requires one AND a clear statement of what was expected vs what was found. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is, no verdict ever turns on the line component, and cite-refresh sweeps happen only under an explicit directive.
 - **Grep before asserting.** Never claim "code uses X" without running a grep to verify.
 - **Check concerns.md for overrides.** A documented override flips IGNORED → HONORED_WITH_OVERRIDE.
-- **No severity classification.** All deviations are defects. The GRIND phase fixes them.
+- **Name the class when deviations share a root cause.** Five files hand-rolling the same helper the research said to import are one class, not five unrelated deviations — carry it in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix rather than five repeated point fixes, and that only fires if you named it. Omit the field when a deviation stands alone.
+- **No severity classification.** All deviations are defects. The GRIND phase fixes them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
+- **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not a research deviation. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Every real deviation from a recommendation stays a defect, and this rule gives you no discretion to call one "cosmetic."
+- **Declare `target_kind` on every filing.** Pass `target_kind: "comment"` when the deviation you are recording is about a code comment, otherwise the kind of artifact that departed from the recommendation (`code`, `test`, `config`, `doc`). That refusal engages on the declaration alone — leave it out and a drifted line number is filed as a research deviation, the exact outcome the split exists to prevent. It rides on every `Foundry-Defect` and `Foundry-Sync` call, never on some of them.
+- **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the research was only advisory."
+- **An observation carries no `spec_ref` and names no requirement id.** That denylist entry is mechanical: `Foundry-Observation` reads ANY non-empty `spec_ref` as a spec-required-behaviour claim by construction, with no inspection of what the finding says — the `research/...#anchor` form your defect shape uses is a recommendation cite rather than a requirement id, and is refused just the same — and a `US-`/`FR-`/`AC-`-shaped id in the description matches identically. So `spec_ref` rides on the deviations you file through `Foundry-Defect` and `Foundry-Sync`, and is left empty on the comment-prose findings you file through `Foundry-Observation`. Attach one anyway and the demotion is refused, the tripwire fires, and a drifted cite is a research deviation after all.
 - **If there's no research (no files in `research/` and no Informational items in spec), return immediately with empty findings and a note**: "No research recommendations to audit." Don't make up checks.
 - **Run in parallel with other INSPECT streams.** Don't wait for TRACE/PROVE/SIGHT/TEST. Return your findings independently.
 - **Regression check.** If a previous cycle's research audit had HONORED items that are now IGNORED, flag as regression.
+- **Log your own progress, don't just verify everyone else's.** Append a ledger line at every new step, per the `## Progress ledger` section. You demand a grep behind every claim; the lead is owed the same evidence that you are still running.
+
+## Progress ledger
+
+You are the cheapest stream in F2 and the easiest to forget. A ledger is how the lead knows the difference between "research-auditor finished in two minutes" and "research-auditor never started."
+
+Append one JSON object per line to `foundry-archive/{run}/progress/research_audit.jsonl`. **The file is named for your wire id — `research_audit` — not for this agent file**, because that id is what `Foundry-Liveness` expects the RESEARCH_AUDIT stream to write.
+
+```
+{"timestamp": "2026-08-31T19:04:22+00:00", "phase": "inspect", "step": "7 recommendations enumerated"}
+```
+
+- `timestamp` — ISO-8601 **UTC**, with the offset. A bare local time is a guess.
+- `phase` — `inspect`.
+- `step` — where you have actually got to, in a few words.
+
+Append with a shell redirect (`>>`) — never rewrite the file — and create the `progress/` directory if it does not exist. Write a line when you start and at every new step: recommendations enumerated, each one verified, `concerns.md` checked for overrides, findings assembled, `Foundry-Sync` called. Never let more than 5 minutes of work pass without a line.
+
+`step` is the load-bearing field. `Foundry-Liveness` reports you `stalled` when no line arrives for 15 minutes, and `no_progress` when lines keep arriving while `step` stays identical for 15 minutes — alive but not advancing. Move `step` when the work moves, and never repeat a step to look busy.
+
+**Your LAST line declares you finished** — the same three fields plus `"done": true`:
+
+```
+{"timestamp": "2026-08-31T19:31:07+00:00", "phase": "inspect", "step": "2 deviations synced", "done": true}
+```
+
+This matters most to you, because you finish early. Without the terminal line you stop writing, cross the 15-minute threshold, and report `stalled` for the rest of the run even though your audit is complete and correct. Write it and you report `done` and drop out of `needs_attention`. The empty-research early return counts: write a start line and a terminal line even when there is nothing to audit.
+
+A failed append must NEVER block the audit: swallow the error and carry on.

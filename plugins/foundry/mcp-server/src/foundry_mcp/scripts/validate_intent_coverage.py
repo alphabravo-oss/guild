@@ -87,6 +87,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from foundry_mcp.tools.foundry_state import read_document, read_text_file
+
 
 # ---------------------------------------------------------------------------
 # Constants — closed vocabularies
@@ -365,9 +367,8 @@ def load_manifest_casting_ids(castings_dir: Path | None) -> set[str] | None:
     manifest_path = castings_dir / "manifest.json"
     if not manifest_path.is_file():
         return None
-    try:
-        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    manifest_data, manifest_problem = read_document(manifest_path)
+    if manifest_problem is not None:
         return None
     if isinstance(manifest_data, dict) and isinstance(
         manifest_data.get("castings"), list
@@ -394,10 +395,12 @@ def _read_casting_prompt(
     prompt_path = castings_dir / f"casting-{casting_id}-prompt.md"
     cache_key = str(prompt_path)
     if cache_key not in cache:
-        try:
-            cache[cache_key] = prompt_path.read_text(encoding="utf-8")
-        except OSError:
-            cache[cache_key] = None
+        # D-146: `except OSError` does not name UnicodeDecodeError, so a prompt
+        # whose bytes are not UTF-8 raised instead of resolving to the D-018a
+        # unverifiable state. `read_text_file` answers both in one call, and an
+        # unreadable prompt is exactly as unverifiable as an absent one.
+        text, problem = read_text_file(prompt_path)
+        cache[cache_key] = None if (problem is not None or not prompt_path.exists()) else text
     return cache[cache_key]
 
 
@@ -612,15 +615,15 @@ def validate_intent_coverage(
     failures: list[str] = []
 
     # ----- Step 1: JSON parse -----
-    try:
-        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
-    except FileNotFoundError as e:
+    if not coverage_path.exists():
         print(
-            f"INTENT_COVERAGE_SCHEMA_INVALID: coverage file missing: {e}"
+            f"INTENT_COVERAGE_SCHEMA_INVALID: coverage file missing: "
+            f"{coverage_path}"
         )
         return 1
-    except json.JSONDecodeError as e:
-        print(f"INTENT_COVERAGE_SCHEMA_INVALID: malformed JSON: {e}")
+    coverage, coverage_problem = read_document(coverage_path)
+    if coverage_problem is not None:
+        print(f"INTENT_COVERAGE_SCHEMA_INVALID: malformed JSON: {coverage_problem}")
         return 1
     if not isinstance(coverage, dict):
         print(
@@ -652,14 +655,23 @@ def validate_intent_coverage(
     spec_text: str = ""
     spec_answer_ids: set[str] = set()
     if spec_path is not None:
-        try:
-            spec_text = spec_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
+        # D-146: `except FileNotFoundError` covered absence and nothing else,
+        # so an unreadable --spec raised out of the CLI. Absence keeps its own
+        # named token — "you pointed me at nothing" and "what you pointed me at
+        # is broken" send the operator to look at different things.
+        if not spec_path.exists():
             failures.append(
                 f"INTENT_COVERAGE_SCHEMA_INVALID: --spec path missing: "
                 f"{spec_path}"
             )
             spec_text = ""
+        else:
+            spec_text, spec_problem = read_text_file(spec_path)
+            if spec_problem is not None:
+                failures.append(
+                    f"INTENT_COVERAGE_SCHEMA_INVALID: --spec {spec_problem}"
+                )
+                spec_text = ""
         if spec_text:
             spec_answer_ids = extract_answer_ids_from_spec(spec_text)
 
@@ -900,6 +912,14 @@ def validate_intent_coverage(
     # Advisory shape: only fires when --tool-call-log passed (mirror of
     # Phase 7 advisory pattern).
     if tool_call_log_path is not None:
+        # D-141: the read and the decode sat two statements apart under two
+        # handlers, `except FileNotFoundError` and `except json.JSONDecodeError`
+        # — between them naming two exception types and covering neither the
+        # OSError nor the UnicodeDecodeError the READ itself raises, which is
+        # the D-137 residual one rung out from the sites that fix closed.
+        # `read_text_file` is the canonical answer and this module already
+        # imports its sibling; the local handler is widened rather than
+        # rewritten because this file belongs to another casting's boundary.
         try:
             calls_text = tool_call_log_path.read_text(encoding="utf-8")
         except FileNotFoundError as e:
@@ -908,6 +928,12 @@ def validate_intent_coverage(
                 f"missing: {e}"
             )
             calls: Any = []
+        except (OSError, UnicodeDecodeError) as e:
+            failures.append(
+                f"INTENT_COVERAGE_SCHEMA_INVALID: --tool-call-log could not be "
+                f"read ({type(e).__name__}: {e})"
+            )
+            calls = []
         else:
             try:
                 calls = json.loads(calls_text)

@@ -150,11 +150,11 @@ For each user story, enumerate EVERY reasonable scenario:
 Example — spec says "users can manage credentials":
 | # | Scenario | Status | Evidence |
 |---|----------|--------|----------|
-| 1 | Create a credential | ✓ | handler.go:42 |
-| 2 | View list of credentials | ✓ | handler.go:15 |
+| 1 | Create a credential | ✓ | handler.go#CreateCredential |
+| 2 | View list of credentials | ✓ | handler.go#ListCredentials |
 | 3 | View single credential details | ✗ GAP | No GET /:id handler |
 | 4 | Edit a credential | ✗ GAP | No PUT handler |
-| 5 | Delete a credential | ✓ | handler.go:78 |
+| 5 | Delete a credential | ✓ | handler.go#DeleteCredential |
 | 6 | Search/filter credentials | ✗ GAP | No query params |
 | 7 | Validate input on create | ✓ THIN | Only checks name |
 | 8 | Handle duplicate names | ✗ GAP | No unique constraint |
@@ -204,15 +204,18 @@ For each major feature, walk through the complete workflow as a user would:
    - PL-2: "Edit flow — EditCredential component reads credential by ID but DetailPage
      doesn't pass the ID prop, so edit form loads empty"
 
-**PL-N findings are high severity** — they represent flows that a user will hit on
-their first interaction. A feature with working functions but broken workflows is
-worse than a missing feature (users expect it to work and get confused when it doesn't).
+**PL-N findings are defects, never observations** — they represent flows that a user
+will hit on their first interaction. A feature with working functions but broken
+workflows is worse than a missing feature (users expect it to work and get confused
+when it doesn't). This is a channel statement, not a severity one: a broken workflow
+is not a comment, so the never-demote denylist puts it in the defect ledger whatever
+else is true about it.
 
 In foundry TRACE mode, PL-N findings become defects alongside L-N and THIN-N findings.
 
 ### Step 3: CLASSIFY — Number the Findings
 
-- **L-1, L-2...** — Gaps. Description, story ref, file:line, what's missing.
+- **L-1, L-2...** — Gaps. Description, story ref, `path#Symbol`, what's missing.
 - **THIN-1, THIN-2...** — Anemic features with unsatisfied observable truths. Story
   ref, which OTs are YES vs NO, what's missing. **THIN findings are just as important
   as GAP findings.**
@@ -227,7 +230,7 @@ When run standalone, write to `trace-reports/trace-{timestamp}.md`. When run fro
 - Story traces with function-level Q1+Q2 for every function in each chain
 - Scenario completeness tables per story
 - Error path traces (3+ per story)
-- All findings (L-N, THIN-N, SA-N, DEV-N) with file:line references
+- All findings (L-N, THIN-N, SA-N, DEV-N) with `path#Symbol` references
 - Cross-story analysis
 
 ### Step 5: DECIDE
@@ -236,9 +239,15 @@ When run standalone, write to `trace-reports/trace-{timestamp}.md`. When run fro
 
 **Foundry F2 TRACE stream (READ-ONLY):** DO NOT fix findings. DO NOT spawn
 agents. Only collect and document. Record findings via the `Foundry-Defect`
-MCP tool, then mark the stream complete via `Foundry-Mark-Stream-Complete`
-with `items_checked`, `items_total`, and `findings_count`. F3 GRIND converts
-findings into fix items.
+MCP tool, then mark the stream complete via `Foundry-Stream` with
+`stream: "trace"`, `cycle`, `items_checked`, `items_total`, and
+`findings_count`. `stream`, `cycle` and `items_checked` are all REQUIRED — a
+call omitting any of them is rejected at the MCP boundary, and a stream that
+cannot mark itself complete contributes nothing to the cycle's coverage
+roll-up, where its absence reads as no coverage rather than as a broken call.
+Take `cycle` from `Foundry-Next`: the roll-up is keyed by the server's own
+counter, and the value you pass is retained on the record for audit only. F3
+GRIND converts findings into fix items.
 
 ## MCP Validation (optional)
 
@@ -276,28 +285,33 @@ JSON block at the end for tooling consumption.
         "type": "object",
         "properties": {
           "id": {"type": "string", "description": "Finding ID (L-N, THIN-N, SA-N, DEV-N)"},
-          "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
-          "category": {"type": "string", "description": "gap|thin|ambiguity|deviation"},
-          "file": {"type": "string", "description": "Primary file path"},
-          "line": {"type": "integer", "description": "Line number (if applicable)"},
+          "classification": {"type": "string", "enum": ["DEFECT", "OBSERVATION"],
+            "description": "Channel, not a tier. Comment-prose findings are OBSERVATION; every other finding is a DEFECT. The never-demote denylist overrides this field."},
+          "type": {"type": "string",
+            "enum": ["MISSING", "WRONG", "THIN", "HOLLOW", "PARTIAL", "UNWIRED",
+                     "BROKEN", "FAIL", "ARCHITECTURAL_PLACEMENT", "RESEARCH_DEVIATION",
+                     "COVERAGE_INCOMPLETE", "THIN_MIGRATION"],
+            "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
+          "class": {"type": "string",
+            "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+          "file": {"type": "string", "description": "Bare path. Never carries a line number."},
+          "symbol": {"type": "string", "description": "The symbol the finding is about. With `file` this is the `path#Symbol` cite."},
           "description": {"type": "string", "description": "What's wrong and why"},
           "spec_reference": {"type": "string", "description": "Spec section/requirement ID"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "severity", "category", "file", "description"]
+        "required": ["id", "classification", "type", "file", "symbol", "description"]
       }
     },
     "summary": {
       "type": "object",
       "properties": {
         "total": {"type": "integer"},
-        "by_severity": {
+        "by_classification": {
           "type": "object",
           "properties": {
-            "critical": {"type": "integer"},
-            "high": {"type": "integer"},
-            "medium": {"type": "integer"},
-            "low": {"type": "integer"}
+            "DEFECT": {"type": "integer"},
+            "OBSERVATION": {"type": "integer"}
           }
         },
         "verdict": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]},
@@ -311,9 +325,13 @@ JSON block at the end for tooling consumption.
 }
 ```
 
+**There is no `severity` field, and adding one is a vocabulary violation.** Every defect is a defect and GRIND fixes them all, so a tier has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. `type` and `classification` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` and `#FINDING_CLASSES` — a value outside them is rejected server-side rather than coerced onto something known.
+
+**There is no `line` field either.** A finding cites `path#Symbol` — `file` bare, `symbol` beside it. The symbol is authoritative, and the commit-pinned-run-artifact carve-out that permits a line hint does not reach a findings record: this JSON goes straight to the foundry defect sync tools and is then re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
+
 **Verdict rules:**
-- **FAIL**: any critical or high finding
-- **WARN**: only medium/low findings
+- **FAIL**: any finding classified `DEFECT`
+- **WARN**: findings exist but every one is classified `OBSERVATION`
 - **PASS**: zero findings (rare — verify you didn't miss anything)
 
 This JSON format can be passed directly to the foundry defect sync tools.
@@ -322,6 +340,12 @@ This JSON format can be passed directly to the foundry defect sync tools.
 
 - **Read-only** — never modify code, only read and report
 - **Spec-anchored** — every finding references a spec requirement
+- **The symbol is authoritative** — cite `path#Symbol`, never `path:line`. A cite whose
+  symbol resolves is valid however stale any line hint beside it has become. No finding
+  ever turns on the line component, a moved line alone produces no finding of any kind,
+  and cite-refresh sweeps happen only under an explicit directive. Durable cites are
+  symbol-only, optionally with a quoted snippet; a line hint belongs only in a
+  commit-pinned run artifact, where it is frozen against the one commit it was written at.
 - **No AST tooling** — read code directly for semantic understanding
 - **Language-agnostic** — works with any language Claude can read
 - Do NOT trust tests as evidence — tests can pass with stubs

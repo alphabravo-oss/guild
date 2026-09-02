@@ -32,6 +32,15 @@ Test surface (per 09-VALIDATION.md RUN-01 verification rows):
   13. test_run_01_quantitative_gates
   14. test_saturation_threshold_dual_criterion
 
+  FR-013 vocabulary derivation + the FR-018 key/case repair (Tests 15-17).
+
+  D-034 — the gates operating on a REAL archive (Tests 18-28): absent
+  cohort.json and context-at-f2.txt are cohort-study inputs no run writes, the
+  per-cycle roll-up is read rather than ignored, a roll-up proving a higher
+  cycle than state.json names the stale counter, and --context-pct /
+  --baseline-seconds turn the two structurally-MISSING gates into real
+  verdicts.
+
 RED-or-SKIP discipline:
 
 - Module-top guard: ``pytest.skip(allow_module_level=True)`` when
@@ -50,6 +59,7 @@ import csv
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -84,6 +94,12 @@ SPEC_REVIEWER = REPO_ROOT / "plugins" / "forge" / "agents" / "spec-reviewer.md"
 EVIDENCE_PY = (
     REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
     / "tools" / "evidence.py"
+)
+# FR-013: the canonical vocabulary module measure-run.py now derives its
+# stream roster from. This is where the roster literals live post-FR-013.
+VOCAB_PY = (
+    REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
+    / "schemas" / "vocab.py"
 )
 
 
@@ -176,6 +192,8 @@ def make_run_dir(tmp_path: Path) -> Callable[..., Path]:
         omit_handoffs: bool = False,
         omit_state: bool = False,
         cohort_json_override: dict[str, Any] | None = None,
+        omit_cohort: bool = False,
+        rollup: dict[str, Any] | None = None,
     ) -> Path:
         run_dir = tmp_path / cohort_id
         run_dir.mkdir()
@@ -217,9 +235,14 @@ def make_run_dir(tmp_path: Path) -> Callable[..., Path]:
             "spec_path": "forge-specs/phase9-sloppy/spec.md",
             "spec_format_version": "v2.1",
         }
-        (run_dir / "cohort.json").write_text(
-            json.dumps(cohort_json), encoding="utf-8"
-        )
+        if not omit_cohort:
+            (run_dir / "cohort.json").write_text(
+                json.dumps(cohort_json), encoding="utf-8"
+            )
+        if rollup is not None:
+            (run_dir / "stream-rollup.json").write_text(
+                json.dumps(rollup), encoding="utf-8"
+            )
         return run_dir
 
     return _make
@@ -537,17 +560,22 @@ def test_known_phase9_stream_ids_matches_authoritative_sources() -> None:
     for sid in ("INTENT-01", "TEST-01", "PROBE-01", "EVID-01"):
         assert sid in start_text, f"start.md missing {sid}"
 
-    # Plan 09-02 territory: import KNOWN_PHASE9_STREAM_IDS from measure-run.py
-    # and assert byte-equivalence with EXPECTED_KNOWN_PHASE9_STREAM_IDS.
-    # Until then we exercise the disk-side cross-grep above; the script-side
-    # check fires once measure-run.py ships.
+    # Script side: measure-run.py still exposes KNOWN_PHASE9_STREAM_IDS, but
+    # per FR-013 it DERIVES it from foundry_mcp.schemas.vocab rather than
+    # re-typing the roster. The literal cross-grep therefore runs against
+    # vocab.py, the roster's single source of truth — same anti-drift check,
+    # pointed at the copy that is now authoritative.
     script_text = SCRIPT.read_text(encoding="utf-8")
     assert "KNOWN_PHASE9_STREAM_IDS" in script_text, (
         "measure-run.py must export KNOWN_PHASE9_STREAM_IDS frozenset"
     )
+    assert "CANONICAL_STREAM_IDS" in script_text, (
+        "measure-run.py must derive its roster from vocab.CANONICAL_STREAM_IDS"
+    )
+    vocab_text = VOCAB_PY.read_text(encoding="utf-8")
     for sid in EXPECTED_KNOWN_PHASE9_STREAM_IDS:
-        assert sid in script_text, (
-            f"measure-run.py KNOWN_PHASE9_STREAM_IDS missing {sid}"
+        assert sid in vocab_text, (
+            f"vocab.py CANONICAL_STREAM_IDS missing {sid}"
         )
 
 
@@ -658,11 +686,19 @@ def test_run_01_quantitative_gates() -> None:
             "--context-pct", str(ctx),
             "--regression-pct", str(reg),
         )
-        assert exit_code == 0, stderr
         payload = json.loads(stdout)
         assert payload["overall_verdict"] == expected, (
             f"case={cycles, yld, ctx, reg}: "
             f"expected {expected}, got {payload['overall_verdict']}"
+        )
+        # D-105: this path printed overall_verdict FAIL and then returned 0
+        # unconditionally, and this loop asserted that 0 on all eight cases —
+        # five of which it simultaneously asserted were FAIL. The verdict and
+        # the status must agree at every boundary, or the band constants below
+        # are documentation rather than gates.
+        assert exit_code == (1 if expected == "FAIL" else 0), (
+            f"case={cycles, yld, ctx, reg}: verdict {expected} "
+            f"but exit {exit_code}{stderr}"
         )
 
 
@@ -702,3 +738,729 @@ def test_saturation_threshold_dual_criterion() -> None:
             f"bl_yld={bl_yld}, co_yld={co_yld}): "
             f"expected {expected}, got {payload['saturated']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# FR-013 / FR-018 — vocabulary derivation + the real-archive key/case repair.
+# ---------------------------------------------------------------------------
+
+
+def _load_measure_run_module():
+    """Import the dash-named measure-run.py as a module object.
+
+    Loading the real file (rather than grepping its text) is what proves the
+    roster is DERIVED at import time and not merely mentioned in a comment.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_measure_run_under_test", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # measure-run.py defines a @dataclass, whose annotation resolution looks
+    # the defining module up in sys.modules — register before exec_module.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_known_phase9_stream_ids_is_derived_from_vocab() -> None:
+    """Test 15 — the ``measure-run.py roster <- vocab.py`` key link (FR-013).
+
+    KNOWN_PHASE9_STREAM_IDS must not be a re-typed copy: it must BE
+    vocab.CANONICAL_STREAM_IDS. Identity (``is``) is asserted, not just
+    equality, so a future hand-typed duplicate that happens to match today
+    still fails this test.
+    """
+    from foundry_mcp.schemas import vocab
+
+    module = _load_measure_run_module()
+    assert module.KNOWN_PHASE9_STREAM_IDS is vocab.CANONICAL_STREAM_IDS, (
+        "measure-run.py must derive its roster from vocab, not re-type it"
+    )
+    assert module.KNOWN_PHASE9_STREAM_IDS == EXPECTED_KNOWN_PHASE9_STREAM_IDS
+    assert len(module.KNOWN_PHASE9_STREAM_IDS) == 15
+
+
+def test_lowercase_source_counted_under_canonical_stream_id(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 16 — FR-018 / AC-024 regression.
+
+    Every writer of defects.json persists the filing stream as ``source``,
+    lowercase (tools/foundry.py, tools/foundry_orchestrator.py). measure-run
+    read ``d.get("stream")`` against an UPPERCASE roster, so per_stream_defects
+    was ALWAYS empty and every record emitted PHASE9_DEFECTS_FILE_MALFORMED.
+    This pins both halves of that repair: the key and the case.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps(
+            {
+                "defects": [
+                    {"id": "D-001", "source": "prove", "type": "THIN"},
+                    {"id": "D-002", "source": "prove", "type": "WRONG"},
+                    {"id": "D-003", "source": "trace", "type": "MISSING"},
+                    {"id": "D-004", "source": "test01", "type": "FAIL"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {
+        "PROVE": 2,
+        "TRACE": 1,
+        "TEST-01": 1,
+    }, payload["per_stream_defects"]
+    assert "PHASE9_DEFECTS_FILE_MALFORMED" not in payload["failure_tokens"]
+
+
+def test_legacy_stream_key_still_counted(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 17 — an archive written under the legacy ``stream`` key still
+    counts, so the key repair loses no pre-existing data.
+
+    The claim under test is "no REJECTION", which is ``failure_tokens == []``
+    — a strictly sharper assertion than the exit code this used to read. A
+    one-record ledger puts 100% of the yield on a single stream, so post-D-105
+    the yield gate FAILs and the status is 1; that says nothing about the
+    legacy key, and asserting 0 here would have re-pinned the bug D-105 fixed.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps({"defects": [{"id": "D-001", "stream": "TRACE"}]}),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {"TRACE": 1}
+    assert payload["failure_tokens"] == [], (
+        "the legacy `stream` key is being rejected, not merely gated"
+    )
+    # The nonzero status is the yield band on a single-record ledger, and
+    # nothing else — every other gate is clean.
+    assert payload["gate_verdicts"]["defect_yield_per_stream"] == "FAIL"
+    assert payload["gate_verdicts"]["cycles"] == "PASS"
+    assert exit_code == 1, (stdout, stderr)
+
+
+def test_assay_and_temper_sourced_defects_are_counted_not_discarded(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-091 / FR-018 — a defect `source` is resolved against the SOURCE
+    vocabulary, not the stream roster.
+
+    The key/case half of FR-018 was fixed; a VOCABULARY half survived it. The
+    field being read is `source`, whose vocabulary is vocab.DEFECT_SOURCE_IDS
+    (11 values, byte-equal to server.py's live Foundry-Defect `source` enum).
+    It was resolved through ``canonical_stream_id``, which knows only the nine
+    STREAM wire ids — ASSAY and TEMPER are adjudicators, not verification
+    streams, so they are correctly absent from the roster. Each such record was
+    therefore dropped from the counts AND reported as PHASE9_UNKNOWN_STREAM: a
+    failure token naming a value the protocol declares legal.
+
+    Both halves matter to NFR-001. ``_yield_band_verdict`` sums
+    per_stream_defects, so the yield gate was evaluated on a truncated total;
+    and grand-vulture's baseline holds only prove/test/trace sources, so the
+    BASELINE measured clean while the comparison side under-counted — an
+    instrument manufacturing the exact "defect finding dropped" signal the
+    effort's global bar treats as proof the change is wrong.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps(
+            {
+                "defects": [
+                    {"id": "D-001", "source": "prove", "type": "THIN"},
+                    {"id": "D-002", "source": "trace", "type": "MISSING"},
+                    {"id": "D-003", "source": "assay", "type": "WRONG"},
+                    {"id": "D-004", "source": "temper", "type": "HOLLOW"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {
+        "PROVE": 1,
+        "TRACE": 1,
+        "ASSAY": 1,
+        "TEMPER": 1,
+    }, payload["per_stream_defects"]
+    # The ledger's own total is what the yield gate must see.
+    assert sum(payload["per_stream_defects"].values()) == 4
+    assert payload["failure_tokens"] == [], (
+        "a legal defect source is being reported as an unknown stream"
+    )
+
+
+def test_a_source_outside_the_defect_vocabulary_is_still_unknown(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """PHASE9_UNKNOWN_STREAM keeps meaning what it always claimed to.
+
+    The D-091 repair widens the resolver to the right vocabulary; it must not
+    turn the refusal off. A value outside DEFECT_SOURCE_IDS is still named and
+    still discarded — never coerced onto a known source.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        json.dumps(
+            {
+                "defects": [
+                    {"id": "D-001", "source": "prove", "type": "THIN"},
+                    {"id": "D-002", "source": "haruspex", "type": "WRONG"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    # A named token is a rejection — Test 25's contract for the roll-up reader,
+    # and the defect reader owes the same.
+    assert exit_code != 0
+    payload = json.loads(stdout)
+    assert payload["per_stream_defects"] == {"PROVE": 1}
+    assert payload["failure_tokens"] == ["PHASE9_UNKNOWN_STREAM:haruspex"]
+
+
+def test_the_defect_reader_uses_the_defect_source_resolver() -> None:
+    """The key link, pinned at the source rather than only through behaviour.
+
+    ``_read_defects_per_stream`` must call ``canonical_defect_source``. The
+    roll-up reader keeps ``canonical_stream_id``, because a roll-up genuinely
+    IS per-stream coverage and ASSAY files none — the two resolvers are
+    siblings and each site must read its own vocabulary.
+    """
+    import inspect
+
+    measure_run_module = _load_measure_run_module()
+    source = inspect.getsource(measure_run_module._read_defects_per_stream)
+    assert "canonical_defect_source(" in source, (
+        "the defect reader no longer resolves `source` against the defect-source "
+        "vocabulary; D-091 is back"
+    )
+    assert "canonical_stream_id(" not in source, (
+        "the defect reader resolves a defect `source` through the STREAM "
+        "resolver, which drops every assay- and temper-filed defect (D-091)"
+    )
+    rollup = inspect.getsource(measure_run_module._read_stream_rollup)
+    assert "canonical_stream_id(" in rollup, (
+        "the roll-up reader must keep the STREAM resolver — its keys are "
+        "streams reporting coverage, not defect filers"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-034 — the gates must operate on a REAL run archive (FR-018 / AC-024).
+#
+# A real foundry archive has no cohort.json and no context-at-f2.txt (both are
+# hand-placed cohort-study inputs, written by no run), and — after the release
+# that introduces it — a stream-rollup.json that measure-run never opened.
+# ---------------------------------------------------------------------------
+
+
+def _rollup_doc(cycles: dict[str, Any]) -> dict[str, Any]:
+    """A stream-rollup.json in the shape the server writes and migration emits."""
+    return {"cycles": cycles, "updated_at": "2026-08-30T04:34:50+00:00"}
+
+
+def _entry(items_checked: int, items_total: int, findings: int) -> dict[str, Any]:
+    return {
+        "items_checked": items_checked,
+        "items_total": items_total,
+        "findings": findings,
+        "records": [],
+    }
+
+
+def test_absent_cohort_json_is_not_a_schema_violation(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 18 — D-034's first symptom.
+
+    No foundry run writes cohort.json, so treating its absence as
+    PHASE9_SCHEMA_INVALID made EVERY real archive emit a failure token and exit
+    1 — the instrumentation rejected real data by construction.
+    """
+    run_dir = make_run_dir(omit_cohort=True)
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == []
+    assert payload["cohort_id"] == ""
+
+
+def test_strict_flag_rejects_missing_cohort_json(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 19 — absence is strict-gated, exactly as context-at-f2.txt is,
+    so the cohort-study workflow keeps its strictness.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct="42.7")
+    exit_code, stdout, stderr = _invoke_measure_run("--strict", str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_malformed_cohort_json_is_still_a_schema_violation(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 20 — tolerating ABSENCE must not tolerate a corrupt file."""
+    run_dir = make_run_dir()
+    (run_dir / "cohort.json").write_text("{not json", encoding="utf-8")
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_stream_rollup_coverage_is_read_and_reported(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 21 — D-034's third symptom: the roll-up was never opened.
+
+    defects.json records what each stream FOUND; only stream-rollup.json
+    records what it CHECKED, so without it the instrumentation reported defect
+    yield with no denominator. Coverage is re-keyed onto the canonical
+    UPPERCASE ids so the payload speaks one spelling throughout.
+    """
+    run_dir = make_run_dir(
+        rollup=_rollup_doc(
+            {
+                "2": {"prove": _entry(80, 80, 4), "trace": _entry(12, 15, 1)},
+                "3": {"prove": _entry(165, 165, 0), "test01": _entry(9, 9, 0)},
+            }
+        )
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_cycle_coverage"] == {
+        "2": {
+            "PROVE": {"items_checked": 80, "items_total": 80, "findings": 4},
+            "TRACE": {"items_checked": 12, "items_total": 15, "findings": 1},
+        },
+        "3": {
+            "PROVE": {"items_checked": 165, "items_total": 165, "findings": 0},
+            "TEST-01": {"items_checked": 9, "items_total": 9, "findings": 0},
+        },
+    }
+
+
+def test_absent_stream_rollup_is_not_a_failure(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 22 — archives written before the roll-up existed are exactly the
+    ones this instrumentation has to measure, so absence reports empty.
+    """
+    run_dir = make_run_dir()
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["per_cycle_coverage"] == {}
+    assert payload["failure_tokens"] == []
+
+
+def test_rollup_proving_a_higher_cycle_names_the_stale_counter(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 23 — survey/data.md FI-1.
+
+    ``state.json["cycle"]`` was written once as 0 and never incremented, so an
+    unrepaired archive reports a cycle count the run never had and the
+    convergence gate PASSes on fiction. The roll-up is keyed BY the server-side
+    cycle counter (FR-005 / ST-001), so its highest key is that counter read
+    from the artifact — not a second counter invented here. When it proves
+    more, report the proven value and NAME the stale one.
+    """
+    run_dir = make_run_dir(  # fixture state.json records cycle 3
+        rollup=_rollup_doc({"3": {"prove": _entry(80, 80, 1)},
+                            "7": {"prove": _entry(80, 80, 0)}})
+    )
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    # Index 7 is the EIGHTH cycle — the counter is 0-based (see
+    # _reconcile_final_cycle_index) and ``cycles`` publishes a COUNT.
+    assert payload["cycles"] == 8, "must report the cycles the run reached"
+    assert "PHASE9_CYCLE_COUNT_INVALID" in payload["failure_tokens"]
+    assert exit_code != 0
+
+
+def test_rollup_agreeing_with_state_is_silent(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 24 — a repaired archive reconciles cleanly and stays quiet."""
+    run_dir = make_run_dir(
+        rollup=_rollup_doc({"3": {"prove": _entry(80, 80, 1)}})
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["cycles"] == 4, "index 3 is the fourth cycle"
+    assert payload["failure_tokens"] == []
+
+
+def test_unknown_stream_in_rollup_is_named(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 25 — a roll-up key outside the roster is NAMED, never coerced."""
+    run_dir = make_run_dir(rollup=_rollup_doc({"3": {"bogus": _entry(1, 1, 0)}}))
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_UNKNOWN_STREAM:bogus" in json.loads(stdout)["failure_tokens"]
+
+
+def test_malformed_stream_rollup_is_a_schema_violation(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 26 — a roll-up that EXISTS but is not the documented shape."""
+    run_dir = make_run_dir()
+    (run_dir / "stream-rollup.json").write_text("{not json", encoding="utf-8")
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_operator_inputs_turn_the_two_missing_gates_real(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 27 — D-034's second symptom: 2 of 4 gates permanently MISSING.
+
+    The F2 context percentage and the wall-clock baseline are measurements no
+    archive holds, so without an input path those two gates can NEVER be
+    anything but MISSING. ``--context-pct`` and ``--baseline-seconds`` supply
+    them; all four gates then return a real verdict.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct=None)
+
+    # Without the inputs: honest MISSING on exactly those two gates.
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    before = json.loads(stdout)["gate_verdicts"]
+    assert before["f2_context_pct"] == "MISSING"
+    assert before["wall_clock_regression_pct"] == "MISSING"
+
+    # With them: four real verdicts, no MISSING left.
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "41.5", "--baseline-seconds", "100.0"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["f2_context_pct"] == 41.5
+    assert "MISSING" not in payload["gate_verdicts"].values(), payload["gate_verdicts"]
+    assert payload["gate_verdicts"]["f2_context_pct"] == "PASS"
+
+
+def test_context_pct_override_wins_over_the_file(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """Test 28 — an explicit measurement beats a stale on-disk one."""
+    run_dir = make_run_dir(context_pct="42.7")
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "13.5"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    assert json.loads(stdout)["f2_context_pct"] == 13.5
+
+
+# ---------------------------------------------------------------------------
+# D-063 — ``cycles`` is a COUNT, and the convergence gate reads it as one.
+#
+# The server's counter is 0-based (Foundry-Init writes 0; the F1 -> F2 entry
+# from CAST is not a new cycle; only the F3 -> F2 boundary increments), so a run
+# that executed N cycles ends at index N-1. Publishing the raw index reported
+# every run one cycle short and let the convergence gate admit one cycle more
+# than MAX_CYCLES_FOR_CONVERGENCE names, at every threshold value.
+# ---------------------------------------------------------------------------
+
+
+MIGRATE_SCRIPT = REPO_ROOT / "plugins" / "foundry" / "scripts" / "migrate-archive.py"
+GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
+
+
+def test_convergence_gate_threshold_counts_cycles_not_indices(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The gate half of D-063.
+
+    A run at index 8 executed NINE cycles. The gate must FAIL it against a
+    threshold of 8, and the boundary case (index 7 = eight cycles) must PASS.
+    """
+    module = _load_measure_run_module()
+    assert module.MAX_CYCLES_FOR_CONVERGENCE == 8
+
+    over = make_run_dir(
+        rollup=_rollup_doc({"8": {"prove": _entry(10, 10, 0)}}),
+        cohort_id="no_TYPE_01",
+    )
+    payload = json.loads(_invoke_measure_run(str(over))[1])
+    assert payload["cycles"] == 9, "index 8 is the ninth cycle"
+    assert payload["gate_verdicts"]["cycles"] == "FAIL"
+
+    at_threshold = make_run_dir(
+        rollup=_rollup_doc({"7": {"prove": _entry(10, 10, 0)}}),
+        cohort_id="no_TYPE_02",
+    )
+    payload = json.loads(_invoke_measure_run(str(at_threshold))[1])
+    assert payload["cycles"] == 8
+    assert payload["gate_verdicts"]["cycles"] == "PASS"
+
+    # The operator-supplied path already spoke in COUNTS; both paths now agree.
+    exit_code, stdout, _ = _invoke_measure_run(
+        "--evaluate-gates", "--cycles", "9",
+        "--yield-pct", "25.0", "--context-pct", "42.0", "--regression-pct", "30.0",
+    )
+    assert json.loads(stdout)["gate_verdicts"]["cycles"] == "FAIL"
+    assert exit_code == 1, "a blown convergence gate is a nonzero status (D-105)"
+
+
+@pytest.mark.skipif(
+    not GRAND_VULTURE.exists(),
+    reason=(
+        f"grand-vulture archive not present in this checkout: {GRAND_VULTURE} "
+        "(foundry-archive/ is git-ignored)"
+    ),
+)
+def test_grand_vulture_reports_nfr_001s_two_baseline_numbers(tmp_path: Path) -> None:
+    """NFR-001 writes its baseline as "18 cycles, 168 defects".
+
+    Both numbers are read from the SAME archive by the SAME command, so they
+    can never again disagree: the defect half already matched to the unit while
+    the cycle half was one short, which is what ruled out coincidence when
+    D-063 was filed. The archive is copied first — never opened for writing.
+    """
+    dest = tmp_path / "grand-vulture"
+    shutil.copytree(GRAND_VULTURE, dest)
+
+    migrate = subprocess.run(
+        [sys.executable, str(MIGRATE_SCRIPT), str(dest)],
+        capture_output=True, text=True,
+    )
+    assert migrate.returncode == 0, migrate.stderr
+
+    exit_code, stdout, stderr = _invoke_measure_run(str(dest))
+    payload = json.loads(stdout)
+    assert payload["cycles"] == 18, "NFR-001 baseline: 18 cycles"
+    assert sum(payload["per_stream_defects"].values()) == 168, (
+        "NFR-001 baseline: 168 defects"
+    )
+    # D-060's other half — the repaired archive must satisfy its own detector.
+    # This is the token half of the exit contract, and it stays clean: nothing
+    # about grand-vulture is malformed or unreadable.
+    assert payload["failure_tokens"] == [], payload["failure_tokens"]
+
+    # D-105 — the gate half. Those same two numbers are BOTH out of band:
+    # 18 cycles against a convergence threshold of 8, and a defect yield
+    # concentrated past the 50% ceiling. That is the whole premise of NFR-001,
+    # which names grand-vulture as the baseline this effort must improve ON.
+    # The instrument therefore has to say so out loud. It previously printed
+    # both FAILs and exited 0 — the acceptance instrument certifying the very
+    # run whose gates it had just watched blow.
+    assert payload["gate_verdicts"]["cycles"] == "FAIL"
+    assert payload["gate_verdicts"]["defect_yield_per_stream"] == "FAIL"
+    assert exit_code == 1, (
+        "measure-run reports success on the baseline archive whose gates it "
+        f"just failed: {payload['gate_verdicts']} / {stderr}"
+    )
+
+    # And the real archive was never touched.
+    assert json.loads((GRAND_VULTURE / "state.json").read_text())["cycle"] == 0
+
+
+# ---------------------------------------------------------------------------
+# D-105 — a gate verdict must reach the exit status.
+#
+# All three gate-evaluating entry points derived their status from
+# failure_tokens alone, so a run could blow a gate, print the FAIL, and exit 0.
+# The calibration was exactly backwards: a purely informational token
+# (PHASE9_WALL_CLOCK_UNAVAILABLE, pinned by Test 4) exited 1 with every gate
+# PASSing, while a blown convergence gate exited 0. NFR-001 makes this the
+# effort's acceptance instrument; a gate whose verdict never reaches the exit
+# status is not a gate.
+# ---------------------------------------------------------------------------
+
+
+def test_a_blown_gate_alone_is_a_nonzero_status(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The per-run path, with a gate FAIL as the ONLY thing wrong.
+
+    ``--context-pct 50.0`` is the cleanest isolation available: it blows one
+    gate (the cap is a strict ``<``) while leaving failure_tokens empty, so the
+    status can come from nowhere else. 49.9 is the control — one tenth of a
+    point away, the same code path, exit 0. Together they also pin the band
+    boundary itself, which D-105 verified as consistent and must not move.
+    """
+    run_dir = make_run_dir()
+
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "50.0"
+    )
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == [], (
+        "isolation broken — the status could come from a token, not the gate"
+    )
+    assert payload["gate_verdicts"]["f2_context_pct"] == "FAIL"
+    assert exit_code == 1, (
+        f"gate FAIL printed but not routed to the exit status: {stderr}"
+    )
+
+    exit_code, stdout, stderr = _invoke_measure_run(
+        str(run_dir), "--context-pct", "49.9"
+    )
+    payload = json.loads(stdout)
+    assert payload["gate_verdicts"]["f2_context_pct"] == "PASS"
+    assert exit_code == 0, (stdout, stderr)
+
+
+def test_a_missing_gate_is_honest_not_failed(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """MISSING maps to 0, and the mapping is deliberate.
+
+    Two of the four gates read measurements no archive holds, so MISSING is the
+    ordinary state of a run measured without ``--context-pct`` /
+    ``--baseline-seconds``. Folding MISSING into the nonzero status would fail
+    nearly every real run — the over-firing calibration D-034 already had to
+    undo. Only a gate that was measured AND blown is a 1.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct=None)
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == []
+    verdicts = payload["gate_verdicts"]
+    assert "MISSING" in verdicts.values(), verdicts
+    assert "FAIL" not in verdicts.values(), verdicts
+    assert exit_code == 0, (stdout, stderr)
+
+
+def test_matrix_gate_fail_reaches_the_exit_status(tmp_path: Path) -> None:
+    """The --matrix path, reproducing the exact row D-105 describes.
+
+    A row rendering ``gate_verdict_overall=FAIL`` beside an EMPTY
+    ``failure_tokens_csv`` was the visible shape of the bug: the aggregator
+    read only the tokens column it had just printed blank. One cohort is given
+    a single-record ledger, which puts 100% of the yield on one stream and
+    blows the band with no token attached.
+    """
+    runs = _populate_runs_dir(tmp_path)
+    (runs / "no_TYPE_01" / "defects.json").write_text(
+        json.dumps({"defects": [{"id": "D-001", "source": "prove"}]}),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(
+        "--matrix", str(runs), "--format", "csv"
+    )
+    rows = {r[0]: r for r in csv.reader(io.StringIO(stdout))}
+    header = list(csv.reader(io.StringIO(stdout)))[0]
+    row = rows["no_TYPE_01"]
+    assert row[header.index("gate_verdict_overall")] == "FAIL", row
+    assert row[header.index("failure_tokens_csv")] == "", (
+        "isolation broken — this row must fail on its VERDICT, not a token"
+    )
+    assert exit_code == 1, (
+        f"a FAIL row in the matrix left the exit status at 0: {stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-106 — --matrix over a directory holding no cohort arm.
+#
+# The roster comprehension dropped every non-cohort subdir with no token, no
+# warning and no count, so a directory matching NONE of the ten ids produced a
+# header row, zero data rows and exit 0. --matrix <a file> and --matrix
+# <nonexistent> were both correctly refused; the ordinary mistake (the archive
+# root instead of the runs dir, or arms named otherwise) was the single input
+# that reported success.
+# ---------------------------------------------------------------------------
+
+
+def test_matrix_over_a_directory_with_no_cohorts_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The refusal is named, counts what it ignored, and exits nonzero."""
+    runs = tmp_path / "archive-root"
+    runs.mkdir()
+    for name in ("grand-vulture", "thunder-viper", "process-fixes"):
+        (runs / name).mkdir()
+
+    exit_code, stdout, stderr = _invoke_measure_run("--matrix", str(runs))
+    assert exit_code == 1, (stdout, stderr)
+    assert "PHASE9_NO_COHORTS" in stderr, stderr
+    # The operator has to be able to see WHICH arms were ignored, or the
+    # refusal just relocates the guesswork.
+    assert "3 subdirectories ignored" in stderr, stderr
+    for name in ("grand-vulture", "thunder-viper", "process-fixes"):
+        assert name in stderr, stderr
+    # No table is printed for a directory that was never measured.
+    assert stdout.strip() == "", stdout
+
+    # --strict is not what makes this an error; it always was one.
+    strict_exit, _, strict_err = _invoke_measure_run(
+        "--matrix", str(runs), "--strict"
+    )
+    assert strict_exit == 1
+    assert "PHASE9_NO_COHORTS" in strict_err
+
+
+def test_matrix_over_an_empty_directory_is_refused(tmp_path: Path) -> None:
+    """A directory with nothing in it at all takes the same refusal."""
+    runs = tmp_path / "empty"
+    runs.mkdir()
+    exit_code, stdout, stderr = _invoke_measure_run("--matrix", str(runs))
+    assert exit_code == 1, (stdout, stderr)
+    assert "PHASE9_NO_COHORTS" in stderr, stderr
+    assert "0 subdirectories ignored" in stderr, stderr
+
+
+def test_matrix_reports_the_arms_it_ignored(tmp_path: Path) -> None:
+    """Partial recognition is the dangerous middle case.
+
+    Ten arms measured beside four that were dropped still exits on the gates
+    alone — ignoring a docs/ directory is ordinary and must not become a
+    refusal — but the operator is told what was left out, because "10 rows"
+    and "10 of your 14 arms" look identical in the table.
+    """
+    runs = _populate_runs_dir(tmp_path)
+    for name in ("docs", "no_TYPE_03", "v4_1_0_baseline", "scratch"):
+        (runs / name).mkdir()
+    # A stray file is not an ignored arm and must not be counted as one.
+    (runs / "README.md").write_text("notes", encoding="utf-8")
+
+    exit_code, stdout, stderr = _invoke_measure_run(
+        "--matrix", str(runs), "--format", "csv"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    assert "4 non-cohort subdirectories ignored" in stderr, stderr
+    for name in ("docs", "no_TYPE_03", "v4_1_0_baseline", "scratch"):
+        assert name in stderr, stderr
+    assert "README.md" not in stderr, stderr
+    # The advisory is not a refusal, so it must not wear a token's name.
+    assert "PHASE9_" not in stderr, stderr
+    # And the ten real arms are still measured.
+    rows = list(csv.reader(io.StringIO(stdout)))
+    assert len(rows) == 11, f"expected 1 header + 10 data rows, got {len(rows)}"
+    assert {r[0] for r in rows[1:]} == EXPECTED_KNOWN_PHASE9_COHORT_IDS
+
+
+def test_no_cohorts_token_joins_the_closed_vocabulary() -> None:
+    """D-106's token is a member of the frozenset, not a loose string.
+
+    The closed-vocabulary discipline is that a refusal is a NAMED member of
+    KNOWN_PHASE9_FAILURE_TOKENS — writing the string to stderr without
+    enrolling it would make the roster a partial inventory of the refusals the
+    script can actually emit, which is what the roster exists to prevent.
+    """
+    module = _load_measure_run_module()
+    assert "PHASE9_NO_COHORTS" in module.KNOWN_PHASE9_FAILURE_TOKENS
+    # The 8 locked per CONTEXT.md are still all present — extended, not
+    # rewritten.
+    assert EXPECTED_KNOWN_PHASE9_FAILURE_TOKENS.issubset(
+        module.KNOWN_PHASE9_FAILURE_TOKENS
+    )
+    assert len(module.KNOWN_PHASE9_FAILURE_TOKENS) == 9

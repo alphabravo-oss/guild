@@ -12,16 +12,40 @@ from mcp.types import TextContent, Tool
 
 from foundry_mcp import __version__
 
+# FR-013 / CT-002 — the closed vocabularies this file advertises are READ, not
+# re-typed. The AC-013 class of defect was exactly this file's hand-typed enums
+# drifting away from the runtime guards, so the schema advertised streams the
+# server rejected and rejected defect types the agent contracts were told to
+# emit. Where each one comes from:
+#
+#   stream / source / defect_type   schemas/vocab.py — the wire vocabulary
+#   verdict                         foundry_orchestrator.VERDICT_VALUES, which
+#                                   derives from vocab's DEFECT_TYPES
+#   phase                           the ONE remaining literal, spelled out
+#                                   below with its own note on why, and pinned
+#                                   to the handler's branch set by a test
+#
+# That drift is not cosmetic on this surface. The MCP SDK validates arguments
+# against the advertised enum BEFORE dispatch, so a token missing from an enum
+# here is unreachable no matter what the handler accepts.
+from foundry_mcp.schemas.vocab import (
+    DEFECT_SOURCE_IDS,
+    DEFECT_TYPES,
+    OBSERVATION_CLASSES,
+    STREAM_WIRE_IDS,
+)
 from foundry_mcp.tools.citation import verify_citations
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
+    foundry_add_observation,
     foundry_add_verdict,
     foundry_init,
     foundry_query_defects,
+    foundry_query_observations,
     foundry_verify_coverage,
 )
 from foundry_mcp.tools.foundry_orchestrator import (
-    VALID_STREAMS,
+    VERDICT_VALUES,
     foundry_clear_directives,
     foundry_defects_to_tasks,
     foundry_gate,
@@ -128,7 +152,15 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["phase"],
                 "properties": {
-                    "phase": {"type": "string", "enum": ["validate", "cast", "inspect", "grind", "assay", "temper", "nyquist", "done"]},
+                    # D-043 / AC-011 — "nyquist_done" is advertised here because
+                    # foundry_gate now has a branch for it. F6 has two doors and
+                    # only one was gateable: a lead following start.md's
+                    # Foundry-Gate("done") -> Foundry-Phase("nyquist_done")
+                    # sequence was gating a token other than the one it was
+                    # about to call, and no server-side gate existed for the one
+                    # it did call. Both terminal tokens resolve to the same
+                    # _done_preconditions evaluation.
+                    "phase": {"type": "string", "enum": ["validate", "cast", "inspect", "grind", "assay", "temper", "nyquist", "nyquist_done", "done"]},
                 },
             },
         ),
@@ -139,7 +171,27 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["phase"],
                 "properties": {
-                    "phase": {"type": "string", "enum": ["research_done", "decompose_done", "validate_done", "start_cast", "cast", "inspect_clean", "grind_start", "assay_fail", "temper", "nyquist", "nyquist_done", "done"]},
+                    # D-006 / D-007 — this enum is pinned to
+                    # foundry_mark_phase_complete's OWN branch set by the drift
+                    # guard in tests/test_orchestrator_gates.py, which reads the
+                    # handler's AST. It drifted in both directions at once: it
+                    # advertised research_done / decompose_done / validate_done,
+                    # which the handler has no branch for and refuses, while
+                    # OMITTING inspect_start — the only token whose branch
+                    # advances the cycle counter. The SDK validates against this
+                    # enum before dispatch, so that omission made the counter
+                    # unable to leave 0 over MCP however the handler behaved.
+                    # Spelled out rather than imported from
+                    # foundry_orchestrator.PHASE_TOKENS because tests assert
+                    # these tokens are READABLE in this file's own source; the
+                    # drift guard is what keeps the two copies honest. See the
+                    # concerns entry recommending both be collapsed once that
+                    # source-grep assertion is replaced.
+                    "phase": {"type": "string", "enum": [
+                        "start_cast", "cast", "inspect_start", "inspect_clean",
+                        "grind_start", "assay_fail", "temper", "nyquist",
+                        "nyquist_done", "done",
+                    ]},
                 },
             },
         ),
@@ -151,12 +203,106 @@ async def list_tools() -> list[Tool]:
                 "required": ["cycle", "source", "defect_type", "description"],
                 "properties": {
                     "cycle": {"type": "integer"},
-                    "source": {"type": "string", "enum": ["trace", "prove", "research_audit", "coverage_diff", "sight", "test", "assay", "temper"]},
-                    "defect_type": {"type": "string", "enum": ["MISSING", "WRONG", "THIN", "HOLLOW", "UNWIRED", "BROKEN", "FAIL", "RESEARCH_DEVIATION", "COVERAGE_INCOMPLETE", "THIN_MIGRATION"]},
+                    "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
+                    "defect_type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
                     "description": {"type": "string"},
                     "spec_ref": {"type": "string"},
                     "symbol": {"type": "string"},
                     "file_path": {"type": "string"},
+                    # FR-001 / FR-007 — the handler has accepted both since the
+                    # observations split landed, but neither had a schema
+                    # property or a dispatch path, so over MCP the comment-prose
+                    # refusal and class tagging were dead: a line-drift finding
+                    # filed over MCP was accepted as a defect because
+                    # target_kind never arrived to make it demotable.
+                    "target_kind": {
+                        "type": "string",
+                        "description": (
+                            "What the finding is ABOUT. Pass 'comment' when the "
+                            "subject is a code comment — that declaration is what "
+                            "lets the comment-prose refusal engage. Any other "
+                            "value pins the finding as a defect that can never be "
+                            "demoted to an observation."
+                        ),
+                    },
+                    "defect_class": {
+                        "type": "string",
+                        "description": (
+                            "Optional root-cause class shared by several "
+                            "instances, persisted as the record's 'class'. A "
+                            "class filed in 3 consecutive cycles escalates to "
+                            "one structural-fix packet."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Observation",
+            description=(
+                "Record a comment-prose finding in the run's observations "
+                "ledger — the non-blocking half of the observation/defect "
+                "split. Observations are typed, persisted per run, and NEVER "
+                "mixed into the defect ledger. The never-demote denylist is "
+                "absolute: a security-property claim, a spec-required-behaviour "
+                "claim, an unresolvable cite, or anything that is not a declared "
+                "comment is REFUSED here and the audit tripwire fires naming the "
+                "entry that matched. Citing a requirement in spec_ref is by "
+                "construction enough to keep a finding a defect."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["cycle", "source", "description"],
+                "properties": {
+                    "cycle": {"type": "integer"},
+                    "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
+                    "description": {"type": "string"},
+                    "classification": {
+                        "type": "string",
+                        "enum": sorted(OBSERVATION_CLASSES),
+                        "description": "Optional — derived from the description when omitted.",
+                    },
+                    # D-074 — NO "default" KEY. jsonschema.validate never
+                    # applies schema defaults, so this one was inert as
+                    # validation; what it did was advertise, to every reader of
+                    # the tool surface, that omission means "comment". The
+                    # dispatch lambda below then made that true. Absence must
+                    # travel to the writer AS absence, so it reaches the
+                    # NON_COMMENT branch that fails the demotion closed.
+                    "target_kind": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED IN PRACTICE, and only 'comment' is "
+                            "accepted: recording an observation IS a demotion "
+                            "out of the blocking defect ledger, so the "
+                            "declaration must be made rather than assumed. "
+                            "Omitting the field is refused server-side under "
+                            "the NON_COMMENT denylist entry and fires the "
+                            "audit tripwire, exactly as a present non-comment "
+                            "value does. A finding about code — a function, a "
+                            "handler, a wiring path — is a defect and belongs "
+                            "in Foundry-Defect."
+                        ),
+                    },
+                    "spec_ref": {"type": "string"},
+                    "symbol": {"type": "string"},
+                    "file_path": {"type": "string"},
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Observations",
+            description=(
+                "Query the observations ledger, with the denylist tripwire log "
+                "returned alongside so a validator never has to know the "
+                "ledger's file layout."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "cycle": {"type": "integer"},
+                    "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
+                    "classification": {"type": "string", "enum": sorted(OBSERVATION_CLASSES)},
                 },
             },
         ),
@@ -175,19 +321,64 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Fix",
-            description="Mark a defect as fixed in this cycle.",
+            description=(
+                "Mark a defect as fixed in this cycle. Requires an adjacent-path "
+                "statement (who else calls this, what else transitions here, what "
+                "runs concurrently) and a reference to a test that drives at least "
+                "one of those adjacent paths. The call is REFUSED without both, "
+                "naming each missing field — a fix whose blast radius is undeclared "
+                "is how a defect closes and a regression opens in the same cycle."
+            ),
             inputSchema={
                 "type": "object",
+                # MANDATORY, but deliberately NOT in `required` (D-039).
+                #
+                # The SDK runs `jsonschema.validate` before dispatch and returns
+                # on the FIRST error, so listing both declarations here made the
+                # handler's refusal unreachable for the exact call CT-001 is
+                # written about: a caller omitting both got one
+                # "'adjacent_path_statement' is a required property" and never
+                # saw that the test reference was missing too. CT-001 requires a
+                # refusal naming EACH missing field, and only the handler can
+                # name more than one. Both fields are enforced — unconditionally
+                # and with the fuller message — in `foundry_mark_defect_fixed`.
+                #
+                # The descriptions below carry the obligation to the caller, and
+                # the tool description states the refusal outright.
                 "required": ["defect_id", "cycle"],
                 "properties": {
                     "defect_id": {"type": "string"},
                     "cycle": {"type": "integer"},
+                    "adjacent_path_statement": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED. Who ELSE calls this, what else transitions here, "
+                            "what runs concurrently. Must name a path other than the one "
+                            "the defect was found on."
+                        ),
+                    },
+                    "adjacent_path_test": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED. Reference to a test exercising at least one NAMED "
+                            "adjacent path (e.g. tests/test_auth.py::test_refresh_reuses_session). "
+                            "A locator, not a sentence: 'n/a', 'TODO' and 'tested it "
+                            "manually' are refused, as is a test named for the defect's "
+                            "own symbol."
+                        ),
+                    },
                 },
             },
         ),
         Tool(
             name="Foundry-Sync",
-            description="Sync new findings against existing defects. Detects regressions automatically.",
+            description=(
+                "Sync new findings against existing defects. Detects regressions "
+                "automatically. source and type are validated against the canonical "
+                "vocabulary and never coerced: an unknown or absent source is refused "
+                "rather than silently recorded as 'trace'. The whole batch is refused "
+                "if any finding is invalid, so nothing lands half-applied."
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["cycle", "findings"],
@@ -197,14 +388,32 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["description"],
+                            "required": ["description", "source"],
                             "properties": {
                                 "description": {"type": "string"},
-                                "source": {"type": "string"},
+                                "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
                                 "symbol": {"type": "string"},
                                 "file": {"type": "string"},
                                 "spec_ref": {"type": "string"},
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
+                                "class": {
+                                    "type": "string",
+                                    "description": (
+                                        "Optional root-cause class shared by several "
+                                        "instances. A class filed in 3 consecutive "
+                                        "cycles escalates to one structural-fix packet."
+                                    ),
+                                },
+                                "target_kind": {
+                                    "type": "string",
+                                    "description": (
+                                        "What the finding is ABOUT — 'comment' when the "
+                                        "subject is a code comment, otherwise the kind of "
+                                        "artifact. Populate it: any value other than "
+                                        "'comment' pins the finding as a defect that can "
+                                        "never be demoted to an observation."
+                                    ),
+                                },
                             },
                         },
                     },
@@ -224,7 +433,12 @@ async def list_tools() -> list[Tool]:
                 "required": ["requirement_id", "verdict", "evidence"],
                 "properties": {
                     "requirement_id": {"type": "string"},
-                    "verdict": {"type": "string", "enum": ["VERIFIED", "HOLLOW", "THIN", "PARTIAL", "MISSING", "WRONG", "COVERAGE_INCOMPLETE"]},
+                    # Derived, not hand-typed: the baseline literal here rejected
+                    # MISPLACED, which agents/assayer.md mandates as a verdict
+                    # word and commands/start.md routes into this tool — the
+                    # protocol told an agent to emit a verdict the surface that
+                    # records it could not represent.
+                    "verdict": {"type": "string", "enum": sorted(VERDICT_VALUES)},
                     "evidence": {"type": "string"},
                     "spec_text_cited": {"type": "string"},
                     "code_location": {"type": "string"},
@@ -249,7 +463,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["stream", "cycle", "items_checked"],
                 "properties": {
-                    "stream": {"type": "string", "enum": sorted(VALID_STREAMS)},
+                    "stream": {"type": "string", "enum": sorted(STREAM_WIRE_IDS)},
                     "cycle": {"type": "integer"},
                     "items_checked": {"type": "integer"},
                     "items_total": {"type": "integer"},
@@ -349,14 +563,55 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Accept-Casting",
+            # D-047 / FR-004 — this string is the cite policy a lead reads FIRST
+            # and most often: it is delivered verbatim into every lead's context
+            # with the tool list. It named only `file:line`, contradicting
+            # agents/teammate.md ("cite the exact path#Symbol ... the symbol,
+            # not a line range"), this tool's OWN return payload
+            # (foundry_handoff.py's must_verify), and tools/citation.py's
+            # grammar — one gate, three descriptions, and the protocol-level one
+            # never mentioned the durable form at all. The implementation always
+            # accepted both; this is the surface catching up, so path#Symbol
+            # leads and file:line is named as the accepted legacy form.
+            # D-077 / D-078 / FR-017 / AC-023 — the enumeration in this string
+            # was FALSE, and false in the direction that hides the gate's most
+            # likely refusal. It named two blocking conditions; the handler has
+            # nine hard-reject branches, and the one it denied existed is the
+            # one that fires most: `evidence_verdict == "rejected"`. The word
+            # "evidence" appeared nowhere. Evidence re-execution was documented
+            # ONLY in the nested `casting_commit` property below, which a lead
+            # composing the call from this headline has no reason to open — so
+            # a lead who omitted the SHA silently skipped both EVID-01 and
+            # EVID-02, got `ok: true`, and had accepted a casting whose
+            # evidence was never run. Per the comment above, this string is the
+            # surface a lead reads at the moment of the call; it must name what
+            # engaging the gate costs and what omitting it costs.
+            #
+            # PINNED, not merely written: test_orchestrator_gates.py derives
+            # every hard-reject guard in `foundry_accept_casting` from its AST
+            # and fails on any branch this description does not account for.
             description=(
                 "Gate acceptance of a completed casting. Requires fresh spec_hash and prompt_hash "
                 "(verifies re-reads happened), extracts the casting's acceptance criteria from the "
                 "<spec_requirements> block, checks the completion report for scope-flag phrases, "
                 "and mechanically verifies every requirement ID in the casting's spec slice "
-                "has a file:line citation in the completion report. Returns the AC list, requirement "
-                "IDs, and any missing citations. Blocks acceptance if the teammate reported scope "
-                "cuts OR any requirement has no citation."
+                "has a path#Symbol citation (the durable form) or a file:line citation (the legacy "
+                "form, still accepted) in the completion report. A path#Symbol cite must resolve in "
+                "the named file; a stale :line hint beside it is never a finding. "
+                "PASS casting_commit — the casting's commit SHA — to engage the evidence gate: "
+                "EVID-01 re-executes every committed `# evidence-cmd:` at that commit in an "
+                "isolated worktree and rejects the casting on byte-mismatch, and EVID-02 rejects "
+                "it when any requirement ID in the slice is bound to no evidence file. OMIT "
+                "casting_commit and BOTH are skipped SILENTLY while the call still returns "
+                "ok:true — an acceptance that verified no evidence at all. "
+                "Returns the AC list, requirement IDs, any missing citations, any unresolved "
+                "symbol cites, and the evidence verdict and provenance. "
+                "Blocks acceptance if evidence re-execution rejected the casting, if any "
+                "requirement is bound to no evidence, if the teammate reported scope cuts, if any "
+                "requirement has no citation, or if any path#Symbol cite resolves nowhere. "
+                "Refuses before running anything on a stale spec_hash or prompt_hash, a casting "
+                "prompt with no <spec_requirements> block, or a spec whose declared "
+                "spec_format_version is malformed."
             ),
             inputSchema={
                 "type": "object",
@@ -366,6 +621,62 @@ async def list_tools() -> list[Tool]:
                     "spec_hash": {"type": "string", "description": "Fresh hash from Foundry-Spec-Hash."},
                     "prompt_hash": {"type": "string", "description": "Hash from Foundry-Spawn-Teammate."},
                     "completion_report": {"type": "string", "description": "The teammate's completion report text."},
+                    # FR-017 / AC-023 — the evidence gate's reachable half. The
+                    # handler has always accepted casting_commit and gates the
+                    # whole evidence re-execution block on `is not None`, but the
+                    # parameter had no schema property and no dispatch path, so
+                    # over MCP it was ALWAYS None: nothing in tools/evidence.py
+                    # ever ran from a real run and manifest.evidence_provenance
+                    # was never populated. Optional, so existing four-argument
+                    # calls keep working.
+                    "casting_commit": {
+                        "type": "string",
+                        "description": (
+                            "The casting's commit SHA. Supplying it runs evidence "
+                            "re-execution for that commit in an isolated worktree "
+                            "and binds each requirement ID to committed evidence."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Liveness",
+            description=(
+                "Report each spawned agent's last-progress age from the run's "
+                "progress ledger, compared against a stall threshold, so a slow "
+                "agent can be told from a dead one. Called with no argument it "
+                "returns every agent in the run; with an agent identifier it "
+                "returns only that agent. A run with no progress ledger returns an "
+                "empty roster, not an error. Pass stall_seconds to override the "
+                "900s threshold — a longer one for a phase whose steps are "
+                "genuinely slow, a shorter one to sweep for wedged agents."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent": {
+                        "type": "string",
+                        "description": "Optional agent identifier. Omit for the whole roster.",
+                    },
+                    # D-002: implemented and tested in the handler, undeclared
+                    # here, so the SDK rejected any call carrying it and
+                    # commands/start.md documented a parameter no MCP caller
+                    # could send.
+                    #
+                    # No `exclusiveMinimum`: the handler already refuses a
+                    # non-positive threshold by name, and a schema bound would
+                    # pre-empt that with a raw validator message — the same
+                    # failure D-039 fixes on Foundry-Fix. `"number"` (which
+                    # jsonschema does not satisfy with a bool) is exactly the
+                    # handler's own accept-set.
+                    "stall_seconds": {
+                        "type": "number",
+                        "description": (
+                            "Optional stall-threshold override, in seconds. Must be "
+                            "greater than 0. Omit for the run-derived default (900s)."
+                        ),
+                    },
                 },
             },
         ),
@@ -389,7 +700,13 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Directive",
-            description="Inject a non-blocking directive. Lead reads it at every phase transition.",
+            description=(
+                "Inject a non-blocking directive. Lead reads it at every phase "
+                "transition; urgent and normal directives are BOTH shown. "
+                "Recognized control directive: 'escalation-override: <class>' "
+                "de-escalates one recurring defect class back to per-instance "
+                "packets (bare 'escalation-override' de-escalates every class)."
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["directive"],
@@ -401,7 +718,10 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Clear",
-            description="Clear all directives after they've been addressed.",
+            description=(
+                "Clear active directives after they've been addressed. The cleared "
+                "text is preserved in directives-cleared.md — nothing is destroyed."
+            ),
             inputSchema={"type": "object", "properties": {}},
         ),
         # ── Forge-Spec ─────────────────────────────────────────────
@@ -456,6 +776,33 @@ async def list_tools() -> list[Tool]:
 
 # ── Tool name -> function dispatch ───────────────────────────────────────────
 
+
+def _dispatch_liveness(args: dict) -> dict:
+    """Dispatch Foundry-Liveness to its handler in tools/foundry_spawn.py.
+
+    Imported lazily and unguarded: a module-top import would take the ENTIRE
+    server down while the casting that owns foundry_spawn.py is still landing
+    this handler, and swallowing the ImportError would hide a real wiring break
+    behind a silent no-op. Failing here fails one tool, loudly, naming the
+    symbol. The agent identifier and the threshold override are passed
+    positionally so this registration does not depend on the handler's
+    parameter NAMES.
+
+    ``stall_seconds`` is forwarded unvalidated and un-defaulted (D-002): the
+    handler owns both the default and the named refusal for a bad value, and
+    re-deciding either here would give MCP callers different answers from
+    in-process ones. ``None`` — the shape an omitted key takes — is exactly
+    what the handler reads as "use the derived default".
+    """
+    from foundry_mcp.tools.foundry_spawn import foundry_liveness
+
+    return foundry_liveness(
+        args.get("agent"),
+        args.get("stall_seconds"),
+        project_root=_project_root,
+    )
+
+
 _DISPATCH = {
     "Validate-Report": lambda args: validate_report(
         report_path=args["report_path"], schema_name=args.get("schema_name", "trace"),
@@ -475,12 +822,36 @@ _DISPATCH = {
     "Foundry-Defect": lambda args: foundry_add_defect(
         cycle=args["cycle"], source=args["source"], defect_type=args["defect_type"],
         description=args["description"], spec_ref=args.get("spec_ref", ""),
-        symbol=args.get("symbol", ""), file_path=args.get("file_path", ""), project_root=_project_root),
+        symbol=args.get("symbol", ""), file_path=args.get("file_path", ""),
+        target_kind=args.get("target_kind", ""), defect_class=args.get("defect_class", ""),
+        project_root=_project_root),
     "Foundry-Defects": lambda args: foundry_query_defects(
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),
         spec_ref=args.get("spec_ref"), project_root=_project_root),
+    # D-074 — the fallback is "" and must stay "". D-069 gave
+    # `foundry_add_observation` a fail-closed `target_kind=""` default so an
+    # undeclared subject reaches the NON_COMMENT denylist entry; this lambda
+    # then substituted "comment" one frame ABOVE it, so over MCP the writer's
+    # guard was never reached. A genuine code-behaviour finding filed with the
+    # field absent was RECORDED as an observation, the fabricated declaration
+    # was persisted into observations.json where no auditor can tell it from a
+    # real one, and the tripwire stayed silent on the bypass. Defaulting here
+    # in EITHER direction re-decides, in transport, a question the writer owns:
+    # pass absence through as absence.
+    "Foundry-Observation": lambda args: foundry_add_observation(
+        cycle=args["cycle"], source=args["source"], description=args["description"],
+        classification=args.get("classification", ""),
+        target_kind=args.get("target_kind", ""),
+        spec_ref=args.get("spec_ref", ""), symbol=args.get("symbol", ""),
+        file_path=args.get("file_path", ""), project_root=_project_root),
+    "Foundry-Observations": lambda args: foundry_query_observations(
+        cycle=args.get("cycle"), source=args.get("source"),
+        classification=args.get("classification"), project_root=_project_root),
     "Foundry-Fix": lambda args: foundry_mark_defect_fixed(
-        defect_id=args["defect_id"], cycle=args["cycle"], project_root=_project_root),
+        defect_id=args["defect_id"], cycle=args["cycle"],
+        adjacent_path_statement=args.get("adjacent_path_statement", ""),
+        adjacent_path_test=args.get("adjacent_path_test", ""),
+        project_root=_project_root),
     "Foundry-Sync": lambda args: foundry_sync_defects(
         cycle=args["cycle"], findings=args["findings"], project_root=_project_root),
     "Foundry-Tasks": lambda args: foundry_defects_to_tasks(project_root=_project_root),
@@ -508,7 +879,9 @@ _DISPATCH = {
     "Foundry-Accept-Casting": lambda args: foundry_accept_casting(
         casting_id=args["casting_id"], spec_hash=args["spec_hash"],
         prompt_hash=args["prompt_hash"], completion_report=args["completion_report"],
+        casting_commit=args.get("casting_commit"),
         project_root=_project_root),
+    "Foundry-Liveness": lambda args: _dispatch_liveness(args),
     "Foundry-Team-Up": lambda args: foundry_register_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Team-Down": lambda args: foundry_unregister_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Directive": lambda args: foundry_inject_directive(
@@ -526,10 +899,28 @@ _DISPATCH = {
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
-    if handler:
+    if not handler:
+        return [TextContent(type="text", text=format_result(name, {"error": f"Unknown tool: {name}"}))]
+
+    # D-098: the outermost net. Every handler returns named refusals as dicts
+    # (the house pattern) and none is supposed to raise, but this boundary used
+    # to have no try/except at all — so one unguarded read of a corrupt
+    # state.json raised out of Foundry-Next, the mandatory pre-transition
+    # handshake, and the operator could not even read state to diagnose it. The
+    # tolerant loader in foundry_orchestrator means no KNOWN input reaches this
+    # branch; it exists for the unknown one, so a bug degrades to an error
+    # message naming the tool instead of bricking the run.
+    try:
         result = handler(arguments)
-    else:
-        result = {"error": f"Unknown tool: {name}"}
+    except Exception as exc:
+        result = {
+            "error": f"{name} failed: {type(exc).__name__}: {exc}",
+            "hint": (
+                "This is an unhandled server-side error, not a refusal. The run "
+                "state may be unreadable or on disk in an unexpected shape — "
+                "check the run directory's JSON artifacts."
+            ),
+        }
 
     return [TextContent(type="text", text=format_result(name, result))]
 
