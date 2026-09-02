@@ -1,7 +1,0 @@
-# evidence-cmd: test -d plugins/foundry/mcp-server && cd plugins/foundry/mcp-server && uv run -q --with pytest pytest tests/test_protocol_prose.py -q -p no:cacheprovider -k "routes_comment_prose_to_observations or states_the_never_demote_denylist_absolutely or split_did_not_soften or f2_roster_carries_the_split or f2_roster_scopes_the_split_claim"
-# evidence-for: AC-003
-# evidence-volatile: \d+ deselected
-# evidence-volatile: \d+\.\d+s
-
-..............                                                           [100%]
-14 passed, 156 deselected in 0.05s
