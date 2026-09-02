@@ -54,6 +54,7 @@
 
 _agent_id_for_casting
 _agent_liveness_record
+_append_spawn_records
 _build_grind_cycle_context
 _expected_inspect_stream_agents
 _is_terminal
@@ -67,6 +68,7 @@ _parse_progress_timestamp
 _progress_dir
 _progress_protocol_block
 _read_progress_ledger
+_read_spawn_log
 _shape_problem
 _skipped_stream_ids
 _step_key

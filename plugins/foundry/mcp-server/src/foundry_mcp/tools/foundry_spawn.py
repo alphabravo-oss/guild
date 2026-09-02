@@ -74,6 +74,19 @@ against the phase clock the alternative gates fail: a real run sat in ONE F3
 episode across five GRIND cycles, so a phase-episode gate expires nothing
 between cycles, and ``state.cycle`` read 0 throughout.
 
+A SPAWN RECORD IS A CLAIM THAT AN AGENT EXISTS (D-144)
+-------------------------------------------------------
+Because the roster above is derived from ``spawns.log``, a record in it is not
+bookkeeping — it is the assertion that a teammate is out there, and after the
+stall threshold it becomes the assertion that one may have died. The bulk door
+used to write those records inside its per-casting loop, so a wave refused on
+its third prompt had already claimed two teammates that were never spawned,
+and Foundry-Liveness duly reported both as possibly dead. Every spawn record
+now goes through ``_append_spawn_records`` and a whole dispatch is appended
+once, after every casting in it has cleared every check; ``_read_spawn_log``
+takes the matching shared lock, so a Foundry-Liveness call that arrives
+mid-wave sees all of that wave or none of it.
+
 EVERY READ IN THIS MODULE GOES THROUGH ONE PRIMITIVE (D-138)
 ------------------------------------------------------------
 ``foundry_state.read_text_file`` / ``read_json`` are the only ways bytes enter
@@ -106,6 +119,7 @@ file it is:
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import math
@@ -297,6 +311,101 @@ def _agent_id_for_casting(casting_id: int | str) -> str:
     lead reads one continuous history per casting.
     """
     return f"casting-{casting_id}"
+
+
+# ---------------------------------------------------------------------------
+# spawns.log — ONE writer, ONE reader, and a wave is indivisible in both (D-144)
+# ---------------------------------------------------------------------------
+#
+# `spawns.log` is the record of what the run DISPATCHED, and `foundry_liveness`
+# derives half its roster from it, so a record in it is a claim that an agent
+# is out there working. The bulk door used to write that claim from INSIDE its
+# per-casting loop, one record at a time, while its own comment claimed the
+# opposite property in as many words. A wave whose third prompt would not
+# decode had therefore already logged two dispatches by the time it refused,
+# and Foundry-Liveness reported two teammates that were never spawned as
+# `no_ledger` — "possibly died before its first line". That defeats
+# CT-004/AC-021/OT-010 at the root: the whole point of the status vocabulary is
+# to tell a stalled agent from a slow one, and a NON-EXISTENT agent reported as
+# one that may have died is worse than either.
+#
+# So the wave is the unit. The records are buffered while the castings are
+# checked and appended once, after every casting in the wave has cleared every
+# check — and the append is a single locked write of the whole payload rather
+# than N unlocked ones, so the property holds against a concurrent reader too,
+# not only against a later refusal.
+#
+# THE LOCK IS WHAT MAKES "ATOMIC" TRUE RATHER THAN LIKELY. `O_APPEND` orders
+# concurrent writers' bytes but says nothing about a READER that arrives
+# mid-write, and nothing at all about a reader arriving between the first and
+# second record of a wave. The exclusive flock the writer holds and the shared
+# flock the reader holds are one pair: while a wave is being appended, a
+# Foundry-Liveness call blocks rather than reading a half-dispatched wave, and
+# it then sees all of the wave or none of it. `foundry.py`'s `_locked_document`
+# is the same discipline one artifact over; this is its append-only form.
+
+
+def _append_spawn_records(spawn_log: Path, records: list[dict]) -> None:
+    """Append a dispatch's records to ``spawns.log`` as ONE indivisible unit.
+
+    Both spawn doors write through here, which is what keeps "a record means a
+    dispatch that actually happened" one property rather than an agreement
+    between two call sites. The single door has one record and the bulk door
+    has one per casting; the difference is the length of the list, not the
+    discipline.
+
+    The payload is serialised BEFORE the file is opened, so a record that will
+    not serialise cannot leave a half-written wave behind — it fails with the
+    lock unheld and nothing appended.
+
+    Never raises, and never blocks the spawn: an audit ledger that can fail a
+    dispatch is worse than one with a gap in it, which is the rule ``spawns.log``
+    has held since it was added (``except Exception: pass``).
+    """
+    if not records:
+        return
+    try:
+        payload = "".join(json.dumps(record) + "\n" for record in records)
+        with spawn_log.open("a", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                handle.write(payload)
+                handle.flush()
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        # Logging failures must not block the spawn.
+        pass
+
+
+def _read_spawn_log(spawn_log: Path) -> tuple[str, str | None]:
+    """``read_text_file`` on ``spawns.log``, under the writer's SHARED lock.
+
+    The reader half of the pair above. The lock handle is opened in BINARY
+    mode and never read from: it exists only to hold ``LOCK_SH`` while the
+    bytes come in through the one primitive this module reads through (D-138),
+    so the lock discipline costs the decode contract nothing — a binary handle
+    cannot decode, and ``read_text_file`` still owns the whole raise set and
+    still NAMES THE FILE.
+
+    An absent log takes the plain path: there is nothing to lock and nothing to
+    tear, and ``read_text_file`` already answers "absent" as empty-and-fine
+    rather than as a problem. A failure to take the lock degrades to the
+    unlocked read rather than failing the lead's call — a diagnostic that
+    refuses because it could not lock a log tells the lead less than one that
+    reads it.
+    """
+    if not spawn_log.exists():
+        return read_text_file(spawn_log)
+    try:
+        with spawn_log.open("rb") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_SH)
+            try:
+                return read_text_file(spawn_log)
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        return read_text_file(spawn_log)
 
 
 # The two agent-shaped halves of the protocol block. Everything else in it —
@@ -842,8 +951,12 @@ def _latest_teammate_dispatches(fdir: Path) -> tuple[dict[str, dict], str | None
     teammates in flight right now"; the artifact is corrupt at every phase, and
     a lead diagnosing a run at F2 or F4 is exactly as entitled to be told which
     file will not decode as one at F3.
+
+    Read under the writer's SHARED lock (``_read_spawn_log``, D-144) so a
+    Foundry-Liveness call that lands while a wave is being dispatched sees the
+    whole wave or none of it, never the first two castings of three.
     """
-    raw, problem = read_text_file(fdir / "spawns.log")
+    raw, problem = _read_spawn_log(fdir / "spawns.log")
     if problem is not None:
         return {}, problem
 
@@ -1462,22 +1575,22 @@ def foundry_spawn_teammate(
     # names it, so which model each steerable agent was asked to run on is
     # observable in the run's spawn log rather than inferred (OT-011, NFR-001).
     # With nothing configured the entry is byte-identical to before.
-    spawn_log = fdir / "spawns.log"
-    try:
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "casting_id": casting_id,
-            "phase": phase,
-            "prompt_hash": prompt_hash,
-            "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
-        }
-        if model:
-            entry["model"] = model
-        with spawn_log.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except Exception:
-        # Logging failures must not block the spawn.
-        pass
+    #
+    # Written here, after every check this door makes: a casting whose prompt is
+    # missing, empty or undecodable has already returned above, so no refusal
+    # this door can reach leaves a record behind. That ordering is what the bulk
+    # door lacked (D-144); routing both through `_append_spawn_records` is what
+    # keeps it one property rather than two call sites that agree today.
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "casting_id": casting_id,
+        "phase": phase,
+        "prompt_hash": prompt_hash,
+        "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+    }
+    if model:
+        entry["model"] = model
+    _append_spawn_records(fdir / "spawns.log", [entry])
 
     result: dict = {
         "ok": True,
@@ -1732,6 +1845,11 @@ def foundry_cast_wave(
 
     spawn_log = fdir / "spawns.log"
     results = []
+    # The wave's dispatch records, BUFFERED until every casting has cleared
+    # every check (D-144). Nothing in this loop touches spawns.log; the single
+    # locked append below is the only write, so a refusal anywhere in the wave
+    # leaves the audit trail exactly as it found it.
+    dispatched: list[dict] = []
     model = _teammate_model()
 
     for cid in casting_ids:
@@ -1745,7 +1863,13 @@ def foundry_cast_wave(
         # The bulk door's copy of the single door's prompt read, and the fifth
         # member (D-138). Refusing here rather than at the end of the loop is
         # the D-132 property one rung down: a wave whose third prompt will not
-        # decode must not have logged two spawns to spawns.log first.
+        # decode must not have logged two spawns to spawns.log first. Refusing
+        # EARLY was never enough to make that true, though — castings 1 and 2
+        # wrote their records in earlier iterations of this same loop, so the
+        # refusal on casting 3 left exactly the two phantom dispatches the
+        # comment promised it would not (D-144). What makes it true is that no
+        # iteration writes at all: the records are buffered and appended once,
+        # below, after the loop has run to completion.
         prompt_text, prompt_problem = read_text_file(prompt_path)
         if prompt_problem is not None:
             return document_refusal(prompt_path, prompt_problem)
@@ -1783,21 +1907,24 @@ def foundry_cast_wave(
 
         results.append(entry_out)
 
-        try:
-            entry = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "casting_id": cid,
-                "phase": phase,
-                "wave": wave,
-                "prompt_hash": prompt_hash,
-                "bulk": True,
-            }
-            if model:
-                entry["model"] = model
-            with spawn_log.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
-        except Exception:
-            pass
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "casting_id": cid,
+            "phase": phase,
+            "wave": wave,
+            "prompt_hash": prompt_hash,
+            "bulk": True,
+        }
+        if model:
+            entry["model"] = model
+        dispatched.append(entry)
+
+    # Every casting in the wave cleared every check, so this wave really was
+    # handed out and the audit trail may say so — all of it, in one locked
+    # append (D-144). Above this line no refusal has left a record behind;
+    # below it the whole wave is on record or, if the write itself fails, none
+    # of it is. There is no state in between for Foundry-Liveness to read.
+    _append_spawn_records(spawn_log, dispatched)
 
     run_name = fdir.name
     # Phase-first naming: {phase}-{run}-{suffix}. CAST uses `wave-N`

@@ -1,0 +1,76 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && PYTHONPATH=src:tests uv run --quiet --with pytest python -c "import test_spawn_progress as t; s,o,u,c=t._package_text_reads(); print(f'ROOTS      {[str(r.relative_to(t.REPO_ROOT)) for r in t._scanned_roots()]}'); print(f'MODULES    {len(t._scanned_modules())}'); print(f'SEEN       {len(s)} decode sites'); print(f'UNRESOLVED {u or \"none\"}'); print(f'UNCLASSIFD {c or \"none\"}'); print(f'ANCHOR     foundry_state.py#read_text_file seen = {any(x.startswith(t._DECODE_SCAN_ANCHOR) for x in s)}'); print(f'OFFENDERS  {len(o)}'); [print('  '+x) for x in t._symbol_cites(o)]"
+# evidence-for: NFR-002, AC-021
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 120
+#
+# D-146 — THE DECODE RULE'S MEMBERSHIP, AND ITS PREDICATE.
+#
+# THE GAP: `test_no_read_in_this_module_can_raise_a_decode_error` derived its
+# subject from `Path(fs.__file__)` — foundry_spawn.py alone — while its three
+# sibling structural rules all derived membership over the package. PROVE drove
+# it: an unguarded `path.read_text(encoding="utf-8")` with no handler planted
+# in a NEW module in a NEW subpackage, appended to foundry_validate.py, and
+# appended to foundry_orchestrator.py were all GREEN against the full
+# 1756-test suite, while the same plants TRIP all three package-wide rules.
+# The derivation existed and worked; it was simply not applied to this rule.
+#
+# MEMBERSHIP now comes from `_scanned_roots` — the rglob over both shipped
+# trees the manifest rule already used, cross-checked against an independent
+# os.walk — so the two package-wide rules in this file share one derivation of
+# what the shipped source is.
+#
+# THE PREDICATE IS WHERE THE CLASS HAD RETREATED TO, and going package-wide is
+# what exposed it. With `open` matched as a bare NAME the rule reported 41
+# sites, of which eighteen cannot decode a byte: six append-only log writes, a
+# "rb" lock handle, five reads whose errors= handler substitutes rather than
+# raising, and "a+" handles opened only to hold an fcntl.flock. A decode rule
+# demanding a decode handler on a log append is a finding about punctuation,
+# and it is the same shape as `token.isalpha() or token.isdigit()`.
+#
+# So every axis is asked of Python rather than read off the source:
+#
+#   which stream a mode yields  a scratch file is opened in that very mode and
+#                               the object inspected — isinstance(h,
+#                               io.TextIOBase), h.readable(). "a" is text and
+#                               not readable; "rb" is readable and not text.
+#   whether errors= raises      the handler is fetched from the codecs registry
+#                               and handed a real UnicodeDecodeError. "replace"
+#                               answers; "strict" raises.
+#   whether the handle is read  the attribute is CALLED on a text handle over
+#                               an undecodable byte and watched. read/readline/
+#                               readlines/__iter__ raise; fileno/close/flush/
+#                               readable do not — which is how a flock-only
+#                               "a+" handle leaves the rule without anybody
+#                               enrolling it out.
+#   where an argument sits      inspect.signature, because open(p,"r") puts the
+#                               mode at index 1 and p.open("r") at index 0, and
+#                               a hand-written index reads the FILENAME as the
+#                               mode in one of the two spellings.
+#
+# A mode or errors= value that is not a literal is REPORTED and counted as a
+# MEMBER — over-reporting is recoverable and visible, under-reporting is the
+# defect this family exists to close.
+#
+# THE ANCHOR (D-142): foundry_state.py#read_text_file is the guarded primitive
+# every read in the package is meant to route through, so it holds the one
+# read_text that cannot legitimately disappear. If the scan stops naming it,
+# the matcher has gone blind and every green after that is a green about
+# nothing — so its absence is a named failure rather than a clean report.
+#
+# THIS RULE IS RED AS SHIPPED AND THAT IS THE FINDING. Every offender below is
+# a live unguarded strict-decoding read on a path reachable from an MCP door —
+# D-145's shape exactly, in files this casting does not own. They are reported,
+# not edited. Cited as `path::Symbol` with the `:line` dropped, because a line
+# number in somebody else's file goes stale the next time they touch it and a
+# citation that rots on its own is worse than none.
+
+ROOTS      ['plugins/foundry/mcp-server/src/foundry_mcp', 'plugins/foundry/scripts']
+MODULES    30
+SEEN       9 decode sites
+UNRESOLVED none
+UNCLASSIFD none
+ANCHOR     foundry_state.py#read_text_file seen = True
+OFFENDERS  3
+  plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::_read_casting_prompt
+  plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::validate_intent_coverage
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py::validate_report

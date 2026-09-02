@@ -101,15 +101,32 @@ AXIS 2 — WHICH RUNGS (walked out of _MANIFEST_SHAPE, not typed):
   castings[].key_files and waves[].casting_ids are lists of
   NON-records (element shape None), so they are correctly not rungs
 
-AXIS 3 — WHICH READERS (taint from the literal, across calls and
-         through path-building helpers; allow-list is EMPTY):
+AXIS 3 — WHICH READERS (taint from the literal, across calls,
+         through path-building helpers, and back OUT of a helper's
+         RETURN when it descends below what it was handed [D-148];
+         allow-list is EMPTY):
   shared validators, read off foundry_spawn: ['_manifest_shape_error', '_manifest_shape_problem']
+
+SEEN — the readers the derivation actually RECOGNISED. Without
+       this line the VERDICT below is green whether the package is
+       clean or the tracker has gone blind [D-142]:
+  plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py#load_manifest_casting_ids
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#_append_to_manifest_evidence_provenance
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_check_sight_required
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_trace_skip_check
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#foundry_gate
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py#_build_grind_cycle_context
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py#foundry_cast_wave
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py#foundry_spawn_teammate
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#_fingerprint_inputs
+  plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py#foundry_validate_castings
 
 VERDICT — reaches inside a manifest record with nobody having
           established its shape:
+  none
 
 NOT LISTED, and not by exemption — these pass the same rule:
   foundry_spawn.py                    (routes through the validator)
   scripts/validate_intent_coverage.py (isinstance-guards the rung it indexes)
 .
-1 passed, 91 deselected in 0.53s
+1 passed, 112 deselected in 0.78s

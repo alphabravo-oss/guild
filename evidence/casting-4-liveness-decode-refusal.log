@@ -41,4 +41,4 @@ Before the fix the second, third and fourth rows read
   RAISES UnicodeDecodeError across the MCP boundary
 naming no file, from CT-004 / AC-021 / OT-010's entire surface.
 .
-1 passed, 93 deselected in 0.45s
+1 passed, 93 deselected in 0.05s

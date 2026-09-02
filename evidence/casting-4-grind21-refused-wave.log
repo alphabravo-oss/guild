@@ -1,0 +1,74 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_spawn_progress.py -v --no-header -p no:cacheprovider -k "refused_wave or phantom or healthy_wave or write_after_check or one_write or partial_wave or not_logged_as_dispatched"
+# evidence-for: AC-021, OT-010, FR-020, AC-025
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: Installed \d+ packages? in \d+(\.\d+)?ms
+# evidence-timeout: 300
+#
+# D-144 — A SPAWN RECORD IS A CLAIM THAT AN AGENT EXISTS.
+#
+# THE HARM, driven through the real server._DISPATCH at d8215c5: a wave of
+# three castings whose THIRD prompt will not decode. Foundry-Cast-Wave refuses
+# — correctly, and before writing casting 3's record — but castings 1 and 2
+# wrote theirs in earlier iterations of the same loop, so spawns.log holds
+# `dispatched [1, 2]`. Aged past the 900s threshold, Foundry-Liveness then
+# reports
+#
+#   agents          [('casting-1','no_ledger'), ('casting-2','no_ledger')]
+#   needs_attention ['casting-1', 'casting-2']
+#   detail          "casting-1 was dispatched from spawns.log 60 minutes ago
+#                    and has written no progress ledger at all ... or it died
+#                    before its first line. This row is the only trace of it
+#                    either way."
+#
+# Two teammates that were never spawned, reported as teammates that may have
+# died. CT-004 / AC-021 / OT-010 exist to tell a stalled agent from a slow one,
+# and this is the worst answer available: a NON-EXISTENT agent reported as one
+# that might be dead, whose only remedy is to go looking for it.
+#
+# THE WRITE SITE'S OWN COMMENT CLAIMED THE OPPOSITE, in as many words: "a wave
+# whose third prompt will not decode must not have logged two spawns to
+# spawns.log first." It logged exactly two. Refusing EARLY was never enough,
+# because the earlier iterations had already written.
+#
+# THE FIX IS THE UNIT, NOT THE ORDER. The dispatch records are buffered while
+# the castings are checked and appended ONCE, after every casting in the wave
+# has cleared every check. `_append_spawn_records` is the only writer, so both
+# spawn doors hold the property rather than agreeing on it, and the single
+# door's own ordering is asserted separately below as the adjacent path.
+#
+# ALL THREE REFUSAL BRANCHES, not just the reported one. The loop refuses on
+# undecodable, missing and empty prompts; the pre-existing test covered the
+# decode branch alone, so a fix bound to it would have left the other two.
+#
+# AND THE LOCK IS WHAT MAKES "ALL OR NONE" TRUE AGAINST A READER, not only
+# against a refusal. O_APPEND orders concurrent writers' bytes and says nothing
+# about a Foundry-Liveness call arriving between the second and third record of
+# a wave. The writer holds LOCK_EX for the whole payload and `_read_spawn_log`
+# takes LOCK_SH around the read, so a concurrent reader waits and then sees the
+# whole wave. `..._never_sees_a_partial_wave` drives that against a real lock
+# holder: the reader is started while the log on disk is EMPTY, asserted to be
+# still blocked, and only then is the wave written and the lock released — so
+# what it returns is all three records and never the empty prefix it would have
+# read had it not waited.
+#
+# The `phantom` rows assert the far end of the loop both ways: empty after the
+# refusal, and all three castings on the roster after the same wave is really
+# handed out. Emptiness that is not contrasted with a reachable non-empty is
+# just an unreachable threshold.
+
+============================= test session starts ==============================
+collecting ... collected 113 items / 102 deselected / 11 selected
+
+tests/test_spawn_progress.py::test_the_refused_casting_is_not_logged_as_dispatched PASSED [  9%]
+tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[undecodable] PASSED [ 18%]
+tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[missing] PASSED [ 27%]
+tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[empty] PASSED [ 36%]
+tests/test_spawn_progress.py::test_liveness_reports_no_phantom_teammate_after_a_refused_wave[undecodable] PASSED [ 45%]
+tests/test_spawn_progress.py::test_liveness_reports_no_phantom_teammate_after_a_refused_wave[missing] PASSED [ 54%]
+tests/test_spawn_progress.py::test_liveness_reports_no_phantom_teammate_after_a_refused_wave[empty] PASSED [ 63%]
+tests/test_spawn_progress.py::test_the_healthy_wave_still_records_every_casting PASSED [ 72%]
+tests/test_spawn_progress.py::test_the_single_door_keeps_its_own_write_after_check_ordering PASSED [ 81%]
+tests/test_spawn_progress.py::test_the_whole_wave_is_appended_in_one_write PASSED [ 90%]
+tests/test_spawn_progress.py::test_a_concurrent_liveness_read_never_sees_a_partial_wave PASSED [100%]
+
+====================== 11 passed, 102 deselected in 0.57s ======================

@@ -164,99 +164,183 @@
 # different artifact (the pre-authored prompt) in the same class.
 
 ============================= test session starts ==============================
-collecting ... collected 92 items
+collecting ... collected 113 items
 
-tests/test_spawn_progress.py::test_single_spawn_returns_a_progress_protocol_block PASSED [  1%]
-tests/test_spawn_progress.py::test_the_block_names_the_exact_ledger_path_for_that_casting PASSED [  2%]
-tests/test_spawn_progress.py::test_the_block_names_the_three_required_line_fields PASSED [  3%]
-tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [  4%]
-tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [  5%]
-tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [  6%]
-tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [  7%]
-tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [  8%]
-tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [  9%]
-tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [ 10%]
-tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [ 11%]
-tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 13%]
-tests/test_spawn_progress.py::test_single_spawn_block_carries_the_terminal_line_instruction PASSED [ 14%]
-tests/test_spawn_progress.py::test_bulk_spawn_blocks_carry_the_terminal_line_instruction PASSED [ 15%]
-tests/test_spawn_progress.py::test_a_terminal_line_written_as_instructed_reports_done PASSED [ 16%]
-tests/test_spawn_progress.py::test_the_teammate_variant_is_what_the_spawn_tools_still_emit PASSED [ 17%]
-tests/test_spawn_progress.py::test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in PASSED [ 18%]
-tests/test_spawn_progress.py::test_the_two_variants_share_every_machine_read_field PASSED [ 19%]
-tests/test_spawn_progress.py::test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness PASSED [ 20%]
-tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 21%]
-tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 22%]
-tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 23%]
-tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 25%]
-tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 26%]
-tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [ 27%]
-tests/test_spawn_progress.py::test_the_header_is_never_emitted_without_the_files_it_promises[True] PASSED [ 28%]
-tests/test_spawn_progress.py::test_the_header_is_never_emitted_without_the_files_it_promises[False] PASSED [ 29%]
-tests/test_spawn_progress.py::test_a_casting_with_no_key_files_gets_the_fallback_diff PASSED [ 30%]
-tests/test_spawn_progress.py::test_the_key_files_branch_is_unmoved_by_the_fallback_repair PASSED [ 31%]
-tests/test_spawn_progress.py::test_the_fallback_block_reaches_both_spawn_doors_alike PASSED [ 32%]
-tests/test_spawn_progress.py::test_a_real_bulk_dispatch_becomes_a_liveness_row PASSED [ 33%]
-tests/test_spawn_progress.py::test_a_real_single_dispatch_becomes_a_liveness_row PASSED [ 34%]
-tests/test_spawn_progress.py::test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write PASSED [ 35%]
-tests/test_spawn_progress.py::test_an_agent_that_obeys_its_block_leaves_the_missing_roster PASSED [ 36%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 38%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[null] PASSED [ 39%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 40%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[42] PASSED [ 41%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 42%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[null] PASSED [ 43%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 44%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[42] PASSED [ 45%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_type_it_actually_found PASSED [ 46%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_wrong_typed_manifest_with_one_policy PASSED [ 47%]
-tests/test_spawn_progress.py::test_a_torn_manifest_keeps_the_parse_error_it_already_had PASSED [ 48%]
-tests/test_spawn_progress.py::test_a_well_formed_manifest_is_untouched_by_the_guard PASSED [ 50%]
-tests/test_spawn_progress.py::test_the_grind_context_builder_survives_a_wrong_typed_manifest PASSED [ 51%]
-tests/test_spawn_progress.py::test_a_wrong_typed_manifest_cannot_reach_the_builder_through_a_door PASSED [ 52%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings="nope"] PASSED [ 53%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings=[1,2,3]] PASSED [ 54%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings=[null]] PASSED [ 55%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[waves="nope"] PASSED [ 56%]
-tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings=[{"no_id":1}]] PASSED [ 57%]
-tests/test_spawn_progress.py::test_demo_shape_parity_report PASSED       [ 58%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body0-manifest.json.castings] PASSED [ 59%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body1-manifest.json.castings[0]] PASSED [ 60%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body2-manifest.json.castings[0].id] PASSED [ 61%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body3-manifest.json.castings[0].key_files] PASSED [ 63%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body4-manifest.json.waves] PASSED [ 64%]
-tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body5-manifest.json.waves[0].casting_ids] PASSED [ 65%]
-tests/test_spawn_progress.py::test_a_nested_failure_does_not_claim_the_document_is_not_an_object PASSED [ 66%]
-tests/test_spawn_progress.py::test_a_manifest_missing_a_key_entirely_is_not_a_shape_problem PASSED [ 67%]
-tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings="nope"] PASSED [ 68%]
-tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings=[1,2,3]] PASSED [ 69%]
-tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings=[null]] PASSED [ 70%]
-tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[waves="nope"] PASSED [ 71%]
-tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings=[{"no_id":1}]] PASSED [ 72%]
-tests/test_spawn_progress.py::test_every_manifest_key_the_module_indexes_is_declared PASSED [ 73%]
-tests/test_spawn_progress.py::test_the_scan_catches_a_reader_that_indexes_an_undeclared_key PASSED [ 75%]
-tests/test_spawn_progress.py::test_the_shape_table_states_the_two_keys_the_readers_address_records_by PASSED [ 76%]
-tests/test_spawn_progress.py::test_no_read_in_this_module_can_raise_a_decode_error PASSED [ 77%]
-tests/test_spawn_progress.py::test_the_read_scan_catches_a_freshly_planted_unguarded_read PASSED [ 78%]
-tests/test_spawn_progress.py::test_the_read_scan_does_not_accept_a_guard_in_the_wrong_place PASSED [ 79%]
-tests/test_spawn_progress.py::test_the_manifest_scan_looks_in_both_shipped_source_trees PASSED [ 80%]
-tests/test_spawn_progress.py::test_the_record_rungs_come_out_of_the_shape_table PASSED [ 81%]
-tests/test_spawn_progress.py::test_the_locked_validator_names_are_still_the_ones_the_scan_looks_for PASSED [ 82%]
-tests/test_spawn_progress.py::test_every_manifest_record_reader_in_the_package_establishes_the_shape PASSED [ 83%]
-tests/test_spawn_progress.py::test_the_manifest_scan_catches_a_reader_planted_in_a_new_module PASSED [ 84%]
-tests/test_spawn_progress.py::test_a_planted_reader_is_cleared_by_either_route_and_by_neither_alone PASSED [ 85%]
-tests/test_spawn_progress.py::test_the_scan_follows_the_manifest_through_a_call PASSED [ 86%]
-tests/test_spawn_progress.py::test_the_scan_follows_a_manifest_path_a_helper_built PASSED [ 88%]
-tests/test_spawn_progress.py::test_the_provider_module_passes_its_own_package_wide_rule PASSED [ 89%]
-tests/test_spawn_progress.py::test_the_isinstance_route_clears_the_real_intent_coverage_reader PASSED [ 90%]
-tests/test_spawn_progress.py::test_the_single_door_refuses_an_undecodable_prompt PASSED [ 91%]
-tests/test_spawn_progress.py::test_the_bulk_door_refuses_an_undecodable_prompt PASSED [ 92%]
-tests/test_spawn_progress.py::test_the_refused_casting_is_not_logged_as_dispatched PASSED [ 93%]
-tests/test_spawn_progress.py::test_a_healthy_prompt_is_untouched_by_the_prompt_guard PASSED [ 94%]
-tests/test_spawn_progress.py::test_an_undecodable_baseline_marker_still_never_fails_a_spawn PASSED [ 95%]
-tests/test_spawn_progress.py::test_handler_coverage_is_decided_by_python_not_by_a_name_list PASSED [ 96%]
+tests/test_spawn_progress.py::test_single_spawn_returns_a_progress_protocol_block PASSED [  0%]
+tests/test_spawn_progress.py::test_the_block_names_the_exact_ledger_path_for_that_casting PASSED [  1%]
+tests/test_spawn_progress.py::test_the_block_names_the_three_required_line_fields PASSED [  2%]
+tests/test_spawn_progress.py::test_the_block_states_the_cadence_and_threshold_it_will_be_judged_by PASSED [  3%]
+tests/test_spawn_progress.py::test_the_block_explains_why_step_must_change PASSED [  4%]
+tests/test_spawn_progress.py::test_the_instructions_tell_the_lead_to_append_the_block PASSED [  5%]
+tests/test_spawn_progress.py::test_the_block_is_appended_last_so_the_established_order_is_undisturbed PASSED [  6%]
+tests/test_spawn_progress.py::test_the_prompt_itself_is_never_modified_by_the_progress_block PASSED [  7%]
+tests/test_spawn_progress.py::test_bulk_spawn_gives_every_casting_its_own_block PASSED [  7%]
+tests/test_spawn_progress.py::test_bulk_instructions_tell_the_lead_to_append_each_block PASSED [  8%]
+tests/test_spawn_progress.py::test_a_line_written_where_the_block_says_is_read_back_by_liveness PASSED [  9%]
+tests/test_spawn_progress.py::test_the_agent_id_in_the_block_matches_the_one_liveness_reports PASSED [ 10%]
+tests/test_spawn_progress.py::test_single_spawn_block_carries_the_terminal_line_instruction PASSED [ 11%]
+tests/test_spawn_progress.py::test_bulk_spawn_blocks_carry_the_terminal_line_instruction PASSED [ 12%]
+tests/test_spawn_progress.py::test_a_terminal_line_written_as_instructed_reports_done PASSED [ 13%]
+tests/test_spawn_progress.py::test_the_teammate_variant_is_what_the_spawn_tools_still_emit PASSED [ 14%]
+tests/test_spawn_progress.py::test_the_stream_variant_names_the_phase_a_stream_agent_is_actually_in PASSED [ 15%]
+tests/test_spawn_progress.py::test_the_two_variants_share_every_machine_read_field PASSED [ 15%]
+tests/test_spawn_progress.py::test_a_stream_agent_obeying_its_block_becomes_visible_to_liveness PASSED [ 16%]
+tests/test_spawn_progress.py::test_bulk_grind_returns_grind_cycle_context_per_casting PASSED [ 17%]
+tests/test_spawn_progress.py::test_bulk_cast_returns_no_grind_cycle_context PASSED [ 18%]
+tests/test_spawn_progress.py::test_bulk_grind_matches_the_single_spawn_path_it_was_missing PASSED [ 19%]
+tests/test_spawn_progress.py::test_bulk_grind_context_is_scoped_to_each_castings_key_files PASSED [ 20%]
+tests/test_spawn_progress.py::test_bulk_grind_still_carries_the_progress_block PASSED [ 21%]
+tests/test_spawn_progress.py::test_bulk_grind_without_a_baseline_omits_the_context_quietly PASSED [ 22%]
+tests/test_spawn_progress.py::test_the_header_is_never_emitted_without_the_files_it_promises[True] PASSED [ 23%]
+tests/test_spawn_progress.py::test_the_header_is_never_emitted_without_the_files_it_promises[False] PASSED [ 23%]
+tests/test_spawn_progress.py::test_a_casting_with_no_key_files_gets_the_fallback_diff PASSED [ 24%]
+tests/test_spawn_progress.py::test_the_key_files_branch_is_unmoved_by_the_fallback_repair PASSED [ 25%]
+tests/test_spawn_progress.py::test_the_fallback_block_reaches_both_spawn_doors_alike PASSED [ 26%]
+tests/test_spawn_progress.py::test_a_real_bulk_dispatch_becomes_a_liveness_row PASSED [ 27%]
+tests/test_spawn_progress.py::test_a_real_single_dispatch_becomes_a_liveness_row PASSED [ 28%]
+tests/test_spawn_progress.py::test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write PASSED [ 29%]
+tests/test_spawn_progress.py::test_an_agent_that_obeys_its_block_leaves_the_missing_roster PASSED [ 30%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 30%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[null] PASSED [ 31%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 32%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_a_wrong_typed_manifest[42] PASSED [ 33%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[[1, 2, 3]] PASSED [ 34%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[null] PASSED [ 35%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest["a bare string"] PASSED [ 36%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_a_wrong_typed_manifest[42] PASSED [ 37%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_type_it_actually_found PASSED [ 38%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_wrong_typed_manifest_with_one_policy PASSED [ 38%]
+tests/test_spawn_progress.py::test_a_torn_manifest_keeps_the_parse_error_it_already_had PASSED [ 39%]
+tests/test_spawn_progress.py::test_a_well_formed_manifest_is_untouched_by_the_guard PASSED [ 40%]
+tests/test_spawn_progress.py::test_the_grind_context_builder_survives_a_wrong_typed_manifest PASSED [ 41%]
+tests/test_spawn_progress.py::test_a_wrong_typed_manifest_cannot_reach_the_builder_through_a_door PASSED [ 42%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings="nope"] PASSED [ 43%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings=[1,2,3]] PASSED [ 44%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings=[null]] PASSED [ 45%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[waves="nope"] PASSED [ 46%]
+tests/test_spawn_progress.py::test_both_doors_refuse_a_nested_shape_with_identical_text[castings=[{"no_id":1}]] PASSED [ 46%]
+tests/test_spawn_progress.py::test_demo_shape_parity_report PASSED       [ 47%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body0-manifest.json.castings] PASSED [ 48%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body1-manifest.json.castings[0]] PASSED [ 49%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body2-manifest.json.castings[0].id] PASSED [ 50%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body3-manifest.json.castings[0].key_files] PASSED [ 51%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body4-manifest.json.waves] PASSED [ 52%]
+tests/test_spawn_progress.py::test_the_refusal_names_the_key_path_that_failed[body5-manifest.json.waves[0].casting_ids] PASSED [ 53%]
+tests/test_spawn_progress.py::test_a_nested_failure_does_not_claim_the_document_is_not_an_object PASSED [ 53%]
+tests/test_spawn_progress.py::test_a_manifest_missing_a_key_entirely_is_not_a_shape_problem PASSED [ 54%]
+tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings="nope"] PASSED [ 55%]
+tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings=[1,2,3]] PASSED [ 56%]
+tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings=[null]] PASSED [ 57%]
+tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[waves="nope"] PASSED [ 58%]
+tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_nested_shape[castings=[{"no_id":1}]] PASSED [ 59%]
+tests/test_spawn_progress.py::test_every_manifest_key_the_module_indexes_is_declared PASSED [ 60%]
+tests/test_spawn_progress.py::test_the_scan_catches_a_reader_that_indexes_an_undeclared_key PASSED [ 61%]
+tests/test_spawn_progress.py::test_the_shape_table_states_the_two_keys_the_readers_address_records_by PASSED [ 61%]
+tests/test_spawn_progress.py::test_no_read_in_this_module_can_raise_a_decode_error FAILED [ 62%]
+tests/test_spawn_progress.py::test_the_read_scan_catches_a_freshly_planted_unguarded_read PASSED [ 63%]
+tests/test_spawn_progress.py::test_a_read_planted_in_a_new_subpackage_is_named_by_the_package_rule PASSED [ 64%]
+tests/test_spawn_progress.py::test_the_read_scan_does_not_accept_a_guard_in_the_wrong_place PASSED [ 65%]
+tests/test_spawn_progress.py::test_the_manifest_scan_looks_in_both_shipped_source_trees PASSED [ 66%]
+tests/test_spawn_progress.py::test_the_record_rungs_come_out_of_the_shape_table PASSED [ 67%]
+tests/test_spawn_progress.py::test_the_locked_validator_names_are_still_the_ones_the_scan_looks_for PASSED [ 68%]
+tests/test_spawn_progress.py::test_every_manifest_record_reader_in_the_package_establishes_the_shape PASSED [ 69%]
+tests/test_spawn_progress.py::test_the_manifest_scan_catches_a_reader_planted_in_a_new_module PASSED [ 69%]
+tests/test_spawn_progress.py::test_a_planted_reader_is_cleared_by_either_route_and_by_neither_alone PASSED [ 70%]
+tests/test_spawn_progress.py::test_the_scan_follows_the_manifest_through_a_call PASSED [ 71%]
+tests/test_spawn_progress.py::test_the_scan_follows_a_manifest_path_a_helper_built PASSED [ 72%]
+tests/test_spawn_progress.py::test_the_scan_follows_the_records_back_out_of_a_helper PASSED [ 73%]
+tests/test_spawn_progress.py::test_following_a_return_still_does_not_launder_a_shared_loader PASSED [ 74%]
+tests/test_spawn_progress.py::test_the_provider_module_passes_its_own_package_wide_rule PASSED [ 75%]
+tests/test_spawn_progress.py::test_the_isinstance_route_clears_the_real_intent_coverage_reader PASSED [ 76%]
+tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rule_by_name[test_the_manifest_scan_looks_in_both_shipped_source_trees] PASSED [ 76%]
+tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rule_by_name[test_every_manifest_record_reader_in_the_package_establishes_the_shape] PASSED [ 77%]
+tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rule_by_name[test_the_provider_module_passes_its_own_package_wide_rule] PASSED [ 78%]
+tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rule_by_name[test_the_isinstance_route_clears_the_real_intent_coverage_reader] PASSED [ 79%]
+tests/test_spawn_progress.py::test_the_single_door_refuses_an_undecodable_prompt PASSED [ 80%]
+tests/test_spawn_progress.py::test_the_bulk_door_refuses_an_undecodable_prompt PASSED [ 81%]
+tests/test_spawn_progress.py::test_the_refused_casting_is_not_logged_as_dispatched PASSED [ 82%]
+tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[undecodable] PASSED [ 83%]
+tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[missing] PASSED [ 84%]
+tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[empty] PASSED [ 84%]
+tests/test_spawn_progress.py::test_liveness_reports_no_phantom_teammate_after_a_refused_wave[undecodable] PASSED [ 85%]
+tests/test_spawn_progress.py::test_liveness_reports_no_phantom_teammate_after_a_refused_wave[missing] PASSED [ 86%]
+tests/test_spawn_progress.py::test_liveness_reports_no_phantom_teammate_after_a_refused_wave[empty] PASSED [ 87%]
+tests/test_spawn_progress.py::test_the_healthy_wave_still_records_every_casting PASSED [ 88%]
+tests/test_spawn_progress.py::test_the_single_door_keeps_its_own_write_after_check_ordering PASSED [ 89%]
+tests/test_spawn_progress.py::test_the_whole_wave_is_appended_in_one_write PASSED [ 90%]
+tests/test_spawn_progress.py::test_a_concurrent_liveness_read_never_sees_a_partial_wave PASSED [ 91%]
+tests/test_spawn_progress.py::test_a_healthy_prompt_is_untouched_by_the_prompt_guard PASSED [ 92%]
+tests/test_spawn_progress.py::test_an_undecodable_baseline_marker_still_never_fails_a_spawn PASSED [ 92%]
+tests/test_spawn_progress.py::test_handler_coverage_is_decided_by_python_not_by_a_name_list PASSED [ 93%]
+tests/test_spawn_progress.py::test_membership_is_decided_by_python_not_by_the_shape_of_the_mode PASSED [ 94%]
+tests/test_spawn_progress.py::test_a_mode_this_scan_cannot_resolve_is_reported_not_skipped PASSED [ 95%]
+tests/test_spawn_progress.py::test_the_positional_argument_indexes_come_from_pythons_signatures PASSED [ 96%]
 tests/test_spawn_progress.py::test_an_unresolvable_handler_name_is_reported_not_skipped PASSED [ 97%]
 tests/test_spawn_progress.py::test_render_decode_read_derivation PASSED  [ 98%]
+tests/test_spawn_progress.py::test_render_return_taint_derivation PASSED [ 99%]
 tests/test_spawn_progress.py::test_render_manifest_reader_derivation PASSED [100%]
 
-============================== 92 passed in 3.79s ==============================
+=================================== FAILURES ===================================
+_____________ test_no_read_in_this_module_can_raise_a_decode_error _____________
+
+    def test_no_read_in_this_module_can_raise_a_decode_error() -> None:
+        """D-138 as a property of the SHIPPED SOURCE, not of one module (D-146).
+    
+        The rule was bound to ``Path(fs.__file__)`` -- foundry_spawn.py alone --
+        while its three sibling structural rules all derived their membership over
+        the package. That difference is the ST-003 class living inside D-138's own
+        fix: an unguarded ``read_text`` anywhere else was invisible, and D-146
+        proved it by planting one in a NEW subpackage, one in foundry_validate.py
+        and one in foundry_orchestrator.py, all three GREEN against the full suite.
+    
+        Membership now comes from ``_scanned_modules`` -- the same rglob over both
+        shipped trees the manifest rule uses -- so there is no module the rule
+        cannot see and no list to enrol one in. The predicate is derived too: a
+        site is judged when Python says its stream decodes strictly, so an
+        append-only log write leaves the rule by property rather than by exemption.
+        """
+        seen, offenders, unresolved, unclassified = _package_text_reads()
+    
+        assert not unresolved, (
+            f"{unresolved} name exceptions this resolver could not turn into "
+            f"classes, so it cannot say what they catch and has counted them as "
+            f"catching nothing. Fix the resolver rather than the handler."
+        )
+        assert not unclassified, (
+            f"{unclassified} are reads whose mode or errors= handler this scan "
+            f"could not resolve from the source, so it cannot say whether they "
+            f"decode. They are counted as members meanwhile. Fix the resolver."
+        )
+    
+        # D-142's anchor. `assert not offenders` is green both when the source is
+        # clean AND when the matcher has stopped recognising the spelling it looks
+        # for; naming the site the rule is ABOUT is what tells those apart.
+        assert any(site.startswith(_DECODE_SCAN_ANCHOR) for site in seen), (
+            f"the scan no longer names {_DECODE_SCAN_ANCHOR}, which is the guarded "
+            f"primitive every read in this package is supposed to route through -- "
+            f"it holds the one `path.read_text` that cannot legitimately go away. "
+            f"Its absence means `_decode_site` has stopped recognising read_text, "
+            f"not that the package got safer. Saw {len(seen)} decode sites: {seen}"
+        )
+    
+>       assert not offenders, (
+            "these read a file's text without handling the decode failure, so one "
+            "non-UTF-8 byte raises UnicodeDecodeError across the MCP boundary as a "
+            "traceback naming no file. `except OSError` and `except "
+            "json.JSONDecodeError` do not catch it -- UnicodeDecodeError is a "
+            "ValueError. Route the read through foundry_state.read_text_file / "
+            "read_json and return document_refusal (one file) or "
+            "_unreadable_artifacts_refusal (several). There is no allow-list to "
+            "add yourself to: the guarded primitive passes this rule on its own "
+            "merits.\n  " + "\n  ".join(_symbol_cites(offenders))
+        )
+E       AssertionError: these read a file's text without handling the decode failure, so one non-UTF-8 byte raises UnicodeDecodeError across the MCP boundary as a traceback naming no file. `except OSError` and `except json.JSONDecodeError` do not catch it -- UnicodeDecodeError is a ValueError. Route the read through foundry_state.read_text_file / read_json and return document_refusal (one file) or _unreadable_artifacts_refusal (several). There is no allow-list to add yourself to: the guarded primitive passes this rule on its own merits.
+E           plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::_read_casting_prompt
+E           plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::validate_intent_coverage
+E           plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py::validate_report
+E       assert not ['plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::_read_casting_prompt:399', 'plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::validate_intent_coverage:657', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py::validate_report:104']
+
+tests/test_spawn_progress.py:2308: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_spawn_progress.py::test_no_read_in_this_module_can_raise_a_decode_error
+======================== 1 failed, 112 passed in 8.37s =========================
