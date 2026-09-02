@@ -108,6 +108,7 @@ from pathlib import Path
 
 from foundry_mcp.parsers.prove import Verdict, parse_prove_report
 from foundry_mcp.parsers.spec import extract_requirements
+from foundry_mcp.tools.foundry_state import read_text_file
 
 # ---------------------------------------------------------------------------
 # Durable-cite grammar (FR-004 / AC-005).
@@ -362,13 +363,21 @@ def verify_citations(
     spath = root / spec_path if not Path(spec_path).is_absolute() else Path(spec_path)
     if not spath.exists():
         return {"pass": False, "error": f"Spec not found: {spec_path}", "traceability_matrix": [], "summary": {}}
-    spec_text = spath.read_text(encoding="utf-8")
+    # D-146: both reads go through the guarded primitive. An existing-but-
+    # undecodable spec or report used to raise UnicodeDecodeError across the
+    # MCP boundary; it now comes back as this surface's own refusal shape,
+    # which already distinguishes "not found" from "not usable".
+    spec_text, spec_problem = read_text_file(spath)
+    if spec_problem is not None:
+        return {"pass": False, "error": spec_problem, "traceability_matrix": [], "summary": {}}
 
     # Load critic report
     rpath = root / report_path if not Path(report_path).is_absolute() else Path(report_path)
     if not rpath.exists():
         return {"pass": False, "error": f"Report not found: {report_path}", "traceability_matrix": [], "summary": {}}
-    report_text = rpath.read_text(encoding="utf-8")
+    report_text, report_problem = read_text_file(rpath)
+    if report_problem is not None:
+        return {"pass": False, "error": report_problem, "traceability_matrix": [], "summary": {}}
 
     # Parse both
     requirements = extract_requirements(spec_text)

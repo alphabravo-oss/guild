@@ -26,9 +26,14 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
 from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
-from foundry_mcp.tools.foundry_state import get_run_dir
+from foundry_mcp.tools.foundry_state import (
+    document_refusal,
+    get_run_dir,
+    read_text_file,
+)
 
 
 def _hash_file(path: Path) -> str | None:
@@ -308,7 +313,14 @@ def foundry_accept_casting(
             "hint": "Re-run F0.5 DECOMPOSE",
         }
 
-    prompt_text = prompt_path.read_text(encoding="utf-8")
+    # D-146: the whole read sits behind ONE guarded call. A casting prompt that
+    # exists but cannot be decoded used to raise UnicodeDecodeError straight
+    # across the MCP boundary, where the lead sees a traceback instead of a
+    # named refusal — the D-137 family's exact shape, one door further along.
+    prompt_text, prompt_problem = read_text_file(prompt_path)
+    if prompt_problem is not None:
+        return document_refusal(prompt_path, prompt_problem)
+
     current_prompt_hash = _hash_str(prompt_text)
     if prompt_hash != current_prompt_hash:
         return {
@@ -363,8 +375,15 @@ def foundry_accept_casting(
     # cycles. Widening the code to match the prose is the fix; the prose is
     # another casting's file and needs no change.
     CITATION_WINDOW = 300
-    req_id_pattern = r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b"
-    casting_req_ids = sorted(set(re.findall(req_id_pattern, spec_block)))
+    # D-150: the requirement-ID families are declared ONCE, in the vocabulary
+    # module. This was the first of seven hand-typed copies, and like the rest
+    # it knew seven families and neither OT- nor GI-, so an observable truth
+    # quoted into a casting's <spec_requirements> block was invisible here: no
+    # citation was ever demanded for it and none could be credited. The
+    # canonical pattern is a strict SUPERSET, so every ID that required a
+    # citation before still does (NFR-002) — and OT-/GI-/CT-/ST- rows quoted
+    # into the block now require one too, which is the point.
+    casting_req_ids = sorted(set(REQUIREMENT_ID_RE.findall(spec_block)))
     citation_pattern = CITATION_PATTERN
     missing_citations: list = []
     for rid in casting_req_ids:

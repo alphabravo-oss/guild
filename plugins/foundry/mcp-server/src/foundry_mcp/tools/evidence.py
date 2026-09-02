@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.foundry_handoff import _hash_str
 from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
@@ -133,15 +134,18 @@ _EVIDENCE_HEADER_LINE_RE = re.compile(
 )
 _EVIDENCE_HEADER_BLOCK_RE = re.compile(r"\A(?:#[^\n]*\n|[ \t]*\n)+")
 
-# Phase 5 / EVID-02 — single-source-of-truth requirement-ID regex re-used
-# from plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_handoff.py:324
-# (`req_id_pattern`). Module-level constant so artifact-side parsing
-# (this module) and prompt-side parsing (foundry_handoff.py) agree
-# byte-for-byte. Closed vocabulary: US, FR, NFR, AC, VC, IR, TR + numeric
-# ID with optional decimal (e.g., FR-2.1).
-_REQUIREMENT_ID_RE: re.Pattern[str] = re.compile(
-    r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b"
-)
+# Phase 5 / EVID-02 — the requirement-ID grammar, READ from the vocabulary
+# module rather than re-typed here.
+#
+# D-150: this was a hand-copied literal whose comment claimed to be a
+# "single-source-of-truth ... re-used from foundry_handoff.py" while being the
+# second of seven copies. All seven knew the same seven families and none knew
+# OT- or GI-, so `# evidence-for: OT-011` parsed to the EMPTY LIST and was
+# dropped without a word — an evidence file could never bind to an observable
+# truth, and EVID-02's requirement-binding check could never see one. The
+# canonical pattern is a strict superset of what this copy matched, so no
+# `# evidence-for:` header that bound before binds less now (NFR-002).
+_REQUIREMENT_ID_RE: re.Pattern[str] = REQUIREMENT_ID_RE
 
 
 def _parse_evidence_header(text: str) -> dict[str, Any]:

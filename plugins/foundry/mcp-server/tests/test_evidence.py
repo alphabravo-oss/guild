@@ -66,6 +66,7 @@ import pytest
 # cleanly. importorskip is the canonical RED-or-SKIP discipline for
 # downstream-wave-owned implementation modules — mirrors Phase 2 Plan 02-01.
 evidence = pytest.importorskip("foundry_mcp.tools.evidence")
+vocab = pytest.importorskip("foundry_mcp.schemas.vocab")
 
 
 # ---------------------------------------------------------------------------
@@ -687,7 +688,12 @@ def _run_git(args: list[str], cwd: Path) -> None:
     )
 
 
-def _build_divergent_spec_repo(tmp_path: Path, *, replay_body_only: bool = False) -> dict:
+def _build_divergent_spec_repo(
+    tmp_path: Path,
+    *,
+    replay_body_only: bool = False,
+    req_ids: tuple = ("AC-023",),
+) -> dict:
     """A repo whose stale ``specs/spec.md`` is v2.0 and whose RUN spec is v2.1.
 
     Returns the arguments ``foundry_accept_casting`` needs, plus the two spec
@@ -727,7 +733,7 @@ def _build_divergent_spec_repo(tmp_path: Path, *, replay_body_only: bool = False
     # ``use_cat_replay`` harness.
     evidence_log = (
         "# evidence-cmd: cat replay.txt\n"
-        "# evidence-for: AC-023\n"
+        f"# evidence-for: {', '.join(req_ids)}\n"
         "\n" + _EVIDENCE_BODY
     )
     # replay_body_only mirrors what a REAL evidence command does: it emits the
@@ -755,14 +761,18 @@ def _build_divergent_spec_repo(tmp_path: Path, *, replay_body_only: bool = False
     run_spec = fdir / "spec.md"
     run_spec.write_text(
         "---\nspec_format_version: v2.1\n---\n"
-        "# Run spec\n\nAC-023 the gate reads the run's spec.\n",
+        "# Run spec\n\n"
+        + "".join(f"{r} the gate reads the run's spec.\n" for r in req_ids),
         encoding="utf-8",
     )
 
     prompt_text = (
         "<spec_requirements>\n"
-        "- **AC-023**: evidence runs against the run's actual spec\n"
-        "</spec_requirements>\n"
+        + "".join(
+            f"- **{r}**: evidence runs against the run's actual spec\n"
+            for r in req_ids
+        )
+        + "</spec_requirements>\n"
     )
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
     (fdir / "castings" / "casting-1-prompt.md").write_text(
@@ -3054,6 +3064,26 @@ def _package_modules(root: Path) -> list:
     return sorted(root.rglob("*.py"))
 
 
+def _scan(modules: list, rule) -> tuple:
+    """Run one ``(seen, offenders)`` rule over a corpus and union both halves.
+
+    D-142's shape. ``seen`` names every site the rule's recogniser identified
+    as a MEMBER of the class it polices — offending or not — because
+    ``assert not offenders`` is green in two different worlds: the one where
+    the corpus is clean, and the one where the derivation has quietly stopped
+    recognising the corpus's spelling. Callers assert against ``seen`` to tell
+    the two apart by name. ``test_orchestrator_gates`` records this tuple as
+    the agreed contract across test modules.
+    """
+    seen: list = []
+    offenders: list = []
+    for path in modules:
+        module_seen, module_offenders = rule(path)
+        seen.extend(module_seen)
+        offenders.extend(module_offenders)
+    return sorted(set(seen)), sorted(set(offenders))
+
+
 def _module_name(path: Path) -> str:
     rel = path.relative_to(_SERVER_PKG.parent).with_suffix("")
     parts = [p for p in rel.parts]
@@ -3401,3 +3431,348 @@ def test_the_adjacent_dispatch_paths_also_emit_nothing_on_stdout(tmp_path, capsy
     assert no_commit["evidence_verdict"] is None, no_commit
     assert no_commit["evidence_tally"] is None, no_commit
     assert isinstance(other_tool, dict), other_tool
+
+
+# --------------------------------------------------------------------------- #
+# D-150 — the requirement-ID grammar, declared once (FR-017 / AC-023).
+#
+# The literal `\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b` was hand-typed in
+# SEVEN places across five modules, and every wide copy knew the same seven
+# families and neither OT- nor GI-. Fifteen of this run's own 71 spec IDs were
+# invisible to the acceptance gate, the DONE gate's requirement count and the
+# verdict-coverage synthesis -- and `# evidence-for: OT-011` parsed to the
+# EMPTY LIST, so no evidence could ever bind to an observable truth.
+# --------------------------------------------------------------------------- #
+
+_ID_LITERAL_MARKER = "-\\d"
+
+
+def _enumerated_prefixes(text: str) -> frozenset:
+    """The requirement-ID families a string constant enumerates.
+
+    Derived against ``REQUIREMENT_ID_PREFIXES`` rather than a list written
+    here, so a family added to the vocabulary is recognised by this scan the
+    day it lands.
+    """
+    return frozenset(
+        p for p in vocab.REQUIREMENT_ID_PREFIXES
+        if re.search(rf"(?<![A-Z]){re.escape(p)}(?![A-Z])", text)
+    )
+
+
+def _requirement_id_literals(path: Path) -> tuple:
+    """``(seen, offenders)`` for one module.
+
+    A MEMBER is a string constant that enumerates two or more requirement-ID
+    families AND carries the regex marker ``-\\d`` -- the pair is what
+    separates a grammar from prose that happens to mention ``FR`` and ``AC``.
+
+    A member is WAIVED when the same module also declares a constant anchored
+    to a LITERAL marker (``^`` or ``\\A`` followed by ordinary text, not a
+    wildcard) enumerating exactly the same families. That is the structural
+    signature of a selector bounded by a declared input FORMAT rather than one
+    scanning free prose: ``test_deriver`` reads the ``# tests-spec: US-1, FR-2``
+    header its own ``^#\\s*tests-spec:`` regex defines, and narrowing to US/FR
+    there is the format, not a forgotten copy.
+
+    THE LITERAL REQUIREMENT IS LOAD-BEARING. A first cut waived on ``^``
+    alone, and ``parsers/spec.py`` slipped through: its ``^.*?\\b(...)``
+    matches ANY line containing an ID, so it is a prose scanner wearing an
+    anchor. An anchor followed by ``.`` or ``(`` constrains nothing, and a
+    waiver that accepts one excuses exactly the sites this rule exists to
+    find.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    constants = [
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    anchored = set()
+    for const in constants:
+        for anchor in ("^", "\\A"):
+            if const.startswith(anchor):
+                rest = const[len(anchor):]
+                if rest[:1] and rest[0] not in ".([\\":
+                    anchored.add(_enumerated_prefixes(const))
+    seen, offenders = [], []
+    for const in constants:
+        families = _enumerated_prefixes(const)
+        if len(families) < 2 or _ID_LITERAL_MARKER not in const:
+            continue
+        label = f"{path.name}#{'|'.join(sorted(families))}"
+        seen.append(label)
+        if families not in anchored:
+            offenders.append(label)
+    return seen, offenders
+
+
+def test_no_module_declares_its_own_requirement_id_grammar():
+    """DERIVED MEMBERSHIP over the package, on the axis D-150 was filed on.
+
+    The anchors are load-bearing. ``seen`` must be non-empty, because the
+    package still legitimately contains one format-bounded selector -- if the
+    recogniser breaks, ``seen`` empties and ``offenders == []`` goes green over
+    a corpus it can no longer read. And every module that carried one of the
+    seven copies must still be SCANNED, so a ``_package_modules`` that stopped
+    reaching them fails by name rather than reporting a clean zero.
+    """
+    filed_on = [
+        "foundry_handoff.py", "evidence.py", "foundry_validate.py",
+        "foundry_orchestrator.py", "foundry.py", "vocab.py",
+    ]
+    modules = _package_modules(_SERVER_PKG)
+    names = {p.name for p in modules}
+    missing = [m for m in filed_on if m not in names]
+    assert missing == [], f"the scan no longer reaches {missing}"
+
+    seen, offenders = _scan(modules, _requirement_id_literals)
+    assert seen, (
+        "the scan found no requirement-ID grammar anywhere in the package, "
+        "though test_deriver still declares a format-bounded one -- blind"
+    )
+
+    # This casting's key_files plus the lead's vocab.py grant. Splitting on
+    # ownership is not a softening of the rule — it is what lets the rule ship
+    # strict while other castings land their own halves.
+    owned = {
+        "foundry_handoff.py", "evidence.py", "citation.py", "foundry.py",
+        "vocab.py",
+    }
+    mine = [o for o in offenders if o.split("#")[0] in owned]
+    assert mine == [], (
+        f"these files of MINE declare their own requirement-ID grammar instead "
+        f"of importing REQUIREMENT_ID_RE from foundry_mcp.schemas.vocab: {mine}"
+    )
+
+    # Offenders outside this casting's grant, pinned so the backlog cannot grow
+    # in silence. `parsers/spec.py` was found BY this rule after the waiver was
+    # tightened: `extract_requirements` and its sibling both carry the wide
+    # seven-family literal, so `citation.verify_citations`' traceability matrix
+    # cannot see an OT-, GI-, CT-, ST- or LR- requirement either. Nobody's
+    # casting owns that file; it is named in the completion report for routing.
+    pending_unowned = {"spec.py#AC|FR|IR|NFR|TR|US|VC"}
+    theirs = {o for o in offenders if o.split("#")[0] not in owned}
+    assert theirs == pending_unowned, (
+        f"the set of requirement-ID grammars outside this casting's grant "
+        f"changed: now {sorted(theirs)}, pinned {sorted(pending_unowned)}. A "
+        f"NEW one must be routed, not absorbed."
+    )
+
+
+def test_the_canonical_grammar_never_narrows_what_was_counted_before():
+    """NFR-002 at the seam every consumer now shares.
+
+    The pre-D-150 literal is reproduced here EXACTLY as it stood in all five
+    wide copies. The canonical pattern must be a strict superset of it: every
+    ID any consumer counted, cited or bound before this change must still be
+    counted, cited and bound. Written against the exported pattern, so
+    casting 2's swap of foundry_validate and foundry_orchestrator is checked by
+    this test too -- neither of us can narrow the shared seam alone.
+    """
+    old = re.compile(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b")
+    corpus = (
+        "US-1 FR-2 NFR-3 AC-4 VC-5 IR-6 TR-7 FR-2.1 "
+        "OT-011 GI-001 CT-002 ST-004 "
+        "A-AUTO-003 FLAG-001 TEST-01 EVID-01 D-150 P-6"
+    )
+    before, after = set(old.findall(corpus)), set(
+        vocab.REQUIREMENT_ID_RE.findall(corpus)
+    )
+    assert before <= after, f"the canonical grammar NARROWED: lost {before - after}"
+    assert {"OT-011", "GI-001", "CT-002", "ST-004"} <= after, (
+        f"the families D-150 was filed on are still not matched: {after}"
+    )
+    # ...and it did not widen into namespaces that are not requirements.
+    for foreign in ("A-AUTO-003", "FLAG-001", "TEST-01", "EVID-01", "D-150", "P-6"):
+        assert foreign not in after, (
+            f"{foreign} is not a requirement -- counting it would inflate every "
+            f"coverage denominator in the run"
+        )
+
+
+def test_every_id_prefix_in_a_real_spec_is_classified():
+    """A new ID family must be REPORTED, never silently dropped.
+
+    Scans every shipped forge spec for ``XX-NNN``-shaped tokens and partitions
+    the prefixes across the two declared sets. A prefix in NEITHER is the
+    failure this exists to surface: it is exactly how OT- and GI- went missing
+    for the whole of this run, matching nothing and complaining about nothing.
+    """
+    specs = sorted((REPO_ROOT / "forge-specs").glob("*/spec.md"))
+    if not specs:
+        pytest.skip("no forge specs in this checkout")
+    known = vocab.REQUIREMENT_ID_PREFIXES | vocab.NON_REQUIREMENT_ID_PREFIXES
+    unclassified = {}
+    # Two or more capitals, and not preceded by a letter, digit or hyphen.
+    # Every real ID family is at least two letters, and the negative lookbehind
+    # is what stops the tail of a compound word from reading as a family:
+    # without it `LEAD-RULING-5` yields "RULING" and the prose "cycle N to N-1"
+    # yields "N", and a test that reports those reports nothing anyone acts on.
+    family = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,6})-\d+(?:\.\d+)?\b")
+    for spec in specs:
+        text = spec.read_text(encoding="utf-8", errors="replace")
+        for token in family.findall(text):
+            if token not in known:
+                unclassified.setdefault(token, spec.name)
+    assert unclassified == {}, (
+        f"ID prefixes classified as neither requirement nor non-requirement: "
+        f"{unclassified}. Add each to REQUIREMENT_ID_PREFIXES or to "
+        f"NON_REQUIREMENT_ID_PREFIXES in schemas/vocab.py, with provenance."
+    )
+
+
+def test_an_observable_truth_binds_evidence_end_to_end(tmp_path):
+    """D-150's whole point, at the surface EVID-02 actually gates.
+
+    A casting whose ``<spec_requirements>`` cite OT-011, an evidence log whose
+    header binds ONLY OT-011, and a completion report citing it. Before this
+    change `# evidence-for: OT-011` parsed to the empty list, so the binding
+    check saw an unbound requirement and hard-rejected with
+    EVIDENCE_REQUIREMENT_UNBOUND -- an observable truth could never be
+    evidenced at all.
+    """
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path, req_ids=("OT-011",))
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report="OT-011 implemented at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+    finally:
+        clear_active_run()
+
+    assert result.get("failure_token") != "EVIDENCE_REQUIREMENT_UNBOUND", result
+    assert result["evidence_verdict"] == "accepted", result
+    assert result["evidence_provenance"][0]["evidence_for"] == ["OT-011"], result
+    assert result["requirement_ids"] == ["OT-011"], result
+    assert result["missing_citations"] == [], result
+    assert result["ok"] is True, result.get("warning")
+
+
+def test_an_uncited_observable_truth_is_now_caught(tmp_path):
+    """The falsifier for the test above.
+
+    If the gate still could not see OT-011, it would demand no citation for it
+    and the report below -- which cites nothing -- would pass. The widening has
+    to bite in BOTH directions or it has not happened.
+    """
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path, req_ids=("OT-011",))
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report="I implemented OT-011, trust me.\n",
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+    finally:
+        clear_active_run()
+
+    assert result["missing_citations"] == ["OT-011"], result
+    assert result["ok"] is False, result
+
+
+# --------------------------------------------------------------------------- #
+# D-146 — an undecodable document is a named refusal, never a traceback.
+#
+# Casting 4's package-wide scan named ONE site in this casting's files. These
+# cover all four it should have named: the casting-prompt read in
+# foundry_accept_casting, both reads in citation.verify_citations, and the spec
+# copy in foundry_init. Each is driven with real undecodable bytes rather than
+# asserted from the source, because the property is "does not raise", and only
+# running it can show that.
+# --------------------------------------------------------------------------- #
+
+#: Bytes that are not valid UTF-8 in any position -- a lone continuation byte.
+_UNDECODABLE = b"\xff\xfe stray continuation \x80\x81\n"
+
+
+def test_an_undecodable_casting_prompt_is_refused_not_raised(tmp_path):
+    """D-146 at the site the scan named."""
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    (env["fdir"] / "castings" / "casting-1-prompt.md").write_bytes(_UNDECODABLE)
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report="AC-023 at src/gate.py#accept_casting\n",
+            project_root=str(env["project_root"]),
+        )
+    finally:
+        clear_active_run()
+
+    assert result["ok"] is False, result
+    assert "casting-1-prompt.md" in result["error"], result
+    assert "could not be read" in result["error"], result
+    # It is the run-artifact guard one rung EARLIER that answers here, and that
+    # is the correct outcome, not a weaker one: the whole run directory is
+    # swept before the gate reads any single document. The read inside
+    # foundry_accept_casting is the second rung, and it is exercised directly
+    # by the citation and init doors below where no such sweep runs first.
+    assert "UnicodeDecodeError" in result["error"], result
+
+
+@pytest.mark.parametrize("corrupt", ["spec", "report"])
+def test_an_undecodable_spec_or_report_is_refused_not_raised(tmp_path, corrupt):
+    """ADJACENT PATH 1 — a different door, and BOTH of its reads.
+
+    ``verify_citations`` is reached by a different tool than the acceptance
+    gate and has its own refusal shape. Parametrizing over which of its two
+    documents is corrupt is the point: a guard added to the first read and not
+    the second is the shape this whole class keeps recurring as.
+    """
+    from foundry_mcp.tools.citation import verify_citations
+
+    spec = tmp_path / "spec.md"
+    report = tmp_path / "report.md"
+    spec.write_bytes(_UNDECODABLE if corrupt == "spec" else b"# Spec\n\nFR-1 x\n")
+    report.write_bytes(_UNDECODABLE if corrupt == "report" else b"# Report\n")
+
+    result = verify_citations(
+        spec_path=str(spec), report_path=str(report), project_root=str(tmp_path)
+    )
+    assert result["pass"] is False, result
+    assert "could not be read" in result["error"], result
+
+
+def test_an_undecodable_spec_is_refused_at_init_not_copied(tmp_path):
+    """ADJACENT PATH 2 — a different tool again, and the WRITE side.
+
+    ``foundry_init`` copies the spec into the run directory. The tempting fix
+    there is ``errors="replace"``, which does not raise and is worse than
+    raising: it would seed the run with a silently mangled spec that every
+    later phase hashes and trusts. So this asserts the copy did NOT happen.
+    """
+    from foundry_mcp.tools.foundry import foundry_init
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    project_root = tmp_path / "repo"
+    (project_root / "specs").mkdir(parents=True)
+    spec = project_root / "specs" / "spec.md"
+    spec.write_bytes(_UNDECODABLE)
+
+    try:
+        result = foundry_init(
+            project_root=str(project_root), spec_path="specs/spec.md"
+        )
+    finally:
+        clear_active_run()
+
+    assert result["ok"] is False, result
+    assert "could not be read" in result["error"], result
+    copies = list((project_root / "foundry-archive").rglob("spec.md"))
+    assert copies == [], f"a spec that could not be decoded was copied: {copies}"

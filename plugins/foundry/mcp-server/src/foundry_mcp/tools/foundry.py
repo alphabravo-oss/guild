@@ -105,9 +105,12 @@ from foundry_mcp.schemas.vocab import (
     never_demote_class,
     observation_class,
 )
+from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
+    document_refusal,
     get_run_dir,
+    read_text_file,
     set_active_run,
 )
 from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
@@ -1237,7 +1240,15 @@ def foundry_init(
         src = root / spec_path if not Path(spec_path).is_absolute() else Path(spec_path)
         dest = fdir / "spec.md"
         if src.exists() and not dest.exists():
-            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            # D-146: refuse rather than copy a spec we could not decode. The
+            # old read raised UnicodeDecodeError across the MCP boundary; the
+            # tempting alternative — errors="replace" — is worse than either,
+            # because it would seed the run with a silently mangled spec that
+            # every later phase hashes and trusts.
+            spec_src_text, spec_src_problem = read_text_file(src)
+            if spec_src_problem is not None:
+                return document_refusal(src, spec_src_problem)
+            dest.write_text(spec_src_text, encoding="utf-8")
             spec_copied = True
             files_created.append("spec.md")
 
@@ -1860,17 +1871,26 @@ def foundry_verify_coverage(
                 "description": d.get("description", ""),
             })
 
+    # D-150 + D-146. This coverage count carried the NARROWEST copy of the
+    # requirement-ID grammar in the tree — `US-\d+|FR-\d+|NFR-\d+`, three
+    # families — so a spec's AC-, OT-, GI-, CT- and ST- rows were never
+    # counted as requirements to be covered at all, and the traceability gaps
+    # this function reports were computed over a third of the spec. Both reads
+    # now go through the guarded primitive and the one canonical pattern; an
+    # unreadable spec degrades to "no ids from the spec", which falls through
+    # to the requirements-derived fallback below rather than raising.
     spec_req_ids: list[str] = []
+    spec_source: Path | None = None
     if spec_path:
         spath = root / spec_path if not Path(spec_path).is_absolute() else Path(spec_path)
         if spath.exists():
-            import re
-            spec_text = spath.read_text(encoding="utf-8")
-            spec_req_ids = list(dict.fromkeys(re.findall(r"\b(US-\d+|FR-\d+|NFR-\d+)\b", spec_text)))
+            spec_source = spath
     elif (fdir / "spec.md").exists():
-        import re
-        spec_text = (fdir / "spec.md").read_text(encoding="utf-8")
-        spec_req_ids = list(dict.fromkeys(re.findall(r"\b(US-\d+|FR-\d+|NFR-\d+)\b", spec_text)))
+        spec_source = fdir / "spec.md"
+    if spec_source is not None:
+        spec_text, spec_problem = read_text_file(spec_source)
+        if spec_problem is None:
+            spec_req_ids = list(dict.fromkeys(REQUIREMENT_ID_RE.findall(spec_text)))
 
     if not spec_req_ids:
         spec_req_ids = [r["id"] for r in requirements if r.get("id")]

@@ -449,10 +449,111 @@ _SECURITY_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Requirement-ID families used across forge/foundry specs.
-_REQUIREMENT_ID_RE = re.compile(
-    r"\b(?:US|FR|NFR|AC|VC|IR|TR|GI|CT|ST|OT)-\d+(?:\.\d+)?\b"
+# ---------------------------------------------------------------------------
+# D-150 — the requirement-ID grammar, declared ONCE.
+#
+# This literal was hand-typed in SEVEN places across five modules
+# (foundry_handoff, evidence, foundry_validate ×3, foundry_orchestrator, and a
+# narrower US|FR-only copy in test_deriver), and every wide copy knew the same
+# seven families and neither OT- nor GI-. Fifteen of this run's own 71 spec IDs
+# were therefore invisible to the acceptance gate, the DONE gate's requirement
+# count and the verdict-coverage synthesis — and no evidence file could bind to
+# an observable truth at all, because `# evidence-for: OT-011` parsed to the
+# empty list and was silently dropped.
+#
+# PROVENANCE — there is no single authoritative emitter, so the set is the
+# union of the grammars that actually produce these IDs, each cited:
+#
+#   FR, NFR, AC, GI, US, OT   the forge spec emitter's own bullet grammar, in
+#                             three separate literals inside
+#                             plugins/forge/scripts/validate-spec.py — the
+#                             typed-bullet matcher (:232), the Locked/Flexible
+#                             classifier (:854) and the citation-marker check
+#                             (:952). A fourth (:706) carries the narrower
+#                             FR|NFR|AC|GI subset for Locked items only.
+#   GI, ST, CT                the three typed tables forge emits, named by
+#                             validate-spec.py's TYPED_SECTION_HEADINGS (:142)
+#                             = Global Invariants, State Transitions,
+#                             Contracts. Every row of those tables carries an
+#                             ID of the matching family.
+#   LR                        "Locked Requirement" — the bullet family forge
+#                             emits under a spec's `### Locked (implement
+#                             exactly as specified)` heading. Found by
+#                             ``test_every_id_prefix_in_a_real_spec_is_classified``
+#                             on its first run, in
+#                             forge-specs/codsworth-serena-daemon-lifecycle/spec.md
+#                             (LR-001..LR-004, 19 uses across the shipped
+#                             specs). Nothing in foundry had ever matched it,
+#                             so an entire spec's Locked requirements were
+#                             uncountable and unbindable — the same hole as
+#                             OT- and GI-, in a family nobody had named. This
+#                             is the reporting rung doing its job.
+#
+#   VC, IR, TR                foundry-only families carried by the pre-D-150
+#                             literal. They appear in NONE of the five shipped
+#                             forge specs, so no grammar emits them today, but
+#                             they are RETAINED rather than pruned: NFR-002's
+#                             no-narrowing guarantee means nothing that was
+#                             counted before this change may stop being
+#                             counted, and an unused family costs a branch.
+#
+# WHAT IS DELIBERATELY NOT HERE. Three other namespaces share the `XX-NNN`
+# shape and must never be swept into a requirement count — an interview answer
+# is not a requirement, and a stream that ran is not a requirement that was
+# met. They are declared below so the sweep over a real spec can PARTITION
+# every observed prefix instead of silently ignoring what it does not know.
+REQUIREMENT_ID_PREFIXES: frozenset[str] = frozenset(
+    {
+        "US", "FR", "NFR", "AC",      # forge core requirement families
+        "GI", "ST", "CT",             # forge typed-table families
+        "OT",                         # forge observable truths
+        "LR",                         # forge "Locked" requirement bullets
+        "VC", "IR", "TR",             # foundry-only, retained per NFR-002
+    }
+)  # 12 families
+
+#: The `XX-NNN`-shaped namespaces that are NOT requirements. Declared so that
+#: ``test_every_prefix_in_a_real_spec_is_classified`` can report a prefix that
+#: belongs to NEITHER set, rather than letting a new family fall silently
+#: through the gap between them.
+NON_REQUIREMENT_ID_PREFIXES: frozenset[str] = frozenset(
+    {
+        "A",        # interview answer ids, incl. A-AUTO-NNN implicit facts
+        "AUTO",     # the tail of A-AUTO-NNN when read without its `A-` head
+        "FLAG",     # R3.5 spec-review ambiguity flags (validate_spec_review.py)
+        "TEST",     # TEST-01, a verification STREAM id (CANONICAL_STREAM_IDS)
+        "EVID",     # EVID-01 / EVID-02, likewise stream ids
+        "INTV", "TYPE", "PROBE", "INTENT",   # the remaining numbered streams
+        "D",        # defect ids in the run ledger
+        "P",        # phase/packet ids in planning documents
+    }
+)  # 11 non-requirement namespaces
+
+#: The requirement-ID grammar. Built FROM the prefix set above rather than
+#: re-typed beside it, so the families are the single axis: add a prefix and
+#: every reader of this pattern sees it, with no second literal to forget.
+#: Longest-first alternation is defensive only — `\b` already prevents `FR`
+#: from matching inside `NFR-001`.
+REQUIREMENT_ID_RE: re.Pattern[str] = re.compile(
+    r"\b(?:"
+    + "|".join(sorted(REQUIREMENT_ID_PREFIXES, key=lambda p: (-len(p), p)))
+    + r")-\d+(?:\.\d+)?\b"
 )
+
+
+def is_requirement_id(token: str) -> bool:
+    """True when ``token`` is EXACTLY one requirement ID and nothing else.
+
+    ``REQUIREMENT_ID_RE`` is a scanner — callers use ``findall`` to pull IDs
+    out of prose. This is the membership question for a single token, so it
+    anchors both ends: ``"AC-001"`` is an ID, ``"see AC-001 below"`` is not.
+    """
+    return REQUIREMENT_ID_RE.fullmatch(token) is not None
+
+
+#: Retained private alias — this module's own predicates were written against
+#: it, and the two must never diverge.
+_REQUIREMENT_ID_RE = REQUIREMENT_ID_RE
 _SPEC_CLAIM_RE = re.compile(
     r"\b(?:spec(?:ification)?\s+(?:requires?|mandates?|says?|demands?)"
     r"|required\s+behaviou?r|spec[- ]required"
