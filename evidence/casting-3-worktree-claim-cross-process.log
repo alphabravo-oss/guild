@@ -1,7 +1,6 @@
 # evidence-cmd: test -d plugins/foundry/mcp-server && printf '%s\n' "== the pre-fix claim (ab5a430) had no cross-process primitive ==" && git show ab5a430:plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py | grep -c fcntl | sed 's/^/   fcntl references in the pre-fix module: /' && git show ab5a430:plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py | grep -n "_LIVE_WORKTREES: set\|process-local, like the lock" | sed 's/^/   what it used instead: /' && printf '%s\n' "" "== the claim now, driven across two real OS processes ==" && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest tests/test_evidence.py -p no:cacheprovider -k "second_PROCESS or arrives_first or claim_itself" -v --no-header -rN
 # evidence-for: FR-017, AC-023
 # evidence-volatile: \d+\.\d+s
-
 == the pre-fix claim (ab5a430) had no cross-process primitive ==
    fcntl references in the pre-fix module: 0
    what it used instead: 71:# The claim is process-local, like the lock, and for the same reason: two server
@@ -9,10 +8,10 @@
 
 == the claim now, driven across two real OS processes ==
 ============================= test session starts ==============================
-collecting ... collected 206 items / 203 deselected / 3 selected
+collecting ... collected 221 items / 218 deselected / 3 selected
 
 tests/test_evidence.py::test_a_second_PROCESS_cannot_destroy_a_live_worktree PASSED [ 33%]
 tests/test_evidence.py::test_the_unsuffixed_name_goes_to_whichever_process_arrives_first PASSED [ 66%]
 tests/test_evidence.py::test_the_claim_itself_is_refused_to_another_process PASSED [100%]
 
-====================== 3 passed, 203 deselected in 0.57s =======================
+====================== 3 passed, 218 deselected in 0.60s =======================

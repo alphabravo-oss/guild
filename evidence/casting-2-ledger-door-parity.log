@@ -52,4 +52,4 @@
 # over every non-list container shape (`{...}`, a string, an int), with the
 # file byte-identical afterward on each.
 ..............                                                           [100%]
-14 passed, 265 deselected in 0.51s
+14 passed, 272 deselected in 0.51s

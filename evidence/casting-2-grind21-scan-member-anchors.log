@@ -72,4 +72,4 @@
    <pkg root>/split.py                ['split.py::_load_manifest:10 leaks OSError+UnicodeDecodeError']
 
 == and each rule fails BY NAME when its own derivation is blinded ==
-9 passed, 270 deselected in 1.54s
+10 passed, 276 deselected in 1.73s

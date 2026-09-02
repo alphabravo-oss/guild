@@ -55,9 +55,8 @@
 # refusal, and all three castings on the roster after the same wave is really
 # handed out. Emptiness that is not contrasted with a reachable non-empty is
 # just an unreachable threshold.
-
 ============================= test session starts ==============================
-collecting ... collected 113 items / 102 deselected / 11 selected
+collecting ... collected 116 items / 105 deselected / 11 selected
 
 tests/test_spawn_progress.py::test_the_refused_casting_is_not_logged_as_dispatched PASSED [  9%]
 tests/test_spawn_progress.py::test_a_refused_wave_records_no_dispatch_at_all[undecodable] PASSED [ 18%]
@@ -71,4 +70,4 @@ tests/test_spawn_progress.py::test_the_single_door_keeps_its_own_write_after_che
 tests/test_spawn_progress.py::test_the_whole_wave_is_appended_in_one_write PASSED [ 90%]
 tests/test_spawn_progress.py::test_a_concurrent_liveness_read_never_sees_a_partial_wave PASSED [100%]
 
-====================== 11 passed, 102 deselected in 0.57s ======================
+====================== 11 passed, 105 deselected in 0.69s ======================

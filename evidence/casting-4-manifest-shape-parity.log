@@ -43,7 +43,6 @@
 # with_identical_text run against the real absolute path the operator receives.
 #
 
-
 D-132 — five nested manifest shapes x two spawn doors
 
 row                      spawn    wave     refusal text (identical at both doors)
@@ -56,4 +55,4 @@ castings=[{"no_id":1}]   ok=False ok=False manifest.json.castings[0].id is absen
 
 TOTAL 0/10 RAISE, 10/10 name manifest.json, 5/5 rows byte-identical across doors
 .
-1 passed, 112 deselected in 0.05s
+1 passed, 115 deselected in 0.05s

@@ -76,7 +76,6 @@
 #     `.replace` unresolved    cannot be promoted: `text.replace("a","b")` would
 #                              be every second line. The `os.` qualifier stays
 #                              as the fallback only.== D-147: the handler axis was derived and the load axis was a string ==
-
 == D-147: the handler axis was derived and the load axis was a string ==
 
    the operation, spelled                 old rule  derived rule
@@ -95,4 +94,4 @@
    ['mystery.py::_load:4 leaks OSError+UnicodeDecodeError+JSONDecodeError [unresolved load spelling: codec.loads]']
 
 == the three axes that decided membership by spelling, now resolved ==
-6 passed, 273 deselected in 0.27s
+6 passed, 280 deselected in 0.24s

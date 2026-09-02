@@ -50,7 +50,6 @@
 # `seen` is D-142's anchor on the same rows: the guarded control is SEEN and
 # cleared, not unseen — the distinction an offender-only scan cannot make, and
 # the one it goes blind through.
-
 ....SUBJECT   a helper handed the ACTUAL manifest, whose RETURN is the records
 
   the shape                                                seen            verdict
@@ -72,4 +71,4 @@ SEEN is D-142's anchor on the same rows: the guarded control is SEEN
   and cleared, not unseen — the distinction an offender-only scan
   cannot make, and the one it goes blind through.
 .
-5 passed, 108 deselected in 0.06s
+5 passed, 111 deselected in 0.07s

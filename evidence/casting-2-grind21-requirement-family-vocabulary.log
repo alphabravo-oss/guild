@@ -65,4 +65,4 @@
    an observable truth has a row      : True   (and US-1 still does: True)
 
 == the count, the verdict rows, and the key link, asserted ==
-4 passed, 275 deselected in 0.24s
+4 passed, 282 deselected in 0.24s

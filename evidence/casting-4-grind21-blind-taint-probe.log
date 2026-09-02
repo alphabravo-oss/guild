@@ -60,9 +60,8 @@
 # rule (not a copy of it) under the blind probe and requires it to raise, with
 # a message that says the derivation went blind rather than that the package
 # has a finding. All four passed under this probe before; none does now.
-
 ============================= test session starts ==============================
-collecting ... collected 113 items / 104 deselected / 9 selected
+collecting ... collected 116 items / 107 deselected / 9 selected
 
 tests/test_spawn_progress.py::test_a_read_planted_in_a_new_subpackage_is_named_by_the_package_rule PASSED [ 11%]
 tests/test_spawn_progress.py::test_the_manifest_scan_looks_in_both_shipped_source_trees PASSED [ 22%]
@@ -74,4 +73,4 @@ tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rul
 tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rule_by_name[test_the_provider_module_passes_its_own_package_wide_rule] PASSED [ 88%]
 tests/test_spawn_progress.py::test_a_blinded_derivation_fails_every_manifest_rule_by_name[test_the_isinstance_route_clears_the_real_intent_coverage_reader] PASSED [100%]
 
-====================== 9 passed, 104 deselected in 3.91s =======================
+====================== 9 passed, 107 deselected in 3.75s =======================

@@ -41,6 +41,6 @@
    castings/manifest.json   names 6/6     names 6/6     names 6/6     names 6/6   
    -> 0 of 24 brick at least one tool, 24 of 24 name the offending file
 == the pins ==
-........................................................................ [ 85%]
-............                                                             [100%]
-84 passed, 230 deselected in 1.00s
+........................................................................ [ 83%]
+..............                                                           [100%]
+86 passed, 235 deselected in 1.06s
