@@ -56,7 +56,7 @@
 <td width="25%" align="center" valign="top">
 <h2>🤖</h2>
 <b><a href="plugins/crew">crew</a></b><br/>
-<sub>Owns the outcome.<br/>Five agents, one persona.</sub><br/><br/>
+<sub>Owns the outcome.<br/>Five agents, one job.</sub><br/><br/>
 <code>/crew:do</code>
 </td>
 </tr>
