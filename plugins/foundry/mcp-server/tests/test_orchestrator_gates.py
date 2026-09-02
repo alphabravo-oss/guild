@@ -4053,6 +4053,240 @@ def _raw_ledger_iterations(path: Path) -> list[str]:
     return sorted(set(offenders))
 
 
+#: The names that convert a LedgerShapeError into the house refusal. Derived
+#: as a set of one because there IS one; the point is that membership below is
+#: computed from the call graph, not from this.
+_LEDGER_REFUSAL_DECORATOR = "ledger_refusals"
+
+
+def _ledger_transaction_callers(path: Path) -> set[str]:
+    """Every function in ``path`` that opens a ``ledger_transaction``."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    callers: set[str] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ledger_transaction"
+            ):
+                callers.add(fn.name)
+    return callers
+
+
+def _package_call_graph(modules: list[Path]) -> tuple[dict, dict, dict]:
+    """``(callees, decorators, defining module)`` for every function in the package.
+
+    Keyed by bare function name, which is what a cross-module call looks like
+    at the AST — the package has no duplicate top-level function names, and a
+    collision would only make this STRICTER (it would union the callees).
+    """
+    callees: dict[str, set[str]] = {}
+    decorators: dict[str, set[str]] = {}
+    where: dict[str, str] = {}
+    for path in modules:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            names = set()
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        names.add(node.func.id)
+                    elif isinstance(node.func, ast.Attribute):
+                        names.add(node.func.attr)
+            callees.setdefault(fn.name, set()).update(names)
+            decorators.setdefault(fn.name, set()).update(
+                d.attr if isinstance(d, ast.Attribute) else getattr(d, "id", "")
+                for d in fn.decorator_list
+            )
+            where.setdefault(fn.name, path.name)
+    return callees, decorators, where
+
+
+def _dispatched_functions(server_src: Path) -> dict[str, str]:
+    """``{function name: tool name}`` for every entry in server.py's _DISPATCH."""
+    tree = ast.parse(server_src.read_text(encoding="utf-8"))
+    dispatch = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_DISPATCH" for t in node.targets
+        ):
+            dispatch = node.value
+    assert isinstance(dispatch, ast.Dict), "server.py has no _DISPATCH dict"
+    doors: dict[str, str] = {}
+    for key, value in zip(dispatch.keys, dispatch.values):
+        for sub in ast.walk(value):
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
+                doors[sub.func.id] = key.value
+    return doors
+
+
+def test_every_dispatched_ledger_writer_in_the_package_answers_in_band():
+    """D-127's structural question, asked of the WHOLE PACKAGE.
+
+    ``foundry.py``'s own test derives its door set from ``server.py``'s
+    ``_DISPATCH`` crossed with THAT MODULE's call graph — so it was blind to
+    exactly the module D-127 was filed on. ``ledger_shape_problem``'s docstring
+    named ``foundry_orchestrator``'s two ledger writers as its consumers and
+    they had never called it; grepping the whole plugin tree returned its own
+    definition and one in-module call site, and nothing else. A NEW export with
+    a NEW docstring naming two consumers had zero of them.
+
+    The rule is about REACHABILITY, not about who literally types
+    ``ledger_transaction``: a dispatched tool that can reach the locked
+    primitive by any path must carry the decorator that converts its raise.
+    An internal helper does NOT need one — ``foundry.py``'s
+    ``record_denylist_tripwire`` opens a transaction and is reached only from
+    doors that are decorated, which the transitive walk below establishes
+    rather than assumes. This scan found it, which is the argument for the
+    scan: it is precisely the kind of caller a hand search does not turn up.
+    """
+    import foundry_mcp.server as foundry_server
+
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    modules = _package_modules(pkg)
+    callees, decorators, where = _package_call_graph(modules)
+    doors = _dispatched_functions(Path(foundry_server.__file__).resolve())
+
+    def reaches_a_transaction(name: str, seen: set | None = None) -> bool:
+        seen = seen if seen is not None else set()
+        if name in seen:
+            return False
+        seen.add(name)
+        sub = callees.get(name, set())
+        if "ledger_transaction" in sub:
+            return True
+        return any(reaches_a_transaction(c, seen) for c in sub if c in callees)
+
+    writing_doors = {n: t for n, t in doors.items() if reaches_a_transaction(n)}
+    # The derivation must SEE the doors, or the assertion below is vacuous —
+    # and it must see them in BOTH modules, which is the widening D-127 needs.
+    assert writing_doors, "no dispatched tool reaches a locked transaction"
+    assert {where[n] for n in writing_doors} >= {"foundry.py", "foundry_orchestrator.py"}, {
+        n: where[n] for n in writing_doors
+    }
+
+    offenders = sorted(
+        f"{tool} -> {where[name]}::{name}"
+        for name, tool in writing_doors.items()
+        if _LEDGER_REFUSAL_DECORATOR not in decorators.get(name, set())
+    )
+    assert not offenders, (
+        f"{offenders} can reach a ledger_transaction, so a LedgerShapeError "
+        f"raised inside the locked primitive escapes across the MCP boundary, "
+        f"where call_tool turns it into an unhandled-error banner instead of "
+        f"the house {{error, hint}} refusal. That is D-127: the right rule "
+        f"living in one copy, with a docstring naming the consumers that were "
+        f"never wired. Decorate with @ledger_refusals."
+    )
+
+
+#: The container shapes D-096 was filed on: a valid JSON object whose RECORD
+#: CONTAINER is not a list, so `_document_problem` cannot name it.
+_BAD_CONTAINERS = ({"D-001": {"id": "D-001"}}, "a string", 42)
+
+#: Doors in THIS casting's module that write a ledger, and a minimal valid call
+#: for each. Both reach `ledger_transaction` on defects.json.
+_ORCHESTRATOR_LEDGER_DOORS = {
+    "Foundry-Sync": {
+        "cycle": 1,
+        "findings": [{"source": "trace", "type": "MISSING", "description": "x"}],
+    },
+    "Foundry-Fix": {
+        "defect_id": "D-001",
+        "cycle": 1,
+        "adjacent_path_statement": "foundry_sync_defects writes the same ledger",
+        "adjacent_path_test": "tests/test_orchestrator_gates.py::"
+                              "test_both_orchestrator_ledger_doors_refuse_in_band",
+    },
+}
+
+
+@pytest.mark.parametrize("container", _BAD_CONTAINERS)
+@pytest.mark.parametrize("tool", sorted(_ORCHESTRATOR_LEDGER_DOORS))
+def test_both_orchestrator_ledger_doors_refuse_in_band(run_env, monkeypatch, tool, container):
+    """D-127 — the two doors whose docstring named them and never wired them.
+
+    ``ledger_shape_problem``'s docstring said its second consumer was
+    "``foundry_orchestrator``'s two ledger writers"; grep over the whole plugin
+    tree returned its own definition and ONE in-module call site. So the
+    orchestrator doors hit ``ledger_transaction``'s backstop raise, and
+    ``server.py#call_tool``'s outer net turned it into the banner
+    "Foundry-Sync failed: LedgerShapeError: ..." — which carries the filename
+    but ships as an UNHANDLED ERROR, not the house {error, hint} refusal every
+    other failure on this surface returns. That refusal shape is the precise
+    thing D-095/D-096 were filed to establish.
+
+    Mitigating and stated as the ledger states it: it failed CLOSED, so this
+    also asserts the file is byte-identical afterward. It is a refusal-shape
+    defect, not a data-loss one — which is exactly why only a parity test
+    catches it.
+    """
+    from foundry_mcp import server as srv
+
+    project_root, fdir = run_env
+    # The _DISPATCH lambdas read server._project_root, NOT args["project_root"]
+    # — so driving them without this writes to the AMBIENT run directory.
+    monkeypatch.setattr(srv, "_project_root", project_root)
+    defects = fdir / "defects.json"
+    defects.write_text(
+        json.dumps({"defects": container, "meta": "KEEP"}), encoding="utf-8"
+    )
+    before = defects.read_bytes()
+
+    result = srv._DISPATCH[tool](dict(_ORCHESTRATOR_LEDGER_DOORS[tool]))
+
+    assert isinstance(result, dict) and "error" in result, result
+    assert "defects.json" in result["error"], result["error"]
+    assert result.get("hint"), result
+    # Failed closed: the sibling key that proved the write completed in D-096
+    # is still there, and nothing was rewritten.
+    assert defects.read_bytes() == before
+
+
+@pytest.mark.parametrize("container", _BAD_CONTAINERS)
+def test_the_two_doors_tell_one_story_about_one_broken_ledger(run_env, monkeypatch, container):
+    """Parity, which is the whole point of a cross-door test.
+
+    An operator must not be able to tell WHICH door noticed, nor get a
+    different account of the same file from each. D-094's parity shape.
+    """
+    from foundry_mcp import server as srv
+
+    project_root, fdir = run_env
+    monkeypatch.setattr(srv, "_project_root", project_root)
+    answers = set()
+    for tool, args in sorted(_ORCHESTRATOR_LEDGER_DOORS.items()):
+        (fdir / "defects.json").write_text(
+            json.dumps({"defects": container, "meta": "KEEP"}), encoding="utf-8"
+        )
+        result = srv._DISPATCH[tool](dict(args))
+        answers.add((result["error"], result["hint"]))
+    assert len(answers) == 1, answers
+
+
+def test_every_ledger_key_container_shape_is_covered_by_the_parity_drive():
+    """The drive above must cover the collection keys the module declares.
+
+    ``_LEDGER_KEYS`` is where "which container holds this ledger's records" is
+    declared once. Asserting the drive against it means a ledger added there
+    surfaces here rather than being silently untested — the failure mode of
+    every hand-kept fixture list.
+    """
+    from foundry_mcp.tools.foundry import _LEDGER_KEYS
+
+    assert _LEDGER_KEYS["defects.json"] == ("defects",), _LEDGER_KEYS
+    # Every declared ledger is a real artifact name, and every one with a
+    # collection key is reachable from some dispatched door.
+    for name, keys in _LEDGER_KEYS.items():
+        assert name.endswith(".json"), name
+        assert isinstance(keys, tuple), (name, keys)
+
+
 def test_no_document_load_can_raise_across_the_mcp_boundary():
     """D-130, asserted as a property of the whole installed package.
 

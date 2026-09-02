@@ -33,6 +33,18 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
     read_text_file,
 )
+
+# D-127: the house rule is that a tool never raises across the MCP boundary, it
+# returns {error, hint}. A ledger whose record container is the wrong shape is
+# discovered INSIDE the locked primitive, several frames below the entry point,
+# and trusting each entry point to remember a pre-flight check for it is what
+# D-127 cost: this module's two ledger writers did not, so Foundry-Sync and
+# Foundry-Fix shipped call_tool's unhandled-error banner instead of the house
+# refusal — the very refusal shape D-095/D-096 were filed to establish.
+#
+# A module-top import, not the lazy one used for foundry_spawn: THIS module
+# imports foundry.py (never the reverse), so there is no cycle to open.
+from foundry_mcp.tools.foundry import ledger_refusals
 from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
 
 # ANSI colors — shared with display.py
@@ -3595,6 +3607,7 @@ def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | 
     return None
 
 
+@ledger_refusals
 def foundry_mark_defect_fixed(
     defect_id: str,
     cycle: int,
@@ -3925,6 +3938,7 @@ def _is_regression_of(finding: dict, norm: dict, fixed_record: dict) -> bool:
     return agreements >= _REGRESSION_MIN_AGREEMENTS
 
 
+@ledger_refusals
 def foundry_sync_defects(
     cycle: int,
     findings: list[dict],
