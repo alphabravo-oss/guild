@@ -236,7 +236,7 @@ tests/test_spawn_progress.py::test_the_grind_context_builder_degrades_on_every_n
 tests/test_spawn_progress.py::test_every_manifest_key_the_module_indexes_is_declared PASSED [ 60%]
 tests/test_spawn_progress.py::test_the_scan_catches_a_reader_that_indexes_an_undeclared_key PASSED [ 61%]
 tests/test_spawn_progress.py::test_the_shape_table_states_the_two_keys_the_readers_address_records_by PASSED [ 61%]
-tests/test_spawn_progress.py::test_no_read_in_this_module_can_raise_a_decode_error FAILED [ 62%]
+tests/test_spawn_progress.py::test_no_read_in_this_module_can_raise_a_decode_error PASSED [ 62%]
 tests/test_spawn_progress.py::test_the_read_scan_catches_a_freshly_planted_unguarded_read PASSED [ 63%]
 tests/test_spawn_progress.py::test_a_read_planted_in_a_new_subpackage_is_named_by_the_package_rule PASSED [ 64%]
 tests/test_spawn_progress.py::test_the_read_scan_does_not_accept_a_guard_in_the_wrong_place PASSED [ 65%]
@@ -280,67 +280,4 @@ tests/test_spawn_progress.py::test_render_decode_read_derivation PASSED  [ 98%]
 tests/test_spawn_progress.py::test_render_return_taint_derivation PASSED [ 99%]
 tests/test_spawn_progress.py::test_render_manifest_reader_derivation PASSED [100%]
 
-=================================== FAILURES ===================================
-_____________ test_no_read_in_this_module_can_raise_a_decode_error _____________
-
-    def test_no_read_in_this_module_can_raise_a_decode_error() -> None:
-        """D-138 as a property of the SHIPPED SOURCE, not of one module (D-146).
-    
-        The rule was bound to ``Path(fs.__file__)`` -- foundry_spawn.py alone --
-        while its three sibling structural rules all derived their membership over
-        the package. That difference is the ST-003 class living inside D-138's own
-        fix: an unguarded ``read_text`` anywhere else was invisible, and D-146
-        proved it by planting one in a NEW subpackage, one in foundry_validate.py
-        and one in foundry_orchestrator.py, all three GREEN against the full suite.
-    
-        Membership now comes from ``_scanned_modules`` -- the same rglob over both
-        shipped trees the manifest rule uses -- so there is no module the rule
-        cannot see and no list to enrol one in. The predicate is derived too: a
-        site is judged when Python says its stream decodes strictly, so an
-        append-only log write leaves the rule by property rather than by exemption.
-        """
-        seen, offenders, unresolved, unclassified = _package_text_reads()
-    
-        assert not unresolved, (
-            f"{unresolved} name exceptions this resolver could not turn into "
-            f"classes, so it cannot say what they catch and has counted them as "
-            f"catching nothing. Fix the resolver rather than the handler."
-        )
-        assert not unclassified, (
-            f"{unclassified} are reads whose mode or errors= handler this scan "
-            f"could not resolve from the source, so it cannot say whether they "
-            f"decode. They are counted as members meanwhile. Fix the resolver."
-        )
-    
-        # D-142's anchor. `assert not offenders` is green both when the source is
-        # clean AND when the matcher has stopped recognising the spelling it looks
-        # for; naming the site the rule is ABOUT is what tells those apart.
-        assert any(site.startswith(_DECODE_SCAN_ANCHOR) for site in seen), (
-            f"the scan no longer names {_DECODE_SCAN_ANCHOR}, which is the guarded "
-            f"primitive every read in this package is supposed to route through -- "
-            f"it holds the one `path.read_text` that cannot legitimately go away. "
-            f"Its absence means `_decode_site` has stopped recognising read_text, "
-            f"not that the package got safer. Saw {len(seen)} decode sites: {seen}"
-        )
-    
->       assert not offenders, (
-            "these read a file's text without handling the decode failure, so one "
-            "non-UTF-8 byte raises UnicodeDecodeError across the MCP boundary as a "
-            "traceback naming no file. `except OSError` and `except "
-            "json.JSONDecodeError` do not catch it -- UnicodeDecodeError is a "
-            "ValueError. Route the read through foundry_state.read_text_file / "
-            "read_json and return document_refusal (one file) or "
-            "_unreadable_artifacts_refusal (several). There is no allow-list to "
-            "add yourself to: the guarded primitive passes this rule on its own "
-            "merits.\n  " + "\n  ".join(_symbol_cites(offenders))
-        )
-E       AssertionError: these read a file's text without handling the decode failure, so one non-UTF-8 byte raises UnicodeDecodeError across the MCP boundary as a traceback naming no file. `except OSError` and `except json.JSONDecodeError` do not catch it -- UnicodeDecodeError is a ValueError. Route the read through foundry_state.read_text_file / read_json and return document_refusal (one file) or _unreadable_artifacts_refusal (several). There is no allow-list to add yourself to: the guarded primitive passes this rule on its own merits.
-E           plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::_read_casting_prompt
-E           plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::validate_intent_coverage
-E           plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py::validate_report
-E       assert not ['plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::_read_casting_prompt:399', 'plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::validate_intent_coverage:657', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py::validate_report:104']
-
-tests/test_spawn_progress.py:2308: AssertionError
-=========================== short test summary info ============================
-FAILED tests/test_spawn_progress.py::test_no_read_in_this_module_can_raise_a_decode_error
-======================== 1 failed, 112 passed in 8.37s =========================
+============================= 113 passed in 8.46s ==============================

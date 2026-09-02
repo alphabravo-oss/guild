@@ -94,4 +94,4 @@
    <pkg root>/split.py                ['split.py::_load_manifest:10 leaks OSError+UnicodeDecodeError']
 
 == the three package-wide assertions, driven ==
-5 passed, 268 deselected in 1.22s
+5 passed, 274 deselected in 1.21s

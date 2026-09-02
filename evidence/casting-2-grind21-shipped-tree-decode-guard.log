@@ -45,7 +45,8 @@
 # WHAT THE TABLE SHOWS: both roots reached and named; the shape all three CLIs
 # held, raising; the same byte returning None through the fixed loaders; and
 # each CLI driven through the real process boundary, exiting on a NAMED token
-# with no traceback.
+# with no traceback.== D-141: the decode rule's ROOT stopped at the installed package ==
+
 == D-141: the decode rule's ROOT stopped at the installed package ==
 
 -- the two shipped source trees, both derived from foundry_mcp.__file__ --
@@ -66,4 +67,4 @@
    validate-test-observations.py  exit=1  traceback=False  names-a-token=True
 
 == the decode rule over BOTH shipped trees, and a copy planted in the second ==
-7 passed, 266 deselected in 1.30s
+7 passed, 272 deselected in 0.67s

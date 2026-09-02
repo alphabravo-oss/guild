@@ -19,4 +19,4 @@
 # total is deliberately not judged, because CT-003 requires tranches be stored
 # and a legitimate re-record would trip it.
 ........                                                                 [100%]
-8 passed, 27 deselected in 0.07s
+8 passed, 27 deselected in 0.06s

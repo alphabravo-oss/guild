@@ -12,6 +12,14 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+# D-150: the requirement-ID families are declared ONCE, in the vocabulary
+# module. This file held THREE hand-typed copies of the same literal, all
+# knowing the same seven families and none knowing GI- or OT-, so a spec's
+# invariants and observable truths were invisible to requirement coverage:
+# never counted as spec requirements, and never counted as covered by a
+# casting that cites them. NFR-002: the canonical pattern is a strict
+# SUPERSET, so no ID that matched before stops matching.
+from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
 # D-134: the SHARED nested-shape validator, so "unusable manifest" means one
 # thing in every module that reads castings/manifest.json. A module-top import
@@ -183,7 +191,7 @@ def foundry_validate_castings(
     spec_text, spec_problem = read_text_file(spec_path)
     if spec_problem is not None:
         return {"passed": False, **document_refusal(spec_path, spec_problem)}
-    spec_req_ids = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", spec_text))
+    spec_req_ids = set(REQUIREMENT_ID_RE.findall(spec_text))
 
     # Check for research artifacts
     research_dir = fdir / "research"
@@ -197,11 +205,11 @@ def foundry_validate_castings(
     covered_reqs: set[str] = set()
     for c in castings:
         spec_text_field = c.get("spec_text", "")
-        casting_reqs = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", spec_text_field))
+        casting_reqs = set(REQUIREMENT_ID_RE.findall(spec_text_field))
         covered_reqs.update(casting_reqs)
         # Also check observable truths text
         for truth in c.get("observable_truths", []):
-            truth_reqs = set(re.findall(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b", truth))
+            truth_reqs = set(REQUIREMENT_ID_RE.findall(truth))
             covered_reqs.update(truth_reqs)
 
     uncovered = spec_req_ids - covered_reqs

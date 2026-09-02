@@ -6606,3 +6606,293 @@ def test_the_load_spelling_table_shows_the_miss_and_the_fix(tmp_path):
     assert both.count("clean") == 2, both
     assert "carries `import json as _json`: True" in table, table
     assert "unresolved load spelling: codec.loads" in table, table
+
+
+# --------------------------------------------------------------------------- #
+# D-150 — WHICH REQUIREMENT FAMILIES EXIST WAS A LITERAL, TYPED SIX TIMES.
+#
+# `\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b` appeared in four modules and
+# every copy knew the same seven families. This spec has 71 requirement IDs and
+# 15 of them are GI- and OT-, so an observable truth was invisible to every one
+# of those readers at once: never counted by the DONE gate, never given a
+# synthesized verdict row, never seen as covered by a casting that cites it,
+# and — because the evidence binder reads the same literal — never bindable to
+# an evidence file at all.
+#
+# The families are declared ONCE now, in `schemas.vocab`, and read from there.
+# Casting 3 owns that export (LOCKED name `REQUIREMENT_ID_RE`) and the
+# package-wide scan that reports any module still carrying its own copy; the
+# four sites in this casting's files read it.
+# --------------------------------------------------------------------------- #
+
+#: The seven families every old copy knew. A LITERAL on purpose, and the only
+#: one here: it records what the DELETED code did, and there is no source left
+#: to derive it from. Written as data rather than as a second regex, so this
+#: test cannot agree with the pattern by repeating it.
+_OLD_ID_FAMILIES = ("US", "FR", "NFR", "AC", "VC", "IR", "TR")
+
+
+def _widened_id_families() -> tuple[str, ...]:
+    """The families the old literal could not see, DERIVED from the vocabulary.
+
+    This was itself a typed list — ``("GI", "CT", "ST", "OT")`` — and it went
+    stale within the hour, when a family was added to
+    ``REQUIREMENT_ID_PREFIXES`` and this test kept asserting the old four. A
+    hand-kept copy of the thing under test is the defect it is testing for.
+    Derived, a family added tomorrow is exercised the same day.
+    """
+    from foundry_mcp.schemas.vocab import REQUIREMENT_ID_PREFIXES
+
+    return tuple(sorted(set(REQUIREMENT_ID_PREFIXES) - set(_OLD_ID_FAMILIES)))
+
+
+def _spec_with_every_family(fdir: Path) -> set[str]:
+    """Write a spec naming one ID of every family, and return what it names."""
+    ids = [f"{fam}-{i:03d}" for i, fam in enumerate(
+        _OLD_ID_FAMILIES + _widened_id_families(), start=1)]
+    body = "\n".join(f"- **{rid}**: a requirement of its family" for rid in ids)
+    (fdir / "spec.md").write_text(f"# Spec\n\n{body}\n", encoding="utf-8")
+    return set(ids)
+
+
+def test_the_orchestrator_counts_every_declared_requirement_family(run_env):
+    """D-150 on the reported path: the DONE gate's count sees GI- and OT-.
+
+    NFR-002 is the first assertion, not an afterthought: every family the old
+    literal matched must still be counted, or "widened" would be a narrowing
+    wearing the word.
+    """
+    project_root, fdir = run_env
+    expected = _spec_with_every_family(fdir)
+
+    found = set(fo._spec_requirement_ids(project_root))
+    old_half = {i for i in expected if i.split("-")[0] in _OLD_ID_FAMILIES}
+    assert old_half <= found, f"NFR-002 narrowing: {sorted(old_half - found)}"
+    assert expected <= found, f"still unseen: {sorted(expected - found)}"
+    assert fo._count_spec_requirements(project_root) == len(expected)
+
+
+def test_verdict_synthesis_covers_the_widened_families(run_env):
+    """D-150 adjacent-path test (AC-013).
+
+    The path the defect names is the requirement COUNT. The ADJACENT path this
+    drives is P3 verdict synthesis, a different caller of the same id source:
+    it writes one row per requirement id, and `verdict_coverage` is measured
+    against the count. If the two ever read different families the run reports
+    coverage over a denominator that does not match its own rows — which is
+    the drift `_spec_requirement_ids` exists to prevent, now restated one
+    vocabulary wider.
+    """
+    project_root, fdir = run_env
+    expected = _spec_with_every_family(fdir)
+    _write_prove(fdir, items_checked=len(expected), items_total=len(expected), findings=0)
+
+    written = fo._synthesize_clean_prove_verdicts(fdir, project_root, cycle=1)
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    synthesized = {r["id"] for r in rows.get("requirements", [])}
+    assert expected <= synthesized, (
+        f"P3 synthesis wrote rows for {sorted(synthesized)}, missing "
+        f"{sorted(expected - synthesized)} — the count and the rows disagree "
+        f"about which families exist."
+    )
+    assert written == len(synthesized) == fo._count_spec_requirements(project_root)
+
+
+def test_no_module_in_this_castings_files_retypes_the_requirement_families():
+    """The KEY LINK, asserted where its loss would be silent.
+
+    A module that re-types the literal keeps working and quietly disagrees with
+    the vocabulary the day a family is added — which is exactly how six copies
+    came to exist. Casting 3 owns the package-wide scan; this pins THIS
+    casting's four sites against the locked export by name.
+    """
+    from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
+
+    for module in (fo, __import__(
+        "foundry_mcp.tools.foundry_validate", fromlist=["x"]
+    )):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "US|FR|NFR|AC|VC|IR|TR" not in source, (
+            f"{Path(module.__file__).name} still carries its own copy of the "
+            f"requirement-ID literal. Import REQUIREMENT_ID_RE."
+        )
+        assert "REQUIREMENT_ID_RE" in source, Path(module.__file__).name
+
+    # ...and the export really is a superset of what the copies matched.
+    for family in _OLD_ID_FAMILIES + _widened_id_families():
+        assert REQUIREMENT_ID_RE.findall(f"see {family}-007 here") == [f"{family}-007"]
+
+
+def render_requirement_family_table(tmp_path: Path) -> str:
+    """D-150 pre/post: which families each reader could see.
+
+    The PRE arm is the literal all six copies carried, reproduced verbatim
+    rather than described, so the log shows the miss instead of asserting it.
+    """
+    from foundry_mcp.schemas.vocab import REQUIREMENT_ID_PREFIXES, REQUIREMENT_ID_RE
+
+    project_root = str(tmp_path)
+    fdir = tmp_path / "foundry-archive" / "d150"
+    fdir.mkdir(parents=True, exist_ok=True)
+    _write_state(fdir, phase="F4", cycle=1)
+    foundry_state.set_active_run("d150")
+    old = re.compile(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b")
+    expected = sorted(_spec_with_every_family(fdir))
+    spec_text = (fdir / "spec.md").read_text(encoding="utf-8")
+
+    out = [
+        "== D-150: which requirement families exist was a literal, typed six times ==",
+        "",
+        f"   the vocabulary declares      : {sorted(REQUIREMENT_ID_PREFIXES)}",
+        f"   the literal every copy held  : ['AC', 'FR', 'IR', 'NFR', 'TR', 'US', 'VC']",
+        f"   families the copies could NOT see: {list(_widened_id_families())}",
+        "",
+        "-- a spec naming one id of every family --",
+        f"   ids present                  : {expected}",
+        f"   the old literal finds        : {sorted(set(old.findall(spec_text)))}",
+        f"   the declared pattern finds   : {sorted(set(REQUIREMENT_ID_RE.findall(spec_text)))}",
+        "",
+        "-- through the two readers this casting owns --",
+    ]
+    _write_prove(fdir, items_checked=len(expected), items_total=len(expected), findings=0)
+    out.append(f"   DONE gate requirement count  : {fo._count_spec_requirements(project_root)}")
+    written = fo._synthesize_clean_prove_verdicts(fdir, project_root, cycle=1)
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    ids = sorted(r["id"] for r in rows.get("requirements", []))
+    out.append(f"   P3 verdict rows synthesized  : {written} -> {ids}")
+    out.append(
+        f"   count and rows agree         : "
+        f"{written == fo._count_spec_requirements(project_root)}"
+    )
+
+    out += ["", "-- and no module in the grant re-types the families any more --"]
+    for dotted in (
+        "foundry_mcp.tools.foundry_orchestrator",
+        "foundry_mcp.tools.foundry_validate",
+        "foundry_mcp.parsers.spec",
+    ):
+        module = __import__(dotted, fromlist=["x"])
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        own = any(
+            fam + "|" in source for fam in ("US", "FR", "AC")
+        ) and "-\\d+(?:\\.\\d+)?" in source
+        out.append(
+            f"   {Path(module.__file__).name:26s} own copy={own}"
+            f"  reads the export={'REQUIREMENT_ID_RE' in source}"
+        )
+
+    out += [
+        "",
+        "-- end to end, through the reader furthest from the change --",
+    ]
+    from foundry_mcp.tools.citation import verify_citations
+
+    spec, report = _traceability_fixture(tmp_path)
+    result = verify_citations(
+        spec_path=spec, report_path=report, project_root=str(tmp_path)
+    )
+    rows = {r["requirement_id"]: r["status"] for r in result["traceability_matrix"]}
+    out.append(f"   verify_citations traceability rows : {rows}")
+    out.append(
+        "   an observable truth has a row      : "
+        f"{'OT-011' in rows}   (and US-1 still does: {'US-1' in rows})"
+    )
+    return "\n".join(out)
+
+
+def test_the_requirement_family_table_shows_the_miss_and_the_fix(tmp_path):
+    """D-150's drive, ASSERTED so the log is a claim and not a picture."""
+    try:
+        table = render_requirement_family_table(tmp_path)
+    finally:
+        foundry_state.clear_active_run()
+    assert f"families the copies could NOT see: {list(_widened_id_families())}" in table, table
+    # NFR-002 first: nothing the old literal found has stopped being found.
+    old_line = next(r for r in table.split("\n") if "the old literal finds" in r)
+    new_line = next(r for r in table.split("\n") if "the declared pattern finds" in r)
+    for family in _OLD_ID_FAMILIES:
+        assert f"'{family}-" in old_line and f"'{family}-" in new_line, family
+    for family in _widened_id_families():
+        assert f"'{family}-" not in old_line and f"'{family}-" in new_line, family
+    assert "count and rows agree         : True" in table, table
+    assert "own copy=False" in table and "own copy=True" not in table, table
+    assert table.count("reads the export=True") == 3, table
+    assert "an observable truth has a row      : True   (and US-1 still does: True)" in table, table
+
+
+def _traceability_fixture(tmp_path: Path) -> tuple[str, str]:
+    """A spec with an OT- requirement and a report whose verdict cites it."""
+    (tmp_path / "spec.md").write_text(
+        "# Spec\n\n"
+        "- **US-1**: the user story every copy of the literal already saw\n"
+        "- **OT-011**: the observable truth not one of them could\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "report.md").write_text(
+        "# Report\n\n"
+        "### VC-1: US-1 is implemented\n"
+        "**Verdict:** VERIFIED\n"
+        "**Reasoning:** US-1 is satisfied by src/a.py#alpha\n\n"
+        "### VC-2: OT-011 holds\n"
+        "**Verdict:** VERIFIED\n"
+        "**Reasoning:** OT-011 is satisfied by src/b.py#beta\n",
+        encoding="utf-8",
+    )
+    return "spec.md", "report.md"
+
+
+def test_the_traceability_matrix_carries_an_observable_truth(tmp_path):
+    """D-150 end to end, through the reader furthest from the change.
+
+    `parsers/spec.py` held the last two copies of the seven-family literal, and
+    `citation.verify_citations` builds its whole traceability matrix out of
+    `extract_requirements`. So an OT- requirement was not merely uncovered in
+    that matrix — it had no ROW: the spec was read, the verdict citing it was
+    parsed, and the requirement simply did not exist as far as the parser was
+    concerned. Nothing reported a gap, because a gap needs two sides.
+
+    NFR-002 is asserted alongside it: the US- row the old literal always
+    produced is still produced, still covered, and still carries its text.
+    """
+    from foundry_mcp.tools.citation import verify_citations
+
+    spec, report = _traceability_fixture(tmp_path)
+    result = verify_citations(
+        spec_path=spec, report_path=report, project_root=str(tmp_path)
+    )
+    rows = {r["requirement_id"]: r for r in result["traceability_matrix"]}
+
+    assert "US-1" in rows, f"NFR-002 narrowing — the old family lost its row: {rows}"
+    assert "OT-011" in rows, (
+        f"the traceability matrix still has no row for an observable truth, so "
+        f"`extract_requirements` is not reading the declared families: {rows}"
+    )
+    assert rows["OT-011"]["status"] == "covered", rows["OT-011"]
+    assert rows["OT-011"]["requirement_text"].startswith("the observable truth")
+
+
+def test_the_spec_parser_keeps_its_own_anchoring(tmp_path):
+    """The grant was two ID sub-patterns, not the parser's shape.
+
+    `extract_requirements` decides how a requirement is ANCHORED in a line
+    (leading text, the id, the separator run) and how the TEXT after it is
+    captured, including the line number. Swapping the id sub-pattern must not
+    move any of that, so it is pinned here rather than assumed: the em-dash
+    separator, the bold markers, a dotted id, and the 1-based line number.
+    """
+    from foundry_mcp.parsers.spec import extract_requirements, extract_requirement_ids
+
+    text = (
+        "# Spec\n"
+        "- **US-1**: a user story\n"
+        "- **OT-011** — an observable truth\n"
+        "prose mentioning AC-3.2: nested id\n"
+    )
+    reqs = extract_requirements(text)
+    assert {k: v.text for k, v in reqs.items()} == {
+        "US-1": "a user story",
+        "OT-011": "an observable truth",
+        "AC-3.2": "nested id",
+    }
+    assert {k: v.line for k, v in reqs.items()} == {"US-1": 2, "OT-011": 3, "AC-3.2": 4}
+    assert extract_requirement_ids(text) == ["AC-3.2", "OT-011", "US-1"]

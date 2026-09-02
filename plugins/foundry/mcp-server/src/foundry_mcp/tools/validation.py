@@ -70,6 +70,7 @@ import jsonschema
 
 from foundry_mcp.parsers.report import extract_last_json
 from foundry_mcp.schemas.findings import SCHEMAS
+from foundry_mcp.tools.foundry_state import read_text_file
 
 
 def validate_report(
@@ -101,7 +102,21 @@ def validate_report(
     if not rpath.exists():
         return {"valid": False, "errors": [f"File not found: {report_path}"], "stats": {}}
 
-    text = rpath.read_text(encoding="utf-8")
+    # D-146: `read_text` raises UnicodeDecodeError before anything below it
+    # runs, and this door had no handler at all -- so a report whose bytes are
+    # not UTF-8 crossed the MCP boundary as a traceback, while every other bad
+    # input to this tool gets a named refusal. Routed through the canonical
+    # primitive, which closes OSError and UnicodeDecodeError in one call and
+    # NAMES THE FILE. The report is a caller-supplied path, not a run artifact,
+    # so the refusal is local and says so -- the same shape the schema read
+    # below already uses.
+    text, problem = read_text_file(rpath)
+    if problem is not None:
+        return {
+            "valid": False,
+            "errors": [f"Report could not be read: {problem}"],
+            "stats": {},
+        }
     block = extract_last_json(text)
 
     if block is None:

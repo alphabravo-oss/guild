@@ -45,7 +45,8 @@
 # The project root is derived from `fdir` rather than passed in, and the
 # ARCHIVE_DIR check is what makes that a fact about the path instead of an
 # assumption about it. The control rows keep the refusal narrow: a run whose
-# declared spec is healthy — which is every run this repo has — is untouched.
+# declared spec is healthy — which is every run this repo has — is untouched.== D-145: the run's spec lives OUTSIDE the run directory ==
+
 == D-145: the run's spec lives OUTSIDE the run directory ==
 
    state.json declares spec_path : forge-specs/probe/spec.md
@@ -70,4 +71,4 @@
    a key nobody has heard of -> ['context.txt'] reported=['context.txt']
 
 == the door, the derivation, and the reader that holds without the guard ==
-6 passed, 267 deselected in 0.25s
+6 passed, 273 deselected in 0.28s

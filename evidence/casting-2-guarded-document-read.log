@@ -63,7 +63,8 @@
 # The `-- control --` block is what keeps the refusal narrow: the same document
 # as valid UTF-8 still spawns. A rule that reported every document load would
 # have forced the canonical primitive into an allow-list, which is the mechanism
-# this replaces.
+# this replaces.== D-137: one non-UTF-8 byte in castings/manifest.json ==
+
 == D-137: one non-UTF-8 byte in castings/manifest.json ==
 
 -- why `except json.JSONDecodeError` never covered this --
@@ -83,4 +84,4 @@
    Foundry-Cast-Wave        ok=True  read-fault reported=False
 
 == the decode rule over the installed package, and over planted copies ==
-4 passed, 269 deselected in 0.49s
+4 passed, 275 deselected in 0.42s

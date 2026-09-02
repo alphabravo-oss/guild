@@ -101,4 +101,4 @@ tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_
 tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The comment says the helper is defined above, but it moved.] PASSED [ 96%]
 tests/test_orchestrator_gates.py::test_sync_still_demotes_the_canonical_comment_prose_classes[The comment's list of streams omits flow_trace.] PASSED [100%]
 
-====================== 30 passed, 243 deselected in 0.37s ======================
+====================== 30 passed, 249 deselected in 0.31s ======================

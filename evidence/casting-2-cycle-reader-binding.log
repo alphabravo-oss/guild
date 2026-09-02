@@ -38,7 +38,8 @@
 # DIFFERENT transition (F4 clean-PROVE auto-pass), where the consequence is a
 # persisted verdict record rather than a response field, plus the valid-value
 # cases proving the fix normalises malformed input without flattening a real
-# counter to 0.
+# counter to 0.============================= test session starts ==============================
+
 ============================= test session starts ==============================
 
 tests/test_orchestrator_gates.py::test_every_state_cycle_read_goes_through_a_guarded_reader PASSED [  7%]
@@ -56,4 +57,4 @@ tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synth
 tests/test_orchestrator_gates.py::test_malformed_state_cycle_never_reaches_synthesized_verdicts[float] PASSED [ 92%]
 tests/test_orchestrator_gates.py::test_valid_state_cycle_is_stamped_on_synthesized_verdicts PASSED [100%]
 
-====================== 14 passed, 259 deselected in 0.62s ======================
+====================== 14 passed, 265 deselected in 0.64s ======================

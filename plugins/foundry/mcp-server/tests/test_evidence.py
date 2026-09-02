@@ -3546,11 +3546,13 @@ def test_no_module_declares_its_own_requirement_id_grammar():
 
     # Offenders outside this casting's grant, pinned so the backlog cannot grow
     # in silence. `parsers/spec.py` was found BY this rule after the waiver was
-    # tightened: `extract_requirements` and its sibling both carry the wide
+    # tightened: `extract_requirements` and its sibling both carried the wide
     # seven-family literal, so `citation.verify_citations`' traceability matrix
-    # cannot see an OT-, GI-, CT-, ST- or LR- requirement either. Nobody's
-    # casting owns that file; it is named in the completion report for routing.
-    pending_unowned = {"spec.py#AC|FR|IR|NFR|TR|US|VC"}
+    # could not see an OT-, GI-, CT-, ST- or LR- requirement either. Routed to
+    # casting 2 under a lead grant and closed there, so the backlog is EMPTY --
+    # which is the state this pin exists to hold, not a softening of it: a new
+    # unowned grammar re-fails this assertion by name the day it is written.
+    pending_unowned: set[str] = set()
     theirs = {o for o in offenders if o.split("#")[0] not in owned}
     assert theirs == pending_unowned, (
         f"the set of requirement-ID grammars outside this casting's grant "

@@ -18,4 +18,4 @@
 # the coverage check entirely, so any clean .prove-complete drove the F4
 # auto-pass on a spec nothing had been proved against.
 ...................................                                      [100%]
-35 passed in 0.38s
+35 passed in 0.47s

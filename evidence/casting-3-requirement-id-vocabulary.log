@@ -44,7 +44,7 @@
    recogniser is non-blind (finds the known selector): True
    offenders among this casting's files              : []
    waived as format-bounded, not prose               : ['test_deriver.py#FR|US']
-   offenders outside this casting's grant remain     : True
+   offenders outside this casting's grant remain     : False
    -- counted, not named: castings 2 and 4 are landing their halves
       while this runs, so the NAMES drift and the pytest scan pins
       them instead. They are listed in the completion report.
@@ -60,4 +60,4 @@
    citation.py          unguarded reads: []
    foundry.py           unguarded reads: []
 .......                                                                  [100%]
-7 passed in 0.52s
+7 passed in 0.34s

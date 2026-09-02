@@ -66,11 +66,8 @@
 
 ROOTS      ['plugins/foundry/mcp-server/src/foundry_mcp', 'plugins/foundry/scripts']
 MODULES    30
-SEEN       9 decode sites
+SEEN       6 decode sites
 UNRESOLVED none
 UNCLASSIFD none
 ANCHOR     foundry_state.py#read_text_file seen = True
-OFFENDERS  3
-  plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::_read_casting_prompt
-  plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py::validate_intent_coverage
-  plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py::validate_report
+OFFENDERS  0

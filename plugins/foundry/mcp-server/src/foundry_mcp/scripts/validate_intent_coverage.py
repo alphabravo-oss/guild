@@ -87,7 +87,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from foundry_mcp.tools.foundry_state import read_document
+from foundry_mcp.tools.foundry_state import read_document, read_text_file
 
 
 # ---------------------------------------------------------------------------
@@ -395,10 +395,12 @@ def _read_casting_prompt(
     prompt_path = castings_dir / f"casting-{casting_id}-prompt.md"
     cache_key = str(prompt_path)
     if cache_key not in cache:
-        try:
-            cache[cache_key] = prompt_path.read_text(encoding="utf-8")
-        except OSError:
-            cache[cache_key] = None
+        # D-146: `except OSError` does not name UnicodeDecodeError, so a prompt
+        # whose bytes are not UTF-8 raised instead of resolving to the D-018a
+        # unverifiable state. `read_text_file` answers both in one call, and an
+        # unreadable prompt is exactly as unverifiable as an absent one.
+        text, problem = read_text_file(prompt_path)
+        cache[cache_key] = None if (problem is not None or not prompt_path.exists()) else text
     return cache[cache_key]
 
 
@@ -653,14 +655,23 @@ def validate_intent_coverage(
     spec_text: str = ""
     spec_answer_ids: set[str] = set()
     if spec_path is not None:
-        try:
-            spec_text = spec_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
+        # D-146: `except FileNotFoundError` covered absence and nothing else,
+        # so an unreadable --spec raised out of the CLI. Absence keeps its own
+        # named token — "you pointed me at nothing" and "what you pointed me at
+        # is broken" send the operator to look at different things.
+        if not spec_path.exists():
             failures.append(
                 f"INTENT_COVERAGE_SCHEMA_INVALID: --spec path missing: "
                 f"{spec_path}"
             )
             spec_text = ""
+        else:
+            spec_text, spec_problem = read_text_file(spec_path)
+            if spec_problem is not None:
+                failures.append(
+                    f"INTENT_COVERAGE_SCHEMA_INVALID: --spec {spec_problem}"
+                )
+                spec_text = ""
         if spec_text:
             spec_answer_ids = extract_answer_ids_from_spec(spec_text)
 

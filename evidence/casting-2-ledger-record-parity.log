@@ -73,4 +73,4 @@
    PRE-fix every row read: Defect=ok  Sync=AttributeError  filing kept=NO  junk kept=yes
 
 == the parity pins, driven ==
-28 passed, 135 deselected in 0.08s
+28 passed, 135 deselected in 0.10s

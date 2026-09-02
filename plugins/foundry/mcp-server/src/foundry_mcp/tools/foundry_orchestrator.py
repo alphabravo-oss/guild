@@ -22,6 +22,7 @@ from pathlib import Path
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
+    REQUIREMENT_ID_RE,
     STREAM_WIRE_IDS,
     canonical_defect_type,
     observation_class,
@@ -678,7 +679,15 @@ def _current_cycle(fdir: Path) -> int:
 # BOTH the requirement count and the requirement-ID list so the P3 verdict
 # synthesis writes exactly one row per ID the DONE gate's verdict_coverage
 # check counts (analog note 3: do not fork a second regex/path resolver).
-_REQ_ID_RE = re.compile(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b")
+# D-150: the requirement-ID families are declared ONCE, in the vocabulary
+# module, and read from there. This was a hand-typed literal, one of six copies
+# across four modules, and every copy knew the same seven families and not
+# OT- or GI- — 15 of this spec's 71 IDs. So the DONE gate's requirement count
+# and the verdict-coverage synthesis below it could not see an observable truth
+# at all, and no evidence could ever bind to one. NFR-002: the canonical
+# pattern is a strict SUPERSET of what this copy matched, so nothing that was
+# counted before stops being counted.
+_REQ_ID_RE = REQUIREMENT_ID_RE
 
 
 def _resolve_spec_path(project_root: str) -> Path | None:
@@ -704,12 +713,19 @@ def _resolve_spec_path(project_root: str) -> Path | None:
 
 
 def _spec_requirement_ids(project_root: str) -> list[str]:
-    """Return the sorted unique requirement IDs (US/FR/NFR/AC/VC/IR/TR-N).
+    """Return the sorted unique requirement IDs the vocabulary declares.
 
     The id source for P3 verdict synthesis. Uses the SAME path resolution
     and regex as ``_count_spec_requirements`` (which now delegates here) so
     synthesizing one VERIFIED row per id keeps ``verdict_coverage`` in
     lock-step with the DONE gate's ``_count_spec_requirements`` read.
+
+    D-150: which FAMILIES count is no longer decided here. It was a literal
+    naming seven of them, and this spec has 71 IDs of which 15 are the two it
+    did not name — so an observable truth could not be counted, could not be
+    verified, and could not have evidence bound to it. The families are one
+    declaration in ``schemas.vocab`` now, and it is a strict superset of what
+    this copy matched (NFR-002: nothing counted before stops being counted).
     """
     spec_path = _resolve_spec_path(project_root)
     if spec_path is None:
