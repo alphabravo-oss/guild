@@ -52,8 +52,10 @@ RED-or-SKIP discipline:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -2472,3 +2474,930 @@ def test_an_honest_log_with_a_varying_duration_still_passes_the_whole_verifier()
     assert record["log_sha256"] != record["captured_sha256"], (
         "the duration did not actually vary, so this control proves nothing"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-143 — the discrimination rung's DENYLIST becomes an ALLOWLIST.
+# (FR-017 / AC-023 / OT-011 — SECURITY-RELEVANT, A-AUTO-005.)
+#
+# D-135 shipped `_is_unstructured_token(t) = t.isalpha() or t.isdigit()` and
+# refused when either side was true. That is a denylist of two shapes with
+# ACCEPT as the default, so one non-alphanumeric character anywhere in the
+# disagreeing token made a verdict read as a volatile field. PROVE drove 13
+# forgery shapes and 8 were accepted end to end through the shipped
+# `_verify_one_evidence_file` on a real git repo at a real casting commit —
+# among them the process exit code and the failure count.
+#
+# The block below is the bar. Refusal is now the default and membership is
+# derived from the corpus: cold-driven over all 65 committed logs at d8215c5
+# from a clean worktree, every differing token pair in the entire corpus is a
+# duration or an absolute filesystem path. Nothing else has ever varied, so
+# nothing else is admitted.
+# --------------------------------------------------------------------------- #
+
+#: The shapes D-143 was filed on, plus the five the rung already held against.
+#: Each is (patterns, committed, captured, culprit). Every one must REFUSE.
+#: The three path variants are deliberate: PROVE reported the forgery as a
+#: RELATIVE path (`out/1650/summary.json`), and a rule that refused only
+#: relative paths would be bound to the spelling it was reported in — so the
+#: absolute and word-shaped-segment spellings are driven beside it.
+_D143_FORGERIES = [
+    pytest.param(
+        [r"coverage: [\d.]+%"],
+        _BODY + "coverage: 95.2%\n", _BODY + "coverage: 41.0%\n",
+        r"coverage: [\d.]+%", id="coverage-percentage",
+    ),
+    pytest.param(
+        [r"exit=\d+"],
+        _BODY + "exit=0\n", _BODY + "exit=1\n",
+        r"exit=\d+", id="process-exit-code",
+    ),
+    pytest.param(
+        [r"result [\d/]+"],
+        _BODY + "result 1650/1650\n", _BODY + "result 1631/1650\n",
+        r"result [\d/]+", id="pass-ratio",
+    ),
+    pytest.param(
+        [r"failures: [\d/]+"],
+        _BODY + "failures: 0/1650\n", _BODY + "failures: 19/1650\n",
+        r"failures: [\d/]+", id="failure-ratio",
+    ),
+    pytest.param(
+        [r"out/\d+/summary\.json"],
+        _BODY + "out/1650/summary.json\n", _BODY + "out/1631/summary.json\n",
+        r"out/\d+/summary\.json", id="count-inside-a-relative-path",
+    ),
+    pytest.param(
+        [r"/tmp/out/\d+/summary\.json"],
+        _BODY + "/tmp/out/1650/summary.json\n",
+        _BODY + "/tmp/out/1631/summary.json\n",
+        r"/tmp/out/\d+/summary\.json", id="count-inside-an-absolute-path",
+    ),
+    pytest.param(
+        [r"/tmp/run-\d+/x"],
+        _BODY + "/tmp/run-1650/x\n", _BODY + "/tmp/run-1631/x\n",
+        r"/tmp/run-\d+/x", id="count-inside-a-word-shaped-path-segment",
+    ),
+    pytest.param(
+        [r"rootdir: .*"],
+        _BODY + "rootdir: /a/b passed=1650\n",
+        _BODY + "rootdir: /c/d passed=1631\n",
+        r"rootdir: .*", id="count-riding-a-rootdir-line",
+    ),
+    pytest.param(
+        [r"status: [\w-]+"],
+        _BODY + "status: all-passed\n", _BODY + "status: some-failed\n",
+        r"status: [\w-]+", id="hyphenated-verdict-word",
+    ),
+    pytest.param(
+        [r"platform \S+ -- \S+"],
+        _BODY + "platform darwin -- run=passed-1650\n",
+        _BODY + "platform darwin -- run=failed-1631\n",
+        r"platform \S+ -- \S+", id="verdict-assigned-in-a-platform-line",
+    ),
+    # The five the denylist already held against — driven here too, because a
+    # rewrite that closed the eight and dropped one of these is a regression.
+    pytest.param(
+        [r"\d+ passed"],
+        _BODY + "== 1650 passed ==\n", _BODY + "== 1631 passed ==\n",
+        r"\d+ passed", id="held-bare-integer",
+    ),
+    pytest.param(
+        [r"\d+ \w+ in \d+\.\d+s"],
+        _BODY + "===== 84 passed in 0.17s =====\n",
+        _BODY + "===== 84 failed in 0.17s =====\n",
+        r"\d+ \w+ in \d+\.\d+s", id="held-bare-word",
+    ),
+    pytest.param(
+        [r"\d+ passed in \d+\.\d+s"],
+        _BODY + "1650 passed in 4.86s\n", _BODY + "1631 passed in 4.91s\n",
+        r"\d+ passed in \d+\.\d+s", id="held-count-adjacent-to-a-duration",
+    ),
+    pytest.param(
+        [r"pid=\d+ \w+"],
+        _BODY + "pid=41 green\n", _BODY + "pid=52 broken\n",
+        r"pid=\d+ \w+", id="held-verdict-word-adjacent-to-a-pid",
+    ),
+    pytest.param(
+        [r"Installed \d+ packages? in \d+(\.\d+)?ms"],
+        _BODY + "Installed 42 packages in 137ms\n",
+        _BODY + "Installed 5 packages in 137ms\n",
+        r"Installed \d+ packages? in \d+(\.\d+)?ms",
+        id="held-corpus-installed-packages-count",
+    ),
+]
+
+#: The shapes the DEFECT names, by the id they carry above. This is the
+#: "members_seen includes the sites the defect was filed on" rung: the sweep
+#: below reports by name any shape D-143 was filed on that the table stopped
+#: driving, so the table cannot quietly shrink back to the reported spelling.
+_D143_SITES_FILED_ON = frozenset({
+    "coverage-percentage",
+    "process-exit-code",
+    "pass-ratio",
+    "failure-ratio",
+    "count-inside-a-relative-path",
+    "count-riding-a-rootdir-line",
+    "hyphenated-verdict-word",
+    "verdict-assigned-in-a-platform-line",
+})  # 8 shapes accepted at cycle 20
+
+
+def _d143_shape_ids() -> set:
+    """The table's ids, read off the table itself rather than re-listed."""
+    return {p.id for p in _D143_FORGERIES}
+
+
+def test_the_d143_table_still_drives_every_shape_the_defect_was_filed_on():
+    """members_seen vs offenders on the SHAPES axis.
+
+    A sweep that stops covering a site it was filed on still reports a number
+    and still passes its own tests — the exact way this run's escalated class
+    hides. So the roster is compared against the defect's own list and the
+    missing members are named.
+    """
+    members_seen = _d143_shape_ids()
+    offenders = sorted(_D143_SITES_FILED_ON - members_seen)
+    assert offenders == [], (
+        f"the D-143 forgery table no longer drives {offenders}, which D-143 "
+        f"was filed on. It drives {sorted(members_seen)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "patterns,committed,captured,culprit", _D143_FORGERIES
+)
+def test_a_forged_field_outside_the_allowlist_is_refused(
+    patterns, committed, captured, culprit
+):
+    """The D-143 bar. Every shape refuses, and the refusal names the pattern
+    whose narrowing is the fix."""
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(committed, captured, patterns)
+    message = str(exc.value)
+    assert "EVIDENCE_VOLATILE_MALFORMED" in message
+    assert message.split(":", 1)[0] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    assert repr(culprit) in message, f"the refusal names no culprit: {message}"
+
+
+@pytest.mark.parametrize(
+    "patterns,committed,captured,culprit", _D143_FORGERIES
+)
+def test_neither_earlier_rung_could_have_caught_the_d143_shapes(
+    patterns, committed, captured, culprit
+):
+    """The falsifier for "D-126 or the canary probe already covered this".
+
+    PROVE was explicit that the volume floor never fired on any of these — the
+    bodies are long and the residue sits far above 25%. If any shape were
+    refused by an earlier rung, this block would be re-asserting a guarantee
+    that already held and the allowlist would be untested scaffolding.
+    """
+    for label, text in (
+        ("committed log", committed), ("re-execution capture", captured),
+    ):
+        redacted = evidence._apply_volatile_redaction(text, patterns)
+        assert evidence._composed_redaction_problem(label, text, redacted) is None
+        assert _residue_ratio(text, patterns) > 0.5
+    for pattern in patterns:
+        replacement = (
+            evidence.TIMING_PLACEHOLDER
+            if evidence.VOLATILE_PLACEHOLDER in pattern
+            else evidence.VOLATILE_PLACEHOLDER
+        )
+        assert not evidence._pattern_redacts_everything(pattern, replacement)
+
+
+@pytest.mark.parametrize(
+    "patterns,committed,captured,culprit", _D143_FORGERIES
+)
+def test_each_d143_shape_really_did_buy_a_byte_match(
+    patterns, committed, captured, culprit
+):
+    """The negative control that makes the block above non-vacuous.
+
+    A forgery probe is only meaningful when the forgery actually succeeds
+    without the fix: the raw texts must differ and the declared redaction must
+    collapse them to one string. Without this, a typo'd fixture that never
+    reconciled anything would "pass" the refusal test for the wrong reason.
+    """
+    assert evidence._hash_str(committed) != evidence._hash_str(captured)
+    assert evidence._apply_volatile_redaction(
+        committed, patterns
+    ) == evidence._apply_volatile_redaction(captured, patterns), (
+        "this fixture no longer reconciles, so it has stopped being a forgery"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The registry's own derivation — every grammar carries a live witness.
+# --------------------------------------------------------------------------- #
+
+_TEAMMATE_PROTOCOL = REPO_ROOT / "plugins/foundry/agents/teammate.md"
+
+
+def _corpus_witness_tokens() -> set:
+    """Every token the shipped corpus's own declarations can erase.
+
+    Derived: each committed log's declared patterns applied to that log's own
+    body, matches tokenized the way the guard tokenizes them. This is what
+    "the corpus exercises this grammar" means mechanically — no hand-copied
+    list of which log proves what.
+    """
+    import re as _re
+
+    tokens = set()
+    evidence_dir = REPO_ROOT / "evidence"
+    for log in sorted(evidence_dir.glob("*.log")):
+        text = log.read_text(encoding="utf-8")
+        body = evidence._strip_leading_header_block(text)
+        for pattern in evidence._parse_evidence_header(text).get("volatile", []):
+            try:
+                for match in _re.finditer(pattern, body):
+                    tokens.update(match.group(0).split())
+            except _re.error:
+                continue
+    return tokens
+
+
+def _grammar_witness_sweep() -> tuple:
+    """Returns ``(members_seen, offenders)`` over the grammar registry.
+
+    ``members_seen`` is read off ``_ENVIRONMENTAL_GRAMMARS`` itself, so a
+    grammar added tomorrow is swept the day it lands rather than the day
+    someone remembers to extend a list here. ``offenders`` are the grammars
+    whose declared witness no longer exercises them — a dead grammar, which is
+    how an allowlist silently widens.
+    """
+    corpus_tokens = _corpus_witness_tokens()
+    protocol_text = (
+        _TEAMMATE_PROTOCOL.read_text(encoding="utf-8")
+        if _TEAMMATE_PROTOCOL.exists()
+        else ""
+    )
+    members_seen, offenders = set(), []
+    for name, grammar in evidence._ENVIRONMENTAL_GRAMMARS.items():
+        members_seen.add(name)
+        if not grammar.token.fullmatch(grammar.sample):
+            offenders.append(
+                f"{name}: its own sample {grammar.sample!r} does not match it"
+            )
+            continue
+        if grammar.witness_kind == "corpus":
+            if not any(
+                grammar.token.fullmatch(tok) for tok in corpus_tokens
+            ):
+                offenders.append(
+                    f"{name}: declares a corpus witness, but no committed "
+                    f"evidence log's own patterns erase a token of this shape"
+                )
+        elif grammar.witness_kind == "protocol":
+            if grammar.witness not in protocol_text:
+                offenders.append(
+                    f"{name}: declares the protocol witness "
+                    f"{grammar.witness!r}, which {_TEAMMATE_PROTOCOL.name} no "
+                    f"longer ships"
+                )
+        else:
+            offenders.append(
+                f"{name}: witness_kind={grammar.witness_kind!r} is neither "
+                f"'corpus' nor 'protocol', so nothing keeps it alive"
+            )
+    return members_seen, offenders
+
+
+def test_every_declared_grammar_has_a_live_witness():
+    """DERIVED MEMBERSHIP over the allowlist itself.
+
+    An allowlist widens by accretion: a grammar goes in for a log that later
+    changes, and nothing ever takes it out. Each entry names what keeps it
+    alive — a committed log whose own declaration erases a token of that
+    shape, or the literal `# evidence-volatile:` example agents/teammate.md
+    ships to authors — and this sweep re-derives both from the tree.
+    """
+    if not (REPO_ROOT / "evidence").exists():
+        pytest.skip("no committed evidence corpus")
+    members_seen, offenders = _grammar_witness_sweep()
+    assert members_seen == set(evidence._ENVIRONMENTAL_GRAMMARS), (
+        "the sweep did not walk the whole registry"
+    )
+    assert offenders == [], f"grammars with no live witness: {offenders}"
+
+
+def test_a_grammar_with_no_live_witness_is_reported_by_name(monkeypatch):
+    """The plant: a NEW unbound member must turn this rule red.
+
+    A witness sweep that cannot fail is decoration. A grammar is planted whose
+    protocol witness exists nowhere in the tree; the sweep must name it rather
+    than report a clean number over the members it happened to know.
+    """
+    if not (REPO_ROOT / "evidence").exists():
+        pytest.skip("no committed evidence corpus")
+    planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
+    planted["build_number"] = evidence._EnvironmentalGrammar(
+        token=re.compile(r"build#\d+"),
+        varies_in="digits",
+        witness_kind="protocol",
+        witness="# evidence-volatile: build#[0-9]+  (never shipped)",
+        sample="build#42",
+        note="planted by the test; nothing in the tree witnesses it",
+    )
+    monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
+    members_seen, offenders = _grammar_witness_sweep()
+    assert "build_number" in members_seen, (
+        "the sweep did not even walk the planted grammar"
+    )
+    assert any("build_number" in o for o in offenders), (
+        f"a grammar with no witness went unreported: {offenders}"
+    )
+
+
+def test_every_grammar_declares_a_known_variation_site():
+    """The `varies_in` axis is closed and total over the registry."""
+    unknown = {
+        name: g.varies_in
+        for name, g in evidence._ENVIRONMENTAL_GRAMMARS.items()
+        if g.varies_in not in evidence._KNOWN_VARIATION_SITES
+    }
+    assert unknown == {}, f"grammars with an unreadable variation site: {unknown}"
+
+
+def test_an_unreadable_variation_site_is_reported_not_admitted(monkeypatch):
+    """The unrecognised-member rung on the `varies_in` axis.
+
+    If a grammar ever declares a direction of variation this module cannot
+    read, the token must be REFUSED and the bad value named — never admitted
+    because the shape matched.
+    """
+    planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
+    planted["duration_seconds"] = evidence._EnvironmentalGrammar(
+        token=re.compile(r"\d+\.\d+s"),
+        varies_in="whenever",
+        witness_kind="corpus",
+        witness="casting-1-pytest.log",
+        sample="4.86s",
+        note="planted",
+    )
+    monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
+    grammar, note = evidence._environmental_field("4.86s", "4.91s")
+    assert grammar is None, "an unreadable variation site admitted the token"
+    assert "whenever" in note, note
+
+
+#: Shapes no declared grammar recognises. None is a forgery in itself — the
+#: point is the POLARITY: an unanticipated shape is refused and reported, where
+#: the denylist would have waved every one of them through.
+_UNRECOGNISED_SHAPES = [
+    pytest.param("a1b2c3d4", "e5f6a7b8", id="a-content-hash"),
+    pytest.param("1.2MB", "3.4MB", id="a-byte-size"),
+    pytest.param("v1.2.3", "v1.2.4", id="a-semver"),
+    pytest.param("port=8080", "port=9090", id="a-port-assignment"),
+    pytest.param("host-01", "host-02", id="a-hyphenated-host"),
+    pytest.param("out/1650/x", "out/1631/x", id="a-relative-path"),
+]
+
+
+@pytest.mark.parametrize("token_a,token_b", _UNRECOGNISED_SHAPES)
+def test_an_unrecognised_shape_is_refused_by_default(token_a, token_b):
+    """Refusal is the default (D-143's whole polarity change).
+
+    Under `isalpha() or isdigit()` every shape here was ACCEPTED, because each
+    carries a non-alphanumeric character or mixes cases. Under the allowlist
+    each is refused and reported. A byte-size and a content hash are in this
+    list on purpose: the brief anticipated both, no committed log varies
+    either, so neither is admitted until something in the tree witnesses it.
+    """
+    grammar, _ = evidence._environmental_field(token_a, token_b)
+    assert grammar is None, (
+        f"{token_a!r}/{token_b!r} was admitted as {grammar!r} with nothing in "
+        f"the tree witnessing that shape"
+    )
+
+
+def test_the_stated_residual_is_still_exactly_this_wide():
+    """The KNOWN limit, pinned in the suite rather than buried in a comment.
+
+    D-143's ruling was that the previous residual was written narrowly (a
+    percentage) while the shipped rule admitted eight shapes. So this one is
+    pinned where it can be read: a verdict word placed inside an absolute path
+    segment is STILL admitted, because the corpus relocates paths by exactly
+    one alphabetic segment and no rule over shape separates that from a swapped
+    word.
+
+    If a future change closes it, this test goes red — which is the point. Do
+    not delete the assertion; update it together with the RESIDUAL block in
+    ``evidence.py`` so the declared scope keeps matching the shipped scope.
+    """
+    grammar, _ = evidence._environmental_field("/logs/passed/run", "/logs/failed/run")
+    assert grammar == "absolute_path", (
+        "the stated residual has changed. Update the RESIDUAL block in "
+        "evidence.py and this test together — a limit is only a limit while "
+        "what it declares matches what it ships"
+    )
+    # The neighbouring shapes it must NOT be confused with are closed.
+    for a, b in (
+        ("/logs/1650/run", "/logs/1631/run"),
+        ("/logs/run-1650", "/logs/run-1631"),
+        ("passed", "failed"),
+    ):
+        assert evidence._environmental_field(a, b)[0] is None, (a, b)
+
+
+# --------------------------------------------------------------------------- #
+# ADJACENT PATHS (A-017/A-018). D-143 was reported on the COMMITTED side of a
+# single declared pattern. These drive the two paths beside it: the forgery
+# planted in the RE-EXECUTION CAPTURE, and the forging pattern at every
+# declared index other than the reported one, behind decoys that must not fire.
+# --------------------------------------------------------------------------- #
+
+#: Decoys that erase real environmental fields on their own lines — one per
+#: grammar family, so a rewrite that dropped a grammar goes red here rather
+#: than in a fixture nobody re-reads. Each carries its OWN pair of lines, so
+#: the per-decoy control below can name which grammar died; the combined body
+#: is derived from the same triples rather than written out a second time.
+_D143_DECOY_FIELDS = [
+    (r"rootdir: \S+", "rootdir: /a/b\n", "rootdir: /c/d\n"),
+    (r"pid=\d+", "pid=41\n", "pid=52\n"),
+    (r"20\d{2}-\d{2}-\d{2}", "2026-08-14\n", "2026-09-01\n"),
+    (r"\d+\.\d+s", "took 1.25s\n", "took 9.90s\n"),
+]
+_D143_DECOYS = [pattern for pattern, _, _ in _D143_DECOY_FIELDS]
+_D143_DECOY_COMMITTED = "".join(a for _, a, _ in _D143_DECOY_FIELDS)
+_D143_DECOY_CAPTURED = "".join(b for _, _, b in _D143_DECOY_FIELDS)
+
+
+@pytest.mark.parametrize("forged_side", ["committed", "captured"])
+@pytest.mark.parametrize("index", range(len(_D143_DECOYS) + 1))
+def test_the_allowlist_holds_on_the_capture_side_at_every_declared_index(
+    forged_side, index
+):
+    """The NAMED adjacent paths, distinct from the path D-143 was filed on.
+
+    Adjacent path 1 — the CAPTURE side. An attacker picks which side carries
+    the fabrication; D-143 was driven with the forgery in the committed log,
+    so the mirror is driven here.
+
+    Adjacent path 2 — a declared index OTHER than 0. D-143's drive used one
+    declared pattern. Here the forging pattern is slid through every position
+    in a list of four decoys, each of which erases a genuinely environmental
+    field that must NOT be what refuses. `range(len(_D143_DECOYS) + 1)` tracks
+    the decoy list, so adding a decoy adds a position automatically.
+
+    The decoys double as a live check on the registry: `rootdir:` exercises
+    absolute_path, `pid=` process_id, the date iso_timestamp and `1.25s`
+    duration_seconds. Drop a grammar and these stop reconciling, so the
+    refusal names a decoy instead of the forging pattern and this goes red.
+    """
+    forging = r"failures: [\d/]+"
+    patterns = _D143_DECOYS[:index] + [forging] + _D143_DECOYS[index:]
+    honest = _BODY + _D143_DECOY_COMMITTED + "failures: 0/1650\n"
+    forged = _BODY + _D143_DECOY_CAPTURED + "failures: 19/1650\n"
+    committed, captured = (
+        (forged, honest) if forged_side == "committed" else (honest, forged)
+    )
+    with pytest.raises(ValueError) as exc:
+        evidence._compare_byte_match(committed, captured, patterns)
+    message = str(exc.value)
+    assert "EVIDENCE_VOLATILE_MALFORMED" in message
+    assert repr(forging) in message, (
+        f"a decoy was blamed instead of the forging pattern: {message}"
+    )
+
+
+@pytest.mark.parametrize("pattern,line_a,line_b", _D143_DECOY_FIELDS)
+def test_every_decoy_field_still_reconciles_on_its_own(pattern, line_a, line_b):
+    """The false-positive floor for the decoys above.
+
+    If any decoy stopped reconciling, the adjacent-path sweep would go red for
+    the wrong reason and would stop proving what it claims. Each is driven
+    against its OWN pair of lines, so the failure names the grammar that died
+    rather than reporting that four fields differ.
+    """
+    matched, diff, _, _ = evidence._compare_byte_match(
+        _BODY + line_a, _BODY + line_b, [pattern]
+    )
+    assert matched is True, f"{pattern!r} no longer reconciles: {diff}"
+
+
+def test_a_forged_count_cannot_buy_a_pass_through_the_whole_verifier():
+    """D-143 at the surface where PROVE drove it, not at the helper.
+
+    PROVE's end-to-end drive: a committed log claiming `failures: 0/1650`
+    against a command that really prints `failures: 19/1650`, declared volatile
+    as `failures: [\\d/]+`. At cycle 20 this returned verdict='accepted' with
+    failure_token=None and the two raw shas plainly different. Neither stub
+    rung can be what saves it — the command is real and the body clears the
+    128-byte floor.
+    """
+    import tempfile
+
+    workdir = Path(tempfile.mkdtemp())
+    (workdir / "evidence").mkdir()
+    log = workdir / "evidence" / "casting-3-forged-failure-count.log"
+    log.write_text(
+        "# evidence-cmd: python3 -c \"print('collected 1650 items across the "
+        "whole suite, which is padding so neither the stub library nor the "
+        "volume floor can be what rejects this log'); print('failures: "
+        "19/1650')\"\n"
+        "# evidence-for: FR-017\n"
+        "# evidence-volatile: failures: [\\d/]+\n"
+        "\n"
+        "collected 1650 items across the whole suite, which is padding so "
+        "neither the stub library nor the volume floor can be what rejects "
+        "this log\n"
+        "failures: 0/1650\n",
+        encoding="utf-8",
+    )
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=workdir, casting_commit="0" * 40
+    )
+
+    assert record["verdict"] == "rejected", record
+    assert record["failure_token"] == "EVIDENCE_VOLATILE_MALFORMED", record
+    assert record["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    assert record["log_sha256"] != record["captured_sha256"], record
+    assert "0/1650" in record["failure_detail"], record
+    assert "19/1650" in record["failure_detail"], record
+
+
+# --------------------------------------------------------------------------- #
+# D-149 — stdout IS the protocol channel (FR-017 / AC-023 / OT-011).
+#
+# `foundry_accept_casting` ended its evidence block with a bare
+# `print(..., flush=True)` of the verdict tally. This server speaks JSON-RPC
+# over stdio, so that line lands INSIDE the channel, ahead of the response
+# frame, and a conforming client's parser fails on the message. The only way to
+# reach it was to pass `casting_commit` — the exact path FR-017 exists to make
+# reachable over MCP. Wiring the evidence gate would have broken the channel the
+# first time it fired.
+#
+# The tally now travels in the returned dict. The guard below is derived over
+# the whole installed package rather than bound to the one site that was
+# reported, because "the handler that happened to print" is not the class —
+# "a handler that prints" is.
+# --------------------------------------------------------------------------- #
+
+_SERVER_PKG = REPO_ROOT / "plugins/foundry/mcp-server/src/foundry_mcp"
+
+
+def _package_modules(root: Path) -> list:
+    """Every source module in the package tree rooted at ``root``.
+
+    Membership is derived on BOTH axes — the files in a directory and the
+    directories in the package — so neither a new module nor a new subpackage
+    has to be remembered anywhere. Same derivation the D-137 family uses in
+    ``test_orchestrator_gates.py``; that file's ``_scan`` docstring records the
+    ``(seen, offenders)`` tuple as the agreed contract ACROSS test modules, so
+    the shape is re-declared here rather than imported across test files.
+    """
+    return sorted(root.rglob("*.py"))
+
+
+def _module_name(path: Path) -> str:
+    rel = path.relative_to(_SERVER_PKG.parent).with_suffix("")
+    parts = [p for p in rel.parts]
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _writes_to_stdout(node: ast.AST) -> bool:
+    """True when this expression writes to the process's real stdout.
+
+    Two spellings, and only two: a ``print()`` whose ``file=`` is absent or is
+    anything other than ``sys.stderr``, and a direct reference to ``sys.stdout``
+    or ``sys.__stdout__``. The ``sys.`` qualifier is load-bearing — an earlier
+    cut of this recogniser keyed on any attribute named ``stdout`` and reported
+    six false members, every one of them a ``subprocess`` result's ``.stdout``.
+    """
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if node.func.id == "print":
+            target = next(
+                (ast.unparse(k.value) for k in node.keywords if k.arg == "file"),
+                None,
+            )
+            return target not in ("sys.stderr", "sys.__stderr__")
+    if isinstance(node, ast.Attribute) and node.attr in ("stdout", "__stdout__"):
+        return isinstance(node.value, ast.Name) and node.value.id == "sys"
+    return False
+
+
+def _loud_functions(path: Path) -> set:
+    """Every function in ``path`` that can reach a stdout write.
+
+    Transitive, over the module's own call graph: the four prints in the CLI
+    validator all sit in one function that nothing imports, and it is entered
+    only through ``main``. A rule that stopped at the function CONTAINING the
+    write would call that function unreachable and clear it for the wrong
+    reason, then miss the same shape in a handler's private helper.
+
+    ``"<module>"`` stands for module-level statements, which run on import.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    functions, calls, loud = {}, {}, set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions[fn.name] = fn
+            body = list(ast.walk(fn))
+            calls[fn.name] = {
+                (c.func.id if isinstance(c.func, ast.Name) else c.func.attr)
+                for c in body
+                if isinstance(c, ast.Call)
+                and isinstance(c.func, (ast.Name, ast.Attribute))
+            }
+            if any(_writes_to_stdout(n) for n in body):
+                loud.add(fn.name)
+    nested = {
+        n.name
+        for fn in functions.values()
+        for n in ast.walk(fn)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name != fn.name
+    }
+    top_level = [
+        n for n in tree.body
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    if any(_writes_to_stdout(x) for n in top_level for x in ast.walk(n)):
+        loud.add("<module>")
+    # Backward closure: a caller of a loud function is loud.
+    changed = True
+    while changed:
+        changed = False
+        for name, callees in calls.items():
+            if name not in loud and callees & loud:
+                loud.add(name)
+                changed = True
+    return loud - (nested - set(functions))
+
+
+def _redirect_guarded(fn: ast.AST) -> bool:
+    """True when this function wraps its work in ``redirect_stdout``."""
+    return any(
+        isinstance(n, ast.Call)
+        and (
+            (isinstance(n.func, ast.Name) and n.func.id == "redirect_stdout")
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "redirect_stdout")
+        )
+        for n in ast.walk(fn)
+    )
+
+
+def _protocol_stdout_scan() -> tuple:
+    """``(seen, offenders)`` over the whole installed package.
+
+    ``seen`` names every loud function found anywhere in the package, CLI
+    scripts included — it is what tells a clean run apart from a blind one. A
+    scan that reports zero loud functions is not passing; the recogniser has
+    stopped recognising a print, and the caller asserts against ``seen`` to
+    tell the two apart by name.
+
+    ``offenders`` are the loud functions a client can actually reach over the
+    protocol. Reachability is DERIVED, not typed: the import graph rooted at
+    ``foundry_mcp.server`` decides which modules are on the channel, and for
+    each such module every name a protocol-path module imports from it is
+    checked — a loud entry name offends unless every one of its import sites
+    sits in a function that redirects stdout. No directory is exempt by
+    NAME. The CLI validator clears this because its one entry point, ``main``,
+    is imported solely inside ``intent_coverage._call_validator_in_process``,
+    which redirects; delete that redirect and it becomes an offender.
+    """
+    modules = {_module_name(p): p for p in _package_modules(_SERVER_PKG)}
+    trees = {n: ast.parse(p.read_text(encoding="utf-8")) for n, p in modules.items()}
+
+    def imports_of(name):
+        out = set()
+        for n in ast.walk(trees[name]):
+            if isinstance(n, ast.Import):
+                out |= {a.name for a in n.names}
+            elif isinstance(n, ast.ImportFrom) and n.module:
+                out.add(n.module)
+                out |= {f"{n.module}.{a.name}" for a in n.names}
+        return {m for m in out if m in modules}
+
+    reach, stack = set(), ["foundry_mcp.server"]
+    while stack:
+        m = stack.pop()
+        if m in reach or m not in modules:
+            continue
+        reach.add(m)
+        stack.extend(imports_of(m))
+
+    loud = {n: _loud_functions(modules[n]) for n in modules}
+    seen = sorted(f"{n}#{f}" for n, fns in loud.items() for f in fns)
+
+    offenders = []
+    for name in sorted(reach):
+        for fn_name in sorted(loud[name]):
+            if fn_name == "<module>":
+                offenders.append(f"{name}#<module> prints at import time")
+                continue
+            sites = []
+            for importer in sorted(reach):
+                for node in ast.walk(trees[importer]):
+                    if isinstance(node, ast.ImportFrom) and node.module == name:
+                        if any(a.name == fn_name for a in node.names):
+                            sites.append((importer, node))
+                    elif isinstance(node, ast.Import) and any(
+                        a.name == name for a in node.names
+                    ):
+                        sites.append((importer, node))
+            if not sites:
+                continue  # no protocol path reaches this name
+            for importer, node in sites:
+                enclosing = [
+                    f for f in ast.walk(trees[importer])
+                    if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and any(n is node for n in ast.walk(f))
+                ]
+                if not any(_redirect_guarded(f) for f in enclosing):
+                    offenders.append(
+                        f"{name}#{fn_name} reaches stdout and is imported by "
+                        f"{importer} without a redirect_stdout"
+                    )
+                    break
+    return seen, sorted(set(offenders))
+
+
+def test_no_handler_reachable_over_the_protocol_writes_to_stdout():
+    """D-149, derived over the installed package rather than the reported site.
+
+    The anchors are what keep this honest. ``seen`` must be non-empty, because
+    the package really does contain a loud function (the CLI validator) — if
+    the print-recogniser ever breaks, ``seen`` empties and ``offenders == []``
+    would go green over a corpus it can no longer read. And the module corpus
+    must contain both the defect's own module and ``server.py``, so a
+    ``_package_modules`` that stopped reaching them fails BY NAME instead of
+    reporting a clean zero.
+    """
+    scanned = {_module_name(p) for p in _package_modules(_SERVER_PKG)}
+    for anchor in ("foundry_mcp.tools.foundry_handoff", "foundry_mcp.server"):
+        assert anchor in scanned, (
+            f"the scan no longer reaches {anchor}, so a print there would be "
+            f"invisible — this is the derivation going blind"
+        )
+    seen, offenders = _protocol_stdout_scan()
+    assert seen, (
+        "the scan found no stdout writer anywhere in the package, including "
+        "the CLI validator that certainly has four — the recogniser is blind"
+    )
+    assert offenders == [], (
+        f"stdout is the JSON-RPC channel; these reach it: {offenders}"
+    )
+
+
+def test_a_new_handler_that_prints_is_reported_by_name(tmp_path, monkeypatch):
+    """The plant: a NEW unbound member must turn this rule red.
+
+    A brand-new module, in a brand-new subpackage, imported by the server
+    without a redirect. Nothing about it is on any list this test maintains —
+    if the scan only knew the modules that exist today, this stays green and
+    the rule is decoration.
+    """
+    pkg = tmp_path / "foundry_mcp"
+    (pkg / "handlers").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "handlers" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "handlers" / "planted.py").write_text(
+        "def handle_thing():\n"
+        "    print('tally: 3 accepted')\n"
+        "    return {'ok': True}\n",
+        encoding="utf-8",
+    )
+    (pkg / "server.py").write_text(
+        "from foundry_mcp.handlers.planted import handle_thing\n"
+        "_DISPATCH = {'Thing': lambda args: handle_thing()}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys.modules[__name__], "_SERVER_PKG", pkg, raising=False
+    )
+    seen, offenders = _protocol_stdout_scan()
+    assert "foundry_mcp.handlers.planted#handle_thing" in seen, seen
+    assert any("planted" in o for o in offenders), (
+        f"a printing handler in a new subpackage went unreported: {offenders}"
+    )
+
+
+def test_a_redirected_cli_entry_point_is_not_an_offender(tmp_path, monkeypatch):
+    """The narrowness control for the plant above.
+
+    The rule must not simply refuse every print in the package — the CLI
+    validator's four are legitimate and are cleared by the redirect at its one
+    protocol entry. Driven on a synthetic pair so the clearing is shown to come
+    from the redirect and not from the module's path.
+    """
+    pkg = tmp_path / "foundry_mcp"
+    (pkg / "scripts").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "scripts" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "scripts" / "cli.py").write_text(
+        "def report():\n    print('human readable')\n\n"
+        "def main(argv):\n    report()\n    return 0\n",
+        encoding="utf-8",
+    )
+    (pkg / "server.py").write_text(
+        "import contextlib, io\n"
+        "def run():\n"
+        "    from foundry_mcp.scripts.cli import main\n"
+        "    buf = io.StringIO()\n"
+        "    with contextlib.redirect_stdout(buf):\n"
+        "        return main([])\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys.modules[__name__], "_SERVER_PKG", pkg, raising=False
+    )
+    seen, offenders = _protocol_stdout_scan()
+    assert "foundry_mcp.scripts.cli#report" in seen, seen
+    assert "foundry_mcp.scripts.cli#main" in seen, (
+        "loudness did not propagate to the entry point that calls report()"
+    )
+    assert offenders == [], (
+        f"a redirect-guarded CLI entry point was wrongly flagged: {offenders}"
+    )
+
+
+def test_the_dispatched_evidence_path_emits_nothing_on_stdout(tmp_path, capsys):
+    """D-149 at the surface a client actually meets.
+
+    Driven through ``server._DISPATCH["Foundry-Accept-Casting"]`` — the
+    dispatcher a real MCP client reaches — WITH ``casting_commit``, which is the
+    only way into the tally block and the path FR-017 makes reachable. Before
+    the fix this emitted one `Foundry-Accept-Casting: casting 1 — evidence
+    verdicts: ...` line into the JSON-RPC channel.
+
+    The tally is asserted present in the RETURN, so "no stdout" cannot be
+    satisfied by deleting the information instead of moving it.
+    """
+    from foundry_mcp import server
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    server_project_root = server._project_root
+    server._project_root = str(env["project_root"])
+    capsys.readouterr()
+    try:
+        result = server._DISPATCH["Foundry-Accept-Casting"]({
+            "casting_id": 1,
+            "spec_hash": env["spec_hash"],
+            "prompt_hash": env["prompt_hash"],
+            "completion_report": (
+                "AC-023 implemented at src/gate.py#accept_casting\n"
+            ),
+            "casting_commit": env["casting_commit"],
+        })
+    finally:
+        server._project_root = server_project_root
+        clear_active_run()
+    captured = capsys.readouterr()
+
+    assert captured.out == "", (
+        f"the handler wrote {captured.out!r} into the JSON-RPC channel"
+    )
+    # Non-vacuity: the tally block really was reached on this call.
+    assert result["evidence_verdict"] == "accepted", result
+    assert result["evidence_tally"] == {
+        "accepted": 1, "rejected": 0, "failure_tokens": [],
+    }, result
+
+
+def test_the_adjacent_dispatch_paths_also_emit_nothing_on_stdout(tmp_path, capsys):
+    """The NAMED adjacent paths for D-149.
+
+    Adjacent path 1 — the SAME handler WITHOUT ``casting_commit``, which skips
+    the evidence block entirely and returns through a different branch.
+
+    Adjacent path 2 — a DIFFERENT tool through the same dispatch table
+    (``Foundry-Context``), so the guarantee is shown to be a property of the
+    channel rather than of the one handler the defect was filed on.
+    """
+    from foundry_mcp import server
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(tmp_path)
+    server_project_root = server._project_root
+    server._project_root = str(env["project_root"])
+    capsys.readouterr()
+    try:
+        no_commit = server._DISPATCH["Foundry-Accept-Casting"]({
+            "casting_id": 1,
+            "spec_hash": env["spec_hash"],
+            "prompt_hash": env["prompt_hash"],
+            "completion_report": (
+                "AC-023 implemented at src/gate.py#accept_casting\n"
+            ),
+        })
+        other_tool = server._DISPATCH["Foundry-Context"]({})
+    finally:
+        server._project_root = server_project_root
+        clear_active_run()
+    captured = capsys.readouterr()
+
+    assert captured.out == "", (
+        f"an adjacent dispatch path wrote {captured.out!r} to stdout"
+    )
+    assert no_commit["evidence_verdict"] is None, no_commit
+    assert no_commit["evidence_tally"] is None, no_commit
+    assert isinstance(other_tool, dict), other_tool

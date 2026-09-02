@@ -26,6 +26,7 @@ import os
 import re
 import shlex
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -513,29 +514,280 @@ def _composed_redaction_problem(
 # is not a pair — the guard REPORTS rather than silently continuing, because an
 # unalignable member is exactly where a bypass would hide.
 #
-# RESIDUAL, stated rather than buried: a disagreement confined to a token that
-# IS structured but IS evidentiary (``coverage: 95.2%`` against ``41.0%``)
-# passes. Nothing textual separates a percentage that varies from one that was
-# fabricated; that is a rule about what a log may cite, not one a comparator
-# can enforce. Recorded in concerns.md.
+# D-143 — WHY THE CHARACTER-CLASS TEST WAS THE WRONG DERIVATION, AND WHAT
+# REPLACED IT.
+#
+# The first cut of this rung asked ``token.isalpha() or token.isdigit()`` and
+# refused when either side was true — a DENYLIST of two shapes, with accept as
+# the default. PROVE drove 13 forgery shapes through the shipped
+# ``_verify_one_evidence_file`` on a real git repo at a real casting commit and
+# 8 were ACCEPTED end to end, because one non-alphanumeric character anywhere
+# in the disagreeing token made a verdict read as a "field":
+#
+#     failures: 0/1650  vs  19/1650     exit=0  vs  exit=1
+#     coverage: 95.2%   vs  41.0%       status: all-passed vs some-failed
+#     result 1650/1650  vs  1631/1650   run=passed-1650 vs failed-1631
+#     out/1650/summary.json vs out/1631/…   rootdir line carrying passed=1650
+#
+# A log claiming zero failures against a command printing 19 is A-AUTO-005's
+# one binding constraint — "the verification loop's standard must not weaken" —
+# defeated by a slash. The previous cycle recorded this as a documented limit
+# scoped to percentages; the shipped scope was every token carrying one
+# non-alphanumeric character, which includes the process exit code and the
+# failure count. A limit that names one member of a class and ships a rule
+# admitting eight has documented an instance, not a limit.
+#
+# THE POLARITY IS THE FIX. "What is a volatile field" is now an ALLOWLIST with
+# refusal as the default, so a shape nobody anticipated is REPORTED instead of
+# waved through. Membership is derived from the corpus rather than remembered
+# per bypass: cold-driven over all 65 committed logs at d8215c5 from a clean
+# worktree, 37 differ raw and all 37 reconcile, and every differing token pair
+# in the entire corpus is one of exactly two shapes — a duration (``4.86s`` /
+# ``4.91s``, ``0.07s`` / ``0.18s``, ``54.80s`` / ``55.09s``; 37 pairs) or an
+# absolute filesystem path (rootdir and cachedir roots, uv's
+# ``.tmphgnUSu`` / ``.tmpLS4FNM`` build dirs, the ``.planning`` root; 13
+# pairs). Not one bare word, bare integer, ratio, percentage, ``=``-assignment
+# or ``symbol:line``.
+#
+# WHERE A GRAMMAR'S VARIATION LIVES is the one axis each entry declares, and it
+# is what stops the allowlist from re-opening the hole inside a grammar. An
+# absolute path is environmental because the run RELOCATED; a duration, a pid
+# and a timestamp are environmental because the NUMBER moved. So:
+#
+#   varies_in="digits"  the disagreement must be confined to the digits
+#                       — strip them and the two sides must be IDENTICAL.
+#   varies_in="text"    the disagreement must NOT be confined to the digits
+#                       — strip them and the two sides must still DIFFER.
+#
+# One predicate, negated; a total partition with no third bucket, and an
+# unrecognised ``varies_in`` is reported rather than silently admitted. That
+# second rung is what refuses ``/tmp/out/1650/summary.json`` against
+# ``/tmp/out/1631/summary.json`` — both absolute paths, both matching the
+# grammar, digit-stripped to the same string, so the only thing that moved was
+# a count. It refuses ``/tmp/run-1650/x`` against ``/tmp/run-1631/x`` too,
+# where the count hides inside a word-shaped segment that no segment-level
+# check would catch. And it costs the corpus nothing: all 13 real path pairs
+# still differ after digit-stripping, because a relocated path changes its
+# words, not just its numbers.
+#
+# EVERY GRAMMAR CARRIES A LIVE WITNESS, or the registry sweep names it. Two
+# witness kinds, both real artifacts in the tree rather than a maintainer's
+# memory: ``corpus``, meaning some committed log's own declared pattern erases
+# a token of this shape from its own body, and ``protocol``, meaning
+# ``plugins/foundry/agents/teammate.md`` ships this pattern as an example it
+# tells evidence authors to declare. ``test_every_declared_grammar_has_a_live_witness``
+# walks the registry itself — not a hand-copied list — and reports by name any
+# grammar whose witness has gone dead, so a grammar cannot outlive the reason
+# it was admitted.
+#
+# STATED RESIDUAL, scoped this time to what actually ships rather than to the
+# one instance that was easiest to describe. D-143's ruling was that a limit is
+# a limit only when its DECLARED scope is its REAL scope, so this names the
+# whole of it, including the part that is uncomfortable.
+#
+# A disagreement inside a token that matches a declared grammar IN THAT
+# GRAMMAR'S OWN DIRECTION OF VARIATION is admitted. Concretely, and these are
+# the real attacks, not a euphemism for them:
+#
+#   1. A fabricated duration against a real one — `4.86s` against `9.91s`.
+#      Refusing this would refuse 37 of the corpus's 50 differing token pairs.
+#   2. A VERDICT WORD PLACED IN A PATH SEGMENT — a committed log citing
+#      `/logs/passed/run` against a command printing `/logs/failed/run`. Both
+#      are absolute paths, both differ outside their digits, so the path
+#      grammar reads it as a relocation and lets it through. This is the same
+#      family D-143 was filed on, one spelling further out, and it is NOT
+#      closed. It cannot be closed by shape: the corpus relocates paths by
+#      exactly one alphabetic segment (`.tmphgnUSu` against `.tmpLS4FNM`) and
+#      by whole roots (`/Users/rayjanoka/…` against `/private/tmp/…`), so no
+#      rule over segment counts, positions or character classes separates a
+#      moved directory from a swapped word. Separating them needs a list of
+#      verdict words, which is the remembered-membership shape this whole class
+#      keeps recurring as. Recorded for the lead rather than hand-listed here.
+#
+# What is NOT in the residual, and was in the last one: every verdict, count,
+# ratio, percentage, exit code, assignment and hyphenated word standing on its
+# own, plus every count embedded in a path — `/tmp/out/1650/x` against
+# `/tmp/out/1631/x` is refused, and so is `/tmp/run-1650/x`.
 # ---------------------------------------------------------------------------
-def _is_unstructured_token(token: str) -> bool:
-    """True when ``token`` is a bare word or a bare integer.
+_DIGIT_RUN_RE: re.Pattern[str] = re.compile(r"\d+")
 
-    The partition is total and has no third bucket: a token is unstructured
-    when it is entirely alphabetic or entirely numeric, and structured
-    otherwise — which is every token that mixes the two (``12ms``, ``4f2a``)
-    or carries any character that is neither (``4.86s``, ``/tmp/wt``,
-    ``pid=41``, ``2026-08-14T10:23``, ``.tmpDURf54``). No character can fall
-    outside it, so no member of the axis can arrive unrecognised.
+#: The two directions a grammar's environmental variation can run. Closed, and
+#: total over the registry: ``test_every_grammar_declares_a_known_variation_site``
+#: walks ``_ENVIRONMENTAL_GRAMMARS`` and fails on any other value, and
+#: ``_environmental_field`` REPORTS an unrecognised one rather than admitting
+#: the token. There is deliberately no third bucket — a shape whose
+#: disagreement is neither confined to digits nor confined to non-digits is
+#: not a field, it is two different strings.
+_KNOWN_VARIATION_SITES: frozenset[str] = frozenset({"digits", "text"})  # 2 sites
 
-    The distinction it draws is between a VALUE and a WORD. A volatile field's
-    value is supplied by the environment and wears its own structure; a bare
-    word or a bare integer is supplied by the command and is the thing the log
-    is asserting. ``passed`` → ``failed`` and ``1650`` → ``1631`` are the two
-    forgeries this exists to refuse.
+
+@dataclass(frozen=True)
+class _EnvironmentalGrammar:
+    """One shape the environment is allowed to vary, and where it varies.
+
+    ``token`` must FULLMATCH both sides of a disagreement — a partial match
+    would let an arbitrary prefix ride along beside a legal field.
+
+    ``varies_in`` names the half of the token the environment owns; the other
+    half must be byte-identical across the two sides. See the block comment
+    above for why the two halves are not symmetric.
+
+    ``witness_kind`` / ``witness`` record what keeps this entry alive:
+    ``corpus`` names a committed evidence log whose own declared pattern erases
+    a token of this shape from its own body, ``protocol`` names the literal
+    ``# evidence-volatile:`` example ``agents/teammate.md`` ships. ``sample``
+    is a real token of the shape, used by the witness sweep to prove the
+    grammar and its witness still describe the same thing.
     """
-    return token.isalpha() or token.isdigit()
+
+    token: re.Pattern[str]
+    varies_in: str
+    witness_kind: str
+    witness: str
+    sample: str
+    note: str
+
+
+#: The closed allowlist of environmental shapes. Refusal is the default: a
+#: disagreeing token pair that matches no entry here is evidence, not a field.
+#:
+#: Provenance is per entry and checked, not asserted. Anything the corpus does
+#: not exercise and the protocol does not document is ABSENT on purpose —
+#: notably a byte-size and a content hash, which the lead's brief anticipated
+#: but which no committed log varies and no teammate.md example declares.
+#: Adding one means adding its witness, which is the point.
+_ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
+    "duration_seconds": _EnvironmentalGrammar(
+        token=re.compile(r"\d+\.\d+s"),
+        varies_in="digits",
+        witness_kind="corpus",
+        witness="casting-1-pytest.log",
+        sample="4.86s",
+        note=(
+            "wall-clock seconds. 37 of the corpus's 50 differing token pairs, "
+            "and the shape 42 of the 65 logs declare volatile. The decimal "
+            "point is required because every second-valued duration in the "
+            "corpus carries one; a bare `\\d+s` has no witness."
+        ),
+    ),
+    "duration_millis": _EnvironmentalGrammar(
+        token=re.compile(r"\d+(?:\.\d+)?(?:ms|us|µs|ns)"),
+        varies_in="digits",
+        witness_kind="protocol",
+        witness=r"# evidence-volatile: \b\d+ms\b",
+        sample="12ms",
+        note=(
+            "sub-second latencies. 31 logs DECLARE `Installed \\d+ packages "
+            "in \\d+ms`, but the witness sweep showed no committed body "
+            "actually carries one — uv prints that line only on a cold cache, "
+            "so the declaration is precautionary and the corpus has never "
+            "varied a millisecond value. The live witness is therefore the "
+            "protocol, not the corpus. Kept because teammate.md tells authors "
+            "to declare this shape and the narrowness controls exercise it."
+        ),
+    ),
+    "absolute_path": _EnvironmentalGrammar(
+        token=re.compile(r"/\S*"),
+        varies_in="text",
+        witness_kind="corpus",
+        witness="casting-1-pytest.log",
+        sample="/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
+        note=(
+            "where the run happened: rootdir and cachedir roots, uv build "
+            "dirs, the .planning root. 13 of the corpus's 50 differing token "
+            "pairs. Anchored at `/` because every path the corpus varies is "
+            "absolute — a RELATIVE path such as `out/1650/summary.json` is "
+            "not admitted, and `0/1650` is not a path at all."
+        ),
+    ),
+    "process_id": _EnvironmentalGrammar(
+        token=re.compile(r"pid=\d+", re.IGNORECASE),
+        varies_in="digits",
+        witness_kind="protocol",
+        witness=r"# evidence-volatile: pid=\d+",
+        sample="pid=1234",
+        note=(
+            "the key is part of the grammar. `exit=0` against `exit=1` is an "
+            "assignment too and is REFUSED — what makes a pid environmental "
+            "is that it is a pid, not that it has an `=` in it."
+        ),
+    ),
+    "iso_timestamp": _EnvironmentalGrammar(
+        token=re.compile(
+            r"20\d{2}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
+            r"(?:Z|[+-]\d{2}:?\d{2})?)?"
+        ),
+        varies_in="digits",
+        witness_kind="protocol",
+        witness=r"# evidence-volatile: 20\d{2}-\d{2}-\d{2}T",
+        sample="2026-08-14T10:23:45",
+        note=(
+            "wall-clock date, with or without a time. The date alone is "
+            "admitted because the corpus's own decoy shape is `20\\d{2}-"
+            "\\d{2}-\\d{2}`."
+        ),
+    ),
+}  # 5 grammars
+
+
+def _digit_skeleton(token: str) -> str:
+    """``token`` with every run of digits removed.
+
+    The one primitive both directions of ``varies_in`` are measured through, so
+    the two halves of the partition cannot drift apart: a digits-varying field
+    must leave this UNCHANGED across the two sides, a text-varying field must
+    leave it CHANGED.
+    """
+    return _DIGIT_RUN_RE.sub("", token)
+
+
+def _environmental_field(token_a: str, token_b: str) -> tuple[str | None, str]:
+    """Classify a disagreeing token pair against the grammar allowlist.
+
+    Returns ``(grammar_name, note)``. A non-None name means the environment is
+    allowed to have varied this token and the redaction may erase it. A None
+    name means REFUSE, and the note says what could not be classified — the
+    whole registry is walked before giving up, so the note reports the most
+    specific reason found rather than the first grammar tried.
+
+    Both sides must match the SAME grammar. A token pair that changes shape —
+    a duration on one side, a path on the other — is not one field varying.
+    """
+    closest = ""
+    for name, grammar in _ENVIRONMENTAL_GRAMMARS.items():
+        if not (
+            grammar.token.fullmatch(token_a) and grammar.token.fullmatch(token_b)
+        ):
+            continue
+        if grammar.varies_in not in _KNOWN_VARIATION_SITES:
+            # An unrecognised member of the one axis this rule turns on. Report
+            # it; never fall through to admitting the token.
+            closest = (
+                f"both sides match the {name!r} grammar, but it declares "
+                f"varies_in={grammar.varies_in!r}, which is not one of "
+                f"{', '.join(sorted(_KNOWN_VARIATION_SITES))}. A grammar whose "
+                f"direction of variation cannot be read cannot license an "
+                f"erasure"
+            )
+            continue
+        confined_to_digits = _digit_skeleton(token_a) == _digit_skeleton(token_b)
+        if confined_to_digits == (grammar.varies_in == "digits"):
+            return name, ""
+        if grammar.varies_in == "digits":
+            closest = (
+                f"both sides are {name!r}-shaped, but they differ outside "
+                f"their digits ({_digit_skeleton(token_a)!r} against "
+                f"{_digit_skeleton(token_b)!r}) — the environment varies the "
+                f"NUMBER in this field, not the text around it"
+            )
+        else:
+            closest = (
+                f"both sides are {name!r}-shaped, but strip the digits and "
+                f"they are the same string ({_digit_skeleton(token_a)!r}) — "
+                f"the only thing that moved is a COUNT, and a count is what "
+                f"the command reported, not where it ran"
+            )
+    return None, closest
 
 
 def _field_disagreement_problem(
@@ -545,9 +797,13 @@ def _field_disagreement_problem(
 
     ``span_a`` and ``span_b`` are the same pattern's match on the two real
     texts, and they differ — so the redaction is about to make two texts that
-    disagree here compare as equal. Returns None when the disagreement has the
-    shape a varying field takes, else the house refusal sentence naming the
-    pattern, both sides' text, and what to do about it.
+    disagree here compare as equal. Returns None when EVERY disagreeing token
+    is a member of the environmental allowlist, else the house refusal sentence
+    naming the pattern, both sides' text, and what to do about it.
+
+    Refusal is the default (D-143). Every differing token is walked, not just
+    the first, so the refusal reports the whole disagreement rather than the
+    one token that happened to be leftmost.
     """
     tokens_a, tokens_b = span_a.split(), span_b.split()
     verdict: str | None = None
@@ -559,16 +815,25 @@ def _field_disagreement_problem(
             f"reported and the other did not"
         )
     else:
+        unclassified: list[str] = []
         for token_a, token_b in zip(tokens_a, tokens_b):
             if token_a == token_b:
                 continue
-            if _is_unstructured_token(token_a) or _is_unstructured_token(token_b):
-                verdict = (
-                    f"{token_a!r} in the {label_a} is {token_b!r} in the "
-                    f"{label_b}, and a bare word or a bare integer is not a "
-                    f"field — it is what the command reported"
-                )
-                break
+            grammar, note = _environmental_field(token_a, token_b)
+            if grammar is not None:
+                continue
+            unclassified.append(
+                f"{token_a!r} in the {label_a} is {token_b!r} in the "
+                f"{label_b}"
+                + (f" — {note}" if note else "")
+            )
+        if unclassified:
+            verdict = (
+                "; ".join(unclassified)
+                + ". A volatile field is one of "
+                + ", ".join(sorted(_ENVIRONMENTAL_GRAMMARS))
+                + "; anything else that differs is what the command REPORTED"
+            )
     if verdict is None:
         return None
     return (
@@ -578,10 +843,10 @@ def _field_disagreement_problem(
         f"{label_b} says {span_b!r}. Applied to both sides that span cancels "
         f"out of the comparison, so the gate would report a byte-match "
         f"between two texts that plainly say different things. A volatile "
-        f"pattern removes a value the ENVIRONMENT varies — a duration, a "
-        f"path, a pid, a timestamp, a size — whose text carries structure of "
-        f"its own. Narrow the pattern to that value, and the comparison will "
-        f"surface the disagreement instead of swallowing it."
+        f"pattern removes a value the ENVIRONMENT varies — a duration whose "
+        f"digits moved, a path that relocated, a pid, a timestamp. Narrow the "
+        f"pattern to that value, and the comparison will surface the "
+        f"disagreement instead of swallowing it."
     )
 
 

@@ -259,12 +259,18 @@ def foundry_accept_casting(
              "unresolved_symbol_cites": [],
              "evidence_verdict": "accepted" | "skipped",
              "evidence_provenance": [...],
+             "evidence_tally": {"accepted": N, "rejected": N,
+                                "failure_tokens": [...]} | None,
              "evidence_spec_path": str | None}
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
         On evidence rejection:
             {"ok": False, "failure_token": "EVIDENCE_*", "failure_detail": "...",
-             "evidence_provenance": [...]}
+             "evidence_provenance": [...], "evidence_tally": {...}}
+
+    ``evidence_tally`` is the per-casting verdict count. It is a RETURN VALUE
+    and never a printed line (D-149): this server speaks JSON-RPC over stdio,
+    so anything written to stdout lands inside the protocol channel.
 
     ``evidence_spec_path`` names the spec the evidence run actually read —
     resolved from the RUN (``foundry_spec_hash``), never re-derived from a
@@ -402,6 +408,7 @@ def foundry_accept_casting(
     # completion report (via Foundry-Spawn-Teammate or git rev-parse HEAD).
     # ============================================================
     evidence_verdict = None
+    evidence_tally: dict | None = None
     evidence_provenance: list[dict] = []
     evidence_spec_path: Path | None = None
     evidence_stream_skips: list[dict] = []
@@ -488,26 +495,38 @@ def foundry_accept_casting(
                 project_root=project_root,
             )
 
-        # Stdout summary line (Phase 3 F0.5 stdout-summary precedent).
-        accepted = sum(
-            1 for r in evidence_provenance if r.get("verdict") == "accepted"
-        )
-        rejected = sum(
-            1 for r in evidence_provenance if r.get("verdict") == "rejected"
-        )
-        tokens = sorted(
-            {
-                r.get("failure_token")
-                for r in evidence_provenance
-                if r.get("failure_token")
-            }
-        )
-        print(
-            f"Foundry-Accept-Casting: casting {casting_id} — "
-            f"evidence verdicts: {accepted} accepted, {rejected} rejected "
-            f"(tokens: {','.join(tokens) if tokens else 'none'})",
-            flush=True,
-        )
+        # D-149 — THE TALLY IS A RETURN VALUE, NOT A PRINT.
+        #
+        # This block used to end in a bare ``print(..., flush=True)``, carried
+        # over from an "F0.5 stdout-summary precedent" that belongs to CLI
+        # scripts, not to a handler. The MCP server speaks JSON-RPC over stdio:
+        # stdout IS the protocol channel. One non-protocol line ahead of the
+        # response frame and a conforming client's parser fails on the whole
+        # message — and the only way to reach it was to pass ``casting_commit``,
+        # which is precisely the path FR-017 exists to make reachable over MCP.
+        # Wiring the evidence gate would therefore have broken the channel the
+        # first time it fired.
+        #
+        # The tally is data the caller asked for, so it travels in the returned
+        # dict beside ``evidence_verdict`` and ``evidence_provenance``. Nothing
+        # in the handler tree writes to stdout now, and
+        # ``test_no_handler_writes_to_the_protocol_channel`` derives that over
+        # the whole installed package rather than over this one site.
+        evidence_tally = {
+            "accepted": sum(
+                1 for r in evidence_provenance if r.get("verdict") == "accepted"
+            ),
+            "rejected": sum(
+                1 for r in evidence_provenance if r.get("verdict") == "rejected"
+            ),
+            "failure_tokens": sorted(
+                {
+                    r.get("failure_token")
+                    for r in evidence_provenance
+                    if r.get("failure_token")
+                }
+            ),
+        }
 
         # Hard-reject on evidence verdict='rejected'. Skip path (v2.0)
         # falls through to scope-flag check; the manifest.stream_skips
@@ -520,6 +539,7 @@ def foundry_accept_casting(
                 "failure_token": evidence_result["failure_token"],
                 "failure_detail": evidence_result["failure_detail"],
                 "evidence_provenance": evidence_provenance,
+                "evidence_tally": evidence_tally,
                 "evidence_spec_path": str(evidence_spec_path),
                 "hint": (
                     "Evidence re-execution rejected the casting. The teammate's "
@@ -577,6 +597,7 @@ def foundry_accept_casting(
                     "unbound_requirements": unbound,
                     "evidence_verdict": evidence_verdict,
                     "evidence_provenance": evidence_provenance,
+                    "evidence_tally": evidence_tally,
                     "requirement_ids": casting_req_ids,
                     "hint": (
                         f"Add a `# evidence-for: {', '.join(unbound)}` header "
@@ -665,6 +686,7 @@ def foundry_accept_casting(
         "warning": warning,
         "evidence_verdict": evidence_verdict,
         "evidence_provenance": evidence_provenance,
+        "evidence_tally": evidence_tally,
         "evidence_stream_skips": evidence_stream_skips,
         "evidence_spec_path": (
             str(evidence_spec_path) if evidence_spec_path is not None else None
