@@ -133,6 +133,12 @@ WEBSTER_LENS_ALLOW="controller,controllers,reconciler" \
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctype.py check docs
 ```
 
+**A label the server supplies is invisible to the survey.** `survey.py` reads source, so a
+screen that renders its labels from an API response contributes nothing to the allowlist however
+complete the survey is. Waypoint's secrets screen prints each secret's storage key under its
+display name, and both are data. A term you watched the product print, and that the survey does
+not know, belongs on this list; that is the case the list exists for.
+
 Record the list in the plan with a line on why each term belongs to the reader, and keep it
 short. It is a declaration, not a default, because the easy way to defeat this rule is to widen
 it until nothing fires. A term goes on the list when the product's own interface uses it in front

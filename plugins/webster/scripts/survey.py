@@ -697,8 +697,12 @@ for p in walk(exts={".tsx", ".jsx", ".vue", ".svelte"}):
     add_screen("component:" + base, f"{r}:1", name=label)
 
 user_surface["screens"] = screens
-for k in ("labels", "messages"):
-    user_surface[k] = user_surface[k][:120]
+
+# No cap. These are read back as an allowlist by doctype.py's lens, so a truncated list is a
+# wrong answer rather than a shorter one: the Waypoint secrets screen prints its storage keys
+# under each display name, and with the first 120 labels only, two of them were reported as
+# internal symbols on a page that was quoting the screen. A silent cut that turns a correct
+# sentence into a defect is worse than a long file, and the file is read by a script.
 
 # ---------------------------------------------------------------- tooling
 tooling = []
