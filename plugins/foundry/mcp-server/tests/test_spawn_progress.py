@@ -1640,25 +1640,162 @@ def test_the_shape_table_states_the_two_keys_the_readers_address_records_by() ->
 # module in the package for exactly as long as that difference stood.
 
 
-def _scanned_roots() -> list[Path]:
-    """The two source trees a shipped reader can live in.
+def _plugin_root() -> Path:
+    """``plugins/foundry`` -- located from the installed package's own file."""
+    # .../plugins/foundry/mcp-server/src/foundry_mcp/__init__.py -> parents:
+    #   [0]=foundry_mcp, [1]=src, [2]=mcp-server, [3]=plugins/foundry.
+    return Path(foundry_mcp.__file__).resolve().parents[3]
 
-    Both derived from the installed package's own location rather than typed,
-    and both asserted to exist by ``test_the_manifest_scan_looks_in_both_shipped_source_trees``
-    below -- a scan whose root has moved finds nothing and passes, which is the
-    failure mode these rules exist to avoid.
 
-    ``plugins/foundry/scripts`` is here because it is shipped source that reads
-    run artifacts (``measure-run.py``, ``migrate-archive.py``,
-    ``validate-intent-coverage.py``) and is NOT importable as part of the
-    package, so a package-only rglob would leave it permanently outside every
-    derived rule in the suite -- D-066's boundary mistake, one directory over,
-    and the same boundary D-141 found the D-137 document-load rule still
-    sitting inside.
+def _unshipped_dir_names() -> frozenset[str]:
+    """Directory names the repository itself declares it does not ship.
+
+    Read out of the repo's own ``.gitignore`` -- the one place that already
+    states this -- rather than typed here, so a newly ignored tree is excluded
+    the day it is declared and nobody has to remember a second copy. Only the
+    trailing-slash entries are directory declarations; ``*.pyc`` and friends
+    name files and are none of this census's business.
+
+    This is what keeps the enumeration below both fast and STABLE. ``.venv``
+    holds several thousand third-party modules and exists only in a checkout
+    where somebody has run ``uv``; ``__pycache__`` holds none of ours and comes
+    and goes with the last test run. A census that let either in would render
+    differently in the working tree and in the detached worktree the evidence
+    gate builds, which is D-152/D-161's failure on the neighbouring axis.
     """
-    pkg = Path(foundry_mcp.__file__).resolve().parent
-    # .../plugins/foundry/mcp-server/src/foundry_mcp -> .../plugins/foundry
-    return [pkg, pkg.parents[2] / "scripts"]
+    names: set[str] = set()
+    for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#") or not entry.endswith("/"):
+            continue
+        names.add(entry.strip("/").rsplit("/", 1)[-1])
+    return frozenset(names)
+
+
+def _shipped_python_dirs(plugin_root: Path) -> list[Path]:
+    """Every directory under ``plugin_root`` that DIRECTLY holds a shipped ``.py``.
+
+    ``os.walk`` rather than ``rglob`` because the unshipped trees have to be
+    PRUNED rather than filtered afterwards -- walking ``.venv`` to throw it
+    away costs seconds and buys nothing.
+
+    This is the census D-159 found missing. It answers "which directories does
+    this plugin ship Python in", from the tree, so that WHICH ROOTS EXIST can
+    be derived by ``_derived_roots`` and whatever is still outside them can be
+    named by ``_unscanned_shipped_dirs`` instead of being absent.
+    """
+    unshipped = _unshipped_dir_names()
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(plugin_root):
+        dirnames[:] = sorted(d for d in dirnames if d not in unshipped)
+        if any(name.endswith(".py") for name in filenames):
+            found.append(Path(dirpath).resolve())
+    return sorted(found)
+
+
+#: Directories holding a shipped ``.py`` that no package-wide rule judges, each
+#: mapped to the reason it is outside. Keys are relative to ``plugins/foundry``.
+#:
+#: The pin in ``test_every_shipped_python_directory_is_scanned_or_declared``
+#: asserts the unscanned set EQUALS these keys BOTH WAYS -- the two-sided shape
+#: ``test_evidence.py#test_no_module_declares_its_own_requirement_id_grammar``
+#: uses for offenders outside its grant (``pending_unowned``). A new shipped
+#: directory therefore fails BY NAME, which is precisely what D-159 drove and
+#: could not get: a planted four-violation reader in ``plugins/foundry/lib/``
+#: left the suite byte-identical, because being outside every root and being
+#: clean were the same observation.
+_UNSCANNED_SHIPPED_DIRS = {
+    "mcp-server/tests": (
+        "the suite itself. These files ARE the package-wide rules; scanning "
+        "them would report every planted violation string in this module as a "
+        "package offender, and would make each rule's membership include its "
+        "own judge."
+    ),
+}  # 1 declared exemption
+
+
+def _derived_roots(pkg: Path) -> list[Path]:
+    """The source trees every package-wide rule judges, membership DERIVED.
+
+    D-159, the axis: membership WITHIN a root was derived by rglob, but WHICH
+    ROOTS EXIST was a two-element list extended by hand. ``scripts`` was in it
+    only because D-141 reported the D-137 document-load rule sitting inside the
+    package boundary and the fix added that one directory. A shipped reader in
+    a NEW top-level directory under ``plugins/foundry/`` was therefore outside
+    every package-wide rule at once -- and not reported as unscanned either,
+    just absent, which reads exactly like clean.
+
+    So the roots are walked out of the plugin tree now. Both ORIGINAL roots
+    keep their identity AND their position, because both are contracts:
+
+      ``[0]``   the importable package, located from ``foundry_mcp.__file__``.
+      ``[-1]``  ``plugins/foundry/scripts`` -- shipped source that reads run
+                artifacts (``measure-run.py``, ``migrate-archive.py``,
+                ``validate-intent-coverage.py``) and is NOT importable as part
+                of the package (hyphenated filenames), so it is parsed from
+                disk. ``test_orchestrator_gates.py`` addresses it positionally
+                as ``_scanned_roots()[-1]``; it stays last by construction
+                rather than by alphabetical luck.
+
+    Anything else holding a shipped ``.py`` lands in between, discovered, and
+    is judged by every rule riding this list the day it appears -- including
+    the two in the other test modules that import this helper. Today the walk
+    yields exactly the two roots the literal named, so nothing else moves.
+    """
+    pkg = pkg.resolve()
+    plugin_root = pkg.parents[2]
+    scripts = plugin_root / "scripts"
+    exempt = [plugin_root / key for key in _UNSCANNED_SHIPPED_DIRS]
+    discovered: list[Path] = []
+    for candidate in _shipped_python_dirs(plugin_root):
+        if candidate == pkg or pkg in candidate.parents:
+            continue
+        if candidate == scripts or scripts in candidate.parents:
+            continue
+        if any(candidate == e or e in candidate.parents for e in exempt):
+            continue
+        if any(root in candidate.parents for root in discovered):
+            continue  # already covered by a root discovered above it
+        discovered.append(candidate)
+    return [pkg, *discovered, scripts]
+
+
+def _unscanned_shipped_dirs(
+    plugin_root: Path | None = None, roots: list[Path] | None = None
+) -> list[str]:
+    """Shipped-``.py`` directories that no root in ``roots`` reaches.
+
+    The other half of D-159's exhaustiveness rule: ``_derived_roots`` says
+    which roots exist, and this says what the derivation still does not reach,
+    so a directory outside every rule ANNOUNCES itself instead of being absent.
+
+    Rendered relative to the plugin root, which makes the census a claim about
+    the tree rather than about where the tree happens to be checked out
+    (D-152/D-161). ``plugin_root``/``roots`` are the plant tests' override, the
+    same shape ``_scanned_modules`` already uses.
+    """
+    plugin_root = (_plugin_root() if plugin_root is None else plugin_root).resolve()
+    roots = _scanned_roots() if roots is None else [r.resolve() for r in roots]
+    return sorted(
+        candidate.relative_to(plugin_root).as_posix()
+        for candidate in _shipped_python_dirs(plugin_root)
+        if not any(candidate == r or r in candidate.parents for r in roots)
+    )
+
+
+def _scanned_roots() -> list[Path]:
+    """The source trees a shipped reader can live in, walked out of the tree.
+
+    Derived from the installed package's own location rather than typed, and
+    every root asserted to exist by
+    ``test_the_manifest_scan_looks_in_both_shipped_source_trees`` below -- a
+    scan whose root has moved finds nothing and passes, which is the failure
+    mode these rules exist to avoid.
+
+    WHICH roots exist is derived too, since D-159. See ``_derived_roots`` for
+    the shape and for the two positional contracts it preserves.
+    """
+    return _derived_roots(Path(foundry_mcp.__file__).resolve().parent)
 
 
 def _scanned_modules(roots: list[Path] | None = None) -> list[Path]:
@@ -2957,6 +3094,155 @@ def test_the_manifest_scan_looks_in_both_shipped_source_trees() -> None:
     )
 
 
+def test_every_shipped_python_directory_is_scanned_or_declared() -> None:
+    """D-159 — exhaustiveness over WHICH ROOTS EXIST, not just within them.
+
+    The rule above proves each root is really walked. It cannot prove the set
+    of roots is complete, and that is the whole of D-159: ``_scanned_roots``
+    named two directories, membership WITHIN them was derived by rglob, and
+    membership OF them was a literal extended by hand. PROVE planted
+    ``plugins/foundry/lib/reader.py`` carrying FOUR violations at once and the
+    suite was BYTE-IDENTICAL -- outside every root and clean are the same
+    observation, so nothing had anything to say.
+
+    So: enumerate the directories under ``plugins/foundry`` that hold shipped
+    ``.py``, and assert each is either inside a scanned root or declared in
+    ``_UNSCANNED_SHIPPED_DIRS`` with its reason. The pin is TWO-SIDED, the
+    shape ``test_evidence.py#test_no_module_declares_its_own_requirement_id_grammar``
+    uses for offenders outside its grant: the unscanned set must EQUAL the
+    declared set, so a new shipped directory fails by name and a declaration
+    that stops being true fails too.
+    """
+    plugin_root = _plugin_root()
+    census = [
+        str(d.relative_to(plugin_root)) for d in _shipped_python_dirs(plugin_root)
+    ]
+
+    # ANCHORS (D-142). An enumeration that has gone blind reports nothing
+    # unscanned, and the two-sided pin below then goes green over a census it
+    # can no longer read. So the census is required to still contain the two
+    # roots this rule was built on, a subpackage inside one of them, and
+    # nothing from the trees the repository says it does not ship.
+    assert "mcp-server/src/foundry_mcp" in census, census
+    assert "mcp-server/src/foundry_mcp/tools" in census, census
+    assert "scripts" in census, census
+    assert "mcp-server/tests" in census, census
+    unshipped = _unshipped_dir_names()
+    assert {".venv", "__pycache__"} <= unshipped, sorted(unshipped)
+    leaked = [d for d in census if set(Path(d).parts) & unshipped]
+    assert leaked == [], (
+        f"the census walked into a tree .gitignore excludes: {leaked}. That "
+        f"makes it a function of whether anyone has run `uv` in this checkout."
+    )
+
+    # Every derived root is a real directory that the census found -- the roots
+    # and the census have to be answers about the same tree.
+    for root in _scanned_roots():
+        assert root.is_dir(), (
+            f"{root} does not exist, so this rule is scanning nothing. The "
+            f"roots are derived from foundry_mcp.__file__; if the tree moved, "
+            f"fix _derived_roots rather than deleting the root."
+        )
+        assert str(root.relative_to(plugin_root)) in census, (root, census)
+
+    # THE PIN, both ways.
+    unscanned = _unscanned_shipped_dirs()
+    assert unscanned == sorted(_UNSCANNED_SHIPPED_DIRS), (
+        f"the set of shipped-.py directories that NO package-wide rule judges "
+        f"changed: now {unscanned}, declared {sorted(_UNSCANNED_SHIPPED_DIRS)}. "
+        f"A new one must be scanned or declared with the reason it is outside "
+        f"-- it may not simply be absent, which is what D-159 was filed on."
+    )
+    assert all(reason.strip() for reason in _UNSCANNED_SHIPPED_DIRS.values()), (
+        "an exemption without a stated reason is a literal with better "
+        "manners; every key here states why that directory is outside"
+    )
+
+
+#: PROVE's D-159 plant, in shape: ONE module in a NEW top-level directory under
+#: the plugin root carrying four package-rule violations at once -- an unguarded
+#: strict-decoding ``read_text``, a raw ``json.loads`` of it, a bare ``print``
+#: on a shipped path, and an unlocked ``rename`` onto a run artifact -- plus a
+#: reach inside a manifest record whose shape nobody established, so BOTH
+#: package-wide rules in this module have a member in it. Filed with the suite
+#: byte-identical either way: `597 passed, 1 skipped` with and without it, and
+#: no test naming the file.
+_D159_PLANTED_READER = '''
+import json
+
+
+def loads_notes(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def reads_the_records(fdir):
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    for c in manifest.get("castings", []):
+        print("planted reader tally: " + str(c.get("id")))
+
+
+def publishes(tmp, dest):
+    tmp.rename(dest)
+'''
+
+
+def test_a_shipped_reader_in_a_new_top_level_directory_is_not_invisible(
+    tmp_path,
+) -> None:
+    """D-159 driven, on the plant that left the suite byte-identical.
+
+    A faithful miniature of the plugin tree: the importable package under
+    ``mcp-server/src/foundry_mcp``, the hyphenated-CLI ``scripts`` tree, the
+    suite's own ``mcp-server/tests``, and a NEW top-level ``lib/`` holding
+    PROVE's four-violation reader. Planted into a temporary tree rather than
+    the shipped one for the reason ``_scanned_modules`` records: two other
+    castings run this suite against the same working tree, and a module that
+    exists for four seconds inside ``src/foundry_mcp`` is a spurious offender
+    in somebody else's run.
+
+    BOTH halves of the fix are driven on the SAME bed, because either alone is
+    still D-159:
+
+      under the OLD two-literal roots ``lib`` is not scanned -- and it is now
+      REPORTED, so the directory announces itself instead of being absent;
+
+      under the DERIVED roots ``lib`` IS a root, and both package-wide rules in
+      this module name the file inside it.
+    """
+    bed = tmp_path / "foundry"
+    pkg = bed / "mcp-server" / "src" / "foundry_mcp"
+    tests = bed / "mcp-server" / "tests"
+    scripts = bed / "scripts"
+    lib = bed / "lib"
+    for d in (pkg, tests, scripts, lib):
+        d.mkdir(parents=True)
+    bed = bed.resolve()
+    pkg, tests, scripts, lib = (p.resolve() for p in (pkg, tests, scripts, lib))
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (scripts / "measure-run.py").write_text("VERSION = 1\n", encoding="utf-8")
+    (tests / "test_x.py").write_text("VERSION = 1\n", encoding="utf-8")
+    (lib / "reader.py").write_text(_D159_PLANTED_READER, encoding="utf-8")
+
+    # BEFORE — the literal the defect was filed on. `lib` is outside it, and
+    # the report is what makes that observable rather than silent.
+    assert _unscanned_shipped_dirs(bed, [pkg, scripts]) == ["lib", "mcp-server/tests"]
+
+    # AFTER — the derivation reaches it, and the two positional contracts hold.
+    roots = _derived_roots(pkg)
+    assert roots == [pkg, lib, scripts]
+    assert roots[0] == pkg and roots[-1] == scripts
+    assert _unscanned_shipped_dirs(bed, roots) == ["mcp-server/tests"]
+
+    # ...and now the rules NAME the file, which is the observation the plant
+    # could not produce: a four-violation module and a byte-identical suite.
+    _every, decode_offenders, _u, _c = _package_text_reads(roots)
+    assert [o.rsplit(":", 1)[0] for o in decode_offenders] == [
+        "reader.py::loads_notes"
+    ], decode_offenders
+    _seen, record_offenders = _package_record_readers(roots)
+    assert record_offenders == ["reader.py#reads_the_records"], record_offenders
+
+
 def test_the_record_rungs_come_out_of_the_shape_table() -> None:
     """The rungs policed are the rungs the validator checks — not a typed list.
 
@@ -3989,6 +4275,60 @@ def a_reader(p):
 # --------------------------------------------------------------------------- #
 
 
+def test_render_scanned_root_derivation() -> None:
+    """Print D-159's census: which roots exist, and what is outside them.
+
+    Every path here is relative to ``plugins/foundry``, so the body is a claim
+    about the tree and not about the machine that captured it (D-152/D-161).
+    """
+    plugin_root = _plugin_root()
+    roots = _scanned_roots()
+    unscanned = _unscanned_shipped_dirs()
+    covered = {str(r.relative_to(plugin_root)) for r in roots}
+
+    lines = [
+        "SUBJECT   WHICH SOURCE TREES every package-wide rule in this module",
+        "          judges -- walked out of plugins/foundry, not extended by",
+        "          hand (D-159). Paths below are relative to plugins/foundry.",
+        "",
+        "NOT SHIPPED — pruned by name, read off the repository's own",
+        f"          .gitignore rather than typed: {sorted(_unshipped_dir_names())}",
+        "",
+        "CENSUS    every directory holding a shipped .py:",
+    ]
+    for d in _shipped_python_dirs(plugin_root):
+        rel = str(d.relative_to(plugin_root))
+        if rel in covered:
+            verdict = "SCANNED — a root"
+        elif any(r in d.parents for r in roots):
+            verdict = "scanned — inside a root"
+        else:
+            verdict = "UNSCANNED — declared below"
+        lines.append(f"  {rel:<38} {verdict}")
+
+    lines += [
+        "",
+        "ROOTS     position is a contract, not alphabetical luck:",
+        f"  [0]   {str(roots[0].relative_to(plugin_root)):<32} "
+        f"the importable package",
+        f"  [-1]  {str(roots[-1].relative_to(plugin_root)):<32} "
+        f"the hyphenated CLI tree, addressed",
+        f"        {'':<32} positionally by test_orchestrator_gates.py",
+        "",
+        "UNSCANNED — reported, not absent. This is the line D-159 was filed",
+        "          for: a shipped reader in a NEW top-level directory used to",
+        "          be outside every rule AND outside every report, which reads",
+        "          exactly like clean. The set is pinned BOTH ways.",
+    ]
+    for rel in unscanned:
+        lines.append(f"  {rel}")
+        lines.append(f"      declared: {_UNSCANNED_SHIPPED_DIRS[rel]}")
+
+    print("\n".join(lines))
+    assert unscanned == sorted(_UNSCANNED_SHIPPED_DIRS)
+    assert roots[-1].name == "scripts"
+
+
 def test_render_decode_read_derivation() -> None:
     """Print the D-138 read rule's subject, verdict, and its own adjacent path."""
     every, offenders, unresolved, unclassified = _package_text_reads()
@@ -3996,7 +4336,18 @@ def test_render_decode_read_derivation() -> None:
     lines = [
         "SUBJECT   every decode site in both shipped source trees, membership",
         "          derived by rglob from the package's own __file__ (D-146)",
-        *(f"          {r} " for r in _scanned_roots()),
+        # Repo-relative, the same rendering the sibling
+        # `test_render_manifest_reader_derivation` below already uses on these
+        # same roots. Printed absolute (D-152/D-161) this body pinned the
+        # capture machine's home directory, so the shipped verifier -- which
+        # always re-executes inside a worktree it creates, never at the capture
+        # path -- refused the log with EVIDENCE_OUTPUT_MISMATCH everywhere on
+        # earth except one laptop. The fix is to stop printing a fact about
+        # where the repo is checked out, NOT to declare that fact volatile: a
+        # path-shaped volatile pattern would have been ADMITTED by the
+        # `absolute_path` grammar (D-156) and the log would have passed while
+        # still pinning output no other machine produces.
+        *(f"          {r.relative_to(REPO_ROOT)} " for r in _scanned_roots()),
         f"READS     {len(every)} decode sites found in {len(_scanned_modules())} modules",
         f"OFFENDERS {len(offenders)} not covered for the decode family",
         f"UNRESOLVED handler spellings: {unresolved or 'none'}",
