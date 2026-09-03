@@ -26,7 +26,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
+from foundry_mcp.schemas.vocab import HANDOFF_EVENT_LEAD_FIX, REQUIREMENT_ID_RE
 from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
 from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
 from foundry_mcp.tools.foundry_state import (
@@ -45,6 +45,173 @@ def _hash_file(path: Path) -> str | None:
 
 def _hash_str(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _append_handoff_record(
+    fdir: Path,
+    entry: dict,
+    md_fields: list[tuple[str, str]],
+) -> None:
+    """Append one record to BOTH handoff channels — JSONL and the md mirror.
+
+    WHY THIS IS A FUNCTION (GI-003)
+    -------------------------------
+    The audit log has two channels and they are only useful while they agree.
+    While ``foundry_handoff`` was the sole writer, "append to both" was one
+    block of straight-line code and could not disagree with itself. GI-003
+    adds a SECOND writer — the server's own ``lead_fix`` record — and the
+    moment there are two, "both channels, same format, header bootstrapped
+    once" becomes a convention each is trusted to remember. That is the shape
+    D-127 and D-119 both took (two doors, one remembered a step, the other did
+    not), so it is factored here before it can happen a third time rather than
+    after.
+
+    ``entry`` is written to handoffs.jsonl verbatim, so each caller owns its
+    own record shape — the lead_fix record carries defect_id/tier/file/
+    line_count/test/fix_commit as FIRST-CLASS keys, not prose squeezed into a
+    summary field, because the F6 report reads them back by name. ``md_fields``
+    is the ordered human mirror; empty values are skipped, mirroring
+    ``foundry._ledger_mirror``'s rule so an absent field prints nothing rather
+    than an empty bullet.
+    """
+    fdir.mkdir(parents=True, exist_ok=True)
+
+    jsonl_path = fdir / "handoffs.jsonl"
+    with jsonl_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    md_path = fdir / "handoffs.md"
+    header_needed = not md_path.exists()
+    with md_path.open("a", encoding="utf-8") as f:
+        if header_needed:
+            f.write("# Foundry Handoff Audit Log\n\n")
+            f.write("Every transition between phases or artifacts is recorded here.\n\n")
+        f.write(f"## {entry['event']} — {entry['timestamp']}\n")
+        for label, value in md_fields:
+            if value:
+                f.write(f"- {label}: {value}\n")
+        f.write("\n")
+
+
+def record_lead_fix_handoff(
+    run_dir: Path,
+    *,
+    defect_id: str,
+    tier: str,
+    file: str | None,
+    line_count: int | None,
+    test: str,
+    fix_commit: str,
+) -> dict:
+    """Append the server's own ``lead_fix`` record. Returns the record.
+
+    GI-003 / AC-022 / OT-010 — THE SERVER WRITES THIS, NOT THE LEAD. A lead
+    fix recorded as free prose in a hand-written handoff is a fix nothing can
+    measure or count: it cannot be totalled, the F6 report cannot list it, and
+    the lane the fix was supposed to fit inside is unfalsifiable after the
+    fact. So ``Foundry-Fix`` appends this itself on every accepted lead fix,
+    and the record carries the five things a reader needs to re-derive the
+    decision — which defect, at which tier, in which file, how many lines, and
+    the test that holds it — plus the commit those were measured from.
+
+    ``file`` and ``line_count`` are None for a LATENT lead fix, which lands
+    unmeasured (ST-004 / CT-006: "a LATENT lead fix is not measured"). They
+    are None rather than absent so every record has one shape and the report
+    reads "unmeasured" from a value instead of from a missing key.
+
+    Takes ``run_dir`` rather than ``project_root`` because its one caller —
+    ``foundry_mark_defect_fixed``, which has just written the defect ledger —
+    already holds the resolved run dir. Re-resolving it here would be a second
+    derivation of a path the caller has, and the two could disagree.
+    """
+    timestamp = datetime.now(timezone.utc).isoformat()
+    entry = {
+        "handoff_id": _hash_str(f"{timestamp}|{HANDOFF_EVENT_LEAD_FIX}|{defect_id}"),
+        "timestamp": timestamp,
+        "event": HANDOFF_EVENT_LEAD_FIX,
+        "defect_id": defect_id,
+        "tier": tier,
+        "file": file,
+        "line_count": line_count,
+        "test": test,
+        "fix_commit": fix_commit,
+    }
+    _append_handoff_record(
+        run_dir,
+        entry,
+        [
+            ("defect_id", f"`{defect_id}`"),
+            ("tier", tier),
+            ("file", file if file is not None else "unmeasured (LATENT)"),
+            (
+                "line_count",
+                str(line_count) if line_count is not None else "unmeasured (LATENT)",
+            ),
+            ("test", f"`{test}`"),
+            ("fix_commit", f"`{fix_commit}`"),
+        ],
+    )
+    return entry
+
+
+def check_reported_prompt_hash(
+    run_dir: Path,
+    casting_id: int | str,
+    reported_hash: str | None,
+) -> dict | None:
+    """None when the teammate's reported prompt hash is the file's, else a refusal.
+
+    CT-011 / AC-030 — pointer dispatch hands the teammate a PATH and a HASH
+    instead of the prompt text, and this is what turns that from advice into
+    something checkable: only an agent that actually read the file can state
+    the value back. Both consuming gates use this one function —
+    ``foundry_accept_casting`` below and ``Foundry-Fix`` — because a hash rung
+    that exists at one door and not the other lets an unread prompt through
+    whichever door the lead happens to walk.
+
+    THE COMPARISON VALUE IS THE PUBLISHED SPELLING. ``_hash_str`` produces
+    ``"sha256:" + hexdigest()[:16]``, which is byte-for-byte what
+    ``foundry_spawn`` publishes as ``prompt_hash`` and what its dispatch block
+    tells the teammate to state back "character for character". A bare
+    hexdigest or the full 64 characters here would make every honest report a
+    mismatch, so there is exactly one spelling in the package and this reads
+    it rather than re-deriving one.
+
+    An unreadable or missing prompt file returns the house ``document_refusal``
+    rather than None: nothing was compared, and "I could not read the file" is
+    not the same answer as "the hashes agree".
+    """
+    prompt_path = run_dir / "castings" / f"casting-{casting_id}-prompt.md"
+    if not prompt_path.exists():
+        return document_refusal(prompt_path, f"{prompt_path.name} not found")
+
+    prompt_text, problem = read_text_file(prompt_path)
+    if problem is not None:
+        return document_refusal(prompt_path, problem)
+
+    expected = _hash_str(prompt_text)
+    if reported_hash == expected:
+        return None
+
+    return {
+        "ok": False,
+        # The error TOKEN is unchanged from the inline rung this replaced.
+        # Callers and tests key on it, and a rung that starts naming itself
+        # differently the day it is shared is a behaviour change smuggled in
+        # under a refactor.
+        "error": "stale_prompt_hash",
+        "hint": (
+            f"Casting prompt hash mismatch. The file at {prompt_path.name} "
+            f"hashes to {expected!r}; the value reported was "
+            f"{reported_hash!r}. Call Foundry-Spawn-Teammate for a fresh "
+            f"prompt hash — or, if the teammate reported it, have them re-read "
+            f"the prompt file in full and state its hash character for "
+            f"character. Only reading the file produces the right answer, "
+            f"which is the point."
+        ),
+        "expected_hash": expected,
+        "reported_hash": reported_hash,
+    }
 
 
 def foundry_handoff(
@@ -123,32 +290,24 @@ def foundry_handoff(
             f"not a fresh read of the source. Context rot risk."
         )
 
-    # Write JSONL
-    jsonl_path = fdir / "handoffs.jsonl"
-    with jsonl_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
-    # Mirror to human-readable markdown
-    md_path = fdir / "handoffs.md"
-    header_needed = not md_path.exists()
-    with md_path.open("a", encoding="utf-8") as f:
-        if header_needed:
-            f.write("# Foundry Handoff Audit Log\n\n")
-            f.write("Every transition between phases or artifacts is recorded here.\n\n")
-        f.write(f"## {event} — {timestamp}\n")
-        f.write(f"- handoff_id: `{handoff_id}`\n")
-        if source:
-            f.write(f"- source: `{source}` ({source_hash or 'no file'})\n")
-        if destination:
-            f.write(f"- destination: `{destination}` ({dest_hash or 'no file'})\n")
-        f.write(f"- source_reread: `{source_reread}`\n")
-        if summary:
-            f.write(f"- summary: {summary}\n")
-        if information_loss:
-            f.write(f"- **information_loss**: {information_loss}\n")
-        if warning:
-            f.write(f"- **WARNING**: {warning}\n")
-        f.write("\n")
+    # Both channels, through the writer the lead_fix record also uses, so the
+    # two records cannot land in different files or in different formats.
+    _append_handoff_record(
+        fdir,
+        entry,
+        [
+            ("handoff_id", f"`{handoff_id}`"),
+            ("source", f"`{source}` ({source_hash or 'no file'})" if source else ""),
+            (
+                "destination",
+                f"`{destination}` ({dest_hash or 'no file'})" if destination else "",
+            ),
+            ("source_reread", f"`{source_reread}`"),
+            ("summary", summary),
+            ("**information_loss**", information_loss),
+            ("**WARNING**", warning or ""),
+        ],
+    )
 
     return {
         "ok": True,
@@ -251,11 +410,25 @@ def foundry_accept_casting(
         prompt_hash: Hash of casting-{id}-prompt.md (from Foundry-Spawn-Teammate)
         completion_report: The teammate's completion report text
         project_root: Repo root
-        casting_commit: Phase 4 / EVID-01 — full SHA of the casting's
-            commit (rev-parseable). Required for evidence re-execution
-            (``verify_evidence`` checks out this commit in a detached
-            worktree). When None, evidence verification is bypassed
-            (Phase 4 backwards-compat for callers not yet updated).
+        casting_commit: REQUIRED (CT-015 / FR-010 / AC-015) — full SHA of the
+            casting's commit (rev-parseable). ``verify_evidence`` checks this
+            commit out in a detached worktree, so acceptance without it would
+            have nothing to verify. Omitting it is a refusal naming the
+            parameter, on the first rung of the precondition ladder. The
+            parameter keeps its ``None`` default so the refusal is the
+            handler's and reads identically however the call arrived — over
+            MCP, from a test, or from another handler — rather than being an
+            argument-binding TypeError at one door and a named refusal at the
+            next.
+
+            The backwards-compat shim this used to carry is GONE: when
+            ``casting_commit`` was optional, omitting it bypassed BOTH EVID-01
+            and EVID-02 and still returned ``ok: true``, which bought a green
+            acceptance that verified nothing. Note that ``evidence_provenance``
+            being an EMPTY list is still a legitimate outcome — a v2.0 spec
+            routes through the stream-skip branch — but it is now always the
+            RESULT of running the evidence path rather than a default from a
+            bypassed block.
 
     Returns:
         On success:
@@ -286,6 +459,41 @@ def foundry_accept_casting(
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"ok": False, "error": "No active foundry run"}
+
+    # CT-015 / FR-010 / AC-015 / OT-027 — casting_commit is REQUIRED.
+    #
+    # It was optional, and optional is what made it dangerous: omitting it
+    # bypassed BOTH EVID-01 (evidence re-execution) and EVID-02 (per-requirement
+    # binding) and still returned ok:true. The failure mode was not an error a
+    # lead would notice, it was a GREEN ACCEPTANCE THAT VERIFIED NOTHING —
+    # the most expensive kind, because the run proceeds on it. "No acceptance
+    # without EVID-01/EVID-02 running" (FR-010) is the rule, and a default that
+    # silently disables both is that rule's exact negation.
+    #
+    # It is the FIRST rung deliberately. A missing required parameter is a
+    # fault in the CALL, not in the run's artifacts, so making a lead produce a
+    # fresh spec hash before learning they omitted a parameter answers a
+    # question they did not ask. It also lands before any worktree or
+    # subprocess work by construction rather than by placement luck.
+    if not casting_commit:
+        return {
+            "ok": False,
+            "error": (
+                "casting_commit is required. Acceptance re-executes the "
+                "casting's committed evidence at that commit; without it "
+                "there is nothing to check out and nothing to verify."
+            ),
+            "hint": (
+                "Pass the full SHA of the casting's commit — the teammate "
+                "states it in the completion report, and `git rev-parse HEAD` "
+                "in the casting's worktree produces it. Acceptance is not "
+                "available without evidence re-execution: a casting that "
+                "cannot name its commit has not been shown to have built "
+                "anything."
+            ),
+            "casting_id": casting_id,
+            "field": "casting_commit",
+        }
 
     # Verify spec hash
     spec_result = foundry_spec_hash(project_root=project_root)
@@ -321,16 +529,16 @@ def foundry_accept_casting(
     if prompt_problem is not None:
         return document_refusal(prompt_path, prompt_problem)
 
-    current_prompt_hash = _hash_str(prompt_text)
-    if prompt_hash != current_prompt_hash:
-        return {
-            "ok": False,
-            "error": "stale_prompt_hash",
-            "hint": (
-                f"Casting prompt hash mismatch. Call Foundry-Spawn-Teammate "
-                f"first to get a fresh prompt hash, then retry acceptance."
-            ),
-        }
+    # CT-011 / AC-030 — the hash rung is `check_reported_prompt_hash`, not a
+    # second inline comparison. Foundry-Fix applies the same check to the same
+    # value, and two implementations of "does the reported hash match the
+    # file" is how one door ends up accepting a prompt the other would refuse.
+    # The helper re-reads the file rather than taking `prompt_text` as an
+    # argument, so the bytes it hashes are the bytes on disk at the moment of
+    # the check at BOTH doors.
+    hash_refusal = check_reported_prompt_hash(fdir, casting_id, prompt_hash)
+    if hash_refusal is not None:
+        return hash_refusal
 
     # Extract acceptance criteria from the <spec_requirements> block
     import re
@@ -420,213 +628,215 @@ def foundry_accept_casting(
     # and rejected on byte-mismatch, timeout, non-zero exit, missing
     # command, malformed volatile regex, or stub-pattern hit.
     #
-    # casting_commit=None is the backwards-compat shim for callers not yet
-    # updated; evidence verification is bypassed in that case so the gate
-    # doesn't break test fixtures + prior-Phase callsites that haven't
-    # migrated. Production callers MUST pass the SHA from the teammate's
-    # completion report (via Foundry-Spawn-Teammate or git rev-parse HEAD).
+    # THIS BLOCK IS NO LONGER CONDITIONAL (CT-015 / FR-010). It used to sit
+    # under `if casting_commit is not None:` — a backwards-compat shim for
+    # callsites that had not migrated — and the branch is dead now that the
+    # first rung refuses an absent commit. It is REMOVED rather than left
+    # standing as an unreachable guard, because an `if` that can no longer be
+    # false still reads as a supported mode to the next author, and the mode it
+    # advertised was "acceptance with no verification". `evidence_provenance`
+    # is therefore always the result of running this path.
     # ============================================================
     evidence_verdict = None
     evidence_tally: dict | None = None
     evidence_provenance: list[dict] = []
     evidence_spec_path: Path | None = None
     evidence_stream_skips: list[dict] = []
-    if casting_commit is not None:
-        from foundry_mcp.tools.evidence import (
-            _declared_spec_format_version,
-            _read_spec_format_version,
-            verify_evidence,
-        )
-        from foundry_mcp.tools.foundry_state import get_run_dir as _get_run_dir
+    from foundry_mcp.tools.evidence import (
+        _declared_spec_format_version,
+        _read_spec_format_version,
+        verify_evidence,
+    )
+    from foundry_mcp.tools.foundry_state import get_run_dir as _get_run_dir
 
-        # Resolve run_dir for worktree storage. fdir is the active foundry
-        # run dir (computed at function entry); pass it through so the
-        # worktree lives under foundry-archive/{run}/worktrees/.
-        #
-        # FR-017 / AC-023: the spec path is the RUN's spec, not a third
-        # re-derivation. `foundry_spec_hash` already resolved it above
-        # (fdir/spec.md, else the spec_path recorded in state.json) and the
-        # result is in `spec_result`. The hardcoded
-        # `<project_root>/specs/spec.md` this replaces pointed at a file most
-        # runs do not have; `verify_evidence` reads `spec_format_version` off
-        # whatever path it is handed and defaults to v2.0 on a miss, so the
-        # wrong path silently downgraded every v2.1 run to the stream-skip
-        # branch and no evidence was ever re-executed.
-        evidence_spec_path = Path(spec_result["spec_path"])
+    # Resolve run_dir for worktree storage. fdir is the active foundry
+    # run dir (computed at function entry); pass it through so the
+    # worktree lives under foundry-archive/{run}/worktrees/.
+    #
+    # FR-017 / AC-023: the spec path is the RUN's spec, not a third
+    # re-derivation. `foundry_spec_hash` already resolved it above
+    # (fdir/spec.md, else the spec_path recorded in state.json) and the
+    # result is in `spec_result`. The hardcoded
+    # `<project_root>/specs/spec.md` this replaces pointed at a file most
+    # runs do not have; `verify_evidence` reads `spec_format_version` off
+    # whatever path it is handed and defaults to v2.0 on a miss, so the
+    # wrong path silently downgraded every v2.1 run to the stream-skip
+    # branch and no evidence was ever re-executed.
+    evidence_spec_path = Path(spec_result["spec_path"])
 
-        # A DECLARED but unparseable spec_format_version is a precondition
-        # failure, and it is refused HERE, in the same {ok, error, hint} shape
-        # as every other rung of this ladder. It is not an evidence failure —
-        # nothing was re-executed and no evidence file is at fault — so it
-        # carries no KNOWN_EVIDENCE_FAILURE_TOKENS name. What it must not do is
-        # what it used to: parse as v2.0, skip re-execution, and return
-        # `ok: true`. A typo in one frontmatter line bought a green gate.
-        if _read_spec_format_version(evidence_spec_path) is None:
-            declared = _declared_spec_format_version(evidence_spec_path)
-            return {
-                "ok": False,
-                "casting_id": casting_id,
-                "error": "malformed_spec_format_version",
-                "evidence_spec_path": str(evidence_spec_path),
-                "declared_spec_format_version": declared,
-                "hint": (
-                    f"{evidence_spec_path} declares spec_format_version "
-                    f"{declared!r}, which is not a vN.N version. Evidence "
-                    f"verification will not guess a version and will not "
-                    f"silently downgrade the run to v2.0. Fix the spec's "
-                    f"frontmatter to a real version (e.g. `spec_format_version: "
-                    f"v2.1`) and re-run acceptance."
-                ),
-            }
-
-        evidence_result = verify_evidence(
-            casting_id=casting_id,
-            project_root=Path(project_root),
-            casting_commit=casting_commit,
-            spec_path=evidence_spec_path,
-            run_dir=fdir,
-        )
-        evidence_verdict = evidence_result["verdict"]
-        evidence_provenance = list(evidence_result.get("provenance_records", []))
-        # A v2.0 stream-skip means evidence verification was structurally
-        # bypassed for this casting. It is persisted in the run's manifest, but
-        # the lead reads THIS return — surfacing the record here is what makes
-        # the bypass visible at the moment it happens rather than only to
-        # whoever later opens the manifest.
-        evidence_stream_skips = list(
-            evidence_result.get("manifest_updates", {}).get("stream_skips", [])
-        )
-
-        # Audit-log per evidence file (two-channel audit: manifest +
-        # handoffs.jsonl). Mirrors Phase 1/2/3 dual-channel pattern.
-        for record in evidence_provenance:
-            foundry_handoff(
-                event="evidence_verified",
-                source=f"castings/casting-{casting_id}-prompt.md",
-                destination=record.get("evidence_path", ""),
-                source_reread=True,
-                summary=(
-                    f"casting {casting_id} evidence verdict={record.get('verdict')} "
-                    f"token={record.get('failure_token') or 'none'} "
-                    f"elapsed={record.get('elapsed_seconds')}s"
-                ),
-                information_loss=record.get("failure_detail") or "",
-                project_root=project_root,
-            )
-
-        # D-149 — THE TALLY IS A RETURN VALUE, NOT A PRINT.
-        #
-        # This block used to end in a bare ``print(..., flush=True)``, carried
-        # over from an "F0.5 stdout-summary precedent" that belongs to CLI
-        # scripts, not to a handler. The MCP server speaks JSON-RPC over stdio:
-        # stdout IS the protocol channel. One non-protocol line ahead of the
-        # response frame and a conforming client's parser fails on the whole
-        # message — and the only way to reach it was to pass ``casting_commit``,
-        # which is precisely the path FR-017 exists to make reachable over MCP.
-        # Wiring the evidence gate would therefore have broken the channel the
-        # first time it fired.
-        #
-        # The tally is data the caller asked for, so it travels in the returned
-        # dict beside ``evidence_verdict`` and ``evidence_provenance``. Nothing
-        # in the handler tree writes to stdout now, and
-        # ``test_no_handler_writes_to_the_protocol_channel`` derives that over
-        # the whole installed package rather than over this one site.
-        evidence_tally = {
-            "accepted": sum(
-                1 for r in evidence_provenance if r.get("verdict") == "accepted"
-            ),
-            "rejected": sum(
-                1 for r in evidence_provenance if r.get("verdict") == "rejected"
-            ),
-            "failure_tokens": sorted(
-                {
-                    r.get("failure_token")
-                    for r in evidence_provenance
-                    if r.get("failure_token")
-                }
+    # A DECLARED but unparseable spec_format_version is a precondition
+    # failure, and it is refused HERE, in the same {ok, error, hint} shape
+    # as every other rung of this ladder. It is not an evidence failure —
+    # nothing was re-executed and no evidence file is at fault — so it
+    # carries no KNOWN_EVIDENCE_FAILURE_TOKENS name. What it must not do is
+    # what it used to: parse as v2.0, skip re-execution, and return
+    # `ok: true`. A typo in one frontmatter line bought a green gate.
+    if _read_spec_format_version(evidence_spec_path) is None:
+        declared = _declared_spec_format_version(evidence_spec_path)
+        return {
+            "ok": False,
+            "casting_id": casting_id,
+            "error": "malformed_spec_format_version",
+            "evidence_spec_path": str(evidence_spec_path),
+            "declared_spec_format_version": declared,
+            "hint": (
+                f"{evidence_spec_path} declares spec_format_version "
+                f"{declared!r}, which is not a vN.N version. Evidence "
+                f"verification will not guess a version and will not "
+                f"silently downgrade the run to v2.0. Fix the spec's "
+                f"frontmatter to a real version (e.g. `spec_format_version: "
+                f"v2.1`) and re-run acceptance."
             ),
         }
 
-        # Hard-reject on evidence verdict='rejected'. Skip path (v2.0)
-        # falls through to scope-flag check; the manifest.stream_skips
-        # record is the audit signal that evidence verification was
-        # structurally bypassed for this run.
-        if evidence_verdict == "rejected":
+    evidence_result = verify_evidence(
+        casting_id=casting_id,
+        project_root=Path(project_root),
+        casting_commit=casting_commit,
+        spec_path=evidence_spec_path,
+        run_dir=fdir,
+    )
+    evidence_verdict = evidence_result["verdict"]
+    evidence_provenance = list(evidence_result.get("provenance_records", []))
+    # A v2.0 stream-skip means evidence verification was structurally
+    # bypassed for this casting. It is persisted in the run's manifest, but
+    # the lead reads THIS return — surfacing the record here is what makes
+    # the bypass visible at the moment it happens rather than only to
+    # whoever later opens the manifest.
+    evidence_stream_skips = list(
+        evidence_result.get("manifest_updates", {}).get("stream_skips", [])
+    )
+
+    # Audit-log per evidence file (two-channel audit: manifest +
+    # handoffs.jsonl). Mirrors Phase 1/2/3 dual-channel pattern.
+    for record in evidence_provenance:
+        foundry_handoff(
+            event="evidence_verified",
+            source=f"castings/casting-{casting_id}-prompt.md",
+            destination=record.get("evidence_path", ""),
+            source_reread=True,
+            summary=(
+                f"casting {casting_id} evidence verdict={record.get('verdict')} "
+                f"token={record.get('failure_token') or 'none'} "
+                f"elapsed={record.get('elapsed_seconds')}s"
+            ),
+            information_loss=record.get("failure_detail") or "",
+            project_root=project_root,
+        )
+
+    # D-149 — THE TALLY IS A RETURN VALUE, NOT A PRINT.
+    #
+    # This block used to end in a bare ``print(..., flush=True)``, carried
+    # over from an "F0.5 stdout-summary precedent" that belongs to CLI
+    # scripts, not to a handler. The MCP server speaks JSON-RPC over stdio:
+    # stdout IS the protocol channel. One non-protocol line ahead of the
+    # response frame and a conforming client's parser fails on the whole
+    # message — and the only way to reach it was to pass ``casting_commit``,
+    # which is precisely the path FR-017 exists to make reachable over MCP.
+    # Wiring the evidence gate would therefore have broken the channel the
+    # first time it fired.
+    #
+    # The tally is data the caller asked for, so it travels in the returned
+    # dict beside ``evidence_verdict`` and ``evidence_provenance``. Nothing
+    # in the handler tree writes to stdout now, and
+    # ``test_no_handler_writes_to_the_protocol_channel`` derives that over
+    # the whole installed package rather than over this one site.
+    evidence_tally = {
+        "accepted": sum(
+            1 for r in evidence_provenance if r.get("verdict") == "accepted"
+        ),
+        "rejected": sum(
+            1 for r in evidence_provenance if r.get("verdict") == "rejected"
+        ),
+        "failure_tokens": sorted(
+            {
+                r.get("failure_token")
+                for r in evidence_provenance
+                if r.get("failure_token")
+            }
+        ),
+    }
+
+    # Hard-reject on evidence verdict='rejected'. Skip path (v2.0)
+    # falls through to scope-flag check; the manifest.stream_skips
+    # record is the audit signal that evidence verification was
+    # structurally bypassed for this run.
+    if evidence_verdict == "rejected":
+        return {
+            "ok": False,
+            "casting_id": casting_id,
+            "failure_token": evidence_result["failure_token"],
+            "failure_detail": evidence_result["failure_detail"],
+            "evidence_provenance": evidence_provenance,
+            "evidence_tally": evidence_tally,
+            "evidence_spec_path": str(evidence_spec_path),
+            "hint": (
+                "Evidence re-execution rejected the casting. The teammate's "
+                "committed log diverges from a clean re-execution of "
+                "`# evidence-cmd:`. Re-run the command yourself, inspect "
+                "the diff, and re-dispatch with corrected evidence."
+            ),
+        }
+
+    # ============================================================
+    # Phase 5 / EVID-02: per-requirement-coverage check (strictness
+    # upgrade to EVID-01).
+    #
+    # Runs only when:
+    #   1. evidence verification engaged AND verdict was "accepted"
+    #      (skipped → v2.0 stream-skip routing; rejected → Phase 4
+    #      already returned; both bypass this check)
+    #   2. casting_req_ids is non-empty (zero-req castings — refactors,
+    #      doc edits — legitimately need no per-requirement binding)
+    #
+    # Computes the set difference of casting requirement IDs against
+    # the union of `evidence_for` lists across all provenance records.
+    # Non-empty difference → reject with named missing IDs.
+    #
+    # casting_commit=None bypasses the entire enclosing block (Phase 4
+    # backwards-compat shim — Pitfall 7); this check inherits.
+    #
+    # Why set(casting_req_ids) - bound_ids (not the reverse): "unbound"
+    # = "in the casting but not bound by any artifact". The reverse
+    # direction would surface "over-coverage" (artifact cites IDs not
+    # in the casting), which 05-RESEARCH.md decided to silently drop
+    # (closed-vocabulary minimization). Over-coverage is not an error.
+    # ============================================================
+    if (
+        evidence_verdict == "accepted"  # don't double-reject after Phase 4 fail
+        and casting_req_ids  # zero-req castings need no per-req binding
+    ):
+        bound_ids: set[str] = set()
+        for record in evidence_provenance:
+            for rid in record.get("evidence_for", []):
+                bound_ids.add(rid)
+        unbound = sorted(set(casting_req_ids) - bound_ids)
+        if unbound:
+            # Hard-reject with named missing IDs (SC#4 satisfied).
             return {
                 "ok": False,
                 "casting_id": casting_id,
-                "failure_token": evidence_result["failure_token"],
-                "failure_detail": evidence_result["failure_detail"],
+                "failure_token": "EVIDENCE_REQUIREMENT_UNBOUND",
+                "failure_detail": (
+                    f"casting {casting_id} has no evidence artifact bound to "
+                    f"requirement(s): {', '.join(unbound)}. Each committed "
+                    f"evidence file must carry a `# evidence-for: <ids>` "
+                    f"header listing the requirement IDs it demonstrates."
+                ),
+                "unbound_requirements": unbound,
+                "evidence_verdict": evidence_verdict,
                 "evidence_provenance": evidence_provenance,
                 "evidence_tally": evidence_tally,
-                "evidence_spec_path": str(evidence_spec_path),
+                "requirement_ids": casting_req_ids,
                 "hint": (
-                    "Evidence re-execution rejected the casting. The teammate's "
-                    "committed log diverges from a clean re-execution of "
-                    "`# evidence-cmd:`. Re-run the command yourself, inspect "
-                    "the diff, and re-dispatch with corrected evidence."
+                    f"Add a `# evidence-for: {', '.join(unbound)}` header "
+                    f"line to the relevant evidence file(s) and re-commit. "
+                    f"Multiple files may bind to the same requirement; one "
+                    f"file may bind to multiple requirements (comma-separated "
+                    f"list). See plugins/foundry/agents/teammate.md Step 11 "
+                    f"for the canonical evidence-file format."
                 ),
             }
-
-        # ============================================================
-        # Phase 5 / EVID-02: per-requirement-coverage check (strictness
-        # upgrade to EVID-01).
-        #
-        # Runs only when:
-        #   1. evidence verification engaged AND verdict was "accepted"
-        #      (skipped → v2.0 stream-skip routing; rejected → Phase 4
-        #      already returned; both bypass this check)
-        #   2. casting_req_ids is non-empty (zero-req castings — refactors,
-        #      doc edits — legitimately need no per-requirement binding)
-        #
-        # Computes the set difference of casting requirement IDs against
-        # the union of `evidence_for` lists across all provenance records.
-        # Non-empty difference → reject with named missing IDs.
-        #
-        # casting_commit=None bypasses the entire enclosing block (Phase 4
-        # backwards-compat shim — Pitfall 7); this check inherits.
-        #
-        # Why set(casting_req_ids) - bound_ids (not the reverse): "unbound"
-        # = "in the casting but not bound by any artifact". The reverse
-        # direction would surface "over-coverage" (artifact cites IDs not
-        # in the casting), which 05-RESEARCH.md decided to silently drop
-        # (closed-vocabulary minimization). Over-coverage is not an error.
-        # ============================================================
-        if (
-            evidence_verdict == "accepted"  # don't double-reject after Phase 4 fail
-            and casting_req_ids  # zero-req castings need no per-req binding
-        ):
-            bound_ids: set[str] = set()
-            for record in evidence_provenance:
-                for rid in record.get("evidence_for", []):
-                    bound_ids.add(rid)
-            unbound = sorted(set(casting_req_ids) - bound_ids)
-            if unbound:
-                # Hard-reject with named missing IDs (SC#4 satisfied).
-                return {
-                    "ok": False,
-                    "casting_id": casting_id,
-                    "failure_token": "EVIDENCE_REQUIREMENT_UNBOUND",
-                    "failure_detail": (
-                        f"casting {casting_id} has no evidence artifact bound to "
-                        f"requirement(s): {', '.join(unbound)}. Each committed "
-                        f"evidence file must carry a `# evidence-for: <ids>` "
-                        f"header listing the requirement IDs it demonstrates."
-                    ),
-                    "unbound_requirements": unbound,
-                    "evidence_verdict": evidence_verdict,
-                    "evidence_provenance": evidence_provenance,
-                    "evidence_tally": evidence_tally,
-                    "requirement_ids": casting_req_ids,
-                    "hint": (
-                        f"Add a `# evidence-for: {', '.join(unbound)}` header "
-                        f"line to the relevant evidence file(s) and re-commit. "
-                        f"Multiple files may bind to the same requirement; one "
-                        f"file may bind to multiple requirements (comma-separated "
-                        f"list). See plugins/foundry/agents/teammate.md Step 11 "
-                        f"for the canonical evidence-file format."
-                    ),
-                }
 
     # Check for "out of scope" or "cut scope" mentions in the teammate report
     warning_phrases = [
