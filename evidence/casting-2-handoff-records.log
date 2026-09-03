@@ -1,0 +1,9 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_handoff_records.py
+# evidence-for: US-003, GI-003, CT-011, CT-015, AC-015, AC-022, AC-030, FR-010, OT-010, OT-027
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \(\d+:\d\d:\d\d\)
+# evidence-volatile: in <VOLATILE>(?: <VOLATILE>)?
+# evidence-timeout: 300
+
+....................                                                     [100%]
+20 passed in 0.35s

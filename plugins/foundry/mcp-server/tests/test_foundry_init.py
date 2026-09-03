@@ -280,3 +280,107 @@ def test_seeded_artifacts_are_fresh_per_run(tmp_path):
         fdir = Path(result["foundry_dir"])
         assert json.loads((fdir / "observations.json").read_text())["observations"] == []
         assert "OBSERVATION/DEFECT SPLIT" in (fdir / "directives.md").read_text()
+
+
+# ===========================================================================
+# Casting 2 / CT-016 / FR-017 / FR-024 / FR-050 / AC-027 / OT-018 — what a run
+# records about itself at init: the GRIND cycle ceiling, and the identity of
+# the build it is executing on.
+#
+# These extend the file rather than replacing it: every test above still
+# passes, and the state.json literal they guard has gained keys, not changed
+# meaning. AC-025/AC-026's COMPARISON — the self-target preflight and its
+# refusal — is driven in tests/test_self_target.py, which can fake the two
+# trees it needs; this file drives the RECORDING side, which needs neither.
+# ===========================================================================
+
+
+def test_init_records_the_executing_servers_identity(tmp_path):
+    """OT-018 verbatim: 'After a successful init, state.json contains
+    server_version, plugin_version, server_root and server_commit, and
+    Foundry-Next's display shows them.'
+
+    Not monkeypatched: this is the real derivation against the real tree the
+    suite runs from, so it fails if the fourth-parent walk from
+    ``foundry_mcp.__file__`` ever stops landing on the plugin directory."""
+    result = foundry_init(project_root=str(tmp_path))
+    state = json.loads(
+        (Path(result["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    for key in ("server_version", "plugin_version", "server_root", "server_commit"):
+        assert key in state, f"state.json is missing {key!r}"
+        assert isinstance(state[key], str)
+
+    from foundry_mcp import __version__
+
+    assert state["server_version"] == __version__
+    assert Path(state["server_root"]).is_dir()
+    assert (Path(state["server_root"]) / ".claude-plugin" / "plugin.json").is_file()
+    assert state["plugin_version"], "the executing plugin.json declares a version"
+
+
+def test_init_records_self_target_false_for_an_ordinary_project(tmp_path):
+    """FR-050 verbatim: 'On other runs Foundry-Init records server_version,
+    plugin_version, server_root, server_commit and Foundry-Next shows them;
+    nothing is compared.' A tmp_path project holds no foundry plugin.json, so
+    it is the ordinary case."""
+    result = foundry_init(project_root=str(tmp_path))
+    state = json.loads(
+        (Path(result["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert state["self_target"] is False
+    assert result["self_target"] is False
+
+
+def test_max_cycles_defaults_to_zero_in_both_stores(tmp_path):
+    """FR-024 verbatim: 'Default 0 = unbounded.' Zero is the value that means
+    the run has no ceiling, so it must be what an init that was never given
+    one writes — in BOTH stores, since a reader finding it in one and not the
+    other would have to decide which absence meant unbounded."""
+    result = foundry_init(project_root=str(tmp_path))
+    state = json.loads(
+        (Path(result["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert state["max_cycles"] == 0
+    assert _read_manifest(result)["max_cycles"] == 0
+
+
+def test_max_cycles_is_persisted_to_state_and_manifest(tmp_path):
+    """CT-016 verbatim: 'max_cycles from the --max-cycles flag, default 0 ...
+    persisted in state.json'. The manifest carries it too, mirroring how
+    temper and nyquist are written to both — and the manifest literal used to
+    hardcode 0 while no caller could set it, so this is the test that fails if
+    the parameter is ever un-threaded back to a constant."""
+    result = foundry_init(project_root=str(tmp_path), max_cycles=12)
+    state = json.loads(
+        (Path(result["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert state["max_cycles"] == 12
+    assert _read_manifest(result)["max_cycles"] == 12
+    assert result["max_cycles"] == 12
+
+
+def test_the_version_fields_do_not_disturb_the_existing_state_keys(tmp_path):
+    """No-regression. The keys every earlier phase reads out of state.json are
+    still there and still mean what they meant; the preflight ADDED fields, it
+    did not restructure the document."""
+    result = foundry_init(
+        spec_path=None, temper=True, nyquist=True, project_root=str(tmp_path)
+    )
+    state = json.loads(
+        (Path(result["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert state["phase"] == "F0"
+    assert state["cycle"] == 0
+    assert state["temper"] is True
+    assert state["nyquist"] is True
+    assert state["no_ui"] is False
+    assert "F0" in state["phase_times"]
+    # AC5's Locked constraint, re-checked against the widened literal.
+    assert "target_url" not in state
+    assert "url" not in state
