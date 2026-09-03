@@ -650,9 +650,20 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="Foundry-Spawn-Teammate",
             description=(
-                "Read the pre-authored teammate prompt for a casting and return it verbatim. "
-                "The lead MUST pass the returned `prompt` field directly to the Agent tool without "
-                "modification. Authored at F0.5 DECOMPOSE from the spec, validated at F0.9, frozen. "
+                # D-012 — THIS SENTENCE USED TO NAME A FIELD THAT IS NOW ALWAYS
+                # NULL. It read "The lead MUST pass the returned `prompt` field
+                # directly to the Agent tool", while `foundry_spawn` returns
+                # `prompt: None` unless full_prompt=true. Pointer dispatch made
+                # `dispatch` the field to pass, and three of the run's four
+                # instruction surfaces still described the old one — with
+                # start.md telling the lead to follow Foundry-Next literally.
+                "Return the DISPATCH BLOCK for a casting's pre-authored teammate prompt. "
+                "The lead MUST pass the returned `dispatch` field directly to the Agent tool "
+                "without modification: it names the prompt FILE and the sha256 the teammate must "
+                "read that file to obtain and state back, which Foundry-Accept-Casting and "
+                "Foundry-Fix then check. `prompt` is null unless full_prompt=true, and is for "
+                "your own inspection — never for the Agent call. Authored at F0.5 DECOMPOSE from "
+                "the spec, validated at F0.9, frozen. "
                 "Plans are prompts: the lead is a router, not an interpreter. "
                 "Prefer Foundry-Cast-Wave for wave-level bulk fetch — single casting lookups "
                 "are for GRIND or one-off re-dispatches."
@@ -681,11 +692,16 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="Foundry-Cast-Wave",
             description=(
-                "Bulk-fetch prompts for every casting in a wave as a single MCP call. "
+                # D-012 — same stale field named here. `prompt` is null by
+                # default in every returned casting; `dispatch` is the field
+                # that goes to the Agent tool.
+                "Bulk-fetch the dispatch block for every casting in a wave as a single MCP call. "
                 "Replaces N sequential Foundry-Spawn-Teammate roundtrips for a CAST wave. "
-                "Returns {castings: [{casting_id, prompt, prompt_hash}, ...], team_name_suggestion, "
-                "instructions}. Lead then does TeamCreate + Foundry-Team-Up + a SINGLE parallel Agent "
-                "tool-use message with one Agent per casting. Preserves audit trail — every casting "
+                "Returns {castings: [{casting_id, dispatch, prompt_path, prompt_hash, prompt}, ...], "
+                "team_name_suggestion, instructions}, where `prompt` is null unless full_prompt=true. "
+                "Lead then does TeamCreate + Foundry-Team-Up + a SINGLE parallel Agent "
+                "tool-use message with one Agent per casting, passing that casting's `dispatch` "
+                "field VERBATIM as the prompt. Preserves audit trail — every casting "
                 "is still logged to spawns.log with bulk=true."
             ),
             inputSchema={

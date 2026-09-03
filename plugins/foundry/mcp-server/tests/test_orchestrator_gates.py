@@ -8424,3 +8424,191 @@ def test_a_short_gap_says_nothing_either_way(run_env):
     assert "waiting_on_agents" not in nxt
     assert "STALL DETECTED" not in nxt["instructions"]
     assert "WAITING ON" not in nxt["instructions"]
+
+
+# --------------------------------------------------------------------------- #
+# D-021 — a registered-but-dead team must not suppress the stall warning
+# --------------------------------------------------------------------------- #
+
+
+def _stalled_ledger(fdir: Path, agent: str = "casting-3", hours: int = 3) -> None:
+    """A ledger whose last line is hours old — `foundry_liveness` reports it
+    `stalled`, which is the status of an agent that is NOT running."""
+    stamp = datetime.now(timezone.utc) - timedelta(hours=hours)
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / f"{agent}.jsonl").write_text(
+        json.dumps({
+            "timestamp": stamp.isoformat(), "phase": "cast",
+            "step": "writing the handler", "agent": agent,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_registered_team_with_dead_ledgers_does_not_suppress_the_stall(
+    run_env, monkeypatch
+):
+    """D-021: 'A registered-but-dead team suppresses the stall warning forever.
+    The function's own docstring states the intended rule ("a team dir that was
+    never cleaned up is the false positive"); the code does the opposite.'
+
+    Driven exactly as filed: a three-hour-old ledger, so `foundry_liveness`
+    reports every agent `stalled`, plus a registered team the run never cleaned
+    up. The old final arm returned `waiting: True` on that state and
+    Foundry-Next rendered "that gap is the agents working, not you
+    deliberating" indefinitely — a watchdog a stale directory can switch off.
+
+    `_check_active_teams` is monkeypatched ACTIVE here, against the fixture's
+    default. That inversion is the point: every fixture in the suite pins it
+    inactive, which is why the arm that only fires when it is active was
+    untestable as shipped.
+    """
+    project_root, fdir = run_env
+    monkeypatch.setattr(
+        fo, "_check_active_teams",
+        lambda _pr: {"active": True, "teams": ["cast-run-wave-1"], "live_panes": []},
+    )
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stalled_ledger(fdir)
+    _stale_stall_clock(fdir, 600)
+
+    assert fo._waiting_on_agents(project_root)["waiting"] is False
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt.get("stall_detected_seconds", 0) >= 600
+    assert "waiting_on_agents" not in nxt
+    assert "WAITING ON" not in nxt["instructions"]
+    assert "silently deliberating" in nxt["instructions"]
+
+
+def test_a_progressing_ledger_still_reports_waiting_with_no_team_registered(
+    run_env
+):
+    """The other direction, and the reason the team scan is gone rather than
+    demoted: the F2 stream agents are background Agents, never tmux teammates,
+    so a team scan cannot see them at all. Requiring a registered team would
+    have made every INSPECT wait read as a stall."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _progressing_ledger(fdir, agent="prove")
+    _stale_stall_clock(fdir, 600)
+
+    waiting = fo._waiting_on_agents(project_root)
+
+    assert waiting["waiting"] is True
+    assert waiting["count"] == 1
+    assert "stall_detected_seconds" not in foundry_next_action(project_root)
+
+
+def test_the_waiting_check_does_not_consult_the_team_scan(run_env):
+    """D-021's cause was an evidence source that could only add false
+    positives. Asserted on the source, because "which sources it asked" is not
+    observable from a return value that agrees on the tested cases."""
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._waiting_on_agents)))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_check_active_teams" not in called, (
+        "a registered team is not evidence that an agent is running; the "
+        "progress ledgers are the only source that answers FR-020's question"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-012 / D-023 — the lead's imperatives describe the run that exists
+# --------------------------------------------------------------------------- #
+
+
+def test_the_imperatives_do_not_tell_the_lead_to_pass_the_prompt_field(run_env):
+    """D-012: 'The lead imperatives instruct the lead to pass prompt text that
+    is now always null. _ACTION_IMPERATIVES says "prompt=<returned prompt
+    VERBATIM...>" while foundry_spawn.py returns "prompt": prompt_text if
+    full_prompt else None.'
+
+    start.md was already correct, so the run shipped four instruction surfaces
+    with three wrong — and start.md is the one that tells the lead to follow
+    Foundry-Next literally. Pointer dispatch put the text behind a file and a
+    hash; an imperative naming the old field sends the lead to paste `None`.
+    """
+    for action in ("transition_to_cast", "transition_to_grind"):
+        text = fo._ACTION_IMPERATIVES[action]
+        assert "`dispatch` field VERBATIM" in text, action
+        assert "returned prompt VERBATIM" not in text, action
+        assert "prompt text VERBATIM" not in text, action
+        # The positive statement, so a lead reading only this line knows why
+        # the field it remembers is empty.
+        assert "null by default" in text, action
+
+
+def test_the_spawn_tool_descriptions_name_the_field_that_carries_the_text(
+    run_env
+):
+    """D-012's other half: 'Both spawn tools" MCP description= strings in
+    server.py#list_tools repeat it ("The lead MUST pass the returned prompt
+    field").'
+
+    The MCP description is an instruction surface the lead reads directly, so a
+    stale one is not documentation drift — it is a second, contradictory order.
+    """
+    from foundry_mcp import server as foundry_server
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+
+    for name in ("Foundry-Spawn-Teammate", "Foundry-Cast-Wave"):
+        description = tools[name].description
+        assert "`dispatch`" in description, name
+        assert "MUST pass the returned `prompt` field" not in description, name
+        assert "full_prompt" in description, name
+
+
+def test_the_imperatives_say_foundry_next_is_optional_between_gate_and_phase(
+    run_env
+):
+    """D-023: 'The imperatives never say Foundry-Next is optional between Gate
+    and Phase. Text-verified: the word "optional" appears ZERO times in
+    _ACTION_IMPERATIVES, while FR-044 names "the imperatives and start.md" as
+    the two surfaces that must carry the rule.'
+
+    FR-044 verbatim: 'Foundry-Gate no longer unlinks the ordering token. The
+    imperatives and start.md say Gate then Phase, and note Foundry-Next may be
+    called between them (it is where the inspect mode is announced) but is not
+    required.' Both surfaces, not either.
+    """
+    # GATE then PHASE, in that order. `transition_to_assay` names both but the
+    # other way round, and a Foundry-Next before a Phase call that no Gate
+    # preceded is still REQUIRED — the token has to be armed by something.
+    gate_then_phase = [
+        action for action, text in fo._ACTION_IMPERATIVES.items()
+        if "Foundry-Gate(" in text and "Foundry-Phase(" in text
+        and text.index("Foundry-Gate(") < text.index("Foundry-Phase(")
+    ]
+    assert gate_then_phase, "no imperative pairs a Gate with a following Phase call"
+
+    for action in gate_then_phase:
+        text = fo._ACTION_IMPERATIVES[action]
+        assert "OPTIONAL" in text, action
+        assert "Foundry-Next" in text, action
+
+
+def test_the_optional_rule_has_one_spelling(run_env):
+    """FR-044's rule is stated once and appended, not typed into each
+    imperative. This file's own history is that a rule stated in N copies
+    becomes a rule stated N different ways — which is the
+    stale-prose-survives-beside-new-prose class D-012 and D-023 both belong
+    to."""
+    note = fo._GATE_THEN_PHASE_NOTE
+    assert "OPTIONAL" in note
+
+    carriers = [t for t in fo._ACTION_IMPERATIVES.values() if note in t]
+    assert len(carriers) >= 3
+    # No imperative says it in its own words.
+    for text in fo._ACTION_IMPERATIVES.values():
+        assert text.count("OPTIONAL") == (1 if note in text else 0)

@@ -2658,12 +2658,33 @@ def _waiting_on_agents(project_root: str) -> dict:
 
     Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
 
-    THREE EVIDENCE SOURCES, ASKED IN COST ORDER. `_check_active_teams` is a
-    cheap tmux/team-dir scan and answers "is a team registered and alive at
-    all"; `foundry_liveness` reads the per-agent progress ledgers and answers
-    the sharper question, "and is any of them still MOVING". A registered team
-    whose agents all died is not something to wait for, and a team dir that was
-    never cleaned up is the false positive a team-scan alone would produce.
+    THE LEDGERS DECIDE, BECAUSE THEY ARE THE ONLY SOURCE THAT ANSWERS THE
+    QUESTION ACTUALLY BEING ASKED. FR-020 says "if agents are RUNNING it
+    reports waiting instead of a stall". `_check_active_teams` is a tmux and
+    team-dir scan: it answers "is a team registered", which is not the same
+    question and cannot become it. `foundry_liveness` reads the per-agent
+    progress ledgers, and an agent whose ledger is still receiving lines is an
+    agent that is running.
+
+    D-021 — THIS FUNCTION USED TO DO THE OPPOSITE OF THIS PARAGRAPH.
+    ---------------------------------------------------------------
+    The docstring already named the team-dir false positive ("a team dir that
+    was never cleaned up") and the code then had a final arm that returned
+    ``waiting: True`` on exactly that: a registered team with NO moving ledger.
+    Driven with a three-hour-old ledger, where `foundry_liveness` reports every
+    agent `stalled`, it returned waiting and Foundry-Next rendered "that gap is
+    the agents working, not you deliberating" — forever, on a run where nothing
+    was working. A watchdog that a stale directory can disable permanently is
+    not a watchdog, and this was the harder failure to see because the
+    suppression is silent.
+
+    The team scan is gone rather than demoted. It could only ever add
+    false positives here: it cannot see the F2 stream agents (spawned as
+    background Agents, never as tmux teammates), so it was not even a
+    necessary condition, and every question it could answer the ledgers answer
+    better. That also makes this function testable — the suite's fixtures all
+    monkeypatch `_check_active_teams` inactive, which is precisely why the bug
+    survived.
 
     NEVER RAISES AND NEVER BLOCKS (CT-012). Every failure path answers "not
     waiting", which degrades to the pre-change behaviour — the watchdog warns —
@@ -2671,10 +2692,6 @@ def _waiting_on_agents(project_root: str) -> dict:
     able to suppress a real stall warning.
     """
     result = {"waiting": False, "count": 0, "detail": "", "agents": []}
-    try:
-        teams = _check_active_teams(project_root)
-    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
-        teams = {"active": False, "teams": []}
 
     try:
         from foundry_mcp.tools.foundry_spawn import (
@@ -2684,7 +2701,7 @@ def _waiting_on_agents(project_root: str) -> dict:
         )
 
         liveness = foundry_liveness(None, None, project_root=project_root)
-    except Exception:  # noqa: BLE001 - same reason
+    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
         liveness = {"ok": False}
 
     live_agents = []
@@ -2692,45 +2709,36 @@ def _waiting_on_agents(project_root: str) -> dict:
         for row in liveness.get("agents", []) or []:
             if not isinstance(row, dict):
                 continue
+            # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
+            # they differ only in whether the `step` field moved. STALLED means
+            # no line at all for the threshold, DONE means finished, and
+            # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
+            # an agent to wait for.
             if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
                 live_agents.append(row)
 
-    if not live_agents and not teams.get("active"):
+    if not live_agents:
         return result
 
-    if live_agents:
-        # FR-036: the oldest progress age is what the lead actually needs — the
-        # agent least recently heard from is the one that decides whether this
-        # wait is healthy.
-        ages = [
-            row.get("last_progress_age_seconds", 0)
-            for row in live_agents
-            if isinstance(row.get("last_progress_age_seconds"), int)
-        ]
-        oldest = max(ages) if ages else 0
-        result.update({
-            "waiting": True,
-            "count": len(live_agents),
-            "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",
-            "agents": [
-                {"agent": r.get("agent"), "status": r.get("status"),
-                 "step": r.get("step")}
-                for r in live_agents
-            ],
-            "oldest_progress_seconds": oldest,
-        })
-        return result
-
-    # A registered, live team with no moving ledger. Still a wait, and still not
-    # deliberation — but the detail says the ledgers are the reason it cannot be
-    # more precise, so the lead knows to call Foundry-Liveness rather than
-    # assume the agents are fine.
-    names = ", ".join(teams.get("teams", []) or []) or "unnamed"
+    # FR-036: the oldest progress age is what the lead actually needs — the
+    # agent least recently heard from is the one that decides whether this
+    # wait is healthy.
+    ages = [
+        row.get("last_progress_age_seconds", 0)
+        for row in live_agents
+        if isinstance(row.get("last_progress_age_seconds"), int)
+    ]
+    oldest = max(ages) if ages else 0
     result.update({
         "waiting": True,
-        "count": len(teams.get("teams", []) or []) or 1,
-        "detail": f"team(s) {names} are live but no progress ledger is moving",
-        "agents": [],
+        "count": len(live_agents),
+        "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",
+        "agents": [
+            {"agent": r.get("agent"), "status": r.get("status"),
+             "step": r.get("step")}
+            for r in live_agents
+        ],
+        "oldest_progress_seconds": oldest,
     })
     return result
 
@@ -5906,6 +5914,23 @@ def _lead_lane_problem(fix_commit: str, project_root: str) -> str | None:
     measurement that could not be taken is not a measurement that passed — the
     shape that would let an unbounded lead fix through by naming a SHA that does
     not exist.
+
+    D-020 — EXACTLY ONE, AND THE REFUSAL SAYS WHICH DIRECTION IT MISSED BY.
+    ----------------------------------------------------------------------
+    LEAD RULING (recorded SPEC_AMBIGUOUS in the run's state.json): the lane
+    requires EXACTLY one non-test file for a LIVE lead fix. FR-014 states the
+    lane as "LIVE if one file and <= 20 lines"; FR-016's "more than one" names
+    one refusal condition, not the only one. So the `!=` comparison is correct
+    and stays, and a test-only LIVE fix is outside the lane and goes to a GRIND
+    teammate.
+
+    What was wrong is what the refusal SAID. A commit with zero non-test files
+    was refused with "changes 0 non-test file(s) ... Dispatch this to a GRIND
+    teammate instead" — the too-big message, on a commit that is too small,
+    telling a lead to shrink something that is already empty. The two
+    directions are now separate branches with separate remedies, because "add
+    the source change this fix is missing" and "split this commit up" are
+    opposite instructions and a lead acting on the wrong one loses a cycle.
     """
     measured = _numstat_measurement(fix_commit, project_root)
     if not measured["ok"]:
@@ -5914,10 +5939,18 @@ def _lead_lane_problem(fix_commit: str, project_root: str) -> str | None:
             "commit that cannot be read cannot be measured."
         )
     files = measured["files"]
+    if not files:
+        return (
+            f"{fix_commit[:12]} changes 0 non-test file(s) — the lane requires "
+            f"exactly {LEAD_LANE_MAX_FILES}, and this commit touches only test "
+            "files. A LIVE defect whose fix is a test-only change is outside "
+            "the lane: name the commit that carries the source change, or "
+            "dispatch it to a GRIND teammate."
+        )
     if len(files) != LEAD_LANE_MAX_FILES:
         return (
             f"{fix_commit[:12]} changes {len(files)} non-test file(s) "
-            f"({', '.join(files[:5]) or 'none'}) — the lead lane is exactly "
+            f"({', '.join(files[:5])}) — the lane requires exactly "
             f"{LEAD_LANE_MAX_FILES}. Dispatch this to a GRIND teammate instead."
         )
     if measured["lines"] > LEAD_LANE_MAX_LINES:
@@ -7416,6 +7449,27 @@ def foundry_next_action(
     return result
 
 
+# FR-044 / ST-011 / AC-035 / D-023 — GATE THEN PHASE, AND NOTHING REQUIRED IN
+# BETWEEN.
+#
+# `Foundry-Gate` no longer unlinks the ordering token, so `Foundry-Phase` called
+# straight after a passing gate still finds it. FR-044 names TWO surfaces that
+# have to carry that rule — "the imperatives and start.md" — and the word
+# "optional" appeared ZERO times in the imperatives, so the lead was told to
+# make a call the spec had just made unnecessary, on every gate-then-phase path
+# in the run.
+#
+# Written once and appended to each sequence that pairs them, rather than typed
+# into three imperatives: this file's own history is that a rule stated in N
+# copies becomes a rule stated N different ways.
+_GATE_THEN_PHASE_NOTE = (
+    "\nFoundry-Next between the Gate and the Phase call is OPTIONAL — the gate "
+    "no longer consumes the ordering token, so Foundry-Phase straight after a "
+    "passing Foundry-Gate is accepted. Call Foundry-Next there only if you want "
+    "the INSPECT width and rule announced; do not call it to satisfy the "
+    "protocol."
+)
+
 # Action → imperative-header map. Each action returned by
 # _compute_next_action maps to a "YOUR NEXT CALL(S)" directive that the lead
 # can execute without re-reading paragraph instructions. Multi-step actions
@@ -7464,10 +7518,13 @@ _ACTION_IMPERATIVES = {
         "  (2) Foundry-Phase(phase='start_cast')\n"
         "  (3) TeamCreate('cast-{run}-wave-1')\n"
         "  (4) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
-        "  (5) Foundry-Cast-Wave(wave=1, phase='cast') \u2014 returns ALL prompts for wave 1 in ONE call.\n"
+        "  (5) Foundry-Cast-Wave(wave=1, phase='cast') \u2014 returns ALL wave-1 dispatch blocks in ONE call.\n"
         "  (6) In a SINGLE message (parallel tool use), spawn one Agent per returned casting: "
         "subagent_type='foundry:teammate', mode='bypassPermissions', "
-        "prompt=<that casting's prompt text VERBATIM \u2014 no edits>. "
+        "prompt=<that casting's `dispatch` field VERBATIM \u2014 it names the prompt FILE and the "
+        "sha256 the teammate must read that file to obtain. The `prompt` field is null by "
+        "default and is NOT what you pass; do not paste, summarise or augment the prompt text "
+        "yourself>. "
         "For the model: obey the model clause in the `instructions` Foundry-Cast-Wave just "
         "returned \u2014 it names the model to pass when the foundry `model` option is configured "
         "(foundry:teammate follows that option) and tells you to pass no model parameter when it "
@@ -7478,7 +7535,7 @@ _ACTION_IMPERATIVES = {
         "subagent_type='Explore' or 'general-purpose' for CAST. F0.5 DECOMPOSE uses background "
         "general-purpose Agents; F2 INSPECT and F4 ASSAY use named agents (foundry:tracer, "
         "foundry:assayer, foundry:research-auditor, foundry:coverage-diff) whose frontmatter "
-        "carries model/effort/tools."
+        "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE
     ),
     "build_castings": (
         "YOUR NEXT ACTION depends on wave state:\n"
@@ -7495,6 +7552,7 @@ _ACTION_IMPERATIVES = {
         "and roll-up entry after this point is stamped with the NEW cycle, so "
         "skipping this call silently files the next cycle's evidence under the "
         "last one and the recurring-class escalation never accumulates."
+        + _GATE_THEN_PHASE_NOTE
     ),
     "run_streams": (
         "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel message. Stream-specific rules:\n"
@@ -7519,14 +7577,16 @@ _ACTION_IMPERATIVES = {
         "  (5) Foundry-Team-Up(team_name='grind-{run}-cycle-N')\n"
         "  (6) For each casting with open defects: Foundry-Spawn-Teammate(casting_id=N, phase='grind')\n"
         "  (7) Spawn Agent(subagent_type='foundry:teammate', mode='bypassPermissions', "
-        "prompt=<returned prompt VERBATIM, then APPEND (a) the `grind_cycle_context` block from the spawn "
+        "prompt=<the returned `dispatch` field VERBATIM \u2014 it names the prompt FILE and the sha256 the "
+        "teammate must read that file to obtain; the `prompt` field is null by default and is NOT what "
+        "you pass. Then APPEND (a) the `grind_cycle_context` block from the spawn "
         "response if present \u2014 lists files changed in prior cycles so the teammate reads current state "
-        "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block. Order: prompt \u2192 "
-        "cycle_context \u2192 defects. Both appended BELOW the prompt, never inside it.>). "
+        "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block. Order: dispatch \u2192 "
+        "cycle_context \u2192 defects. Both appended BELOW the dispatch block, never inside it.>). "
         "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates. "
         "For the model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
         "returned \u2014 pass the model it names, or no model parameter when it names none. This "
-        "server owns that decision; never re-derive it here."
+        "server owns that decision; never re-derive it here." + _GATE_THEN_PHASE_NOTE
     ),
     "fix_defects": (
         "YOUR NEXT ACTION depends on GRIND state:\n"

@@ -41,6 +41,7 @@ import pytest
 from foundry_mcp.schemas.vocab import (
     FIX_AUTHORS,
     HANDOFF_EVENT_LEAD_FIX,
+    LEAD_LANE_MAX_FILES,
     LEAD_LANE_MAX_LINES,
 )
 from foundry_mcp.tools import foundry_orchestrator as fo
@@ -2815,3 +2816,88 @@ def test_a_lead_fix_needs_no_prompt_hash(run_env):
     )
 
     assert result["ok"] is True, result
+
+
+# --------------------------------------------------------------------------- #
+# D-020 — the lane's zero-file refusal said "too big" about a commit too small
+#
+# LEAD RULING (SPEC_AMBIGUOUS, recorded in the run's state.json): the lane
+# requires EXACTLY one non-test file for a LIVE lead fix. FR-014 states it as
+# "LIVE if one file and <= 20 lines"; FR-016's "more than one" names one
+# refusal condition, not the only one. So the `!=` comparison is correct, a
+# test-only LIVE fix is outside the lane, and what had to change is what the
+# refusal SAYS about which direction it missed by.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_test_only_commit_is_refused_without_being_called_too_big(run_env):
+    """D-020: 'a test-only fix commit is refused with "changes 0 non-test
+    file(s) — the lead lane is exactly 1. Dispatch this to a GRIND teammate
+    instead." ... the refusal says "too big" when it is too small.'
+
+    The refusal still refuses, per the lead ruling. What it must not do is hand
+    the lead the remedy for the opposite fault: "dispatch this to a teammate,
+    it is too large" is unactionable advice about an empty commit, and a lead
+    that follows it burns a dispatch discovering the commit was never the
+    problem.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(project_root, {"tests/test_sweeper.py": 12})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    error = result["error"]
+    assert "0 non-test file(s)" in error, error
+    # The rule, stated as a requirement rather than as a size complaint.
+    assert f"exactly {LEAD_LANE_MAX_FILES}" in error, error
+    assert "only test files" in error, error
+    # And NOT the too-big remedy: nothing here can be made smaller.
+    assert "the lead lane is at most" not in error, error
+
+
+def test_the_lane_still_requires_exactly_one_non_test_file(run_env):
+    """The lead ruling's other half, pinned so a later reader does not "fix"
+    the `!=` into a `>` by reading FR-016 alone.
+
+    Two non-test files is refused, and the refusal names the count.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(
+        project_root, {"src/sweeper.py": 3, "src/other.py": 3}
+    )
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert "2 non-test file(s)" in result["error"], result
+    assert f"exactly {LEAD_LANE_MAX_FILES}" in result["error"], result
+
+
+def test_the_comparison_is_equality_not_an_upper_bound(run_env):
+    """The ruling is a property of the SOURCE, and the two readings differ only
+    on a commit shape a passing test-suite might never contain. Asserted here
+    so the rule survives a refactor that never runs the zero-file case."""
+    import inspect
+
+    source = inspect.getsource(fo._lead_lane_problem)
+    assert "len(files) != LEAD_LANE_MAX_FILES" in source, (
+        "the lane is EXACTLY one non-test file (lead ruling on FR-014 vs "
+        "FR-016); an upper-bound comparison would admit a test-only fix"
+    )
