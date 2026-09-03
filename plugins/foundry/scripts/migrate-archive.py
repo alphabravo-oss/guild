@@ -174,11 +174,12 @@ def _as_cycle(value: Any) -> int | None:
 #
 # `tier` is the load-bearing one and the value is NOT negotiable: FR-051 says a
 # record with no tier reads as unknown and NEVER as LATENT. The distinction is
-# not cosmetic — LATENT stops blocking at TEMPER/NYQUIST/DONE, so migrating 162
-# unclassified thunder-viper records to LATENT would silently clear three gates
-# on defects no stream ever looked at. TIER_UNKNOWN is imported rather than
-# spelled here so the sentinel has exactly one definition (the same discipline
-# that made the vocabulary module exist).
+# not cosmetic — LATENT blocks no gate at all (FR-006 passes INSPECT-clean,
+# ASSAY, TEMPER, NYQUIST and DONE alike on a LATENT-only backlog), so migrating
+# 162 unclassified thunder-viper records to LATENT would silently clear every
+# one of them on defects no stream ever looked at. TIER_UNKNOWN is imported
+# rather than spelled here so the sentinel has exactly one definition (the same
+# discipline that made the vocabulary module exist).
 #
 # The other four are `null` because that is what Foundry-Fix and the LATENT
 # door write before they are populated — a migrated record and a fresh one then

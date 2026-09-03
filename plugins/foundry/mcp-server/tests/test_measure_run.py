@@ -1642,9 +1642,10 @@ def test_an_untiered_record_reads_as_unknown_and_never_as_latent(
 ) -> None:
     """FR-051, stated as the negative that matters.
 
-    LATENT stops blocking at TEMPER, NYQUIST and DONE. A reader that resolved
-    a missing tier to LATENT would report every pre-change archive as fully
-    triaged and let three gates pass on records no stream ever looked at.
+    LATENT blocks no gate: FR-006 passes INSPECT-clean, ASSAY, TEMPER, NYQUIST
+    and DONE alike on a LATENT-only backlog. A reader that resolved a missing
+    tier to LATENT would report every pre-change archive as fully triaged and
+    let all five pass on records no stream ever looked at.
     """
     run_dir = make_run_dir()
     (run_dir / "defects.json").write_text(

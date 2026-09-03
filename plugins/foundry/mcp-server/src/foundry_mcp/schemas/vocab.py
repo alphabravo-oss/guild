@@ -245,11 +245,27 @@ FINDING_CLASSES = frozenset({"DEFECT", "OBSERVATION"})  # 2 items
 #           `reproduction_attempted` statement naming what was driven and what
 #           it found (`reproduction_attempted_problem` below is the check).
 #
-# Both tiers are DEFECTS and both get fixed; the axis decides only which GATE
-# a still-open instance blocks (ASSAY blocks on either; TEMPER, NYQUIST and
-# DONE block on LIVE alone). A grade would let a stream write "minor" and move
-# on; this cannot, because neither value is an excuse — it is a statement about
-# evidence the stream is answerable for.
+# Both tiers are DEFECTS and both get fixed. FR-006 and CT-008 give ONE gate
+# rule and it has no per-door exception in it: INSPECT-clean, ASSAY, TEMPER,
+# NYQUIST and DONE ALL pass when the only open defects are LATENT, and all five
+# refuse on an open LIVE or unknown-tier defect (FR-051). So the tier does not
+# select a gate. What it decides is TASKING — which defects a GRIND cycle must
+# clear before the run can move, and which escalation-clearing cycles count
+# (ST-001: a LATENT instance does not reset the clean-cycle counter) — and
+# REPORTING: a LATENT defect stays open, tracked, and named in the F6 backlog.
+#
+# D-148 — this paragraph used to hand ASSAY an exception, saying it blocked on
+# either tier while the other doors passed on LATENT. No shipped gate ever did
+# that: `foundry_orchestrator.BLOCKING_TIERS` is LIVE plus the unknown
+# sentinel, and all five doors ask one helper. The rule was invented HERE, in
+# the file that DEFINES the tier — which is the file a maintainer reads to
+# learn what the tier means, so a rule invented here is a rule someone
+# eventually implements. State the gate rule the requirements give, or state
+# none.
+#
+# A grade would let a stream write "minor" and move on; this cannot, because
+# neither value is an excuse — it is a statement about evidence the stream is
+# answerable for.
 #
 # Extend only via phase-level RFC — and never with a third value that means
 # "less important than LIVE", which is the grade returning under a new name.

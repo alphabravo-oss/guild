@@ -212,8 +212,9 @@ def test_step_2_defects_gain_the_evidence_tier_fields(archive: Path) -> None:
 def test_step_2_never_migrates_an_untiered_record_to_latent(archive: Path) -> None:
     """FR-051 — the load-bearing negative, stated as a negative.
 
-    LATENT stops blocking at TEMPER, NYQUIST and DONE. So migrating records
-    nobody ever classified to LATENT would silently clear three gates on every
+    LATENT blocks no gate: FR-006 passes INSPECT-clean, ASSAY, TEMPER, NYQUIST
+    and DONE alike on a LATENT-only backlog. So migrating records nobody ever
+    classified to LATENT would silently clear every one of them on every
     archive resumed under this release — grand-vulture's 168 and
     thunder-viper's 162 among them. Unknown blocks like LIVE; LATENT does not.
     That is the whole difference, and it is why the default is not "the
@@ -816,7 +817,8 @@ def test_grand_vulture_migration(tmp_path: Path) -> None:
         # FR-051 on the real acceptance fixture: 168 records nobody ever
         # classified read as unknown, which blocks like LIVE. Had they migrated
         # to LATENT, resuming this archive would have walked straight through
-        # TEMPER, NYQUIST and DONE.
+        # INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE alike — LATENT blocks
+        # none of them (FR-006).
         assert after["tier"] == "unknown"
     assert summary["steps"]["defect_tier"]["tier_unknown"] == 168
     assert _measure(dest)["defects_by_tier"] == {

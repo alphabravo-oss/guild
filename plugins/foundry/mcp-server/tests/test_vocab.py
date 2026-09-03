@@ -1029,12 +1029,142 @@ def test_tier_unknown_is_a_read_sentinel_and_not_a_writable_tier() -> None:
 def test_defect_tier_reads_anything_unclassified_as_unknown(record, expected) -> None:
     """FR-051 — never LATENT by default, and never coerced onto a member.
 
-    The LATENT half is the load-bearing one: LATENT stops blocking at TEMPER,
-    NYQUIST and DONE, so a record that defaults to LATENT silently clears three
-    gates on a defect nobody ever classified.
+    The LATENT half is the load-bearing one: LATENT blocks NO gate — FR-006
+    passes INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE alike on a
+    LATENT-only backlog — so a record that defaults to LATENT silently clears
+    every one of them on a defect nobody ever classified.
     """
     assert vocab.defect_tier(record) == expected
     assert vocab.defect_tier(record) in vocab.DEFECT_TIER_OR_UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# D-148 — the tier's GATE RULE, pinned where the tier is defined.
+#
+# The header above `DEFECT_TIERS` stated a rule the requirements forbid and the
+# shipped gates never implemented: that the axis chose WHICH door a still-open
+# instance blocks, ASSAY blocking on either tier while TEMPER, NYQUIST and DONE
+# blocked on LIVE alone. Driven through `foundry_gate(phase="assay")` on a run
+# whose only open defect was LATENT: passed=True, reason=None. FR-006 is one
+# sentence with no exception in it — "INSPECT-clean, ASSAY, TEMPER, NYQUIST and
+# DONE all pass when the only open defects are LATENT" — and CT-008 says the
+# same, so the header was inventing a fifth requirement in the one file a
+# maintainer reads to learn what the tier means.
+#
+# WHY A PROSE PIN AND NOT ONLY A BEHAVIOUR TEST. The gates were already correct
+# and already tested; what failed was the DESCRIPTION of them, which no
+# behaviour test can reach. This class — stale prose surviving beside new prose
+# — has now been filed for five consecutive cycles, and the instance fix is
+# what kept failing. So the rule is asserted as text: the header must state the
+# requirements' rule, and no casting-1 surface may restate it with a door
+# missing.
+# ---------------------------------------------------------------------------
+
+#: The five doors FR-006 names. A statement of the tier's gate rule that omits
+#: any one of them is the D-148 undercount, whatever else it gets right.
+_TIER_AWARE_DOORS = ("INSPECT-clean", "ASSAY", "TEMPER", "NYQUIST", "DONE")
+
+#: The retired spellings, verbatim as they shipped. Each asserted ABSENT below;
+#: naming a door subset is what every one of them has in common.
+_RETIRED_TIER_GATE_SPELLINGS = (
+    "ASSAY blocks on either",   # D-148, vocab.py's own header
+    "block on LIVE alone",      # D-148, the same sentence's second half
+    "stops blocking at TEMPER",  # D-148, the four sibling restatements
+    "clears three gates",       # D-148, the undercount: FR-006 names five
+    "clear three gates",        # D-148, same undercount, other conjugation
+    "three gates pass",         # D-148, same undercount, measure-run's phrasing
+)
+
+#: Every casting-1 key_file whose prose could restate the rule, EXCEPT this
+#: module — the roster above spells all six retired sentences on purpose, so a
+#: scan including this file would report itself. That is the only exclusion,
+#: and it is one file wide.
+_OWNED_PROSE_SURFACES = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
+    "plugins/foundry/mcp-server/tests/test_findings_schemas.py",
+    "plugins/foundry/scripts/migrate-archive.py",
+    "plugins/foundry/scripts/measure-run.py",
+    "plugins/foundry/mcp-server/tests/test_migrate_archive.py",
+    "plugins/foundry/mcp-server/tests/test_measure_run.py",
+)
+
+
+def _tier_header() -> str:
+    """The comment block above `DEFECT_TIERS` in schemas/vocab.py.
+
+    Sliced from the source text rather than from a docstring because the block
+    IS a `#` comment — the thing D-148 was filed against — and a docstring
+    rewrite would leave the filed surface unread by this assertion.
+    """
+    text = Path(vocab.__file__).read_text(encoding="utf-8")
+    start = text.index("# The evidence tier (GI-001")
+    end = text.index("DEFECT_TIERS = frozenset", start)
+    return text[start:end]
+
+
+def test_the_tier_header_states_the_gate_rule_the_requirements_give() -> None:
+    """FR-006 / CT-008 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and
+    DONE all pass when the only open defects are LATENT.'
+
+    The header must say that, name every door FR-006 names, and say that the
+    unknown sentinel blocks — the half FR-051 adds. A header that describes the
+    axis without describing what it does to a run is what let the wrong rule
+    sit there unchallenged.
+    """
+    header = _tier_header()
+    for door in _TIER_AWARE_DOORS:
+        assert door in header, (
+            f"the DEFECT_TIERS header does not name {door}, which FR-006 lists "
+            f"among the doors a LATENT-only backlog passes. Naming a subset is "
+            f"exactly the D-148 defect."
+        )
+    assert "only open defects are LATENT" in header, (
+        "the header no longer quotes FR-006's own rule. State it in the "
+        "requirement's words; a paraphrase is what drifted last time."
+    )
+    assert "unknown-tier" in header, (
+        "FR-051's half is missing: an untiered record blocks like LIVE, so a "
+        "header promising that only LIVE blocks is wrong in the other "
+        "direction."
+    )
+
+
+@pytest.mark.parametrize("relpath", _OWNED_PROSE_SURFACES)
+def test_no_casting_1_surface_names_the_retired_per_gate_tier_rule(
+    relpath: str,
+) -> None:
+    """No owned file restates the tier's gate rule with a door missing.
+
+    Six surfaces carried it: `vocab.py`'s header, and five restatements that
+    named three of the five doors and called them "three gates". Only the first
+    was filed; the other five are the same sentence, and leaving them is how
+    this class came back four times.
+    """
+    text = (REPO_ROOT / relpath).read_text(encoding="utf-8")
+    hits = [s for s in _RETIRED_TIER_GATE_SPELLINGS if s in text]
+    assert not hits, (
+        f"{relpath} names the retired per-gate tier rule: {hits}. FR-006 gives "
+        f"one rule for all five doors — INSPECT-clean, ASSAY, TEMPER, NYQUIST "
+        f"and DONE all pass when the only open defects are LATENT. Restate it "
+        f"in full or do not restate it; a subset reads as a live exception."
+    )
+
+
+def test_the_retired_tier_gate_pin_actually_fires() -> None:
+    """A pin that cannot fail is a comment with an assert in it.
+
+    Each retired spelling is driven through the same containment check the scan
+    above uses, in a sentence shaped like the ones that shipped, and must be
+    caught alone — so a later edit that narrows a pattern into uselessness, or
+    lets two patterns shadow each other, fails here rather than going quiet.
+    """
+    for spelling in _RETIRED_TIER_GATE_SPELLINGS:
+        sample = f"the tier decides which gate blocks: LATENT {spelling} today"
+        hits = [s for s in _RETIRED_TIER_GATE_SPELLINGS if s in sample]
+        assert hits == [spelling], (
+            f"{spelling!r} was not caught alone in {sample!r}; got {hits}"
+        )
 
 
 def test_reproduction_attempted_accepts_a_real_negative_result() -> None:
