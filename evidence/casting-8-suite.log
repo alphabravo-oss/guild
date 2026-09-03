@@ -10,8 +10,8 @@
 ........................................................................ [  6%]
 ........................................................................ [  8%]
 ........................................................................ [ 10%]
-........................................................................ [ 13%]
-........................................................................ [ 15%]
+........................................................................ [ 12%]
+........................................................................ [ 14%]
 ........................................................................ [ 17%]
 ............................
 === select_sweep_scope: which logs the boundary re-executes ===
@@ -62,33 +62,35 @@
     a caller ceiling wins for every log : 30
 ............................................ [ 19%]
 ........................................................................ [ 21%]
-........................................................................ [ 24%]
-........................................................................ [ 26%]
-........................................................................ [ 28%]
-........................................................................ [ 30%]
+........................................................................ [ 23%]
+........................................................................ [ 25%]
+........................................................................ [ 27%]
+........................................................................ [ 29%]
 ........................................................................ [ 32%]
-........................................................................ [ 35%]
-........................................................................ [ 37%]
-........................................................................ [ 39%]
-.................s........................................s.s........... [ 41%]
-........................................................................ [ 43%]
-........................................................................ [ 45%]
-........................................................................ [ 48%]
-........................................................................ [ 50%]
-........................................................................ [ 52%]
-........................................................................ [ 54%]
-........................................................................ [ 56%]
+........................................................................ [ 34%]
+........................................................................ [ 36%]
+........................................................................ [ 38%]
+........................................s............................... [ 40%]
+.........s.s............................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 47%]
+........................................................................ [ 49%]
+........................................................................ [ 51%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
 ........................................................................ [ 59%]
 ........................................................................ [ 61%]
-........................................................................ [ 63%]
-........................................................................ [ 65%]
-........................................................................ [ 67%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
 ........................................................................ [ 70%]
 ........................................................................ [ 72%]
 ........................................................................ [ 74%]
-..............................................s..s.s..s................. [ 76%]
-........................................................................ [ 78%]
-...................................................................
+.................s..s.s..s.............................................. [ 76%]
+........................................................................ [ 79%]
+........................................................................ [ 81%]
+
 === report.json top-level keys ===
   generated_at
   run
@@ -211,8 +213,34 @@
   | self_target | (none recorded) |
   a PARTIAL record names the one field it lacks, and self_target False is an answer:
   recorded=False  missing=['server_commit']  self_target=False
-.... [ 80%]
-........................................................................ [ 83%]
+.
+=== D-175 — the halt reason and the report it generated, one call, one number ===
+  Foundry-Phase('grind_start') -> ok=True halted=True  state.phase=HALTED
+  state.halted_reason:  --max-cycles 2 reached: opening GRIND cycle 3 would exceed it
+  the server counter it was computed from: cycle=2  halted_at_cycle=2
+  report.json run.max_cycles:                2
+  report.json baseline_comparison.current.grind_cycles:  2
+  REPORT.md: | GRIND cycles | 22 |  | 12 | 2 |
+  the filing read 3 in both of those, beside a cap of 2 and a reason naming GRIND 3 as the one that did NOT open.
+  under the cap now: True
+
+  the counter is untouched; only the GRIND it would have opened is subtracted:
+  index=2  halted=True  count=2
+  and a run at the same counter with no halt record still publishes index + 1, which is what keeps the two published baselines reproducing from their own archives:
+  index=2  halted=False  count=3
+
+=== D-172 — the cycle axis covers what the archive stamps, and the prose says which ===
+  three teammates dispatched at cycle 1, one reported spend:
+  unreported_dispatches: count=2  by_phase={'F1': ['casting-2', 'casting-3']}
+  spend by_phase[F1].unreported = 2   spend by_cycle['1'].unreported = 0
+  the filing observed exactly that 2-beside-0 with prose claiming the cycle row 'names the cycles those agents were dispatched in'.
+  the gap is now a derived number: unreported_without_cycle=2
+  ...an agent reaches them only if its dispatch record stamps a cycle, and the only record that does is stream-rollup.json's own cycle bucket, so those rows cover the F2 stream agents and nothing else. spawns.log stamps a teammate dispatch with a timestamp and no cycle, so a CAST or GRIND teammate is counted per phase and appears in NO cycle row, however many cycles it ran in — of the 2 unreported pairs here, 2 are in that position and are absent from every cycle row below (D-172).
+
+  the axis is narrowed, not emptied — a stream agent IS stamped, by the roll-up's own cycle bucket:
+  one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
+  the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
+...................................................................... [ 83%]
 ........................................................................ [ 85%]
 ........................................................................ [ 87%]
 ........................................................................ [ 89%]
@@ -220,15 +248,15 @@
 ........................................................................ [ 94%]
 ........................................................................ [ 96%]
 ........................................................................ [ 98%]
-...................................................                      [100%]
+.........................................................                [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/c3suite8/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1962: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/c3suite8/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2031: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/c3suite8/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_protocol_prose.py:5207: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
-SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/agents/teammate.md states no `target_kind` bullet
-SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
-SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3281 passed, 10 skipped, 3 deselected in 145.45s
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-recapture/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1962: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-recapture/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2031: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-recapture/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
+SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
+SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
+SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
+3359 passed, 10 skipped, 3 deselected in 136.94s
