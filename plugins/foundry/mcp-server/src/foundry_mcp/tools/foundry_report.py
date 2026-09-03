@@ -959,6 +959,30 @@ def _wall_clock_minutes(run_dir: Path) -> float | None:
     return None if seconds is None else round(seconds / 60.0, 1)
 
 
+#: Why `_archive_metrics` publishes None for each of the two cycle numbers the
+#: baseline records — in the words a reader of the table needs, not the token a
+#: reader of this module would need (D-151).
+#:
+#: It lives beside `_archive_metrics` because that is the function whose Nones
+#: it explains, and each entry is a restatement of a rule stated in prose a few
+#: lines down: `derive_cycle_count`'s "``count`` is None only when NO source
+#: could supply a number", and this function's "None, not 0, when the archive
+#: recorded no ``inspect_modes`` at all". A third cycle metric added to
+#: `_archive_metrics` without an entry here raises `KeyError` at the note site
+#: rather than printing a bare `None` again, which is the whole failure D-151
+#: names.
+_UNDERIVABLE_REASON: dict[str, str] = {
+    "grind_cycles": (
+        "neither its state counter, its stream roll-up nor its defect ledger "
+        "can supply a cycle number"
+    ),
+    "post_verification_cycles": (
+        "it recorded no inspect_modes list, so the F5 INSPECTs it opened "
+        "cannot be counted"
+    ),
+}  # 2 entries — the two keys THUNDER_VIPER_BASELINE records
+
+
 def _archive_metrics(
     run_dir: Path, *, state: dict | None = None, inspect_modes: dict | None = None
 ) -> dict:
@@ -1182,18 +1206,63 @@ def _baseline_comparison_section(
             f"comparison of the archive with itself."
         )
     else:
-        differs = {
-            key: baseline_derived.get(key)
-            for key in ("grind_cycles", "post_verification_cycles")
-            if baseline_derived.get(key) != baseline_recorded.get(key)
-        }
-        if differs:
+        # D-151 — "CANNOT DERIVE" IS NOT "DERIVES A DIFFERENT NUMBER".
+        #
+        # D-135 fixed the `self` branch of this note; this is the same class
+        # one branch over, inside the branch D-135 left alone. `differs` was a
+        # single dict keyed on `derived != recorded`, and None satisfies that
+        # test against every recorded number — so an archive that CANNOT say
+        # what it did was reported as having said something. Driven at HEAD,
+        # through both doors that render this object:
+        # `measure-run.py foundry-archive/daring-orca` and the REPORT.md
+        # generator over the same archive both emitted "That archive currently
+        # DERIVES post_verification_cycles None, shown in the Derived column"
+        # — while the Derived cell on that row was EMPTY, because `_md_table`
+        # renders None as a blank. One sentence naming a column that showed
+        # nothing, asserting a derivation the archive never produced, with the
+        # Python repr of the absence standing in for the number.
+        #
+        # `_archive_metrics`' docstring is the authority the sentence broke:
+        # "Every metric is None when its ledger cannot supply it." So the two
+        # outcomes are separated HERE and each gets its own sentence, which is
+        # exactly the property D-135 installed one branch along — an outcome
+        # that cannot be added without giving it words. Dropping the null keys
+        # from the note instead would leave the empty cell explained by
+        # nothing, which is the unexplained-blank failure D-029 and D-103
+        # already had to fix in the LATENT backlog.
+        derived_differs: dict[str, Any] = {}
+        underivable: dict[str, str] = {}
+        for key in ("grind_cycles", "post_verification_cycles"):
+            derived_value = baseline_derived.get(key)
+            if derived_value == baseline_recorded.get(key):
+                continue
+            if derived_value is None:
+                underivable[key] = _UNDERIVABLE_REASON[key]
+            else:
+                derived_differs[key] = derived_value
+        if derived_differs:
+            # WORDING UNCHANGED on this arm. It is the arm the note always
+            # described correctly, and `test_report.py` pins its spelling
+            # ("DERIVES grind_cycles 31"); D-151 is about the arm that had no
+            # sentence of its own, not about this one.
             baseline_note += (
                 " That archive currently DERIVES "
-                + ", ".join(f"{k} {v}" for k, v in sorted(differs.items()))
+                + ", ".join(f"{k} {v}" for k, v in sorted(derived_differs.items()))
                 + ", shown in the Derived column. The recorded constant stands;"
                 " a derivation that disagrees with it is a fact about the"
                 " archive, not a better measurement of the run."
+            )
+        if underivable:
+            baseline_note += (
+                " That archive CANNOT DERIVE "
+                + ", ".join(
+                    f"{key} ({why})" for key, why in sorted(underivable.items())
+                )
+                + f", so the Derived column is empty on {'those rows' if len(underivable) > 1 else 'that row'}"
+                " rather than showing a number — an absence of measurement,"
+                " not a measurement of zero. The recorded constant is what the"
+                " Baseline column shows, exactly as it would be if the"
+                " derivation agreed."
             )
 
     def _meets(value: object, limit: object) -> bool | None:
@@ -1463,14 +1532,46 @@ def _render_section(key: str, value: dict) -> list[str]:
                 f"{d.get('state_rollup')}"
                 for d in disagreements
             ]
+        # D-151's class on this section's own headline (D-150). `agents` is the
+        # ROLL-UP's number or it is nothing — `_new_spend_bucket` seeds it None
+        # and `_read_spend` fills it only from `state.json.spend`, on the
+        # stated ground that "nobody recorded how many agents" and "no agents
+        # ran" are different facts. This sentence interpolated that None raw
+        # while the adjacent `records` used `.get('records', 0)`, so at the
+        # moment a --max-cycles halt generates a report over a run with no
+        # spend roll-up — the normal state at a halt — operator-facing prose
+        # read "0 spend records over None distinct agents." The Agents column
+        # four lines below rendered the SAME null as a blank cell: one null,
+        # two spellings, in one section, and the one the reader met first was a
+        # Python repr.
+        #
+        # `or 0` is not the fix. It would print the fabrication `_read_spend`
+        # refuses by name, and report.json would still carry null beside it —
+        # trading a visible repr for two documents that disagree. So the
+        # unknown is stated in WORDS, and the sentence names the blank cells it
+        # is describing, which is how the LATENT backlog's prose already
+        # handles its own null cells (D-103).
+        agents = total.get("agents")
+        if isinstance(agents, int) and not isinstance(agents, bool):
+            headline = (
+                f"{value.get('records', 0)} spend records over {agents} "
+                "distinct agents."
+            )
+        else:
+            headline = (
+                f"{value.get('records', 0)} spend records; how many DISTINCT "
+                "agents produced them was not recorded, because "
+                "`state.json.spend` — the roll-up that is the only source for "
+                "that count — carries none. The Agents and Unreported cells "
+                "below are blank for want of that source, not because they "
+                "are zero."
+            )
         return (
             # "Reported as", not "Cost is": NFR-002 bans the money frame, and
             # the word invites a reader to supply the rate table the section
             # deliberately does not keep. `test_report.py`'s currency scan
             # drove this — it matched the generator's own sentence.
-            [f"{value.get('records', 0)} spend records over "
-             f"{total.get('agents')} distinct agents. Reported as "
-             "tokens and minutes only (NFR-002).", ""]
+            [f"{headline} Reported as tokens and minutes only (NFR-002).", ""]
             + _md_table(
                 ["Scope", "Key", "Tokens", "Minutes", "Records", "Agents",
                  "Unreported"],

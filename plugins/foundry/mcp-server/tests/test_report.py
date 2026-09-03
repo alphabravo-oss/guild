@@ -1511,6 +1511,89 @@ def test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does(
     assert "Records" in header and "Agents" in header, header
 
 
+def test_an_unrecorded_agent_count_is_stated_in_words_never_printed_as_None(
+    report_env,
+):
+    """D-150 — the spend headline printed a Python None as an agent count.
+
+    AC-036 / FR-023 / FR-038. `agents` is the roll-up's number or it is
+    nothing: `_new_spend_bucket` seeds it None and `_read_spend` fills it only
+    from `state.json.spend`, on the stated ground that "nobody recorded how
+    many agents" and "no agents ran" are different facts. The headline
+    interpolated that None raw — `{total.get('agents')}` — while the `records`
+    beside it used `.get('records', 0)`, so a run with no spend roll-up
+    rendered "0 spend records over None distinct agents." into operator-facing
+    prose. That is the normal state at the moment a --max-cycles halt
+    generates its report.
+
+    The same section's TABLE rendered the same null as a blank Agents cell, so
+    one section printed one null two ways and the spelling a reader met first
+    was a repr. Both surfaces are driven here: the sentence must state the
+    absence in words, and it must name the blank cells so the two agree
+    instead of contradicting each other.
+
+    `or 0` is asserted against explicitly. It would print the fabrication
+    `_read_spend` refuses by name, and `report.json` would still carry null
+    beside it — two documents disagreeing about one field.
+    """
+    # (a) THE UNKNOWN BRANCH: a run whose state.json carries every version
+    #     field and no `spend` roll-up at all — the second door the filing was
+    #     driven through, and what a halted run looks like.
+    state = _read_json(report_env, "state.json")
+    del state["spend"]
+    _write_json(report_env, "state.json", state)
+    (report_env / SPEND_LEDGER_FILENAME).write_text("", encoding="utf-8")
+
+    _generate(report_env)
+    section = _document(report_env)["spend_per_phase_and_cycle"]
+
+    # report.json was always honest and stays honest — null, not 0.
+    assert section["total"]["agents"] is None
+    assert section["total"]["records"] == 0
+
+    table = _markdown(report_env).split("## Spend per phase and cycle", 1)[1]
+    headline = next(ln for ln in table.splitlines() if "spend records" in ln)
+
+    assert "None" not in headline, headline
+    assert "over None distinct agents" not in headline, headline
+    assert "0 distinct agents" not in headline, (
+        "`or 0` is the fabrication `_read_spend` refuses by name: it would "
+        "report 'no agents ran' for a run nobody measured"
+    )
+    assert "was not recorded" in headline, headline
+    assert "state.json.spend" in headline, (
+        "the sentence names the source that is missing, so the reader knows "
+        "what to go and look at"
+    )
+    # THE TWO SURFACES AGREE. The sentence describes the cells, and the cells
+    # are what it describes — blank, not zero.
+    assert "blank" in headline and "not because they are zero" in headline
+    total_row = next(ln for ln in table.splitlines() if ln.startswith("| run |"))
+    cells = [c.strip() for c in total_row.split("|")[1:-1]]
+    assert cells[:5] == ["run", "total", "0", "0.0", "0"], total_row
+    assert cells[5:] == ["", ""], (
+        f"Agents and Unreported are the blank cells the sentence names: "
+        f"{total_row}"
+    )
+
+    # (b) THE KNOWN BRANCH is unchanged: a recorded count is still named as a
+    #     number, in the same sentence it always was.
+    state["spend"] = {
+        "by_phase": {}, "by_cycle": {},
+        "total": {"tokens": 0, "duration_ms": 0, "agents": 4, "unreported": 0},
+    }
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    known = next(
+        ln for ln in
+        _markdown(report_env).split("## Spend per phase and cycle", 1)[1].splitlines()
+        if "spend records" in ln
+    )
+    assert "0 spend records over 4 distinct agents." in known, known
+    assert "tokens and minutes only (NFR-002)" in known, known
+
+
 def test_a_ledger_and_rollup_disagreement_is_named_not_printed_twice(report_env):
     """D-090's other half — what "worth being able to see" now MEANS.
 
@@ -2099,6 +2182,95 @@ def test_the_note_says_the_archive_was_read_when_the_archive_was_read(tmp_path):
     assert derived["baseline_derived"]["defects_by_tier"] == {
         tier: (1 if tier == "LIVE" else 0) for tier in sorted(DEFECT_TIER_OR_UNKNOWN)
     }
+
+
+def test_a_baseline_the_archive_cannot_derive_is_not_reported_as_a_derivation(
+    tmp_path,
+):
+    """D-151 — 'cannot derive' was reported as 'derives a different number'.
+
+    NFR-001 / AC-036 / OT-030. This is D-135's class one branch over: D-135
+    gave the `self` outcome its own sentence, and left the `derived` outcome
+    holding a single `differs` dict keyed on `derived != recorded`. None
+    satisfies that test against every recorded number, so an archive that
+    CANNOT say what it did was reported as having said something:
+
+        That archive currently DERIVES post_verification_cycles None,
+        shown in the Derived column.
+
+    while `_md_table` rendered that same None as an EMPTY Derived cell. The
+    sentence named a column that showed nothing and asserted a derivation the
+    archive never produced, with the Python repr of the absence standing in
+    for the number. `_archive_metrics`' own docstring is the authority it
+    broke: "Every metric is None when its ledger cannot supply it."
+
+    thunder-viper is exactly that archive — it wrote no `inspect_modes` list,
+    so its post-verification count is underivable — which is why this fired on
+    OT-030's own comparison. Driven here against a real archive on disk,
+    because the claim is about what the generator did with a directory.
+
+    The real-number arm keeps its wording; the pin on it
+    (`test_a_derivation_that_exceeds_the_recorded_baseline_never_replaces_it`)
+    is what D-151 says was the only arm covered.
+    """
+    archive = tmp_path / "foundry-archive"
+
+    # thunder-viper's real shape: a counter the defect ledger can reconstruct
+    # a cycle count from, and NO `inspect_modes` list at all.
+    baseline_dir = archive / THUNDER_VIPER_BASELINE["run"]
+    baseline_dir.mkdir(parents=True)
+    _write_json(baseline_dir, "state.json", {"phase": "F6", "cycle": 21})
+    _write_json(baseline_dir, "defects.json", {"defects": []})
+
+    run_dir = archive / "some-later-run"
+    run_dir.mkdir()
+    _write_json(run_dir, "state.json", {"phase": "F6", "cycle": 2})
+    _write_json(run_dir, "defects.json", {"defects": []})
+
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+    section = _document(run_dir)["baseline_comparison"]
+    note = section["baseline_note"]
+
+    # The archive really cannot supply this number, and really can supply the
+    # other — so this fixture holds BOTH arms at once.
+    assert section["baseline_derived"]["post_verification_cycles"] is None
+    assert section["baseline_derived"]["grind_cycles"] == (
+        THUNDER_VIPER_BASELINE["grind_cycles"]
+    ), "21 + 1 = 22, so grind_cycles agrees and only the null arm speaks"
+
+    assert "DERIVES post_verification_cycles None" not in note, note
+    assert "None" not in note, f"no Python repr reaches operator prose: {note}"
+    assert "CANNOT DERIVE post_verification_cycles" in note, note
+    # ...and it says WHY, which is the fact the empty cell cannot carry.
+    assert "recorded no inspect_modes list" in note, note
+    assert "the Derived column is empty on that row" in note, note
+    assert "not a measurement of zero" in note, note
+
+    # THE SENTENCE AND THE COLUMN AGREE. The row it names is blank, and it is
+    # the row it names — not the one above it, which does carry a derivation.
+    table = _markdown(run_dir).split("## Baseline comparison", 1)[1]
+    row = next(
+        ln for ln in table.splitlines()
+        if ln.startswith("| Post-verification cycles |")
+    )
+    # Metric | Baseline (recorded) | Baseline (derived) | Target | This run
+    cells = [c.strip() for c in row.split("|")[1:-1]]
+    assert cells[2] == "", f"the Derived cell the sentence names is empty: {row}"
+    assert cells[1] == str(THUNDER_VIPER_BASELINE["post_verification_cycles"]), (
+        "and the Baseline column still shows the recorded constant, which is "
+        "what the sentence says it shows"
+    )
+
+    # The BOTH-ARMS case: an archive that derives one number differently AND
+    # cannot derive the other gets one sentence for each, never one sentence
+    # covering both.
+    _write_json(baseline_dir, "state.json", {"phase": "F6", "cycle": 30})
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+    both = _document(run_dir)["baseline_comparison"]["baseline_note"]
+    assert "DERIVES grind_cycles 31" in both, both
+    assert "CANNOT DERIVE post_verification_cycles" in both, both
+    assert "The recorded constant stands" in both, both
+    assert "None" not in both, both
 
 
 def test_an_unmeasured_wall_clock_is_null_on_both_surfaces(report_env, tmp_path):
