@@ -14,6 +14,15 @@ wrong assertion because it resolved in both specs and named neither:
     the server-side cycle counter and the three-cycle escalation heuristic,
     which is the older half this file still drives.
 
+That convention is now ENFORCED, not merely stated here. D-181: this header was
+corrected in cycle 11 and the per-test docstrings below were left unqualified,
+so the module documented a rule it broke 156 times — and a documented rule
+nothing checks is how D-178 came back one file over. The pin at the bottom of
+this module, under the ``D-178`` sentinel, runs casting 2's scan over this
+file's own prose; ``_CONVERGENCE_IDS`` there is the declared list of ids this
+module legitimately cites bare, and the block above it states what the pin
+cannot see.
+
 The header of this module used to open with a bare
 ``FR-005 / FR-006 / … / AC-011, OT-003`` list and name no spec at all. Every
 one of those ids is a process-fixes id and every one of them ALSO resolves in
@@ -256,13 +265,14 @@ def _recurring(cycles: list[int], klass: str = "FALSE_DOCUMENTED_CONTRACT") -> l
 
 
 # --------------------------------------------------------------------------- #
-# AC-008 / ST-001 / FR-005 — the server-owned cycle counter
+# process-fixes AC-008 / ST-001 / FR-005 — the server-owned cycle counter
 # --------------------------------------------------------------------------- #
 
 
 def test_grind_to_inspect_increments_the_counter(run_env):
-    """AC-008 verbatim: 'After a GRIND->INSPECT transition, the server-side
-    cycle counter has incremented without any caller-supplied value.'"""
+    """process-fixes AC-008 verbatim: 'After a GRIND->INSPECT transition,
+    the server-side cycle counter has incremented without any
+    caller-supplied value.'"""
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=0)
     _arm(fdir)
@@ -276,9 +286,10 @@ def test_grind_to_inspect_increments_the_counter(run_env):
 
 
 def test_the_boundary_handler_takes_no_cycle_argument(run_env):
-    """ST-001: 'caller-supplied cycle is not trusted where the server knows
-    better'. The handler's signature is the proof — there is no cycle argument
-    to supply, so the increment cannot be steered from outside."""
+    """process-fixes ST-001: 'caller-supplied cycle is not trusted where the
+    server knows better'. The handler's signature is the proof — there is no
+    cycle argument to supply, so the increment cannot be steered from
+    outside."""
     import inspect
 
     params = inspect.signature(foundry_mark_phase_complete).parameters
@@ -440,13 +451,14 @@ def test_inspect_start_is_a_recognized_phase_token(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# AC-009 / ST-002 / FR-006 — three consecutive cycles fire, two do not
+# process-fixes AC-009 / ST-002 / FR-006 — three consecutive cycles fire,
+# two do not
 # --------------------------------------------------------------------------- #
 
 
 def test_escalation_fires_on_the_third_consecutive_cycle(run_env):
-    """AC-009 / OT-003: the synthetic 3-cycle fixture. The same class filed in
-    three consecutive server-counted cycles escalates."""
+    """process-fixes AC-009 / OT-003: the synthetic 3-cycle fixture. The same
+    class filed in three consecutive server-counted cycles escalates."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, _recurring([0, 1, 2]))
@@ -459,7 +471,8 @@ def test_escalation_fires_on_the_third_consecutive_cycle(run_env):
 
 
 def test_two_consecutive_cycles_do_not_fire_escalation(run_env):
-    """AC-009's negative half — the one that keeps N=3 meaningful."""
+    """process-fixes AC-009's negative half — the one that keeps N=3
+    meaningful."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=1)
     _write_defects(fdir, _recurring([0, 1]))
@@ -468,8 +481,9 @@ def test_two_consecutive_cycles_do_not_fire_escalation(run_env):
 
 
 def test_non_consecutive_cycles_do_not_fire_escalation(run_env):
-    """FR-006 says CONSECUTIVE. A class that appears in cycles 0, 1 and 3 broke
-    its run — cycle 2 is evidence a fix held, however briefly."""
+    """process-fixes FR-006 says CONSECUTIVE. A class that appears in cycles
+    0, 1 and 3 broke its run — cycle 2 is evidence a fix held, however
+    briefly."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=3)
     _write_defects(fdir, _recurring([0, 1, 3]))
@@ -504,8 +518,9 @@ def test_a_regression_reopen_counts_as_the_class_recurring(run_env):
 
 
 def test_a_class_with_no_open_defects_is_not_escalated(run_env):
-    """ST-003 CLEARED: once every defect of the class closes, the class stops
-    producing a structural packet. Escalation describes work outstanding."""
+    """process-fixes ST-003 CLEARED: once every defect of the class closes,
+    the class stops producing a structural packet. Escalation describes work
+    outstanding."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     defects = _recurring([0, 1, 2])
@@ -518,13 +533,14 @@ def test_a_class_with_no_open_defects_is_not_escalated(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# FR-007 / FR-024 / ST-002 (A-033) — class identity
+# process-fixes FR-007 / FR-024 / ST-002 (A-033) — class identity
 # --------------------------------------------------------------------------- #
 
 
 def test_a_stream_declared_class_is_the_class(run_env):
-    """FR-007: the optional stream-declared ``class`` field wins outright — it
-    is the assayer's systemic_patterns[] output finally being consumed."""
+    """process-fixes FR-007: the optional stream-declared ``class`` field wins
+    outright — it is the assayer's systemic_patterns[] output finally being
+    consumed."""
     assert _defect_class({"class": "FALSE_DOCUMENTED_CONTRACT", "type": "WRONG",
                           "file": "a/b/c.py"}) == "FALSE_DOCUMENTED_CONTRACT"
     # Whitespace-only is not a declaration.
@@ -532,10 +548,10 @@ def test_a_stream_declared_class_is_the_class(run_env):
 
 
 def test_fallback_clusters_on_type_plus_file_cluster(run_env):
-    """FR-024 (implementer-tunable, chosen rule documented at the constant):
-    the fallback is the canonical defect type joined with the first
-    FALLBACK_CLUSTER_DEPTH path segments. Same type + same subsystem is one
-    class; a different subsystem is a different class."""
+    """process-fixes FR-024 (implementer-tunable, chosen rule documented at
+    the constant): the fallback is the canonical defect type joined with the
+    first FALLBACK_CLUSTER_DEPTH path segments. Same type + same subsystem is
+    one class; a different subsystem is a different class."""
     assert fo.FALLBACK_CLUSTER_DEPTH == 2
 
     same_a = _defect_class({"type": "UNWIRED", "file": "src/api/login.py"})
@@ -564,8 +580,9 @@ def test_fallback_handles_a_defect_with_no_file(run_env):
 
 
 def test_the_fallback_can_accumulate_the_three_cycle_count(run_env):
-    """ST-002 / A-033: 'Escalation keys on stream-declared class when present,
-    and on the fallback clustering when absent — either can accumulate.'"""
+    """process-fixes ST-002 / A-033: 'Escalation keys on stream-declared class
+    when present, and on the fallback clustering when absent — either can
+    accumulate.'"""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, [
@@ -584,14 +601,16 @@ def test_the_fallback_can_accumulate_the_three_cycle_count(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# AC-010 / FR-008 / ST-003 / OT-003 — one structural packet per escalated class
+# process-fixes AC-010 / FR-008 / ST-003 / OT-003 — one structural packet
+# per escalated class
 # --------------------------------------------------------------------------- #
 
 
 def test_escalated_class_produces_exactly_one_structural_task(run_env):
-    """AC-010 / OT-003: 'Foundry-Tasks emits exactly one structural-fix task
-    for that class'. These three defects live in three different files, so the
-    old location grouping produced three unrelated packets."""
+    """process-fixes AC-010 / OT-003: 'Foundry-Tasks emits exactly one
+    structural-fix task for that class'. These three defects live in three
+    different files, so the old location grouping produced three unrelated
+    packets."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, [
@@ -613,8 +632,8 @@ def test_escalated_class_produces_exactly_one_structural_task(run_env):
 
 
 def test_packets_for_every_other_defect_are_unaffected(run_env):
-    """AC-010: 'packets for all other defects are unaffected'. Escalation
-    changes the shape of ONE class's work and nothing else."""
+    """process-fixes AC-010: 'packets for all other defects are unaffected'.
+    Escalation changes the shape of ONE class's work and nothing else."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, [
@@ -635,9 +654,9 @@ def test_packets_for_every_other_defect_are_unaffected(run_env):
 
 
 def test_the_structural_packet_carries_a_recorded_proposal(run_env):
-    """FR-008 / ST-003: 'one structural packet with a recorded proposal'. It
-    states the evidence that made this systemic and that closure is not
-    waived."""
+    """process-fixes FR-008 / ST-003: 'one structural packet with a recorded
+    proposal'. It states the evidence that made this systemic and that closure
+    is not waived."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, _recurring([0, 1, 2]))
@@ -653,8 +672,9 @@ def test_the_structural_packet_carries_a_recorded_proposal(run_env):
 
 
 def test_the_proposal_is_persisted_not_only_returned(run_env):
-    """ST-003 says the proposal is RECORDED on the class's packet. Holding it
-    only in the returned dict would lose it the moment the lead moved on."""
+    """process-fixes ST-003 says the proposal is RECORDED on the class's
+    packet. Holding it only in the returned dict would lose it the moment the
+    lead moved on."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, _recurring([0, 1, 2]))
@@ -686,13 +706,13 @@ def test_a_non_escalated_run_produces_the_same_tasks_as_before(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# AC-010 — the explicit directive override
+# process-fixes AC-010 — the explicit directive override
 # --------------------------------------------------------------------------- #
 
 
 def test_a_scoped_directive_override_restores_per_instance_packets(run_env):
-    """AC-010: 'an explicit directive override restores per-instance
-    packets'."""
+    """process-fixes AC-010: 'an explicit directive override restores
+    per-instance packets'."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
     _write_defects(fdir, [
@@ -761,14 +781,15 @@ def test_an_unrelated_directive_does_not_de_escalate(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# AC-011 — escalation never waives closure
+# process-fixes AC-011 — escalation never waives closure
 # --------------------------------------------------------------------------- #
 
 
 def test_done_gate_refuses_while_an_escalated_class_has_open_defects(run_env):
-    """AC-011 verbatim: 'the run cannot reach DONE while any escalated-class
-    defect remains open'. Stated as its own named check so the guarantee is
-    visible rather than merely implied by the open-defect count."""
+    """process-fixes AC-011 verbatim: 'the run cannot reach DONE while any
+    escalated-class defect remains open'. Stated as its own named check so the
+    guarantee is visible rather than merely implied by the open-defect
+    count."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F4", cycle=2)
     _write_defects(fdir, _recurring([0, 1, 2]))
@@ -789,8 +810,9 @@ def test_done_gate_refuses_while_an_escalated_class_has_open_defects(run_env):
 
 
 def test_done_gate_escalation_check_passes_once_the_class_closes(run_env):
-    """ST-003 CLEARED: the structural fix still has to close every instance.
-    When it does, the check clears — closure is the only exit."""
+    """process-fixes ST-003 CLEARED: the structural fix still has to close
+    every instance. When it does, the check clears — closure is the only
+    exit."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F4", cycle=2)
     defects = _recurring([0, 1, 2])
@@ -814,15 +836,16 @@ def test_done_gate_escalation_check_passes_once_the_class_closes(run_env):
 
 
 def test_the_done_transition_itself_refuses_an_open_escalated_class(run_env):
-    """D-037 — AC-011 constrains the RUN, so the TRANSITION must enforce it.
+    """D-037 — process-fixes AC-011 constrains the RUN, so the TRANSITION
+    must enforce it.
 
     ``foundry_mark_phase_complete("done")`` was an unconditional
     ``_update_phase(F6)`` + ``clear_active_run()``: it read no verdicts, no open
     defects and no escalated classes. Every check above lived in
     ``foundry_gate("done")``, which is advisory — a lead that simply did not
     call it archived the run. Driven before the fix: DONE reached with six open
-    escalated-class defects and zero verdicts, which is precisely what AC-011
-    says cannot happen.
+    escalated-class defects and zero verdicts, which is precisely what
+    process-fixes AC-011 says cannot happen.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F4", cycle=2)
@@ -888,7 +911,8 @@ def test_the_done_transition_advances_once_the_gate_would_pass(run_env, monkeypa
     project_root, fdir = run_env
     _write_state(fdir, phase="F4", cycle=3)
 
-    # Every defect of the escalated class closed (ST-003 CLEARED)...
+    # Every defect of the escalated class closed (process-fixes ST-003
+    # CLEARED)...
     defects = _recurring([0, 1, 2])
     for d in defects:
         d["status"] = "fixed"
@@ -922,7 +946,7 @@ def test_the_done_transition_advances_once_the_gate_would_pass(run_env, monkeypa
 
 
 # --------------------------------------------------------------------------- #
-# AC-011 — F6 has TWO doors and both are locked (D-043 / D-044)
+# process-fixes AC-011 — F6 has TWO doors and both are locked (D-043 / D-044)
 #
 # D-037 bound _done_preconditions to foundry_mark_phase_complete's `done`
 # branch and left the sibling terminal branch, `nyquist_done`, unbound: an
@@ -934,8 +958,9 @@ def test_the_done_transition_advances_once_the_gate_would_pass(run_env, monkeypa
 # foundry_gate had no `nyquist_done` case at all, so there was no server-side
 # gate a caller could invoke for the token either.
 #
-# AC-011's words are "the RUN cannot reach DONE while any escalated-class
-# defect remains open", with no exception for how F6 is entered.
+# process-fixes AC-011's words are "the RUN cannot reach DONE while any
+# escalated-class defect remains open", with no exception for how F6 is
+# entered.
 # --------------------------------------------------------------------------- #
 
 
@@ -1256,7 +1281,8 @@ def test_the_clean_arm_records_every_closed_cycle_it_evaluated(run_env):
 
 
 def test_a_reproduced_instance_of_an_escalated_class_still_blocks_done(run_env):
-    """The other side, unchanged: AC-011's 'escalation NEVER waives closure'.
+    """The other side, unchanged: process-fixes AC-011's 'escalation NEVER
+    waives closure'.
 
     One LIVE instance among the LATENT ones and the class blocks again, named,
     with the blocking instance named in the hint — the tier is what decides, not
@@ -1499,8 +1525,8 @@ def test_next_action_reads_normally_when_nothing_is_escalated(run_env):
 
 
 def test_escalation_threshold_constant_is_three(run_env):
-    """FR-006 / A-012 fixes N at 3. Pinned so a later edit to the constant has
-    to be a deliberate spec change, not a silent retune."""
+    """process-fixes FR-006 / A-012 fixes N at 3. Pinned so a later edit to
+    the constant has to be a deliberate spec change, not a silent retune."""
     assert ESCALATION_CYCLES == 3
 
 
@@ -1511,8 +1537,8 @@ def test_escalation_threshold_constant_is_three(run_env):
 # `return scoped or {"*"}` meant ANY mention of the token de-escalated EVERY
 # class. A directive that FORBADE the override therefore disabled escalation
 # wholesale — semantics exactly inverted from operator intent, with no signal.
-# ST-003 makes the override an EXPLICIT directive action, and a substring match
-# is not explicit.
+# process-fixes ST-003 makes the override an EXPLICIT directive action, and a
+# substring match is not explicit.
 # --------------------------------------------------------------------------- #
 
 
@@ -1585,7 +1611,7 @@ def test_a_directive_forbidding_the_override_leaves_escalation_armed(run_env):
 
 def test_the_marker_grammar_still_de_escalates_the_named_class(run_env):
     """The override must keep WORKING — D-101 narrows the trigger, it does not
-    remove the capability AC-010 requires."""
+    remove the capability process-fixes AC-010 requires."""
     project_root, fdir = run_env
     _write_defects(fdir, _recurring([1, 2, 3]))
     _write_state(fdir, phase="F3", cycle=3)
@@ -1603,8 +1629,8 @@ def test_the_marker_grammar_still_de_escalates_the_named_class(run_env):
 # TV-B-04: `class` is OPTIONAL, so one stream omitting it split a real cluster
 # into SHARED{1,3} and MISSING@src{2}. Neither reached three consecutive
 # cycles, so a class that genuinely recurred three straight cycles escaped
-# escalation in silence — ST-002 says EITHER path accumulates the count, and a
-# mixed cluster accumulated in neither.
+# escalation in silence — process-fixes ST-002 says EITHER path accumulates
+# the count, and a mixed cluster accumulated in neither.
 # --------------------------------------------------------------------------- #
 
 
@@ -1630,7 +1656,7 @@ def test_a_mixed_declared_cluster_escalates_on_the_third_cycle(run_env):
     assert escalated["SHARED"]["consecutive_cycles"] == 3
     assert escalated["SHARED"]["cycles"] == [1, 2, 3]
     # The undeclared record is CARRIED, not merely counted: closure still binds
-    # it (AC-011), so it must appear on the structural packet.
+    # it (process-fixes AC-011), so it must appear on the structural packet.
     assert set(escalated["SHARED"]["defect_ids"]) == {"D-001", "D-002", "D-003"}
 
 
@@ -1685,7 +1711,8 @@ def test_a_declared_class_is_never_merged_into_another_declared_class(run_env):
 
 
 def test_a_wholly_undeclared_cluster_still_uses_the_fallback(run_env):
-    """FR-024 / ST-002: the fallback path is untouched by the absorption rule."""
+    """process-fixes FR-024 / ST-002: the fallback path is untouched by the
+    absorption rule."""
     project_root, fdir = run_env
     _write_defects(fdir, [
         _defect("D-001", 1, type="MISSING", file="src/a.py"),
@@ -1723,12 +1750,14 @@ def test_two_cycles_of_a_mixed_cluster_still_do_not_fire(run_env):
 # caller cycles 1/2/3, only the DOOR differs: Foundry-Defect stamped [1,2,3]
 # and escalated and DONE refused, while Foundry-Sync stamped [0] and neither
 # fired. Mixed filing persisted [1,0,3] — longest consecutive run 2 — so a
-# genuine systemic class evaded escalation and the AC-011 guard never fired.
+# genuine systemic class evaded escalation and the process-fixes AC-011 guard
+# never fired.
 #
 # LEAD INTERFACE RULING (cross-casting, casting 3 owns the foundry.py half):
 # on a malformed/unusable counter BOTH doors resolve the stamped cycle to 0,
 # matching _current_cycle's documented "every reader gets a usable integer"
-# and ST-001's "the caller's cycle is never trusted for stamping"; AND both
+# and process-fixes ST-001's "the caller's cycle is never trusted for
+# stamping"; AND both
 # writers persist the caller-supplied value as `declared_cycle` for
 # auditability, so the divergence is visible rather than silent.
 #
@@ -1875,8 +1904,9 @@ def test_the_batch_door_persists_the_callers_declared_cycle(run_env, state):
 
 
 def test_the_batch_door_stamps_a_healthy_counter_over_the_callers_claim(run_env):
-    """ST-001 on the path that is entirely this casting's: the server counter
-    wins, and the caller's 7 survives only as the audit field."""
+    """process-fixes ST-001 on the path that is entirely this casting's: the
+    server counter wins, and the caller's 7 survives only as the audit
+    field."""
     project_root, fdir = run_env
     (fdir / "state.json").write_text(json.dumps({"phase": "F3", "cycle": 4}), encoding="utf-8")
 
@@ -1886,8 +1916,9 @@ def test_the_batch_door_stamps_a_healthy_counter_over_the_callers_claim(run_env)
 
 
 def test_a_healthy_counter_is_stamped_by_both_doors_unchanged(run_env):
-    """NFR-002: the ruling changes the MALFORMED path only. A real counter is
-    still the authority at both doors, and the caller's 7 is still ignored."""
+    """process-fixes NFR-002: the ruling changes the MALFORMED path only. A
+    real counter is still the authority at both doors, and the caller's 7 is
+    still ignored."""
     project_root, fdir = run_env
     (fdir / "state.json").write_text(json.dumps({"phase": "F3", "cycle": 4}), encoding="utf-8")
 
@@ -1903,7 +1934,8 @@ def test_mixed_door_filing_across_three_cycles_still_escalates(run_env):
     """The harm, end to end. Same class, three consecutive cycles, alternating
     doors, on an archive whose counter is malformed. Before the ruling the
     stamps were [1, 0, 3] — longest consecutive run 2 — and a genuine systemic
-    class evaded escalation while the AC-011 DONE guard passed."""
+    class evaded escalation while the process-fixes AC-011 DONE guard
+    passed."""
     project_root, fdir = run_env
 
     for cycle, door in ((1, _stamped_via_add), (2, _stamped_via_sync), (3, _stamped_via_add)):
@@ -2002,8 +2034,8 @@ def test_the_override_table_shows_the_inversion_and_the_fix():
 
 
 # --------------------------------------------------------------------------- #
-# D-128 (FR-020 / AC-025 / NFR-002) — the malformed-record row of the cross-door
-# parity matrix.
+# D-128 (process-fixes FR-020 / AC-025 / NFR-002) — the malformed-record row
+# of the cross-door parity matrix.
 #
 # D-097 added `_dict_records` to foundry.py and applied it to the SINGLE door.
 # The BATCH door kept `[d for d in records if d.get("status") == "fixed"]` over
@@ -2030,7 +2062,8 @@ _MALFORMED_RECORDS = ["not-a-dict", None, 42, True, ["nested"], 3.5]
 
 @pytest.mark.parametrize("junk", _MALFORMED_RECORDS)
 def test_neither_filing_door_raises_on_a_malformed_historical_record(run_env, junk):
-    """NFR-002 / the house rule: never raise across MCP, refuse by name."""
+    """process-fixes NFR-002 / the house rule: never raise across MCP, refuse
+    by name."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=1)
     _write_defects(fdir, [_defect("D-001", 1), junk])
@@ -2069,8 +2102,9 @@ def test_neither_filing_door_loses_the_filing_it_was_handed(run_env, junk):
 
 @pytest.mark.parametrize("junk", _MALFORMED_RECORDS)
 def test_neither_filing_door_discards_the_malformed_record(run_env, junk):
-    """NFR-002's no-narrowing half. Tolerating a junk record must not mean
-    DELETING it -- that would be a quieter D-096, refusing to lose records to a
+    """process-fixes NFR-002's no-narrowing half. Tolerating a junk record
+    must not mean DELETING it -- that would be a quieter D-096, refusing to
+    lose records to a
     bad container while losing them to a bad record. The single door already
     preserved it; the batch door must agree."""
     project_root, fdir = run_env
@@ -2137,15 +2171,16 @@ def test_a_regression_reopen_survives_a_junk_ledger(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# D-133 (AC-010 / ST-003 / FR-008) — the override grammar's two residual holes,
-# and the common root under them.
+# D-133 (process-fixes AC-010 / ST-003 / FR-008) — the override grammar's two
+# residual holes, and the common root under them.
 #
 # D-101's fix is correct and closed: a MENTION of the token is no longer a
 # REQUEST. What survived it, both "invisible rather than refused":
 #
 #   (1) `_OVERRIDE_SCOPED_RE`'s value group was `(\S+)`, so a class key
-#       containing a SPACE could never be overridden -- and FR-007 makes
-#       `class` free text a stream writes. Driven: "SHARED RESOURCE LEAK"
+#       containing a SPACE could never be overridden -- and process-fixes
+#       FR-007 makes `class` free text a stream writes. Driven: "SHARED
+#       RESOURCE LEAK"
 #       escalates; Foundry-Directive("escalation-override: SHARED RESOURCE
 #       LEAK") returns ok:true "injected", `_escalation_overrides()` is set(),
 #       and the class stays escalated. `_structural_proposal` interpolates that
@@ -2156,8 +2191,8 @@ def test_a_regression_reopen_survives_a_junk_ledger(run_env):
 #   (3) COMMON ROOT: nothing reported an override in either direction.
 # --------------------------------------------------------------------------- #
 
-# Class keys a stream can legitimately declare under FR-007's free text. The
-# first is the one from the defect report.
+# Class keys a stream can legitimately declare under process-fixes FR-007's
+# free text. The first is the one from the defect report.
 _AWKWARD_CLASS_KEYS = [
     "SHARED RESOURCE LEAK",
     "a hardening mechanism bound by hand to the site where a defect was reported",
@@ -2169,8 +2204,8 @@ _AWKWARD_CLASS_KEYS = [
 
 @pytest.mark.parametrize("klass", _AWKWARD_CLASS_KEYS)
 def test_a_class_key_with_a_space_can_be_overridden(run_env, klass):
-    """(1) FR-007 makes the class key free text; the grammar must be able to
-    name any key a stream can declare."""
+    """(1) process-fixes FR-007 makes the class key free text; the grammar
+    must be able to name any key a stream can declare."""
     project_root, fdir = run_env
     _write_defects(fdir, _recurring([1, 2, 3], klass=klass))
     _write_state(fdir, phase="F3", cycle=3)
@@ -2326,8 +2361,9 @@ def test_a_quoted_marker_beside_a_real_one_honours_only_the_real_one(run_env):
 
 @pytest.mark.parametrize("directive", _OVERRIDE_NON_REQUESTS)
 def test_widening_the_value_group_did_not_reopen_d_101(run_env, directive):
-    """NFR-002 for the grammar itself. The value group went from `(\\S+)` to
-    end-of-line, which is exactly the direction that could resurrect D-101's
+    """process-fixes NFR-002 for the grammar itself. The value group went
+    from `(\\S+)` to end-of-line, which is exactly the direction that could
+    resurrect D-101's
     inversion. Every phrasing D-101 closed is re-driven against the new
     grammar."""
     project_root, fdir = run_env
@@ -2338,7 +2374,7 @@ def test_widening_the_value_group_did_not_reopen_d_101(run_env, directive):
 
 @pytest.mark.parametrize("directive", _OVERRIDE_REQUESTS_ALL)
 def test_widening_the_value_group_kept_the_bare_marker_working(run_env, directive):
-    """...and the capability AC-010 requires still works."""
+    """...and the capability process-fixes AC-010 requires still works."""
     project_root, fdir = run_env
     foundry_inject_directive(directive, "normal", project_root)
 
@@ -2494,7 +2530,8 @@ def test_the_override_decision_table_shows_both_holes_and_the_fix():
 
     (1) every space-carrying key WAS unnameable and is nameable now;
     (2) every quoted marker DID override and overrides nothing now;
-    and neither change reopened D-101 or broke AC-010's capability.
+    and neither change reopened D-101 or broke process-fixes AC-010's
+    capability.
     """
     spaced = [k for k in _AWKWARD_CLASS_KEYS if " " in k]
     assert len(spaced) >= 3
@@ -3846,3 +3883,181 @@ def test_the_budget_arm_never_retracts_a_packet_inside_its_own_cycle(run_env):
     assert entry["status"] == "CLEARED", entry
     assert entry["exit_reason"] == "budget", entry
     assert entry["cleared_at_cycle"] == 5, entry
+
+
+# --------------------------------------------------------------------------- #
+# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED.
+#
+# D-181, filed one cycle after D-178 closed in test_observations.py, is the same
+# defect in this module. Cycle 11 corrected THIS file's header to state the
+# convention — a bare id cites forge-specs/foundry-run-convergence/spec.md, a
+# historical one is written `process-fixes AC-008` — and left the per-test
+# docstrings unqualified, so the header documented a rule the file itself broke
+# 156 times. Confirmed by citation resolution:
+# `test_grind_to_inspect_increments_the_counter` quoted "AC-008 verbatim: 'After
+# a GRIND->INSPECT transition, the server-side cycle counter has incremented
+# without any caller-supplied value.'" — process-fixes AC-008 — while
+# convergence AC-008 reads "With only LATENT defects open, Foundry-Gate assay,
+# temper, nyquist and done pass...". A stream resolving that bare tag against
+# the spec the header names judges the test against text it does not prove.
+#
+# So the convention is now MACHINE-CHECKED here, and the check is casting 2's,
+# IMPORTED rather than copied. Two copies of one scan drift, and the drift is
+# invisible until a stream trips over the half that was not updated — which is
+# the shape of D-178 itself, one rung up. `_prose_blocks` keys its own exemption
+# off the sentinel line above, so it exempts THIS block and this module's
+# docstring for the same reason it exempts test_observations': both are ABOUT
+# the collision and must be free to name both sides of it.
+#
+# WHAT THIS PIN CANNOT SEE, STATED SO NOBODY DISCOVERS IT THE HARD WAY.
+# --------------------------------------------------------------------------
+# `_CONVERGENCE_IDS` is an ID-level allow-list, so declaring an id there
+# silences the scan for that id ACROSS THE WHOLE FILE. Three ids here are cited
+# both ways — FR-006, ST-001 and ST-002 each appear as convergence citations in
+# the escalation-exit sections and as process-fixes citations in the
+# cycle-counter and class-identity sections — so their process-fixes uses are
+# qualified by hand and CANNOT be held by this test. A scan that could hold them
+# would have to demand a qualification on EVERY id, convergence ones included,
+# which is a convention change across every module that cites one, not a change
+# this file may make alone.
+# --------------------------------------------------------------------------- #
+
+#: The convergence-spec ids this module cites BARE, per its own docstring's
+#: "a BARE id cites forge-specs/foundry-run-convergence/spec.md" rule. Every one
+#: of them also resolves in the process-fixes spec with different text, so
+#: membership is DECLARED here and never inferred. Kept honest from the other
+#: side by `test_every_declared_convergence_id_is_actually_cited_here`: an entry
+#: naming an id this file does not cite is an allow-list entry that waives a
+#: check nothing needed, and it fails.
+_CONVERGENCE_IDS = frozenset({
+    "AC-001", "AC-002", "AC-003", "AC-004", "AC-016",
+    "CT-001", "CT-002", "CT-008", "CT-014",
+    "FR-001", "FR-002", "FR-003", "FR-006", "FR-023", "FR-028", "FR-051",
+    "OT-012",
+    "ST-001", "ST-002", "ST-005", "ST-010",
+})  # 21 items
+
+
+def _own_source() -> str:
+    return Path(__file__).read_text(encoding="utf-8")
+
+
+def _shared_prose_scan(monkeypatch):
+    """casting 2's scan, imported — `(prose_blocks, unqualified_ids)`.
+
+    Imported LAZILY, inside the function that needs it, exactly as this server's
+    modules import their cross-casting seams: a module-top import of a sibling
+    test module makes one unfinished file a collection error for both.
+
+    `_CONVERGENCE_IDS` is the only file-specific datum the scan takes, and it is
+    a module global there, so it is patched rather than passed. That is the
+    whole of what "share the machinery, declare the data" means here: the
+    qualification grammar — the `process-fixes ` prefix, the `A / B / C` chain
+    whose head governs the tail, the wrap-collapse — has ONE implementation, and
+    each module states which bare ids it owns.
+    """
+    from tests import test_observations as shared
+
+    monkeypatch.setattr(shared, "_CONVERGENCE_IDS", _CONVERGENCE_IDS)
+    return shared._prose_blocks, shared._unqualified_ids
+
+
+def test_every_requirement_id_in_this_module_names_its_spec(monkeypatch) -> None:
+    """D-181's root cause, refused structurally rather than re-tagged by hand.
+
+    Every requirement id in this module's docstrings and comments is a
+    `process-fixes` citation or a declared convergence id. Anything else is the
+    unqualified tag that sent a stream to a requirement this file does not
+    drive, and this fails naming it.
+    """
+    prose_blocks, unqualified_ids = _shared_prose_scan(monkeypatch)
+
+    offenders: list[str] = []
+    for lineno, text in prose_blocks(_own_source()):
+        for offence in unqualified_ids(text):
+            offenders.append(f"line {lineno}: {offence}")
+
+    assert not offenders, (
+        "unqualified requirement id(s) — D-178/D-181 again. Write "
+        "'process-fixes AC-008' for the earlier spec, or add the id to "
+        "_CONVERGENCE_IDS if it cites forge-specs/foundry-run-convergence:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_pin_reports_the_bare_tag_it_was_written_for(monkeypatch) -> None:
+    """The pin's own fail-safe: a guard that cannot fail guards nothing.
+
+    Driven over the exact prose D-181 was filed against, which must be reported,
+    and over each legal form, which must not be. Without this the pin would go
+    green on a file whose ids were all declared away, and nobody would know.
+    """
+    _, unqualified_ids = _shared_prose_scan(monkeypatch)
+
+    # The docstring D-181 named, verbatim from this module before the fix.
+    assert unqualified_ids(
+        "AC-008 verbatim: 'After a GRIND->INSPECT transition, the server-side "
+        "cycle counter has incremented without any caller-supplied value.'"
+    )
+    # The other tags the census found, one per carrier and per grammar shape.
+    assert unqualified_ids("ST-003 CLEARED: once every defect of the class closes")
+    assert unqualified_ids("AC-010 / FR-008 / ST-003 / OT-003 — one structural packet")
+    assert unqualified_ids("NFR-002 / the house rule: never raise across MCP")
+
+    # ...and the qualified forms stay silent, including across a `/` chain whose
+    # head governs its tail and across a source line wrap.
+    assert not unqualified_ids(
+        "process-fixes AC-008 verbatim: 'After a GRIND->INSPECT transition, "
+        "the server-side cycle counter has incremented without any "
+        "caller-supplied value.'"
+    )
+    assert not unqualified_ids(
+        "process-fixes AC-010 / FR-008 / ST-003 / OT-003 — one structural packet"
+    )
+    # A declared convergence id needs no prefix — that is the convention.
+    assert not unqualified_ids("AC-004 verbatim: 'escalation.json records'")
+
+
+def test_a_declared_convergence_id_is_unpinned_across_this_whole_file(
+    monkeypatch,
+) -> None:
+    """The limitation, asserted rather than left to be discovered.
+
+    `_CONVERGENCE_IDS` is keyed on the id alone, so declaring one waives the
+    check for every occurrence of it in this module — including the
+    process-fixes uses of the three dual-cited ids, which are therefore held by
+    hand and by the census in the defect report, not by this test. Stated as a
+    test so the next author reads it as a known boundary of the guard rather
+    than as coverage they can lean on.
+    """
+    _, unqualified_ids = _shared_prose_scan(monkeypatch)
+
+    for dual in ("FR-006", "ST-001", "ST-002"):
+        assert dual in _CONVERGENCE_IDS, dual
+        # Its process-fixes sense reads exactly as silent as its convergence
+        # sense, which is the hole: neither is reported.
+        assert not unqualified_ids(f"{dual} says CONSECUTIVE")
+        assert not unqualified_ids(f"process-fixes {dual} says CONSECUTIVE")
+
+    # A NON-dual process-fixes id is still reported, so the hole is bounded to
+    # what is declared and has not swallowed the guard whole.
+    assert unqualified_ids("ST-003 says CONSECUTIVE")
+
+
+def test_every_declared_convergence_id_is_actually_cited_here() -> None:
+    """The allow-list cannot grow into a blanket waiver.
+
+    An entry for an id this module does not cite waives a check nothing needed,
+    and the cheapest way to make the pin above go green is to keep adding
+    entries. So every declared id must appear in this file's prose, and the
+    check is the same regex the scan uses, read off the shared module rather
+    than re-typed.
+    """
+    from tests.test_observations import _TWO_SPEC_ID_RE
+
+    cited = set(_TWO_SPEC_ID_RE.findall(_own_source()))
+    unused = sorted(_CONVERGENCE_IDS - cited)
+    assert not unused, (
+        f"_CONVERGENCE_IDS declares {unused}, which this module does not cite. "
+        "Remove the entry rather than leaving a standing waiver."
+    )
