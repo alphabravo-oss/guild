@@ -2006,17 +2006,38 @@ def foundry_gate(
             passed = False
             reason = f"Cannot open ASSAY — {assay_unrecorded['reason']}"
             hint = assay_unrecorded["hint"]
+        # D-169 — AND THE SENTENCE STATES THE PREDICATE THIS CODE EVALUATES.
+        #
+        # The check is `assay_width_ok = mode == "FULL"`, and its checklist
+        # entry is literally named `inspect_ran_at_full_width` — WIDTH. The
+        # refusal beside it said "ASSAY is only opened by an INSPECT whose
+        # recorded rule is final_gate", which is a condition on the RULE and is
+        # false: driven at this door on synthetic runs recorded FULL/final_gate,
+        # FULL/first_of_phase and FULL/verifier_touched, all three returned
+        # ok True. A verifier-touching GRIND is the ordinary case for a run that
+        # builds this plugin, so a lead reading the old sentence believed a
+        # clean FULL/verifier_touched INSPECT still owed a widening cycle — one
+        # more cycle of ceremony, which is the cost US-004 exists to remove.
+        #
+        # D-152 fixed the rule PRECEDENCE so the recorded rule names the arm
+        # that fired, and left every stated condition naming a rule no code
+        # reads. So the mode and the rule are now reported as the FACTS they
+        # are, and the condition quoted is the one evaluated one line above.
         elif not assay_width_ok:
             passed = False
             reason = (
-                f"cycle {assay_mode.get('cycle', '?')} ran at DELTA width (rule "
-                f"{assay_mode.get('rule', '?')}) — ASSAY is only opened by an "
-                "INSPECT whose recorded rule is final_gate"
+                f"cycle {assay_mode.get('cycle', '?')} ran at "
+                f"{assay_mode.get('mode') or 'unrecorded'} width (rule "
+                f"{assay_mode.get('rule') or 'unrecorded'}) — ASSAY is only "
+                "opened by an INSPECT whose recorded mode is FULL"
             )
             hint = (
                 "Call Foundry-Phase(phase='inspect_start') again from F2: the "
                 "widening re-open advances the cycle, sweeps the whole evidence "
-                "corpus and records FULL with rule final_gate."
+                "corpus and records FULL. Which rule it records — final_gate "
+                "from the widening re-open, verifier_touched when the diff "
+                "cannot be measured — does not enter this check; the width "
+                "does."
             )
         checklist.append({
             "check": (
@@ -3130,13 +3151,32 @@ def _test01_scope_touched(project_root: str, touched: list[str]) -> bool:
 
 def _prove_delta_sample(
     fdir: Path, project_root: str, cycle: int, fixed_in_cycle: int | None = None
-) -> list[str]:
+) -> dict:
     """The requirement rows PROVE checks on a DELTA cycle (FR-013 / AC-018).
 
     The rows tied to the defects the preceding GRIND fixed — those are the rows
-    whose verdicts the fixes could have changed — plus
+    whose verdicts the fixes could have changed — plus up to
     `PROVE_DELTA_SAMPLE_SIZE` more, drawn from the sorted remainder with
     `random.Random(cycle)`.
+
+    Returns `{"rows", "tied", "sampled"}`: the roster and the two halves it was
+    built from, `rows == tied + sampled`.
+
+    D-177 — THE HALVES ARE RETURNED BECAUSE THE CALLER STATES THEM.
+    --------------------------------------------------------------
+    This returned the concatenated list alone, so `_decide_inspect_mode` — the
+    one caller — had the roster and no way to say how it was made. It wrote the
+    breakdown as f"{len(prove_sample)} row(s): rows tied to the fixed defects
+    plus {PROVE_DELTA_SAMPLE_SIZE} sampled", interpolating the CONSTANT as
+    though it were the measurement. The draw is `min(PROVE_DELTA_SAMPLE_SIZE,
+    len(remaining))`, so the two clauses of that one sentence disagree by
+    construction whenever the remaining pool is smaller than the ceiling.
+    Driven end to end on a two-requirement spec with no fixed-defect rows:
+    `prove_sample` recorded ['FR-001', 'FR-002'] and the stream_scope detail
+    beside it read "2 row(s): rows tied to the fixed defects plus 10 sampled".
+    That string is recorded into state.json and stream-rollup.json and is read
+    back by the PROVE stream as its width statement, so a stream that trusts
+    the breakdown looks for eight rows that were never drawn.
 
     TWO CYCLE NUMBERS, DELIBERATELY. ``cycle`` is the cycle this roster is FOR
     and is the seed; ``fixed_in_cycle`` is the cycle whose GRIND just ended and
@@ -3163,7 +3203,7 @@ def _prove_delta_sample(
 
     all_rows = sorted(set(_spec_requirement_ids(project_root)))
     if not all_rows:
-        return []
+        return {"rows": [], "tied": [], "sampled": []}
 
     fixed_rows: set[str] = set()
     for d in _load_json(fdir / "defects.json").get("defects", []):
@@ -3179,9 +3219,11 @@ def _prove_delta_sample(
 
     tied = sorted(fixed_rows & set(all_rows))
     remaining = [r for r in all_rows if r not in set(tied)]
+    # The ceiling, applied. `draw` is the number actually taken and is what the
+    # caller states; `PROVE_DELTA_SAMPLE_SIZE` is the most it can be.
     draw = min(PROVE_DELTA_SAMPLE_SIZE, len(remaining))
     sampled = sorted(random.Random(cycle).sample(remaining, draw)) if draw else []
-    return tied + sampled
+    return {"rows": tied + sampled, "tied": tied, "sampled": sampled}
 
 
 def _base_required_streams(project_root: str) -> list[str]:
@@ -3292,8 +3334,12 @@ def _decide_inspect_mode(
     carries no `.inspect-boundary-sha`, `.trace-clean-at` or `.cast-baseline-sha`
     recorded `verifier_touched` with `rule_detail` "the GRIND diff could not be
     computed ... so the verifier cannot be shown to be untouched" — for the very
-    cycle that opens ASSAY, whose own gate refuses with "ASSAY is only opened by
-    an INSPECT whose recorded rule is final_gate". Driven at cycle 8 on a
+    cycle that opens ASSAY, whose own gate refused, at the time, by naming the
+    recorded rule rather than the recorded width. (That refusal has since been
+    corrected — D-169: both ASSAY doors read the MODE and always did, so a
+    sentence turning on the rule was false about every FULL cycle the rule did
+    not happen to name. It is quoted here only as the state of the tree D-152
+    was filed against.) Driven at cycle 8 on a
     phase_history of F2 -> F4 -> F3; the same substitution occurs on the F2->F2
     widening re-open and wherever git is unavailable. The mode is FULL either
     way, so no verification is lost; what was wrong is the PROVENANCE, which is
@@ -3374,9 +3420,10 @@ def _decide_inspect_mode(
         # The GRIND that just ended is `cycle - 1` on the `inspect_start`
         # boundary, where the counter has already been advanced for the INSPECT
         # this roster is for.
-        prove_sample = _prove_delta_sample(
+        prove_draw = _prove_delta_sample(
             fdir, project_root, cycle, fixed_in_cycle=max(0, cycle - 1)
         )
+        prove_sample = prove_draw["rows"]
         for wire in FULL_ROSTER_STREAMS:
             if wire in skips:
                 scope[wire] = {"scope": "skipped", "detail": "manifest.stream_skips"}
@@ -3411,11 +3458,19 @@ def _decide_inspect_mode(
                     "detail": f"symbols in the {len(touched)} file(s) the GRIND touched",
                 }
             else:
+                # D-177: BOTH numbers are measured. This interpolated
+                # `PROVE_DELTA_SAMPLE_SIZE` — the ceiling — as though it were
+                # the count drawn, so on any spec whose remaining pool is
+                # smaller than the constant the sentence contradicted the
+                # roster printed beside it ("2 row(s) ... plus 10 sampled").
+                # The draw is `min(ceiling, len(remaining))`, and the caller
+                # states what the draw returned.
                 scope[wire] = {
                     "scope": "delta",
                     "detail": (
-                        f"{len(prove_sample)} row(s): rows tied to the fixed "
-                        f"defects plus {PROVE_DELTA_SAMPLE_SIZE} sampled"
+                        f"{len(prove_sample)} row(s): "
+                        f"{len(prove_draw['tied'])} tied to the fixed defects "
+                        f"plus {len(prove_draw['sampled'])} sampled"
                     ),
                 }
 
@@ -5634,8 +5689,11 @@ _PHASE_ENTRY_SOURCES: dict[str, dict] = {
             "F2": (
                 "The run is in INSPECT, and TEMPER is reached THROUGH ASSAY. "
                 "Close this INSPECT with "
+                # D-169: the width, which is what that door reads. Naming the
+                # rule here made this hint the fourth surface stating a
+                # condition no code evaluates.
                 "Foundry-Phase(phase='inspect_clean') — which refuses a DELTA "
-                "cycle until the widening re-open records FULL / final_gate — "
+                "cycle until the widening re-open records FULL — "
                 "then Foundry-Gate(phase='assay'), run ASSAY, and only then "
                 "Foundry-Phase(phase='temper'). Entering F5 from here would "
                 "leave the last INSPECT before NYQUIST at DELTA width with no "
@@ -5974,9 +6032,18 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # LEAD RULING, GRIND cycle 4: "every final gate still runs everything at
         # full width" (US-004) is a property of the INSPECT that PRECEDES the
         # gate, so a DELTA cycle coming back clean earns the widening re-open,
-        # not the gate. Named by rule, because `final_gate` is the rule that has
-        # to have fired for this door to open and saying so tells the lead
-        # exactly which crossing to make.
+        # not the gate.
+        #
+        # D-169 — AND THE CONDITION NAMED IS THE ONE TESTED ONE LINE ABOVE.
+        #
+        # This said "ASSAY is only opened by an INSPECT whose recorded rule is
+        # final_gate", which named the RULE while the `if` beside it reads the
+        # MODE — and the sibling gate's checklist entry that decides the same
+        # question is named `inspect_ran_at_full_width`. Driven at the ASSAY
+        # door, a FULL INSPECT recorded with rule verifier_touched opens ASSAY,
+        # so the sentence was false about the very run this plugin builds, where
+        # a GRIND touching the verifier is the ordinary cycle. The width is
+        # reported as the fact it is, and the rule beside it as provenance.
         #
         # LAST of the three refusals, deliberately. Open defects and
         # fixes-landed-mid-INSPECT are both more specific than "this cycle was
@@ -5987,16 +6054,19 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "error": (
                     f"Cannot mark INSPECT clean — cycle {recorded_mode.get('cycle', '?')} "
                     f"ran at DELTA width (rule {recorded_mode.get('rule', '?')}), and "
-                    "ASSAY is only opened by an INSPECT whose recorded rule is "
-                    "final_gate."
+                    "ASSAY is only opened by an INSPECT whose recorded mode is "
+                    "FULL."
                 ),
                 "hint": (
                     "The DELTA cycle came back clean, which earns the widening "
                     "re-open rather than the gate: call "
                     "Foundry-Phase(phase='inspect_start') again from F2. That "
                     "crossing advances the cycle counter, sweeps the whole "
-                    "evidence corpus, records FULL with rule final_gate and "
-                    "requires the full roster — then inspect_clean opens ASSAY."
+                    "evidence corpus, records FULL and requires the full roster "
+                    "— then inspect_clean opens ASSAY. The rule that re-open "
+                    "records is final_gate, or verifier_touched when the diff "
+                    "cannot be measured; either satisfies this door, which "
+                    "reads the width."
                 ),
                 "inspect_mode": "DELTA",
                 "inspect_rule": recorded_mode.get("rule", ""),
@@ -9847,6 +9917,31 @@ def foundry_mark_defect_fixed(
     # path when there is exactly one, None otherwise — and `line_count` from
     # those same rows, so the two cannot disagree and no caller re-derives
     # either.
+    # D-170 — `test` CARRIES THE TEST THE LANE MANDATED, NOT WHICHEVER ONE THE
+    # CALLER ALSO SENT.
+    # ----------------------------------------------------------------------
+    # This read `test=regression_ref or test_ref`, so on the LIVE lane an
+    # OPTIONAL `regression_test` displaced the MANDATED `adjacent_path_test`.
+    # Driven at the door with authored_by=lead on a LIVE defect carrying the
+    # full declaration plus an extra regression locator: the record's `test`
+    # read `tests/test_lane.py::test_lane_holds` and the adjacent-path test
+    # appeared nowhere in the record or in the handoffs.md mirror row.
+    #
+    # GI-003 / AC-022 make this the audit trail for a fix nobody else reviewed,
+    # and the test is one of the five things a reader must be able to
+    # re-derive. Which test HOLDS the fix is a property of the lane, not of what
+    # the caller volunteered: on LIVE it is the adjacent-path test (AC-023 /
+    # FR-015 demand it and nothing else), on LATENT it is the regression test
+    # (ST-003 / CT-004 demand that one and no adjacent-path fields at all). So
+    # the lane selects, exactly as the persist step above and the forge-log
+    # write below already select on `latent_lane`.
+    #
+    # The optional locator is not dropped — the comment at the persist step
+    # says a LIVE fix that also names a regression test "has said something
+    # true and the record should carry it", and now it carries it IN ADDITION
+    # rather than INSTEAD, under its own name. `regression_test` is casting 2's
+    # keyword-only parameter on `record_lead_fix_handoff`; None when the lane
+    # already reports it as `test`, so no record states the same locator twice.
     lead_fix_record = None
     if author == "lead":
         measured = _numstat_measurement(commit, project_root)
@@ -9857,7 +9952,8 @@ def foundry_mark_defect_fixed(
             defect_id=defect_id,
             tier=tier,
             files=(measured["per_file"] if measured else None),
-            test=regression_ref or test_ref,
+            test=regression_ref if latent_lane else test_ref,
+            regression_test=(None if latent_lane else (regression_ref or None)),
             fix_commit=commit,
         )
 
@@ -11711,17 +11807,66 @@ def _compute_next_action(project_root: str) -> dict:
     # would send the lead round the loop the cap just stopped.
     if phase == RUN_PHASE_HALTED:
         blocking = _blocking_defects(fdir)
+        # D-171 — AND IT DOES NOT ASSERT A REPORT THE HALT MAY NEVER HAVE
+        # WRITTEN. D-165, one surface along.
+        # ------------------------------------------------------------------
+        # This said "The report has been generated at REPORT.md and names every
+        # open defect by tier" unconditionally, and set `details.report` to the
+        # path unconditionally. Driven: a run at cycle 2 with max_cycles 2, one
+        # open LIVE and one open LATENT defect, and a deliberately corrupt
+        # verdicts.json. `_halt_if_capped` behaved correctly — ok True, phase
+        # HALTED, `halted_report_error` recorded, and its own message said the
+        # report could NOT be generated. THIS branch, on that same run, then
+        # asserted the opposite and handed the lead a path to a file that does
+        # not exist.
+        #
+        # D-165 reasoned that every later REFUSAL names the call that can still
+        # write the report, and Foundry-Next is not a refusal — so it was
+        # missed. It is also the ONE surface a lead consults next, and HALTED
+        # has no exit by design, so nothing regenerates the report on its own:
+        # a lead told to read a document that was never written has no next
+        # move at all.
+        #
+        # Both halves come from `_halted_state` and the file itself, the same
+        # two sources `_halted_refusal` reads, so the transition, the refusal
+        # and this notice cannot state three different things about one file.
+        # The FILE'S PRESENCE is the ground truth and the recorded error only
+        # supplies the REASON when it is absent — read the other way, this
+        # would still say "not written" about a report the lead had just
+        # regenerated with Foundry-Report.
+        halted = _halted_state(fdir) or {}
+        report_path = fdir / REPORT_MD_FILENAME
+        report_present = report_path.exists()
+        report_error = halted.get("halted_report_error", "")
         return {
             "phase": RUN_PHASE_HALTED,
             "action": "halted",
             "instructions": (
                 f"Run HALTED at cycle {state.get('halted_at_cycle', '?')} — "
                 f"{state.get('halted_reason', 'the configured cycle cap was reached')}. "
-                "HALTED is NOT DONE: this run stopped with open work. The report "
-                f"has been generated at {REPORT_MD_FILENAME} and names every open "
-                "defect by tier. Do NOT dispatch another wave, do NOT call "
-                "Foundry-Phase again — read the report and hand the remaining "
-                "work to a new run, or re-run with a higher --max-cycles."
+                "HALTED is NOT DONE: this run stopped with open work. "
+                + (
+                    f"The report has been generated at {REPORT_MD_FILENAME} and "
+                    "names every open defect by tier. Do NOT dispatch another "
+                    "wave, do NOT call Foundry-Phase again — read the report "
+                    "and hand the remaining work to a new run, or re-run with a "
+                    "higher --max-cycles."
+                    if report_present
+                    else (
+                        f"The report was NOT generated — "
+                        f"{report_error or 'it is not present at ' + str(report_path)}"
+                        ". Do NOT dispatch another wave and do NOT call "
+                        "Foundry-Phase again; neither is what is missing. "
+                        "Foundry-Report is not a phase transition and still "
+                        "runs on a halted run: repair what the error names, "
+                        f"call Foundry-Report to write {REPORT_MD_FILENAME}, "
+                        "then read it. Until it exists, read defects.json "
+                        "directly — the open work is recorded there whatever "
+                        "the generator could not render — and hand the "
+                        "remaining work to a new run, or re-run with a higher "
+                        "--max-cycles."
+                    )
+                )
             ),
             "details": {
                 "halted_at_cycle": state.get("halted_at_cycle"),
@@ -11730,7 +11875,12 @@ def _compute_next_action(project_root: str) -> dict:
                 "open_live_defects": blocking["live"],
                 "open_unknown_tier_defects": blocking["unknown"],
                 "open_latent_defects": blocking["latent"],
-                "report": str(fdir / REPORT_MD_FILENAME),
+                # Named as what it IS rather than always as a path, exactly as
+                # `_halted_refusal` names it, so a caller cannot read a promise
+                # out of the field's presence.
+                "report": str(report_path) if report_present else None,
+                "report_generated": report_present,
+                "report_error": report_error,
             },
         }
 
@@ -12003,12 +12153,17 @@ def _compute_next_action(project_root: str) -> dict:
                     f"rule {f2_mode.get('rule', '?')}): zero blocking defects."
                     + carried
                     + still_escalated_note
-                    + " ASSAY is only opened by an INSPECT recorded with rule "
-                    "final_gate, so call Foundry-Phase(phase='inspect_start') "
+                    # D-169: the condition stated is the one both ASSAY doors
+                    # evaluate — the recorded MODE — not the rule. A FULL
+                    # INSPECT recorded with rule verifier_touched opens ASSAY,
+                    # and telling the lead otherwise buys a widening cycle
+                    # nothing asked for.
+                    + " ASSAY is only opened by an INSPECT whose recorded mode "
+                    "is FULL, so call Foundry-Phase(phase='inspect_start') "
                     "again from F2. That crossing advances the cycle counter, "
-                    "sweeps the WHOLE evidence corpus, records FULL / "
-                    "final_gate and names the full roster — run exactly the "
-                    "roster it names, then Foundry-Phase(phase='inspect_clean')."
+                    "sweeps the WHOLE evidence corpus, records FULL and names "
+                    "the full roster — run exactly the roster it names, then "
+                    "Foundry-Phase(phase='inspect_clean')."
                 ),
                 "details": {
                     "open_defects": 0,

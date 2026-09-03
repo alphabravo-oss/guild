@@ -544,8 +544,15 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         # been on this screen since D-104 and TRACE's files were on none — the
         # stream was left to scope its walk from the spec while the server had
         # the file list recorded. Truncated for the terminal exactly as the
-        # PROVE line is; the array is `inspect_mode.touched_files` in the
-        # response body, which is what the stream reads.
+        # PROVE line is; the whole array is `inspect_mode.touched_files` in the
+        # JSON after `RESULT_JSON_MARKER`, which is what the stream reads.
+        #
+        # D-173: that last clause used to say "in the response body", and there
+        # was no response body — `call_tool` returned this rendering and
+        # nothing else, so the truncated line was the only thing on the wire
+        # and the safety property this comment asserts was false. It is true
+        # now because `format_result_blocks` appends the result; keep the
+        # truncation, and keep the marker.
         touched = mode.get("touched_files") or []
         trace_scope = (mode.get("stream_scope") or {}).get("trace")
         if touched and isinstance(trace_scope, dict) and trace_scope.get("scope") == "delta":
@@ -1247,6 +1254,14 @@ def format_result(tool_name: str, result: dict) -> str:
     Returns a visually formatted string if a formatter exists for the tool,
     otherwise falls back to indented JSON. A refusal the handler named always
     survives to the output -- see the note above.
+
+    THIS IS THE DISPLAY HALF ONLY. It is deliberately lossy: every formatter in
+    the table above summarises, truncates and drops keys, which is what makes
+    the terminal readable (NFR-005). `format_result_blocks` is what crosses the
+    MCP boundary, and it is what a caller that needs the DATA reads. Nothing
+    here changed when that was added, because
+    `test_a_result_that_names_no_refusal_is_left_exactly_as_the_formatter_rendered_it`
+    pins this function to exactly what the formatter produced.
     """
     formatter = _FORMATTERS.get(tool_name)
 
@@ -1262,3 +1277,74 @@ def format_result(tool_name: str, result: dict) -> str:
             return rendered
 
     return json.dumps(result, indent=2)
+
+
+#: D-173 — the line after which the response IS the result, as JSON.
+#:
+#: A marker line and no terminator, because the JSON runs to the end of the
+#: response. A ```json fence was the first shape and was rejected: result dicts
+#: here routinely carry defect descriptions containing backtick runs, so the
+#: fence would have to vary in length and no consumer could pin one spelling.
+#: The rule a stream follows is one sentence -- everything after this line is
+#: the complete result, `json.loads` it -- and a mis-split fails loudly at the
+#: parse rather than quietly returning half a roster.
+RESULT_JSON_MARKER = "── machine-readable result ──"
+
+#: The sentence above the marker. Prose, so the operator reading the terminal
+#: knows what the JSON below is and why it repeats what the box just said.
+RESULT_JSON_PREAMBLE = (
+    "The display above is a summary and truncates its lists; the complete "
+    "result, with every array in full, is the JSON after the line below."
+)
+
+
+def format_result_blocks(tool_name: str, result: dict) -> str:
+    """The text one tool result crosses the MCP boundary as (D-173).
+
+    A formatted tool: the display, then the marker, then the whole result as
+    JSON. An unformatted tool: unchanged -- `format_result` already returns the
+    whole result as JSON and a second copy would say everything twice.
+
+    D-173 — THE RECORDED ROSTER NEVER REACHED THE STREAM THAT MUST OBEY IT.
+    ----------------------------------------------------------------------
+    `server.py#call_tool` returned exactly `format_result(name, result)`, and
+    `format_result` returns ONLY the formatter's string whenever a formatter
+    exists. So for the twenty-five formatted tools the result dict was built,
+    populated and discarded one rung below the boundary -- and the three
+    unformatted ones DO return their whole dict, which is what makes the
+    "response body" assumption read as true in review and be false in
+    production.
+
+    Driven at the real MCP surface on a synthetic repo: an `inspect_start`
+    whose GRIND touched 9 files recorded `inspect_modes[].touched_files` with 9
+    entries and `prove_sample` with 10 rows; the COMPLETE `Foundry-Next`
+    response named 5 files then "(+4 more)" and 8 rows then "...", and the
+    literals `inspect_mode`, `touched_files` and `prove_sample` appeared
+    NOWHERE in it. `Foundry-Context`, `Foundry-Coverage`, `Foundry-Tasks` and
+    `Foundry-Gate` named 0 of the 9. So there was no MCP surface at all from
+    which a stream could obtain the roster, while FR-047 / FR-049 make that
+    roster the exact set the streams-complete check judges the stream against,
+    and D-104 / D-140 / D-160 / D-161 each wired one more field into a payload
+    no reader could reach.
+
+    AT THE BOUNDARY, NOT PER FORMATTER. Every formatter summarises -- that is
+    its job and NFR-005 is why -- so "also print the arrays" is a fix that has
+    to be re-made in each of the twenty-five, and re-made again in the
+    twenty-sixth. D-011 is the same defect one field over (`launch_command`
+    reached no screen because `call_tool` returned only the rendering) and was
+    fixed one formatter at a time; this is the rung both belong on. The display
+    stays exactly as truncated as it was, deliberately: the summary is for the
+    operator and the JSON is for the parser, and collapsing them would cost
+    one of the two.
+    """
+    rendered = format_result(tool_name, result)
+    if tool_name not in _FORMATTERS:
+        return rendered
+    try:
+        payload = json.dumps(result, indent=2, default=str)
+    except (TypeError, ValueError):
+        # Never raise across the MCP boundary, and never lose the display over
+        # a payload that would not serialise: the rendering is still correct
+        # and is still the operator's answer.
+        return rendered
+    return f"{rendered}\n\n{RESULT_JSON_PREAMBLE}\n{RESULT_JSON_MARKER}\n{payload}"

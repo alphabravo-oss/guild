@@ -62,7 +62,7 @@ from foundry_mcp.tools.foundry_orchestrator import (
     foundry_sync_defects,
     foundry_unregister_team,
 )
-from foundry_mcp.tools.display import format_result
+from foundry_mcp.tools.display import format_result_blocks
 from foundry_mcp.tools.forge_spec import (
     forge_spec_check,
     forge_spec_start,
@@ -1399,6 +1399,34 @@ async def _tool_schema(name: str) -> dict | None:
     return _SCHEMAS.get(name)
 
 
+def _instance_label(path) -> str:
+    """`err.absolute_path` rendered the way this server names a batch item.
+
+    `['findings', 1]` becomes `findings[1]`, `['findings', 1, 'tier']` becomes
+    `findings[1].tier`, and an empty path (a failure on the arguments object
+    itself) becomes `""`.
+
+    ONE SPELLING, and it is the one already in the tree. `schemas/findings.py`
+    and `foundry_sync_defects` both name an offending batch member
+    `findings[N]` — `test_orchestrator_gates.py::
+    test_a_non_dict_finding_refuses_the_batch_naming_the_index` pins that
+    exact substring against the handler's refusal. This rung is the one BEFORE
+    the handler, refusing the same batch about the same member, so it says the
+    same thing. The previous `".".join(...)` rendered `findings.1.tier`, which
+    is a second spelling of one address and reads as a nested key rather than
+    an index (D-176).
+    """
+    label = ""
+    for part in path:
+        if isinstance(part, int) and not isinstance(part, bool):
+            label += f"[{part}]"
+        elif label:
+            label += f".{part}"
+        else:
+            label = str(part)
+    return label
+
+
 def _argument_refusal(name: str, schema: dict, arguments: dict) -> dict | None:
     """None when ``arguments`` satisfy ``schema``; otherwise the house refusal.
 
@@ -1412,6 +1440,38 @@ def _argument_refusal(name: str, schema: dict, arguments: dict) -> dict | None:
     An `enum` failure names the vocabulary it missed, because the caller's next
     move is to pick a member of it and no other message tells them what the
     members are.
+
+    D-176 — A NESTED `required` FAILURE IS JUDGED AGAINST THE ITEM IT WAS
+    RAISED ON, AND NAMED BY ITS INDEX.
+    --------------------------------------------------------------------
+    The `required` branch read `for prop in err.validator_value: if prop not in
+    (arguments or {})`. On a batch door that is the wrong object on both sides.
+    `err.validator_value` is the ITEM schema's whole `required` list, and
+    `arguments` is the TOP-LEVEL dict — which for `Foundry-Sync` holds only
+    `cycle` and `findings` — so EVERY member of the item's required list came
+    back absent. Driven at the real door with a two-item batch whose second
+    finding carried description, source, tier, file, symbol and type and omitted
+    only `class`: the refusal read "unusable argument(s): description —
+    required, and absent; source — required, and absent; tier — required, and
+    absent; class — required, and absent." Three of those four were supplied,
+    and the message was byte-identical whether the offender was the only
+    finding, the second of two or the third of three, so a caller could not tell
+    which finding was at fault and its rational next move was to re-send fields
+    it had already sent.
+
+    Both facts the message needed were already on the error and were thrown
+    away by the `continue`: `err.absolute_path` had been resolved to
+    ['findings', 1], and `err.message` already read "'class' is a required
+    property". jsonschema's `required` validator yields ONE error per missing
+    property, so testing `err.validator_value` against `err.instance` — the
+    object the rule was actually applied to — names exactly the properties that
+    object lacks, and the path labels which object that was.
+
+    OT-029 is "Foundry-Sync with one finding lacking class refuses the whole
+    batch naming the finding", and the batch IS refused whole — nothing is
+    persisted. It was only the diagnostic that could not say which finding. The
+    rendering is generic, not Foundry-Sync-specific: every nested `required`
+    violation in every tool rendered the same way and is fixed by the same rung.
     """
     import jsonschema
 
@@ -1427,11 +1487,20 @@ def _argument_refusal(name: str, schema: dict, arguments: dict) -> dict | None:
     invalid: list[dict] = []
     for err in errors:
         if err.validator == "required":
+            # The object the rule was applied to, and the label that says which
+            # one it was. At the top level `absolute_path` is empty and
+            # `instance` IS `arguments`, so the single-door spelling is
+            # unchanged: a bare `tier` stays `tier`.
+            container = err.instance if isinstance(err.instance, dict) else {}
+            prefix = _instance_label(err.absolute_path)
             for prop in err.validator_value:
-                if prop not in (arguments or {}) and prop not in missing:
-                    missing.append(prop)
+                if prop in container:
+                    continue
+                label = f"{prefix}.{prop}" if prefix else prop
+                if label not in missing:
+                    missing.append(label)
             continue
-        field = ".".join(str(part) for part in err.absolute_path) or "<arguments>"
+        field = _instance_label(err.absolute_path) or "<arguments>"
         if err.validator == "enum":
             reason = (
                 f"{err.instance!r} is not one of "
@@ -1579,7 +1648,7 @@ def _audit_security_claim_on_refusal(name: str, arguments: dict) -> None:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
     if not handler:
-        return [TextContent(type="text", text=format_result(name, {"error": f"Unknown tool: {name}"}))]
+        return [TextContent(type="text", text=format_result_blocks(name, {"error": f"Unknown tool: {name}"}))]
 
     schema = await _tool_schema(name)
     if schema is not None:
@@ -1589,7 +1658,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # a schema-invalid argument set cannot switch off the tripwire a
             # security-property claim owes.
             _audit_security_claim_on_refusal(name, arguments)
-            return [TextContent(type="text", text=format_result(name, refusal))]
+            return [TextContent(type="text", text=format_result_blocks(name, refusal))]
 
     # D-098: the outermost net. Every handler returns named refusals as dicts
     # (the house pattern) and none is supposed to raise, but this boundary used
@@ -1611,7 +1680,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             ),
         }
 
-    return [TextContent(type="text", text=format_result(name, result))]
+    # D-173: `format_result_blocks`, not `format_result`. The display half is
+    # lossy by design — every formatter truncates — and this is the only rung
+    # where the result dict still exists, so a caller that needs the DATA (a
+    # stream reading `inspect_mode.touched_files`, say) can only be served
+    # here. All three return sites use it, so a refused call and an unknown
+    # tool are as machine-readable as a successful one.
+    return [TextContent(type="text", text=format_result_blocks(name, result))]
 
 
 def main():

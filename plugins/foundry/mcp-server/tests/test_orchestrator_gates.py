@@ -9439,7 +9439,13 @@ def test_the_f1_imperative_names_the_tool_that_enters_f2(run_env):
 def test_a_clean_delta_cycle_is_told_to_widen_not_to_open_assay(run_env):
     """AC-016 / D-068's ruling, on the router side: the imperative names the
     crossing that actually works. Naming `inspect_clean` here would send the
-    lead into the refusal the transition now returns."""
+    lead into the refusal the transition now returns.
+
+    D-169: and the CONDITION it states is the one both ASSAY doors evaluate —
+    the recorded mode. It said "ASSAY is only opened by an INSPECT recorded
+    with rule final_gate", and neither door reads a rule, so a lead sitting on
+    a clean FULL / verifier_touched cycle was told to spend a widening cycle
+    the server would refuse as having nothing to widen."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=3, inspect_modes=[{
         "cycle": 3, "phase": "F2", "mode": "DELTA", "rule": "delta",
@@ -9455,7 +9461,10 @@ def test_a_clean_delta_cycle_is_told_to_widen_not_to_open_assay(run_env):
 
     assert action["action"] == "widen_inspect"
     assert "inspect_start" in action["instructions"]
-    assert "final_gate" in action["instructions"]
+    assert "recorded mode is FULL" in action["instructions"], action["instructions"]
+    assert "rule final_gate" not in action["instructions"], (
+        "the rule is not the condition either ASSAY door reads"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -11918,3 +11927,282 @@ def test_the_budget_arm_is_offered_while_the_class_still_has_work(run_env):
 
     assert "more structural packet(s) (budget arm" in sentence, sentence
     assert "cannot advance this class" not in sentence, sentence
+
+
+# --------------------------------------------------------------------------- #
+# D-171 — THE HALTED NEXT-ACTION READS THE REPORT IT NAMES.
+#
+# D-165 one surface along. `_halt_if_capped` behaves correctly on a failed
+# generation — it records `halted_report_error`, says "The report could NOT be
+# generated" and names Foundry-Report — and `_halted_refusal` reads that record.
+# `_compute_next_action`'s HALTED branch read NEITHER: it asserted, as fact,
+# "The report has been generated at REPORT.md and names every open defect by
+# tier" and set `details.report` to the path of a file that does not exist.
+#
+# D-165's fix reasoned that every later REFUSAL names the call that can still
+# write the report, and Foundry-Next is not a refusal — so this branch was
+# missed. It is also the ONE surface a lead consults next, and HALTED has no
+# exit by design, so nothing regenerates the report on its own: the lead's only
+# stated next move was to read a document that was never written.
+#
+# `grep -rn halted_report_error tests/` returned nothing before this block.
+# --------------------------------------------------------------------------- #
+
+
+def _halt_with_a_failed_report(project_root, fdir, monkeypatch) -> dict:
+    """Drive the real cap transition with the report generation failing.
+
+    The same window `test_a_halt_whose_report_failed_says_so` drives, and for
+    the same reason: `_artifact_guard` runs at the entry point and the report is
+    generated several frames later, in a tree five castings commit into at once.
+    """
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LIVE"),
+        _tiered("D-002", "LATENT", reproduction_attempted="AST sweep finds 0 sites"),
+    ])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    real_generate = fo._generate_report
+
+    def _corrupted_mid_transition(pr, run_dir):
+        (fdir / "verdicts.json").write_text("{not json", encoding="utf-8")
+        return real_generate(pr, run_dir)
+
+    monkeypatch.setattr(fo, "_generate_report", _corrupted_mid_transition)
+    _arm_ordering_token(fdir)
+    halted = foundry_mark_phase_complete("grind_start", project_root)
+    monkeypatch.setattr(fo, "_generate_report", real_generate)
+    return halted
+
+
+def test_the_halted_next_action_does_not_claim_an_unwritten_report(run_env, monkeypatch):
+    """FR-045 verbatim: 'state.json phase becomes HALTED, the report is written
+    naming every open LIVE and LATENT defect, and Foundry-Next then reports the
+    run halted and stops dispatching'.
+
+    The transition and the notice must agree about the artifact. Driven end to
+    end: the halt records the failure and says so, and the next action a lead
+    reads must say the same thing rather than the opposite.
+    """
+    project_root, fdir = run_env
+    halted = _halt_with_a_failed_report(project_root, fdir, monkeypatch)
+
+    assert halted["ok"] is True, halted
+    assert halted["report_generated"] is False, halted
+    assert not (fdir / "REPORT.md").exists()
+    assert json.loads((fdir / "state.json").read_text())["halted_report_error"]
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "halted"
+    assert "was NOT generated" in action["instructions"], action["instructions"]
+    assert "has been generated" not in action["instructions"], action["instructions"]
+    assert "verdicts.json" in action["instructions"], (
+        "the recorded error is what tells the lead WHAT to repair"
+    )
+    assert "Foundry-Report" in action["instructions"], (
+        "HALTED has no exit, so the one call that can still write the report "
+        "must be named or the lead has no next move at all"
+    )
+    # The field is named as what it IS, so a caller cannot read a promise out
+    # of its presence — the same shape `_halted_refusal` uses.
+    assert action["details"]["report"] is None, action["details"]
+    assert action["details"]["report_generated"] is False, action["details"]
+    assert action["details"]["report_error"], action["details"]
+    # ...and it still stops dispatching, which is the rest of FR-052.
+    assert "Do NOT dispatch another wave" in action["instructions"]
+
+
+def test_the_halted_next_action_names_the_report_once_it_exists(run_env, monkeypatch):
+    """The discrimination, not a deletion. Read the other way this would say
+    "not written" about a report the lead had just regenerated with
+    Foundry-Report — the same defect with the sign flipped — so the FILE is the
+    ground truth and the recorded error only supplies the REASON when it is
+    absent.
+    """
+    project_root, fdir = run_env
+    _halt_with_a_failed_report(project_root, fdir, monkeypatch)
+
+    # The operator does exactly what the notice asks: repair, then regenerate.
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    from foundry_mcp import server as foundry_server
+
+    previous = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        assert foundry_server._DISPATCH["Foundry-Report"]({})["ok"] is True
+    finally:
+        foundry_server._project_root = previous
+    assert (fdir / "REPORT.md").exists()
+
+    action = fo._compute_next_action(project_root)
+
+    assert "The report has been generated at REPORT.md" in action["instructions"]
+    assert "was NOT generated" not in action["instructions"]
+    assert action["details"]["report"] == str(fdir / "REPORT.md"), action["details"]
+    assert action["details"]["report_generated"] is True
+
+
+def test_an_ordinary_halt_names_the_report_it_wrote(run_env):
+    """The unremarkable path, unchanged: the report generates, and the notice
+    says so and hands over the path."""
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_tiered("D-001", "LATENT",
+                                  reproduction_attempted="AST sweep finds 0 sites")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    assert foundry_mark_phase_complete("grind_start", project_root)["halted"] is True
+    assert (fdir / "REPORT.md").exists()
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "halted"
+    assert "The report has been generated at REPORT.md" in action["instructions"]
+    assert action["details"]["report"] == str(fdir / "REPORT.md")
+    assert action["details"]["report_generated"] is True
+    assert action["details"]["report_error"] == ""
+
+
+# --------------------------------------------------------------------------- #
+# D-176 — A BATCH REFUSAL NAMES THE OFFENDING FINDING AND THE ONE FIELD IT LACKS
+#
+# OT-029 verbatim: "Foundry-Sync with one finding lacking class refuses the
+# whole batch naming the finding."
+#
+# `_argument_refusal`'s `required` branch read `for prop in err.validator_value:
+# if prop not in (arguments or {})`. On a batch door that is the wrong object on
+# both sides — `validator_value` is the ITEM schema's whole required list and
+# `arguments` is the TOP-LEVEL dict, which holds only `cycle` and `findings` —
+# so every member came back absent. Driven at the real door with a two-item
+# batch whose second finding carried description, source, tier, file, symbol and
+# type and omitted only `class`: "unusable argument(s): description — required,
+# and absent; source — required, and absent; tier — required, and absent; class
+# — required, and absent." Three of those four were supplied, and the message
+# was byte-identical whether the offender was the only finding, the second of
+# two or the third of three.
+#
+# Both facts were already on the error and were discarded by the `continue`:
+# `err.absolute_path` had resolved to ['findings', 1] and `err.message` read
+# "'class' is a required property". The batch IS refused whole and nothing is
+# persisted — only the diagnostic was wrong, and it sent a stream to re-add
+# fields it had already sent.
+# --------------------------------------------------------------------------- #
+
+
+def _sync_finding(**overrides) -> dict:
+    finding = {
+        "description": "the handler never calls the store it documents",
+        "source": "prove",
+        "tier": "LIVE",
+        "file": "src/api/handler.py",
+        "symbol": "handle",
+        "type": "UNWIRED",
+        "class": "UNWIRED_SURFACE",
+    }
+    finding.update(overrides)
+    return finding
+
+
+@pytest.mark.parametrize("offender", [0, 1, 2])
+def test_a_batch_refusal_names_the_offending_finding_by_index(offender):
+    """OT-029 verbatim: 'Foundry-Sync with one finding lacking class refuses the
+    whole batch naming the finding.' CT-002 / AC-010 / FR-007.
+
+    Parametrised over the position because the old message was byte-identical
+    at every one of them: naming the index is the whole of "naming the
+    finding", and a message that cannot vary with the offender's position
+    cannot be naming it.
+    """
+    import asyncio
+
+    from foundry_mcp import server as srv
+
+    batch = [_sync_finding(symbol=f"h{i}") for i in range(3)]
+    bad = dict(batch[offender])
+    bad.pop("class")
+    batch[offender] = bad
+
+    schema = asyncio.run(srv._tool_schema("Foundry-Sync"))
+    refusal = srv._argument_refusal(
+        "Foundry-Sync", schema, {"cycle": 1, "findings": batch}
+    )
+
+    assert refusal is not None
+    assert refusal["missing_fields"] == [f"findings[{offender}].class"], refusal
+    assert f"findings[{offender}].class" in refusal["error"], refusal["error"]
+    # The fields that WERE supplied are not named. This is the half that sent a
+    # stream to re-send what it had already sent.
+    for supplied in ("description", "source", "tier", "file", "symbol", "type"):
+        assert f"{supplied} — required" not in refusal["error"], (
+            supplied, refusal["error"]
+        )
+
+
+def test_the_batch_refusal_index_is_the_spelling_the_handler_uses():
+    """One address, one spelling. `foundry_sync_defects` names an offending
+    batch member `findings[N]` and `schemas/findings.py` renders its own errors
+    the same way — `test_a_non_dict_finding_refuses_the_batch_naming_the_index`
+    pins that substring against the handler. This rung refuses the SAME batch
+    about the SAME member one frame earlier, so it says the same thing; the
+    previous `".".join(...)` rendered `findings.1.class`, which reads as a
+    nested key rather than an index and is a second spelling of one address.
+    """
+    from foundry_mcp import server as srv
+
+    assert srv._instance_label(["findings", 1]) == "findings[1]"
+    assert srv._instance_label(["findings", 1, "tier"]) == "findings[1].tier"
+    assert srv._instance_label([]) == ""
+    assert srv._instance_label(["tier"]) == "tier"
+
+
+def test_a_top_level_required_failure_is_named_exactly_as_before():
+    """The single-door spelling is untouched. At the top level `absolute_path`
+    is empty and `err.instance` IS `arguments`, so a bare missing field stays a
+    bare name — no index, no prefix, and every genuinely absent one still named
+    in the one refusal.
+    """
+    import asyncio
+
+    from foundry_mcp import server as srv
+
+    schema = asyncio.run(srv._tool_schema("Foundry-Defect"))
+    refusal = srv._argument_refusal(
+        "Foundry-Defect", schema, {"cycle": 1, "source": "prove"}
+    )
+
+    assert refusal is not None
+    assert set(refusal["missing_fields"]) == {
+        "defect_type", "description", "tier", "defect_class",
+    }, refusal["missing_fields"]
+    assert not any("[" in field for field in refusal["missing_fields"]), refusal
+
+
+def test_a_nested_finding_missing_two_fields_names_both_on_that_finding():
+    """The house rule at this rung: where several fields failed at once, name
+    every one of them in a single refusal. jsonschema yields one `required`
+    error per missing property, so membership is tested against the instance
+    the rule was applied to and both come back — on the right finding.
+    """
+    import asyncio
+
+    from foundry_mcp import server as srv
+
+    bad = _sync_finding()
+    bad.pop("class")
+    bad.pop("tier")
+
+    schema = asyncio.run(srv._tool_schema("Foundry-Sync"))
+    refusal = srv._argument_refusal(
+        "Foundry-Sync", schema, {"cycle": 1, "findings": [_sync_finding(), bad]}
+    )
+
+    assert set(refusal["missing_fields"]) == {
+        "findings[1].class", "findings[1].tier",
+    }, refusal["missing_fields"]

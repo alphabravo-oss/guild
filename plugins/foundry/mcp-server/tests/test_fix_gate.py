@@ -3963,3 +3963,122 @@ def test_fr048_the_latent_lane_needs_a_locator_and_an_author_and_is_never_measur
     )
     assert measured.get("ok") is not True, measured
     assert "3" in json.dumps(measured), measured
+
+
+# --------------------------------------------------------------------------- #
+# D-170 — THE lead_fix RECORD CARRIES THE TEST THE LANE MANDATED.
+#
+# `foundry_mark_defect_fixed` passed `test=regression_ref or test_ref`, so on
+# the LIVE lane an OPTIONAL `regression_test` displaced the MANDATED
+# `adjacent_path_test`. Driven at the door with authored_by=lead on a LIVE
+# defect carrying the full declaration plus an extra regression locator: the
+# record's `test` read the regression locator and the adjacent-path test
+# appeared nowhere in the record or in the handoffs.md mirror row.
+#
+# GI-003 / AC-022 make this the audit trail for a fix nobody else reviewed, and
+# the test is one of the five things a reader must be able to re-derive. Which
+# test HOLDS the fix is a property of the LANE — AC-023 / FR-015 demand the
+# adjacent-path test on LIVE and nothing else; ST-003 / CT-004 demand the
+# regression test on LATENT and no adjacent-path fields at all — not of what
+# the caller volunteered. Neither existing test covered the both-supplied case:
+# the LIVE fixture passes only the adjacent-path fields and the LATENT one only
+# the regression locator, so `regression_ref or test_ref` returned the right
+# answer in both by accident of the input.
+# --------------------------------------------------------------------------- #
+
+
+def _lead_fix_records(fdir: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
+    ]
+
+
+def test_a_live_lead_fix_records_the_adjacent_path_test_not_the_optional_one(run_env):
+    """AC-022 verbatim: 'a lead_fix record ... carrying the defect id, tier,
+    file, line count and test'; AC-023: 'A lane LIVE fix still requires
+    adjacent_path_statement and adjacent_path_test.'
+
+    The both-supplied case, which is the one that was wrong. A LIVE lead fix
+    that ALSO names a regression test has said something true, and the record
+    keeps it — in its own field, beside the mandated one, never instead of it.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LIVE")
+    regression = _regression_test_file(project_root)
+    commit = _commit_changing(project_root, {"src/sweeper.py": 4})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        regression_test=regression,
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    records = _lead_fix_records(fdir)
+    assert len(records) == 1, records
+    record = records[0]
+    assert record["test"] == ADJACENT_TEST, (
+        "the mandated adjacent-path test is the test that holds a LIVE fix"
+    )
+    assert record["regression_test"] == regression, record
+    assert record["test"] != record["regression_test"]
+
+    # ...and the markdown mirror a human reads carries both, so the audit trail
+    # is not one field narrower than the jsonl beside it.
+    mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
+    assert ADJACENT_TEST in mirror, mirror
+    assert regression in mirror, mirror
+
+
+def test_a_live_lead_fix_with_no_regression_test_records_only_the_mandated_one(run_env):
+    """The ordinary LIVE lane, unchanged: nothing optional was offered, so
+    nothing optional is recorded and no field is invented to hold a blank."""
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(project_root, {"src/sweeper.py": 4})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    record = _lead_fix_records(fdir)[0]
+    assert record["test"] == ADJACENT_TEST
+    assert not record.get("regression_test"), record
+
+
+def test_a_latent_lead_fix_records_its_regression_test_as_the_test(run_env):
+    """ST-003 / CT-004: on the LATENT lane the regression test IS the test that
+    holds the fix — no adjacent-path fields are demanded and none exist — so it
+    is what `test` carries, and it is not also repeated into the optional
+    field."""
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LATENT")
+    regression = _regression_test_file(project_root)
+    commit = _commit_changing(project_root, {"src/sweeper.py": 4})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        regression_test=regression,
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    record = _lead_fix_records(fdir)[0]
+    assert record["test"] == regression, record
+    assert not record.get("regression_test"), (
+        "one locator stated twice is two things that can disagree"
+    )

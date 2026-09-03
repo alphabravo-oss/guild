@@ -489,11 +489,18 @@ def test_a_clean_delta_cycle_widens_to_full_before_assay(run_env):
     """AC-016 / US-004: 'every final gate still runs everything at full width.'
 
     The path DELTA opens onto, driven end to end. A DELTA INSPECT that comes
-    back clean does not open ASSAY — `inspect_clean` refuses naming the rule —
+    back clean does not open ASSAY — `inspect_clean` refuses naming the WIDTH —
     and the lead re-calls `inspect_start` from F2. That crossing advances the
-    counter, records FULL / final_gate, requires the full roster, and THEN
-    inspect_clean opens ASSAY. Without this the ruling would trade one
-    non-termination for a narrower final gate.
+    counter, records FULL, requires the full roster, and THEN inspect_clean
+    opens ASSAY. Without this the ruling would trade one non-termination for a
+    narrower final gate.
+
+    D-169: the refusal is asserted on the condition the code EVALUATES. It used
+    to be asserted on the substring "final_gate", which is the rule this
+    particular crossing happens to record and is not what either ASSAY door
+    reads — see
+    `test_a_full_inspect_opens_assay_whichever_full_rule_recorded_it` below,
+    which drives all three FULL rules through both doors.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=1)
@@ -511,11 +518,14 @@ def test_a_clean_delta_cycle_widens_to_full_before_assay(run_env):
     for stream in delta["required_streams"]:
         (fdir / f".{stream}-complete").write_text("x\n", encoding="utf-8")
 
-    # The gate is refused while the recorded width is DELTA, by rule name.
+    # The gate is refused while the recorded width is DELTA, and the refusal
+    # states the width — the thing tested — with the recorded mode and rule
+    # beside it as facts (D-169).
     _arm(fdir)
     refused = foundry_mark_phase_complete("inspect_clean", project_root)
     assert refused.get("ok") is not True
-    assert "final_gate" in refused["error"]
+    assert "recorded mode is FULL" in refused["error"], refused["error"]
+    assert "ran at DELTA width (rule delta)" in refused["error"], refused["error"]
     assert refused["inspect_mode"] == "DELTA"
 
     # ...and the widening re-open is the crossing that opens it.
@@ -2676,3 +2686,355 @@ def test_the_recorded_rule_survives_the_transition_into_state_and_rollup(run_env
     rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
     cycle_row = rollup["cycles"][str(recorded["cycle"])]
     assert cycle_row["inspect_rule"] == "final_gate", cycle_row
+
+
+# --------------------------------------------------------------------------- #
+# D-169 — THE CONDITION A SURFACE STATES IS THE CONDITION THE CODE EVALUATES.
+#
+# Three shipped surfaces said "ASSAY is only opened by an INSPECT whose recorded
+# rule is final_gate": `foundry_gate`'s assay-width refusal,
+# `foundry_mark_phase_complete`'s inspect_clean DELTA refusal, and
+# `_compute_next_action`'s widen_inspect instructions. The enforced predicate is
+# WIDTH — the checklist entry is literally named `inspect_ran_at_full_width` and
+# the test is `mode == "FULL"`. Driven at the ASSAY door on runs recorded
+# FULL/final_gate, FULL/first_of_phase and FULL/verifier_touched: all three
+# returned ok True, so an INSPECT recorded with rule verifier_touched DOES open
+# ASSAY and the sentence was false.
+#
+# It was false about the ordinary case for a run that builds this plugin, where
+# a GRIND touching `vocab.py`, `schemas/` or the orchestrator records
+# verifier_touched — so a lead reading any of the three believed a clean FULL
+# cycle still owed a widening cycle, which is exactly the ceremony US-004 exists
+# to remove. D-152 fixed the rule PRECEDENCE and left every stated condition
+# naming a rule no code reads.
+#
+# Pinned from BOTH ends: the doors accept every FULL rule (behaviour), and no
+# shipped surface states a rule condition (the sentence). Either alone lets this
+# come back — the behaviour was already right, and it was the prose that lied.
+# --------------------------------------------------------------------------- #
+
+
+def _full_cycle_recorded_with(fdir: Path, rule: str, cycle: int = 2) -> None:
+    """A clean F2 whose recorded width is FULL and whose rule is `rule`."""
+    _write_state(fdir, phase="F2", cycle=cycle, inspect_modes=[{
+        "cycle": cycle, "phase": "F2", "mode": "FULL", "rule": rule,
+        "rule_detail": f"{rule} fired", "decided_by": "inspect_start",
+        "decided_at": "2026-09-03T00:00:00.000001+00:00",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {
+            w: {"scope": "full", "detail": "every item in scope"}
+            for w in ("trace", "prove", "test")
+        },
+        "touched_files": [], "prove_sample": [], "diff_base": "0" * 40,
+    }])
+    _write_manifest(fdir)
+    _write_spec(fdir, ["FR-001"])
+    _write_defects(fdir, [])
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2026-09-03T00:00:00+00:00 cycle=2\nitems_checked=1\nitems_total=1\n"
+            "coverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+
+@pytest.mark.parametrize("rule", sorted(INSPECT_FULL_RULES))
+def test_a_full_inspect_opens_assay_whichever_full_rule_recorded_it(run_env, rule):
+    """AC-016 verbatim: 'every later inspect_start transition records FULL when
+    it is the INSPECT before ASSAY, NYQUIST or DONE, or when the GRIND diff
+    touches vocab.py, schemas/, orchestrator or gate code, agent or skill prose,
+    or the spec'.
+
+    US-004's premise is "every final gate still runs everything at full WIDTH".
+    All three FULL rules produce full width, so all three open ASSAY — at both
+    doors. Parametrised over `INSPECT_FULL_RULES` rather than over a typed list,
+    so a rule added to the vocabulary is covered here the day it is added.
+    """
+    project_root, fdir = run_env
+    _full_cycle_recorded_with(fdir, rule)
+
+    _arm(fdir)
+    gate = fo.foundry_gate("assay", project_root)
+    width = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("inspect_ran_at_full_width")
+    )
+    assert width["ok"] is True, (rule, width, gate.get("reason"))
+    assert gate["passed"] is True, (rule, gate.get("reason"))
+
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean.get("ok") is True, (rule, clean)
+    assert _read_state(fdir)["phase"] == "F4", (rule, clean)
+
+
+def test_the_delta_refusals_state_the_width_they_test_and_not_a_rule(run_env):
+    """GI-008 / AC-016. The refusal half of the same property.
+
+    A DELTA cycle is refused at both doors — that is unchanged and correct —
+    and what each says is the condition it EVALUATED, with the recorded mode
+    and rule reported beside it as the facts they are. A refusal that names a
+    condition the code never reads sends the lead to satisfy a rule instead of
+    a width.
+    """
+    project_root, fdir = run_env
+    _full_cycle_recorded_with(fdir, "delta")
+    state = _read_state(fdir)
+    state["inspect_modes"][-1]["mode"] = "DELTA"
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean.get("ok") is not True, clean
+    assert "recorded mode is FULL" in clean["error"], clean["error"]
+    assert "ran at DELTA width (rule delta)" in clean["error"], clean["error"]
+
+    _arm(fdir)
+    gate = fo.foundry_gate("assay", project_root)
+    assert gate["passed"] is False, gate
+    assert "recorded mode is FULL" in gate["reason"], gate["reason"]
+    assert "DELTA width (rule delta)" in gate["reason"], gate["reason"]
+
+
+def test_no_shipped_surface_states_the_rule_as_the_assay_condition():
+    """D-169's sentence half, over the module's source.
+
+    The behaviour above was ALREADY right before this defect was filed; what
+    was wrong was three strings. So the strings are asserted directly: no
+    surface may claim ASSAY turns on the recorded RULE, because none of them
+    reads one. Scoped to the two spellings the three offenders used, so an
+    honest sentence that merely mentions `final_gate` as provenance — which the
+    hints still do, correctly — is not caught.
+
+    READ OFF THE AST, over string CONSTANTS, not over the file's text. A `#`
+    comment quoting the retired sentence to explain why it was retired is the
+    house style and must not trip this — the failure history is how the next
+    author learns which invariant they are about to break. What may not survive
+    is a sentence the server can EMIT, and every one of those is a string
+    literal.
+    """
+    import ast
+
+    tree = ast.parse(Path(fo.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        for claim in (
+            "recorded rule is final_gate",
+            "recorded with rule final_gate",
+        ):
+            assert claim not in node.value, (
+                f"foundry_orchestrator.py line {node.lineno} states {claim!r} in "
+                "a string the server can emit; both ASSAY doors read the "
+                "recorded MODE, and `inspect_ran_at_full_width` is the name of "
+                "the check that decides it"
+            )
+
+
+# --------------------------------------------------------------------------- #
+# D-177 — the recorded PROVE scope states the number DRAWN, not the ceiling.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_prove_scope_detail_states_the_sample_it_actually_drew(run_env):
+    """FR-013 / FR-049. The recorded `stream_scope` is read back by the PROVE
+    stream as its width statement, so its two clauses must agree with the
+    roster recorded beside them.
+
+    The detail was built as f"{len(prove_sample)} row(s): rows tied to the fixed
+    defects plus {PROVE_DELTA_SAMPLE_SIZE} sampled" — one measured number and
+    one CONSTANT. The draw is `min(PROVE_DELTA_SAMPLE_SIZE, len(remaining))`, so
+    on any spec with fewer remaining rows than the ceiling the sentence
+    contradicted the list it described. Driven on a two-requirement spec with no
+    fixed-defect rows: `prove_sample` recorded ['FR-001', 'FR-002'] and the
+    detail read "2 row(s): rows tied to the fixed defects plus 10 sampled" — a
+    stream trusting it looks for eight rows that were never drawn.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+    _write_spec(fdir, ["FR-001", "FR-002"])
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+    assert result["inspect_mode"] == "DELTA", result
+
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    sample = recorded["prove_sample"]
+    detail = recorded["stream_scope"]["prove"]["detail"]
+
+    assert len(sample) == 2, sample
+    assert detail == "2 row(s): 0 tied to the fixed defects plus 2 sampled", detail
+    assert str(PROVE_DELTA_SAMPLE_SIZE) not in detail, (
+        "the ceiling is not the measurement; the pool held fewer rows than it"
+    )
+
+
+def test_the_prove_scope_detail_adds_up_to_the_roster_beside_it(run_env):
+    """The general property, on a spec large enough for the full draw: the two
+    numbers the detail states are the two halves of the roster it describes.
+
+    A spec of forty rows with one row tied to a fixed defect draws the full ten,
+    so this is the case where the old string happened to be right — and it must
+    still be right for the reason that it is measured, not by coincidence.
+    """
+    project_root, fdir = run_env
+    ids = [f"FR-{n:03d}" for n in range(1, 41)]
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{
+        **_open_live(), "status": "fixed", "fixed_in_cycle": 1, "spec_ref": "FR-007",
+    }])
+    _write_manifest(fdir)
+    _write_spec(fdir, ids)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    assert foundry_mark_phase_complete(
+        "inspect_start", project_root
+    )["inspect_mode"] == "DELTA"
+
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    detail = recorded["stream_scope"]["prove"]["detail"]
+    total = len(recorded["prove_sample"])
+
+    assert detail == (
+        f"{total} row(s): 1 tied to the fixed defects plus "
+        f"{PROVE_DELTA_SAMPLE_SIZE} sampled"
+    ), detail
+    assert total == 1 + PROVE_DELTA_SAMPLE_SIZE, recorded["prove_sample"]
+
+
+# --------------------------------------------------------------------------- #
+# D-173 — the recorded roster crosses the MCP boundary.
+#
+# `server.call_tool` returned one TextContent of `format_result(name, result)`,
+# and `format_result` returns ONLY the formatter's string when a formatter
+# exists. Foundry-Next has one, so the result dict — the roster the streams
+# must obey — was discarded one rung below the wire. Driven at the real MCP
+# surface: a DELTA cycle with 9 touched files and 10 sampled rows produced a
+# response naming 5 files then "(+4 more)" and 8 rows then "...", with the
+# literals `inspect_mode`, `touched_files` and `prove_sample` appearing nowhere
+# in it. FR-047 / FR-049 make that roster the exact set the streams-complete
+# check judges the stream against.
+# --------------------------------------------------------------------------- #
+
+
+def _drive_mcp_text(name: str, arguments: dict) -> str:
+    """Call a tool through the MCP REQUEST HANDLER, not through `call_tool`.
+
+    The transport a client actually uses — the same helper shape
+    `test_orchestrator_gates.py` uses for the argument refusals, and for the
+    same reason: this defect is about what crosses the boundary, so the test
+    must cross it.
+    """
+    import asyncio
+
+    from mcp import types
+
+    import foundry_mcp.server as srv
+
+    handler = srv.server.request_handlers[types.CallToolRequest]
+    request = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(name=name, arguments=arguments),
+    )
+    return asyncio.run(handler(request)).root.content[0].text
+
+
+def _machine_readable(text: str) -> dict:
+    """The result dict a response carries after `RESULT_JSON_MARKER`."""
+    import re
+
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER
+
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    assert RESULT_JSON_MARKER in plain, "no machine-readable block in the response"
+    _, _, body = plain.partition(RESULT_JSON_MARKER + "\n")
+    return json.loads(body)
+
+
+def test_the_delta_roster_crosses_the_mcp_boundary_whole(run_env, monkeypatch):
+    """FR-049 verbatim: 'every later Foundry-Next displays the decision'; FR-047:
+    'the streams-complete check enforces exactly that set'.
+
+    Nine touched files and a full sample, driven at the real MCP surface. Both
+    halves are asserted on ONE response: the display still truncates — that is
+    NFR-005 and it is deliberate — and the arrays are recoverable in full from
+    the machine-readable part. A fix that un-truncated the terminal line instead
+    would satisfy neither requirement and would fail the first two assertions
+    here.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    touched = [f"src/mod_{i}.py" for i in range(9)]
+    sample = [f"FR-{n:03d}" for n in range(1, 11)]
+    _write_state(fdir, phase="F2", cycle=4, inspect_modes=[{
+        "cycle": 4, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
+        "rule_detail": "no FULL rule fired", "decided_by": "inspect_start",
+        "decided_at": "2026-09-03T00:00:00.000001+00:00",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {
+            "trace": {"scope": "delta", "detail": "symbols in the 9 file(s)"},
+            "prove": {"scope": "delta", "detail": "10 row(s): 0 tied plus 10"},
+            "test": {"scope": "full", "detail": "whole suite, cold"},
+        },
+        "touched_files": touched, "prove_sample": sample, "diff_base": "abc1234",
+    }])
+    _write_defects(fdir, [])
+    _write_manifest(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    text = _drive_mcp_text("Foundry-Next", {})
+    payload = _machine_readable(text)
+    mode = payload["inspect_mode"]
+
+    # The roster, whole, off the wire.
+    assert mode["touched_files"] == touched, mode["touched_files"]
+    assert mode["prove_sample"] == sample, mode["prove_sample"]
+    assert mode["required_streams"] == ["trace", "prove", "test"]
+    assert mode["stream_scope"]["trace"]["scope"] == "delta"
+    assert mode["mode"] == "DELTA"
+    assert mode["diff_base"] == "abc1234"
+    assert mode["cycle"] == 4
+
+    # ...and the display half is still the summary it was built to be.
+    head = text.partition("machine-readable result")[0]
+    assert "(+4 more)" in head, "the terminal line must stay truncated"
+    assert touched[8] not in head, "the terminal line must stay truncated"
+
+
+def test_a_tool_with_no_formatter_is_not_given_a_second_copy(run_env, monkeypatch):
+    """The boundary rule's other half. An unformatted tool's whole response is
+    already the result as JSON, so appending the marker would say everything
+    twice and break `json.loads` on the response — which is what
+    `test_call_tool_still_returns_a_normal_result_unwrapped` reads.
+    """
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER, format_result_blocks
+
+    project_root, _fdir = run_env
+    del project_root
+
+    rendered = format_result_blocks("Foundry-No-Formatter-Test", {"ok": True, "v": 42})
+    assert RESULT_JSON_MARKER not in rendered
+    assert json.loads(rendered) == {"ok": True, "v": 42}
+
+
+def test_a_payload_that_will_not_serialise_still_renders_its_display():
+    """The house rule at this rung: never raise across the MCP boundary, and
+    never lose the operator's answer over a value that would not serialise.
+    """
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER, format_result_blocks
+
+    class _Unserialisable:
+        def __repr__(self):  # `default=str` reaches this, so the block is written
+            return "<opaque>"
+
+    rendered = format_result_blocks(
+        "Foundry-Next", {"display": "BANNER", "instructions": "go", "x": _Unserialisable()}
+    )
+    assert "BANNER" in rendered
+    assert RESULT_JSON_MARKER in rendered
+    assert json.loads(rendered.partition(RESULT_JSON_MARKER + "\n")[2])["x"] == "<opaque>"
