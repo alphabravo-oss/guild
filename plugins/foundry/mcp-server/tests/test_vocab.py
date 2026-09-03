@@ -1136,10 +1136,10 @@ def test_no_casting_1_surface_names_the_retired_per_gate_tier_rule(
 ) -> None:
     """No owned file restates the tier's gate rule with a door missing.
 
-    Six surfaces carried it: `vocab.py`'s header, and five restatements that
-    named three of the five doors and called them "three gates". Only the first
-    was filed; the other five are the same sentence, and leaving them is how
-    this class came back four times.
+    Six surfaces carried the retired rule (D-148): `vocab.py`'s header, and
+    five restatements that named three of the five doors and called them
+    "three gates". Only the first was filed; the other five are the same
+    sentence, and leaving them is how this class came back four times.
     """
     text = (REPO_ROOT / relpath).read_text(encoding="utf-8")
     hits = [s for s in _RETIRED_TIER_GATE_SPELLINGS if s in text]
