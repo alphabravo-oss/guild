@@ -88,8 +88,9 @@ from __future__ import annotations
 import fcntl
 import json
 import re
+import subprocess
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
@@ -98,18 +99,23 @@ from typing import Any
 
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
+    DEFECT_TIERS,
     DEFECT_TYPES,
     NEVER_DEMOTE_CLASSES,
     OBSERVATION_CLASSES,
+    SECURITY_PROPERTY_CLAIM,
     canonical_defect_type,
+    is_security_property_text,
     never_demote_class,
     observation_class,
+    reproduction_attempted_problem,
 )
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     document_refusal,
     get_run_dir,
+    read_document,
     read_text_file,
     set_active_run,
 )
@@ -695,6 +701,9 @@ def _finding_mapping(
     *,
     symbol: str = "",
     file_path: str = "",
+    tier: str = "",
+    defect_class: str = "",
+    reproduction_attempted: str = "",
 ) -> dict:
     """Build the mapping vocab's predicates read (see its module docstring).
 
@@ -702,6 +711,20 @@ def _finding_mapping(
     that one mapping is both what the predicates judge AND what an audit record
     quotes back. Key names match the shape ``foundry_sync_defects`` already
     passes around, so the same mapping crosses both filing paths unchanged.
+
+    CT-001 / CT-002 / CT-003 — ``tier``, ``class`` and ``reproduction_attempted``
+    are carried here rather than assembled into a second dict at the filing
+    door, for the same reason ``symbol`` and ``file`` are: ONE mapping is what
+    ``validate_defect_filing`` judges AND what ``record_denylist_tripwire``
+    quotes back when the LATENT security gate refuses. A second shape would put
+    the audit record and the refusal one edit apart from disagreeing about the
+    finding they describe — and ``foundry_sync_defects`` (the batch door) hands
+    its caller's finding dict straight to the validator, whose keys are already
+    spelled exactly this way, so the two doors judge one shape.
+
+    ``defect_class`` lands under the key ``"class"`` because that is the key the
+    persisted record, the batch door's finding dicts and the escalation reader
+    all already use; ``class`` is a Python keyword and cannot be the parameter.
     """
     return {
         "description": description,
@@ -709,6 +732,9 @@ def _finding_mapping(
         "target_kind": target_kind,
         "symbol": symbol,
         "file": file_path,
+        "tier": tier,
+        "class": defect_class,
+        "reproduction_attempted": reproduction_attempted,
     }
 
 
@@ -941,6 +967,130 @@ def record_denylist_tripwire(
         ],
     )
     return tripwire
+
+
+def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
+    """The tier/class/LATENT checks both filing doors apply, decided in ONE place.
+
+    Returns None when the filing may be persisted, otherwise the house refusal
+    dict: ``{"ok": False, "error": ..., "hint": ..., "field": <"tier" | "class"
+    | "reproduction_attempted" | "description">}`` plus, for the security
+    refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
+
+    Reads the mapping and nothing else — no ledger read, no run-dir resolution,
+    no write — so the batch door can call it once per finding BEFORE it opens
+    its transaction, and so a refusal costs nothing.
+
+    WHY THIS IS A SHARED FUNCTION (CT-001 / CT-002 / CT-003 / AC-010)
+    -----------------------------------------------------------------
+    There are two filing doors and they live in different modules:
+    ``foundry_add_defect`` here, ``foundry_sync_defects`` in
+    ``foundry_orchestrator.py``. Every check those two doors were each trusted
+    to remember has eventually diverged — D-119 is the shipped instance (the
+    two doors disagreed about which cycle a record belonged to, so identical
+    findings filed through different doors produced different cycle runs and a
+    systemic class escaped ST-002 escalation). A filing whose tier the single
+    door demands and the batch door does not is that defect again, one field
+    along, and it would be worse: the batch door is the one a whole INSPECT
+    stream files through, so the gap would be the common path rather than the
+    rare one.
+
+    THE CHECK ORDER IS LOCKED, so that the two doors name the same field first
+    for the same bad filing: tier, then class, then — for LATENT only —
+    reproduction_attempted, then the security denylist.
+
+    WHY THE LATENT GATE CONSULTS THE SECURITY PREDICATE AND NOT
+    ``never_demote_class`` (CT-003)
+    -----------------------------------------------------------
+    ``never_demote_class`` returns SPEC_REQUIRED_BEHAVIOUR_CLAIM for ANY
+    finding carrying a non-empty ``spec_ref`` (see
+    ``vocab.is_spec_required_behaviour_claim``). Routing this gate through it
+    would refuse every LATENT filing that cites a requirement — which is the
+    majority of them — and OT-005 requires the exact opposite: a LATENT filing
+    citing NFR-002 with a scan-gap description is ACCEPTED. A spec_ref alone
+    never refuses a LATENT filing. Only the security predicate does.
+
+    THE TRIPWIRE IS THE CALLER'S TO WRITE. ``record_denylist_tripwire`` needs
+    the resolved run dir, the cycle and the source, none of which a pure
+    validator has, and there is exactly one tripwire writer in this package by
+    design (see that function's own docstring). So this returns the refusal
+    carrying ``denylist_class`` and the calling door fires the audit record
+    through the existing exported path before returning it.
+    """
+    tier = finding.get("tier")
+    if not isinstance(tier, str) or tier not in DEFECT_TIERS:
+        return {
+            "ok": False,
+            "error": (
+                f"Invalid tier: {tier!r}. Must be one of: "
+                f"{', '.join(sorted(DEFECT_TIERS))}"
+            ),
+            "hint": (
+                "Every defect carries the evidence tier the filing stream is "
+                "answerable for. LIVE means you drove the door and observed "
+                "the wrong result — put the reproduction in the description. "
+                "LATENT means you looked for the failure and did not find one "
+                "— name what you drove in reproduction_attempted. The tier is "
+                "not a severity: both are defects and both get fixed."
+            ),
+            "field": "tier",
+        }
+
+    defect_class = finding.get("class")
+    if not isinstance(defect_class, str) or not defect_class.strip():
+        return {
+            "ok": False,
+            "error": (
+                f"Missing class: {defect_class!r} is not a non-empty root-cause "
+                f"class name."
+            ),
+            "hint": (
+                "Escalation keys on the declared class, so a filing without "
+                "one cannot recur as anything. Name the root cause this "
+                "instance shares with its siblings (e.g. "
+                "FALSE_DOCUMENTED_CONTRACT), not the symptom and not the file."
+            ),
+            "field": "class",
+        }
+
+    if tier != "LATENT":
+        return None
+
+    problem = reproduction_attempted_problem(finding.get("reproduction_attempted"))
+    if problem is not None:
+        return {
+            "ok": False,
+            "error": f"Invalid reproduction_attempted: {problem}",
+            "hint": (
+                "A LATENT filing is a gap you REASONED about rather than "
+                "reproduced, so the negative result is the whole evidence: "
+                "say what you drove and what it found (e.g. 'AST sweep of "
+                "both roots finds 0 sites'). If you did drive the failure, "
+                "file it as LIVE with its reproduction instead."
+            ),
+            "field": "reproduction_attempted",
+        }
+
+    if is_security_property_text(str(finding.get("description", ""))):
+        return {
+            "ok": False,
+            "error": (
+                f"Refused: {SECURITY_PROPERTY_CLAIM} — a security-property "
+                f"claim may never be filed as LATENT."
+            ),
+            "hint": (
+                "A claim that a security property is broken is never a gap "
+                "reasoned about: drive it, and file what you observed as "
+                "LIVE. Do NOT re-word the description to get past this "
+                "refusal — the same predicate guards the never-demote "
+                "denylist, and an audit tripwire has already recorded this "
+                "attempt."
+            ),
+            "field": "description",
+            "denylist_class": SECURITY_PROPERTY_CLAIM,
+        }
+
+    return None
 
 
 def _server_cycle(fdir: Path) -> int:
@@ -1277,6 +1427,8 @@ def foundry_add_defect(
     target_kind: str = "",
     defect_class: str = "",
     project_root: str = ".",
+    tier: str = "",
+    reproduction_attempted: str = "",
 ) -> dict:
     """Add a defect to the foundry ledger.
 
@@ -1299,13 +1451,27 @@ def foundry_add_defect(
             subject is a code comment \u2014 that declaration is what allows the
             comment-prose refusal of AC-001 to engage. Any other value, or
             none, means the finding is not demotable and is filed as a defect.
-        defect_class: optional root-cause class shared by several instances,
-            persisted under the key ``"class"``. Escalation keys on it.
+        defect_class: the root-cause class shared by several instances,
+            persisted under the key ``"class"``. REQUIRED (CT-002 / FR-007):
+            escalation keys on it, so a filing without one cannot recur as
+            anything. The path fallback other readers carry survives only for
+            READING pre-change archives.
+        tier: a member of ``vocab.DEFECT_TIERS`` — LIVE when the stream drove
+            the door and observed the wrong result, LATENT when it looked for
+            the failure and found none. REQUIRED (CT-001 / FR-004). It is NOT
+            a severity: both tiers are defects and both get fixed; the axis
+            decides only which gate a still-open instance blocks.
+        reproduction_attempted: for a LATENT filing, the statement naming what
+            was driven and what it found (e.g. "AST sweep of both roots finds
+            0 sites"). Required on LATENT and refused when it is a placeholder
+            (``vocab.reproduction_attempted_problem`` is the check); stored as
+            ``None`` on a LIVE record, whose reproduction lives in the
+            description.
 
     Returns:
         ``{defect_id, total_defects, open_defects}``, or a named refusal
-        ``{error, hint, ...}`` when the vocabulary check or the comment-prose
-        check rejects the filing.
+        ``{error, hint, ...}`` when the vocabulary check, the comment-prose
+        check, or ``validate_defect_filing`` rejects the filing.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1351,7 +1517,14 @@ def foundry_add_defect(
     # the subject is a comment and no denylist entry outranks the class \u2014 see
     # the module docstring for why an undeclared subject is never refused.
     finding = _finding_mapping(
-        description, spec_ref, target_kind, symbol=symbol, file_path=file_path
+        description,
+        spec_ref,
+        target_kind,
+        symbol=symbol,
+        file_path=file_path,
+        tier=tier,
+        defect_class=defect_class,
+        reproduction_attempted=reproduction_attempted,
     )
     refused_class = _observation_refusal(finding)
     if refused_class is not None:
@@ -1375,6 +1548,37 @@ def foundry_add_defect(
             "refused_class": refused_class,
             "observation_classes": sorted(OBSERVATION_CLASSES),
         }
+
+    # The tier/class/LATENT gate (CT-001 / CT-002 / CT-003 / AC-006 / AC-007 /
+    # AC-010). Shared with the batch door rather than re-spelled here — see
+    # `validate_defect_filing` for why the two doors cannot be trusted to
+    # remember a check each.
+    #
+    # It runs AFTER the comment-prose refusal deliberately: a finding that is
+    # comment prose is not a defect at all, and telling its filer about a
+    # missing tier would send them to add a field to a record that should never
+    # reach this ledger. The refusal a caller gets first is the one that
+    # decides which LEDGER the finding belongs in.
+    filing_refusal = validate_defect_filing(finding)
+    if filing_refusal is not None:
+        if filing_refusal.get("denylist_class"):
+            # The audit signal is fired through the ONE exported tripwire
+            # writer, before the refusal is returned, exactly as
+            # `foundry_add_observation` and `foundry_sync_defects` fire it. A
+            # second writer here would be the FR-002 defect returning: an audit
+            # control that only records the attempts one of its callers makes.
+            #
+            # `record_denylist_tripwire` names the highest-certainty denylist
+            # class that matched the finding, which for a filing that declared
+            # a non-comment `target_kind` is NON_COMMENT rather than
+            # SECURITY_PROPERTY_CLAIM. That is not a disagreement: the refusal
+            # names the predicate the LATENT gate consulted, the tripwire names
+            # why the finding could never have been demoted at all. Both are
+            # true of the same finding and both are recorded.
+            record_denylist_tripwire(
+                fdir, finding, cycle=_server_cycle(fdir), source=source
+            )
+        return filing_refusal
 
     # Canonical spelling, not the caller's (FR-013 / D-018). MISPLACED and
     # ARCHITECTURAL_PLACEMENT are ONE type under two live spellings \u2014 agent
@@ -1403,16 +1607,40 @@ def foundry_add_defect(
         "declared_cycle": cycle,
         "source": source,
         "type": canonical_type,
+        # CT-001 / FR-004: the evidence axis, on every record. Written from
+        # the validated value, so a persisted record's tier is always a member
+        # of DEFECT_TIERS — `vocab.TIER_UNKNOWN` is a READ-side sentinel for
+        # records written before this release and is NEVER written by a door.
+        "tier": tier,
+        # CT-002 / FR-007: `class` moved OUT of the trailing `if defect_class:`
+        # block and into the literal. It was conditional because it was
+        # optional; the validator above has already refused an absent or blank
+        # one, so a record without the key can no longer be produced here — and
+        # leaving the conditional would have meant escalation still had to
+        # handle a keyless record it can never again be handed.
+        "class": defect_class,
+        # FR-004 / FR-029: the negative result a LATENT filing is answerable
+        # for, and explicitly `None` on a LIVE record rather than "" — absent
+        # evidence and empty evidence are different claims, and a LIVE record's
+        # reproduction lives in the description where the stream put it.
+        "reproduction_attempted": reproduction_attempted if tier == "LATENT" else None,
         "description": description,
         "spec_ref": spec_ref,
         "symbol": symbol,
         "file": file_path,
         "status": "open",
         "fixed_in_cycle": None,
+        # C-2 / GI-003: the three fields Foundry-Fix sets when this defect is
+        # closed, seeded null at filing so every record has one shape from the
+        # moment it exists. A reader asking "who fixed this and with what test"
+        # gets `None` from an open defect rather than a KeyError, which is what
+        # lets the report and the lead_fix handoff read every record the same
+        # way instead of branching on whether the fix door has run yet.
+        "regression_test": None,
+        "authored_by": None,
+        "fix_commit": None,
         "created_at": now,
     }
-    if defect_class:
-        defect["class"] = defect_class
     if target_kind:
         defect["target_kind"] = target_kind
 
@@ -1436,6 +1664,11 @@ def foundry_add_defect(
         f"Cycle {defect['cycle']} \u2014 {source}: {defect_id}",
         [
             ("Type", canonical_type),
+            # CT-001 \u2014 the human mirror carries the evidence axis too. A lead
+            # reading forge-log.md to decide what still blocks the run needs
+            # LIVE vs LATENT there, not only in defects.json.
+            ("Tier", tier),
+            ("Reproduction attempted", reproduction_attempted if tier == "LATENT" else ""),
             ("Class", defect_class),
             ("Description", description),
             ("Spec ref", spec_ref),
