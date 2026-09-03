@@ -857,6 +857,40 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
             "to be IN the token or this field has no identifier at all."
         ),
     ),
+    "archive_root": _EnvironmentalGrammar(
+        token=re.compile(r"/\S*/foundry-archive/\S*"),
+        varies_in="text",
+        key=None,  # the `/foundry-archive/` anchor is in the token
+        witness_kind="corpus",
+        witness="casting-8-suite.log",
+        witness_pair=(
+            "",
+            "/private/tmp/c3wt/foundry-archive/thunder-viper",
+            "/private/var/folders/kq/T/tmp.X6ktF5/wt/foundry-archive/thunder-viper",
+        ),
+        falsifier=(
+            "",  # the same relocation with the anchor removed
+            "/private/tmp/c3wt/thunder-viper",
+            "/private/var/folders/kq/T/tmp.X6ktF5/wt/thunder-viper",
+        ),
+        note=(
+            "the run-archive root, printed by the `<name> archive not present "
+            "in this checkout: <path>` skip in test_measure_run and "
+            "test_migrate_archive. `foundry-archive/` is git-ignored, so those "
+            "tests skip in EVERY detached worktree and name that worktree in "
+            "the message -- which is to say the line appears exactly when a "
+            "sweep re-executes the log and never when it was captured in the "
+            "main tree, so without this entry a suite log can be re-captured "
+            "any number of times and still never re-execute. Sibling of "
+            "`planning_root` in every respect: same shape, same reason, same "
+            "self-keying. Self-keyed because the declaration erases the bare "
+            "token with nothing beside it, so the anchor has to be IN the "
+            "token or the field has no identifier at all; `varies_in='text'` "
+            "because what moved is the checkout, not a number. The CLAIM -- "
+            "that the archive is absent -- is byte-identical on both sides "
+            "and stays visible."
+        ),
+    ),
     "process_id": _EnvironmentalGrammar(
         token=re.compile(r"pid=\d+", re.IGNORECASE),
         varies_in="digits",
@@ -890,7 +924,7 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
             "digit skeletons and is REFUSED — the shape is the identity."
         ),
     ),
-}  # 7 grammars
+}  # 8 grammars
 
 
 def _digit_skeleton(token: str) -> str:

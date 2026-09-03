@@ -6,7 +6,7 @@
 ........................................................................ [ 27%]
 ........................................................................ [ 55%]
 ........................................................................ [ 83%]
-.........................................
+...........................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -53,5 +53,5 @@
     declared 300s                       : 300
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
-.                               [100%]
-258 passed, 1 deselected in 18.52s
+.                             [100%]
+260 passed, 1 deselected in 18.15s

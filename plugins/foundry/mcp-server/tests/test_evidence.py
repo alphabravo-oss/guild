@@ -2837,6 +2837,76 @@ def test_every_declared_grammar_has_a_live_witness():
     assert offenders == [], f"grammars with no live witness: {offenders}"
 
 
+def test_every_grammar_admits_its_witness_pair_and_refuses_its_falsifier():
+    """DERIVED MEMBERSHIP again, this time over each entry's OWN two triples.
+
+    `_EnvironmentalGrammar` documents `witness_pair` as "a REAL disagreement
+    this grammar must ADMIT" and `falsifier` as "the same triple with the
+    grammar's identifier removed, which the whole registry must REFUSE", and
+    says the registry sweep drives both. The sweep above drives neither — it
+    confirms a witness EXISTS in the corpus, which is a different claim — so
+    the two fields were prose until something ran them.
+
+    They are run here through `_field_disagreement_problem`, the guard's own
+    door, so an entry that is too wide (its falsifier gets admitted) or too
+    narrow (its own witness gets refused) turns this red rather than surfacing
+    as a sweep refusal on someone's evidence log. That is not hypothetical:
+    `archive_root` was added because a suite log declaring
+    `/[^ ]*/foundry-archive/[^ ]*` could be re-captured any number of times and
+    never re-execute — `foundry-archive/` is git-ignored, so the skip naming it
+    appears ONLY in the detached worktree a sweep re-executes in, and the
+    registry had no grammar to admit the path that moved with it.
+
+    Membership is read off the registry, so a grammar added tomorrow is driven
+    the day it lands."""
+    offenders: list[str] = []
+    for name, grammar in evidence._ENVIRONMENTAL_GRAMMARS.items():
+        context, side_a, side_b = grammar.witness_pair
+        admitted = evidence._field_disagreement_problem(
+            f"<{name}>", "log", f"{context} {side_a}".strip(),
+            "capture", f"{context} {side_b}".strip(),
+        )
+        if admitted is not None:
+            offenders.append(f"{name}: refuses its own witness pair — {admitted}")
+        context, side_a, side_b = grammar.falsifier
+        refused = evidence._field_disagreement_problem(
+            f"<{name}>", "log", f"{context} {side_a}".strip(),
+            "capture", f"{context} {side_b}".strip(),
+        )
+        if refused is None:
+            offenders.append(
+                f"{name}: the WHOLE registry admits its falsifier "
+                f"{side_a!r}/{side_b!r}, so some grammar is wider than the "
+                f"thing keeping it alive"
+            )
+    assert offenders == [], offenders
+
+
+def test_the_checkout_root_moves_but_the_claim_beside_it_does_not():
+    """`archive_root`, stated as the property rather than as a table row.
+
+    The line is `thunder-viper archive not present in this checkout: <path>`.
+    What the environment varies is the checkout; what the command REPORTED is
+    that the archive is absent, and that half is byte-identical on both sides
+    and must stay visible. So the relocated path is admitted with the
+    `/foundry-archive/` anchor in the token, and refused without it — a bare
+    `/x/y` says nothing about whether it is where the run happened or what the
+    run found."""
+    anchored = evidence._field_disagreement_problem(
+        r"/[^ ]*/foundry-archive/[^ ]*",
+        "log", "/private/tmp/c3wt/foundry-archive/thunder-viper",
+        "capture", "/private/tmp/other/wt/foundry-archive/thunder-viper",
+    )
+    assert anchored is None, anchored
+
+    bare = evidence._field_disagreement_problem(
+        r"/[^ ]*",
+        "log", "/private/tmp/c3wt/thunder-viper",
+        "capture", "/private/tmp/other/wt/thunder-viper",
+    )
+    assert bare is not None and "not field-shaped" in bare
+
+
 def test_a_grammar_with_no_live_witness_is_reported_by_name(monkeypatch):
     """The plant: a NEW unbound member must turn this rule red.
 
