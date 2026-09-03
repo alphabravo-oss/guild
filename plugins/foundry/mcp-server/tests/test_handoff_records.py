@@ -1183,3 +1183,95 @@ def test_neither_reader_derives_the_declared_set_inline():
         and node.name == "declared_requirement_ids"
     ]
     assert definitions == ["declared_requirement_ids"], definitions
+
+
+def test_both_callers_derive_the_same_set_from_one_block(tmp_path):
+    """D-180's whole point, asserted as AGREEMENT rather than twice separately.
+
+    The two tests above each drive one caller on ``_QUOTING_BLOCK`` and each
+    gets the right answer, which is not the same as showing the two answers are
+    the SAME answer. This drives both on that one block in one test and
+    compares them: the acceptance gate's demanded set (what it will require a
+    citation and an evidence binding for) against the F0.9 validator's covered
+    set (which requirements it credits this casting with). They were computed
+    separately, with the same regex, over the same text, by two modules with no
+    surface that compared them — so they could drift apart and the first sign
+    would be a run shipping a requirement nothing verified.
+    """
+    from foundry_mcp.tools.foundry import foundry_init
+    from foundry_mcp.tools.foundry_state import set_active_run
+    from foundry_mcp.tools.foundry_validate import foundry_validate_castings
+
+    # One spec naming both IDs, so "covered" and "uncovered" are complementary
+    # halves of a known whole and the validator's answer can be read as a SET.
+    spec_text = (
+        "# Spec\n\n"
+        "- **AC-015**: the gate refuses without casting_commit.\n"
+        "- **NFR-002**: the report totals tokens and minutes.\n"
+    )
+    init = foundry_init(project_root=str(tmp_path))
+    fdir = Path(init["foundry_dir"])
+    (fdir / "spec.md").write_text(spec_text, encoding="utf-8")
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        _QUOTING_PROMPT, encoding="utf-8"
+    )
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "spec_type": "GREENFIELD",
+                "castings": [
+                    {
+                        "id": "1",
+                        "title": "the quoting casting",
+                        # The SAME block the prompt carries, which is what
+                        # F0.5 DECOMPOSE stores here.
+                        "spec_text": _QUOTING_BLOCK,
+                        "observable_truths": ["a", "b", "c"],
+                        "key_files": ["src/gate.py"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "gate.py").write_text(
+        "def accept_casting():\n    return True\n", encoding="utf-8"
+    )
+
+    set_active_run(init["run_name"])
+    try:
+        gate = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=foundry_spec_hash(project_root=str(tmp_path))["spec_hash"],
+            prompt_hash=_hash_str(_QUOTING_PROMPT),
+            completion_report="AC-015: implemented at src/gate.py#accept_casting\n",
+            project_root=str(tmp_path),
+            casting_commit=CASTING_COMMIT,
+        )
+        validator = foundry_validate_castings(str(tmp_path))
+    finally:
+        clear_active_run()
+
+    gate_demands = set(gate["requirement_ids"])
+
+    dim1 = validator["dimensions"]["requirement_coverage"]
+    uncovered = {
+        rid
+        for issue in dim1["issues"]
+        if issue["type"] == "uncovered_requirements"
+        for rid in issue["ids"]
+    }
+    validator_credits = {"AC-015", "NFR-002"} - uncovered
+
+    assert gate_demands == validator_credits, (
+        f"the acceptance gate demands {sorted(gate_demands)} of this casting "
+        f"while F0.9 credits it with {sorted(validator_credits)} — two "
+        f"answers to one question, from one block"
+    )
+    assert gate_demands == {"AC-015"}, sorted(gate_demands)
+    assert "NFR-002" not in gate_demands, (
+        "both callers agree, but on the OLD answer: NFR-002 is quoted inside "
+        "AC-015's prose and declared nowhere in this casting"
+    )
