@@ -50,6 +50,7 @@ from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     clear_active_run,
     get_run_dir,
+    is_stream_record,
     read_document,
     read_text_file,
 )
@@ -4117,6 +4118,13 @@ def _stream_dispatch_cycles(fdir: Path) -> dict[str, list[str]]:
     (`inspect_mode`, `stream_scope`, `evidence_sweep`) out of the roster without
     an edit every time the roll-up gains a field.
 
+    D-182 — AND THAT TEST IS READ, NOT RE-TYPED. The same predicate was spelled
+    out inline here and in `measure-run.py` and `foundry_report.py`, three
+    derivations of one rule over one document, and D-182 was the third of them
+    disagreeing. `foundry_state.is_stream_record` is now the single definition
+    and every reader calls it, so a C-6 addition that has to be excluded is
+    excluded everywhere by one edit rather than by three that must agree.
+
     The cycle is kept as its own axis and never folded into the phase: every
     INSPECT stream shares the phase `F2`, and `cycle-1` is a cycle, not a phase
     a lead could ever type into `Foundry-Spend`.
@@ -4128,7 +4136,7 @@ def _stream_dispatch_cycles(fdir: Path) -> dict[str, list[str]]:
             if not isinstance(bucket, dict):
                 continue
             for stream, entry in bucket.items():
-                if isinstance(entry, dict) and "records" in entry:
+                if is_stream_record(entry):
                     cycles.setdefault(str(stream), []).append(str(cycle_key))
     return {stream: sorted(seen) for stream, seen in cycles.items()}
 
