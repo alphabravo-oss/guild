@@ -1376,3 +1376,227 @@ def test_the_helper_tolerates_a_non_dict_historical_record():
         defect_class="UNWIRED_SURFACE",
         cycle=4,
     ) is None
+
+
+# --- D-147: the denylist reads the FILING, not one field of it ---------------
+#
+# Driven at the moment D-147 was filed, through
+# `server.call_tool('Foundry-Sync', ...)` over the real transport, in the
+# filing shape `agents/coverage-diff.md` documents: description '', the
+# security sentence in a `failure` key, tier LATENT. ACCEPTED — +1 Added,
+# persisted with tier LATENT and description '', and `observations.json`
+# tripwire delta 0. The gate read `description` and nothing else, so the one
+# key the shipped stream prose puts its sentence in was the one key the gate
+# did not look at.
+#
+# Every test below drives a shape a surface documents or a stream can send,
+# never a hand-built worst case, because the hole was on the documented path.
+
+#: The claim itself, spelled once. Any sentence asserting an authentication
+#: property does; this one is `agents/*.md`'s own register.
+_SMUGGLED_CLAIM = "the login endpoint does not verify the authentication token signature"
+
+
+def _coverage_diff_latent(**overrides) -> dict:
+    """`agents/coverage-diff.md`'s documented LATENT defect, verbatim in shape.
+
+    Its prose is in `failure`; it carries no `description` key at all. That is
+    the shape the driven filing wore.
+    """
+    finding = {
+        "type": "MISSING_COVERAGE_LIST",
+        "failure": "casting declares no coverage_list",
+        "class": "migration-casting-shipped-without-a-coverage-list",
+        "tier": "LATENT",
+        "target_kind": "config",
+        "reproduction_attempted": (
+            "Read casting 7 must_haves in manifest.json and grepped its casting "
+            "prompt for coverage_list; the key is absent from both, so there was "
+            "no source entry to derive a destination from and no grep to drive"
+        ),
+        "casting_id": 7,
+    }
+    finding.update(overrides)
+    return finding
+
+
+def test_a_security_claim_in_a_key_other_than_description_is_refused():
+    """AC-007 / CT-003 / FR-005: 'A LATENT filing whose description matches the
+    security-property predicate is refused naming SECURITY_PROPERTY_CLAIM.'
+
+    D-147: `description` was read literally, so the predicate answered False
+    for a filing whose claim sat one key over — and the batch door hands the
+    caller's dict straight through, so every key a stream invents was a
+    channel. The rung now reads every prose value the filing carries."""
+    from foundry_mcp.schemas.vocab import is_security_property_text
+    from foundry_mcp.tools.foundry import security_scan_text
+
+    smuggled = _coverage_diff_latent(failure=_SMUGGLED_CLAIM)
+
+    assert is_security_property_text(str(smuggled.get("description", ""))) is False, (
+        "the one-field reading is what D-147 drove past; if this starts "
+        "answering True the shape below stopped being the regression"
+    )
+    assert is_security_property_text(security_scan_text(smuggled)) is True
+
+    refusal = validate_defect_filing(smuggled)
+    assert refusal is not None, "the smuggled claim was accepted again"
+    assert refusal["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert refusal["field"] == "description", (
+        "the locked return contract admits four field names; the rung reads "
+        "more keys than it names, and `description` is where a claim belongs"
+    )
+
+
+def test_the_defect_door_refuses_and_audits_a_claim_outside_the_description(run_env):
+    """OT-005 / AC-007: refused naming SECURITY_PROPERTY_CLAIM 'and a tripwire
+    record appears'.
+
+    The single door builds its finding from named parameters, so its smuggling
+    channel is not an invented key but `reproduction_attempted` — the one other
+    prose field a LATENT filing must carry. Driven end to end: refused, nothing
+    persisted, and the audit record written under the class the refusal named."""
+    project_root, fdir = run_env
+
+    result = foundry_add_defect(
+        cycle=0,
+        source="prove",
+        defect_type="MISSING",
+        description="",
+        defect_class="SCAN_COVERAGE_GAP",
+        tier="LATENT",
+        reproduction_attempted=(
+            f"Swept both roots and found 0 sites, so nothing drove it: {_SMUGGLED_CLAIM}"
+        ),
+        project_root=project_root,
+    )
+
+    assert result["ok"] is False, result
+    assert SECURITY_PROPERTY_CLAIM in result["error"]
+    assert result["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert _defects(fdir) == [], "the filing must not be persisted"
+
+    fired = _tripwire(fdir)
+    assert len(fired) == 1, fired
+    assert fired[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert "authentication token" in fired[0]["description"], (
+        "the audit record quotes the empty description instead of the prose "
+        "that matched, so an auditor reading it learns nothing"
+    )
+
+
+def test_the_tripwire_names_the_class_the_refusal_named():
+    """D-083's property, held one field along (D-147).
+
+    `record_denylist_tripwire` re-derives the class through
+    `vocab.never_demote_class`, whose security entry reads `description` alone.
+    Once the refusal keys on all the prose and the derivation keys on one
+    field, one event writes two artifacts that contradict each other — and an
+    auditor querying the tripwire ledger for SECURITY_PROPERTY_CLAIM finds
+    nothing for exactly the filings AC-007 is about. `tripwire_finding` is what
+    closes that, and this is the disagreement it closes."""
+    from foundry_mcp.schemas.vocab import never_demote_class
+    from foundry_mcp.tools.foundry import tripwire_finding
+
+    smuggled = _coverage_diff_latent(failure=_SMUGGLED_CLAIM)
+
+    assert never_demote_class(smuggled) != SECURITY_PROPERTY_CLAIM, (
+        "the raw finding is what the door used to hand over; if the vocab "
+        "predicate started reading the whole finding this substitution is "
+        "redundant and should be removed rather than left to rot"
+    )
+    assert never_demote_class(tripwire_finding(smuggled)) == SECURITY_PROPERTY_CLAIM
+    assert validate_defect_filing(smuggled)["denylist_class"] == SECURITY_PROPERTY_CLAIM
+
+
+def test_a_claim_nested_below_the_top_level_is_read():
+    """The same rung, on the shapes streams actually send: `skills/sight`
+    documents an `evidence` key, and a finding is JSON the caller shaped, so a
+    sentence can sit inside a nested object or a list. A scan that read only
+    top-level strings would admit either."""
+    nested = _coverage_diff_latent(
+        failure="casting declares no coverage_list",
+        evidence={"console": ["CE-1", _SMUGGLED_CLAIM]},
+    )
+
+    assert validate_defect_filing(nested)["denylist_class"] == SECURITY_PROPERTY_CLAIM
+
+
+def test_locators_and_the_escalation_class_are_not_scanned():
+    """CT-003: 'spec_ref alone never refuses a LATENT filing' — and the same
+    promise for the two locators and the escalation key beside it.
+
+    `_SECURITY_RE` matches bounded tokens, so `src/auth/login.py` hits and so
+    does `agents/assayer.md`'s own documented class,
+    `no-auth-guard-on-destructive-endpoints`. Scanning those would refuse a
+    shape a surface ships, and its filer could not re-word a path or rename an
+    escalation key to recover — D-099/D-101's defect exactly. This is the test
+    that fails if the exclusion list is dropped 'for completeness'."""
+    located = _coverage_diff_latent(
+        **{
+            "class": "no-auth-guard-on-destructive-endpoints",
+            "file": "src/auth/login.py",
+            "symbol": "verify_auth_token",
+            "spec_ref": "NFR-002",
+            "type": "MISSING_AUTH_GUARD",
+        }
+    )
+
+    assert validate_defect_filing(located) is None, (
+        "a LATENT filing was refused for where it points rather than for what "
+        "it claims"
+    )
+
+
+def test_a_live_filing_that_states_nothing_is_refused_naming_the_description():
+    """CT-001 input: 'for LIVE the door and observed wrong result in the
+    description'. FR-004 verbatim: 'LIVE needs the reproduction (door +
+    observed wrong result).'
+
+    D-147's secondary consequence: both doors accepted `description=''` and
+    persisted a record that states nothing, so a reader of `defects.json`
+    cannot tell what was wrong. A class and a file locate a finding; they do
+    not state one."""
+    refusal = validate_defect_filing(
+        {"tier": "LIVE", "class": "UNWIRED_HANDLER", "file": "src/api/a.py",
+         "symbol": "handle", "spec_ref": "US-002", "description": ""}
+    )
+
+    assert refusal is not None, "a LIVE record that states nothing was accepted"
+    assert refusal["field"] == "description"
+    assert refusal["ok"] is False and refusal["hint"]
+
+
+def test_the_live_prose_floor_accepts_the_documented_shape_that_has_no_description():
+    """The floor asks whether the filing says anything, not whether it filled a
+    named key — because two of `agents/coverage-diff.md`'s three documented
+    defects carry tier LIVE and no `description` key at all: the sentence is in
+    `failure`, beside `source_entry` and `expected_destination`. A rung
+    demanding the description KEY would refuse a shape that surface ships."""
+    documented_live = {
+        "type": "COVERAGE_INCOMPLETE",
+        "source_entry": "internal/web/workloads_test.go:TestStatusInjection",
+        "expected_destination": "internal/web/workloads_v2_test.go:TestStatusInjection",
+        "failure": "destination symbol not found",
+        "class": "casting-4-v2-port-is-incomplete",
+        "tier": "LIVE",
+        "target_kind": "test",
+        "casting_id": 4,
+    }
+
+    assert validate_defect_filing(documented_live) is None
+
+
+def test_the_live_prose_floor_cannot_refuse_a_latent_filing():
+    """FR-005 verbatim: 'Server refuses LATENT only when the description
+    matches the security-property regex ... naming the denylist class.' `only`
+    is the whole word, and D-101 reversed a LATENT `file_path` rung for
+    breaking it.
+
+    The floor is scoped to LIVE by construction rather than by reachability, so
+    a LATENT filing with no description — the documented coverage-diff shape —
+    is accepted on its `reproduction_attempted` statement alone."""
+    assert validate_defect_filing(_coverage_diff_latent()) is None
+    assert "description" not in _coverage_diff_latent(), (
+        "the shape under test stopped being the one that has no description"
+    )
