@@ -88,6 +88,9 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
       "source_entry": "internal/web/workloads_test.go:TestStatusInjection",
       "expected_destination": "internal/web/workloads_v2_test.go:TestStatusInjection",
       "failure": "destination symbol not found",
+      "class": "casting-4-v2-port-is-incomplete",
+      "tier": "LIVE",
+      "target_kind": "test",
       "casting_id": 4
     },
     {
@@ -96,7 +99,19 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
       "destination": "internal/web/workloads_v2_test.go:TestReadyReplicas",
       "source_assertions": 12,
       "destination_assertions": 3,
+      "class": "casting-4-v2-port-is-incomplete",
+      "tier": "LIVE",
+      "target_kind": "test",
       "casting_id": 4
+    },
+    {
+      "type": "MISSING_COVERAGE_LIST",
+      "failure": "casting declares no coverage_list",
+      "class": "migration-casting-shipped-without-a-coverage-list",
+      "tier": "LATENT",
+      "target_kind": "config",
+      "reproduction_attempted": "Read casting 7 must_haves in manifest.json and grepped its casting prompt for coverage_list; the key is absent from both, so there was no source entry to derive a destination from and no grep to drive",
+      "casting_id": 7
     }
   ],
   "orphans": [
@@ -113,6 +128,8 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
 
 `source_entry` and `expected_destination` are the exception that proves the rule, not a carve-out: they echo a `coverage_list` entry's own `source_file:symbol` shape. That colon separates a path from a **symbol**, never from a line, so it is already a symbol reference and nothing about it can drift as code moves — which is why the FR-004 placement rule has no quarrel with it and why "convert every colon" would be wrong here. The argument stands on the shape itself, NOT on enforcement: `foundry_validate.py` checks only that each `coverage_list` entry is a string, so a colonless entry is caught nowhere in the pipeline. A **re-spelled** entry has one catcher and only one — when the manifest declares a `source_inventory`, Dimension 8 cross-checks the coverage entries against it, and the counterpart the re-spelling stopped claiming is reported as `uncovered_source_entry`. That check fires on the inventory entry left uncovered, never on the misspelling itself, and a manifest with no `source_inventory` gets no check at all. Assume nothing is watching the spelling unless you have read an inventory in the manifest. Reproduce those two values byte-for-byte as the manifest spells them, because the manifest is the only thing that spells them; write every other cite as `path#Symbol`.
 
+`class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the check and observed the wrong result (a destination symbol the `grep` did not find, an assertion count you counted and compared), `LATENT` when you derived the finding and had no reachable instance to drive at all, in which case `reproduction_attempted` rides beside it as the third entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+
 `COVERAGE_INCOMPLETE` and `THIN_MIGRATION` defects flow into `Foundry-Sync` and feed F3 GRIND.
 
 ## Rules
@@ -121,6 +138,9 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
 - **Every defect needs a citation, written by symbol.** Cite `path#Symbol` — source entry + expected destination + specific failure mode. The symbol is authoritative: a cite whose symbol resolves is valid however stale any line hint beside it has become. Never judge the line component, a moved line alone produces no finding of any kind, and cite-refresh sweeps happen only under an explicit directive. A line hint (`path:123`) belongs only in a commit-pinned run artifact, and a coverage record is not one.
 - **If spec_type is not MIGRATION, skip this stream entirely.** Don't run speculatively.
 - **THIN_MIGRATION is not a free pass** — teammates can't argue "I consolidated 3 legacy tests into 1 v2 test." If they did, the casting spec text must explicitly say so under `destination_naming_rule`. Otherwise each source entry gets its own destination.
-- **Orphans are suspicious but not always wrong.** A teammate may add setup/teardown helper funcs that look like Test* but aren't ports. Report every one in the `orphans` array and let the assayer final-judge at F4.
-- **No severity classification.** Do not label a finding critical/major/minor, and do not rank findings by importance anywhere in your report. Every defect is a defect and GRIND fixes them all; the `orphans` array is a separate channel from `defects`, not a weaker tier of it.
+- **Orphans are suspicious but not always wrong.** A teammate may add setup/teardown helper funcs that look like Test* but aren't ports. Report every one in the `orphans` array and let the assayer final-judge at F4. The `orphans` array is a separate CHANNEL from `defects`, not a lesser grade of one: an orphan is not filed through `Foundry-Sync` and does not block the run, and nothing about that routing licenses you to soften a defect into an orphan to get the same effect.
+- **Name the class when entries share a root cause.** Twelve `COVERAGE_INCOMPLETE` entries behind one casting that never wrote its `_v2` file are one class, not twelve independent defects — carry the shared cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix instead of twelve repeated point fixes, and that only fires if you named it. Name a class on EVERY defect, including a source entry that fails alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty. Never group unrelated source entries to manufacture a class.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed two-member vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. A security-property claim can NEVER be `LATENT` — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Both tiers are defects, both get fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **Declare `target_kind` on every filing.** Pass the kind of artifact the missing or thin destination actually is — `test` for a ported test symbol, otherwise `code`, `config` or `doc`. The server demotes nothing it was not told is a comment, so an omitted field is not a neutral default; it is a record the door has nothing to judge. It rides on every `Foundry-Defect` and `Foundry-Sync` call you make, never on some of them.
 - **No semantic equivalence checks here.** Existence + name match + assertion count. Full equivalence is the assayer's job.

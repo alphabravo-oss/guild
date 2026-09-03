@@ -46,10 +46,12 @@ clauses that carry the *ruling*, never on a whole sentence.
 That is a ruling about the SPLIT, and GI-001's tier rule is the deliberate
 exception to it rather than a drift from it: FR-030 requires the replacement
 wording to be pinned, and patterns/PATTERNS.md rules a rule shared across the
-four stream agents word-identical in all four. There is one sentence to pin for
-that rule, not four voices to respect, and
+stream agents word-identical in all of them. There is one sentence to pin for
+that rule, not one voice per file to respect, and
 ``test_stream_agents_share_one_tier_rule_verbatim`` is what holds the
-word-identity the clause pins beside it then read. Both dispositions live in
+word-identity the clause pins beside it then read. The roster it sweeps is
+``DEFECT_FILING_AGENTS``, DERIVED rather than typed -- see the D-017 comment
+above it for why a hand-maintained list cannot fail on the file it forgot. Both dispositions live in
 this module on purpose; the section comment above that test says which ruling
 gets which treatment and why.
 """
@@ -126,9 +128,16 @@ RUN_ENTRY_COMMANDS = tuple(
     )
 )
 
-# The four F2 INSPECT streams that file findings into the defect ledger. The
-# split is a property of all four together: a stream still filing comment prose
-# as a defect re-opens the loop this effort exists to close.
+# The four F2 INSPECT streams that carry the observation/defect split in their
+# own prose. The split is a property of all four together: a stream still filing
+# comment prose as a defect re-opens the loop this effort exists to close.
+#
+# This is NOT the roster of everything that files into the defect ledger --
+# `agents/coverage-diff.md` does too, and start.md's F2 roster states that it is
+# bound by the split without restating it. The tier and class pins therefore
+# sweep the DERIVED `DEFECT_FILING_AGENTS` further down, not this tuple (D-017).
+# Keep the two apart: widening this one would demand a split paragraph in a file
+# the command prose says does not carry one.
 STREAM_AGENTS = (ASSAYER, TRACER, FLOW_TRACER, RESEARCH_AUDITOR)
 
 # Locked cross-casting contract: another casting ships the ledger and the
@@ -1115,6 +1124,20 @@ def test_coverage_diff_abolishes_its_severity_tier() -> None:
         "peer stream agents. The channel decides where a finding goes; a tier "
         "decides nothing and only licenses skipping."
     )
+    # D-017's absence half. The file's own no-severity bullet used to close on
+    # "the `orphans` array is a separate channel from `defects`, not a weaker
+    # tier of it" -- correct prose in the release that wrote it, and a
+    # collision in the release that gave `tier` a closed vocabulary and made it
+    # required on every filing. One word carrying the abolished meaning in the
+    # same file that now mandates the new one teaches the reader the wrong one,
+    # because the graded reading is the one the English invites.
+    for abolished in ("weaker tier", "lesser tier", "tier of it", "severity tier of"):
+        assert abolished not in text, (
+            f"coverage-diff.md uses {abolished!r} -- `tier` in the ABOLISHED "
+            f"graded sense, in the file that now requires `tier` as the "
+            f"evidence axis (GI-001 / FR-004). Say CHANNEL when you mean "
+            f"channel; the word `tier` has exactly one meaning left."
+        )
 
 
 def test_pattern_mapper_rules_its_carve_out_explicitly() -> None:
@@ -3555,10 +3578,82 @@ def test_shapes_carrying_a_spec_ref_qualify_it_at_the_example(path: Path) -> Non
 # what holds that property, and every clause pin after it is parametrised over
 # STREAM_AGENTS so a partial edit that fixes three files fails.
 
+# D-017: the roster of files that must carry the tier and class rules is
+# DERIVED, not typed out. GRIND-1 updated five prose files by hand and missed
+# `agents/coverage-diff.md` -- a live F2 stream whose report shape feeds
+# `Foundry-Sync`, which now refuses every finding in it for a missing `tier`
+# and refuses the whole BATCH for one bad finding. A hand-maintained tuple
+# cannot fail that way loudly: the file that was forgotten is exactly the file
+# nobody adds to the list. This is RUN_ENTRY_COMMANDS' shape (D-086) applied to
+# the filing side.
+#
+# The membership test is the two properties that TOGETHER make a file's prose
+# load-bearing at the defect door: it names `Foundry-Sync` (so its findings
+# reach the ledger) AND its normative example documents a `defects` array (so
+# it is a shape a stream copies). `agents/teammate.md` names the tool and is
+# correctly excluded -- it documents no `defects` array, and states the same
+# obligations in its own fix-and-file voice rather than the stream register.
+# `agents/spec-test-deriver.md` files into `test_observations` and names
+# neither, so it is excluded too. `test_the_defect_filing_roster_is_derived`
+# below is the floor check: a derived roster that silently empties out, or that
+# silently drops a known member, would make every pin that sweeps it vacuous.
+
+
+def _documents_a_defects_array(path: Path) -> bool:
+    """True when a file's normative JSON examples document a `defects` array.
+
+    A malformed block reads as "no array" rather than raising, so one agent
+    file with an unparseable example cannot take this module down at import
+    time. The silence is safe only because the floor check below asserts the
+    five known members are present -- a member that vanished this way fails
+    there, naming the file.
+    """
+    try:
+        records = _example_records(path)
+    except (json.JSONDecodeError, AssertionError):
+        return False
+    return any(isinstance(r.get("defects"), list) for r in records)
+
+
+DEFECT_FILING_AGENTS = tuple(
+    sorted(
+        (
+            path
+            for path in AGENTS.glob("*.md")
+            if "Foundry-Sync" in path.read_text(encoding="utf-8")
+            and _documents_a_defects_array(path)
+        ),
+        key=lambda path: path.name,
+    )
+)
+
+
+def test_the_defect_filing_roster_is_derived() -> None:
+    """Floor check: every tier and class pin below sweeps this roster."""
+    missing = sorted(
+        _rel(p) for p in (set(STREAM_AGENTS) | {COVERAGE_DIFF}) - set(DEFECT_FILING_AGENTS)
+    )
+    assert not missing, (
+        f"{missing} no longer derive into DEFECT_FILING_AGENTS. A file drops "
+        f"out by losing its `Foundry-Sync` mention or its example `defects` "
+        f"array -- either of which is itself the D-017 defect, because the "
+        f"shape a stream copies is what the door then refuses. Fix the file "
+        f"rather than hard-coding the roster."
+    )
+    assert TEAMMATE not in DEFECT_FILING_AGENTS, (
+        "agents/teammate.md derived into DEFECT_FILING_AGENTS. It states the "
+        "tier and class obligations in its own fix-and-file voice, not the "
+        "word-identical stream register, so sweeping it here would demand a "
+        "paste that does not belong in a builder's protocol."
+    )
+
+
 #: The two rules GI-001 puts in every stream agent, located by their bolded
 #: openings. The first opens with BOTH historical spellings of the abolished
-#: axis -- "No severity classification." (assayer, tracer, research-auditor)
-#: and "No severity tiers." (flow-tracer) -- because UNWEAKENED_ABSOLUTES pins
+#: axis -- "No severity classification." (assayer, tracer, research-auditor,
+#: coverage-diff) and "No severity tiers." (flow-tracer) -- because
+#: UNWEAKENED_ABSOLUTES and ``test_coverage_diff_abolishes_its_severity_tier``
+#: pin
 #: each file's own spelling and one shared sentence has to satisfy all four
 #: without any file losing an absolute it holds today. Carrying both also keeps
 #: the ban findable by grep under either name.
@@ -3587,20 +3682,20 @@ def test_stream_agents_share_one_tier_rule_verbatim() -> None:
     against a constant re-typed here) is what makes a divergence fail no
     matter which of the four was edited.
     """
-    spans = {_rel(p): _tier_rule(p) for p in STREAM_AGENTS}
+    spans = {_rel(p): _tier_rule(p) for p in DEFECT_FILING_AGENTS}
     missing = sorted(rel for rel, span in spans.items() if not span)
     assert not missing, (
         f"{missing} carry no GI-001 tier rule at all. The rule opens "
-        f"{_TIER_RULE_OPEN!r} and closes {_TIER_RULE_CLOSE!r} in all four "
-        f"stream agent files; a file without it files findings the doors "
-        f"refuse."
+        f"{_TIER_RULE_OPEN!r} and closes {_TIER_RULE_CLOSE!r} in every file "
+        f"that files into the defect ledger; a file without it files findings "
+        f"the doors refuse -- and one bad finding refuses the whole batch."
     )
     distinct = set(spans.values())
     assert len(distinct) == 1, {
         "why": (
-            "the four stream agents no longer share ONE tier rule. "
+            "the defect-filing agents no longer share ONE tier rule. "
             "patterns/PATTERNS.md rules a shared rule word-identical across "
-            "the four, and FR-030 pins the replacement wording. Fix the "
+            "all of them, and FR-030 pins the replacement wording. Fix the "
             "outlier rather than relaxing this assertion -- a per-file "
             "paraphrase is how one file quietly loses the clause banning the "
             "work-effort grade."
@@ -3709,7 +3804,7 @@ _TIER_RULE_CLAUSES = (
 )
 
 
-@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
 @pytest.mark.parametrize("clause,why", _TIER_RULE_CLAUSES, ids=lambda v: v[:44])
 def test_each_stream_agent_states_the_tier_rule(path: Path, clause: str, why: str) -> None:
     """GI-001 / AC-009 / FR-004 / CT-003, one claim at a time."""
@@ -3717,8 +3812,10 @@ def test_each_stream_agent_states_the_tier_rule(path: Path, clause: str, why: st
 
 
 #: FR-007 replaced an OPTIONAL class with a required one. The clauses that
-#: permitted omission are gone from all four files; these are the sentences
-#: that replaced them.
+#: permitted omission are gone from every file that carried one; these are the
+#: sentences that replaced them. coverage-diff.md is the D-017 case and had no
+#: class rule at all to soften -- it gained one, in its own voice, carrying
+#: these same clauses.
 _CLASS_REQUIRED_CLAUSES = (
     (
         "a single-instance class is still a class",
@@ -3742,7 +3839,7 @@ _CLASS_REQUIRED_CLAUSES = (
 )
 
 
-@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
 @pytest.mark.parametrize("clause,why", _CLASS_REQUIRED_CLAUSES, ids=lambda v: v[:44])
 def test_each_stream_agent_makes_the_class_required(path: Path, clause: str, why: str) -> None:
     """FR-007: agent prose and report formats REQUIRE the class."""
@@ -3775,15 +3872,16 @@ def _class_rule(path: Path) -> str:
     return flat[head if head != -1 else start : start + (len(tail) if stop == -1 else stop)]
 
 
-@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
 def test_no_stream_agent_still_permits_omitting_the_class(path: Path) -> None:
     """FR-007's absence half: a removal is invisible to every positive pin.
 
-    All four files carried a clause permitting omission -- assayer's "Omit the
-    field when a defect genuinely stands alone", tracer's "Omit the field when
-    a symbol's defect stands alone", flow-tracer's "Omit it when a packet
+    Four of the five carried a clause permitting omission -- assayer's "Omit
+    the field when a defect genuinely stands alone", tracer's "Omit the field
+    when a symbol's defect stands alone", flow-tracer's "Omit it when a packet
     fails alone", research-auditor's "Omit the field when a deviation stands
-    alone". A rule that says both "required" and "omit it when" is a rule read
+    alone"; coverage-diff.md named no class at all until D-017. A rule that
+    says both "required" and "omit it when" is a rule read
     in the reader's favour, so the permission has to be gone, not merely
     outvoted. Scoped to the class BULLET: the identical words live in the
     target_kind rule two bullets down, where they are correct.
@@ -3803,12 +3901,13 @@ def test_no_stream_agent_still_permits_omitting_the_class(path: Path) -> None:
         )
 
 
-@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
 def test_no_stream_agent_shape_still_calls_the_class_optional(path: Path) -> None:
     """FR-007 at the SHAPE, where the rule's reader actually copies from.
 
     Every one of the four qualified its example JSON with "`class` is optional
-    and appears only ...". D-016's finding is that a shape and a mandate which
+    and appears only ..."; coverage-diff.md's shape carried neither field.
+    D-016's finding is that a shape and a mandate which
     disagree are resolved in the shape's favour, because the shape is the
     thing that gets pasted -- so the prose beside the example has to change
     with the rule, not after it.
@@ -3849,7 +3948,7 @@ def _example_defect_records(path: Path) -> list[dict]:
     return found
 
 
-@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
 def test_each_stream_agent_report_shape_carries_tier_on_every_defect(path: Path) -> None:
     """FR-004 / FR-007: the instruction is inert if the shape has no slot.
 
@@ -3880,7 +3979,7 @@ def test_each_stream_agent_report_shape_carries_tier_on_every_defect(path: Path)
         )
 
 
-@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
 def test_each_stream_agent_shape_works_a_latent_entry(path: Path) -> None:
     """CT-001: the LATENT half needs a worked example, not just a rule.
 
