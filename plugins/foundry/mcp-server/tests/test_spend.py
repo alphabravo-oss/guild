@@ -360,6 +360,87 @@ def test_an_empty_agent_or_phase_is_named_rather_than_dropped(run_env):
     assert row["phase"] == "unknown"
 
 
+# --------------------------------------------------------------------------- #
+# D-004 — "NEVER REFUSES" WAS IMPLEMENTED AS "NEVER SAYS ANYTHING".
+#
+# The two are not the same. `str(agent or "").strip() or "unknown"` recorded a
+# mis-attributed row and returned ok=True with no key in the result matching
+# "warn", so a lead who mistyped or omitted an agent name had nothing in the
+# response to notice. The refusal half of CT-013 is untouched — a coerced value
+# still records, still counts, still blocks nothing.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_coerced_agent_name_is_warned_about_rather_than_recorded_in_silence(run_env):
+    """The defect: an unnamed dispatch is filed under "unknown" and the caller
+    is TOLD, so the row can be re-recorded before the cost report is read."""
+    project_root, fdir = run_env
+    _write_state(fdir)
+
+    result = foundry_record_spend("", "F1", 10, 10, project_root=project_root)
+
+    assert result["ok"] is True, result
+    assert "error" not in result
+    warnings = result["warnings"]
+    assert any("agent" in w and "unknown" in w for w in warnings), warnings
+    # ...and the row is still there, still counted. The notice is not a refusal.
+    assert _ledger(fdir)[0]["agent"] == "unknown"
+    assert result["total"]["agents"] == 1
+
+
+def test_every_field_this_tool_coerces_is_named_in_one_call(run_env):
+    """The CAUSE was the absence of surfacing, not the absence of surfacing for
+    `agent` — so the fix is derived over the coerced fields. A call that gets
+    all four wrong is told about all four, in one result, and still succeeds.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir)
+
+    result = foundry_record_spend("", "", "lots", None, project_root=project_root)
+
+    assert result["ok"] is True, result
+    said = " ".join(result["warnings"])
+    for field in ("agent", "phase", "tokens", "duration_ms"):
+        assert field in said, (field, said)
+
+
+def test_a_clean_call_carries_no_warnings_key_at_all(run_env):
+    """A notice that is always present is a notice nobody reads. The key exists
+    only when something was actually coerced."""
+    project_root, fdir = run_env
+    _write_state(fdir)
+
+    result = foundry_record_spend("casting-3", "F3", 1000, 2000,
+                                  project_root=project_root)
+
+    assert result["ok"] is True
+    assert "warnings" not in result
+
+
+def test_the_warning_reaches_the_lead_through_the_display(run_env):
+    """THE ADJACENT PATH, and the reason a result key alone would not close this:
+    the lead reads `display.py`'s rendered box, not the raw dict, so a warning
+    the formatter drops is exactly as silent as no warning at all. Driven through
+    `format_result`, the same entry point the MCP layer renders through.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    project_root, fdir = run_env
+    _write_state(fdir)
+
+    result = foundry_record_spend("", "F1", 10, 10, project_root=project_root)
+    rendered = format_result("Foundry-Spend", result)
+
+    # The WARNING TEXT itself, not merely the coerced value — the box already
+    # printed "unknown" as the agent name before this fix and said nothing about
+    # why, which is precisely the silence being closed.
+    assert result["warnings"], result
+    for warning in result["warnings"]:
+        assert warning in rendered, (warning, rendered)
+    # The box still reports the recorded spend — the notice is additive.
+    assert "Spend recorded" in rendered
+
+
 def test_with_no_active_run_it_says_so_rather_than_writing_anywhere(run_env):
     """The one thing it does refuse, and it is not about the numbers: there is
     no run to record against. The house shape — {error, hint}, never a raise."""

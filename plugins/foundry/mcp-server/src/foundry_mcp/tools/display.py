@@ -536,6 +536,12 @@ def _fmt_foundry_record_spend(r: dict) -> str:
         )
     if row.get("ledger_problem"):
         lines.append(f"  {_BYELLOW}Ledger:{_RESET} {row['ledger_problem']}")
+    # D-004: a coercion the result names but the display swallows is still a
+    # silent mis-attribution — the lead reads THIS box, not the raw dict. Beside
+    # `ledger_problem`, which is the same kind of fact: something is not as you
+    # typed it, and nothing is blocked.
+    for warning in r.get("warnings") or []:
+        lines.append(f"  {_BYELLOW}Note:{_RESET} {_DIM}{warning}{_RESET}")
     return _foundry_display("F O U N D R Y  Spend recorded", lines)
 
 

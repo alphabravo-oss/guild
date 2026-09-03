@@ -5625,6 +5625,149 @@ def test_a_directory_occupying_an_artifact_name_is_refused_not_skipped(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# D-007 — A WRITE'S OWN SCAFFOLDING IS NOT AN ARTIFACT OF THE RUN.
+#
+# `_run_artifact_problems` listed the whole run dir and then read each entry,
+# and `_save_json` writes a `{name}.{pid}.{tid}.tmp` sidecar and renames it into
+# place. A peer's rename landing between the listing and the read raised
+# FileNotFoundError, which the scan named as a corrupt run artifact — and since
+# `_artifact_guard` runs at the top of EVERY MCP entry point, that refused
+# whatever tool the lead had called, on a run with nothing wrong with it.
+#
+# Driven: 62 of 23120 scans against a run with ONE concurrent `_save_json`
+# writer returned "stream-rollup.json.<pid>.<tid>.tmp could not be read
+# (FileNotFoundError)". F2 runs 4-8 parallel streams by design, so this is the
+# designed path, not an edge case, and it surfaced as an intermittent refusal in
+# test_stream_rollup.py::test_concurrent_stream_records_are_not_lost under load.
+# --------------------------------------------------------------------------- #
+
+
+def _drive_the_guard_against_a_writer(fdir: Path, seconds: float) -> list[list[str]]:
+    """Scan the run dir while a thread rewrites one artifact. Returns the hits."""
+    import threading
+    import time
+
+    stop = threading.Event()
+    payload = {"cycles": {"0": {"prove": {"records": [{"i": i} for i in range(200)]}}}}
+
+    def writer() -> None:
+        while not stop.is_set():
+            fo._save_json(fdir / "stream-rollup.json", payload)
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    hits: list[list[str]] = []
+    try:
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if (problems := fo._run_artifact_problems(fdir)):
+                hits.append(problems)
+    finally:
+        stop.set()
+        thread.join()
+    return hits
+
+
+def test_a_concurrent_write_never_makes_the_guard_call_a_healthy_run_corrupt(run_env):
+    """The defect itself, driven: a run being written to is not a corrupt run.
+
+    Pre-fix this scan named the writer's in-flight sidecar 62 times in 23120
+    passes. There is no threshold to tune here — a healthy run must never be
+    reported corrupt, so the assertion is zero.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+
+    assert _drive_the_guard_against_a_writer(fdir, 3.0) == []
+
+
+def test_an_entry_point_other_than_the_defects_still_answers_during_a_write(run_env):
+    """The ADJACENT PATH: every MCP entry point runs `_artifact_guard`, so the
+    refusal reached far past the `foundry_mark_stream` call the flake was seen
+    on. `foundry_gate` is a different caller reaching the same guard, and it
+    must keep answering about the RUN while a peer writes an artifact.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+
+    import threading
+    import time
+
+    stop = threading.Event()
+
+    def writer() -> None:
+        while not stop.is_set():
+            fo._save_json(fdir / "stream-rollup.json", {"cycles": {"0": {}}})
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    corrupt_refusals = []
+    try:
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            _arm_ordering_token(fdir)
+            result = fo.foundry_gate("cast", str(project_root))
+            if result.get("corrupt_artifacts"):
+                corrupt_refusals.append(result["corrupt_artifacts"])
+    finally:
+        stop.set()
+        thread.join()
+
+    assert corrupt_refusals == [], corrupt_refusals
+
+
+def test_the_sidecars_the_writers_create_are_the_ones_the_scan_excludes(run_env):
+    """DERIVED, not typed twice: the exclusion is asserted against the sidecars
+    the REAL write primitives produce, so a writer that changes its naming fails
+    here rather than silently re-opening the race.
+    """
+    _project_root, fdir = run_env
+    seen: list[Path] = []
+    real_write_text = Path.write_text
+
+    def spy(self, *args, **kwargs):
+        seen.append(self)
+        return real_write_text(self, *args, **kwargs)
+
+    Path.write_text = spy
+    try:
+        fo._save_json(fdir / "state.json", {"phase": "F2"})
+        with fo._document_transaction(fdir / "defects.json") as doc:
+            doc["defects"] = []
+    finally:
+        Path.write_text = real_write_text
+
+    tmp_sidecars = [p for p in seen if p.name.endswith(fo._TX_TMP_SUFFIX)]
+    assert tmp_sidecars, "no _save_json sidecar observed — the spy missed the write"
+    for sidecar in tmp_sidecars:
+        assert fo._is_write_sidecar(sidecar), sidecar
+
+    lock = fdir / ("defects.json" + fo._TX_LOCK_SUFFIX)
+    assert lock.exists(), "the transaction's lock sidecar was not created"
+    assert fo._is_write_sidecar(lock)
+    # And the lock sitting in the run dir is not reported as an artifact.
+    assert not any(lock.name in p for p in fo._run_artifact_problems(fdir))
+
+
+def test_a_real_artifact_that_vanishes_mid_scan_is_absent_not_corrupt(run_env):
+    """`read_text_file`'s own rule — "an ABSENT file is not a problem" — decided
+    from an `exists()` taken BEFORE the read, so a file removed between the two
+    landed in its OSError arm and was named unreadable. The scan now holds the
+    same rule for a file that became absent DURING it, which is the only way the
+    two answers could ever disagree.
+    """
+    _project_root, fdir = run_env
+    ghost = fdir / "vanished.json"
+
+    assert fo._unless_it_vanished(ghost, "vanished.json could not be read (x)") is None
+    # A file that IS there keeps its named problem, so the guard has not gone soft.
+    ghost.write_bytes(b"\xff\xfe not utf-8")
+    assert fo._unless_it_vanished(ghost, "vanished.json could not be read (x)") == (
+        "vanished.json could not be read (x)"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Pre/post tables for the evidence logs, ASSERTED below so the comparison is a
 # claim this suite holds rather than a picture printed beside it.
 # --------------------------------------------------------------------------- #

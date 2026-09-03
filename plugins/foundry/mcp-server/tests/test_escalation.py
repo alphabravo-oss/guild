@@ -784,6 +784,140 @@ def test_the_nyquist_done_transition_refuses_an_open_escalated_class(run_env):
     assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
 
 
+# --------------------------------------------------------------------------- #
+# D-002 — THE ESCALATED-CLASS CHECK IS TIER-AWARE, LIKE ITS SIBLINGS.
+#
+# `_done_preconditions` counted an escalated class's open instances regardless
+# of tier while every sibling branch in the same function reads
+# `_blocking_defects`. Driven: three open LATENT instances of one class across
+# cycles 1-3 gave blocking={live:[], unknown:[], latent:[D-001,D-002,D-003]} and
+# done_preconditions passed=False, "1 escalated defect class(es) still have open
+# instances" — against FR-006 verbatim. And `foundry_gate("nyquist")` consults
+# `_escalated_classes` not at all, so the two F6 doors disagreed about identical
+# run state.
+# --------------------------------------------------------------------------- #
+
+
+def _latent_recurring(cycles: list[int], klass: str = "FALSE_DOCUMENTED_CONTRACT") -> list[dict]:
+    """`_recurring`, one tier along: nothing anyone ever reproduced."""
+    return [
+        _defect(f"D-{i:03d}", cycle, **{
+            "class": klass,
+            "tier": "LATENT",
+            "reproduction_attempted": "drove every call site; no instance reachable",
+        })
+        for i, cycle in enumerate(cycles, start=1)
+    ]
+
+
+def _ready_for_f6(fdir: Path, defects: list[dict]) -> None:
+    """A run whose only remaining question is the defects under test."""
+    _write_state(fdir, phase="F5.5", cycle=2, nyquist=True)
+    _write_defects(fdir, defects)
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+
+
+def test_an_escalated_class_carrying_only_latent_instances_does_not_block_done(run_env):
+    """FR-006 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass
+    when the only open defects are LATENT.'
+
+    The escalated-class branch was the one place that did not honour it. Nothing
+    here is reproduced, so there is no work of either shape left: ST-002 sends an
+    escalated class's open LATENT instances to the report backlog, and a backlog
+    is what a run finishes WITH.
+    """
+    project_root, fdir = run_env
+    _ready_for_f6(fdir, _latent_recurring([0, 1, 2]))
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    checks = {c["check"]: c for c in outcome["checklist"]}
+    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    assert checks[escalation_check]["ok"] is True, outcome["reason"]
+    assert checks[escalation_check]["classes"] == []
+    # ...and the class is still NAMED, because "escalated, carrying only a LATENT
+    # backlog" is not the same state as "never escalated" (ST-010).
+    assert checks[escalation_check]["latent_only_classes"] == [
+        "FALSE_DOCUMENTED_CONTRACT"
+    ]
+    assert "escalated defect class" not in outcome["reason"]
+
+
+def test_a_reproduced_instance_of_an_escalated_class_still_blocks_done(run_env):
+    """The other side, unchanged: AC-011's 'escalation NEVER waives closure'.
+
+    One LIVE instance among the LATENT ones and the class blocks again, named,
+    with the blocking instance named in the hint — the tier is what decides, not
+    the escalation.
+    """
+    project_root, fdir = run_env
+    defects = _latent_recurring([0, 1, 2])
+    defects[1]["tier"] = "LIVE"
+    defects[1]["reproduction_attempted"] = None
+    _ready_for_f6(fdir, defects)
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False
+    assert "1 escalated defect class(es) still have open instances" in outcome["reason"]
+    assert "FALSE_DOCUMENTED_CONTRACT" in outcome["reason"]
+    assert "D-002" in outcome["hint"]
+    checks = {c["check"]: c for c in outcome["checklist"]}
+    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
+
+
+def test_an_untiered_instance_of_an_escalated_class_blocks_like_a_live_one(run_env):
+    """FR-051 verbatim: 'Blocks like LIVE until a stream re-files it with a
+    tier.' The escalated branch must read the tier the same way every other
+    branch does, or an archive written before tiers existed passes here and is
+    refused one branch above."""
+    project_root, fdir = run_env
+    _ready_for_f6(fdir, _recurring([0, 1, 2]))   # `_recurring` writes no tier
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False
+    assert "1 escalated defect class(es) still have open instances" in outcome["reason"]
+
+
+def test_the_f6_doors_and_the_nyquist_gate_agree_about_a_latent_only_class(run_env):
+    """THE ADJACENT PATH, and the reason this is a defect rather than a
+    preference: `foundry_gate("nyquist")` and `foundry_gate("temper")` read
+    `_blocking_defects` and never `_escalated_classes`, so before this fix the
+    same run state passed NYQUIST and was refused at DONE. Four doors, one
+    answer — asserted across all four rather than at the one that was wrong.
+    """
+    def _defect_verdict(gate: str) -> str:
+        """What this door says about THE DEFECTS, ignoring paperwork it also
+        checks (a report, a parseable spec) that has nothing to do with tier."""
+        _arm(fdir)
+        result = foundry_gate(gate, project_root)
+        return result.get("reason", "") + " " + result.get("hint", "")
+
+    doors = ("temper", "nyquist", "done", "nyquist_done")
+
+    project_root, fdir = run_env
+    _ready_for_f6(fdir, _latent_recurring([0, 1, 2]))
+
+    for gate in doors:
+        said = _defect_verdict(gate)
+        assert "escalated defect class" not in said, (gate, said)
+        assert "D-001" not in said, (gate, said)
+
+    # And they agree in the other direction too: one reproduced instance and
+    # every door names it.
+    defects = _latent_recurring([0, 1, 2])
+    defects[0]["tier"] = "LIVE"
+    defects[0]["reproduction_attempted"] = None
+    _write_defects(fdir, defects)
+    for gate in doors:
+        said = _defect_verdict(gate)
+        assert "D-001" in said, (gate, said)
+
+
 def test_both_doors_into_f6_enforce_the_same_preconditions(run_env):
     """The property, rather than a re-listing of the checks: for one run state,
     ``done`` and ``nyquist_done`` agree. Two terminal transitions with two
@@ -2234,6 +2368,125 @@ def test_latent_instances_do_not_reset_the_clean_count(run_env):
     assert entry["live_clean_cycles"] == 2
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "clean_cycles"
+
+
+def _grind_cycle(fdir: Path, project_root: str) -> dict:
+    """ONE REAL GRIND CYCLE, not just the boundary crossing.
+
+    D-001: `_cross_boundary` calls `inspect_start` alone, which is a path a real
+    cycle cannot take — `foundry_gate`'s grind branch refuses without
+    `.tasks-generated`, and only `foundry_defects_to_tasks` writes it. So every
+    real cycle also runs the tool that records escalation state, and a test that
+    skips it is driving the exit against a record no run produces.
+    """
+    foundry_defects_to_tasks(project_root)
+    return _cross_boundary(fdir, project_root)
+
+
+def _file_finer_latent(fdir: Path, did: str, cycle: int) -> None:
+    """One more never-reproduced instance of the class, at a finer boundary."""
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    defects.append(_defect(did, cycle, **{
+        "class": "FALSE_DOCUMENTED_CONTRACT", "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of every call site finds 0 sites",
+    }))
+    _write_defects(fdir, defects)
+
+
+def test_a_later_filing_does_not_re_date_the_escalation_in_a_real_cycle(run_env):
+    """D-001, in the default configuration and with nothing patched.
+
+    `_record_escalation_proposals` bare-assigned `escalated_at_cycle` from
+    `_escalated_classes`'s CURRENT `_consecutive_run` end, which is recomputed
+    from the ledger on every call. `foundry_defects_to_tasks` runs that recorder
+    once per GRIND and cannot be skipped — `foundry_gate`'s grind branch refuses
+    without `.tasks-generated`, which only that tool writes — so one new filing
+    at a finer boundary re-dated the escalation to the newest cycle.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    assert _escalation_entry(fdir)["escalated_at_cycle"] == 3
+
+    _grind_cycle(fdir, project_root)          # closes cycle 3, the escalation cycle
+    _file_finer_latent(fdir, "D-101", 4)
+    _grind_cycle(fdir, project_root)
+
+    assert _escalation_entry(fdir)["escalated_at_cycle"] == 3, (
+        "the escalation date is a latch: it records WHEN the class escalated, "
+        "not when it was last filed against"
+    )
+
+
+def test_the_clean_arm_fires_across_real_grind_cycles_not_just_boundaries(
+    run_env, monkeypatch
+):
+    """ST-001 verbatim: 'the second consecutive INSPECT cycle in which the class
+    draws zero LIVE instances ... LATENT instances do not reset the count.'
+
+    D-001: the arm could not fire in a REAL cycle. The re-dated latch made
+    ST-001's own guard — `completed_cycle <= escalated_at` in
+    `_advance_escalation_clean_cycles` — skip the count on every crossing, so
+    `live_clean_cycles` sat at 0 forever and only the budget arm could ever
+    terminate a class. That is the exact finer-boundary loop this effort exists
+    to end, converging on the arm the effort added.
+
+    The structural budget is raised for the length of this test so the OTHER
+    exit cannot pre-empt the one under test — ST-002's arm fires on the second
+    packet, which in a real run arrives before two clean cycles can. Every code
+    path driven here is the production one; only which arm gets to win is
+    pinned.
+    """
+    project_root, fdir = run_env
+    monkeypatch.setattr(fo, "STRUCTURAL_PASS_BUDGET", 99)
+    _escalate(fdir, project_root)
+
+    _grind_cycle(fdir, project_root)          # closes cycle 3, the escalation cycle
+    for cycle, did in ((4, "D-101"), (5, "D-102")):
+        _file_finer_latent(fdir, did, cycle)
+        _grind_cycle(fdir, project_root)
+
+    entry = _escalation_entry(fdir)
+    assert entry["escalated_at_cycle"] == 3
+    assert entry["live_clean_cycles"] == 2
+    assert entry["status"] == "CLEARED"
+    assert entry["exit_reason"] == "clean_cycles"
+    assert entry["cleared_at_cycle"] == 5
+
+
+def test_every_writer_of_the_escalation_date_treats_it_as_a_latch(run_env):
+    """DERIVED FROM THE SOURCE, because D-001 was one writer disagreeing with
+    two. Three functions write `escalated_at_cycle`; a bare assignment in ANY of
+    them re-dates the escalation and silently disables ST-001's clean arm, so
+    the property is asserted over the module's own AST rather than over the one
+    writer that happened to be wrong.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    writers = (
+        fo._record_escalation_proposals,
+        fo._spend_structural_budget,
+        fo._advance_escalation_clean_cycles,
+    )
+    bare: list[str] = []
+    for fn in writers:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value == "escalated_at_cycle"
+                ):
+                    bare.append(f"{fn.__name__}:{node.lineno}")
+
+    assert bare == [], (
+        f"{bare} assign escalated_at_cycle directly. It is a latch — write it "
+        "with setdefault, or the clean-cycle exit stops firing."
+    )
 
 
 def test_one_live_instance_in_a_cycle_resets_the_count(run_env):

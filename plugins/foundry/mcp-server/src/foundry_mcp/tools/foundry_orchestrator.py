@@ -272,6 +272,26 @@ def _read_text(path: Path) -> str:
     return read_text_file(path)[0]
 
 
+# D-007 — THE SCAFFOLDING A WRITE PUTS BESIDE AN ARTIFACT IS NOT AN ARTIFACT.
+#
+# ``_save_json`` writes a sidecar and renames it into place; ``_document_
+# transaction`` (and ``foundry.py``'s ledger primitives) open a ``.lock`` file
+# whose bytes are never read. Neither is a document this run reads back, and
+# neither has a state an operator could "repair".
+#
+# These two suffixes are declared HERE and consumed by BOTH the writers below
+# and ``_run_artifact_problems``'s exclusion, so the scan's idea of what is
+# scaffolding cannot drift from what the writers actually create — which is the
+# drift ``_STRICT_ARTIFACT_DECODERS``'s D-138 note describes on the other axis.
+_TX_TMP_SUFFIX = ".tmp"
+_TX_LOCK_SUFFIX = ".lock"
+
+
+def _is_write_sidecar(path: Path) -> bool:
+    """True when ``path`` is a write primitive's scaffolding, not an artifact."""
+    return path.name.endswith((_TX_TMP_SUFFIX, _TX_LOCK_SUFFIX))
+
+
 def _save_json(path: Path, data: dict) -> None:
     """Atomic JSON write — write to a UNIQUE .tmp, then rename.
 
@@ -280,7 +300,9 @@ def _save_json(path: Path, data: dict) -> None:
     rename could move this call's half-written payload into place, or delete it
     mid-write (the 98 FileNotFoundError in the D-103 drive).
     """
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp = path.with_name(
+        f"{path.name}.{os.getpid()}.{threading.get_ident()}{_TX_TMP_SUFFIX}"
+    )
     try:
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         tmp.rename(path)
@@ -324,7 +346,7 @@ def _document_transaction(path: Path) -> Iterator[dict]:
         yield held[key]
         return
 
-    lock_path = path.with_name(path.name + ".lock")
+    lock_path = path.with_name(path.name + _TX_LOCK_SUFFIX)
     with _ARTIFACT_LOCK:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         # The lock handle exists for its FILE DESCRIPTOR and nothing else --
@@ -506,12 +528,38 @@ def _artifact_problem(path: Path, relative: tuple[str, ...] = ()) -> str | None:
     strict = _STRICT_ARTIFACT_DECODERS.get(path.suffix.lower())
     if strict is not None:
         if (problem := strict(path)):
-            return problem
+            return _unless_it_vanished(path, problem)
         rung = _ARTIFACT_RECORD_RUNGS.get(relative)
         return rung(_load_json(path)) if rung is not None else None
     if _is_binary_artifact(path):
         return None
-    return _text_problem(path)
+    return _unless_it_vanished(path, _text_problem(path))
+
+
+def _unless_it_vanished(path: Path, problem: str | None) -> str | None:
+    """Drop a named problem for a file that is no longer there (D-007).
+
+    ``read_text_file`` already rules that "an ABSENT file is not a problem — a
+    run legitimately has artifacts it has not written yet". It decides that from
+    a ``path.exists()`` taken BEFORE the read, so a file removed between the two
+    lands in its OSError arm and is named as unreadable instead. This function
+    holds the same rule for a file that became absent DURING the scan, which is
+    the only way the two answers can disagree.
+
+    Driven, at the site that made it matter: ``_run_artifact_problems`` lists the
+    whole run dir and then reads each entry, while a peer process is renaming
+    ``_save_json``'s sidecar into place. 62 of 23120 scans against a run with one
+    concurrent writer returned "stream-rollup.json.<pid>.<tid>.tmp could not be
+    read (FileNotFoundError)" — and since ``_artifact_guard`` runs at the top of
+    EVERY MCP entry point, that named a healthy run corrupt and refused whatever
+    tool the lead had called. F2 runs 4-8 parallel streams by design, so the
+    concurrency is the designed path; the excluded-sidecar rule above is the
+    other half, and this is the half that holds for any transient nobody has
+    thought of yet.
+    """
+    if problem is not None and not path.exists():
+        return None
+    return problem
 
 
 # Artifacts whose corruption the guard reports. DERIVED, not a hand-kept list:
@@ -615,6 +663,14 @@ def _run_artifact_problems(fdir: Path) -> list[str]:
     problems: list[str] = []
     for candidate in sorted(fdir.rglob("*")):
         if candidate.is_dir() and not candidate.suffix:
+            continue
+        # D-007: a write primitive's own scaffolding is not one of this run's
+        # artifacts. Nothing reads a `.tmp` sidecar or a `.lock` file back, both
+        # are mid-flight by construction while a peer writes, and the guard's
+        # hint — "repair or delete the named file" — is advice that races the
+        # writer. Skipping them is what the guard MEANS by "run artifact", not a
+        # tolerance added to quieten it.
+        if _is_write_sidecar(candidate):
             continue
         if (problem := _artifact_problem(candidate, candidate.relative_to(fdir).parts)):
             problems.append(problem)
@@ -1211,21 +1267,66 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # the work, not whether every instance must reach fixed. Stated as its
     # own named check so the guarantee is visible in the checklist rather
     # than merely implied by the open-defect count above.
+    #
+    # D-002 / FR-006 — TIER-AWARE, LIKE EVERY OTHER BRANCH IN THIS FUNCTION.
+    #
+    # This branch counted `bucket["open"]` regardless of tier while every
+    # sibling above reads `_blocking_defects`, so a class with three open LATENT
+    # instances and nothing reproduced refused DONE — against FR-006 verbatim,
+    # "INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass when the only
+    # open defects are LATENT". Worse, `foundry_gate("nyquist")` consults
+    # `_escalated_classes` not at all, so the two F6 doors returned OPPOSITE
+    # verdicts on identical run state — the drift shape
+    # `test_both_doors_into_f6_enforce_the_same_preconditions` exists to prevent,
+    # one door along.
+    #
+    # HOW THIS RECONCILES WITH ST-010's "every escalated class CLEARED", rather
+    # than deleting the guard: escalation is a statement about the SHAPE of
+    # remaining work, and CLEARED is the answer to "has structural work had its
+    # turn". A class whose open instances are all LATENT has no remaining work of
+    # either shape — ST-002 sends its open LATENT instances to the report backlog
+    # and FR-001 says the same — so holding DONE open on the class's status flag
+    # would refuse the run for work the spec has already dispositioned. The
+    # refusal therefore keys on the axis that CARRIES work, `open_live_defect_ids`
+    # (open LIVE and untiered instances, exactly what blocks everywhere else),
+    # and the checklist below still names EVERY still-escalated class and the
+    # LATENT instances it is carrying, so ST-010's guarantee stays visible in the
+    # artifact it is read against instead of becoming an unstated pass.
     escalated_open = _escalated_classes(fdir, project_root)
-    if escalated_open:
+    blocking_classes = {
+        key: info
+        for key, info in escalated_open.items()
+        if info.get("open_live_defect_ids")
+    }
+    latent_only_classes = sorted(set(escalated_open) - set(blocking_classes))
+    if blocking_classes:
         passed = False
+        blocking_ids = sorted(
+            did
+            for info in blocking_classes.values()
+            for did in info["open_live_defect_ids"]
+        )
         reason = (
-            f"{len(escalated_open)} escalated defect class(es) still have open "
-            f"instances: {', '.join(sorted(escalated_open))}"
+            f"{len(blocking_classes)} escalated defect class(es) still have open "
+            f"instances: {', '.join(sorted(blocking_classes))}"
         )
         hint = (
             "A structural fix must still close every defect of the class. "
-            "Escalation is not a waiver."
+            "Escalation is not a waiver. Blocking instances: "
+            + ", ".join(blocking_ids)
+            + "."
         )
     checklist.append({
-        "check": f"escalated_classes_closed (open classes={len(escalated_open)})",
-        "ok": not escalated_open,
-        "classes": sorted(escalated_open),
+        "check": (
+            f"escalated_classes_closed (open classes={len(blocking_classes)}, "
+            f"latent_only={len(latent_only_classes)})"
+        ),
+        "ok": not blocking_classes,
+        "classes": sorted(blocking_classes),
+        # Named even though they do not block, because ST-010 is read against
+        # this checklist and "escalated, carrying only a LATENT backlog" is a
+        # different state from "not escalated at all".
+        "latent_only_classes": latent_only_classes,
     })
 
     if teams_result["active"]:
@@ -2878,19 +2979,59 @@ def foundry_record_spend(
     if (corrupt := _artifact_guard(fdir)):
         return corrupt
 
-    def _count(value) -> int:
+    # D-004 — A COERCION NOBODY IS TOLD ABOUT IS A SILENT MIS-ATTRIBUTION.
+    #
+    # CT-013's "none" errors column is load-bearing and stays: a forgotten or
+    # fat-fingered spend record must never block a gate (FR-022). But "never
+    # refuses" was implemented as "never says anything", and the two are not the
+    # same. A lead who omits the agent name gets a row filed under "unknown", a
+    # lead who pastes a token count with a comma in it gets a row reading 0, and
+    # in both cases the response says `ok: True` and nothing else — so the cost
+    # report is quietly wrong and the one person who could correct it has no
+    # signal. Every coercion this function performs is now NAMED in the result,
+    # as a warning that blocks nothing.
+    #
+    # Derived over the coerced fields rather than written per field, because the
+    # cause is the absence of surfacing, not the absence of surfacing for
+    # `agent`: a one-field fix ships the sibling defect on `phase` the same day.
+    warnings: list[str] = []
+
+    def _identity(value, field: str) -> str:
+        named = str(value or "").strip()
+        if not named:
+            warnings.append(
+                f"{field} was empty or missing, so this spend is recorded "
+                f"against \"unknown\" — the row still counts toward the totals, "
+                f"but it cannot be attributed. Re-record it with the {field} "
+                f"named if you want the roll-up to be readable."
+            )
+            return "unknown"
+        return named
+
+    def _count(value, field: str) -> int:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
+            # `None` warns like any other non-number: both counts are REQUIRED
+            # parameters with no default, so a None arriving here is a value the
+            # caller got wrong, never a field they declined to fill in.
+            warnings.append(
+                f"{field}={value!r} is not a number, so it is recorded as 0. "
+                f"The dispatch is still counted; only its {field} is lost."
+            )
             return 0
+        if value < 0:
+            warnings.append(
+                f"{field}={value!r} is negative, so it is recorded as 0."
+            )
         return max(0, int(value))
 
     server_cycle = _current_cycle(fdir)
     row = {
-        "agent": str(agent or "").strip() or "unknown",
-        "phase": str(phase or "").strip() or "unknown",
+        "agent": _identity(agent, "agent"),
+        "phase": _identity(phase, "phase"),
         "cycle": server_cycle,
         "declared_cycle": cycle,
-        "tokens": _count(tokens),
-        "duration_ms": _count(duration_ms),
+        "tokens": _count(tokens, "tokens"),
+        "duration_ms": _count(duration_ms, "duration_ms"),
         "recorded_at": _now(),
     }
 
@@ -2930,7 +3071,7 @@ def foundry_record_spend(
         state["updated_at"] = _now()
 
     summary = _spend_summary(fdir)
-    return {
+    result = {
         "ok": True,
         "recorded": row,
         "by_phase": summary["by_phase"],
@@ -2938,6 +3079,12 @@ def foundry_record_spend(
         "total": summary["total"],
         "unreported_dispatches": summary["unreported_dispatches"],
     }
+    # D-004: present ONLY when something was coerced, so a clean call's result
+    # carries no empty key for a reader to interpret, and `ok` stays True either
+    # way — this is a notice, never a refusal.
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def _record_inspect_mode(fdir: Path, entry: dict) -> None:
@@ -4586,7 +4733,30 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
                 entry = classes[key] = {}
             _escalation_entry_defaults(entry)
             entry["proposal"] = info["proposal"]
-            entry["escalated_at_cycle"] = info["escalated_at_cycle"]
+            # D-001 — `escalated_at_cycle` IS A LATCH, AND THIS WRITER MOVED IT.
+            #
+            # `info["escalated_at_cycle"]` is `_consecutive_run`'s CURRENT run
+            # end, recomputed from the ledger on every call, so a bare
+            # assignment re-dates the escalation to the newest filing.
+            # `foundry_defects_to_tasks` calls this recorder on every GRIND and
+            # that call is mandatory — `foundry_gate`'s grind branch refuses
+            # without `.tasks-generated`, which only that tool writes — so the
+            # marker walked forward once per cycle, and ST-001's guard
+            # (`completed_cycle <= escalated_at`) in
+            # `_advance_escalation_clean_cycles` then skipped the count forever.
+            #
+            # Driven: class escalated at cycle 3, one LATENT instance filed at a
+            # finer boundary each later cycle -> escalated_at walked 4, 5, 6
+            # while live_clean_cycles stayed 0 and status stayed ESCALATED. Only
+            # the budget arm could still terminate a class, so the exact
+            # finer-boundary loop this exit exists to end could not converge on
+            # the clean arm at all.
+            #
+            # `setdefault` is what the other two writers of this key already do
+            # (`_spend_structural_budget`, `_advance_escalation_clean_cycles`);
+            # this one was the odd writer out, which is why the record disagreed
+            # with itself depending on which boundary touched it last.
+            entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
             entry["consecutive_cycles"] = info["consecutive_cycles"]
             entry["defect_ids"] = info["defect_ids"]
             # FR-001: refreshed on every recording, because the backlog the F6
