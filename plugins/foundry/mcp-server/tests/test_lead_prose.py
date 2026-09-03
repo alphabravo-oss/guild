@@ -303,6 +303,33 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
     # about how it cleared.
     ("escalation-exit-clean", "ST-001", START_MD, "| Clean cycles | `clean_cycles` |"),
     ("escalation-exit-budget", "ST-002", START_MD, "| Budget exhausted | `budget` |"),
+    # D-157 / ST-001: "two consecutive cycles" is the whole rule only if the
+    # reader already knows which cycle counting STARTS from. The arm skips every
+    # crossing at or before `escalated_at_cycle`, so a class that has just
+    # escalated is THREE crossings from its clean exit, and prose that stopped
+    # at "two" authored the same off-by-one the still-escalated hint printed:
+    # the hint derived its distance as LIVE_CLEAN_CYCLES_TO_CLEAR minus
+    # live_clean_cycles, consulting neither the guard nor the counted list,
+    # while the arm it named applied both. Two derivations of one number, and
+    # the lead was handed the one the arm would not honour.
+    (
+        "escalation-clean-arm-skips-the-escalation-cycle",
+        "ST-001",
+        START_MD,
+        "skips any cycle at or before the class's `escalated_at_cycle`",
+    ),
+    (
+        "escalation-clean-arm-counts-three-crossings",
+        "ST-001",
+        START_MD,
+        "the exit is THREE crossings away, not two",
+    ),
+    (
+        "escalation-distance-is-crossings-not-arithmetic",
+        "ST-001",
+        START_MD,
+        "never as `2` minus `live_clean_cycles`",
+    ),
     (
         "escalation-clearing-not-closing",
         "AC-005",
@@ -475,12 +502,36 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
     # GI-002 again: a --nyquist run leaves F5.5 through `nyquist_done`, so prose
     # that named only `Foundry-Phase('done')` left the other terminal door
     # undocumented and the strip free to precede it.
+    #
+    # D-159 widened this from two crossings to three. GI-002 names the boundary
+    # "before ASSAY/NYQUIST/DONE", and the crossing INTO F5.5 is the one the
+    # word NYQUIST names -- documented as a two-door rule, it was the door that
+    # kept the pre-D-149 evaluation while both others took the three-state one.
+    # Driven at cycle 9: a run at F5 with one committed log that no longer
+    # reproduced refused `Foundry-Phase('nyquist')` before the mandated strip
+    # and PASSED the identical call after it, `corpus_size: 0`, while
+    # `nyquist_done` and `done` on that same stripped tree both refused naming
+    # EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP.
     (
-        "evidence-both-terminal-doors",
+        "evidence-three-terminal-crossings-not-two",
         "GI-002",
         START_MD,
+        "**Three terminal crossings take that same three-state evaluation, "
+        "not two**",
+    ),
+    (
+        "evidence-terminal-crossings-named",
+        "GI-002",
+        START_MD,
+        '`Foundry-Phase("nyquist")` INTO F5.5, '
         '`Foundry-Phase("nyquist_done")` out of F5.5 and '
         '`Foundry-Phase("done")` at F6 sweep the same corpus by the same rule',
+    ),
+    (
+        "evidence-entry-crossing-is-not-an-exception",
+        "CT-007",
+        START_MD,
+        "GI-002 names the boundary before NYQUIST alongside the two after it",
     ),
     # --- D8: the --plugin-dir convention ------------------------------------
     # GI-004 / AC-029: all three surfaces carry it, because whichever one an
@@ -956,6 +1007,17 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "a run ends three ways: F6 DONE, a HALTED --max-cycles stop reached by "
         "a successful transition, or an error",
     ),
+    # D-159 / GI-002: the two-door count. GI-002 names three boundaries and the
+    # crossing INTO F5.5 is one of them, so a sentence that closed the subject
+    # at "both terminal doors" told a --nyquist lead the entry crossing was
+    # already covered by a rule it did not yet take.
+    (
+        "Both terminal doors take that same evaluation",
+        "GI-002",
+        "three terminal crossings take it: `Foundry-Phase(\"nyquist\")` into "
+        "F5.5, `Foundry-Phase(\"nyquist_done\")` out of it, and "
+        "`Foundry-Phase(\"done\")` at F6",
+    ),
 )
 
 
@@ -1208,6 +1270,122 @@ def test_the_f6_sequence_sweeps_before_it_strips() -> None:
         f"{_rel(START_MD)} states the strip command before it states that the "
         f"gate runs first. A lead reads this paragraph top to bottom and runs "
         f"what it reaches; the sweep must be the thing it reaches first."
+    )
+
+
+def test_the_escalation_section_qualifies_the_clean_arm_where_it_states_it() -> None:
+    """ST-001 / D-157: the guard has to sit UNDER the claim it qualifies.
+
+    Every phrase pinned above can be present with the qualification filed in
+    some other section, and a lead reads ``## ESCALATION`` top to bottom: the
+    exits table says "two consecutive INSPECT cycles", and a reader who stops
+    there counts two crossings from wherever the class is standing. The arm
+    skips every crossing at or before ``escalated_at_cycle``, so from a fresh
+    escalation the real distance is three. Driven on AC-002's own fixture --
+    one LATENT instance filed at a finer boundary in cycles 3, 4 and 5, class
+    escalated at 5: ``_class_drew_live_in_cycle(defects, key, 5)`` returned
+    False, yet the still-escalated hint offered "2 more INSPECT cycle(s)", and
+    walking the arm from that state takes three crossings because the one
+    closing cycle 5 is discarded by the guard.
+
+    So the POSITION is asserted, in the section that has to carry both: the row
+    first, the guard after it, and the whole of it inside ``## ESCALATION``.
+    """
+    text = _read(START_MD)
+    start = text.find("\n## ESCALATION")
+    assert start != -1, (
+        f"{_rel(START_MD)} has no `## ESCALATION` section. AC-005 requires it "
+        f"and this ordering rule lives inside it; if the heading was renamed, "
+        f"retarget this test -- do not drop it."
+    )
+    end = text.find("\n## ", start + 1)
+    section = " ".join(text[start : end if end != -1 else len(text)].split())
+
+    row = section.find("| Clean cycles | `clean_cycles` |")
+    guard = section.find("The cycle a class escalated ON is not one of the two.")
+    walk = section.find("the exit is THREE crossings away, not two")
+    assert row != -1, (
+        f"{_rel(START_MD)}'s `## ESCALATION` section no longer carries the "
+        f"clean-cycles exit row."
+    )
+    assert guard != -1, (
+        f"{_rel(START_MD)}'s `## ESCALATION` section does not state that the "
+        f"cycle a class escalated ON is excluded from the two clean cycles. "
+        f"Without it the section states ST-001's count and hides ST-001's "
+        f"guard, which is how a lead reads a two-crossing distance off an arm "
+        f"that needs three (D-157)."
+    )
+    assert walk != -1, (
+        f"{_rel(START_MD)}'s escalation guard paragraph no longer walks the "
+        f"crossings. The count is the part a lead acts on: the crossing that "
+        f"closes the escalation cycle is skipped, the next banks one, and only "
+        f"the third clears."
+    )
+    assert row < guard < walk, (
+        f"{_rel(START_MD)} states the clean-cycle guard before the exit row it "
+        f"qualifies. A qualification a reader meets before the claim reads as "
+        f"a different rule; it has to sit under the row."
+    )
+
+
+def test_the_f6_evidence_rung_names_every_terminal_crossing_in_order() -> None:
+    """GI-002 / D-159: three crossings take this rung, and prose said two.
+
+    GI-002 names the sweep "before ASSAY/NYQUIST/DONE". The crossing the word
+    NYQUIST names is ``Foundry-Phase('nyquist')`` -- the F5-to-F5.5 entry --
+    and while this paragraph closed the subject at "both terminal doors" that
+    entry was the one arm still refusing on the sweep's ``ok`` alone, with no
+    reading of ``corpus_size`` or a recorded pre-strip pass. Driven at cycle 9:
+    on a run at F5 with one committed log that no longer reproduced, the entry
+    call refused naming the log; after the strip ``commands/start.md`` mandates
+    verbatim, the identical call returned ok with ``corpus_size: 0`` while
+    ``nyquist_done`` and ``done`` on that same tree both refused naming
+    EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP.
+
+    Asserted as ORDER, because a paragraph can name all three crossings and
+    still present the entry as an afterthought to a two-door rule: the count
+    comes first, then the crossings in the order a --nyquist run makes them.
+    """
+    text = _read(START_MD)
+    parts = text.split("### F6: DONE", 1)
+    assert len(parts) == 2, (
+        f"{_rel(START_MD)} has no `### F6: DONE` section; the evidence rung's "
+        f"crossings are asserted inside it."
+    )
+    section = " ".join(parts[1].split("\n## ", 1)[0].split())
+
+    count = section.find(
+        "**Three terminal crossings take that same three-state evaluation, "
+        "not two**"
+    )
+    assert count != -1, (
+        f"{_rel(START_MD)}'s F6 evidence-lifecycle step no longer states how "
+        f"many terminal crossings take the three-state rung. Two of three is "
+        f"the shape D-159 filed: the crossing the rung was not applied to is "
+        f"the one an operator never thinks to check."
+    )
+    crossings = (
+        '`Foundry-Phase("nyquist")` INTO F5.5',
+        '`Foundry-Phase("nyquist_done")` out of F5.5',
+        '`Foundry-Phase("done")` at F6',
+    )
+    at = [section.find(c) for c in crossings]
+    missing = [c for c, pos in zip(crossings, at) if pos == -1]
+    assert not missing, (
+        f"{_rel(START_MD)}'s F6 evidence-lifecycle step does not name "
+        f"{missing}. GI-002 names three boundaries; a roster short by one "
+        f"documents the missing crossing as covered by a rule it does not take."
+    )
+    assert count < min(at), (
+        f"{_rel(START_MD)} names the terminal crossings before it says how "
+        f"many take the rung. The count is what a reader checks the list "
+        f"against."
+    )
+    assert at == sorted(at), (
+        f"{_rel(START_MD)} lists the terminal crossings out of run order "
+        f"({[c for _, c in sorted(zip(at, crossings))]}). A --nyquist run "
+        f"makes them entry, exit, done, and the entry crossing is the one that "
+        f"was missing -- listing it last reads as the afterthought it was."
     )
 
 

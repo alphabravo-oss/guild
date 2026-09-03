@@ -1,0 +1,20 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import pathlib,sys; sys.path.insert(0,"src"); from foundry_mcp.schemas import vocab; Q=chr(39); flat=" ".join(pathlib.Path("../commands/start.md").read_text(encoding="utf-8").split()); print("=== D-157: the ESCALATION section states the guard the clean arm applies ==="); print("  vocab LIVE_CLEAN_CYCLES_TO_CLEAR:", vocab.LIVE_CLEAN_CYCLES_TO_CLEAR); print("  crossings from a fresh escalation, guard skips the escalation cycle:", vocab.LIVE_CLEAN_CYCLES_TO_CLEAR + 1); print("  start.md keeps ST-001 two-cycle count (want 1):", flat.count("Two consecutive INSPECT cycles in which the class draws zero `LIVE` instances")); print("  the exit row points at the guard (want 1):", flat.count("counted only from AFTER the cycle the class escalated on")); print("  start.md states the guard (want 1):", flat.count("skips any cycle at or before the class" + Q + "s `escalated_at_cycle`")); print("  start.md walks the crossings (want 1):", flat.count("the exit is THREE crossings away, not two")); print("  start.md forbids the hint arithmetic (want 1):", flat.count("never as `2` minus `live_clean_cycles`")); print("=== D-159: the F6 evidence rung names three terminal crossings ==="); print("  start.md retired the two-door count (want 0):", flat.count("Both terminal doors take that same evaluation")); print("  start.md states three crossings (want 1):", flat.count("**Three terminal crossings take that same three-state evaluation, not two**")); print("  start.md names the F5 to F5.5 entry (want 1):", flat.count("`Foundry-Phase(\"nyquist\")` INTO F5.5")); print("  start.md names the F5.5 exit (want 1):", flat.count("`Foundry-Phase(\"nyquist_done\")` out of F5.5")); print("  start.md names the F6 door (want 1):", flat.count("`Foundry-Phase(\"done\")` at F6")); print("  start.md says the strip precedes none of them (want 1):", flat.count("the strip precedes none of them")); print("  start.md grounds the entry crossing in GI-002 (want 1):", flat.count("GI-002 names the boundary before NYQUIST alongside the two after it"))'
+# evidence-for: ST-001, AC-005, FR-026, GI-002, CT-007, AC-014
+# evidence-timeout: 300
+
+=== D-157: the ESCALATION section states the guard the clean arm applies ===
+  vocab LIVE_CLEAN_CYCLES_TO_CLEAR: 2
+  crossings from a fresh escalation, guard skips the escalation cycle: 3
+  start.md keeps ST-001 two-cycle count (want 1): 1
+  the exit row points at the guard (want 1): 1
+  start.md states the guard (want 1): 1
+  start.md walks the crossings (want 1): 1
+  start.md forbids the hint arithmetic (want 1): 1
+=== D-159: the F6 evidence rung names three terminal crossings ===
+  start.md retired the two-door count (want 0): 0
+  start.md states three crossings (want 1): 1
+  start.md names the F5 to F5.5 entry (want 1): 1
+  start.md names the F5.5 exit (want 1): 1
+  start.md names the F6 door (want 1): 1
+  start.md says the strip precedes none of them (want 1): 1
+  start.md grounds the entry crossing in GI-002 (want 1): 1
