@@ -70,7 +70,9 @@ Your checklist is what the spec says. **What you must CHECK this cycle is what t
 
 **On `FULL`, verify the whole matrix exactly as Step 0 built it** — `items_total` is every requirement in the spec.
 
-**Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `PROVE:    N row(s) — ...` and TRUNCATES that list at eight rows. It is a summary for a human reading a terminal; the roster is `inspect_mode.prove_sample` in the response body. A stream that copies the eight rows it can see checks eight rows and reports a width it never ran.
+**Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `PROVE:    N row(s) — ...` and TRUNCATES that list at eight rows. It is a summary for a human reading a terminal; the roster is `inspect_mode.prove_sample`, below that display and after the marker line. A stream that copies the eight rows it can see checks eight rows and reports a width it never ran.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
 
 **If no `inspect_mode` was recorded at all** — an older archive, or a run that reached you by a path that recorded nothing — verify the whole matrix. A missing width means "no narrowing was decided", never "narrow it yourself." No exceptions, no deferrals, no "the roster looked close enough to the diff."
 

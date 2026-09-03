@@ -5,4 +5,4 @@
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-733 passed, 7 skipped in 1.13s
+763 passed, 7 skipped in 1.07s

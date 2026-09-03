@@ -50,7 +50,9 @@ The checklist is what the spec says. What you must WALK this cycle is what the r
 
 **On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`** — every declared symbol whose file appears in that list and no fewer — and report `items_checked` and `items_total` against those files rather than against the spec. **On `FULL`, walk every declared symbol** and report `items_total` as every symbol in scope. **With no recorded `inspect_mode` at all, walk everything**: a missing width means no narrowing was decided, never that you may narrow it yourself.
 
-**Read the array, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files; the roster itself is `inspect_mode.touched_files` in the response body. Copying the five visible files walks five files and reports a width that was never run.
+**Read the array, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files; the roster itself is `inspect_mode.touched_files`, below that display and after the marker line. Copying the five visible files walks five files and reports a width that was never run.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
 
 ### Step 1: STATIC ANALYSIS — Map the Wiring
 

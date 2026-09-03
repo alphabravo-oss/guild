@@ -74,7 +74,9 @@ The checklist is what the spec says. What you must CHECK this cycle is what the 
 
 **On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`** — every one of them and no fewer — and report `items_checked` and `items_total` against that roster's length rather than against the spec. **On `FULL`, verify the whole matrix** and report `items_total` as every requirement in the spec. **With no recorded `inspect_mode` at all, verify the whole matrix**: a missing width means no narrowing was decided, never that you may narrow it yourself.
 
-**Read the array, never the terminal line.** The `Foundry-Next` display truncates the roster at eight rows; the roster itself is `inspect_mode.prove_sample` in the response body. Copying the eight visible rows checks eight rows and reports a width that was never run.
+**Read the array, never the terminal line.** The `Foundry-Next` display truncates the roster at eight rows; the roster itself is `inspect_mode.prove_sample`, below that display and after the marker line. Copying the eight visible rows checks eight rows and reports a width that was never run.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
 
 ## Step 1: Verify — Line by Line
 

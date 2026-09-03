@@ -101,7 +101,9 @@ The declarations above are what the spec says exists. **What you must WALK this 
 
 **On `FULL`, walk every declared symbol exactly as Step 1 extracted them** — `items_total` is every symbol in scope.
 
-**Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files. It is a summary for a human reading a terminal; the roster is `inspect_mode.touched_files` in the response body. A stream that copies the five files it can see walks five files and reports a width it never ran.
+**Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files. It is a summary for a human reading a terminal; the roster is `inspect_mode.touched_files`, below that display and after the marker line. A stream that copies the five files it can see walks five files and reports a width it never ran.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
 
 **If no `inspect_mode` was recorded at all** — an older archive, or a run that reached you by a path that recorded nothing — walk everything. A missing width means "no narrowing was decided", never "narrow it yourself." No exceptions, no deferrals, no "the diff looked close enough to the scope."
 

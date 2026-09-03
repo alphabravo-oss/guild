@@ -5814,6 +5814,217 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
 
 
 # ---------------------------------------------------------------------------
+# D-174 / FR-012 / FR-047 / AC-019 / US-004 -- the roster the four surfaces
+# send a stream to read is a roster the MCP boundary actually carries
+# ---------------------------------------------------------------------------
+#
+# D-104, D-140, D-160 and D-161 each wired one more field into `inspect_mode`
+# and taught one more surface to read it "out of the RESPONSE". None of them
+# checked that a response HAD a body. It did not: `server.py#call_tool`
+# returned exactly `format_result(name, result)`, and `format_result` returns
+# ONLY the formatter's rendering whenever a formatter exists -- which it does
+# for `Foundry-Next`. So the dict was built, populated and discarded one rung
+# below the boundary, and the four surfaces' instruction named a field that
+# crossed nothing while FORBIDDING the truncated line that was the only thing
+# a stream could see. A TRACE stream hit it first-hand on its opening call.
+#
+# D-173 fixed the boundary (`format_result_blocks`: the display, then
+# `RESULT_JSON_MARKER`, then the whole result as JSON, with no fence because
+# defect descriptions carry backtick runs). This section is the consumer half:
+# the prose now says WHERE, and says it word-identically on all four surfaces,
+# because the previous four fixes each taught one surface and the class was
+# always that the other surfaces did not learn.
+#
+# The pins below are driven, not described. The marker the prose names is READ
+# from `display.RESULT_JSON_MARKER` rather than re-typed here, so a respelling
+# on either side fails naming the four files; and the roster is recovered from
+# a real `format_result_blocks` rendering, so "the arrays cross" is a fact this
+# module establishes rather than a claim it repeats.
+
+from foundry_mcp.tools import display as _display  # noqa: E402
+
+#: Every surface that tells a stream to read its width out of the response.
+#: The union of the two width rosters rather than a third hand-written tuple:
+#: a fifth width surface joins one of those and is swept here automatically,
+#: which is the shape whose absence made D-104 -> D-140 -> D-160 -> D-174 four
+#: separate defects instead of one.
+_WIDTH_SURFACES = tuple(
+    sorted(set(_TRACE_WIDTH_SURFACES) | set(_PROVE_WIDTH_SURFACES), key=_rel)
+)
+
+#: One claim per entry, word-identical across all four surfaces. The register
+#: is _TRACE_WIDTH_CLAUSES': a field path is a mechanism, and two paraphrases
+#: of one are two chances to send a stream at something that is not there.
+_MARKER_CLAUSES = (
+    (
+        "A formatted tool's response is the rendered display, then a line "
+        "reading",
+        "the surface no longer says what a response is SHAPED like. 'Read it "
+        "out of the RESPONSE' with no account of where in the response is the "
+        "instruction D-174 filed -- true-sounding, and satisfiable only by "
+        "the truncated line the same paragraph forbids.",
+    ),
+    (
+        "then the complete result as JSON",
+        "the surface no longer says the part after the marker is the WHOLE "
+        "result. A stream that expects a projection looks for a key the "
+        "boundary never invents and falls back to the display.",
+    ),
+    (
+        "every array in full, nothing truncated",
+        "the surface no longer says the arrays cross WHOLE. That is the one "
+        "property that distinguishes the machine-readable half from the box "
+        "above it, and without it a stream has no reason to prefer either.",
+    ),
+    (
+        "no fence to strip and no terminator to find",
+        "the surface no longer says how the JSON ENDS. D-173 chose a marker "
+        "and no fence because result dicts carry backtick runs; a stream that "
+        "hunts for a closing fence finds one inside a defect description and "
+        "parses half a roster.",
+    ),
+    (
+        "`json.loads` it and read `inspect_mode` off the object it returns",
+        "the surface no longer names the operation. Naming the location "
+        "without naming the parse leaves the stream reading the JSON as text, "
+        "which is grepping a roster -- the failure mode one rung over.",
+    ),
+    (
+        "a tool with no display formatter appends no marker",
+        "the surface no longer states the exception. `format_result_blocks` "
+        "adds the marker only for a tool in `_FORMATTERS`; a stream told the "
+        "marker is universal treats its absence as a broken response instead "
+        "of as a response that is already JSON.",
+    ),
+)
+
+
+def test_the_width_surface_roster_is_derived() -> None:
+    """Floor check: the sweep below is vacuous on an empty roster.
+
+    ``_WIDTH_SURFACES`` is built from the two existing width rosters, so it
+    empties if either is emptied -- and a parametrised test over an empty
+    roster reports zero cases and passes the run. This fails first, and names
+    the four files by the constants they must come from.
+    """
+    assert len(_WIDTH_SURFACES) == 4, (
+        f"_WIDTH_SURFACES derived {[_rel(p) for p in _WIDTH_SURFACES]}, not "
+        f"the four width surfaces. It is the union of _TRACE_WIDTH_SURFACES "
+        f"and _PROVE_WIDTH_SURFACES; if a fifth surface was added, raise this "
+        f"count deliberately rather than dropping the floor."
+    )
+    for expected in (TRACER, TRACE_SKILL, ASSAYER, PROVE_SKILL):
+        assert expected in _WIDTH_SURFACES, (
+            f"{_rel(expected)} is no longer a width surface. It is what the "
+            f"F2 spawn loads or what the slash command runs, and a width rule "
+            f"it does not carry is a rule that reaches its stream through "
+            f"nothing."
+        )
+
+
+@pytest.mark.parametrize("path", _WIDTH_SURFACES, ids=_rel)
+@pytest.mark.parametrize("clause,why", _MARKER_CLAUSES, ids=lambda v: v[:44])
+def test_every_width_surface_says_where_in_the_response(
+    path: Path, clause: str, why: str
+) -> None:
+    """D-174, one claim at a time, on all four surfaces at once."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+@pytest.mark.parametrize("path", _WIDTH_SURFACES, ids=_rel)
+def test_the_marker_each_surface_names_is_the_one_the_boundary_emits(
+    path: Path,
+) -> None:
+    """D-174's floor: a locator is only prose until something emits it.
+
+    The marker is READ from ``display.RESULT_JSON_MARKER`` rather than typed
+    here, in the discipline ``_EXPECTED_TYPE_ENUM`` holds for the type enum. A
+    respelling on the display side then fails HERE, naming the prose files
+    that have to follow it -- rather than shipping four surfaces that send
+    every stream looking for a line the boundary stopped writing.
+    """
+    assert _display.RESULT_JSON_MARKER in _flat(path), (
+        f"{_rel(path)} names a marker other than "
+        f"{_display.RESULT_JSON_MARKER!r}. The prose and the boundary have "
+        f"come apart: a stream splitting the response on the line this file "
+        f"names finds nothing, and its honest fallback is the truncated "
+        f"display -- which is the pre-D-173 behaviour every pin above would "
+        f"still call green."
+    )
+
+
+def test_the_untruncated_roster_is_recoverable_the_way_the_prose_says() -> None:
+    """D-174 end to end: the instruction, executed.
+
+    The four surfaces now tell a stream to split the response on the marker,
+    ``json.loads`` the remainder and read ``inspect_mode`` off it. That
+    instruction is worth nothing unless following it LITERALLY yields the
+    untruncated roster, so this test follows it literally -- no knowledge of
+    ``format_result_blocks``'s internals beyond the public marker constant.
+
+    Both halves are asserted, because D-173's rule is that neither replaces
+    the other: the display stays truncated for the operator (NFR-005) and the
+    JSON stays whole for the parser. A fix that widened the display instead
+    would pass a naive check and cost the readability the truncation buys.
+    """
+    touched = [f"src/mod_{i}.py" for i in range(9)]
+    sample = [f"FR-{i:03d}" for i in range(10)]
+    result = {
+        "action": "dispatch",
+        "inspect_mode": {
+            "mode": "DELTA",
+            "rule": "delta",
+            "cycle": 7,
+            "diff_base": "abc1234",
+            "touched_files": touched,
+            "prove_sample": sample,
+            "stream_scope": {"trace": {"scope": "delta", "detail": "9 files"}},
+        },
+    }
+
+    rendered = _display.format_result_blocks("Foundry-Next", result)
+
+    assert _display.RESULT_JSON_MARKER in rendered, (
+        "Foundry-Next's response carries no marker line, so the instruction "
+        "all four width surfaces give is unfollowable and every DELTA stream "
+        "is back to reading the truncated display."
+    )
+    display_half, _, json_half = rendered.partition(_display.RESULT_JSON_MARKER)
+    recovered = json.loads(json_half)["inspect_mode"]
+
+    assert recovered["touched_files"] == touched, (
+        f"following the prose recovers {len(recovered['touched_files'])} of "
+        f"{len(touched)} touched files. The TRACE surfaces tell the stream "
+        f"this list is its whole walk, so a truncation here is a walk the "
+        f"stream reports having run and did not."
+    )
+    assert recovered["prove_sample"] == sample, (
+        f"following the prose recovers {len(recovered['prove_sample'])} of "
+        f"{len(sample)} roster rows. `_coverage_shortfall`'s DELTA arm "
+        f"measures `checked >= len(roster)` against the full list, so a "
+        f"truncation here refuses a PROVE stream that did all of its work."
+    )
+    assert recovered["stream_scope"]["trace"]["scope"] == "delta", (
+        "the per-stream scope did not survive the boundary. `mode` alone is "
+        "not a stream's width, which is the whole reason the TRACE surfaces "
+        "name this key."
+    )
+
+    assert touched[5] not in display_half, (
+        "the DISPLAY half stopped truncating. The four surfaces say the "
+        "printed list is truncated at five files and that copying it is the "
+        "error; if the box now shows everything, the prose is wrong in the "
+        "other direction -- and NFR-005's readable terminal was the reason "
+        "the summary existed."
+    )
+    assert sample[8] not in display_half, (
+        "the DISPLAY half stopped truncating the PROVE roster at eight rows, "
+        "which both PROVE surfaces state as the number a stream must not "
+        "copy."
+    )
+
+
+# ---------------------------------------------------------------------------
 # D-108 / FR-019 -- one hash spelling, driven rather than described
 # ---------------------------------------------------------------------------
 #

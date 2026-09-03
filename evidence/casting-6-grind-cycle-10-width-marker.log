@@ -1,0 +1,30 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import json,pathlib,subprocess,sys; sys.path.insert(0,"src"); from foundry_mcp.tools import display; R=pathlib.Path.cwd().parents[2]; SURF=["agents/tracer.md","agents/assayer.md","skills/trace/SKILL.md","skills/prove/SKILL.md"]; flat=lambda s: " ".join(s.split()); new=lambda f: flat((R/"plugins/foundry"/f).read_text(encoding="utf-8")); old=lambda f: flat(subprocess.run(["git","-C",str(R),"show","2c23bb4:plugins/foundry/"+f],capture_output=True,text=True).stdout); M=display.RESULT_JSON_MARKER; RESP="read `inspect_mode` out of the RESPONSE"; row=lambda f,t: print("   %-28s names the marker: %-5s says out-of-the-RESPONSE: %s" % (f, str(M in t), str(RESP in t))); print("== D-174: the roster the four width surfaces send a stream to read =="); print("   marker READ from display.RESULT_JSON_MARKER, never re-typed here:", repr(M)); print(); print("== BEFORE (tree 2c23bb4): every surface forbids the only thing it can read =="); [row(f,old(f)) for f in SURF]; print(); print("== AFTER: the same surfaces name where in the response the roster is =="); [row(f,new(f)) for f in SURF]; print(); print("== following the prose literally, on a real format_result_blocks rendering =="); touched=["src/mod_%d.py" % i for i in range(9)]; sample=["FR-%03d" % i for i in range(10)]; res={"action":"dispatch","inspect_mode":{"mode":"DELTA","rule":"delta","cycle":7,"diff_base":"abc1234","touched_files":touched,"prove_sample":sample,"stream_scope":{"trace":{"scope":"delta","detail":"9 files"}}}}; rendered=display.format_result_blocks("Foundry-Next",res); disp,_,tail=rendered.partition(M); rec=json.loads(tail)["inspect_mode"]; print("   recorded touched_files: %d   recovered after the marker: %d   visible in the display half: %d" % (len(touched),len(rec["touched_files"]),sum(1 for f in touched if f in disp))); print("   recorded prove_sample:  %d   recovered after the marker: %d   visible in the display half: %d" % (len(sample),len(rec["prove_sample"]),sum(1 for r in sample if r in disp))); print("   stream_scope.trace.scope recovered:", repr(rec["stream_scope"]["trace"]["scope"])); print(); print("== the display half is STILL truncated, which is the readability NFR-005 buys =="); print("   display truncates TRACE at five files:", str(touched[5] not in disp)); print("   display truncates PROVE at eight rows:", str(sample[8] not in disp)); print(); print("== pre-D-173 boundary, for contrast: format_result discards the dict =="); od=display.format_result("Foundry-Next",res); print("   format_result output carries touched_files:", str("touched_files" in od)); print("   format_result output carries inspect_mode: ", str("inspect_mode" in od))'
+# evidence-for: AC-019, FR-012, FR-047, US-004, NFR-005
+
+== D-174: the roster the four width surfaces send a stream to read ==
+   marker READ from display.RESULT_JSON_MARKER, never re-typed here: '── machine-readable result ──'
+
+== BEFORE (tree 2c23bb4): every surface forbids the only thing it can read ==
+   agents/tracer.md             names the marker: False says out-of-the-RESPONSE: True
+   agents/assayer.md            names the marker: False says out-of-the-RESPONSE: True
+   skills/trace/SKILL.md        names the marker: False says out-of-the-RESPONSE: True
+   skills/prove/SKILL.md        names the marker: False says out-of-the-RESPONSE: True
+
+== AFTER: the same surfaces name where in the response the roster is ==
+   agents/tracer.md             names the marker: True  says out-of-the-RESPONSE: True
+   agents/assayer.md            names the marker: True  says out-of-the-RESPONSE: True
+   skills/trace/SKILL.md        names the marker: True  says out-of-the-RESPONSE: True
+   skills/prove/SKILL.md        names the marker: True  says out-of-the-RESPONSE: True
+
+== following the prose literally, on a real format_result_blocks rendering ==
+   recorded touched_files: 9   recovered after the marker: 9   visible in the display half: 5
+   recorded prove_sample:  10   recovered after the marker: 10   visible in the display half: 8
+   stream_scope.trace.scope recovered: 'delta'
+
+== the display half is STILL truncated, which is the readability NFR-005 buys ==
+   display truncates TRACE at five files: True
+   display truncates PROVE at eight rows: True
+
+== pre-D-173 boundary, for contrast: format_result discards the dict ==
+   format_result output carries touched_files: False
+   format_result output carries inspect_mode:  False
