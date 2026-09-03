@@ -2,6 +2,7 @@
 # evidence-for: AC-040, US-008
 # evidence-volatile: /[^ ]*/\.planning/[^ ]*
 # evidence-volatile: \d+\.\d+s
+# evidence-volatile: /[^ ]*/foundry-archive/[^ ]*
 # evidence-timeout: 300
 
 ........sss............................................................. [  2%]
