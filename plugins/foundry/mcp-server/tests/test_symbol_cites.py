@@ -345,9 +345,23 @@ def test_resolution_ignores_the_hint_even_when_the_symbol_is_broken(
 
 
 # --- gate wiring ------------------------------------------------------------
-def _casting_run(root: Path, spec_requirements: str) -> tuple[str, str, str]:
-    """Initialize a run with one casting prompt. Returns (spec, prompt) hashes
-    and the run dir path."""
+#: A commit-shaped value for the acceptance gate's now-required
+#: ``casting_commit`` (CT-015 / AC-015 / FR-010 / OT-027). It never has to name
+#: a real commit HERE, and that is a property of the evidence path rather than
+#: a shortcut: ``_casting_run`` writes a spec with no ``spec_format_version``
+#: frontmatter, so the spec reads as v2.0 and ``verify_evidence`` decides that
+#: BEFORE any worktree or subprocess ("reading spec_format_version BEFORE
+#: worktree setup keeps the v2.0 path zero-cost"). Nothing checks this SHA out.
+#:
+#: Stated once so the nine gate tests below pass one value rather than nine.
+#: This file's subject is the citation grammar, and none of its assertions
+#: change: the gate was brought to the call sites, never softened for them.
+_CASTING_COMMIT = "0" * 40
+
+
+def _casting_run(root: Path, spec_requirements: str) -> tuple[str, str, str, str]:
+    """Initialize a run with one casting prompt. Returns (spec, prompt) hashes,
+    the run dir path, and the ``casting_commit`` the acceptance gate requires."""
     result = foundry_init(project_root=str(root))
     fdir = Path(result["foundry_dir"])
     spec_text = "# Spec\n\nAC-005 the gate accepts symbol cites.\n"
@@ -363,19 +377,20 @@ def _casting_run(root: Path, spec_requirements: str) -> tuple[str, str, str]:
     from foundry_mcp.tools.foundry_handoff import foundry_spec_hash
 
     spec_hash = foundry_spec_hash(project_root=str(root))["spec_hash"]
-    return spec_hash, _hash_str(prompt_text), str(fdir)
+    return spec_hash, _hash_str(prompt_text), str(fdir), _CASTING_COMMIT
 
 
 def test_gate_accepts_a_symbol_cite_with_a_stale_line_hint(tree: Path) -> None:
     """AC-005 / OT-006 end to end — a report citing ``path#Symbol`` beside a
     badly stale line hint passes the acceptance gate's citation check."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-005**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
         prompt_hash=prompt_hash,
         completion_report="AC-005: implemented at src/ledger.py:9999#add_defect\n",
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == [], result
     assert result["unresolved_symbol_cites"] == []
@@ -385,13 +400,14 @@ def test_gate_accepts_a_symbol_cite_with_a_stale_line_hint(tree: Path) -> None:
 def test_gate_still_accepts_a_legacy_file_line_cite(tree: Path) -> None:
     """AC-005 — no narrowing: the file:line form the gate accepted before is
     still a citation."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-005**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
         prompt_hash=prompt_hash,
         completion_report="AC-005: implemented at src/ledger.py:42-58\n",
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == []
     assert result["ok"] is True, result["warning"]
@@ -400,13 +416,14 @@ def test_gate_still_accepts_a_legacy_file_line_cite(tree: Path) -> None:
 def test_gate_flags_an_unresolvable_symbol_cite(tree: Path) -> None:
     """AC-006 / OT-006 — a symbol that resolves nowhere blocks acceptance and
     is named individually."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-006**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-006**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
         prompt_hash=prompt_hash,
         completion_report="AC-006: implemented at src/ledger.py#never_written\n",
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["ok"] is False
     assert [c["symbol"] for c in result["unresolved_symbol_cites"]] == [
@@ -437,7 +454,7 @@ def test_gate_accepts_a_resolvable_kebab_symbol_cite(tree: Path) -> None:
     """ADJACENT PATH — the acceptance gate end to end. A real kebab-case
     symbol must not become a false block: the fix has to make the guard
     honest, not merely stricter."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-006**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-006**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
@@ -446,6 +463,7 @@ def test_gate_accepts_a_resolvable_kebab_symbol_cite(tree: Path) -> None:
             "AC-006: implemented at hooks/guard.sh:9999#check-staged-only\n"
         ),
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == [], result
     assert result["unresolved_symbol_cites"] == []
@@ -456,7 +474,7 @@ def test_gate_flags_a_truncation_hidden_unresolvable_cite(tree: Path) -> None:
     """ADJACENT PATH — D-054/D-057 at the gate. This report used to be
     accepted, because the guard resolved the `check` prefix. The rejection
     must name the symbol as written."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-006**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-006**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
@@ -465,6 +483,7 @@ def test_gate_flags_a_truncation_hidden_unresolvable_cite(tree: Path) -> None:
             "AC-006: implemented at hooks/guard.sh#check-totally-nonexistent\n"
         ),
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["ok"] is False
     assert [c["symbol"] for c in result["unresolved_symbol_cites"]] == [
@@ -478,13 +497,14 @@ def test_gate_reports_a_missing_citation_when_no_cite_of_either_form(
 ) -> None:
     """No-regression — the missing-citation check still fires when the report
     cites nothing at all."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-005**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
         prompt_hash=prompt_hash,
         completion_report="AC-005: I did it, trust me.\n",
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == ["AC-005"]
     assert result["ok"] is False
@@ -728,13 +748,14 @@ def test_a_citation_immediately_before_the_id_counts(tree: Path) -> None:
     survived: a gate that only refuses too much produces no bad acceptances to
     notice, just wasted cycles.
     """
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-005**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
         prompt_hash=prompt_hash,
         completion_report="src/ledger.py#add_defect implements AC-005\n",
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == [], result
     assert result["ok"] is True, result["warning"]
@@ -743,13 +764,14 @@ def test_a_citation_immediately_before_the_id_counts(tree: Path) -> None:
 def test_a_citation_after_the_id_still_counts(tree: Path) -> None:
     """The direction that already worked — pinned so widening the window did
     not trade one side for the other."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-005**: symbol cites")
     result = foundry_accept_casting(
         casting_id=1,
         spec_hash=spec_hash,
         prompt_hash=prompt_hash,
         completion_report="AC-005 implemented at src/ledger.py#add_defect\n",
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == []
     assert result["ok"] is True, result["warning"]
@@ -760,7 +782,7 @@ def test_a_citation_far_from_the_id_is_still_missing(tree: Path) -> None:
     well beyond 300 characters on EITHER side still reports the requirement as
     uncited — otherwise widening the window would have quietly retired the
     proof-of-coverage check it exists to enforce."""
-    spec_hash, prompt_hash, _ = _casting_run(tree, "- **AC-005**: symbol cites")
+    spec_hash, prompt_hash, _, casting_commit = _casting_run(tree, "- **AC-005**: symbol cites")
     filler = "x" * 400
     result = foundry_accept_casting(
         casting_id=1,
@@ -770,5 +792,6 @@ def test_a_citation_far_from_the_id_is_still_missing(tree: Path) -> None:
             f"src/ledger.py#add_defect\n{filler}\nAC-005 was implemented\n{filler}\n"
         ),
         project_root=str(tree),
+        casting_commit=casting_commit,
     )
     assert result["missing_citations"] == ["AC-005"], result
