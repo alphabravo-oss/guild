@@ -852,8 +852,33 @@ def test_exactly_one_renderer_draws_each_of_the_four_fact_groups(run_env):
         line for line in status_src.splitlines()
         if not line.lstrip().startswith("#")
     )
-    for label in ("Inspect:", "Spend:", "Server:", "HALTED"):
+    for label in ("Inspect:", "Spend:", "Server:", "HALTED:"):
         assert label not in code, f"_format_status_display still draws {label}"
+
+    # D-137 — THE LABEL, NOT THE VOCABULARY CONSTANT.
+    #
+    # This checked the bare token "HALTED", which the halt DETAIL line draws as
+    # "HALTED:" in display.py. That is the fact D-018 forbids a second copy of,
+    # and the assertion now names it with its colon. The bare token also
+    # matched `RUN_PHASE_HALTED` — vocab's own constant — so the guard could
+    # not tell "this renderer draws the halt line" from "this renderer READS
+    # the phase vocabulary", and the second is what every branch in this
+    # module is required to do rather than re-type a literal.
+    #
+    # So the constant is asserted PRESENT: `_format_status_display` compares
+    # the phase against it to render the banner ONCE. Before D-137 the banner
+    # read "F O U N D R Y  HALTED HALTED", because `phase_names` has no entry
+    # for the halt and the fallback repeats the token — a stutter that is this
+    # renderer's own fact to get right (CT-016 / NFR-005), and not a second
+    # copy of anyone else's.
+    assert "RUN_PHASE_HALTED" in code, (
+        "the banner must compare against vocab's constant, never a literal"
+    )
+    assert '"HALTED"' not in code and "'HALTED'" not in code, (
+        "the phase token is READ from vocab here, never re-typed"
+    )
+    rendered_halt = format_result("Foundry-Next", foundry_next_action(project_root))
+    assert "HALTED HALTED" not in rendered_halt
 
 
 # --------------------------------------------------------------------------- #

@@ -2101,15 +2101,28 @@ def test_a_locator_that_does_not_name_a_test_is_refused(run_env, locator, why):
     assert result["missing_fields"] == ["regression_test"], (locator, why)
 
 
-def test_an_unresolvable_path_is_accepted_on_the_shape_alone(run_env):
-    """The deliberate asymmetry, and the reason for it.
+def test_a_locator_naming_no_file_in_the_tree_is_refused(run_env):
+    """ST-003 verbatim: 'the locator names a REAL test' — D-131.
 
-    `_test_ref_problem` already carries this ruling in its own comment: this
-    server runs against a TARGET repo whose tests it frequently cannot resolve,
-    and "I could not find your file" is a refusal the caller cannot falsify from
-    where they stand — it blocks a real fix behind an unsatisfiable check. So the
+    This test asserted the OPPOSITE and is what pinned the hole. It read "the
     filesystem rung is a STRENGTHENING that fires only when it can be proven,
-    never a precondition.
+    never a precondition", on `_test_ref_problem`'s ruling that a server
+    running against a TARGET repo frequently cannot resolve its tests. The
+    premise was true and the consequence was that the one field the LATENT lane
+    rests on validated nothing whenever the caller rooted its path differently
+    from this process. Driven on a LATENT defect:
+    `regression_test='tests/test_ghost.py::test_ghost'` returned ok True and
+    closed the defect with no such file anywhere, and on the guild repo
+    `tests/test_fix_gate.py::test_totally_absent_name` — a REAL file that
+    defines no such test — was accepted too, because
+    `Path(project_root)/'tests/test_fix_gate.py'` does not resolve when
+    project_root is the repository root and the citation is mcp-server-relative.
+
+    LEAD RULING, GRIND cycle 7: the locator must resolve to a real test
+    whichever root it is relative to. `_resolve_test_path` removes the premise
+    — it tries the path as given, under project_root, and by unique suffix
+    beneath it — so "nowhere" now means the file is not in the tree, which is
+    falsifiable from where the caller stands: commit the test.
     """
     project_root, fdir = run_env
     _set_cycle(fdir, 1)
@@ -2121,6 +2134,86 @@ def test_an_unresolvable_path_is_accepted_on_the_shape_alone(run_env):
         project_root=project_root,
     )
 
+    assert result.get("ok") is not True, result
+    assert "regression_test" in result.get("missing_fields", []), result
+    assert "does not resolve" in json.dumps(result), result
+
+
+def test_a_locator_rooted_at_a_subdirectory_resolves_by_suffix(run_env):
+    """D-131's other half: the teammates' own spelling has to resolve.
+
+    A citation is written relative to the package the test lives in
+    (`tests/test_fix_gate.py`), while `project_root` is the repository root
+    several levels up. Resolving only `project_root / path` made every such
+    locator unprovable, which is what let the ghost through. The suffix search
+    resolves it, and the file's real contents are then read — so a real test
+    passes and a name the file does not define is refused, on the same locator
+    spelling.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    nested = Path(project_root) / "packages" / "api" / "tests"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "test_sweeper.py").write_text(
+        "def test_evicts_stale():\n    assert True\n", encoding="utf-8"
+    )
+
+    assert fo._regression_test_problem(
+        "tests/test_sweeper.py::test_evicts_stale", project_root
+    ) is None
+    assert fo._regression_test_problem(
+        "tests/test_sweeper.py::test_never_written", project_root
+    ) is not None
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        regression_test="tests/test_sweeper.py::test_evicts_stale",
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+
+def test_a_parametrised_node_id_is_not_refused_as_naming_no_test(run_env):
+    """CT-004 — D-134. A refusal only when the locator 'is absent or does not
+    name a test'; `tests/test_repro.py::test_param_gap[1]` names one.
+
+    Driven: a file defining `def test_param_gap(a)` under `@parametrize` was
+    refused with "exists but defines no 'test_param_gap[1]'" — the diagnostic
+    asserting a `def` is missing that is present, on a node id pytest collects
+    and runs. The rung compared the bracketed id against def names instead of
+    stripping the parameter suffix.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    tests_dir = Path(project_root) / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_repro.py").write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize('a', [1, 2])\n"
+        "def test_param_gap(a):\n"
+        "    assert a\n",
+        encoding="utf-8",
+    )
+
+    assert fo._regression_test_problem(
+        "tests/test_repro.py::test_param_gap[1]", project_root
+    ) is None, "a parametrised node id names the def it is drawn from"
+    assert fo._regression_test_problem(
+        "tests/test_repro.py::test_param_gap[a-b-c]", project_root
+    ) is None, "the whole bracketed param set is stripped, not one token of it"
+    # And the suffix is not a way to smuggle a name the file lacks past the rung.
+    assert fo._regression_test_problem(
+        "tests/test_repro.py::test_absent[1]", project_root
+    ) is not None
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        regression_test="tests/test_repro.py::test_param_gap[1]",
+        project_root=project_root,
+    )
     assert result["ok"] is True, result
 
 
@@ -3049,7 +3142,14 @@ def test_the_latent_locator_ladder_applies_the_rungs_its_sibling_has(run_env):
     # Both ladders reject prose outright.
     assert fo._regression_test_problem("the fix::works now", project_root)
     assert fo._test_ref_problem("the fix works now", "", "")
-    # ...and a real locator clears it.
+    # ...and a real locator clears it. D-131: "real" now includes the file
+    # being in the tree, so the fixture writes it rather than naming a path off
+    # in space — which is the point of that rung.
+    tests_dir = Path(project_root) / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_auth.py").write_text(
+        "def test_refresh_session_expiry():\n    assert True\n", encoding="utf-8"
+    )
     assert fo._regression_test_problem(
         "tests/test_auth.py::test_refresh_session_expiry", project_root
     ) is None
@@ -3377,3 +3477,218 @@ def test_a_test_only_commit_still_gets_the_test_only_diagnosis(run_env):
     assert "touches only test files" in problem, problem
     assert "tests/test_sweeper.py" in problem, problem
     assert "changes no files at all" not in problem, problem
+
+
+# --------------------------------------------------------------------------- #
+# D-132 — a LATENT lead fix's fix_commit names a real object
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("bad", ["not-a-commit", "-1", "tbd", "0" * 40])
+def test_a_latent_lead_fix_is_refused_when_fix_commit_names_no_object(
+    run_env, bad
+):
+    """FR-053 verbatim: 'authored_by=lead always needs fix_commit SO THE
+    lead_fix HANDOFF CARRIES THE COMMIT'. CT-005 / AC-022. D-132.
+
+    CT-006's second clause — on a LATENT defect the required fix_commit "is
+    recorded and NOT measured" — was read as "no git call at all". Driven on a
+    LATENT defect with authored_by=lead and a valid regression_test locator,
+    each of these values returned ok True; the record persisted fix_commit
+    'tbd'; handoffs.jsonl gained {fix_commit 'tbd', file null, line_count null,
+    files null}; and report.json rendered "measurement unavailable - git could
+    not read the commit". `_numstat_measurement` refuses the shape by name (the
+    D-105 rung) and the LATENT branch discarded the refusal at the record step.
+    The same values on the LIVE lane were refused.
+
+    What stays LIVE-only is the LANE — the file count and the line count. A
+    commit git cannot resolve is not a measurement that was skipped; it is a
+    field that names nothing for the audit record to carry.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead",
+        regression_test=locator, fix_commit=bad, project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (bad, result)
+    assert "fix_commit" in result.get("missing_fields", []), result
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert ledger["defects"][0]["status"] == "open", "a refused fix closes nothing"
+    assert not (fdir / "handoffs.jsonl").exists(), (
+        "no lead_fix record for a refused fix"
+    )
+
+
+def test_the_latent_lead_lane_refusal_does_not_quote_a_limit_it_never_applied(
+    run_env
+):
+    """D-132 / CT-006: a LATENT lead fix is not measured, so its refusal must
+    not send the lead to shrink a commit nothing measured.
+
+    The lane refusal's hint quotes `LEAD_LANE_MAX_FILES` and
+    `LEAD_LANE_MAX_LINES`, which is the right instruction on the LIVE arm and
+    the wrong one here — FR-046 is explicit that a LATENT gap can be a large,
+    mechanical, entirely safe change with no reachable failure whose blast
+    radius the bound is protecting.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead",
+        regression_test=locator, fix_commit="tbd", project_root=project_root,
+    )
+
+    hint = result["hint"]
+    assert "not measured" in hint, hint
+    from foundry_mcp.schemas.vocab import LEAD_LANE_MAX_LINES
+
+    assert str(LEAD_LANE_MAX_LINES) not in hint, hint
+    assert "GRIND teammate" not in hint, hint
+
+
+def test_a_latent_lead_fix_with_a_real_commit_of_any_size_still_succeeds(
+    run_env, tmp_path
+):
+    """AC-021 verbatim: 'on a LATENT defect a lead fix of ANY SIZE succeeds
+    with its regression_test and its required fix_commit is recorded
+    unmeasured.' D-132 must not have narrowed that.
+
+    A five-file, several-hundred-line commit — far outside the LIVE lane — is
+    accepted on the LATENT lane, and the handoff record carries the real
+    measurement rather than nulls (D-046). Only the "is this a commit" rung was
+    added; no limit was.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    _repo(project_root)
+    commit = _commit_changing(project_root, {f"pkg/m{n}.py": 60 for n in range(5)})
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead",
+        regression_test=locator, fix_commit=commit, project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    record = json.loads((fdir / "handoffs.jsonl").read_text(
+        encoding="utf-8").strip().splitlines()[-1])
+    from foundry_mcp.schemas.vocab import HANDOFF_EVENT_LEAD_FIX
+
+    assert record["event"] == HANDOFF_EVENT_LEAD_FIX
+    assert record["fix_commit"] == commit
+    from foundry_mcp.schemas.vocab import LEAD_LANE_MAX_LINES
+
+    assert record["line_count"] and record["line_count"] > LEAD_LANE_MAX_LINES
+
+
+# --------------------------------------------------------------------------- #
+# D-121 — the hash refusal reads the same at both doors
+# --------------------------------------------------------------------------- #
+
+
+def _plain_text(text: str) -> str:
+    """`text` with ANSI colour removed — what a lead actually reads."""
+    import re as _re
+
+    return _re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+
+def test_the_hash_refusal_names_both_hashes_at_the_fix_door(run_env):
+    """FR-019 / AC-030 / CT-011: the hash is the one thing the teammate states
+    back and the server compares. D-121.
+
+    spec.md's Error Handling row names BOTH doors for this refusal — "Reported
+    prompt hash differs from file | Foundry-Accept-Casting, Foundry-Fix |
+    refused | expected and reported hash" — and only one of them said so.
+    Driven (TEST-01 OBS-032): Foundry-Fix with authored_by=teammate, casting_id
+    1 and prompt_hash 'sha256:0000000000000000' refused correctly, and the
+    ENTIRE rendered text was the bare token 'stale_prompt_hash'; the assertion
+    that '0000000000000000' appears in it failed on 7 of 7 fix-door examples
+    while all 3 accept-door examples passed.
+
+    The shared C-8 rung returns `error`, `hint`, `expected_hash` and
+    `reported_hash` — the token is the `error` and every VALUE it compared is
+    in the other three keys. The handler returns that dict unchanged; the
+    renderer dropped three of its four keys. A lead reading only
+    'stale_prompt_hash' cannot tell a stale dispatch from a teammate that never
+    read the file, which is the distinction the check exists to expose.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        "# Casting 1\n\nthe real prompt\n", encoding="utf-8"
+    )
+    stale = "sha256:0000000000000000"
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="teammate",
+        regression_test=locator, casting_id=1, prompt_hash=stale,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert result["error"] == "stale_prompt_hash"
+    assert result["reported_hash"] == stale
+
+    rendered = _plain_text(format_result("Foundry-Fix", result))
+    assert "0000000000000000" in rendered, rendered
+    assert result["expected_hash"][7:] in rendered, rendered
+    assert "re-read the prompt file" in rendered, rendered
+
+
+def test_both_hash_doors_render_the_same_facts(run_env):
+    """D-121 as the property: ONE refusal, TWO doors, one shape.
+
+    `check_reported_prompt_hash` is deliberately shared by
+    `foundry_accept_casting` and `Foundry-Fix` — "a hash rung that exists at
+    one door and not the other lets an unread prompt through whichever door the
+    lead happens to walk". The same reasoning applies to its RENDERING: a
+    refusal that reaches the lead as a bare token at one door and as both
+    hashes at the other is the same drift, one layer up.
+
+    Driven through both doors on identical inputs, comparing what each screen
+    actually carries rather than what each handler returns.
+    """
+    from foundry_mcp.tools.display import format_result
+    from foundry_mcp.tools.foundry_handoff import check_reported_prompt_hash
+
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        "# Casting 1\n\nthe real prompt\n", encoding="utf-8"
+    )
+    stale = "sha256:1111111111111111"
+
+    shared = check_reported_prompt_hash(fdir, 1, stale)
+    assert shared is not None and shared["error"] == "stale_prompt_hash"
+
+    fix = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="teammate",
+        regression_test=locator, casting_id=1, prompt_hash=stale,
+        project_root=project_root,
+    )
+
+    fix_screen = _plain_text(format_result("Foundry-Fix", fix))
+    accept_screen = _plain_text(format_result("Foundry-Accept-Casting", shared))
+
+    for fact in (shared["expected_hash"][7:], stale[7:]):
+        assert fact in fix_screen, ("fix door", fact, fix_screen)
+        assert fact in accept_screen, ("accept door", fact, accept_screen)

@@ -1538,6 +1538,60 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
     checklist.append({"check": f"verdict_coverage ({verdict_count}/{spec_count})", "ok": verdicts_complete})
 
+    # GI-002 / FR-042 / FR-009 — THE CORPUS RE-EXECUTES BEFORE DONE. D-133.
+    #
+    # GI-002 (Locked) sweeps the whole corpus "before ASSAY/NYQUIST/DONE" and
+    # this checklist had no evidence rung at all: report_generated,
+    # escalated_classes_cleared, run_not_halted, spec_requirements_parsed,
+    # all_verified, zero_blocking_defects, no_active_teams, verdict_coverage.
+    # So a fix landing in F5 or F5.5 — which is exactly what the lead lane
+    # US-005 opens is for — reached DONE with the committed evidence never
+    # re-executed over it, and `fixes_after_decision`, the stamp that catches
+    # the same shape one phase earlier, is read only by `inspect_clean`.
+    #
+    # STATED HERE rather than only in the two F6 transitions, because this
+    # function IS the shared evaluation both F6 doors and both gates consult
+    # (D-037 / D-043 / D-044). An evidence rung present in the transition and
+    # absent from the gate would be the drift this helper exists to prevent:
+    # the gate would pass a run the transition then refuses.
+    #
+    # The sweep is memoised on HEAD (see `_terminal_evidence_sweep`), so the
+    # gate-then-transition pair pays for one re-execution rather than two, and
+    # any commit between them invalidates the memo and re-runs it.
+    #
+    # LAST of the reason-claiming branches EXCEPT the halt, in this function's
+    # ordering discipline: a run short a verdict or carrying an open LIVE
+    # defect should be told about that first, because the corpus is going to
+    # move again when they fix it. A halted run still wins over this — it has
+    # already stopped.
+    evidence = _terminal_evidence_sweep(fdir, project_root)
+    if not evidence["ok"]:
+        passed = False
+        refusal = _terminal_sweep_refusal(evidence, "mark the run DONE")
+        reason = refusal["error"].replace("Cannot mark the run DONE — ", "")
+        hint = refusal["hint"]
+    checklist.append({
+        "check": (
+            "evidence_reproduces_at_head "
+            f"(mismatches={len(evidence.get('mismatches') or [])})"
+        ),
+        "ok": bool(evidence["ok"]),
+        "mismatches": [
+            m.get("log", "?") for m in (evidence.get("mismatches") or [])
+        ],
+        "swept_head": evidence.get("head", ""),
+        "cached": bool(evidence.get("cached")),
+    })
+
+    # The halt is re-asserted after the evidence rung so it keeps the last word
+    # on `reason` (see its own branch above): telling a lead to re-capture an
+    # evidence log on a run that ended two cycles ago sends them to do work
+    # that cannot be gated.
+    if halted is not None:
+        refusal = _halted_refusal(fdir, "Foundry-Phase(phase='done')") or {}
+        reason = refusal.get("error", "the run is HALTED")
+        hint = refusal.get("hint", "")
+
     return {"passed": passed, "reason": reason, "hint": hint, "checklist": checklist}
 
 
@@ -1773,7 +1827,33 @@ def foundry_gate(
         if not streams["complete"]:
             passed = False
             reason = f"Verification streams incomplete: {streams.get('missing', '')}"
-            hint = "All streams (trace, prove, sight, test) must complete before ASSAY"
+            # D-122 / FR-012 / AC-017 — THE HINT NAMES THE ROSTER THE
+            # TRANSITION RECORDED, NOT THE ONE THAT PRE-DATES THE WIDTH.
+            #
+            # This read "All streams (trace, prove, sight, test) must complete
+            # before ASSAY" — the roster this gate required before FR-012 made
+            # research_audit and test01 required in FULL mode. Driven on a FULL
+            # cycle whose recorded `required_streams` are trace, prove, test,
+            # research_audit, test01 with only the last two unmarked: the
+            # refusal said "incomplete: research_audit test01" and the hint
+            # beside it named NEITHER of them and named `sight`, which this
+            # run's recorded roster does not require. AC-017's clause is that
+            # the required set is named EXACTLY, and a hint listing a different
+            # set than the reason it sits under sends the lead to run streams
+            # the cycle does not owe while the two it does owe go unmentioned.
+            #
+            # Read from `streams["required"]`, which `_check_streams_complete`
+            # takes off the recorded decision (GI-008) — the same list the
+            # reason's `missing` is computed from, so the two halves of one
+            # refusal cannot disagree again.
+            required_now = streams.get("required") or []
+            hint = (
+                "This INSPECT's recorded roster is "
+                + (", ".join(required_now) if required_now else "not recorded")
+                + f" — every one of them must complete before ASSAY. Missing: "
+                f"{streams.get('missing', '') or 'none'}. Run each missing "
+                "stream, then Foundry-Stream(stream, cycle, items_checked)."
+            )
         checklist.append({"check": "all_streams_complete", "ok": streams["complete"],
                          "missing": streams.get("missing", "")})
 
@@ -1824,7 +1904,24 @@ def foundry_gate(
             if has_fixed > 0:
                 passed = False
                 reason = "GRIND fixed defects but INSPECT has not re-verified"
-                hint = "Run full INSPECT cycle after GRIND. Call foundry_mark_inspect_clean when clean."
+                # D-123 / FR-044 / AC-035 — THE REMEDY NAMES A CALL THAT
+                # EXISTS.
+                #
+                # This hint read "Call foundry_mark_inspect_clean when clean."
+                # `grep -rn foundry_mark_inspect_clean plugins/foundry` found
+                # the name in this string and NOWHERE else: no MCP tool, no
+                # Python function, no prose surface carries it. The door that
+                # closes an INSPECT is Foundry-Phase(phase='inspect_clean'),
+                # which FR-006 and AC-008 name and which FR-044's
+                # Gate-then-Phase sequence relies on. A refusal whose only
+                # stated next move is a call the server would reject is a
+                # refusal with no remedy — the D-011 shape, on this door.
+                hint = (
+                    "Re-run the INSPECT this GRIND owes, then close it with "
+                    "Foundry-Phase(phase='inspect_clean') — that transition "
+                    "writes the .inspect-clean marker this check reads, and it "
+                    "is the only call that does."
+                )
             checklist.append({"check": "inspect_clean", "ok": False})
         else:
             checklist.append({"check": "inspect_clean", "ok": True})
@@ -2000,6 +2097,35 @@ VALID_STREAMS = STREAM_WIRE_IDS
 # --------------------------------------------------------------------------- #
 
 ROLLUP_FILENAME = "stream-rollup.json"
+
+
+def _recorded_stream_scope(fdir: Path, cycle: int, stream: str) -> str:
+    """The scope THIS cycle's recorded decision drew for one stream (D-139).
+
+    ``"full"`` / ``"delta"`` / ``"skipped"`` as `_decide_inspect_mode` wrote
+    them, or ``""`` when no decision applies to this cycle — an older archive,
+    a run whose INSPECT was opened before the width existed, or a decision
+    stamped with a different cycle number.
+
+    The cycle stamp is checked, not assumed. `_current_inspect_mode` returns
+    the LAST entry whatever cycle it belongs to, and a caller reading a scope
+    off a decision made for another cycle would be narrowing this one against a
+    width nothing recorded for it — GI-008's named violation, arriving through
+    a helper instead of through a recomputation.
+    """
+    recorded = _current_inspect_mode(fdir)
+    if not isinstance(recorded, dict):
+        return ""
+    if recorded.get("cycle") != cycle:
+        return ""
+    scope = recorded.get("stream_scope")
+    if not isinstance(scope, dict):
+        return ""
+    entry = scope.get(stream)
+    if not isinstance(entry, dict):
+        return ""
+    value = entry.get("scope")
+    return value if isinstance(value, str) else ""
 
 
 def _rollup_totals(fdir: Path, cycle: int, stream: str) -> dict | None:
@@ -2310,8 +2436,44 @@ def foundry_mark_stream(
     # Drop warning: cycle N's TOTAL against cycle N-1's TOTAL (CT-003). The
     # old comparison read the previous write of this same marker file, which
     # made a second partial tranche in the SAME cycle look like a collapse.
+    #
+    # D-139 / FR-012 / AC-018 — AND IT NEVER FIRES AGAINST A WIDTH THE SERVER
+    # ITSELF DREW.
+    # ----------------------------------------------------------------------
+    # This rung consulted no recorded decision at all, so on every DELTA cycle
+    # that followed a FULL one it accused a stream of rushing for running
+    # EXACTLY the roster the server handed it. Driven: cycle 1 prove recorded
+    # 172/172 at FULL; cycle 2's `inspect_start` recorded a DELTA roster of 13
+    # rows; `Foundry-Stream(prove, cycle 2, items_checked=13, items_total=13)`
+    # returned ok with `coverage_shortfall` null — the rung that DOES read the
+    # roster was satisfied — beside the warning "Coverage dropped: prove
+    # checked 13 items in cycle 2 vs 172 in cycle 1. Are you rushing?". FR-012
+    # fixes the DELTA PROVE width as the fixed-defect rows plus ten sampled
+    # rows, so 13 of 13 is complete delivery of the declared width, and the
+    # same false accusation fired for TRACE on every DELTA cycle after a FULL
+    # one.
+    #
+    # The recorded per-stream SCOPE is what decides. `_decide_inspect_mode`
+    # writes `stream_scope[wire]["scope"]` as "full", "delta" or "skipped" at
+    # the transition that opened this INSPECT, and a stream recorded "delta"
+    # is one whose population the server deliberately narrowed — there is
+    # nothing to compare against last cycle's, because they are not the same
+    # denominator. `_coverage_shortfall` already measures a DELTA stream
+    # against its own roster (D-080), so the width is not going unchecked; it
+    # is being checked by the rung that knows what the width IS.
+    #
+    # A stream recorded "full" on a DELTA cycle — TEST, which AC-019 keeps full
+    # and cold — still gets the drop rung, because its denominator did not
+    # move. So does every stream on a FULL cycle, and every stream on a run
+    # with no recorded decision.
     coverage_warning = ""
-    if prev_totals is not None and prev_totals["items_checked"] > 0:
+    recorded_scope = _recorded_stream_scope(fdir, server_cycle, stream)
+    narrowed_by_the_server = recorded_scope == "delta"
+    if (
+        not narrowed_by_the_server
+        and prev_totals is not None
+        and prev_totals["items_checked"] > 0
+    ):
         if totals["items_checked"] < prev_totals["items_checked"] * 0.7:
             coverage_warning = (
                 f"Coverage dropped: {stream} checked {totals['items_checked']} items in "
@@ -3157,6 +3319,11 @@ def _entered_grind_from_feedback(fdir: Path) -> bool:
 #: that opened that cycle. Its own key is what keeps both records.
 TEMPER_ENTRY_ROLLUP_KEY = "temper_entry"
 
+#: D-133 — and the same reasoning one crossing later. Entering F5.5 does not
+#: advance the counter either, so the NYQUIST boundary's whole-corpus sweep is
+#: recorded under its own key rather than overwriting the temper entry's.
+NYQUIST_ENTRY_ROLLUP_KEY = "nyquist_entry"
+
 
 def _record_cycle_rollup(fdir: Path, cycle: int, *, sub: str = "", **fields) -> None:
     """Write CYCLE-level facts into `stream-rollup.json` (C-6).
@@ -3221,38 +3388,50 @@ def _waiting_on_agents(project_root: str) -> dict:
 
     Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
 
-    BOTH DECLARED INPUTS ARE READ, AND THEY ARE ANDED (D-076).
-    ----------------------------------------------------------
+    BOTH DECLARED INPUTS ARE READ; PROGRESS IS WHAT DECIDES (D-076, D-127).
+    ----------------------------------------------------------------------
     CT-012 declares this check's inputs as ".last-next-at, ACTIVE TEAMS,
     Foundry-Liveness roster"; FR-020 (Locked, verbatim) reads "Before accusing,
-    Foundry-Next checks ACTIVE TEAMS AND Foundry-Liveness"; AC-032's second arm
-    is "with no active teams it reports the stall". This function read
-    `foundry_liveness` only — the team scan was REMOVED, not demoted, and the
-    suite asserted its own absence with an AST walk, so a declared contract
-    input had a test guarding the fact that nothing consulted it. Driven:
-    `_check_active_teams` returning inactive, one ledger with a 60s-old line,
-    `.last-next-at` 600s in the past -> `waiting_on_agents` with
-    `stall_detected_seconds` ABSENT and the notice "WAITING ON 1 AGENT(S)",
-    where AC-032 requires the stall.
+    Foundry-Next checks ACTIVE TEAMS AND Foundry-Liveness ... IF AGENTS ARE
+    RUNNING it reports 'waiting on N agents'". Both sources are read. What they
+    are read FOR is the question the two defects here disagreed about.
 
-    LEAD RULING, GRIND cycle 4: waiting is reported only when a registered team
-    is ACTIVE **and** the liveness roster shows at least one agent progressing
-    inside the threshold. The two failure directions it fixes are the two
-    defects this function has now had:
+    D-076 removed the team scan entirely and the suite asserted its own absence
+    with an AST walk, so a declared contract input had a test guarding the fact
+    that nothing consulted it. The GRIND cycle-4 repair restored the scan and
+    ANDed it: waiting required a registered ACTIVE team **and** a progressing
+    ledger.
 
-      * no active team, a moving ledger        -> STALL (AC-032, D-076)
-      * a registered but DEAD team, no ledger  -> STALL (D-021)
+    D-127 — THE AND ACCUSED THE LEAD WHILE ITS OWN LIVENESS READ SHOWED AGENTS
+    WORKING. The F2 INSPECT streams are background Agents, never tmux
+    teammates, so `_check_active_teams` cannot see them — the cycle-4 comment
+    recorded that as a "known consequence" and the consequence is the defect.
+    Driven: no registered team, two progress ledgers written seconds earlier,
+    `.last-next-at` 600s old -> `waiting` False, `progressing_agents` 2, and
+    Foundry-Next emitted `stall_detected_seconds` 600 beside the notice "NO
+    agent is running. You were silently deliberating" — asserting deliberation
+    over two agents the same call had just measured progressing. FR-020 is
+    Locked and FR-036's proviso is that the notice NEVER asserts deliberation
+    while an agent is progressing.
 
-    D-021's cause is untouched by the AND: a stale team dir alone can no longer
-    suppress the warning, because the ledgers still have to agree. What the AND
-    adds back is the other necessary condition, which is what makes the
-    suppression require BOTH sources to say "something is running".
+    LEAD RULING, GRIND cycle 7 (state.json `spec_ambiguities` entry 7,
+    superseding the cycle-4 AND where they conflict): "if agents are running"
+    is decided by EVIDENCE OF PROGRESS.
 
-    KNOWN CONSEQUENCE, recorded in the run's `concerns.md`: the F2 INSPECT
-    streams are background Agents, not tmux teammates, so `_check_active_teams`
-    cannot see them and a long F2 wait now reads as a stall. That is the ruled
-    behaviour — the notice is advisory and blocks nothing (CT-012) — and the
-    alternative (OR semantics) is D-021 restored.
+      * a progressing ledger, no registered team  -> WAITING   (D-127)
+      * a registered but DEAD team, no ledger     -> STALL     (D-021)
+      * neither                                    -> STALL     (AC-032 arm 2)
+
+    So a progressing roster is SUFFICIENT whether or not a team is registered,
+    and a registered team is never sufficient on its own. AC-032's "with no
+    active teams it reports the stall" means no RUNNING AGENTS by either input,
+    which is what the roster measures. D-021's cause stays closed for the same
+    reason it was closed: a stale team directory alone still cannot suppress
+    the warning, because the ledgers are what answer.
+
+    `teams_active` is still read and still REPORTED on the result, so CT-012's
+    input set is unchanged and a caller can still tell a registered team from a
+    progressing one.
 
     NEVER RAISES AND NEVER BLOCKS (CT-012). Every failure path answers "not
     waiting", which degrades to the pre-change behaviour — the watchdog warns —
@@ -3294,11 +3473,14 @@ def _waiting_on_agents(project_root: str) -> dict:
             if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
                 live_agents.append(row)
 
-    # FR-020's AND, stated once. Either source answering "nothing is running"
-    # is enough to let the watchdog speak.
-    if not live_agents or not teams_active:
+    # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
+    # answer that lets the watchdog speak. A registered team with nothing
+    # progressing is D-021's stale directory rather than an agent to wait for,
+    # and it can no longer suppress the warning because it never reaches past
+    # this line on its own.
+    if not live_agents:
         result["teams_active"] = teams_active
-        result["progressing_agents"] = len(live_agents)
+        result["progressing_agents"] = 0
         return result
 
     # FR-036: the oldest progress age is what the lead actually needs — the
@@ -3312,7 +3494,11 @@ def _waiting_on_agents(project_root: str) -> dict:
     oldest = max(ages) if ages else 0
     result.update({
         "waiting": True,
-        "teams_active": True,
+        # D-127: REPORTED, not asserted. This used to be the literal `True` the
+        # AND had already proved; waiting no longer implies a registered team,
+        # so the field carries what the scan actually answered and CT-012's
+        # input set stays visible to every reader.
+        "teams_active": teams_active,
         "progressing_agents": len(live_agents),
         "count": len(live_agents),
         "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",
@@ -4156,6 +4342,138 @@ def _sweep_evidence_at_boundary(
     }
 
 
+#: D-133 — where the whole-corpus sweep taken at a TERMINAL boundary is
+#: remembered, keyed by the HEAD it was taken at.
+TERMINAL_SWEEP_FILENAME = ".evidence-swept-at-head.json"
+
+
+def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
+    """GI-002's whole-corpus sweep at the NYQUIST and DONE boundaries.
+
+    Returns ``{"ok", "record", "mismatches", "error", "head", "cached"}``.
+
+    D-133 — "BEFORE ASSAY/NYQUIST/DONE" WAS ONE BOUNDARY OF THREE.
+    -------------------------------------------------------------
+    GI-002 (Locked) names the whole corpus as the sweep scope "when the FULL
+    rule fires or BEFORE ASSAY/NYQUIST/DONE". Only the ASSAY path was covered,
+    and it was covered indirectly — through the `final_gate` INSPECT that
+    precedes it. The terminal doors swept nothing, and `fixes_after_decision`
+    (the D-035 stamp that catches a fix landing mid-INSPECT) is read only by
+    `inspect_clean`, which a run reaching NYQUIST from F5 never calls again.
+
+    Driven: a run at F5 with the temper entry recorded and swept; a commit
+    during F5 changed a file `evidence/casting-2-beta.log`'s command reads, so
+    that log no longer reproduces; `_sweep_evidence_at_boundary(full=True)`
+    returned ok False naming it — and `Foundry-Phase('nyquist')` then returned
+    ok True, phase F5.5, and `_done_preconditions`' checklist (report_generated,
+    escalated_classes_cleared, run_not_halted, spec_requirements_parsed,
+    all_verified, zero_blocking_defects, no_active_teams, verdict_coverage)
+    carried no evidence rung at all. A run reached DONE with its committed
+    corpus never re-executed over the fixes F5 and F5.5 landed. The gap was
+    flagged in concerns.md at GRIND cycle 2 and no ruling closed it.
+
+    KEYED ON HEAD, AND MEMOISED, so the GATE and the TRANSITION can both ask.
+    `_done_preconditions` is ONE evaluation with two callers by design — the
+    D-037 discipline that the transition and the gate cannot disagree about
+    what "done" means — and an evidence rung present in only one of them would
+    be that drift restored. But a whole-corpus re-execution is minutes, and
+    `Foundry-Gate('done')` then `Foundry-Phase('done')` would pay it twice.
+    So the sweep is taken once per HEAD and the result is written to
+    ``.evidence-swept-at-head.json``; a later caller at the SAME HEAD reads the
+    verdict back instead of re-running it. That is not a weaker claim: the
+    corpus really was re-executed at exactly this tree. Any commit — which is
+    what a fix landing in F5 or F5.5 is — moves HEAD and invalidates the
+    memo, which is the case the defect was filed on.
+
+    A HEAD that cannot be read is not a cache key, so nothing is memoised and
+    the sweep runs; a sweep that could not RUN is not a sweep that passed, and
+    both are reported through the same `ok` the callers refuse on.
+    """
+    import subprocess
+
+    head = ""
+    try:
+        rev = subprocess.run(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if rev.returncode == 0:
+            head = rev.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        head = ""
+
+    memo_path = fdir / TERMINAL_SWEEP_FILENAME
+    if head:
+        memo = _load_json(memo_path)
+        if isinstance(memo, dict) and memo.get("head") == head and memo.get("ok"):
+            return {
+                "ok": True,
+                "record": memo.get("record") or {},
+                "mismatches": [],
+                "error": "",
+                "head": head,
+                "cached": True,
+            }
+
+    # `entry` carries no mode on purpose: `_sweep_evidence_at_boundary` reads an
+    # entry with no `mode` as "sweep everything", which is the scope this
+    # boundary owes anyway, and there is no width decision to invent here.
+    sweep = _sweep_evidence_at_boundary(fdir, project_root, {}, full=True)
+    result = {
+        "ok": sweep["ok"],
+        "record": sweep["record"],
+        "mismatches": sweep["mismatches"],
+        "error": sweep["error"],
+        "head": head,
+        "cached": False,
+    }
+    if head and sweep["ok"]:
+        _save_json(memo_path, {
+            "head": head,
+            "ok": True,
+            "record": sweep["record"],
+            "swept_at": _now(),
+        })
+    return result
+
+
+def _terminal_sweep_refusal(sweep: dict, door: str) -> dict:
+    """The named refusal a mismatched TERMINAL sweep produces (GI-002/CT-007).
+
+    Names each log, exactly as `_sweep_refusal` does at the INSPECT boundaries,
+    and names the door it refused so the lead knows which call to re-make.
+    """
+    if sweep["error"]:
+        return {
+            "error": (
+                f"Cannot {door} — the evidence sweep could not run: "
+                f"{sweep['error']}"
+            ),
+            "hint": (
+                "A sweep that could not run is not a sweep that passed. Fix the "
+                "condition named above and retry."
+            ),
+            "evidence_sweep": sweep["record"],
+        }
+    named = [m.get("log", "?") for m in sweep["mismatches"]]
+    return {
+        "error": (
+            f"Cannot {door} — {len(named)} committed evidence log(s) no longer "
+            f"reproduce at HEAD: {', '.join(named)}"
+        ),
+        "hint": (
+            "GI-002 sweeps the WHOLE corpus before ASSAY, NYQUIST and DONE. "
+            "Each log's `# evidence-cmd:` was re-executed in a detached "
+            "worktree at HEAD and its output no longer matches what was "
+            "committed — most often because a fix landed after the log was "
+            "captured. Either the behaviour regressed, or the owning casting "
+            "must re-capture the log; then retry."
+        ),
+        "mismatches": sweep["mismatches"],
+        "evidence_sweep": sweep["record"],
+    }
+
+
 def _sweep_refusal(sweep: dict, cycle: int, token: str = "inspect_start") -> dict:
     """The named refusal a mismatched evidence sweep produces (CT-007).
 
@@ -4617,6 +4935,178 @@ _INSPECT_START_SOURCE_HINTS = {
 }
 
 
+#: D-124 / D-125 — the source phases the OTHER TWO INSPECT-opening tokens are
+#: accepted from, and the call that applies instead.
+#:
+#: GI-009 names three transitions that open an INSPECT — the F2 entry (`cast`),
+#: the F5 entry (`temper`) and `inspect_start` — and the cycle-6 ruling gave a
+#: source-phase precondition to exactly ONE of them. The other two kept
+#: D-116's failure shape verbatim, one door over:
+#:
+#:   D-124  `cast` from F4 (ASSAY), cycle 2, with a `final_gate` decision
+#:          already recorded for cycle 2: returned ok, phase F2, mode FULL,
+#:          rule first_of_phase. Afterwards state.json carried a THIRD width
+#:          decision stamped onto cycle 2, `.cast-baseline-sha` had been
+#:          overwritten from the CAST baseline commit to HEAD — destroying the
+#:          cycle-context baseline every GRIND prompt is built from — and the
+#:          stream roll-up's cycle 2 row read `first_of_phase` where it had
+#:          read `final_gate`. CT-009 records ONE decision per INSPECT-opening
+#:          transition and FR-023 reports them per cycle; a run in ASSAY was
+#:          pulled back into F2 with a fabricated first-of-phase record.
+#:
+#:   D-125  `temper` from F2, cycle 2, on a run whose recorded width was DELTA
+#:          with zero verdicts: returned ok, phase F5, and stamped a SECOND
+#:          decision (FULL / first_of_phase / decided_by temper) onto cycle 2
+#:          beside the DELTA one. `Foundry-Gate('nyquist')` then passed and
+#:          `Foundry-Phase('nyquist')` reached F5.5 — so the last INSPECT
+#:          before NYQUIST ran at DELTA width, the widening re-open the cycle-3
+#:          ruling requires never happened, and no verdict was ever written.
+#:          FR-011 makes the INSPECT before ASSAY/NYQUIST/DONE FULL and US-004
+#:          says every final gate still runs everything at full width; neither
+#:          held, because the door never asked what phase the run was in.
+#:
+#: Stated as a TABLE consulted by one helper rather than as an arm inside each
+#: branch, because "three transitions open an INSPECT and each guards its own
+#: source phase" is precisely the three-copies shape that let two of the three
+#: go unguarded for six cycles. `inspect_start` keeps its own inline guard: it
+#: admits two phases with different meanings (F3 crossing, F2 widening) and
+#: threads `widening` into the decision, which a table cannot express.
+_INSPECT_ENTRY_SOURCES: dict[str, dict] = {
+    "cast": {
+        "accepted_from": ("F1",),
+        "opens": "F2",
+        "what": (
+            "the CAST->INSPECT crossing: it closes F1, stamps the CAST "
+            "baseline SHA every GRIND cycle-context block is built from, and "
+            "records the run's FIRST INSPECT at FULL / first_of_phase"
+        ),
+        "hints": {
+            "F0": (
+                "The run has not entered CAST. Call "
+                "Foundry-Phase(phase='start_cast') to enter F1 and build the "
+                "wave; `cast` is what closes it."
+            ),
+            "F2": (
+                "The run is already in INSPECT. To widen a DELTA cycle before "
+                "ASSAY call Foundry-Phase(phase='inspect_start'); to open a "
+                "GRIND call Foundry-Phase(phase='grind_start'). Re-running "
+                "`cast` would overwrite the CAST baseline SHA with HEAD."
+            ),
+            "F3": (
+                "The run is in GRIND. Close it with "
+                "Foundry-Phase(phase='inspect_start') — that is the crossing "
+                "that advances the cycle counter and decides this INSPECT's "
+                "width."
+            ),
+            "F4": (
+                "The run is in ASSAY. Call Foundry-Phase(phase='assay_fail') "
+                "to open a GRIND from an ASSAY rejection, or "
+                "Foundry-Phase(phase='temper') to enter TEMPER. `cast` would "
+                "pull the run back to F2 and destroy the CAST baseline."
+            ),
+            "F5": (
+                "The run is in TEMPER. Call Foundry-Phase(phase='grind_start') "
+                "to open a GRIND on what TEMPER filed, or "
+                "Foundry-Phase(phase='nyquist') to enter NYQUIST."
+            ),
+            "F5.5": (
+                "The run is in NYQUIST. Call Foundry-Phase(phase='grind_start') "
+                "to open a GRIND on what NYQUIST filed, or "
+                "Foundry-Phase(phase='nyquist_done') to finish."
+            ),
+            "F6": (
+                "The run is DONE. Start a new run rather than re-opening this "
+                "one."
+            ),
+        },
+    },
+    "temper": {
+        "accepted_from": ("F4",),
+        "opens": "F5",
+        "what": (
+            "the ASSAY->TEMPER crossing: it enters F5 and opens TEMPER's own "
+            "INSPECT at FULL / first_of_phase"
+        ),
+        "hints": {
+            "F0": (
+                "The run has not started. Call "
+                "Foundry-Phase(phase='start_cast') and build first."
+            ),
+            "F1": (
+                "CAST is still open. Call Foundry-Phase(phase='cast') when the "
+                "wave is down."
+            ),
+            "F2": (
+                "The run is in INSPECT, and TEMPER is reached THROUGH ASSAY. "
+                "Close this INSPECT with "
+                "Foundry-Phase(phase='inspect_clean') — which refuses a DELTA "
+                "cycle until the widening re-open records FULL / final_gate — "
+                "then Foundry-Gate(phase='assay'), run ASSAY, and only then "
+                "Foundry-Phase(phase='temper'). Entering F5 from here would "
+                "leave the last INSPECT before NYQUIST at DELTA width with no "
+                "verdict written (FR-011 / US-004)."
+            ),
+            "F3": (
+                "The run is in GRIND. Close it with "
+                "Foundry-Phase(phase='inspect_start'), run the roster it "
+                "names, then inspect_clean and ASSAY."
+            ),
+            "F5": (
+                "The run is already in TEMPER. Call "
+                "Foundry-Phase(phase='nyquist') to enter NYQUIST, or "
+                "Foundry-Phase(phase='grind_start') to open a GRIND on what "
+                "TEMPER filed."
+            ),
+            "F5.5": (
+                "The run is in NYQUIST, which follows TEMPER. Call "
+                "Foundry-Phase(phase='nyquist_done') to finish, or "
+                "Foundry-Phase(phase='grind_start') to open a GRIND."
+            ),
+            "F6": (
+                "The run is DONE. Start a new run rather than re-opening this "
+                "one."
+            ),
+        },
+    },
+}
+
+
+def _inspect_entry_source_problem(fdir: Path, token: str) -> dict | None:
+    """The refusal an INSPECT-opening token owes from a wrong source phase.
+
+    None when the run is in a phase `token` is accepted from. See
+    `_INSPECT_ENTRY_SOURCES` for the two defects this closes and for why the
+    table is one table.
+
+    Reads the phase from state.json at call time, exactly as `inspect_start`'s
+    inline guard does, and refuses BEFORE any decision, sweep or marker write —
+    so a transition the server refused leaves no trace it was attempted.
+    """
+    spec = _INSPECT_ENTRY_SOURCES.get(token)
+    if spec is None:
+        return None
+    current = _load_json(fdir / "state.json").get("phase", "")
+    accepted = spec["accepted_from"]
+    if current in accepted:
+        return None
+    return {
+        "error": (
+            f"Cannot enter {spec['opens']} from phase {current or 'F0'} — "
+            f"Foundry-Phase(phase='{token}') is {spec['what']}, accepted from "
+            f"{' or '.join(accepted)} and from nowhere else. From any other "
+            "phase it would record a second INSPECT decision against a cycle "
+            "that already has one."
+        ),
+        "hint": spec["hints"].get(
+            current,
+            f"Reach {' or '.join(accepted)} first; "
+            f"Foundry-Next names the transition that applies in {current or 'F0'}.",
+        ),
+        "phase": current,
+        "accepted_from": list(accepted),
+    }
+
+
 def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
     """The branch chain behind `foundry_mark_phase_complete`.
 
@@ -4646,6 +5136,13 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         return {"ok": True, "phase": "F1", "message": "Phase is now F1 (CAST). Create team and build."}
 
     elif phase == "cast":
+        # D-124 — THE SOURCE PHASE IS A PRECONDITION HERE TOO.
+        # Stated FIRST, before the team scan: a run in ASSAY is not a run whose
+        # CAST wave might still be up, and the honest answer to
+        # `cast` from F4 is "this is not the transition that applies", not
+        # "shut down your teammates". See `_INSPECT_ENTRY_SOURCES`.
+        if (wrong := _inspect_entry_source_problem(fdir, "cast")) is not None:
+            return wrong
         teams = _check_active_teams(project_root)
         if teams["active"]:
             return {"error": f"Cannot mark CAST complete \u2014 active teams: {', '.join(teams['teams'])}",
@@ -5130,6 +5627,12 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "message": "ASSAY failed \u2192 phase is now F3 (GRIND). Fix defects, then full INSPECT, then ASSAY again."}
 
     elif phase == "temper":
+        # D-125 — AND HERE, ON THE SAME TERMS.
+        # F5 is reached THROUGH ASSAY. Without this, a DELTA INSPECT reached
+        # NYQUIST with ASSAY never opened and no verdict written — the drive is
+        # recorded on `_INSPECT_ENTRY_SOURCES`.
+        if (wrong := _inspect_entry_source_problem(fdir, "temper")) is not None:
+            return wrong
         # GI-009 / AC-016: the F5 entry opens TEMPER's first INSPECT, so it
         # records FULL / first_of_phase on exactly the same terms as the F2
         # entry above. One rule, two doors — which is what GI-009 means by
@@ -5183,8 +5686,36 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # Enter F5.5. Mirrors the "temper" token: the phase mark is what makes
         # _compute_next_action's F5.5 branch reachable at all, since it
         # dispatches on state["phase"].
+        #
+        # D-133 / GI-002 — AND THE CORPUS IS SWEPT BEFORE NYQUIST, BY NAME.
+        #
+        # GI-002 names three terminal boundaries — "before ASSAY/NYQUIST/DONE"
+        # — and this was the one crossing between them that re-executed
+        # nothing. TEMPER lands lead-lane fixes throughout F5 (that is what
+        # US-005 exists to enable), and each one changes the tree the committed
+        # evidence was captured against. Refused BEFORE `_update_phase`, so a
+        # refused crossing leaves the run in F5 with no trace it was attempted
+        # — the same ordering the INSPECT boundaries hold.
+        nyq_sweep = _terminal_evidence_sweep(fdir, project_root)
+        if not nyq_sweep["ok"]:
+            return _terminal_sweep_refusal(nyq_sweep, "enter NYQUIST")
         _update_phase(fdir, "F5.5")
-        return {"ok": True, "phase": "F5.5", "message": "Phase is now F5.5 (NYQUIST)"}
+        _record_cycle_rollup(
+            fdir,
+            _current_cycle(fdir),
+            sub=NYQUIST_ENTRY_ROLLUP_KEY,
+            evidence_sweep=nyq_sweep["record"],
+        )
+        return {
+            "ok": True,
+            "phase": "F5.5",
+            "evidence_sweep": nyq_sweep["record"],
+            "message": (
+                "Phase is now F5.5 (NYQUIST). Evidence sweep re-executed "
+                f"{len(nyq_sweep['record'].get('logs_reexecuted', []))} log(s) "
+                "at full scope."
+            ),
+        }
 
     elif phase == "nyquist_done":
         # Leave F5.5 for F6. Distinct from the "temper" shape, which exits via
@@ -7402,6 +7933,96 @@ def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | 
 _REGRESSION_DEF_TEMPLATES = ("def {name}", "class {name}", "async def {name}")
 
 
+#: D-134 — pytest's parametrised node id, whose bracketed suffix is the PARAM
+#: SET and not part of any `def` name. `tests/test_repro.py::test_param_gap[1]`
+#: is a real node pytest collects and runs; the def in the file is
+#: `test_param_gap`. Stripped before the file is searched, and only from the
+#: END, so a name that legitimately contains a bracket mid-string is untouched.
+_PARAMETRISED_NODE_SUFFIX = re.compile(r"\[.*\]$")
+
+#: Directories a locator's file is never found in and which dominate the walk
+#: cost of looking for it. Pruned by name at every level (D-131).
+_TEST_SEARCH_PRUNE = frozenset({
+    ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+    ".tox", ".nox", "site-packages", ".worktrees",
+})
+
+
+def _resolve_test_path(path_part: str, project_root: str) -> Path | None:
+    """The file a `path::test` locator's path names, wherever it is rooted.
+
+    D-131 — THE LANE'S EXISTENCE RUNG FIRED ONLY FOR ONE SPELLING OF THE ROOT.
+    -------------------------------------------------------------------------
+    `_regression_test_problem`'s provable half read `Path(project_root) /
+    path_part` and, when that did not resolve, returned None — "I could not
+    find your file" was treated as "no problem". This run's teammates cite
+    mcp-server-relative paths (`tests/test_fix_gate.py`) while `project_root`
+    is the repository root, so the rung never fired for anyone. Driven on a
+    LATENT defect: `Foundry-Fix(regression_test='tests/test_ghost.py::test_ghost')`
+    returned ok True and closed the defect with no such file anywhere in the
+    tree, and `tests/test_fix_gate.py::test_totally_absent_name` — a REAL file
+    that defines no such test — was accepted for the same reason.
+
+    ST-003's guard is that "the locator names a real test", and
+    `agents/teammate.md` Step 7 promises the path must exist and the test must
+    be a `def test_`-shaped symbol inside it. Neither survives a rung that only
+    fires when the caller happened to root its path the way this process did.
+
+    So the path is resolved against the root it is relative to, in order:
+
+      1. as given, if absolute;
+      2. `project_root / path_part`, the spelling that already worked;
+      3. the unique file BENEATH `project_root` whose path ends with
+         `path_part` — which is how an mcp-server-relative or
+         plugin-relative locator resolves. Ambiguity is not resolution: two
+         files ending the same way mean the locator does not single one out,
+         and the caller is told so rather than having one guessed for it.
+
+    LEAD RULING, GRIND cycle 7: this REPLACES the D-065 note that the
+    filesystem check "remains an addition, never a precondition". That note
+    reasoned from a server running against a TARGET repo whose tests it cannot
+    resolve; step 3 resolves exactly that case, and the disagreement is
+    recorded in the run's concerns.md.
+
+    Returns None when the path resolves nowhere — a distinct answer from "it
+    resolved and the test is missing", which is why the caller branches on both.
+    """
+    import os
+
+    candidate = Path(path_part)
+    if candidate.is_absolute():
+        return candidate if candidate.is_file() else None
+
+    direct = Path(project_root) / path_part
+    if direct.is_file():
+        return direct
+
+    # Step 3. Walked rather than globbed so the heavy directories are pruned
+    # before they are descended into; a repo-wide `rglob` over `.git` and
+    # `node_modules` is seconds this door does not have.
+    suffix = "/" + path_part.strip("/")
+    basename = os.path.basename(path_part.rstrip("/"))
+    if not basename:
+        return None
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(project_root):
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _TEST_SEARCH_PRUNE and not d.startswith(".worktree")
+        ]
+        if basename not in filenames:
+            continue
+        hit = Path(dirpath) / basename
+        if hit.as_posix().endswith(suffix):
+            found.append(hit)
+            if len(found) > 1:
+                # Ambiguous: two roots both answer, so the locator singles out
+                # neither. Treated as unresolved rather than as a coin flip.
+                return None
+    return found[0] if found else None
+
+
 def _regression_test_problem(ref: str, project_root: str) -> str | None:
     """The named reason a `regression_test` locator is unusable, else None.
 
@@ -7444,15 +8065,24 @@ def _regression_test_problem(ref: str, project_root: str) -> str | None:
          `test|spec` pattern the LIVE ladder applies) and must not be the
          defect's own symbol — a fix cannot be held by the function it fixed.
 
-    THE FILESYSTEM CHECK REMAINS AN ADDITION, NEVER A PRECONDITION. Where
-    `path` resolves under `project_root` the file is read and the leaf must
-    appear as a `def`/`class` in it; where it does NOT resolve the shape rungs
-    stand alone. That asymmetry is the same ruling `_test_ref_problem` carries:
-    this server runs against a TARGET repo whose tests it frequently cannot
-    resolve, and "I could not find your file" is unfalsifiable from where the
-    caller stands. Rungs 2 and 3 are lexical, so they hold either way — which
-    is the point, since `src/nonexistent.py::whatever` resolves to nothing and
-    must still be refused.
+    D-131 — AND THE FILESYSTEM CHECK IS NOW A PRECONDITION, BECAUSE IT CAN BE.
+    -------------------------------------------------------------------------
+    This block used to read "THE FILESYSTEM CHECK REMAINS AN ADDITION, NEVER A
+    PRECONDITION", on the reasoning that a server running against a TARGET repo
+    frequently cannot resolve its tests and "I could not find your file" is
+    unfalsifiable from where the caller stands. The consequence was that the
+    one field the lane rests on validated nothing whenever the caller rooted
+    its path differently from this process: `tests/test_ghost.py::test_ghost`
+    closed a LATENT defect with no such file in the tree.
+
+    `_resolve_test_path` removes the premise — it resolves the locator against
+    the root it is relative to, including by unique suffix beneath
+    `project_root` — so an unresolvable path now means the file is not there,
+    and ST-003's "the locator names a real test" is enforceable. LEAD RULING,
+    GRIND cycle 7; the superseded note is recorded in the run's concerns.md.
+
+    Rungs 2 and 3 stay LEXICAL and stay ahead of the filesystem, so a caller
+    pointing into production code is told THAT rather than "file not found".
     """
     ref = (ref or "").strip()
     if not ref:
@@ -7470,7 +8100,11 @@ def _regression_test_problem(ref: str, project_root: str) -> str | None:
         )
     path_part, _, name_part = ref.partition("::")
     path_part = _normalize_path(path_part)
-    name = name_part.split("::")[-1].strip()
+    node_name = name_part.split("::")[-1].strip()
+    # D-134: the bracketed param set is pytest's, not the def's. Stripped once,
+    # here, so every rung below judges the name the file actually declares
+    # while the refusals still quote the locator the caller wrote.
+    name = _PARAMETRISED_NODE_SUFFIX.sub("", node_name).strip() or node_name
     if not path_part or not name:
         return f"{ref!r} has an empty path or test name on one side of '::'"
     if not _ref_singles_out_a_leaf(ref):
@@ -7508,12 +8142,23 @@ def _regression_test_problem(ref: str, project_root: str) -> str | None:
     # above — a production path is never a test file, so the defect's own
     # production symbol is refused by rung 2 naming exactly that reason.
 
-    # The provable half. Never a refusal when the file cannot be resolved.
-    candidate = Path(project_root) / path_part
-    if not candidate.is_file():
-        return None
+    # The provable half (D-131). An unresolvable path is now a REFUSAL: the
+    # resolver already tried the locator as given, relative to project_root, and
+    # by unique suffix beneath it, so "nowhere" means the file is not there.
+    candidate = _resolve_test_path(path_part, project_root)
+    if candidate is None:
+        return (
+            f"{path_part!r} does not resolve to a file — searched it as given, "
+            f"under the project root, and by unique path suffix beneath it. A "
+            "LATENT fix closes on a test that EXISTS: commit the test first, "
+            "then name it here (a locator for a file that is not in the tree "
+            "names no test that could fail if this gap came back)"
+        )
     text, problem = read_text_file(candidate)
     if problem is not None:
+        # Resolved but unreadable — nothing was compared, and that is not the
+        # same answer as "the test is missing". The house rule for a read this
+        # door does not own: degrade to the lexical rungs, which already held.
         return None
     if any(
         template.format(name=name) in text for template in _REGRESSION_DEF_TEMPLATES
@@ -8088,9 +8733,50 @@ def foundry_mark_defect_fixed(
         # measured (CT-006's second clause): a LATENT gap can be a large,
         # mechanical, entirely safe change, and there is no reachable failure
         # whose blast radius the bound is protecting.
+        # D-132 — "NOT MEASURED" IS NOT "NOT READ".
+        #
+        # CT-006's second clause is that on a LATENT defect the required
+        # fix_commit "is RECORDED and not measured", and this branch read that
+        # as "no git call at all". Driven on a LATENT defect with
+        # authored_by=lead and a valid regression_test locator: fix_commit
+        # 'not-a-commit', '-1', 'tbd' and forty zeros each returned ok True;
+        # the record persisted fix_commit 'tbd'; handoffs.jsonl gained
+        # {fix_commit 'tbd', file null, line_count null, files null}; and
+        # report.json rendered the row "measurement unavailable - git could not
+        # read the commit". `_numstat_measurement` refuses the shape by name
+        # (the D-105 rung) and the LATENT path discarded that refusal at the
+        # record step (`if not measured["ok"]: measured = None`).
+        #
+        # FR-053 is verbatim "authored_by=lead always needs fix_commit SO THE
+        # lead_fix HANDOFF CARRIES THE COMMIT" — the field exists to make the
+        # audit row point at a real object, and a string that names no object
+        # carries nothing. CT-005 refuses "when fix_commit is absent on a lead
+        # fix"; a value git cannot resolve is absent in every sense that
+        # matters to the reader of the record.
+        #
+        # WHAT STAYS LIVE-ONLY IS THE LANE, exactly as FR-046 / CT-006 / ST-004
+        # say: the file count and the line count are limits on how much a lead
+        # may change without dispatching a teammate, and a LATENT gap can be a
+        # large, mechanical, entirely safe change with no reachable failure
+        # whose blast radius the bound protects. So the LATENT arm runs the
+        # READ and refuses only on "this is not a commit"; it never compares a
+        # count. `_lead_lane_problem` is the LIVE arm and is unchanged — it
+        # already runs the same read as its first rung, so neither arm
+        # re-implements the other.
         lane_problem = None
-        if author == "lead" and not latent_lane and target is not None:
-            lane_problem = _lead_lane_problem(commit, project_root)
+        if author == "lead" and target is not None:
+            if not latent_lane:
+                lane_problem = _lead_lane_problem(commit, project_root)
+            else:
+                unreadable = _numstat_measurement(commit, project_root)
+                if not unreadable["ok"]:
+                    lane_problem = (
+                        f"{unreadable['error']}. A LATENT lead fix is not "
+                        "MEASURED — no file or line limit applies to it — but "
+                        "fix_commit is still the commit the lead_fix handoff "
+                        "record carries (FR-053), so it must name a real "
+                        "object."
+                    )
 
         if target is None:
             refusal = {"error": f"Defect {defect_id} not found"}
@@ -8155,11 +8841,26 @@ def foundry_mark_defect_fixed(
                 "missing_fields": ["fix_commit"],
                 "invalid_fields": [{"field": "fix_commit", "reason": lane_problem}],
                 "tier": tier,
+                # D-132: the hint follows the arm that fired. On the LATENT
+                # arm no limit was compared, so quoting the lane's file and
+                # line ceilings there would send the lead to shrink a commit
+                # nothing measured.
                 "hint": (
-                    "The lead lane exists so a cycle whose open defects are all "
-                    f"small closes without a teammate spawn: {LEAD_LANE_MAX_FILES} "
-                    f"non-test file, at most {LEAD_LANE_MAX_LINES} added-plus-"
-                    "deleted lines. Anything larger is a GRIND task."
+                    (
+                        "A LATENT lead fix is not measured — no file or line "
+                        "limit applies to it — but fix_commit is the commit "
+                        "the lead_fix handoff record carries, so it must be a "
+                        "commit git can read: paste the SHA "
+                        "`git rev-parse --short HEAD` printed for the fix."
+                    )
+                    if latent_lane
+                    else (
+                        "The lead lane exists so a cycle whose open defects are "
+                        f"all small closes without a teammate spawn: "
+                        f"{LEAD_LANE_MAX_FILES} non-test file, at most "
+                        f"{LEAD_LANE_MAX_LINES} added-plus-deleted lines. "
+                        "Anything larger is a GRIND task."
+                    )
                 ),
             }
         else:
@@ -8221,8 +8922,12 @@ def foundry_mark_defect_fixed(
     # measurement nobody took.
     #
     # A commit git cannot read still records None, because there the
-    # measurement genuinely could not be taken. It cannot arise on the LIVE
-    # lane: `_lead_lane_problem` has already refused an unreadable commit above.
+    # measurement genuinely could not be taken. D-132 made that unreachable on
+    # BOTH lanes rather than only on the LIVE one: `_lead_lane_problem` refuses
+    # an unreadable commit on LIVE and the LATENT arm beside it now runs the
+    # same read and refuses on the shape, so by the time this executes the
+    # commit has resolved. The None branch is kept as the honest answer for a
+    # repository state that changes under the call, not as a live path.
     #
     # D-073 — THE ROWS ARE THE RECORD; `file` IS A CONVENIENCE THAT MUST NOT
     # LIE.
@@ -9352,31 +10057,43 @@ def foundry_next_action(
                 override["decisions"]
             )
 
-    critical_rules = (
-        "\n\nCRITICAL RULES:"
-        "\n- NEVER ask 'Want me to proceed?' or 'Should I continue?' \u2014 just do it."
-        # FR-044 / AC-035 / OT-028 / D-097 — the rule and its ONE exception, in
-        # the same sentence, quoting the same constant the imperatives append.
-        # This line used to end at "follow it." full stop, which a lead reading
-        # top-to-bottom took as unconditional and which contradicted the note
-        # `_GATE_THEN_PHASE_NOTE` carries at the tail of the same payload.
-        "\n- NEVER stop between phases. Call Foundry-Next after each step and "
-        "follow it. REQUIRED everywhere except exactly one place: "
-        + _GATE_THEN_PHASE_EXCEPTION
-        + " Skipping it there is correct and is not a shortcut; skipping it "
-        "anywhere else is."
-        "\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says."
-        "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
-        "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
-        "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, TeamCreate-managed, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."
-        "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Pass it to Agent VERBATIM. GRIND is the only exception: append (a) the `grind_cycle_context` block if returned (prior-cycle file changes) and (b) the '## Defects to fix this cycle:' block BELOW the prompt, in that order. Never inside the prompt."
-        "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
-        "\n- Zero approval gates. The foundry runs until F6 DONE or an error stops it."
-        "\n- NEVER wait for teammate 'shutdown_response', 'shutdown_ack', idle-confirmation, or any reply after "
-        "issuing shutdown. The ONLY shutdown signals foundry recognizes are (a) TeamDelete returning ok and "
-        "(b) Foundry-Team-Down succeeding. Narrating 'awaiting shutdown approvals' is a stall \u2014 call TeamDelete "
-        "immediately. Idle / terminated panes ARE the signal; TeamDelete cleans them."
-    )
+    # FR-052 / FR-045 / AC-037 / NFR-005 \u2014 THE RULES BLOCK ON A HALTED RUN
+    # SAYS WHAT A HALTED RUN NEEDS. D-136.
+    #
+    # The standing block heads EVERY Foundry-Next payload, and on a halted run
+    # it contradicted the payload it was heading. Driven on a halted state, the
+    # `instructions` string was the standing block \u2014 "NEVER stop between
+    # phases. Call Foundry-Next after each step and follow it", "If you catch
+    # yourself thinking, call Foundry-Next and execute whatever it says", "The
+    # foundry runs until F6 DONE or an error stops it" \u2014 followed by the halted
+    # imperative "YOUR NEXT CALL: NONE ... do NOT call Foundry-Next in a loop
+    # ... stop". Dispatch was correctly withheld; the lead-facing TEXT told the
+    # lead to do the opposite of the one thing the halt exists to make it do,
+    # and the last of those three sentences was false outright \u2014 FR-024 made
+    # HALTED a THIRD ending beside DONE and error.
+    #
+    # Two changes, because the defect has two halves. The standing line now
+    # names all three endings, and a halted run gets its own block: the caching
+    # argument for a byte-identical prefix (this block is a cache-hit-eligible
+    # prefix across ~30-50 calls per run) does not apply to a run that has
+    # stopped and will be called at most a handful more times.
+    halted_now = result.get("phase") == RUN_PHASE_HALTED
+    if halted_now:
+        critical_rules = (
+            "\n\nCRITICAL RULES \u2014 THIS RUN IS HALTED:"
+            "\n- The run stopped at its configured --max-cycles. HALTED is a "
+            "terminal state, distinct from DONE and reached by a successful "
+            "transition rather than an error (FR-024 / CT-016)."
+            "\n- Do NOT dispatch another wave, do NOT call Foundry-Phase, and "
+            "do NOT call Foundry-Next in a loop. There is no next transition "
+            "to make."
+            "\n- The report has been generated as part of the halt and names "
+            "every open LIVE and LATENT defect. Read it."
+            "\n- Hand the remaining work to a new run, or re-run with a higher "
+            "--max-cycles. Nothing below asks you to keep going."
+        )
+    else:
+        critical_rules = _STANDING_CRITICAL_RULES
 
     # Assemble instructions with stable-first ordering for prompt caching.
     # Every Foundry-Next response is a user-turn message in the lead's single
@@ -9447,6 +10164,28 @@ def foundry_next_action(
                 "required_streams": recorded_mode.get("required_streams", []),
                 "stream_scope": recorded_mode.get("stream_scope", {}),
                 "prove_sample": recorded_mode.get("prove_sample", []),
+                # AC-019 / FR-012 — THE TRACE HALF OF THE ROSTER, EMITTED.
+                # D-140.
+                #
+                # The transition that opens an INSPECT records the TRACE scope
+                # as "symbols in the N file(s) the GRIND touched" and records
+                # `touched_files` beside it — and this payload carried cycle,
+                # decided_at,
+                # decided_by, mode, prove_sample, required_streams, rule,
+                # rule_detail and stream_scope, and nothing naming a file. So
+                # the roster's PROVE half reached its stream (D-104 wired
+                # assayer.md to `prove_sample`) and its TRACE half reached no
+                # consumer at all: `agents/tracer.md` and `skills/trace/SKILL.md`
+                # contained no occurrence of touched_files, inspect_mode, DELTA
+                # or width, and scoped the walk from the spec alone. AC-019 is
+                # "in DELTA mode ... TRACE runs over the symbols the GRIND
+                # commits touched", which is unreachable by a stream that
+                # cannot see which files those are.
+                #
+                # Emitted from the recorded entry and nowhere computed
+                # (GI-008 / GI-009), exactly as `prove_sample` is.
+                "touched_files": recorded_mode.get("touched_files", []),
+                "diff_base": recorded_mode.get("diff_base", ""),
             }
 
     result["display"] = _format_status_display(project_root)
@@ -9528,6 +10267,48 @@ _GATE_THEN_PHASE_EXCEPTION = (
 )
 
 _GATE_THEN_PHASE_NOTE = "\n" + _GATE_THEN_PHASE_EXCEPTION
+
+
+#: D-136 — the standing rules block, named once so the HALTED branch in
+#: `foundry_next_action` can stand beside it instead of inside it.
+#:
+#: This literal used to live inline in that function, which is why nothing
+#: could vary it: a halted run received, verbatim, "NEVER stop between
+#: phases" and "If you catch yourself thinking, call Foundry-Next and
+#: execute whatever it says" immediately above an imperative reading "YOUR
+#: NEXT CALL: NONE ... stop". Hoisting it is what makes the two blocks two
+#: things rather than one string with a conditional tail.
+_STANDING_CRITICAL_RULES = (
+    "\n\nCRITICAL RULES:"
+    "\n- NEVER ask 'Want me to proceed?' or 'Should I continue?' \u2014 just do it."
+    # FR-044 / AC-035 / OT-028 / D-097 — the rule and its ONE exception, in
+    # the same sentence, quoting the same constant the imperatives append.
+    # This line used to end at "follow it." full stop, which a lead reading
+    # top-to-bottom took as unconditional and which contradicted the note
+    # `_GATE_THEN_PHASE_NOTE` carries at the tail of the same payload.
+    "\n- NEVER stop between phases. Call Foundry-Next after each step and "
+    "follow it. REQUIRED everywhere except exactly one place: "
+    + _GATE_THEN_PHASE_EXCEPTION
+    + " Skipping it there is correct and is not a shortcut; skipping it "
+    "anywhere else is."
+    "\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says."
+    "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
+    "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
+    "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, TeamCreate-managed, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."
+    "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Pass it to Agent VERBATIM. GRIND is the only exception: append (a) the `grind_cycle_context` block if returned (prior-cycle file changes) and (b) the '## Defects to fix this cycle:' block BELOW the prompt, in that order. Never inside the prompt."
+    "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
+    # D-136 — THE THIRD ENDING. This read "The foundry runs until F6 DONE or an
+    # error stops it", which FR-024 made false: --max-cycles ends a run in a
+    # named HALTED state reached by a SUCCESSFUL transition, which is neither
+    # DONE nor an error. A lead reading the old sentence and then receiving a
+    # halt has been told the halt cannot happen.
+    "\n- Zero approval gates. The foundry runs until it ends: F6 DONE, a HALTED "
+    "--max-cycles stop (a successful transition, not an error), or an error."
+    "\n- NEVER wait for teammate 'shutdown_response', 'shutdown_ack', idle-confirmation, or any reply after "
+    "issuing shutdown. The ONLY shutdown signals foundry recognizes are (a) TeamDelete returning ok and "
+    "(b) Foundry-Team-Down succeeding. Narrating 'awaiting shutdown approvals' is a stall \u2014 call TeamDelete "
+    "immediately. Idle / terminated panes ARE the signal; TeamDelete cleans them."
+)
 
 # Action → imperative-header map. Each action returned by
 # _compute_next_action maps to a "YOUR NEXT CALL(S)" directive that the lead
@@ -9728,11 +10509,30 @@ def _format_status_display(project_root: str) -> str:
         ("F5.5", "NYQUIST"), ("F6", "DONE"),
     ]
 
+    # NFR-005 / CT-016 — HALTED IS IN THE DISPLAY VOCABULARY. D-137.
+    #
+    # The header read `{phase} {phase_names.get(phase, phase)}`, whose fallback
+    # is the token itself — fine for every member of `phases`, where the token
+    # and the name differ ("F2 INSPECT"), and wrong for the one phase that has
+    # no ladder row. Driven on a halted state, the banner read
+    # "F O U N D R Y  HALTED HALTED". CT-016 makes HALTED a named terminal
+    # state Foundry-Next reports and NFR-005 requires every new notice to read
+    # correctly in the terminal; a stutter is what a fallback produces when a
+    # value it never anticipated reaches it.
+    #
+    # The label is built as ONE string rather than by adding a HALTED row to
+    # `phases`: the ladder below enumerates the phases a run PASSES THROUGH and
+    # marks the current one, and HALTED is not a step on that path — it is
+    # where a run stops instead of continuing along it. It is rendered as its
+    # own line under the ladder for the same reason.
     phase_names = dict(phases)
-    phase_name = phase_names.get(phase, phase)
+    halted_display = phase == RUN_PHASE_HALTED
+    phase_name = phase_names.get(phase, "")
+    header_label = f"{phase} {phase_name}".strip() if phase_name else phase
+    header_colour = _BRED if halted_display else _BCYAN
     run_name = fdir.name
 
-    lines = [foundry_hammer(f"F O U N D R Y  {_BCYAN}{phase} {phase_name}{_RESET}  Cycle: {cycle}  {elapsed}")]
+    lines = [foundry_hammer(f"F O U N D R Y  {header_colour}{header_label}{_RESET}  Cycle: {cycle}  {elapsed}")]
 
     # Phase list
     for pid, pname in phases:
@@ -9759,6 +10559,11 @@ def _format_status_display(project_root: str) -> str:
             right = ""
 
         lines.append(f"  {icon} {label}{right}")
+
+    # D-137 / D-018: the halt DETAIL line (reason, cycle) is display.py's —
+    # `_fmt_foundry_next_lines` already draws it, and two derivations of one
+    # rendered fact is what D-018 filed. What belongs to THIS renderer is the
+    # banner, and the banner is fixed above. No halt line is drawn here.
 
     # Defects
     defects = _load_json(fdir / "defects.json")
@@ -9860,6 +10665,77 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
         "per-instance packets — dispatch that packet as a single task and do not "
         "split it back apart. Every listed defect must still close. To restore "
         f"per-instance packets: {restores}."
+    )
+
+
+def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
+    """The class keys ST-010 still holds DONE open for (D-129).
+
+    The SAME union `_done_preconditions` refuses on — ledger recurrence
+    (`_escalated_classes`) plus the persisted status (`_persisted_escalations`)
+    — read through one function so the guidance engine and the gate can never
+    name different sets. Overrides are honoured by both halves.
+    """
+    escalated_open = _escalated_classes(fdir, project_root)
+    persisted = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+    if not isinstance(persisted, dict):
+        persisted = {}
+    return sorted(
+        set(escalated_open) | set(_persisted_escalations(fdir, project_root, persisted))
+    )
+
+
+def _still_escalated_notice(fdir: Path, project_root: str) -> str:
+    """One sentence naming any class ST-010 will still hold DONE open for.
+
+    Empty string when nothing is escalated, so a clean cycle reads identically.
+
+    D-129 — THE CLEAN PATH LEARNED OF THE ST-010 BLOCK AT THE F6 DOOR.
+    -----------------------------------------------------------------
+    `_escalation_notice` (the sentence above) is wired into ONE arm: the
+    `transition_to_grind` branch, which is reached only when
+    `open_count > 0`. It also reads `_escalated_classes`, which opens with
+    `if not bucket["open"]: continue` — so a class the server has PERSISTED as
+    ESCALATED with every instance closed is invisible to it twice over.
+
+    Driven: three LATENT filings of class FDC at cycles 1-3; the boundary
+    closing cycle 3 wrote escalation.json status ESCALATED, escalated_at 3,
+    packets 0; all five required streams marked, blocking 0.
+    `foundry_next_action` returned action transition_to_assay with "INSPECT
+    clean: zero blocking defects, at FULL width ... 3 LATENT defect(s) stay
+    open ... they block nothing" and named neither FDC, nor ESCALATED, nor
+    ST-010. Following it: inspect_clean ok, Gate assay passed, Gate temper
+    passed, Phase temper ok, Gate nyquist passed, Phase nyquist ok — and then
+    `Foundry-Gate('done')` refused "1 defect class(es) are still ESCALATED:
+    FDC". Each boundary the class still needs is then reached from a
+    post-verification phase and re-enters through final_gate FULL, ASSAY,
+    TEMPER and NYQUIST again: two extra post-verification loops for a class
+    that could have cleared in two INSPECT cycles from F2. NFR-001 targets
+    exactly that axis, and US-001's premise is that the exit is MECHANICAL —
+    which it is, and the lead could not see the meter running.
+
+    READS THE SAME UNION `_done_preconditions` REFUSES ON — `_escalated_classes`
+    (ledger recurrence) ∪ `_persisted_escalations` (the recorded status) — so
+    the notice and the refusal cannot name different sets. Overrides are
+    honoured by both halves, so a class the operator de-escalated is silent
+    here exactly as it is at the gate.
+
+    Carries `_escalation_exit_distances`, so the sentence states not just THAT
+    a class blocks but how far each arm is: a lead reading "1 more clean cycle"
+    at F2 crosses one boundary, where the same lead reading it at F5.5 pays a
+    full post-verification loop for the same crossing.
+    """
+    still = _still_escalated_classes(fdir, project_root)
+    if not still:
+        return ""
+    return (
+        f" ST-010: {len(still)} defect class(es) are still ESCALATED "
+        f"({', '.join(still)}) and DONE is refused until every one of them is "
+        "CLEARED — a LATENT-only backlog does not by itself clear a class. "
+        "Clearing it is a boundary crossing, and the cheapest place to make "
+        "those crossings is HERE, from F2: reaching ASSAY, TEMPER and NYQUIST "
+        "first means every remaining crossing is paid for twice."
+        + _escalation_exit_distances(fdir, still)
     )
 
 
@@ -10160,6 +11036,10 @@ def _compute_next_action(project_root: str) -> dict:
             "named in the F6 backlog; they block nothing."
             if latent_backlog else ""
         )
+        # D-129: and the ST-010 block a LATENT-only backlog does NOT clear,
+        # said HERE — the last arm before the run leaves F2 — rather than at
+        # the F6 door after ASSAY, TEMPER and NYQUIST have been spent.
+        still_escalated_note = _still_escalated_notice(fdir, project_root)
         if f2_mode.get("mode") == "DELTA":
             return {
                 "phase": "F2",
@@ -10168,6 +11048,7 @@ def _compute_next_action(project_root: str) -> dict:
                     f"INSPECT clean at DELTA width (cycle {f2_mode.get('cycle', '?')}, "
                     f"rule {f2_mode.get('rule', '?')}): zero blocking defects."
                     + carried
+                    + still_escalated_note
                     + " ASSAY is only opened by an INSPECT recorded with rule "
                     "final_gate, so call Foundry-Phase(phase='inspect_start') "
                     "again from F2. That crossing advances the cycle counter, "
@@ -10178,6 +11059,11 @@ def _compute_next_action(project_root: str) -> dict:
                 "details": {
                     "open_defects": 0,
                     "latent_backlog": latent_backlog,
+                    # D-129: machine-readable beside the sentence, so a reader
+                    # never has to parse prose to learn what still blocks DONE.
+                    "still_escalated_classes": _still_escalated_classes(
+                        fdir, project_root
+                    ),
                     "inspect_mode": f2_mode.get("mode", ""),
                     "inspect_rule": f2_mode.get("rule", ""),
                     "agent_configs": {
@@ -10199,6 +11085,7 @@ def _compute_next_action(project_root: str) -> dict:
                 f"{f2_mode.get('mode') or 'FULL'} width "
                 f"(rule {f2_mode.get('rule') or 'unrecorded'})."
                 + carried
+                + still_escalated_note
                 + " Call Foundry-Phase(phase='inspect_clean'), then "
                 "Foundry-Gate(phase='assay'). "
                 "Spawn 4 parallel assayer agents using the config below (subagent_type='foundry:assayer' — frontmatter carries opus + effort=max)."
@@ -10206,6 +11093,10 @@ def _compute_next_action(project_root: str) -> dict:
             "details": {
                 "open_defects": 0,
                 "latent_backlog": latent_backlog,
+                # D-129, same field on the arm that opens ASSAY.
+                "still_escalated_classes": _still_escalated_classes(
+                    fdir, project_root
+                ),
                 "inspect_mode": f2_mode.get("mode", ""),
                 "inspect_rule": f2_mode.get("rule", ""),
                 "agent_config": ASSAY_AGENT_CONFIG,

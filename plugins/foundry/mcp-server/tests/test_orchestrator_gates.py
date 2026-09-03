@@ -8002,7 +8002,12 @@ def _defect_ledger(fdir: Path, records: list[dict]) -> None:
 
 
 def _record_full_inspect_mode(
-    fdir: Path, *, cycle: int, phase: str = "F2", decided_by: str = "inspect_start"
+    fdir: Path,
+    *,
+    cycle: int,
+    phase: str = "F2",
+    decided_by: str = "inspect_start",
+    required_streams: tuple[str, ...] = ("trace", "prove", "test"),
 ) -> dict:
     """Append the `state.json.inspect_modes` entry a real crossing records.
 
@@ -8011,6 +8016,12 @@ def _record_full_inspect_mode(
     say so the way the transition says it. Written through
     `_decide_inspect_mode`'s own shape rather than a hand-typed dict, so a
     fixture cannot claim a roster the decider would not produce.
+
+    D-122: `required_streams` is a parameter because FR-012's FULL roster is
+    five streams, not three, and a test about the ROSTER has to be able to
+    record the one FR-012 names. The default stays at the three these fixtures
+    have always used — every existing caller is unaffected — and a caller that
+    wants the widened roster asks for it.
     """
     state_path = fdir / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -8022,10 +8033,10 @@ def _record_full_inspect_mode(
         "rule_detail": "fixture: the INSPECT before the end gates",
         "decided_by": decided_by,
         "decided_at": fo._now(),
-        "required_streams": ["trace", "prove", "test"],
+        "required_streams": list(required_streams),
         "stream_scope": {
             wire: {"scope": "full", "detail": "every item in scope"}
-            for wire in ("trace", "prove", "test")
+            for wire in required_streams
         },
         "touched_files": [],
         "prove_sample": [],
@@ -8438,12 +8449,27 @@ def test_a_report_missing_one_section_is_refused_naming_that_section(run_env):
 
 
 def test_appending_prose_to_the_markdown_never_blocks_done(run_env):
-    """GI-006's first half, which the check must not break: 'The lead MAY append
-    prose.'
+    """GI-006 exactly: 'The lead may APPEND prose but cannot OMIT a section.'
 
-    `report_status` reads the JSON precisely so that appending prose, rewording a
-    heading or reflowing a table — all things the lead is allowed to do — cannot
-    make a present section look absent.
+    APPENDING is the tolerance, and it is the only one. `_markdown_missing_sections`
+    matches a whole trimmed `## <title>` line anywhere in the document, at any
+    depth and in any order, so a lead's own headings and paragraphs can sit
+    between, above and below the generated ones without hiding any.
+
+    D-142 — WHAT THIS DOCSTRING USED TO CLAIM. It read "`report_status` reads
+    the JSON precisely so that appending prose, REWORDING A HEADING or
+    REFLOWING A TABLE — all things the lead is allowed to do — cannot make a
+    present section look absent", and two of those three were false at HEAD.
+    Driven: rewording `## LATENT backlog` to `## Latent backlog (reworded)`
+    makes `report_status` return present False, missing ['latent_backlog'],
+    because the match is on the whole heading line. The body exercised only
+    the appending case, so the test asserted a contract the code did not hold
+    AND did not check — a docstring is what the next maintainer reads to learn
+    what the guarantee is, and this one licensed an edit that breaks the gate.
+
+    Both directions are now driven, so the sentence cannot drift from the
+    behaviour again: appending passes, and rewording a heading is reported as
+    the omission it is.
     """
     project_root, fdir = run_env
     _write_spec(fdir, ["FR-1"])
@@ -8452,13 +8478,31 @@ def test_appending_prose_to_the_markdown_never_blocks_done(run_env):
     _defect_ledger(fdir, [])
     _generate_report(project_root, fdir)
     md = fdir / "REPORT.md"
+    generated = md.read_text(encoding="utf-8")
+
+    # The tolerance GI-006 grants: appended prose, including the lead's own
+    # headings, above and below the generated ones.
     md.write_text(
-        md.read_text(encoding="utf-8") + "\n## Lead's postscript\n\nAll mine.\n",
+        "## Lead's preamble\n\nMine too.\n\n"
+        + generated
+        + "\n## Lead's postscript\n\nAll mine.\n",
         encoding="utf-8",
     )
-
     _arm_ordering_token(fdir)
     assert foundry_mark_phase_complete("done", project_root)["ok"] is True
+
+    # And the half the retired sentence got wrong: a REWORDED heading is an
+    # omitted section, and the check says so by name.
+    from foundry_mcp.tools.foundry_report import report_status
+
+    reworded = generated.replace(
+        "## LATENT backlog", "## Latent backlog (reworded)"
+    )
+    assert reworded != generated, "the fixture must actually reword a heading"
+    md.write_text(reworded, encoding="utf-8")
+    status = report_status(fdir)
+    assert status["present"] is False
+    assert "latent_backlog" in status["missing_sections"], status
 
 
 def test_the_report_tool_is_registered_and_dispatched(run_env):
@@ -8870,17 +8914,28 @@ def test_a_registered_team_with_dead_ledgers_does_not_suppress_the_stall(
     assert "silently deliberating" in nxt["instructions"]
 
 
-def test_a_progressing_ledger_with_no_team_registered_reports_the_stall(run_env):
-    """AC-032's second half verbatim: 'with no active teams it reports the
-    stall.' D-076.
+def test_a_progressing_ledger_with_no_team_registered_reports_waiting(run_env):
+    """FR-020 verbatim: 'IF AGENTS ARE RUNNING it reports waiting on N agents
+    (oldest progress Xm) instead of a stall'. FR-036, D-127.
 
-    This asserted the OPPOSITE — waiting on the strength of the ledgers alone —
-    which is where the declared input went missing. CT-012 declares the inputs
-    as ".last-next-at, ACTIVE TEAMS, Foundry-Liveness roster" and FR-020
-    (Locked, verbatim) reads "Foundry-Next checks active teams AND
-    Foundry-Liveness". Driven: `_check_active_teams` inactive, one ledger with a
-    60s-old line, `.last-next-at` 600s in the past -> the notice read "WAITING
-    ON 1 AGENT(S)" and `stall_detected_seconds` was ABSENT.
+    This test asserted the opposite twice, in opposite directions, and the
+    second version is the defect. D-076's repair ANDed the team scan with the
+    liveness roster, so waiting required a REGISTERED tmux team. The F2 INSPECT
+    streams are background Agents and never tmux teammates, so
+    `_check_active_teams` cannot see them: driven with no registered team, two
+    progress ledgers written seconds earlier and `.last-next-at` 600s old,
+    `_waiting_on_agents` returned waiting False, teams_active False,
+    progressing_agents 2 — and Foundry-Next emitted stall_detected_seconds 600
+    beside "NO agent is running. You were silently deliberating", asserting
+    deliberation over two agents the same call had just measured progressing.
+    FR-036's proviso is that the notice never does that, and FR-020 is Locked,
+    so no GRIND ruling could amend it.
+
+    LEAD RULING, GRIND cycle 7 (superseding the cycle-4 AND where they
+    conflict): 'if agents are running' is decided by EVIDENCE OF PROGRESS. A
+    progressing roster is SUFFICIENT whether or not a team is registered.
+    `teams_active` is still read and still reported, so CT-012's declared input
+    set is unchanged — see the sibling test that pins the stale-team direction.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=1)
@@ -8891,12 +8946,19 @@ def test_a_progressing_ledger_with_no_team_registered_reports_the_stall(run_env)
 
     waiting = fo._waiting_on_agents(project_root)
 
-    assert waiting["waiting"] is False
-    assert waiting["teams_active"] is False
-    assert waiting["progressing_agents"] == 1, (
-        "the ledger half still answered; it is the AND that decides"
+    assert waiting["waiting"] is True
+    assert waiting["count"] == 1
+    assert waiting["teams_active"] is False, (
+        "reported, not asserted — waiting no longer implies a registered team"
     )
-    assert "stall_detected_seconds" in foundry_next_action(project_root)
+    assert waiting["progressing_agents"] == 1
+
+    nxt = foundry_next_action(project_root)
+    assert "stall_detected_seconds" not in nxt, (
+        "an agent is progressing; FR-020 makes this the waiting notice"
+    )
+    assert "silently deliberating" not in nxt["instructions"]
+    assert "WAITING ON" in nxt["instructions"]
 
 
 def test_a_registered_but_dead_team_still_reports_the_stall(run_env):
@@ -10206,3 +10268,824 @@ def test_both_doors_render_the_retier_through_one_formatter(run_env):
     )
     assert batch["retiered_ids"] == ["D-001"], batch
     assert "re-tiered" in _plain(format_result("Foundry-Sync", batch))
+
+
+# --------------------------------------------------------------------------- #
+# STRUCTURAL — the escalated class `stale-prose-survives-beside-new-prose`
+#
+# D-122, D-126, D-136, D-141, D-142, D-143, D-144 are one class, filed across
+# four castings' files, and it has now recurred for four consecutive cycles.
+# Two prior structural packets fixed the INSTANCES and the class came back,
+# which is what makes an instance fix the wrong deliverable: the run kept
+# retiring mechanisms — a roster, a key, a call, a read, a proxy, a caller list,
+# a promise about how a run ends — and every surface that still described the
+# retired one went on describing it until a prover happened to read that file.
+#
+# So the deliverable is a MECHANISM, and it is this: a retired mechanism may be
+# NAMED, but only as HISTORY. The house style already requires it (see the
+# "Every non-obvious decision carries its failure history in a comment" rule) —
+# a comment explaining what a thing USED to do, citing the defect that changed
+# it, is how the next author learns which invariant they are about to break.
+# What that style cannot survive is the same sentence written in the PRESENT
+# TENSE, which is indistinguishable from documentation until someone drives it.
+#
+# The rule is therefore positional, not lexical: naming a retired mechanism is
+# fine when the surrounding block marks it as gone. Every historical mention in
+# the tree today already does — "used to", "which is gone", "D-098 deleted",
+# "no longer" — because the house style was already asking for it. Only the
+# live assertions have no marker, and those are exactly the seven filings.
+#
+# The pin reads the SEVEN FILED SURFACES, whichever casting owns them, because
+# the class is cross-casting and a pin scoped to one casting's files would have
+# caught one of the seven.
+# --------------------------------------------------------------------------- #
+
+
+def _plugin_root() -> Path:
+    """`plugins/foundry/`, from this file."""
+    return Path(__file__).resolve().parents[3] / "foundry"
+
+
+#: The seven surfaces the class was filed against, by defect.
+_STALE_PROSE_SURFACES = {
+    "mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py": "D-122, D-136",
+    "commands/start.md": "D-126",
+    "mcp-server/src/foundry_mcp/tools/foundry_report.py": "D-141",
+    "mcp-server/tests/test_orchestrator_gates.py": "D-142",
+    "mcp-server/tests/test_inspect_mode.py": "D-143",
+    "mcp-server/src/foundry_mcp/tools/foundry.py": "D-144",
+}
+
+#: The mechanisms this run RETIRED, and the spelling each one is named by.
+#: Every entry is a thing that existed, was replaced, and whose old description
+#: outlived it somewhere. Add a row here the moment you retire a mechanism —
+#: that is the whole discipline, and it costs one line.
+# retired-mechanism-registry: BEGIN (this span is excluded from its own scan)
+_RETIRED_MECHANISMS = (
+    (
+        "the pre-width required-stream roster",
+        re.compile(r"trace,\s*prove,\s*sight,\s*test"),
+        "FR-012 made research_audit and test01 required in FULL mode; the "
+        "roster is now read from the recorded decision (D-122).",
+    ),
+    (
+        "the cycle-count context estimate",
+        re.compile(r"estimated_usage"),
+        "AC-033 replaced it with the spend the lead reports through "
+        "Foundry-Spend; it read no tokens and no durations (D-126).",
+    ),
+    (
+        "the foundry_mark_inspect_clean call",
+        re.compile(r"foundry_mark_inspect_clean"),
+        "no such tool, function or prose surface exists; the door is "
+        "Foundry-Phase(phase='inspect_clean') (D-123).",
+    ),
+    (
+        "the JSON-only report_status read",
+        re.compile(r"never from REPORT\.md|reads the JSON precisely"),
+        "D-015 moved the read onto BOTH documents; appended prose is harmless "
+        "because the markdown match is on the whole heading line, not because "
+        "the markdown is unread (D-141, D-142).",
+    ),
+    (
+        "the blocking-count final_gate proxy",
+        re.compile(r"keep\s+.?final_gate.?\s+from firing"),
+        "D-068 replaced `blocking == 0` with two transition facts: entered "
+        "from ASSAY/TEMPER/NYQUIST feedback, or the F2->F2 widening (D-143).",
+    ),
+    (
+        "the sync auto-demotion branch",
+        re.compile(r"auto-demotion branch"),
+        "D-098 removed the batch door's demotion routing; it refuses comment "
+        "prose in the validation loop instead (D-144).",
+    ),
+    (
+        "the two-ending run",
+        re.compile(r"runs until F6 DONE or an error stops it"),
+        "FR-024 made HALTED a third ending, reached by a SUCCESSFUL "
+        "transition rather than an error (D-136).",
+    ),
+)
+# retired-mechanism-registry: END
+
+#: What marks a mention as history rather than as an assertion. Any one of
+#: these in the same block is enough — the point is that SOMETHING in the
+#: paragraph tells the reader the thing is gone.
+_RETIREMENT_MARKERS = re.compile(
+    r"D-\d{2,3}"
+    r"|used to"
+    r"|no longer"
+    r"|retired"
+    r"|(?:is|are|was|were) gone"
+    r"|(?:was|were|has been|have been) (?:removed|replaced|deleted)"
+    r"|replaced (?:it|them|by)"
+    r"|deleted (?:when|the|that|it)"
+    r"|pre-change"
+    r"|does not exist|no such",
+    re.IGNORECASE,
+)
+# D-136 — WHY EVERY MARKER IS A PHRASE AND NOT A WORD.
+#
+# This list carried the bare tokens `deleted` and `stopped`, and a bare word
+# marks nothing: `commands/start.md`'s lead-fix rule says "at most 20
+# added-plus-deleted lines", so the whole CRITICAL LEAD RULES list counted as
+# history and the live sentence four lines below it — "Foundry runs until F6
+# DONE or an error stops it", the exact D-136 filing — passed the scan. Driven
+# while writing this pin, which is the point of writing the falsifiability
+# test beside it. A marker has to be a phrase that can only be about something
+# being gone.
+
+
+def _markdown_units(text: str) -> list[tuple[int, str]]:
+    """(1-based start line, text) for each blank-line-separated paragraph."""
+    out: list[tuple[int, str]] = []
+    start = 0
+    buf: list[str] = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        if line.strip():
+            if not buf:
+                start = i
+            buf.append(line)
+        elif buf:
+            out.append((start, "\n".join(buf)))
+            buf = []
+    if buf:
+        out.append((start, "\n".join(buf)))
+    return out
+
+
+def _python_units(text: str) -> list[tuple[int, str]]:
+    """(1-based start line, text) for each PROSE unit in a Python file.
+
+    A prose unit is a whole docstring, or a whole contiguous run of lines
+    carrying `#` comments — taken as WHOLE SOURCE LINES, so an inline marker
+    marks the line it sits on. Every remaining line of code is its own unit.
+
+    WHY WHOLE LINES AND NOT THE COMMENT TEXT. Taking only the comment token
+    made an inline `# D-136` cover its row without the row's CODE ever being
+    scanned — the marker would have exempted the line by hiding it, which is
+    the escape hatch this pin exists to close. Taking the whole line scans the
+    code and the marker together, which is the rule as stated: a retired
+    mechanism may be named, on a line that says it is gone.
+
+    WHY NOT PARAGRAPHS. The house style writes the defect id on a comment
+    block's HEADING line and the retired behaviour several paragraphs below it,
+    inside the same docstring — so a paragraph-sized unit reports a marked,
+    correctly-written failure-history comment as a violation. The unit a reader
+    takes a claim and its qualification in together is the whole comment, and
+    that is what this returns.
+
+    WHY CODE LINES ARE JUDGED ALONE. A retired spelling in executable code is
+    not prose ABOUT a mechanism, it is a use OF one, and the nearest comment is
+    not what qualifies it.
+    """
+    import io
+    import tokenize
+
+    lines = text.splitlines()
+    covered: set[int] = set()
+    units: list[tuple[int, str]] = []
+
+    comment_rows: list[int] = []
+    prev_comment_line = -2
+
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return _markdown_units(text)
+
+    triple = ('"""', "'''")
+    for tok in tokens:
+        if tok.type == tokenize.COMMENT:
+            row = tok.start[0]
+            if row != prev_comment_line + 1 and comment_rows:
+                units.append(
+                    (comment_rows[0],
+                     "\n".join(lines[r - 1] for r in comment_rows))
+                )
+                comment_rows = []
+            comment_rows.append(row)
+            covered.add(row)
+            prev_comment_line = row
+        elif tok.type == tokenize.STRING and tok.string.lstrip("rbuRBU").startswith(triple):
+            for row in range(tok.start[0], tok.end[0] + 1):
+                covered.add(row)
+            units.append((tok.start[0], tok.string))
+    if comment_rows:
+        units.append(
+            (comment_rows[0], "\n".join(lines[r - 1] for r in comment_rows))
+        )
+
+    for row, line in enumerate(lines, start=1):
+        if row not in covered and line.strip():
+            units.append((row, line))
+    return units
+
+
+def _prose_units(path: Path, text: str) -> list[tuple[int, str]]:
+    """The units a retired-mechanism claim is judged in, per file type."""
+    if path.suffix == ".py":
+        return _python_units(text)
+    return _markdown_units(text)
+
+
+#: A line asserting a spelling is ABSENT is not a claim that the mechanism is
+#: live — it is this class's own kind of pin, and the two must not collide.
+_ABSENCE_ASSERTION = re.compile(r"\bnot in\b|assertNotIn")
+
+#: The registry below and its falsifiability fixtures NAME every retired
+#: spelling on purpose, so the scan would report itself. The span is delimited
+#: by a greppable sentinel rather than by a line range, and
+#: `test_the_registry_exclusion_is_the_only_one` pins that no OTHER surface
+#: declares one — otherwise this is an escape hatch any file could open to hide
+#: a live assertion behind a comment.
+_REGISTRY_BEGIN = "retired-mechanism-registry: BEGIN"
+_REGISTRY_END = "retired-mechanism-registry: END"
+
+
+def _excluded_line_spans(text: str) -> list[range]:
+    """Line ranges a file has explicitly marked as registry fixtures."""
+    spans: list[range] = []
+    open_at: int | None = None
+    for row, line in enumerate(text.splitlines(), start=1):
+        if _REGISTRY_BEGIN in line:
+            open_at = row
+        elif _REGISTRY_END in line and open_at is not None:
+            spans.append(range(open_at, row + 1))
+            open_at = None
+    if open_at is not None:
+        spans.append(range(open_at, len(text.splitlines()) + 2))
+    return spans
+
+
+def test_no_filed_surface_names_a_retired_mechanism_as_though_it_were_live():
+    """The escalated class `stale-prose-survives-beside-new-prose`, as a rule.
+
+    Four consecutive cycles, seven filings, four castings' files. Every one is
+    the same shape: a sentence describing a mechanism the run replaced, sitting
+    in the present tense beside the mechanism that replaced it, where the next
+    reader takes it for documentation.
+
+    The rule this pins is that a retired mechanism may be named only as
+    HISTORY. Concretely: if a PROSE UNIT — a whole docstring, or a whole
+    contiguous run of `#` comment lines — contains one of the retired spellings
+    in `_RETIRED_MECHANISMS`, that same unit must carry a retirement marker: a
+    `D-NNN` citation, or a past-tense phrase such as "used to", "no longer",
+    "D-098 deleted". Every historical mention in the tree today already
+    satisfies this, because the house style ("Every non-obvious decision
+    carries its failure history in a comment") was already asking for it. Only
+    the live assertions do not, and those were the seven filings.
+
+    WHY A WHOLE COMMENT AND NOT A PARAGRAPH. The house style puts the defect id
+    on a comment's heading line and the retired behaviour several paragraphs
+    below it inside the same docstring; a paragraph-sized unit reports a
+    correctly-written failure-history comment as a violation. Driven while
+    writing this: the paragraph unit flagged
+    `test_sync_denylist_hit_fires_the_tripwire_end_to_end`, whose docstring
+    opens "D-036 / AC-002 / FR-002" and describes the retired branch three
+    lines later.
+
+    WHY A LINE ASSERTING ABSENCE IS EXEMPT. `assert "never from REPORT.md" not
+    in source` is this class's own pin, one defect earlier (D-050). A rule that
+    cannot tell "the code claims X" from "the suite checks X is gone" would
+    make every pin against stale prose itself a violation.
+
+    WHY THE SEVEN SURFACES AND NOT ONE CASTING'S FILES. The class is
+    cross-casting — the seven filings land in four castings — so a pin scoped
+    to the files one casting owns would have caught one of them and let the
+    class recur through the other three. This test READS the other castings'
+    files and edits none of them.
+
+    WHEN THIS FAILS, the fix is not to add a marker word. It is to read the
+    named block and decide which is true: the mechanism is live, and the row
+    in `_RETIRED_MECHANISMS` is wrong, or the mechanism is gone and the prose
+    must say so.
+    """
+    root = _plugin_root()
+    violations: list[str] = []
+
+    for rel, filed_as in sorted(_STALE_PROSE_SURFACES.items()):
+        path = root / rel
+        assert path.exists(), f"filed surface missing from the tree: {rel}"
+        text = path.read_text(encoding="utf-8")
+        excluded = _excluded_line_spans(text)
+        for start, block in _prose_units(path, text):
+            if any(start in span for span in excluded):
+                continue
+            if _RETIREMENT_MARKERS.search(block):
+                continue
+            if _ABSENCE_ASSERTION.search(block):
+                continue
+            for name, pattern, why in _RETIRED_MECHANISMS:
+                match = pattern.search(block)
+                if match is None:
+                    continue
+                line = start + block[: match.start()].count("\n")
+                violations.append(
+                    f"{rel}:{line} names {name!r} with nothing marking it as "
+                    f"history — {why} (this surface was filed as {filed_as})\n"
+                    f"    {match.group(0)!r}"
+                )
+
+    assert not violations, (
+        "a retired mechanism is described as though it were live:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_the_retired_mechanism_pin_actually_fires():
+    """The pin's own falsifiability.
+
+    A scanner whose patterns never match anything passes forever and proves
+    nothing — and this class has already survived two structural packets, so a
+    pin that cannot be shown to fire is not a mechanism, it is a comment. Each
+    retired spelling is driven through the block scan in both directions: bare,
+    it is a violation; carrying a retirement marker, it is not.
+    """
+    for name, pattern, _why in _RETIRED_MECHANISMS:
+        # retired-mechanism-registry: BEGIN (this span is excluded from its own scan)
+        sample = {
+            "the pre-width required-stream roster":
+                "All streams (trace, prove, sight, test) must complete.",
+            "the cycle-count context estimate":
+                "If Foundry-Next shows estimated_usage: high, save state.",
+            "the foundry_mark_inspect_clean call":
+                "Call foundry_mark_inspect_clean when clean.",
+            "the JSON-only report_status read":
+                "report_status reads the JSON precisely so prose is safe.",
+            "the blocking-count final_gate proxy":
+                "One OPEN LIVE defect, enough to keep final_gate from firing.",
+            "the sync auto-demotion branch":
+                "foundry_sync_defects's auto-demotion branch faces the mirror.",
+            "the two-ending run":
+                "Zero approval gates. The foundry runs until F6 DONE or an "
+                "error stops it.",
+        }[name]
+        # retired-mechanism-registry: END
+
+        assert pattern.search(sample), f"{name}: the pattern matches nothing"
+        assert not _RETIREMENT_MARKERS.search(sample), (
+            f"{name}: the bare sample must read as a live assertion"
+        )
+        marked = f"D-999 — this is what it used to say: {sample}"
+        assert _RETIREMENT_MARKERS.search(marked), (
+            f"{name}: a marked block must be exempt"
+        )
+
+
+def test_the_tripwire_caller_roster_names_the_callers_that_exist():
+    """D-144 as a mechanical pin rather than a prose one.
+
+    `record_denylist_tripwire`'s docstring carries a roster of its callers and
+    its own instruction to "Re-derive this list from `grep -rn
+    'record_denylist_tripwire' src/` when you change a caller; do not trust it
+    because it is written down." The roster has been wrong once already — it
+    named a branch D-098 deleted — which is what a hand-maintained list of
+    call sites does.
+
+    So the list is checked against the call sites, not read. Every function
+    that calls the tripwire in `src/` must be named in the roster, and the
+    roster names the module each lives in. `tools/foundry.py` is casting 2's
+    file and this test only reads it.
+    """
+    import ast
+    import inspect
+
+    from foundry_mcp.tools.foundry import record_denylist_tripwire
+
+    roster = inspect.getdoc(record_denylist_tripwire) or ""
+    src_root = Path(inspect.getsourcefile(record_denylist_tripwire)).parent.parent
+
+    callers: set[str] = set()
+    for py in sorted(src_root.rglob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Name)
+                    and inner.func.id == "record_denylist_tripwire"
+                ):
+                    callers.add(node.name)
+
+    assert callers, "the tripwire has no callers at all — the export is dead"
+    missing = sorted(c for c in callers if c not in roster)
+    assert not missing, (
+        "record_denylist_tripwire's docstring roster does not name every "
+        f"caller that exists: {missing}. Re-derive it from the call sites."
+    )
+
+
+def test_the_registry_exclusion_is_the_only_one():
+    """The escape hatch, pinned shut.
+
+    `_excluded_line_spans` lets a file mark a span as registry fixtures, and
+    the retired-mechanism scan skips it. That is necessary — the registry and
+    its falsifiability samples name every retired spelling on purpose — and it
+    is exactly the shape that would let a live assertion hide behind a comment
+    somebody pasted from here.
+
+    So the hatch is enumerable and enumerated: the ONLY surface allowed to open
+    one is this test file, which owns the registry. Any other filed surface
+    declaring a span fails here, by name, whatever the scan says about it.
+    """
+    root = _plugin_root()
+    owner = "mcp-server/tests/test_orchestrator_gates.py"
+
+    for rel in sorted(_STALE_PROSE_SURFACES):
+        spans = _excluded_line_spans((root / rel).read_text(encoding="utf-8"))
+        if rel == owner:
+            assert spans, "the registry span sentinel has gone missing"
+            continue
+        assert not spans, (
+            f"{rel} declares a retired-mechanism exclusion span. Only the file "
+            "that owns the registry may; a span anywhere else hides a live "
+            "assertion from the scan."
+        )
+
+
+# --------------------------------------------------------------------------- #
+# D-122 / D-123 — the ASSAY gate's two hints describe the run that exists
+# --------------------------------------------------------------------------- #
+
+
+def test_the_streams_hint_names_the_roster_the_transition_recorded(run_env):
+    """FR-012 / AC-017: 'Foundry-Next names exactly that required set' — and so
+    must the refusal that blocks on it. D-122.
+
+    Driven on a FULL-width cycle whose recorded `required_streams` are trace,
+    prove, test, research_audit and test01 with only the last two unmarked. The
+    gate refused with reason "Verification streams incomplete: research_audit
+    test01" and, beside it, the hint "All streams (trace, prove, sight, test)
+    must complete before ASSAY" — the roster from before FR-012 widened it. It
+    omits both streams the refusal is about and names `sight`, which this run's
+    recorded roster does not require. A lead following the hint runs the wrong
+    streams and never learns which two are owed.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [])
+    recorded = _record_full_inspect_mode(
+        fdir, cycle=1, required_streams=fo.FULL_ROSTER_STREAMS
+    )
+    assert "research_audit" in recorded["required_streams"], recorded
+    assert "test01" in recorded["required_streams"], recorded
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=1\nitems_checked=10\n"
+            "items_total=10\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("assay", project_root)
+
+    assert gate["passed"] is False
+    assert "research_audit" in gate["reason"] and "test01" in gate["reason"]
+    # The hint names the same set the reason is computed from...
+    for stream in recorded["required_streams"]:
+        assert stream in gate["hint"], (stream, gate["hint"])
+    # ...and not the retired roster.
+    assert "trace, prove, sight, test" not in gate["hint"]
+    assert "sight" not in gate["hint"], gate["hint"]
+
+
+def test_the_inspect_clean_hint_names_a_call_the_server_accepts(run_env):
+    """FR-006 / AC-008 / FR-044: the door that closes an INSPECT is
+    Foundry-Phase(phase='inspect_clean'). D-123.
+
+    Driven on a run with every required stream recorded, one fixed defect and
+    no `.inspect-clean` marker: the gate refused with reason "GRIND fixed
+    defects but INSPECT has not re-verified" and hint "Run full INSPECT cycle
+    after GRIND. Call foundry_mark_inspect_clean when clean."
+    `grep -rn foundry_mark_inspect_clean plugins/foundry` found that name in
+    the hint string and NOWHERE else — no MCP tool, no Python function, no
+    prose surface carries it. The refusal's only stated next move was a call
+    the server would reject.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [{
+        "id": "D-001", "cycle": 1, "source": "trace", "type": "UNWIRED",
+        "description": "d", "file": "src/api/a.py", "symbol": "h",
+        "status": "fixed", "tier": "LIVE", "class": "K", "fixed_in_cycle": 1,
+    }])
+    recorded = _record_full_inspect_mode(fdir, cycle=1)
+    for stream in recorded["required_streams"]:
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=1\nitems_checked=10\n"
+            "items_total=10\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("assay", project_root)
+
+    assert gate["passed"] is False
+    assert "has not re-verified" in gate["reason"], gate
+    assert "foundry_mark_inspect_clean" not in gate["hint"]
+    assert "Foundry-Phase(phase='inspect_clean')" in gate["hint"], gate["hint"]
+
+    # And the named call is one the server actually accepts.
+    assert "inspect_clean" in fo.PHASE_TOKENS
+
+
+# --------------------------------------------------------------------------- #
+# D-133 — the corpus re-executes before NYQUIST and before DONE
+# --------------------------------------------------------------------------- #
+
+
+def test_the_done_checklist_carries_an_evidence_rung(run_env):
+    """GI-002 verbatim: the whole corpus is swept 'before ASSAY/NYQUIST/DONE'.
+    D-133.
+
+    `_done_preconditions`' checklist was report_generated,
+    escalated_classes_cleared, run_not_halted, spec_requirements_parsed,
+    all_verified, zero_blocking_defects, no_active_teams, verdict_coverage —
+    no evidence rung of any kind, and `fixes_after_decision` (the stamp that
+    catches the same shape one phase earlier) is read only by `inspect_clean`.
+    So a fix landing in F5 or F5.5 reached DONE with the committed corpus never
+    re-executed over it.
+
+    Asserted on the CHECKLIST as well as the verdict, because the checklist is
+    what a lead reads to learn what DONE requires, and a guarantee absent from
+    it is a guarantee nobody can see.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    rungs = [c["check"].split(" ")[0] for c in outcome["checklist"]]
+    assert "evidence_reproduces_at_head" in rungs, rungs
+    assert outcome["passed"] is True, outcome
+
+
+def test_a_log_that_no_longer_reproduces_refuses_nyquist_and_done(run_env,
+                                                                  monkeypatch):
+    """GI-002 / CT-007: the sweep 'refuses on mismatch', naming each log.
+
+    Both terminal doors, because D-133's drive reached NYQUIST and DONE through
+    two different transitions and neither swept. The sweep engine is casting
+    5's; what is pinned here is that this module CALLS it at these boundaries
+    and refuses on its answer.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    def _mismatch(_fdir, _pr, _entry, *, full):
+        assert full is True, "a terminal boundary sweeps the WHOLE corpus"
+        return {
+            "ok": False,
+            "record": {"scope": "full", "logs_reexecuted": ["evidence/a.log"]},
+            "mismatches": [{"log": "evidence/a.log", "reason": "output differs"}],
+            "error": "",
+        }
+
+    monkeypatch.setattr(fo, "_sweep_evidence_at_boundary", _mismatch)
+
+    _write_state(fdir, phase="F5", cycle=1)
+    _arm_ordering_token(fdir)
+    nyq = foundry_mark_phase_complete("nyquist", project_root)
+    assert nyq.get("ok") is not True, nyq
+    assert "evidence/a.log" in nyq["error"], nyq
+    assert json.loads((fdir / "state.json").read_text())["phase"] == "F5", (
+        "a refused crossing leaves the run where it was"
+    )
+
+    _write_state(fdir, phase="F4", cycle=1)
+    _arm_ordering_token(fdir)
+    done = foundry_mark_phase_complete("done", project_root)
+    assert done.get("ok") is not True, done
+    assert "evidence/a.log" in json.dumps(done), done
+
+
+def test_the_terminal_sweep_is_taken_once_per_head(run_env, monkeypatch):
+    """D-133's cost half: the gate and the transition ask the same question.
+
+    `_done_preconditions` is ONE evaluation with two callers by design (D-037),
+    so the evidence rung has to be in it — a rung present in the transition and
+    absent from the gate is the drift that helper exists to prevent. A
+    whole-corpus re-execution is minutes, and Foundry-Gate('done') followed by
+    Foundry-Phase('done') would pay it twice. The result is memoised on HEAD,
+    so the claim stays exactly as strong ("the corpus was re-executed at THIS
+    tree") while being made once.
+    """
+    import subprocess
+
+    project_root, fdir = run_env
+    subprocess.run(["git", "init", "-q", project_root], check=True)
+    subprocess.run(["git", "-C", project_root, "config", "user.email", "t@t"],
+                   check=True)
+    subprocess.run(["git", "-C", project_root, "config", "user.name", "t"],
+                   check=True)
+    (Path(project_root) / "seed.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "-C", project_root, "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", project_root, "commit", "-qm", "seed"], check=True)
+
+    calls = []
+
+    def _counting(_fdir, _pr, _entry, *, full):
+        calls.append(full)
+        return {"ok": True, "record": {"scope": "full", "logs_reexecuted": []},
+                "mismatches": [], "error": ""}
+
+    monkeypatch.setattr(fo, "_sweep_evidence_at_boundary", _counting)
+
+    first = fo._terminal_evidence_sweep(fdir, project_root)
+    second = fo._terminal_evidence_sweep(fdir, project_root)
+
+    assert first["ok"] and second["ok"]
+    assert first["cached"] is False and second["cached"] is True
+    assert len(calls) == 1, "the second ask re-executed the corpus"
+
+    # ...and a commit — which is what a fix landing in F5 or F5.5 IS —
+    # invalidates it, which is the case D-133 was filed on.
+    (Path(project_root) / "seed.txt").write_text("y", encoding="utf-8")
+    subprocess.run(["git", "-C", project_root, "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", project_root, "commit", "-qm", "fix"], check=True)
+
+    third = fo._terminal_evidence_sweep(fdir, project_root)
+    assert third["cached"] is False
+    assert len(calls) == 2, "HEAD moved and the memo was still trusted"
+
+
+# --------------------------------------------------------------------------- #
+# D-136 / D-137 — a HALTED run is told to stop, once, in words that agree
+# --------------------------------------------------------------------------- #
+
+
+def test_a_halted_run_is_never_told_to_keep_going(run_env):
+    """FR-052 / FR-045 / NFR-005: Foundry-Next 'reports halted and stops
+    dispatching'. D-136.
+
+    Driven on a halted state, `instructions` was the standing CRITICAL RULES
+    block — "NEVER stop between phases. Call Foundry-Next after each step and
+    follow it", "If you catch yourself thinking, call Foundry-Next and execute
+    whatever it says", "The foundry runs until F6 DONE or an error stops it" —
+    followed by the halted imperative "YOUR NEXT CALL: NONE ... do NOT call
+    Foundry-Next in a loop ... stop". Dispatch was correctly withheld; the
+    lead-facing text told the lead to do the opposite, on the same surface.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(
+        fdir, phase=fo.RUN_PHASE_HALTED, cycle=3,
+        halted_at_cycle=3, halted_reason="max_cycles 2 reached", max_cycles=2,
+    )
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+    text = nxt["instructions"]
+
+    assert nxt["action"] == "halted"
+    # Each element below is the RETIRED wording this asserts is absent — test
+    # data, not a claim. The markers are inline because the pin scans a bare
+    # tuple element as its own code line, where the `assert ... not in` two
+    # lines down is not visible to it.
+    for contradiction in (
+        "NEVER stop between phases",  # retired on a halted run (D-136)
+        "call Foundry-Next and execute whatever it says",  # retired (D-136)
+        "runs until F6 DONE or an error stops it",  # retired by FR-024 (D-136)
+    ):
+        assert contradiction not in text, contradiction
+    assert "HALTED" in text
+    assert "do NOT call Foundry-Next in a loop" in text or "loop" in text
+
+
+def test_the_standing_rules_name_all_three_endings(run_env):
+    """FR-024: HALTED is a third ending, 'not a refusal'. D-136's other half.
+
+    The standing block is read on EVERY non-halted call, and it said the run
+    ends two ways. A lead told the halt cannot happen has been mis-briefed
+    about the one transition it will not recognise when it arrives.
+    """
+    assert "runs until F6 DONE or an error stops it" not in (
+        fo._STANDING_CRITICAL_RULES
+    )
+    assert "HALTED" in fo._STANDING_CRITICAL_RULES
+    assert "F6 DONE" in fo._STANDING_CRITICAL_RULES
+
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F1", cycle=0)
+    _defect_ledger(fdir, [])
+    assert "HALTED" in foundry_next_action(project_root)["instructions"]
+
+
+def test_the_status_header_renders_halted_once(run_env):
+    """NFR-005 / CT-016: HALTED is a named terminal state Foundry-Next reports.
+    D-137.
+
+    Driven on a halted state, the banner read "F O U N D R Y  HALTED HALTED":
+    `_format_status_display` renders the phase token followed by
+    `phase_names.get(phase, phase)`, and `phase_names` — built from the ten
+    ladder rows — has no entry for the halt, so the fallback repeated the
+    token. Every new notice has to read correctly in a terminal.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(
+        fdir, phase=fo.RUN_PHASE_HALTED, cycle=3,
+        halted_at_cycle=3, halted_reason="max_cycles 2 reached",
+    )
+    _defect_ledger(fdir, [])
+
+    # The banner sits inside the hammer art block, so the whole render is the
+    # unit — reading line 1 alone reads the art.
+    rendered = _plain(fo._format_status_display(project_root))
+    banner = next(
+        line for line in rendered.splitlines() if "F O U N D R Y" in line
+    )
+
+    assert "HALTED HALTED" not in banner
+    assert banner.count("HALTED") == 1, banner
+    # The ordinary phases still render token AND name, which is what the
+    # fallback was there for.
+    _write_state(fdir, phase="F2", cycle=1)
+    ordinary = _plain(fo._format_status_display(project_root))
+    ordinary_banner = next(
+        line for line in ordinary.splitlines() if "F O U N D R Y" in line
+    )
+    assert "F2 INSPECT" in ordinary_banner
+
+
+# --------------------------------------------------------------------------- #
+# D-129 — the clean path names an ESCALATED class before the F6 door
+# --------------------------------------------------------------------------- #
+
+
+def test_the_clean_f2_arms_name_a_persisted_escalated_class(run_env):
+    """US-001 / ST-010 / NFR-001: the exit is mechanical, and the lead has to
+    be able to see the meter running. D-129.
+
+    Driven: three LATENT filings of class FDC at cycles 1-3; the boundary
+    closing cycle 3 wrote escalation.json status ESCALATED, escalated_at 3,
+    packets 0; all required streams marked, blocking 0. Foundry-Next returned
+    action transition_to_assay with "INSPECT clean: zero blocking defects ...
+    3 LATENT defect(s) stay open ... they block nothing" and named neither FDC
+    nor ESCALATED nor ST-010. Following it reached F5.5 through ASSAY, TEMPER
+    and NYQUIST before Foundry-Gate('done') refused "1 defect class(es) are
+    still ESCALATED: FDC" — every remaining boundary then costs a full
+    post-verification loop instead of one crossing from F2.
+
+    `_escalation_notice` is wired only into the `open_count > 0` GRIND arm, and
+    reads `_escalated_classes`, which skips a class with no open instances —
+    so it was blind twice over on exactly this state.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F2", cycle=3)
+    _defect_ledger(fdir, [
+        {
+            "id": f"D-00{n}", "cycle": n, "source": "prove", "type": "WRONG",
+            "description": "d", "file": "src/api/a.py", "symbol": "h",
+            "status": "open", "tier": "LATENT", "class": "FDC",
+            "reproduction_attempted": "drove every caller; none reach it",
+            "fixed_in_cycle": None,
+        }
+        for n in (1, 2, 3)
+    ])
+    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps({"classes": {
+        "FDC": {
+            "class": "FDC", "status": "ESCALATED", "exit_reason": None,
+            "escalated_at_cycle": 3, "cleared_at_cycle": None,
+            "structural_packets_dispatched": 0, "structural_packet_cycles": [],
+            "live_clean_cycles": 0, "consecutive_cycles": 3,
+            "defect_ids": ["D-001", "D-002", "D-003"],
+            "open_latent_defect_ids": ["D-001", "D-002", "D-003"],
+            "proposal": "", "recorded_at": "2020-01-01T00:00:00+00:00",
+        }
+    }}), encoding="utf-8")
+    recorded = _record_full_inspect_mode(fdir, cycle=3)
+    for stream in recorded["required_streams"]:
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=3\nitems_checked=10\n"
+            "items_total=10\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "transition_to_assay", nxt
+    assert "FDC" in nxt["instructions"], nxt["instructions"]
+    assert "ESCALATED" in nxt["instructions"]
+    assert "ST-010" in nxt["instructions"]
+    assert nxt["details"]["still_escalated_classes"] == ["FDC"]
+
+    # And the set it names is the SAME set the F6 door refuses on — one union,
+    # read through one function, so the notice and the refusal cannot drift.
+    outcome = fo._done_preconditions(fdir, project_root)
+    assert outcome["passed"] is False
+    assert "FDC" in outcome["reason"]

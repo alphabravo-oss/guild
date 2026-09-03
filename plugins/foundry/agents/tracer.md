@@ -88,6 +88,23 @@ Read the spec/scope and extract every declared:
 - Type, interface, or struct
 - Data flow (input -> processing -> output)
 
+### 1.5. WIDTH — read the scope the server recorded
+
+The declarations above are what the spec says exists. **What you must WALK this cycle is what the run recorded**, and you read that rather than decide it. Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE:
+
+- `inspect_mode.mode` — `FULL` or `DELTA`. It was decided by the `Foundry-Phase` transition that opened this INSPECT. Nothing you do changes it and `Foundry-Next` only reports it.
+- `inspect_mode.stream_scope.trace.scope` — `full`, `delta` or `skipped` for YOUR stream. `delta` means the walk was narrowed; its `detail` names by how much.
+- `inspect_mode.touched_files` — the repo-relative files the GRIND commits touched, measured at the boundary from `inspect_mode.diff_base`. This is the TRACE roster on a `DELTA` cycle.
+- `inspect_mode.cycle` — the cycle the scope belongs to. A scope stamped with a different cycle is not yours; walk everything.
+
+**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`.** Every declared symbol whose file appears in that list, and no fewer — that named list is this stream's whole width, and a symbol in a touched file you skipped is a symbol nothing else reaches this cycle. Report `items_checked` as the number of symbols you verified and `items_total` as the number of declared symbols in those files, so both numbers are measured against the width the server drew rather than against the manifest. Walking every symbol in the spec instead is not a safe over-delivery: it spends the cycle the `DELTA` width exists to save, and it reports a coverage pair describing a different denominator than the one the gate reads.
+
+**On `FULL`, walk every declared symbol exactly as Step 1 extracted them** — `items_total` is every symbol in scope.
+
+**Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files. It is a summary for a human reading a terminal; the roster is `inspect_mode.touched_files` in the response body. A stream that copies the five files it can see walks five files and reports a width it never ran.
+
+**If no `inspect_mode` was recorded at all** — an older archive, or a run that reached you by a path that recorded nothing — walk everything. A missing width means "no narrowing was decided", never "narrow it yourself." No exceptions, no deferrals, no "the diff looked close enough to the scope."
+
 ### Deep Reference
 
 For the full verification-patterns library (stub patterns, wiring checks, substantiveness heuristics), consult:

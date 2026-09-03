@@ -540,6 +540,20 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         if sample:
             shown = ", ".join(sample[:8]) + ("..." if len(sample) > 8 else "")
             lines.append(f"  {_BWHITE}PROVE:{_RESET}    {len(sample)} row(s) — {shown}")
+        # D-140 / AC-019: the TRACE half of the same roster. PROVE's rows have
+        # been on this screen since D-104 and TRACE's files were on none — the
+        # stream was left to scope its walk from the spec while the server had
+        # the file list recorded. Truncated for the terminal exactly as the
+        # PROVE line is; the array is `inspect_mode.touched_files` in the
+        # response body, which is what the stream reads.
+        touched = mode.get("touched_files") or []
+        trace_scope = (mode.get("stream_scope") or {}).get("trace")
+        if touched and isinstance(trace_scope, dict) and trace_scope.get("scope") == "delta":
+            shown = ", ".join(_short_path(p) for p in touched[:5])
+            more = f" (+{len(touched) - 5} more)" if len(touched) > 5 else ""
+            lines.append(
+                f"  {_BWHITE}TRACE:{_RESET}    {len(touched)} file(s) — {shown}{more}"
+            )
 
     spend = r.get("spend")
     if isinstance(spend, dict):
@@ -741,10 +755,47 @@ def _fmt_foundry_unregister_team(r: dict) -> str:
 
 
 def _fmt_foundry_mark_defect_fixed(r: dict) -> str:
+    """Foundry-Fix's render — and its refusals carry what the rung named.
+
+    D-121 — ONE REFUSAL, TWO DOORS, TWO DIFFERENT ANSWERS.
+    -----------------------------------------------------
+    `check_reported_prompt_hash` (the C-8 shared rung) returns `error`,
+    `hint`, `expected_hash` and `reported_hash`; its `error` is the bare token
+    `stale_prompt_hash` and every VALUE it compared lives in the other three
+    keys. `foundry_mark_defect_fixed` returns that dict unchanged, and this
+    branch rendered `r['error']` alone — so on the Foundry-Fix door the whole
+    screen read `stale_prompt_hash`, while Foundry-Accept-Casting, which has
+    no formatter and falls through to the JSON dump, showed both hashes for
+    the identical refusal. Driven (TEST-01 OBS-032): 7 of 7 fix-door examples
+    carried neither hash; all 3 accept-door examples carried both.
+    spec.md's Error Handling row names BOTH doors for this refusal
+    ("Reported prompt hash differs from file | Foundry-Accept-Casting,
+    Foundry-Fix | refused | expected and reported hash"), and FR-019 makes the
+    hash the one thing the teammate states back — a refusal that hides both
+    values cannot tell the lead whether the dispatch went stale or the
+    teammate never read the file, which is the distinction the check exists to
+    expose.
+
+    Written as the general refusal shape rather than a `stale_prompt_hash`
+    special case: `hint` is the house key every refusal in this server carries
+    (`foundry_state.py`'s `{"ok": False, "error": ..., "hint": ...}`), and a
+    formatter that renders `error` and drops `hint` loses the remedy for every
+    OTHER Foundry-Fix refusal too — the missing-field ladder's "Name a second
+    path that touches this code..." was going the same way.
+    """
     if r.get("error"):
-        return _foundry_display(f"F O U N D R Y  {_BRED}Error{_RESET}", [
-            f"  {_RED}{r['error']}{_RESET}",
-        ])
+        lines = [f"  {_RED}{r['error']}{_RESET}"]
+        for label, key in (("Expected:", "expected_hash"), ("Reported:", "reported_hash")):
+            value = r.get(key)
+            if value is not None:
+                lines.append(f"  {_BWHITE}{label}{_RESET} {_BYELLOW}{value!r}{_RESET}")
+        fields = r.get("missing_fields")
+        if isinstance(fields, list) and fields:
+            lines.append(f"  {_BWHITE}Fields:{_RESET}   {', '.join(str(f) for f in fields)}")
+        hint = r.get("hint")
+        if isinstance(hint, str) and hint.strip():
+            lines.append(f"  {_DIM}{hint}{_RESET}")
+        return _foundry_display(f"F O U N D R Y  {_BRED}Error{_RESET}", lines)
     defect_id = r.get("defect_id", "?")
     cycle = r.get("fixed_in_cycle", "?")
     remaining = r.get("remaining_open", 0)

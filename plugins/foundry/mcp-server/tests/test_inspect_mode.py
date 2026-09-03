@@ -54,8 +54,14 @@ from foundry_mcp.tools.foundry_orchestrator import (
     _current_inspect_mode,
     _decide_inspect_mode,
     foundry_mark_phase_complete,
+    foundry_mark_stream,
     foundry_next_action,
 )
+
+
+def _plugin_root() -> Path:
+    """`plugins/foundry/`, from this file."""
+    return Path(__file__).resolve().parents[3] / "foundry"
 
 RUN_NAME = "inspect-mode-run"
 
@@ -132,11 +138,37 @@ def _write_defects(fdir: Path, defects: list[dict]) -> None:
 
 
 def _open_live(did: str = "D-001", cycle: int = 1) -> dict:
-    """One OPEN LIVE defect — enough to keep `final_gate` from firing.
+    """One OPEN LIVE defect: an ordinary GRIND with real work still in it.
 
+    D-143 — WHAT THIS DOCSTRING USED TO EXPLAIN.
+    -------------------------------------------
+    It read "One OPEN LIVE defect — enough to keep `final_gate` from firing.
     Every DELTA fixture needs this. `final_gate` fires when no blocking defect
-    remains, because the next gate is then ASSAY; a fixture with an empty ledger
-    would run FULL for a perfectly good reason and prove nothing about DELTA.
+    remains, because the next gate is then ASSAY." That was the RETIRED proxy.
+    `_decide_inspect_mode`'s final_gate arm did test `_blocking_defects(...)
+    ["blocking"] == 0`, and D-068 removed it: under that test DELTA fired only
+    when the lead crossed with LIVE defects still open, which no guidance
+    instructs and which `Foundry-Gate('assay')` refuses anyway — so US-004
+    delivered nothing. The GRIND cycle-4 ruling replaced it with two
+    TRANSITION facts: final_gate fires when the GRIND was entered from ASSAY,
+    TEMPER or NYQUIST feedback (`_entered_grind_from_feedback`), or when this
+    crossing is the F2->F2 widening re-open.
+
+    Driven at HEAD: a CLEARED ledger and a one-handler GRIND record
+    DELTA/delta — so the state the retired sentence says fires final_gate does
+    not fire it, and the claim "every DELTA fixture needs this" is false too.
+    The fixtures built on this helper still pass because they assert the
+    transition's output; what was wrong is the sentence a maintainer reads to
+    learn WHY the fixture holds a LIVE defect, one file away from the rule that
+    replaced it.
+
+    WHY THE FIXTURES STILL HOLD ONE. Not to suppress final_gate — nothing here
+    does that — but because a DELTA cycle is the ordinary GRIND->INSPECT
+    crossing, and an ordinary GRIND has open work. A fixture asserting DELTA
+    over an empty ledger would be asserting it over the run state that reaches
+    `inspect_clean`'s widening refusal instead, which is a different subject.
+    Fixtures that mean "this GRIND fixed everything" set `status: fixed`
+    explicitly rather than dropping the record.
     """
     return {
         "id": did, "cycle": cycle, "source": "trace", "type": "UNWIRED",
@@ -1862,6 +1894,14 @@ def test_the_temper_entry_keeps_the_preceding_inspects_rollup_row(run_env):
     assert delta["inspect_mode"] == "DELTA"
     cycle = str(delta["cycle"])
 
+    # D-125: F5 is reached THROUGH ASSAY, and `temper` is now refused from any
+    # other phase. The subject here is the roll-up bucket, not the route, so
+    # the run is moved to F4 the way a real one gets there (inspect_clean then
+    # ASSAY) — `_update_phase` rather than `_write_state`, because the recorded
+    # DELTA decision and the cycle counter are exactly what this test reads
+    # back and a fresh state document would erase both.
+    fo._update_phase(fdir, "F4")
+
     _arm(fdir)
     temper = foundry_mark_phase_complete("temper", project_root)
     assert temper["inspect_mode"] == "FULL"
@@ -2084,3 +2124,292 @@ def test_the_roster_reader_refuses_a_decision_from_another_cycle(run_env):
     assert fo._recorded_prove_roster(fdir, cycle) == recorded["prove_sample"]
     assert fo._recorded_prove_roster(fdir, cycle + 1) is None
     assert fo._recorded_prove_roster(fdir, cycle - 1) is None
+
+
+# --------------------------------------------------------------------------- #
+# D-124 / D-125 — every INSPECT-opening token guards its source phase
+#
+# GI-009 names three transitions that open an INSPECT: the F2 entry (`cast`),
+# the F5 entry (`temper`) and `inspect_start`. The cycle-6 ruling gave a
+# source-phase precondition to exactly one of them, and D-116's failure shape
+# survived unchanged on the other two.
+# --------------------------------------------------------------------------- #
+
+
+def test_cast_is_refused_from_every_phase_but_f1(run_env):
+    """CT-009 / GI-009 / FR-023: ONE decision per INSPECT-opening transition.
+    D-124.
+
+    Driven on a run at F4 (ASSAY) in cycle 2 whose `inspect_modes` held a
+    final_gate FULL decision for cycle 2 and whose `.cast-baseline-sha` named
+    the CAST baseline commit: `Foundry-Phase('cast')` returned ok True, phase
+    F2, mode FULL, rule first_of_phase. Afterwards state.json carried a THIRD
+    width decision stamped onto cycle 2 beside the inspect_start one,
+    `.cast-baseline-sha` had been overwritten from the baseline commit to HEAD
+    — destroying the cycle-context baseline every GRIND prompt is built from —
+    and the stream roll-up read `first_of_phase` for a cycle that ran
+    final_gate. A run in ASSAY was pulled back into F2 with a fabricated
+    first-of-phase record.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "rule_detail": "fixture", "decided_by": "inspect_start",
+        "decided_at": fo._now(), "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "touched_files": [], "prove_sample": [],
+    }])
+    _write_manifest(fdir)
+    (fdir / ".cast-baseline-sha").write_text("baseline0000\n", encoding="utf-8")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("cast", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "F4" in result["error"], result
+    assert result["accepted_from"] == ["F1"]
+    # Nothing moved: not the phase, not the baseline, not the decision list.
+    state = _read_state(fdir)
+    assert state["phase"] == "F4"
+    assert len(state["inspect_modes"]) == 1
+    assert (fdir / ".cast-baseline-sha").read_text(encoding="utf-8").strip() == (
+        "baseline0000"
+    )
+    assert not (fdir / ".cast-complete").exists()
+
+    # ...and from F1, which is where CAST actually ends, it is accepted.
+    _write_state(fdir, phase="F1", cycle=0)
+    _arm(fdir)
+    ok = foundry_mark_phase_complete("cast", project_root)
+    assert ok["ok"] is True, ok
+    assert ok["phase"] == "F2"
+    assert ok["inspect_rule"] == "first_of_phase"
+
+
+def test_temper_is_refused_from_every_phase_but_f4(run_env):
+    """US-004 / FR-011 / AC-016: 'every final gate still runs everything at full
+    width', and the INSPECT before NYQUIST is FULL. D-125.
+
+    Driven on a run at F2 in cycle 2 whose recorded width was DELTA (rule
+    delta), zero verdicts, nyquist on: `Foundry-Phase('temper')` returned ok
+    True, phase F5, and stamped a SECOND decision onto cycle 2 (FULL,
+    first_of_phase, decided_by temper) beside the DELTA one.
+    `Foundry-Gate('nyquist')` then passed and `Foundry-Phase('nyquist')`
+    reached F5.5 — so the last five-stream INSPECT before NYQUIST ran at DELTA
+    width, the widening re-open the cycle-3 ruling requires never happened, and
+    no verdict was ever written. F5 is reached THROUGH ASSAY; the door never
+    asked what phase the run was in.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, nyquist=True, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
+        "rule_detail": "fixture", "decided_by": "inspect_start",
+        "decided_at": fo._now(), "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "touched_files": [], "prove_sample": [],
+    }])
+    _write_manifest(fdir)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("temper", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "F2" in result["error"], result
+    assert result["accepted_from"] == ["F4"]
+    # The hint sends the lead through the door that widens, not around it.
+    assert "inspect_clean" in result["hint"], result["hint"]
+
+    state = _read_state(fdir)
+    assert state["phase"] == "F2"
+    assert len(state["inspect_modes"]) == 1, "a second decision was stamped"
+    assert state["inspect_modes"][-1]["mode"] == "DELTA"
+
+    # ...and from F4, which is where ASSAY ends, it is accepted.
+    _write_state(fdir, phase="F4", cycle=2, nyquist=True)
+    _arm(fdir)
+    ok = foundry_mark_phase_complete("temper", project_root)
+    assert ok["ok"] is True, ok
+    assert ok["phase"] == "F5"
+    assert ok["inspect_rule"] == "first_of_phase"
+
+
+def test_all_three_inspect_opening_tokens_guard_their_source(run_env):
+    """GI-009's 'one rule', asserted as a property rather than three times.
+
+    The cycle-6 ruling guarded `inspect_start` and left `cast` and `temper`
+    open, which is how one fix covered one door of three. This walks the set
+    from the vocabulary the module itself declares, so a fourth
+    INSPECT-opening token added later cannot quietly join without a guard.
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+
+    guarded = set(fo._INSPECT_ENTRY_SOURCES) | {"inspect_start"}
+    assert guarded == {"cast", "temper", "inspect_start"}, guarded
+
+    for token in sorted(guarded):
+        # F6 is a phase none of the three is accepted from.
+        _write_state(fdir, phase="F6", cycle=1)
+        _arm(fdir)
+        result = foundry_mark_phase_complete(token, project_root)
+        assert result.get("ok") is not True, (token, result)
+        assert "F6" in result["error"], (token, result)
+        assert _read_state(fdir)["phase"] == "F6", token
+
+
+# --------------------------------------------------------------------------- #
+# STRUCTURAL — the escalated class `delta-roster-recorded-then-consumed-at-full-width`
+#
+# D-139 and D-140 are the same shape at two consumers: the server draws a DELTA
+# roster, records it, and then something downstream measures the cycle against
+# a width nobody drew. The deliverable is that the RECORDED decision is what
+# every consumer reads — the drop rung, the Foundry-Next payload, and the
+# stream prose.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_delta_stream_is_not_accused_of_rushing_for_running_its_roster(run_env):
+    """FR-012 / AC-018: the DELTA PROVE width IS the fixed-defect rows plus ten
+    sampled rows. D-139.
+
+    The drop rung compared cycle N's total against cycle N-1's total and
+    consulted no recorded width, so on every DELTA cycle following a FULL one
+    it accused the stream of rushing for delivering exactly the roster the
+    server handed it. Driven: cycle 1 prove recorded 172/172 at FULL; cycle 2
+    recorded a DELTA roster of 13 rows; Foundry-Stream(prove, cycle 2,
+    items_checked 13, items_total 13) returned ok with `coverage_shortfall`
+    null — the rung that DOES read the roster was satisfied — beside the
+    warning "Coverage dropped: prove checked 13 items in cycle 2 vs 172 in
+    cycle 1. Are you rushing?".
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+    _write_spec(fdir, [f"FR-{n}" for n in range(1, 41)])
+
+    _write_state(fdir, phase="F2", cycle=1)
+    fo._record_stream_rollup(fdir, 1, "prove", 40, 40, 0, 1)
+
+    sample = ["FR-1", "FR-2", "FR-3"]
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
+        "rule_detail": "fixture", "decided_by": "inspect_start",
+        "decided_at": fo._now(),
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {
+            "prove": {"scope": "delta", "detail": "3 row(s)"},
+            "trace": {"scope": "delta", "detail": "symbols in 1 file(s)"},
+            "test": {"scope": "full", "detail": "whole suite, cold"},
+        },
+        "touched_files": ["src/handler.py"], "prove_sample": sample,
+    }])
+
+    result = foundry_mark_stream("prove", 2, items_checked=len(sample),
+                                 items_total=len(sample),
+                                 project_root=project_root)
+
+    assert result["ok"] is True, result
+    assert "coverage_shortfall" not in result, result
+    assert "Are you rushing?" not in result.get("warning", ""), result
+    assert "Coverage dropped" not in result.get("warning", ""), result
+
+
+def test_a_stream_the_server_left_at_full_width_still_gets_the_drop_rung(run_env):
+    """D-139's other direction: the rung is scoped, not removed.
+
+    AC-019 keeps TEST full and cold on a DELTA cycle, so its denominator did
+    NOT move and a collapse in it is a real signal. A fix that silenced the
+    warning for every stream on every DELTA cycle would trade one false
+    accusation for a blind spot on the stream most exposed to a delta INSPECT.
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+
+    _write_state(fdir, phase="F2", cycle=1)
+    fo._record_stream_rollup(fdir, 1, "test", 500, 500, 0, 1)
+
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
+        "rule_detail": "fixture", "decided_by": "inspect_start",
+        "decided_at": fo._now(),
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {
+            "test": {"scope": "full", "detail": "whole suite, cold"},
+        },
+        "touched_files": ["src/handler.py"], "prove_sample": [],
+    }])
+
+    result = foundry_mark_stream("test", 2, items_checked=10, items_total=500,
+                                 project_root=project_root)
+
+    assert result["ok"] is True, result
+    assert "Coverage dropped" in result.get("warning", ""), result
+
+
+def test_next_emits_the_trace_half_of_the_delta_roster(run_env):
+    """AC-019 verbatim: 'in DELTA mode ... TRACE runs over the symbols the GRIND
+    commits touched'. D-140.
+
+    `_decide_inspect_mode` records the TRACE scope as "symbols in the N file(s)
+    the GRIND touched" and records `touched_files` beside it — and the
+    Foundry-Next payload carried cycle, decided_at, decided_by, mode,
+    prove_sample, required_streams, rule, rule_detail and stream_scope, and
+    nothing naming a file or a symbol. So the PROVE half of the roster reached
+    its stream (D-104) and the TRACE half reached no consumer at all: the
+    stream could not learn the scope the server had recorded for it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    assert foundry_mark_phase_complete(
+        "inspect_start", project_root
+    )["inspect_mode"] == "DELTA"
+
+    reported = foundry_next_action(project_root)["inspect_mode"]
+
+    assert "src/handler.py" in reported["touched_files"], reported
+    assert reported["stream_scope"]["trace"]["scope"] == "delta"
+    # Reported from the record, never recomputed (GI-008): what Next emits is
+    # byte-identical to what the transition wrote.
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert reported["touched_files"] == recorded["touched_files"]
+    assert reported["diff_base"] == recorded["diff_base"]
+
+
+def test_the_trace_prose_reads_the_scope_the_server_records():
+    """AC-019's consumer half. D-140.
+
+    `agents/tracer.md` and `skills/trace/SKILL.md` contained no occurrence of
+    `touched_files`, `inspect_mode`, DELTA or width — tracer.md scoped the walk
+    from the spec alone, so a DELTA INSPECT's TRACE could not have honoured the
+    roster even once the server emitted it. D-104 closed the PROVE half by
+    wiring assayer.md to `inspect_mode.prove_sample`; this is the same wiring,
+    one stream over.
+
+    Pinned as prose because prose is the whole mechanism: the stream is an
+    agent, and what it reads IS its instructions. Asserted against the same
+    field names the payload emits, so a rename cannot leave the document
+    pointing at a key that no longer arrives.
+    """
+    tracer = (_plugin_root() / "agents" / "tracer.md").read_text(encoding="utf-8")
+
+    for token in (
+        "inspect_mode.mode",
+        "inspect_mode.touched_files",
+        "inspect_mode.stream_scope.trace.scope",
+        "inspect_mode.cycle",
+        "DELTA",
+        "FULL",
+    ):
+        assert token in tracer, f"tracer.md never names {token}"
+
+    # The three rules that make a roster a roster, in the same shape
+    # assayer.md's Step 0.5 carries for PROVE.
+    assert "Foundry-Next" in tracer
+    assert "walk everything" in tracer, (
+        "an unrecorded width must mean 'no narrowing was decided'"
+    )
+    assert "TRUNCATES" in tracer, (
+        "the terminal line is a summary; the roster is the array"
+    )
