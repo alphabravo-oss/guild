@@ -466,9 +466,16 @@ def test_temper_domain_statuses_are_the_ones_the_skill_counts() -> None:
 
 
 def test_temper_findings_are_the_reconciled_record() -> None:
-    """temper/SKILL.md:123 documents `T-N` findings synced through
+    """temper/SKILL.md documents `T-N` findings synced through
     Foundry-Defect, i.e. across the same reconciled vocabulary — and the
-    pre-D-071 schema had no `findings` container at all, only `domains`."""
+    pre-D-071 schema had no `findings` container at all, only `domains`.
+
+    The record carries a `tier` since D-063 made the axis required, and it
+    carries one for the reason the shared item's comment already gives: temper
+    ships no findings block of its own, so an exemption shaped to fit it would
+    be the same defect one stream over. Temper's own prose already tells it to
+    set the axis on every finding.
+    """
     report = {
         "findings": [
             {
@@ -476,6 +483,7 @@ def test_temper_findings_are_the_reconciled_record() -> None:
                 "classification": "DEFECT",
                 "type": "HOLLOW",
                 "class": "STUB_BEHIND_THE_DOMAIN",
+                "tier": "LIVE",
                 "file": "src/example.py",
                 "symbol": "example#probe",
                 "description": "the probe found a stub behind the domain",
@@ -536,18 +544,21 @@ def test_schemas_registry_matches_the_published_schema_name_enum() -> None:
 
 
 def _minimal_finding(**extra: object) -> dict:
-    """The seven required fields, plus whatever the caller is testing.
+    """The eight required fields, plus whatever the caller is testing.
 
-    `class` became the seventh in D-003: the filing door refuses a classless
-    finding, so a "minimal conforming finding" that omitted it was minimal
-    only against the validator and not against the surface the finding is
-    actually bound for.
+    `class` became the seventh in D-003 and `tier` the eighth in D-063, both
+    for the same reason: the filing door refuses a finding without either, so
+    a "minimal conforming finding" that omitted one was minimal only against
+    the validator and not against the surface the finding is actually bound
+    for. A caller testing the tier axis passes its own `tier=` and overrides
+    the default here.
     """
     return {
         "id": "L-1",
         "classification": "DEFECT",
         "type": "WRONG",
         "class": "EXAMPLE_ROOT_CAUSE",
+        "tier": "LIVE",
         "file": "src/example.py",
         "symbol": "example#Thing",
         "description": "a description well past the ten-character floor",
@@ -669,68 +680,45 @@ def test_the_tier_property_never_mentions_the_abolished_axis() -> None:
         )
 
 
-def test_tier_and_reproduction_attempted_are_optional_not_required() -> None:
-    """NFR-002 — the widening narrows nothing.
+def test_tier_is_required_and_reproduction_attempted_is_not() -> None:
+    """D-063 — the validator is no longer laxer than the door it feeds.
 
-    D-039 REPLACED THE REASON THIS TEST USED TO GIVE. It said the shipped
-    skills and casting 6's in-flight prose predate the axis — but that story
-    exempts `class` exactly as well, and `class` IS required here. A split
-    resting on a reason that applies equally to both sides is not a reason.
+    THIS TEST USED TO ASSERT THE OPPOSITE. It recorded two reasons `tier`
+    could stay optional while `class` was required, and the first of them was
+    the one that eventually moved: this module derives its `required` list
+    from the skills' own blocks, and both blocks declared `tier` optional. The
+    reason was never "tier does not belong here" -- it was "the document has
+    not said so yet", and it came with the pin that would fail the day the
+    document did.
 
-    The two that actually distinguish them are recorded in full beside
-    `_FINDING_ITEM["required"]`, and both are checkable rather than asserted:
+    Driven, which is why the direction flipped: a finding carrying exactly the
+    keys both blocks listed as required validated clean through
+    Validate-Report(schema="prove") and was then refused by Foundry-Sync --
+    "findings[0].tier: Invalid tier: None" -- which refuses the WHOLE batch. A
+    stream that validated its report before sending it lost every finding in
+    it, told on the way out that the shape was conforming.
 
-      * the blocks both skills hand their streams require `class` and declare
-        `tier` optional, and this module's stated derivation rule is that the
-        `required` list is what those blocks require — pinned mechanically by
-        `test_the_finding_required_list_is_exactly_what_the_documents_require`,
-        which fails the day a block requires `tier`;
-      * an untiered record has NO legal value to supply, because
-        `vocab.defect_tier` resolves it to TIER_UNKNOWN and TIER_UNKNOWN is
-        deliberately outside the enum below — pinned by
-        `test_the_read_side_sentinel_is_not_a_filable_tier`. A classless record
-        has no such problem: `_defect_class` derives one from its path.
-
-    What stays open is narrow and named: a tier-less finding validates here and
-    is refused at the filing door. That is not this module's to close alone.
+    `reproduction_attempted` stays optional here and that is not the same
+    omission. It is required CONDITIONALLY, on a LATENT filing only, and the
+    condition lives in `validate_defect_filing` (CT-001). Expressing it here
+    would be a second copy of a rule the door already owns -- and a second
+    copy is what this module was written to stop.
     """
     for name, schema in SCHEMAS.items():
         required = schema["properties"]["findings"]["items"]["required"]
-        assert "tier" not in required, name
-        assert "reproduction_attempted" not in required, name
+        assert "tier" in required, (
+            f"SCHEMAS[{name!r}] no longer requires `tier` of a finding. The "
+            f"filing door does (CT-001, first in its check order), so dropping "
+            f"it here makes this validator laxer than the surface every "
+            f"finding it validates is bound for -- and one untiered finding "
+            f"refuses a whole Foundry-Sync batch."
+        )
+        assert "reproduction_attempted" not in required, (
+            f"SCHEMAS[{name!r}] requires `reproduction_attempted` "
+            f"unconditionally. It is owed on a LATENT filing only; demanding "
+            f"it of every finding refuses conforming LIVE reports."
+        )
         assert not _finding_errors(schema, _minimal_finding()), name
-
-
-@pytest.mark.parametrize("path", BLOCK_BEARING_SKILLS, ids=lambda p: p.parent.name)
-def test_the_finding_required_list_is_exactly_what_the_documents_require(
-    path: Path,
-) -> None:
-    """D-039 — the `tier`/`class` split is DERIVED, not decided here.
-
-    findings.py states its rule for `required` as "what that skill's own block
-    requires". Nothing checked it, so the difference between a required `class`
-    and an optional `tier` read as an unexplained inconsistency, which is
-    exactly how D-039 was filed.
-
-    Asserting equality against the document turns the split into a fact with an
-    owner. It also makes it self-correcting in the one direction that matters:
-    when the blocks add `tier` to their `required` lists, this fails naming the
-    field, and findings.py has to follow before the suite is green again. The
-    reverse is covered too — a field quietly added here that no block requires
-    would make this module stricter than the document, which is D-071.
-    """
-    block = _documented_block(path)
-    documented = block["properties"]["findings"]["items"].get("required") or []
-    served = SCHEMAS[_documented_schema_name(path)]
-    enforced = served["properties"]["findings"]["items"]["required"]
-
-    assert sorted(enforced) == sorted(documented), (
-        f"{_rel(path)} requires {sorted(documented)} of a finding and "
-        f"SCHEMAS[{_documented_schema_name(path)!r}] enforces {sorted(enforced)}. "
-        f"findings.py derives its `required` list from these blocks, so the two "
-        f"cannot differ: if the block moved, move the schema to match — do not "
-        f"relax this assertion."
-    )
 
 
 def test_the_read_side_sentinel_is_not_a_filable_tier() -> None:

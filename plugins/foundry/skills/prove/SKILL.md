@@ -284,7 +284,7 @@ the `foundry_add_verdict` MCP tool for defect tracking.
           "spec_reference": {"type": "string", "description": "VC-N item or spec section cited"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "classification", "type", "class", "file", "symbol", "description"]
+        "required": ["id", "classification", "type", "class", "tier", "file", "symbol", "description"]
       }
     },
     "summary": {

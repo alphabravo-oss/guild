@@ -1536,13 +1536,19 @@ def test_skill_schemas_require_the_new_axes(path: Path) -> None:
     refused at the filing door one surface later.
     """
     text = _read(path)
-    assert '"required": ["id", "classification", "type", "class", "file", "symbol", "description"]' in text, (
+    assert '"required": ["id", "classification", "type", "class", "tier", "file", "symbol", "description"]' in text, (
         f"{_rel(path)}'s required list does not demand classification, type, "
-        f"class and symbol. `severity` was REQUIRED before this fix -- "
+        f"class, tier and symbol. `severity` was REQUIRED before this fix -- "
         f"replacing a required field with optional ones weakens the contract "
         f"instead of correcting it. If `class` is what went missing: the "
         f"filing door refuses a classless finding (FR-007/AC-010), so a block "
-        f"that leaves it optional documents a shape the door rejects."
+        f"that leaves it optional documents a shape the door rejects. If "
+        f"`tier` is: D-063 drove that gap end to end -- a finding carrying "
+        f"exactly the old list validated clean through Validate-Report and was "
+        f"then refused by Foundry-Sync ('findings[0].tier: Invalid tier: "
+        f"None'), which refuses the WHOLE batch. This block is the derivation "
+        f"source for schemas/findings.py's own required list, so the two move "
+        f"together or the validator goes laxer than the door it feeds."
     )
     assert "Optional root-cause" not in text, (
         f"{_rel(path)}'s `class` description calls the axis optional again. "
@@ -3578,35 +3584,60 @@ def test_shapes_carrying_a_spec_ref_qualify_it_at_the_example(path: Path) -> Non
 # what holds that property, and every clause pin after it is parametrised over
 # STREAM_AGENTS so a partial edit that fixes three files fails.
 
-# D-017: the roster of files that must carry the tier and class rules is
-# DERIVED, not typed out. GRIND-1 updated five prose files by hand and missed
-# `agents/coverage-diff.md` -- a live F2 stream whose report shape feeds
-# `Foundry-Sync`, which now refuses every finding in it for a missing `tier`
-# and refuses the whole BATCH for one bad finding. A hand-maintained tuple
-# cannot fail that way loudly: the file that was forgotten is exactly the file
-# nobody adds to the list. This is RUN_ENTRY_COMMANDS' shape (D-086) applied to
-# the filing side.
+# D-017 / D-054: the corpus of prose surfaces that must carry the tier and
+# class rules is DERIVED, not typed out. GRIND-1 updated five prose files by
+# hand and missed `agents/coverage-diff.md` -- a live F2 stream whose report
+# shape feeds `Foundry-Sync`, which then refuses every finding in it for a
+# missing `tier` and refuses the whole BATCH for one bad finding. A
+# hand-maintained tuple cannot fail that way loudly: the file that was
+# forgotten is exactly the file nobody adds to the list.
 #
-# The membership test is the two properties that TOGETHER make a file's prose
-# load-bearing at the defect door: it names `Foundry-Sync` (so its findings
-# reach the ledger) AND its normative example documents a `defects` array (so
-# it is a shape a stream copies). `agents/teammate.md` names the tool and is
-# correctly excluded -- it documents no `defects` array, and states the same
+# THE DERIVATION THAT ANSWERED THAT THEN MISSED ONE ITSELF (D-054). It globbed
+# `agents/*.md` and required the literal `Foundry-Sync`. Both are facts about
+# where a file LIVES and which of two doors it happens to name, and neither is
+# what makes a file load-bearing at the defect ledger.
+# `skills/sight/SKILL.md` is a member of `vocab.DEFECT_SOURCE_IDS`, files
+# through `Foundry-Defect`, and lives under `skills/` -- so it failed BOTH
+# predicates and could not derive in however far its prose drifted. Driven: its
+# Step 4 still instructed a call carrying no `tier`, no `class` and no
+# `reproduction_attempted`, which the shipped Foundry-Defect schema refuses
+# outright, and still routed findings by a work-effort grade GI-001 bans by
+# name -- while every pin below stayed green over the gap. A derived roster
+# that derives over the wrong corpus fails exactly as silently as a typed one.
+#
+# So the question the corpus asks is now the question the DOORS ask -- which
+# prose surfaces INSTRUCT A FILING -- and it is asked over both directories a
+# filing surface can live in. That yields two corpora, because two different
+# things are true of the members:
+#
+#   DEFECT_FILING_SURFACES -- every surface that instructs a filing at all.
+#       This is the COMPLETENESS corpus.
+#       ``test_every_defect_source_id_has_a_prose_surface`` binds it to
+#       ``vocab.DEFECT_SOURCE_IDS`` so a filing stream with no prose fails by
+#       name, and ``test_every_filing_surface_carries_the_tier_substance``
+#       holds the floor every filer owes whatever register it writes in.
+#
+#   DEFECT_FILING_AGENTS -- the subset whose normative example documents a
+#       `defects` array, i.e. the stream-report register. patterns/PATTERNS.md
+#       rules a shared rule word-identical across these, and they are what the
+#       clause pins below sweep. A surface emitting a `findings` array (prove,
+#       trace) or a `domains` report (temper) states the same obligations in
+#       its own `## Key Constraints` voice; pasting the stream register into it
+#       would be a paraphrase of a different document.
+#
+# `agents/teammate.md` names both tools and is correctly in the first corpus
+# and not the second: it documents no `defects` array, and states the
 # obligations in its own fix-and-file voice rather than the stream register.
-# `agents/spec-test-deriver.md` files into `test_observations` and names
-# neither, so it is excluded too. `test_the_defect_filing_roster_is_derived`
-# below is the floor check: a derived roster that silently empties out, or that
-# silently drops a known member, would make every pin that sweeps it vacuous.
 
 
 def _documents_a_defects_array(path: Path) -> bool:
     """True when a file's normative JSON examples document a `defects` array.
 
-    A malformed block reads as "no array" rather than raising, so one agent
-    file with an unparseable example cannot take this module down at import
-    time. The silence is safe only because the floor check below asserts the
-    five known members are present -- a member that vanished this way fails
-    there, naming the file.
+    A malformed block reads as "no array" rather than raising, so one file with
+    an unparseable example cannot take this module down at import time. The
+    silence is safe only because the floor check below asserts the known
+    members are present -- a member that vanished this way fails there, naming
+    the file.
     """
     try:
         records = _example_records(path)
@@ -3615,27 +3646,52 @@ def _documents_a_defects_array(path: Path) -> bool:
     return any(isinstance(r.get("defects"), list) for r in records)
 
 
-DEFECT_FILING_AGENTS = tuple(
+#: The two doors a prose surface can be told to file through. Naming EITHER is
+#: what makes a surface load-bearing; demanding a PARTICULAR one is what let
+#: sight drift for three cycles (D-054), because sight names only the first.
+_FILING_TOOLS = ("Foundry-Defect", "Foundry-Sync")
+
+SIGHT_SKILL = SKILLS / "sight" / "SKILL.md"
+TEMPER_SKILL = SKILLS / "temper" / "SKILL.md"
+
+
+def _surface_name(path: Path) -> str:
+    """The name a surface files under: its stem, or its skill directory."""
+    return path.parent.name if path.name == "SKILL.md" else path.stem
+
+
+def _instructs_a_filing(path: Path) -> bool:
+    """True when a surface tells its reader to call a defect-filing door."""
+    text = path.read_text(encoding="utf-8")
+    return any(tool in text for tool in _FILING_TOOLS)
+
+
+DEFECT_FILING_SURFACES = tuple(
     sorted(
         (
             path
-            for path in AGENTS.glob("*.md")
-            if "Foundry-Sync" in path.read_text(encoding="utf-8")
-            and _documents_a_defects_array(path)
+            for path in (*AGENTS.glob("*.md"), *SKILLS.glob("*/SKILL.md"))
+            if _instructs_a_filing(path)
         ),
-        key=lambda path: path.name,
+        key=_rel,
     )
+)
+
+DEFECT_FILING_AGENTS = tuple(
+    path for path in DEFECT_FILING_SURFACES if _documents_a_defects_array(path)
 )
 
 
 def test_the_defect_filing_roster_is_derived() -> None:
     """Floor check: every tier and class pin below sweeps this roster."""
     missing = sorted(
-        _rel(p) for p in (set(STREAM_AGENTS) | {COVERAGE_DIFF}) - set(DEFECT_FILING_AGENTS)
+        _rel(p)
+        for p in (set(STREAM_AGENTS) | {COVERAGE_DIFF, SIGHT_SKILL})
+        - set(DEFECT_FILING_AGENTS)
     )
     assert not missing, (
         f"{missing} no longer derive into DEFECT_FILING_AGENTS. A file drops "
-        f"out by losing its `Foundry-Sync` mention or its example `defects` "
+        f"out by losing its filing-door mention or its example `defects` "
         f"array -- either of which is itself the D-017 defect, because the "
         f"shape a stream copies is what the door then refuses. Fix the file "
         f"rather than hard-coding the roster."
@@ -3645,6 +3701,270 @@ def test_the_defect_filing_roster_is_derived() -> None:
         "tier and class obligations in its own fix-and-file voice, not the "
         "word-identical stream register, so sweeping it here would demand a "
         "paste that does not belong in a builder's protocol."
+    )
+
+
+def test_the_filing_surface_corpus_spans_both_directories() -> None:
+    """D-054's floor: the corpus that missed sight was an `agents/` glob.
+
+    The two corpora are nested -- every DEFECT_FILING_AGENTS member is a
+    DEFECT_FILING_SURFACES member -- so a regression that narrowed the wider
+    one back to a directory would leave every pin below green and only this
+    assertion red. That is deliberate: the narrowing is invisible everywhere
+    else, which is exactly how it survived three GRIND cycles the first time.
+    """
+    assert set(DEFECT_FILING_AGENTS) <= set(DEFECT_FILING_SURFACES), (
+        "DEFECT_FILING_AGENTS is no longer a subset of DEFECT_FILING_SURFACES; "
+        "the two derivations have come apart."
+    )
+    for expected in (TEAMMATE, PROVE_SKILL, TRACE_SKILL, TEMPER_SKILL, SIGHT_SKILL):
+        assert expected in DEFECT_FILING_SURFACES, (
+            f"{_rel(expected)} instructs a filing and is not in "
+            f"DEFECT_FILING_SURFACES. Either the file stopped naming "
+            f"{_FILING_TOOLS} -- in which case its stream now files through "
+            f"nothing -- or the corpus narrowed back to one directory or one "
+            f"tool name, which is D-054 exactly."
+        )
+    skills = {p for p in DEFECT_FILING_SURFACES if p.name == "SKILL.md"}
+    agents = {p for p in DEFECT_FILING_SURFACES if p.parent == AGENTS}
+    assert skills and agents, (
+        f"DEFECT_FILING_SURFACES spans only one directory "
+        f"({sorted(_rel(p) for p in DEFECT_FILING_SURFACES)}). A filing "
+        f"surface lives under agents/ OR under skills/, and a corpus that "
+        f"sees one of those is the D-054 hole re-opened."
+    )
+
+
+#: `vocab.DEFECT_SOURCE_IDS` members the plugin ships no prose surface for,
+#: each with the reason it has none. An entry here is a CLAIM that nothing
+#: reads a file to file under that id, so the test below asserts it both ways:
+#: a listed id that grows a surface fails until its entry is deleted, and an
+#: unlisted id with no surface fails naming the id. A bare absence -- which is
+#: what sight had for three cycles -- can be neither.
+_SOURCELESS_FILING_IDS = {
+    "test": (
+        "TEST is the project's own test command. The lead runs it and records "
+        "coverage through Foundry-Stream; no agent or skill file drives it, so "
+        "there is no prose surface to carry a filing rule."
+    ),
+    "probe": (
+        "PROBE-01 is an F0.9 decompose sub-check inside commands/start.md, not "
+        "a spawned stream. It files through the lead, whose own tier rules live "
+        "in start.md and are pinned by tests/test_lead_prose.py."
+    ),
+    "test01": (
+        "agents/spec-test-deriver.md writes to the `test_observations` channel "
+        "and names no filing door. ASSAY is what promotes an observation into "
+        "the defect ledger, and ASSAY files it with a tier like anything else."
+    ),
+}
+
+
+def _normalise_surface_id(value: str) -> str:
+    """Fold a wire id and a filename onto one spelling.
+
+    `research_audit` is `research-auditor.md`, `flow_trace` is
+    `flow-tracer.md`, `assay` is `assayer.md`. The separators and the agentive
+    suffix are the only differences, so stripping non-alphanumerics and
+    matching on prefix binds the two vocabularies without a hand-written map --
+    which is the artefact this whole derivation exists to avoid.
+    """
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _surfaces_covering(source_id: str) -> list[Path]:
+    """Every filing surface whose own name claims this defect source id."""
+    wanted = _normalise_surface_id(source_id)
+    return [
+        path
+        for path in DEFECT_FILING_SURFACES
+        if _normalise_surface_id(_surface_name(path)).startswith(wanted)
+    ]
+
+
+def test_every_defect_source_id_has_a_prose_surface() -> None:
+    """D-054: a stream that files has a file telling it how, or a reason.
+
+    `vocab.DEFECT_SOURCE_IDS` is the closed set of values a defect record's
+    `source` may carry -- the server's own answer to "who filed this". Every
+    one of them is something that files, so every one of them either has a
+    prose surface in the corpus above (and therefore carries the substance
+    floor below) or is named here with the reason it has none.
+
+    sight was neither. It was a DEFECT_SOURCE_IDS member with a real prose
+    surface that no derivation reached, and nothing anywhere said so.
+    """
+    assert set(_SOURCELESS_FILING_IDS) <= set(vocab.DEFECT_SOURCE_IDS), (
+        f"{sorted(set(_SOURCELESS_FILING_IDS) - set(vocab.DEFECT_SOURCE_IDS))} "
+        f"are excused from having a prose surface but are not defect sources "
+        f"any more. Delete the stale entries; an exemption for an id nothing "
+        f"can file under excuses nothing."
+    )
+    unbound = []
+    for source_id in sorted(vocab.DEFECT_SOURCE_IDS):
+        covering = _surfaces_covering(source_id)
+        if source_id in _SOURCELESS_FILING_IDS:
+            assert not covering, (
+                f"{source_id!r} is listed as having no prose surface -- "
+                f"{_SOURCELESS_FILING_IDS[source_id]} -- but "
+                f"{sorted(_rel(p) for p in covering)} now instructs a filing "
+                f"under that name. Delete the exemption so the surface joins "
+                f"the corpus and carries the rules."
+            )
+            continue
+        if not covering:
+            unbound.append(source_id)
+    assert not unbound, (
+        f"defect source(s) {unbound} resolve to no prose surface that "
+        f"instructs a filing. A stream files under that `source` with nothing "
+        f"telling it to set `tier`, `class` or `reproduction_attempted`, so "
+        f"the doors refuse it mid-INSPECT. Either the surface exists and this "
+        f"derivation cannot see it -- which is D-054 -- or it does not, and "
+        f"the id belongs in _SOURCELESS_FILING_IDS with its reason."
+    )
+
+
+#: What EVERY filing surface owes, whatever register it writes in, located by
+#: the tokens the DOORS themselves refuse on. Deliberately not the
+#: word-identical stream rule: prove, trace and temper state the same
+#: obligations in their own `## Key Constraints` voice, and demanding a paste
+#: would be pinning a paraphrase of a document they do not carry.
+#:
+#: `class` is NOT on this floor and its absence is not an oversight. It is
+#: pinned at the SHAPE for every surface that has one -- the `required` list of
+#: the skills' ```json blocks (mirrored by schemas/findings.py) and the example
+#: `defects` entries of the stream agents -- which is stronger than a token
+#: sweep, because a shape is what a reader copies.
+_FILING_SUBSTANCE = (
+    ("`tier`", "names the evidence axis the filing doors require first"),
+    ("LIVE", "names the tier for a finding the stream drove"),
+    ("LATENT", "names the tier for a finding the stream only derived"),
+    (
+        "reproduction_attempted",
+        "names the statement a LATENT filing is refused without (CT-001)",
+    ),
+    (
+        "SECURITY_PROPERTY_CLAIM",
+        "names the denylist class that refuses a LATENT security claim (CT-003)",
+    ),
+)
+
+#: Filing surfaces KNOWN to be missing part of the floor, with the exact
+#: clauses each lacks. Recorded rather than excused, and asserted as an EXACT
+#: set so the debt cannot rot in either direction: closing a gap fails this
+#: until the entry is deleted, and opening a new one fails immediately.
+#:
+#: skills/temper/SKILL.md states the security rule as "A security-property
+#: claim can NEVER be `LATENT`" without naming the denylist class the refusal
+#: reports, so a temper filing that trips it meets a refusal naming a token its
+#: own prose never taught. The file belongs to another casting; recorded in
+#: foundry-archive/daring-orca/concerns.md rather than edited here.
+_KNOWN_SUBSTANCE_GAPS: dict[str, frozenset[str]] = {
+    "plugins/foundry/skills/temper/SKILL.md": frozenset({"SECURITY_PROPERTY_CLAIM"}),
+}
+
+
+def test_the_known_substance_gap_ledger_names_real_surfaces() -> None:
+    """Floor check: a ledger keyed on a path nothing sweeps excuses nothing."""
+    swept = {_rel(p) for p in DEFECT_FILING_SURFACES}
+    stale = sorted(set(_KNOWN_SUBSTANCE_GAPS) - swept)
+    assert not stale, (
+        f"{stale} carry recorded substance gaps but are no longer filing "
+        f"surfaces. Delete the entries -- a gap recorded against a file this "
+        f"module does not read is a debt nothing will ever collect."
+    )
+    known_clauses = {clause for clause, _ in _FILING_SUBSTANCE}
+    for rel, gaps in _KNOWN_SUBSTANCE_GAPS.items():
+        unknown = sorted(gaps - known_clauses)
+        assert not unknown, (
+            f"{rel} is excused clauses {unknown} that are not on the substance "
+            f"floor, so the exemption covers nothing the test would have "
+            f"checked."
+        )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_every_filing_surface_carries_the_tier_substance(path: Path) -> None:
+    """D-052 / D-053 / FR-004 / CT-001 / CT-003, over the corpus that files.
+
+    The word-identical pins below reach the stream-report register only. This
+    is the floor underneath them, and it is the assertion sight failed on every
+    clause at once: its Step 4 instructed a `Foundry-Defect` call naming no
+    tier, no class and no reproduction statement, and its own suggestion
+    routing sent findings to a backlog on a work-effort grade. Nothing was red,
+    because nothing swept the file.
+    """
+    text = _read(path)
+    missing = frozenset(clause for clause, _ in _FILING_SUBSTANCE if clause not in text)
+    known = _KNOWN_SUBSTANCE_GAPS.get(_rel(path), frozenset())
+    why = dict(_FILING_SUBSTANCE)
+    assert missing == known, {
+        "file": _rel(path),
+        "why": (
+            "a surface that instructs a filing must state the substance the "
+            "doors refuse on, in whatever register it writes in. Compared as "
+            "an EXACT set against the recorded-gap ledger so a closed gap "
+            "fails here too -- a stale exemption is how a fixed file goes "
+            "unpinned again."
+        ),
+        "clauses_missing_and_not_recorded": {
+            clause: why[clause] for clause in sorted(missing - known)
+        },
+        "clauses_recorded_but_now_present": sorted(known - missing),
+    }
+
+
+def test_sight_never_writes_the_defect_ledger_by_hand() -> None:
+    """D-052: the one instruction that routes AROUND every door above.
+
+    sight's Step 4 offered a second path -- "or write them directly to
+    `foundry-archive/{run}/defects.json` if running outside an MCP session".
+    A hand-written entry reaches the ledger without passing the tier check, the
+    class check or the SECURITY_PROPERTY_CLAIM denylist, and is then
+    indistinguishable there from a record that was refused nothing. Every rule
+    this module pins is optional for as long as one surface documents a way
+    past the door that enforces them.
+    """
+    flat = _flat(SIGHT_SKILL)
+    assert "write them directly to" not in flat, (
+        f"{_rel(SIGHT_SKILL)} again offers a direct write to the defect "
+        f"ledger. There is no 'outside an MCP session' filing lane: without a "
+        f"door there is no filing, only a report."
+    )
+    assert "Never write `foundry-archive/{run}/defects.json` yourself" in flat, (
+        f"{_rel(SIGHT_SKILL)} no longer forbids hand-writing the defect "
+        f"ledger. The prohibition is the pin, not the absence of the old "
+        f"sentence -- prose that merely stops offering the bypass reads as "
+        f"silence to the next author who needs one."
+    )
+
+
+def test_sight_routes_its_findings_by_tier_not_by_a_work_effort_grade() -> None:
+    """D-053 / GI-001: two backlog mechanisms, one of them the abolished axis.
+
+    sight shipped its own routing rule -- "Include minor UX suggestions as
+    additional defects for GRIND. Append major UX suggestions to the backlog
+    file." -- beside the tier rule every other stream carries. The axis that
+    decides whether an instance is carried rather than fixed is `tier`: a
+    LATENT finding stays open and reaches the F6 backlog. A second grade
+    deciding the same question, in the words GI-001 bans by name, is the
+    contradiction this asserts away.
+    """
+    flat = _flat(SIGHT_SKILL)
+    for banned in ("minor UX suggestions", "major UX suggestions",
+                   "Minor (auto-implement)", "Major (backlog)",
+                   "Minor issues", "Major issues", "Critical issues"):
+        assert banned not in flat, (
+            f"{_rel(SIGHT_SKILL)} grades findings by work effort again "
+            f"({banned!r}). GI-001 bans `minor`, `major` and `critical` BY "
+            f"NAME on every filing surface, and sight is one -- it is a member "
+            f"of vocab.DEFECT_SOURCE_IDS whose findings enter the same ledger."
+        )
+    assert "Nothing here routes on how large a fix looks" in flat, (
+        f"{_rel(SIGHT_SKILL)} no longer states that nothing routes on the size "
+        f"of a fix. Deleting the graded sentences is half the fix; the other "
+        f"half is saying what replaced them, or the grade comes back the next "
+        f"time someone needs to split a list in two."
     )
 
 

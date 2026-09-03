@@ -70,10 +70,12 @@ narrows nothing: the abolished axis is still rejected here by name. The
 matching widening of `_ALLOWED_ENUM_KEYS` in tests/test_protocol_prose.py
 covers the SKILL.md blocks, which this module does not read.
 
-`tier` is a declared property and is NOT on the finding item's `required`
-list, while `class` — added by the same release, refused at the same door — is.
-That split is deliberate and its two reasons are recorded beside the list
-itself (D-039); do not close it by editing this module alone.
+`tier` IS on the finding item's `required` list, beside `class`. It was not
+until D-063, and the gap was exactly the one this module exists to close: both
+skills' blocks declared the axis optional, this module derives its `required`
+list from those blocks, and the result was a validator laxer than the door it
+feeds. The blocks moved first and this list followed — the only direction the
+derivation rule permits. The full account is recorded beside the list itself.
 """
 
 from __future__ import annotations
@@ -104,44 +106,51 @@ _FINDING_ITEM: dict = {
     # through the same door and whose SKILL.md ships no block of its own -- an
     # exemption shaped to fit temper would be the same defect one stream over.
     #
-    # WHY `tier` IS NOT ON THIS LIST WHEN `class` IS (D-039 / FR-004 / FR-051)
+    # WHY `tier` IS ON THIS LIST BESIDE `class` (D-063 / D-039 / FR-004 / AC-009)
     # -----------------------------------------------------------------------
-    # Both axes arrived in the same release and `validate_defect_filing`
-    # refuses a filing missing either — tier FIRST, in its locked check order.
-    # So "the validator must not be laxer than the door it feeds", the reason
-    # `class` joined this list, argues for `tier` too, and the split needs a
-    # reason of its own rather than the backward-compatibility story it was
-    # first given (that story exempts `class` exactly as well, which is D-039).
-    # There are two, and they are facts rather than preferences:
+    # It was NOT, until D-063. The recorded reason was the derivation rule
+    # above: this list is what the skills' own blocks require, and both blocks
+    # declared `tier` an optional property. That reason was sound in the
+    # direction it was written -- requiring a field here that the document a
+    # stream is handed calls optional makes this module stricter than that
+    # document, which is D-071 in the other direction. It was ALSO the reason
+    # this list could not be fixed from inside this module.
     #
-    #   1. THE DERIVATION RULE ABOVE. This list is what the skills' own blocks
-    #      require. Both shipped blocks list `class` in their `required` and
-    #      declare `tier` as an optional property. Requiring it here would make
-    #      this module STRICTER than the document its own stream is handed,
-    #      which is D-071 in the other direction — and this module cannot close
-    #      that gap alone, because those blocks are another casting's files.
-    #      `test_the_finding_required_list_is_exactly_what_the_documents_require`
-    #      is that rule made mechanical: the day a block requires `tier`, that
-    #      pin fails and this list has to follow. The split cannot go stale.
+    # D-063 drove the gap end to end. A finding carrying exactly the keys both
+    # blocks list as `required` -- id, classification, type, class, file,
+    # symbol, description -- returned {"valid": true, "errors": []} from
+    # Validate-Report(schema="prove"), and the SAME finding through
+    # Foundry-Sync returned "Refused 1 finding(s) -- no findings were recorded.
+    # findings[0].tier: Invalid tier: None". A batch door refuses the WHOLE
+    # batch on one bad finding, so a stream that validated its report before
+    # sending it lost every finding in it and was told the shape was
+    # conforming on the way out. That is the D-003 failure at the second axis,
+    # and `class` joined this list for precisely it.
     #
-    #   2. THE ARCHIVE FACT, which is where the two axes genuinely differ.
-    #      A classless record is REPAIRABLE on read: `_defect_class` falls back
-    #      to `type@file-cluster`, so a pre-change record still resolves to a
-    #      real cluster. A tier-less record is not. `vocab.defect_tier` resolves
-    #      it to TIER_UNKNOWN, which is deliberately NOT a DEFECT_TIERS member
-    #      (FR-051: reading an unclassified record as LATENT silently clears
-    #      gates), and the enum below is DEFECT_TIERS. So there is no legal
-    #      value an untiered finding could carry: requiring `tier` would refuse
-    #      it with nothing it could be given, and the obvious repair — putting
-    #      `unknown` in the enum — makes the read-side sentinel filable, which
-    #      CT-001 forbids at the door.
+    # So the blocks moved first: skills/prove/SKILL.md and skills/trace/SKILL.md
+    # now list `tier` in their `required`, and this list follows them, which is
+    # what `test_the_finding_required_list_is_exactly_what_the_documents_require`
+    # demands and the reason that pin was written self-correcting.
     #
-    # The gap this leaves is narrow and named: a tier-less finding validates
-    # here and is refused at the filing door one surface later. The stream is
-    # told so by the door's refusal hint and by the blocks' own `tier`
-    # description, and closing it is one edit to those blocks away.
+    # THE ARCHIVE FACT, which is why this is safe rather than merely required.
+    # D-039 recorded a second reason for the old split: a tier-less record has
+    # no legal value to supply, because `vocab.defect_tier` resolves it to
+    # TIER_UNKNOWN and TIER_UNKNOWN is deliberately NOT a DEFECT_TIERS member
+    # (FR-051: reading an unclassified record as LATENT silently clears gates).
+    # That is a fact about READING a pre-change archive, and nothing here reads
+    # one: these schemas validate a report a stream is emitting NOW, against a
+    # door that already refuses it untiered. The read side keeps its sentinel
+    # -- `test_the_read_side_sentinel_is_not_a_filable_tier` still holds
+    # TIER_UNKNOWN outside the enum -- so requiring the axis on a new filing
+    # takes nothing away from an old record.
+    #
+    # `reproduction_attempted` stays OPTIONAL and that is not an oversight: it
+    # is required CONDITIONALLY, on a LATENT filing only, which jsonschema
+    # cannot express here without a dependency clause that would then be a
+    # second copy of a rule `validate_defect_filing` already owns. The door
+    # enforces it (CT-001) and refuses naming the field.
     "required": [
-        "id", "classification", "type", "class", "file", "symbol", "description",
+        "id", "classification", "type", "class", "tier", "file", "symbol", "description",
     ],
     "properties": {
         "id": {

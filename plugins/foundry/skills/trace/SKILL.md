@@ -307,7 +307,7 @@ JSON block at the end for tooling consumption.
           "spec_reference": {"type": "string", "description": "Spec section/requirement ID"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "classification", "type", "class", "file", "symbol", "description"]
+        "required": ["id", "classification", "type", "class", "tier", "file", "symbol", "description"]
       }
     },
     "summary": {
