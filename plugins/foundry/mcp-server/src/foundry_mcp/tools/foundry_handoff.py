@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +35,82 @@ from foundry_mcp.tools.foundry_state import (
     get_run_dir,
     read_text_file,
 )
+
+
+#: The DECLARATION grammar: a requirement ID in SUBJECT position on its line.
+#:
+#: Built from ``REQUIREMENT_ID_RE.pattern`` rather than re-typed beside it, so
+#: the families stay the single axis this module already reads (D-150). What is
+#: added here is only the POSITION: everything before the ID on the line must
+#: be structural markdown — list bullets, blockquote markers, heading hashes,
+#: table pipes, emphasis stars, whitespace — and nothing else. Prose before the
+#: ID means the ID is being talked ABOUT, not declared.
+_DECLARED_REQUIREMENT_ID_RE: re.Pattern[str] = re.compile(
+    r"^[\s>|*+#-]*(" + REQUIREMENT_ID_RE.pattern + r")"
+)
+
+
+def declared_requirement_ids(block_text: str) -> list[str]:
+    """The requirement IDs a casting is ANSWERABLE for, sorted and deduped.
+
+    THE ONE DERIVATION (D-180)
+    --------------------------
+    This is the only answer in the tree to "which requirement IDs does this
+    casting own", and it has two callers: the acceptance gate below, which
+    demands a citation and an evidence binding for each of them, and
+    ``foundry_validate``'s F0.9 coverage dimension, which asks whether every
+    spec requirement landed in SOME casting. Those two used to compute it
+    separately with a bare ``REQUIREMENT_ID_RE.findall`` over the whole block,
+    which is not a second implementation of one rule so much as one rule with
+    no owner: the gate and the validator could disagree about what a casting
+    owns and nothing would ever compare them.
+
+    WHY POSITION, AND NOT JUST THE FAMILY (D-180)
+    ---------------------------------------------
+    ``findall`` over the whole block cannot tell a requirement ASSIGNED to the
+    casting from one merely QUOTED as an example inside another requirement's
+    prose. Driven: casting 2's block mentions ``NFR-002`` exactly once, inside
+    OT-005's own statement text ("...a LATENT filing citing NFR-002 with a
+    scan-gap description is accepted"), and has no ``NFR-002`` requirement line
+    of its own — yet the gate collected it as one of that casting's 45 demanded
+    IDs and refused acceptance with ``EVIDENCE_REQUIREMENT_UNBOUND: NFR-002``
+    for a requirement another casting owns. The teammate's only way through was
+    to bind a knowingly false ``# evidence-for: NFR-002`` header to an
+    unrelated log, which is a green gate recording a lie.
+
+    A DECLARATION is the ID in subject position on its own line. All four
+    shapes F0.5 DECOMPOSE emits qualify, because in each the ID is the first
+    thing on the line that is not structural markdown::
+
+        - **AC-006** [derived from A-008]: ...      bold bullet
+        - FR-1: synthesized requirement            plain bullet
+        | CT-001 | Foundry-Defect and ... |        typed-table row
+        ### US-002: Every defect carries a tier    story heading
+
+    ...and the two shapes that are NOT declarations stay out::
+
+          - Maps to: US-003                        a cross-reference
+        ...a LATENT filing citing NFR-002 with...  an example in prose
+
+    WHY NOT NARROWER (the shape this rejects)
+    -----------------------------------------
+    Reading only ``- **ID**`` bullets — the obvious reading of "the
+    requirement's own tag line" — drops every typed-table row and story
+    heading. On casting 2 that is 10 of its 38 Locked requirement IDs,
+    including every CT- contract and ST-009, silently no longer demanding
+    evidence. Over-demanding costs a teammate an argument; under-demanding
+    costs the run its gate, so the rule is anchored at the LINE, not at one
+    markdown shape.
+
+    Deduped and sorted because both callers compare it as a set and the gate
+    reports it to the lead; order was never meaningful.
+    """
+    ids: set[str] = set()
+    for line in block_text.splitlines():
+        match = _DECLARED_REQUIREMENT_ID_RE.match(line)
+        if match:
+            ids.add(match.group(1))
+    return sorted(ids)
 
 
 def _hash_file(path: Path) -> str | None:
@@ -764,7 +841,6 @@ def foundry_accept_casting(
         return hash_refusal
 
     # Extract acceptance criteria from the <spec_requirements> block
-    import re
     match = re.search(
         r"<spec_requirements>(.*?)</spec_requirements>",
         prompt_text,
@@ -814,7 +890,16 @@ def foundry_accept_casting(
     # canonical pattern is a strict SUPERSET, so every ID that required a
     # citation before still does (NFR-002) — and OT-/GI-/CT-/ST- rows quoted
     # into the block now require one too, which is the point.
-    casting_req_ids = sorted(set(REQUIREMENT_ID_RE.findall(spec_block)))
+    #
+    # D-180: ...and WHICH of those rows the casting owns is `declared_requirement_ids`,
+    # not a `findall` over the block. D-150 widened the FAMILIES this reader can
+    # see; it left the SUBJECT unjudged, so an ID quoted as an example inside
+    # another requirement's prose was harvested exactly like a requirement
+    # assigned to the casting. Both consumers below read this one list — the
+    # citation window and the EVID-02 binding check — so the wrong subject was
+    # demanded twice from the same mistake. The helper's docstring carries the
+    # driven case and why the narrower `- **ID**` reading was rejected.
+    casting_req_ids = declared_requirement_ids(spec_block)
     citation_pattern = CITATION_PATTERN
     missing_citations: list = []
     for rid in casting_req_ids:

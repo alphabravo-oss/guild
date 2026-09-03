@@ -20,6 +20,13 @@ from pathlib import Path
 # casting that cites them. NFR-002: the canonical pattern is a strict
 # SUPERSET, so no ID that matched before stops matching.
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
+# D-180: the ONE derivation of "which requirement IDs does this casting own",
+# shared with the acceptance gate that demands evidence for each of them. See
+# `declared_requirement_ids`' docstring for the driven case. The edge is
+# acyclic — foundry_handoff imports foundry_orchestrator, which this module
+# already imports, and nothing in that chain imports foundry_validate (only
+# server.py does).
+from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
 # D-134: the SHARED nested-shape validator, so "unusable manifest" means one
 # thing in every module that reads castings/manifest.json. A module-top import
@@ -204,10 +211,25 @@ def foundry_validate_castings(
     # ── Dimension 1: Requirement Coverage ──
     covered_reqs: set[str] = set()
     for c in castings:
+        # D-180: a casting's `spec_text` IS the verbatim `<spec_requirements>`
+        # block its prompt carries, so "which requirements does this casting
+        # own" must be answered here exactly as the acceptance gate answers it
+        # — through the one `declared_requirement_ids` derivation. A bare
+        # `findall` over the block credited a casting with any ID quoted inside
+        # another requirement's prose, so this dimension could report a
+        # requirement COVERED while `foundry_accept_casting` demanded evidence
+        # for it from nobody. Two readers of one question, disagreeing with no
+        # surface that compares them, is the shape D-180 was filed against.
         spec_text_field = c.get("spec_text", "")
-        casting_reqs = set(REQUIREMENT_ID_RE.findall(spec_text_field))
+        casting_reqs = set(declared_requirement_ids(spec_text_field))
         covered_reqs.update(casting_reqs)
-        # Also check observable truths text
+        # Also check observable truths text.
+        #
+        # This one stays a PROSE scan on purpose. An observable truth is a
+        # sentence, not a requirement declaration — "...refuses a filing whose
+        # tier is absent (AC-006, CT-001, FR-004)" names its requirements
+        # mid-line by design — so the position rule that separates a
+        # declaration from a quotation has nothing to bite on here.
         for truth in c.get("observable_truths", []):
             truth_reqs = set(REQUIREMENT_ID_RE.findall(truth))
             covered_reqs.update(truth_reqs)

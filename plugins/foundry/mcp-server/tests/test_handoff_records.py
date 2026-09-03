@@ -969,3 +969,217 @@ def test_the_handler_keeps_a_none_default_so_the_refusal_is_its_own(run_env):
 
     params = inspect.signature(handoff_module.foundry_accept_casting).parameters
     assert params["casting_commit"].default is None
+
+
+# --- D-180: the gate demands what the casting DECLARES, not what it quotes ---
+#
+# `foundry_accept_casting` harvested requirement IDs with a bare
+# `REQUIREMENT_ID_RE.findall` over the whole `<spec_requirements>` block, which
+# cannot tell a requirement ASSIGNED to the casting from one QUOTED as an
+# example inside another requirement's prose. Driven on this run: casting 2's
+# block names NFR-002 exactly once, inside OT-005's own statement text, and
+# carries no NFR-002 requirement line — yet the gate demanded a citation and an
+# evidence binding for it and refused acceptance with
+# EVIDENCE_REQUIREMENT_UNBOUND for a requirement casting 5 owns.
+#
+# `_QUOTING_BLOCK` reproduces that shape in miniature: one declared requirement
+# whose own prose names another requirement as an example.
+_QUOTING_BLOCK = (
+    "- **AC-015** [derived from A-031]: the gate refuses without casting_commit;\n"
+    "  a LATENT filing citing NFR-002 with a scan-gap description is accepted.\n"
+)
+_QUOTING_PROMPT = (
+    "# Casting 1\n\n"
+    f"<spec_requirements>\n{_QUOTING_BLOCK}</spec_requirements>\n"
+)
+
+
+def test_a_requirement_quoted_in_another_requirements_prose_is_not_owned(run_env):
+    """D-180 at the door that refused: the harvested set is the DECLARED set.
+
+    NFR-002 appears once in this block, inside AC-015's own statement, and the
+    casting has no NFR-002 line. Before this change the gate collected it and
+    then demanded of the teammate a citation and an evidence binding for a
+    requirement another casting owns — a demand no honest report can satisfy,
+    whose only workaround was a knowingly false `# evidence-for:` header.
+    """
+    root, fdir = run_env
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        _QUOTING_PROMPT, encoding="utf-8"
+    )
+
+    result = _accept(root, prompt_hash=_hash_str(_QUOTING_PROMPT))
+
+    assert result["requirement_ids"] == ["AC-015"], result["requirement_ids"]
+    assert "NFR-002" not in result["requirement_ids"]
+
+
+def test_the_citation_check_reads_the_same_declared_set(run_env):
+    """The SECOND consumer of the one list, reached through the same door.
+
+    `casting_req_ids` feeds both the EVID-02 binding check and the 300-char
+    citation window, so the wrong subject was demanded twice from one mistake.
+    A report citing only what the casting declares is complete; the quoted ID
+    is not missing, because it was never this casting's to cite.
+    """
+    root, fdir = run_env
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        _QUOTING_PROMPT, encoding="utf-8"
+    )
+
+    result = _accept(root, prompt_hash=_hash_str(_QUOTING_PROMPT))
+
+    assert result["missing_citations"] == [], result["missing_citations"]
+    assert result["ok"] is True, result.get("warning")
+
+
+def test_a_declared_requirement_with_no_citation_is_still_named(run_env):
+    """The falsifier for the test above: narrowing the subject must not
+    disarm the check. A DECLARED requirement the report never cites is still
+    named as missing, so "no missing citations" above means the report was
+    complete rather than that the gate stopped looking."""
+    root, fdir = run_env
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        _QUOTING_PROMPT, encoding="utf-8"
+    )
+
+    result = _accept(
+        root,
+        prompt_hash=_hash_str(_QUOTING_PROMPT),
+        completion_report="nothing was cited here\n",
+    )
+
+    assert result["missing_citations"] == ["AC-015"], result["missing_citations"]
+    assert result["ok"] is False
+
+
+def test_every_shape_decompose_emits_declares_its_requirement(run_env):
+    """The narrower reading this fix REJECTS, pinned so it cannot be adopted.
+
+    "Derive the IDs from each requirement's own `- **ID**` tag line" drops
+    every typed-table row and story heading — on casting 2 that is 10 of its
+    38 Locked requirement IDs, CT-001 through CT-016 and ST-009 among them,
+    silently no longer demanding evidence. All four shapes F0.5 DECOMPOSE
+    emits are declarations; only prose position is judged."""
+    root, fdir = run_env
+    block = (
+        "## Contracts\n"
+        "\n"
+        "| ID     | surface | citation |\n"
+        "|--------|---------|----------|\n"
+        "| CT-015 | Foundry-Accept-Casting | [from A-031] |\n"
+        "\n"
+        "| ST-009 | F0 init requested | F0 refused |\n"
+        "\n"
+        "### US-006: A self-targeting run executes on its own build\n"
+        "\n"
+        "- **AC-015** [derived from A-031]: refused naming the parameter.\n"
+        "- FR-010: no acceptance without EVID-01 running.\n"
+        "  - Maps to: US-003\n"
+    )
+    prompt = f"# Casting 1\n\n<spec_requirements>\n{block}</spec_requirements>\n"
+    (fdir / "castings" / "casting-1-prompt.md").write_text(prompt, encoding="utf-8")
+
+    result = _accept(root, prompt_hash=_hash_str(prompt), completion_report="")
+
+    assert result["requirement_ids"] == [
+        "AC-015", "CT-015", "FR-010", "ST-009", "US-006",
+    ], result["requirement_ids"]
+    assert "US-003" not in result["requirement_ids"], (
+        "`Maps to: US-003` is a cross-reference to another story, not a "
+        "requirement this casting is answerable for"
+    )
+
+
+# --- D-180 adjacent path: the F0.9 validator, the OTHER caller of the one
+# derivation. `foundry_validate_castings`' Dimension 1 answers the same
+# question over the same text — a casting's `spec_text` IS the verbatim
+# `<spec_requirements>` block its prompt carries — from a different module, in
+# a different phase, with no surface that compares the two answers. When they
+# disagree, F0.9 reports a requirement COVERED because some casting quoted it
+# as an example while the acceptance gate demands evidence for it from nobody,
+# and the run ships a requirement nothing verified.
+def test_the_validator_and_the_gate_agree_on_what_a_casting_owns(tmp_path):
+    """AC-015 / FR-010 adjacent path — one derivation, two callers.
+
+    Driven through `foundry_validate_castings` rather than through the
+    acceptance gate: the casting DECLARES AC-015 and merely quotes NFR-002
+    inside its prose, so F0.9 must report NFR-002 uncovered — the same verdict
+    the gate reaches when it declines to demand it of this casting.
+    """
+    from foundry_mcp.tools.foundry_state import ARCHIVE_DIR, set_active_run
+    from foundry_mcp.tools.foundry_validate import foundry_validate_castings
+
+    run_name = "d180-validator-agreement"
+    fdir = tmp_path / ARCHIVE_DIR / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "spec.md").write_text(
+        "# Spec\n\n"
+        "- **AC-015**: the gate refuses without casting_commit.\n"
+        "- **NFR-002**: the report totals tokens and minutes.\n",
+        encoding="utf-8",
+    )
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "spec_type": "GREENFIELD",
+                "castings": [
+                    {
+                        "id": "1",
+                        "title": "the quoting casting",
+                        "spec_text": _QUOTING_BLOCK,
+                        # Prose scans on purpose: an observable truth names its
+                        # requirements mid-sentence by design. Kept clear of
+                        # both IDs so this test measures `spec_text` alone.
+                        "observable_truths": ["a", "b", "c"],
+                        "key_files": ["src/one.py"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    set_active_run(run_name)
+    try:
+        result = foundry_validate_castings(str(tmp_path))
+    finally:
+        clear_active_run()
+
+    dim1 = result["dimensions"]["requirement_coverage"]
+    uncovered = [i for i in dim1["issues"] if i["type"] == "uncovered_requirements"]
+    assert uncovered, dim1
+    assert uncovered[0]["ids"] == ["NFR-002"], (
+        "F0.9 credited the casting with a requirement it only quoted, so the "
+        "validator and the acceptance gate disagree about what it owns"
+    )
+
+
+def test_neither_reader_derives_the_declared_set_inline():
+    """The KEY LINK, asserted where its loss would be silent (D-180).
+
+    Two modules that each harvest the block themselves agree until one is
+    edited — which is how the gate and the validator came to disagree in the
+    first place. Pinned structurally: neither may reach for the raw scanner on
+    a casting's own block again."""
+    import ast
+
+    from foundry_mcp.tools import foundry_handoff as handoff_module
+    from foundry_mcp.tools import foundry_validate as validate_module
+
+    for module in (handoff_module, validate_module):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "declared_requirement_ids" in source, Path(module.__file__).name
+
+    # The helper is DEFINED once. Asked of the AST rather than of the text so
+    # the prose explaining the rejected reading cannot trip the pin.
+    definitions = [
+        node.name
+        for module in (handoff_module, validate_module)
+        for node in ast.walk(
+            ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        )
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "declared_requirement_ids"
+    ]
+    assert definitions == ["declared_requirement_ids"], definitions
