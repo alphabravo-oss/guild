@@ -514,6 +514,13 @@ def test_temper_rolls_each_axis_up_from_its_own_container(tmp_path: Path) -> Non
     temper is the built-in schema that proves the axis-to-container resolution
     on real vocabulary: counting `status` over `findings` would have produced
     {"unknown": N}, which is exactly the shape (B) reported.
+
+    Both findings carry a `class` because D-003 made it the seventh required
+    field on the shared finding item: temper syncs its T-N findings through
+    Foundry-Defect, and that door refuses a classless filing, so a temper
+    report without one was never valid at the surface it is bound for. The
+    assertion below is about the roll-up, not the required set -- it needs a
+    report that VALIDATES, and this is what one looks like now.
     """
     report = {
         "findings": [
@@ -521,6 +528,7 @@ def test_temper_rolls_each_axis_up_from_its_own_container(tmp_path: Path) -> Non
                 "id": "T-1",
                 "classification": "DEFECT",
                 "type": "HOLLOW",
+                "class": "STUB_BEHIND_THE_DOMAIN",
                 "file": "src/auth.py",
                 "symbol": "auth#verify",
                 "description": "the probe found a stub behind the domain",
@@ -529,6 +537,7 @@ def test_temper_rolls_each_axis_up_from_its_own_container(tmp_path: Path) -> Non
                 "id": "T-2",
                 "classification": "OBSERVATION",
                 "type": "THIN",
+                "class": "COMMENT_COUNT_DRIFT",
                 "file": "src/auth.py",
                 "symbol": "auth#note",
                 "description": "the comment above it counts three cases, not four",
