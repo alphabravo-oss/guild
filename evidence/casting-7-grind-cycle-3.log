@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry && python3 -c 'import pathlib; r=lambda p: pathlib.Path(p).read_text(); c=lambda p,s: r(p).count(s); S="commands/start.md"; H="commands/help.md"; L="references/lead-discipline.md"; CORPUS=[S,H,L,"skills/temper/SKILL.md","README.md","../../README.md"]; sent=lambda p: " ".join(r(p).split()).split(". "); print("D-049 stale back-compat shim (want 0):", c(S,"backwards-compatibility shim")); print("D-049 stale silent-bypass claim (want 0):", c(S,"the whole evidence block is bypassed silently")); print("D-049 casting_commit REQUIRED (want 1):", c(S,"`casting_commit` is REQUIRED")); print("D-049 refusal names the field (want 1):", c(S,"REFUSED naming the field")); print("D-051 stale prompt-field instruction (want 0):", c(L,"pass the `prompt` field")); print("D-051 stale text-return in lead-discipline (want 0):", c(L,"which reads the file and returns the text")); print("D-051 stale text-return in help (want 0):", c(H,"gets the pre-authored prompt back")); print("D-051 pointer in router section (want 1):", c(L,"which return a `dispatch` block naming that frozen file")); print("D-051 pointer in verbatim section (want 1):", c(L,"pass the `dispatch` block from `Foundry-Spawn-Teammate`")); print("D-051 corpus sentences naming `prompt` without null (want 0):", sum(1 for p in CORPUS for s in sent(p) if "`prompt`" in s and "null" not in s)); print("D-051 corpus sentences claiming a text return without full_prompt (want 0):", sum(1 for p in CORPUS for s in sent(p) if ("returns the text" in s or "gets the pre-authored prompt back" in s) and "full_prompt" not in s))'
+# evidence-for: FR-019, AC-005, FR-026
+# evidence-timeout: 300
+
+D-049 stale back-compat shim (want 0): 0
+D-049 stale silent-bypass claim (want 0): 0
+D-049 casting_commit REQUIRED (want 1): 1
+D-049 refusal names the field (want 1): 1
+D-051 stale prompt-field instruction (want 0): 0
+D-051 stale text-return in lead-discipline (want 0): 0
+D-051 stale text-return in help (want 0): 0
+D-051 pointer in router section (want 1): 1
+D-051 pointer in verbatim section (want 1): 1
+D-051 corpus sentences naming `prompt` without null (want 0): 0
+D-051 corpus sentences claiming a text return without full_prompt (want 0): 0

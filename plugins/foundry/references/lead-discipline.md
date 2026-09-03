@@ -6,7 +6,7 @@
 
 **The failure mode.** When the lead drafts teammate prompts from the casting manifest, the lead becomes an *interpreter* between the spec and the teammate. That interpretation layer is where spec fidelity silently erodes: scope cuts, hedge language, "pick the core coverage" permissions. Each translation is lossy; multiplicative decay across layers turns a 90%-faithful spec into a 59%-faithful build.
 
-**The fix.** Eliminate the interpretation layer. Decompose authors the complete teammate prompt ONCE, from the spec as source of truth, at F0.5. The prompt is saved to disk, validated at F0.9, frozen. The lead at F1/F3 calls `Foundry-Spawn-Teammate` which reads the file and returns the text. The lead passes it to the Agent tool verbatim. Plans are prompts.
+**The fix.** Eliminate the interpretation layer. Decompose authors the complete teammate prompt ONCE, from the spec as source of truth, at F0.5. The prompt is saved to disk, validated at F0.9, frozen. The lead at F1/F3 calls `Foundry-Spawn-Teammate` or `Foundry-Cast-Wave`, which return a `dispatch` block naming that frozen file's path and its sha256 — never its text. The lead passes the `dispatch` block to the Agent tool verbatim and the teammate reads the file itself, so the prompt reaches the builder without ever passing through the lead. Plans are prompts.
 
 ## Why CORRECTNESS BEATS CONTEXT BUDGET
 
@@ -18,7 +18,7 @@ When the spec contains ambiguous wording ("equivalent coverage", "similar to leg
 
 ## Why verbatim prompts, no lead authoring
 
-When spawning a teammate, pass the `prompt` field from `Foundry-Spawn-Teammate` verbatim to the Agent tool. You MAY NOT modify, summarize, paraphrase, prepend, append, substitute, or wrap the prompt. GRIND is the only exception: you may append a clearly-delimited `## Defects to fix this cycle:` block after the returned prompt, never inside it.
+When spawning a teammate, pass the `dispatch` block from `Foundry-Spawn-Teammate` or `Foundry-Cast-Wave` verbatim to the Agent tool, together with the `progress_protocol` block that comes back beside it. Never prompt text: the `prompt` field comes back `null` unless you pass `full_prompt=true`, which exists for debugging and nothing else, so a lead who reaches for that field hands the agent an empty prompt. You MAY NOT modify, summarize, paraphrase, prepend, append, substitute, or wrap either block, and you MAY NOT re-type or reconstruct the prompt the file holds. GRIND is the only exception: you may append a clearly-delimited `## Defects to fix this cycle:` block after the dispatch, never inside it.
 
 Any lead-authored text in the teammate prompt is a vector for spec drift. By mechanically forbidding any lead authoring at F1, we eliminate the drift surface entirely. If something is missing from the prompt, the fix is to re-run F0.5 DECOMPOSE with a correction, not to inject text here.
 

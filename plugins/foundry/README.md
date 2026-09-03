@@ -19,7 +19,7 @@
 
 ## What it is
 
-Foundry is a Claude Code plugin that takes a Forge-produced spec and runs an **autonomous build-verify-fix loop** until the feature is shipped or an error stops the run. There are no approval gates. No "is this what you wanted?" checkpoints. The Lead inside Claude Code reads the spec, decomposes it into castings, dispatches teammate prompts verbatim, runs up to eight parallel verification streams, grinds defects to zero, then assays the result with fresh eyes against the original spec.
+Foundry is a Claude Code plugin that takes a Forge-produced spec and runs an **autonomous build-verify-fix loop** until the feature is shipped or an error stops the run. There are no approval gates. No "is this what you wanted?" checkpoints. The Lead inside Claude Code reads the spec, decomposes it into castings, dispatches a pointer to each frozen teammate prompt, runs up to eight parallel verification streams, grinds defects to zero, then assays the result with fresh eyes against the original spec.
 
 The discipline is the product. Every mechanism in Foundry exists to keep the spec intact across the build.
 
@@ -179,7 +179,7 @@ Foundry-Sight runs these as Claude Code skills directly during the corresponding
 
 The `Model` column mirrors each agent's `model:` frontmatter, which is the single source of truth for which model an agent runs on. Which of these the `model` config option can steer is documented under [Model selection](#model-selection); the allocation of foundry's *orchestration* roles — the Lead itself, F0.5 DECOMPOSE — lives in `commands/start.md`'s MODEL ALLOCATION table.
 
-The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, F1/F3 dispatch them verbatim. The Lead is a router, not an interpreter.
+The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, and F1/F3 dispatch a pointer to the frozen file rather than its text; the teammate reads it and states the sha256 back. The Lead is a router, not an interpreter.
 
 ---
 
@@ -199,8 +199,8 @@ The server stores all run state under `foundry-archive/{run}/` in your project �
 | `Foundry-Next` | Every step: returns `YOUR NEXT CALL:` imperative |
 | `Foundry-Gate` | Before phase transitions |
 | `Foundry-Phase` | Mark phase transitions |
-| `Foundry-Spawn-Teammate` | F0.5 / F1 / F3: read pre-authored teammate prompt |
-| `Foundry-Cast-Wave` | F1: bulk-fetch every casting prompt for a wave |
+| `Foundry-Spawn-Teammate` | F0.5 / F1 / F3: dispatch block (path + sha256) for one casting's pre-authored prompt |
+| `Foundry-Cast-Wave` | F1: one bulk call returning the dispatch block for every casting in a wave |
 | `Foundry-Validate-Castings` | F0.9: 11-dimension validate |
 | `Foundry-Intent-Coverage` | F0.7: A-NNN coverage check |
 | `Foundry-Spec-Hash` | Before acceptance: fresh hash forces spec re-read |

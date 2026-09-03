@@ -629,6 +629,63 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         TEMPER_SKILL,
         "which is evidence rather than effort",
     ),
+    # --- GRIND cycle 3 -----------------------------------------------------
+    # D-049 / CT-015: start.md's acceptance block told the lead the parameter
+    # was an optional back-compat shim and that omitting it bypassed the whole
+    # evidence block silently. The shipped tool refuses on absence, and the
+    # SAME FILE's tools table already said "required" -- two statements in the
+    # lead's own operating file disagreeing, with the false one describing a
+    # bypass the server does not offer.
+    (
+        "accept-casting-commit-required",
+        "CT-015",
+        START_MD,
+        "**`casting_commit` is REQUIRED, and it is what engages the evidence gate.**",
+    ),
+    (
+        "accept-casting-commit-refusal",
+        "CT-015",
+        START_MD,
+        "**Omit it and the acceptance is REFUSED naming the field**",
+    ),
+    # The return list carried the same optionality as a conditional clause.
+    (
+        "accept-casting-commit-provenance-always",
+        "CT-015",
+        START_MD,
+        "populated on every success because `casting_commit` is required",
+    ),
+    # D-051 / FR-019: a REGRESSION of D-012, which was marked fixed with two of
+    # its four surfaces untouched. Both rationale sections predated pointer
+    # dispatch and still sent the lead to a field that is permanently null,
+    # standing ABOVE the section that describes pointer dispatch correctly.
+    (
+        "dispatch-pointer-router-section",
+        "FR-019",
+        LEAD_DISCIPLINE,
+        "which return a `dispatch` block naming that frozen file's path and its "
+        "sha256 \u2014 never its text",
+    ),
+    (
+        "dispatch-pointer-verbatim-section",
+        "FR-019",
+        LEAD_DISCIPLINE,
+        "pass the `dispatch` block from `Foundry-Spawn-Teammate` or "
+        "`Foundry-Cast-Wave` verbatim to the Agent tool",
+    ),
+    (
+        "dispatch-pointer-help",
+        "FR-019",
+        HELP_MD,
+        "gets back a **dispatch pointer** \u2014 the prompt file's path and its "
+        "sha256, never its text",
+    ),
+    (
+        "dispatch-pointer-plugin-readme",
+        "FR-019",
+        PLUGIN_README,
+        "F1/F3 dispatch a pointer to the frozen file rather than its text",
+    ),
 )
 
 
@@ -858,3 +915,102 @@ def test_every_agent_start_md_names_really_carries_the_tier_rule() -> None:
         f"{_rel(START_MD)} lists {exempt} as both carrying the tier rule and "
         f"exempt from it."
     )
+
+
+# ---------------------------------------------------------------------------
+# D-051 -- the pointer-dispatch claim, swept over the whole lead-prose corpus
+# ---------------------------------------------------------------------------
+
+#: Every prose file this module owns. The two sweeps below run over ALL of
+#: them rather than over the file a defect was filed against, because D-051 is
+#: what happens when a fix touches only the surface named in the filing: D-012
+#: was marked fixed with two of its four surfaces untouched, and the stale half
+#: came back one cycle later. A per-file pin cannot catch a claim that migrates.
+_LEAD_PROSE_CORPUS: tuple[Path, ...] = (
+    START_MD,
+    HELP_MD,
+    LEAD_DISCIPLINE,
+    TEMPER_SKILL,
+    PLUGIN_README,
+    ROOT_README,
+)
+
+#: Split flattened prose on sentence boundaries. A qualifier only qualifies the
+#: sentence it sits in -- the D-079 lesson from ``test_protocol_prose.py``'s
+#: liveness rows -- so both sweeps below assert per SENTENCE, never per file.
+#: The lookbehind requires the following space, so "F0.5" and "sha256." inside
+#: a clause do not split.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?]) ")
+
+#: Ways a file can claim a spawn tool hands back the prompt TEXT. Under pointer
+#: dispatch that is only true with ``full_prompt=true``, so a sentence making
+#: the claim must name the flag or it is describing the pre-pointer protocol.
+_TEXT_RETURN_CLAIMS = (
+    "returns the text",
+    "return the text",
+    "returns the prompt text",
+    "returns the prompt back",
+    "gets the prompt back",
+    "gets the pre-authored prompt back",
+)
+
+
+def _sentences(path: Path) -> list[str]:
+    return _SENTENCE_SPLIT.split(_flat(path))
+
+
+def test_no_owned_prose_sends_the_lead_to_the_prompt_field() -> None:
+    """D-051 / FR-019: the `prompt` field is null, so naming it must say so.
+
+    ``foundry_spawn.py`` returns ``"prompt": None`` unless ``full_prompt=True``
+    is passed. ``references/lead-discipline.md`` told the lead to "pass the
+    `prompt` field from `Foundry-Spawn-Teammate` verbatim to the Agent tool",
+    which delivers an empty prompt to the teammate and leaves no trace that it
+    did. The rule is therefore not "never mention the field" -- start.md has to
+    mention it to warn the lead off -- but "never mention it without saying it
+    comes back null".
+    """
+    carriers: list[tuple[Path, str]] = []
+    for path in _LEAD_PROSE_CORPUS:
+        for sentence in _sentences(path):
+            if "`prompt`" not in sentence:
+                continue
+            carriers.append((path, sentence))
+            assert "null" in sentence, (
+                f"{_rel(path)} names the `prompt` field without saying it is "
+                f"null: {sentence!r}. Pointer dispatch returns `prompt: null` "
+                f"unless full_prompt=true, so a lead following this sentence "
+                f"hands the agent an empty prompt. Say what to pass instead -- "
+                f"the `dispatch` block -- and say the field is null."
+            )
+    assert carriers, (
+        "No file in the lead-prose corpus mentions the `prompt` code span at "
+        "all, so this sweep asserted nothing. Either the warning that the "
+        "field is null was deleted from start.md and lead-discipline.md -- "
+        "restore it -- or the span is now written some other way and this "
+        "check no longer matches it. Do not delete the sweep to make it pass."
+    )
+
+
+def test_no_owned_prose_says_a_spawn_tool_hands_back_the_prompt_text() -> None:
+    """D-051 / FR-019: only `full_prompt=true` returns prompt text.
+
+    The regressed sentence was "The lead at F1/F3 calls
+    `Foundry-Spawn-Teammate` which reads the file and returns the text" -- true
+    before pointer dispatch, false after, and sitting two sections above the
+    one that describes pointer dispatch correctly. A claim that the tool hands
+    back text is legitimate ONLY where it names the debugging flag that makes
+    it so.
+    """
+    for path in _LEAD_PROSE_CORPUS:
+        for sentence in _sentences(path):
+            claim = next((c for c in _TEXT_RETURN_CLAIMS if c in sentence), None)
+            if claim is None:
+                continue
+            assert "full_prompt" in sentence, (
+                f"{_rel(path)} says {claim!r} without naming full_prompt: "
+                f"{sentence!r}. The spawn tools return a `dispatch` block "
+                f"naming a path and a sha256; the text comes back only with "
+                f"full_prompt=true, which exists for debugging. State the "
+                f"pointer, or name the flag."
+            )

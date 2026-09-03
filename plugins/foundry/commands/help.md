@@ -65,7 +65,7 @@ Three frozen, byte-identical blocks ride in every casting prompt:
 - `<global_invariants>` — cross-cutting spec rules (auth, validation, security, architectural placement)
 - `<spec_requirements>` — the casting's specific spec slice (V2) OR `<upstream_anchor>`/`<this_hop>`/`<downstream_contract>` (V3 brownfield)
 
-F0.9 mechanically verifies byte-identical propagation across every casting. The lead at F1/F3 calls `Foundry-Spawn-Teammate`, gets the pre-authored prompt back, and passes it to the Agent tool **verbatim** — no re-drafting, no paraphrasing.
+F0.9 mechanically verifies byte-identical propagation across every casting. The lead at F1/F3 calls `Foundry-Spawn-Teammate` or `Foundry-Cast-Wave` and gets back a **dispatch pointer** — the prompt file's path and its sha256, never its text — which it passes to the Agent tool verbatim; the teammate reads the frozen file itself and states the hash back, and acceptance refuses on a mismatch. No re-drafting, no paraphrasing, and nothing for the lead to re-type.
 
 ## Commands
 
@@ -159,7 +159,7 @@ will otherwise serve the same one indefinitely.
 
 - **One command, zero approval gates** — fully autonomous from `/foundry:start` to F6 DONE
 - **Lead never edits code** — delegates everything to teammates (SIGHT/Playwright is the one exception)
-- **Plans are prompts** — decompose authors once at F0.5, teammates receive the prompt verbatim
+- **Plans are prompts** — decompose authors once at F0.5; teammates are dispatched a pointer and read that frozen prompt verbatim from disk
 - **Every non-passing verdict is a defect** — no deferrals, no "close enough"
 - **Full re-verify after every fix** — no spot-checking
 - **Methodical teammate** — tuned for correctness over wall-clock speed (read floor, approach deliberation, blast radius, competing hypotheses)
