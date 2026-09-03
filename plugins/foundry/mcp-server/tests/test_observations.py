@@ -1,26 +1,72 @@
-"""Casting 3 — the observation/defect split, the never-demote tripwire, the
-reconciled Foundry-Defect vocabulary, and defect-id uniqueness under
-concurrency.
+"""process-fixes casting 3 — the observation/defect split, the never-demote
+tripwire, the reconciled Foundry-Defect vocabulary, and defect-id uniqueness
+under concurrency. The casting number is qualified for the same reason every
+requirement id below is: under the convergence spec this file belongs to
+casting 2, by the lead ruling recorded in that run's concerns.md.
+
+WHICH SPEC EACH ID BELONGS TO — READ THIS BEFORE GREPPING AN ID HERE
+-------------------------------------------------------------------
+This module was built under ``forge-specs/foundry-run-process-fixes/spec.md``
+(the thunder-viper run) and is maintained under
+``forge-specs/foundry-run-convergence/spec.md``. Both specs number their rows
+from 1, so an id here means two different things depending on which spec the
+reader is holding. That is not a partial overlap to be waved at: EVERY id this
+file names — AC-001, AC-002, AC-004, AC-005, AC-006, AC-007, AC-010, AC-011,
+AC-019, AC-025, CT-001, CT-002, FR-004, FR-007, FR-020, FR-023, NFR-002,
+OT-001, OT-002, OT-008, ST-001, ST-002 — was checked against both files, and
+every one of them resolves in BOTH. Not a single id disambiguates itself, so
+the qualification below is the only thing that tells them apart. ``AC-001`` is
+the comment-prose refusal below in the first spec and the clean-cycles
+escalation exit in the second; ``ST-001`` is the server-owned cycle counter
+here and the ESCALATED->CLEARED transition there; ``CT-002`` is the reconciled
+vocabulary here and the required ``class`` there.
+
+D-178 is what leaving that implicit cost. This docstring tagged the
+comment-prose refusal "AC-001 / OT-001" with no spec named, TRACE resolved
+those ids against the convergence spec — where they name the escalation exit
+driven in ``tests/test_escalation.py`` — and filed the mismatch. The ids were
+never wrong; they were UNQUALIFIED. So the convention is now explicit and
+holds for every id in this file:
+
+  * ``process-fixes AC-001`` cites
+    ``forge-specs/foundry-run-process-fixes/spec.md``;
+  * a BARE id cites ``forge-specs/foundry-run-convergence/spec.md``, the spec
+    this tree is under;
+  * a requirement-shaped string in a KEYWORD ARGUMENT (``spec_ref="AC-007"``,
+    ``requirement_id="AC-025"``) is neither. It is fixture input handed to the
+    door under test — arbitrary, because ``is_spec_required_behaviour_claim``
+    accepts any non-empty ``spec_ref`` — and it cites nothing, exactly as
+    ``FIXTURE_CLASS`` below cites nothing.
 
 One regression test per acceptance criterion:
 
-  AC-001 / OT-001  comment-prose filed as a defect is REFUSED naming the class
-                   and the legal set, the same finding is ACCEPTED into
-                   observations.json, and defects.json never contains it.
-  AC-002 / OT-002  a denylisted finding filed as an observation is REJECTED and
-                   the audit tripwire fires durably (observations.json +
-                   forge-log.md); a security-property claim about a comment is
-                   a DEFECT and files successfully.
-  AC-004           a fresh run carries the seeded F0 ruling (see also
-                   test_foundry_init.py, which asserts the parse).
-  AC-019 / OT-008  defect_type PARTIAL is accepted and stored verbatim, with
-                   source preserved verbatim.
-  AC-025           concurrently filed defects get unique ids and BOTH survive.
-  CT-002           unknown source / defect_type are rejected server-side with a
-                   named error; source is never coerced onto "trace"; and the
-                   root-cause `class` is REQUIRED, refused by name when absent.
-  FR-023           the ledger is typed, per-run, and never mixed into
-                   defects.json.
+  process-fixes AC-001 / OT-001
+      comment-prose filed as a defect is REFUSED naming the class and the
+      legal set, the same finding is ACCEPTED into observations.json, and
+      defects.json never contains it.
+  process-fixes AC-002 / OT-002
+      a denylisted finding filed as an observation is REJECTED and the audit
+      tripwire fires durably (observations.json + forge-log.md); a
+      security-property claim about a comment is a DEFECT and files
+      successfully.
+  process-fixes AC-004
+      a fresh run carries the seeded F0 ruling (see also test_foundry_init.py,
+      which asserts the parse).
+  process-fixes AC-019 / OT-008
+      defect_type PARTIAL is accepted and stored verbatim, with source
+      preserved verbatim.
+  process-fixes AC-025
+      concurrently filed defects get unique ids and BOTH survive.
+  process-fixes CT-002
+      unknown source / defect_type are rejected server-side with a named
+      error, and source is never coerced onto "trace".
+  CT-002 / FR-007 / AC-010
+      the root-cause `class` is REQUIRED, refused by name when absent. This
+      row is convergence numbering, and it is where the two CT-002s meet:
+      process-fixes CT-002 governs the reconciled vocabulary, convergence
+      CT-002 governs the required class. One test carries both, and says so.
+  process-fixes FR-023
+      the ledger is typed, per-run, and never mixed into defects.json.
 
 Every filing below goes through ``_file_defect``, which supplies the ``tier``
 (CT-001 / FR-004) and ``class`` (CT-002 / FR-007) both doors now require. Those
@@ -32,8 +78,8 @@ past the wrapper on purpose — the class-required half of
 arrive without the very field the wrapper exists to supply.
 
 The safety property this file guards hardest is the one that is NOT stated as
-an AC but is the whole point of A-004: the split must never weaken the defect
-standard. ``test_undeclared_subject_is_never_refused``,
+an AC but is the whole point of process-fixes A-004: the split must never
+weaken the defect standard. ``test_undeclared_subject_is_never_refused``,
 ``test_denylist_outranks_observation_class`` and the D-093 promote-direction
 battery below are the tests that fail if a future change lets a real defect
 slip into the non-blocking channel — or, in the battery's case, if it lets one
@@ -43,6 +89,7 @@ be blocked from the blocking channel, which costs exactly as much.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -235,7 +282,7 @@ def _file_defect(**kwargs) -> dict:
     return foundry_add_defect(**kwargs)
 
 
-# --- AC-001 / OT-001 --------------------------------------------------------
+# --- process-fixes AC-001 / OT-001 ------------------------------------------
 @pytest.mark.parametrize(
     "description,expected_class",
     [
@@ -248,8 +295,8 @@ def _file_defect(**kwargs) -> dict:
 def test_comment_prose_filed_as_defect_is_refused(
     run: Path, tmp_path: Path, description: str, expected_class: str
 ) -> None:
-    """AC-001 — each of the four comment-prose classes is refused by
-    Foundry-Defect, with an error naming the offending class AND the legal
+    """process-fixes AC-001 — each of the four comment-prose classes is refused
+    by Foundry-Defect, with an error naming the offending class AND the legal
     set."""
     result = _file_defect(
         cycle=1,
@@ -273,15 +320,15 @@ def test_comment_prose_filed_as_defect_is_refused(
     assert "foundry_add_observation" in result["hint"]
     # And it forecloses the wrong fix: re-wording prose to slip past the gate.
     assert "Do NOT re-word" in result["hint"]
-    # OT-001 — it never reaches defects.json.
+    # process-fixes OT-001 — it never reaches defects.json.
     assert _defects(run) == []
 
 
 def test_refused_finding_is_accepted_as_an_observation(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-001 — the SAME finding the defect ledger refused is recordable in the
-    observations ledger, and lands there with its class."""
+    """process-fixes AC-001 — the SAME finding the defect ledger refused is
+    recordable in the observations ledger, and lands there with its class."""
     _set_server_cycle(run, 2)
     refusal = _file_defect(
         cycle=2,
@@ -311,7 +358,7 @@ def test_refused_finding_is_accepted_as_an_observation(
     assert record["source"] == "prove"
     assert record["cycle"] == 2
     assert record["created_at"]
-    # FR-023 / OT-001 — never mixed into defects.json.
+    # process-fixes FR-023 / OT-001 — never mixed into defects.json.
     assert _defects(run) == []
 
 
@@ -408,7 +455,8 @@ def test_a_substantive_finding_is_never_refused_however_its_prose_reads(
 def test_security_property_claims_always_file_as_defects(
     run: Path, tmp_path: Path, description: str
 ) -> None:
-    """OT-002, driven over the phrasings a stream actually writes.
+    """process-fixes OT-002, driven over the phrasings a stream actually
+    writes.
 
     "A comment claiming a security property the code does not implement is
     filed as a DEFECT and cannot be demoted to observation." The suite went
@@ -482,13 +530,14 @@ def test_a_substantive_finding_with_no_security_vocabulary_still_files(
     "description", [DRIFT, COUNT, DIRECTION, ENUMERATION]
 )
 def test_the_fail_safe_is_silent_on_real_comment_prose(description: str) -> None:
-    """The boundary that keeps AC-001 from being gutted by its own fix.
+    """The boundary that keeps process-fixes AC-001 from being gutted by its
+    own fix.
 
     The promote-side guard is biased to over-match, and over-matching is the
     safe direction — but a guard that matched EVERYTHING would refuse nothing
     and quietly delete the observation channel. These four are the canonical
-    comment-prose findings AC-001 names; the guard must stay silent on all of
-    them, or the refusal above it can never fire again."""
+    comment-prose findings process-fixes AC-001 names; the guard must stay
+    silent on all of them, or the refusal above it can never fire again."""
     assert asserts_code_behaviour({"description": description}) is False
 
 
@@ -540,8 +589,8 @@ def test_the_fail_safe_did_not_open_the_demotion_channel(
 def test_denylist_outranks_observation_class(
     run: Path, tmp_path: Path, kwargs: dict
 ) -> None:
-    """OT-002 / AC-002 — a finding matching BOTH a denylist entry and an
-    observation class is a DEFECT. The denylist outranks the observation
+    """process-fixes OT-002 / AC-002 — a finding matching BOTH a denylist entry
+    and an observation class is a DEFECT. The denylist outranks the observation
     class, so the filing succeeds rather than being refused."""
     result = _file_defect(
         cycle=1,
@@ -555,12 +604,12 @@ def test_denylist_outranks_observation_class(
     assert result["defect_id"] == "D-001"
 
 
-# --- AC-002 / OT-002 --------------------------------------------------------
+# --- process-fixes AC-002 / OT-002 ------------------------------------------
 def test_security_claim_cannot_be_demoted_and_fires_tripwire(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-002 — a security-property claim can never be recorded as an
-    observation; the attempt is rejected and the audit tripwire fires."""
+    """process-fixes AC-002 — a security-property claim can never be recorded
+    as an observation; the attempt is rejected and the audit tripwire fires."""
     result = foundry_add_observation(
         cycle=4,
         source="assay",
@@ -591,9 +640,9 @@ def test_security_claim_cannot_be_demoted_and_fires_tripwire(
 
 
 def test_spec_ref_makes_a_finding_undemotable(run: Path, tmp_path: Path) -> None:
-    """AC-002 — a spec-required-behaviour claim can never be an observation. A
-    non-empty spec_ref IS such a claim, so citing a requirement is by itself
-    enough to keep a finding in the blocking channel."""
+    """process-fixes AC-002 — a spec-required-behaviour claim can never be an
+    observation. A non-empty spec_ref IS such a claim, so citing a requirement
+    is by itself enough to keep a finding in the blocking channel."""
     result = foundry_add_observation(
         cycle=1,
         source="prove",
@@ -609,9 +658,9 @@ def test_spec_ref_makes_a_finding_undemotable(run: Path, tmp_path: Path) -> None
 def test_non_comment_subject_cannot_be_an_observation(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-002 — "anything non-comment" can never be an observation, and an
-    UNDECLARED subject cannot be shown to be a comment either. Both are
-    rejected under the NON_COMMENT entry."""
+    """process-fixes AC-002 — "anything non-comment" can never be an
+    observation, and an UNDECLARED subject cannot be shown to be a comment
+    either. Both are rejected under the NON_COMMENT entry."""
     for target_kind in ("function", ""):
         result = foundry_add_observation(
             cycle=1,
@@ -627,8 +676,8 @@ def test_non_comment_subject_cannot_be_an_observation(
 def test_omitting_target_kind_entirely_is_refused_and_audited(
     run: Path, tmp_path: Path
 ) -> None:
-    """D-069 / AC-002 — the demotion path fails CLOSED when the argument is not
-    passed AT ALL, not merely when it is passed empty.
+    """D-069 / process-fixes AC-002 — the demotion path fails CLOSED when the
+    argument is not passed AT ALL, not merely when it is passed empty.
 
     The matched pair PROVE drove: the same finding, the same classification,
     one argument apart. It is deliberately worded so no OTHER denylist entry
@@ -722,12 +771,12 @@ def test_non_comment_prose_is_not_recordable_as_an_observation(
     assert _observations(run)["observations"] == []
 
 
-# --- CT-002 / AC-019 / OT-008 -----------------------------------------------
+# --- process-fixes CT-002 / AC-019 / OT-008 ---------------------------------
 def test_partial_defect_type_is_accepted_and_stored_verbatim(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-019 / OT-008 — Foundry-Defect accepts PARTIAL and stores it
-    verbatim."""
+    """process-fixes AC-019 / OT-008 — Foundry-Defect accepts PARTIAL and
+    stores it verbatim."""
     result = _file_defect(
         cycle=1,
         source="flow_trace",
@@ -738,7 +787,8 @@ def test_partial_defect_type_is_accepted_and_stored_verbatim(
     assert "error" not in result, result
     record = _defects(run)[0]
     assert record["type"] == "PARTIAL"
-    # AC-019 — source attribution is preserved verbatim, not coerced.
+    # process-fixes AC-019 — source attribution is preserved verbatim, not
+    # coerced.
     assert record["source"] == "flow_trace"
 
 
@@ -755,8 +805,9 @@ def test_both_placement_spellings_persist_as_one_canonical_type(
     could never cluster with one filed through Foundry-Sync, and the escalation
     counter that keys on type saw two half-populated classes instead of one.
 
-    This is normalisation, not the coercion CT-002 forbids: that rule governs
-    UNKNOWN values, which the membership check rejects by name."""
+    This is normalisation, not the coercion process-fixes CT-002 forbids:
+    that rule governs UNKNOWN values, which the membership check rejects by
+    name."""
     for i, spelling in enumerate(("MISPLACED", "ARCHITECTURAL_PLACEMENT")):
         result = _file_defect(
             cycle=1,
@@ -782,10 +833,10 @@ def test_both_placement_spellings_persist_as_one_canonical_type(
 def test_unknown_source_is_rejected_without_coercion(
     run: Path, tmp_path: Path
 ) -> None:
-    """CT-002 — server-side rejection of an unknown source, naming the legal
-    set. Emphatically NOT coerced onto "trace", which is what the old sync
-    path did and what made a finding show up under a stream that never filed
-    it."""
+    """process-fixes CT-002 — server-side rejection of an unknown source,
+    naming the legal set. Emphatically NOT coerced onto "trace", which is what
+    the old sync path did and what made a finding show up under a stream that
+    never filed it."""
     result = _file_defect(
         cycle=1,
         source="bogus_stream",
@@ -800,7 +851,7 @@ def test_unknown_source_is_rejected_without_coercion(
 
 
 def test_unknown_defect_type_is_rejected(run: Path, tmp_path: Path) -> None:
-    """CT-002 — unknown defect_type is refused by name."""
+    """process-fixes CT-002 — unknown defect_type is refused by name."""
     result = _file_defect(
         cycle=1,
         source="trace",
@@ -819,13 +870,17 @@ def test_defect_class_is_required_and_persisted_under_the_class_key(
 ) -> None:
     """The root-cause field is named exactly "class" — escalation keys on it.
 
-    RENAMED, because this test's subject moved (CT-002 / FR-007 / AC-010). It
-    used to say "the OPTIONAL root-cause field", and optional is what made the
-    field worthless where it mattered: escalation counts consecutive cycles per
-    declared class, so a filing without one cannot recur as anything — it is
-    invisible to ST-002 however many times its root cause comes back, and the
-    path fallback that stood in for it survives only for READING pre-change
-    archives.
+    RENAMED, because this test's subject moved to convergence CT-002 /
+    FR-007 / AC-010 — the required-class rule. It is also still the
+    process-fixes CT-002 test, which is the reconciled-vocabulary rule, so this
+    is the one place in the file where both CT-002s are live at once and the
+    bare-means-convergence convention is worth spelling out rather than
+    relying on. It used to say "the OPTIONAL root-cause field", and optional
+    is what made the field worthless where it mattered: escalation counts
+    consecutive cycles per declared class, so a filing without one cannot
+    recur as anything — it is invisible to process-fixes ST-002 however many
+    times its root cause comes back, and the path fallback that stood in for
+    it survives only for READING pre-change archives.
 
     The persistence assertion below is unchanged. What is added is the other
     half of the same property, which is now the Locked one: omitting the field
@@ -861,14 +916,14 @@ def test_defect_class_is_required_and_persisted_under_the_class_key(
     assert len(_defects(run)) == 1, "the refused filing must persist nothing"
 
 
-# --- AC-025 / FR-020 --------------------------------------------------------
+# --- process-fixes AC-025 / FR-020 ------------------------------------------
 def test_concurrent_defects_get_unique_ids_and_all_survive(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-025 — the positional ``len(defects) + 1`` allocation let two
-    simultaneous filings compute the same id, and the second .tmp rename
-    discarded the first record entirely. Both properties are asserted: ids are
-    unique AND no record is lost."""
+    """process-fixes AC-025 — the positional ``len(defects) + 1`` allocation
+    let two simultaneous filings compute the same id, and the second .tmp
+    rename discarded the first record entirely. Both properties are asserted:
+    ids are unique AND no record is lost."""
     filings = 24
     barrier = threading.Barrier(filings)
     results: list[dict] = []
@@ -908,8 +963,8 @@ def test_concurrent_defects_get_unique_ids_and_all_survive(
 def test_observations_and_defects_are_separate_ledgers(
     run: Path, tmp_path: Path
 ) -> None:
-    """FR-023 — the separation is the locked part: observations are typed,
-    persisted per run, and never mixed into defects.json."""
+    """process-fixes FR-023 — the separation is the locked part: observations
+    are typed, persisted per run, and never mixed into defects.json."""
     _file_defect(
         cycle=1,
         source="trace",
@@ -1025,7 +1080,7 @@ def test_ledger_transaction_can_mutate_existing_records(
     assert persisted[1]["id"] == "D-002"
 
 
-# --- query surface (FR-023) --------------------------------------------------
+# --- query surface (process-fixes FR-023) ------------------------------------
 def test_query_observations_filters_and_summarizes(
     run: Path, tmp_path: Path
 ) -> None:
@@ -1053,8 +1108,8 @@ def test_query_observations_filters_and_summarizes(
 
     # Every record above was stamped with the SERVER's cycle (0 on a fresh
     # run), whatever the caller asserted — so the cycle filter selects all
-    # three, not the two whose argument said 2. That is the point of ST-001:
-    # the filter and the stamp read the same counter.
+    # three, not the two whose argument said 2. That is the point of
+    # process-fixes ST-001: the filter and the stamp read the same counter.
     by_cycle = foundry_query_observations(cycle=0, project_root=str(tmp_path))
     assert len(by_cycle["observations"]) == 3
     assert foundry_query_observations(
@@ -1070,12 +1125,12 @@ def test_query_observations_filters_and_summarizes(
     assert len(by_source["observations"]) == 1
 
 
-# --- ST-001 — the server owns the cycle number ------------------------------
+# --- process-fixes ST-001 — the server owns the cycle number ----------------
 def test_defect_is_stamped_with_the_server_cycle_not_the_callers(
     run: Path, tmp_path: Path
 ) -> None:
-    """ST-001 — where a server-side counter exists it is the authority, and a
-    caller-supplied cycle is not trusted against it.
+    """process-fixes ST-001 — where a server-side counter exists it is the
+    authority, and a caller-supplied cycle is not trusted against it.
 
     grand-vulture's state.json read `"cycle": 0` for its entire life while its
     defects carried lead-asserted cycles 0-17, because every cycle number in
@@ -1139,9 +1194,10 @@ def test_an_absent_counter_stamps_zero_and_keeps_the_callers_claim(
     ruling. A run whose state.json predates the counter used to keep the
     caller's number, on the reasoning that the server had "no better answer".
     It does: 0. Trusting the caller in the degraded case is precisely what
-    ST-001 exists to remove, ``foundry_orchestrator._current_cycle`` has
-    resolved this input to 0 since D-059, and a filing door that disagrees with
-    its sibling about WHICH cycle a record belongs to breaks escalation's
+    process-fixes ST-001 exists to remove,
+    ``foundry_orchestrator._current_cycle`` has resolved this input to 0 since
+    D-059, and a filing door that disagrees with its sibling about WHICH cycle
+    a record belongs to breaks escalation's
     consecutive-cycle count no matter which door is "right".
 
     The caller is not silently overruled — its 12 is on the record.
@@ -1186,8 +1242,9 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
     and stamped 0. Identical findings filed through Foundry-Defect and
     Foundry-Sync therefore landed in different cycles: mixed filing persisted
     [1,0,3] where one door alone would have persisted [1,2,3], the longest
-    consecutive run was 2, and a genuine systemic class evaded ST-002
-    escalation while the AC-011 DONE guard passed.
+    consecutive run was 2, and a genuine systemic class evaded
+    process-fixes ST-002 escalation while the process-fixes AC-011 DONE guard
+    passed.
 
     ``test_escalation.test_both_filing_doors_stamp_the_same_cycle`` pins the
     two doors against each other over this same matrix; this pins THIS door
@@ -1221,9 +1278,9 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
 def test_a_healthy_counter_still_outranks_the_caller_and_keeps_the_claim(
     run: Path, tmp_path: Path
 ) -> None:
-    """NFR-002 guard on the ruling: D-119 changes the MALFORMED path only. A
-    real counter is still the authority and the caller's number is still
-    ignored — it is now merely recorded as well."""
+    """process-fixes NFR-002 guard on the ruling: D-119 changes the MALFORMED
+    path only. A real counter is still the authority and the caller's number is
+    still ignored — it is now merely recorded as well."""
     _set_server_cycle(run, 6)
     result = _file_defect(
         cycle=99,
@@ -1238,12 +1295,12 @@ def test_a_healthy_counter_still_outranks_the_caller_and_keeps_the_claim(
     assert _defects(run)[0]["declared_cycle"] == 99
 
 
-# --- AC-002 — the tripwire is reachable, not just present -------------------
+# --- process-fixes AC-002 — the tripwire is reachable, not just present -----
 def test_tripwire_fires_through_the_public_observation_surface(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-002 — a denylisted finding arriving through the Foundry-Observation
-    surface is rejected AND drives the tripwire non-empty.
+    """process-fixes AC-002 — a denylisted finding arriving through the
+    Foundry-Observation surface is rejected AND drives the tripwire non-empty.
 
     The tripwire existed but no MCP path could reach it: every production
     caller pre-filtered on the denylist before calling the writer, so the
@@ -1885,7 +1942,7 @@ def test_ledger_transaction_yields_only_mapping_records(run: Path) -> None:
 
 
 def test_the_dict_only_filter_loses_no_record_and_no_position(run: Path) -> None:
-    """NFR-002 against the fix itself.
+    """process-fixes NFR-002 against the fix itself.
 
     A filter that DROPPED the records it hides would be a quieter D-096:
     refusing to lose records to a bad container while losing them to a bad
@@ -1938,8 +1995,8 @@ def test_dict_records_stays_exported_for_out_of_module_scans() -> None:
 
 
 def test_concurrent_verdicts_all_survive(run: Path, tmp_path: Path) -> None:
-    """D-125 / AC-025 for verdicts.json, the last shared run artifact whose
-    read-modify-write window was still open.
+    """D-125 / process-fixes AC-025 for verdicts.json, the last shared run
+    artifact whose read-modify-write window was still open.
 
     ``foundry_add_verdict`` loaded, mutated and saved as three separate steps
     with no lock at all, so two callers landing between one another's read and
@@ -2088,3 +2145,225 @@ def test_ledger_refusals_converts_only_the_shape_error() -> None:
     assert "error" in refusal and "hint" in refusal
     with pytest.raises(ZeroDivisionError):
         _bug()
+
+
+
+# --------------------------------------------------------------------------- #
+# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED.
+#
+# THE HARM, driven by TRACE while door-driving the convergence spec's first
+# observable truth at 372da0a: the module docstring above tagged
+# `test_comment_prose_filed_as_defect_is_refused` with a bare pair of ids and
+# named no spec. Those ids resolve in BOTH
+# forge-specs/foundry-run-process-fixes/spec.md — where they ARE the
+# comment-prose refusal — and forge-specs/foundry-run-convergence/spec.md,
+# where they name the clean-cycles escalation exit that
+# tests/test_escalation.py drives. A reader, or a coverage sweep, resolving
+# them against the convergence spec landed on the wrong assertion, and the
+# mismatch was filed as a defect. The tag was never false; it was UNQUALIFIED.
+#
+# WHY A PIN AND NOT JUST THE CORRECTED TAGS. Re-tagging the thirty-six sites
+# fixes today's instance and nothing else: the next docstring written here will
+# reach for a bare id exactly as every one of those did, because bare is what
+# the surrounding file teaches. A convention that cannot be checked is a
+# comment about a comment. So this walks THIS MODULE'S OWN PROSE — every
+# docstring and every comment — and refuses an unqualified requirement id,
+# which is the same shape as the D-125 / D-127 guards above: derive the
+# membership from the file rather than re-typing it in prose and hoping.
+#
+# WHY PROSE AND NOT LINES. The scan normalises each contiguous prose block
+# before matching, because the qualification and the id it qualifies are
+# routinely split by an ordinary line wrap — "evaded process-fixes\nST-002" is
+# correctly tagged and a line-oriented scan would call it a violation, then
+# teach the next author to fight the wrapper instead of naming the spec.
+#
+# THE THREE LEGAL FORMS, exactly as the module docstring states them:
+#   1. `process-fixes AC-001`, and each further id in a `/`-joined run after
+#      it — `process-fixes CT-002 / AC-019 / OT-008` qualifies all three,
+#      which is how every section header in this file is written.
+#   2. a BARE id in _CONVERGENCE_IDS. Stated as a closed set rather than
+#      inferred, because a NEW bare id is precisely the drift this exists to
+#      catch, and an inferred set would agree with whatever was written last.
+#   3. anything in CODE — a `spec_ref=` fixture literal, a parametrize entry,
+#      this module's own constants. Those are input handed to the door under
+#      test, not a claim about which requirement a test proves, and the module
+#      docstring says so.
+# Two prose blocks are exempt and both are named: the module docstring, which
+# is the legend and whose job is to name both sides of every collision, and
+# this comment block, which is the explanation and must be free to do the same.
+# --------------------------------------------------------------------------- #
+
+def _own_source() -> str:
+    return Path(__file__).read_text(encoding="utf-8")
+
+
+_TWO_SPEC_ID_RE = re.compile(r"\b(?:AC|OT|FR|CT|ST|NFR)-\d{3}\b")
+
+#: A `/`-joined continuation — an `AC-NNN / ` segment sitting between a
+#: qualification and the id it still governs. Written with a placeholder
+#: rather than a real id because this pin reads its own prose, and an example
+#: here would have to be a citation there.
+_ID_CHAIN_RE = re.compile(r"(?:AC|OT|FR|CT|ST|NFR)-\d{3} / $")
+
+#: The convergence-spec ids this module cites BARE, per the module docstring's
+#: "a BARE id cites forge-specs/foundry-run-convergence/spec.md" rule. Every
+#: one of them ALSO resolves in the process-fixes spec — the collision between
+#: the two specs is total, not partial — so membership is declared here, never
+#: guessed at.
+_CONVERGENCE_IDS = frozenset(
+    {"AC-006", "AC-010", "CT-001", "CT-002", "FR-004", "FR-007"}
+)  # 6 items
+
+_PIN_SENTINEL = "# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED."
+
+
+def _unqualified_ids(text: str) -> list[str]:
+    """Every requirement id in ``text`` that names neither spec.
+
+    ``text`` is one prose block with its line wrapping already collapsed, so a
+    qualification and the id it governs are adjacent however the source broke
+    the line.
+    """
+    found: list[str] = []
+    for match in _TWO_SPEC_ID_RE.finditer(text):
+        prefix = text[: match.start()]
+        while True:
+            stripped = _ID_CHAIN_RE.sub("", prefix)
+            if stripped == prefix:
+                break
+            prefix = stripped
+        if prefix.endswith("process-fixes "):
+            continue
+        if match.group(0) in _CONVERGENCE_IDS:
+            continue
+        found.append(f"{match.group(0)} in ...{text[max(0, match.start() - 60):match.end() + 20]}...")
+    return found
+
+
+def _prose_blocks(source: str) -> list[tuple[int, str]]:
+    """(lineno, normalised text) for every docstring and comment block.
+
+    The module docstring and this file's own D-178 comment block are dropped:
+    both are ABOUT the collision and must name both sides of it.
+    """
+    import io
+    import tokenize
+
+    tree = ast.parse(source)
+    blocks: list[tuple[int, str]] = []
+
+    module_docstring_line = None
+    if tree.body and isinstance(tree.body[0], ast.Expr):
+        first = tree.body[0].value
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            module_docstring_line = first.lineno
+
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        if not node.body or not isinstance(node.body[0], ast.Expr):
+            continue
+        value = node.body[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            blocks.append((value.lineno, " ".join(value.value.split())))
+
+    # Comments, grouped into contiguous runs so a wrapped comment paragraph is
+    # one block rather than N unrelated lines.
+    comments: list[tuple[int, str]] = []
+    readline = io.StringIO(source).readline
+    for token in tokenize.generate_tokens(readline):
+        if token.type == tokenize.COMMENT:
+            comments.append((token.start[0], token.string.lstrip("#").strip()))
+
+    run_start: int | None = None
+    run_text: list[str] = []
+    prev_line = -10
+    for lineno, text in comments + [(10**9, "")]:
+        if lineno != prev_line + 1:
+            if run_start is not None:
+                blocks.append((run_start, " ".join(" ".join(run_text).split())))
+            run_start, run_text = lineno, []
+        run_text.append(text)
+        prev_line = lineno
+
+    pin_line = next(
+        (i + 1 for i, line in enumerate(source.split("\n")) if line == _PIN_SENTINEL),
+        None,
+    )
+    assert pin_line is not None, (
+        "the D-178 sentinel comment is gone; either it was renamed (restore it) "
+        "or this pin is being disabled by deletion"
+    )
+    pin_block_start = max(
+        (start for start, _ in blocks if start <= pin_line), default=pin_line
+    )
+
+    return [
+        (start, text)
+        for start, text in blocks
+        if start not in (module_docstring_line, pin_block_start)
+    ]
+
+
+def test_every_requirement_id_in_this_module_names_its_spec() -> None:
+    """D-178's root cause, refused structurally rather than re-tagged by hand.
+
+    Every requirement id in this module's docstrings and comments is a
+    ``process-fixes`` citation or a declared convergence id. Anything else is
+    the unqualified tag that sent TRACE to the wrong assertion, and this fails
+    naming it.
+    """
+    offenders: list[str] = []
+    for lineno, text in _prose_blocks(_own_source()):
+        for offence in _unqualified_ids(text):
+            offenders.append(f"line {lineno}: {offence}")
+
+    assert not offenders, (
+        "unqualified requirement id(s) — D-178 again. Write "
+        "'process-fixes AC-001' for the earlier spec, or add the id to "
+        "_CONVERGENCE_IDS if it cites forge-specs/foundry-run-convergence:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_pin_catches_the_bare_tag_it_was_written_for() -> None:
+    """The pin's own fail-safe: a guard that cannot fail guards nothing.
+
+    D-093's lesson one rung over — the comment-prose battery stayed green for
+    eleven cycles while eight of its ten cases were unreachable, because it was
+    only ever pinned where it already worked. So the scan is driven directly
+    over the tag D-178 was filed against, which must be reported, and over each
+    legal form, which must not be.
+    """
+    # The shapes D-178 was filed against, verbatim from the old prose.
+    assert _unqualified_ids("AC-001 / OT-001 comment-prose filed as a defect")
+    assert _unqualified_ids("AC-001 — each of the four comment-prose classes")
+    assert _unqualified_ids("ST-001 — the server owns the cycle number")
+    # A chain whose HEAD is unqualified is not rescued by its own tail.
+    assert _unqualified_ids("CT-002 / AC-019 / OT-008 — accepts PARTIAL")
+
+    # The legal forms stay silent, including across a `/` chain and a wrap.
+    assert not _unqualified_ids("process-fixes AC-001 / OT-001 is refused")
+    assert not _unqualified_ids("process-fixes CT-002 / AC-019 / OT-008 — PARTIAL")
+    assert not _unqualified_ids("evaded process-fixes ST-002 escalation while")
+    assert not _unqualified_ids("``tier`` (CT-001 / FR-004 / AC-006) and ``class``")
+
+
+def test_the_prose_scan_sees_comments_and_docstrings_alike() -> None:
+    """Both carriers, because D-178 lived in both.
+
+    The filed instance was a module docstring AND a section-header comment. A
+    scan that read only one of them would have closed half the defect and left
+    the other half to be re-filed.
+    """
+    blocks = _prose_blocks(_own_source())
+    joined = " ".join(text for _, text in blocks)
+    # A docstring this file owns.
+    assert "each of the four comment-prose classes is refused" in joined
+    # A comment this file owns.
+    assert "it never reaches defects.json" in joined
+    # And the two exempt blocks are absent: the legend and this pin's rationale.
+    assert "READ THIS BEFORE GREPPING AN ID HERE" not in joined
+    assert "THE TWO-SPEC ID CONVENTION IS PINNED" not in joined
