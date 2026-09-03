@@ -5,9 +5,12 @@ requirement it proves. Built on the synthetic-run shape
 ``tests/test_escalation.py`` establishes.
 
   GI-003 / AC-022 / OT-010   the SERVER appends the lead_fix record, carrying
-                             the defect id, tier, file, line count and test —
-                             file and line_count null on a LATENT fix, which
-                             lands unmeasured.
+                             the defect id, tier, file, line count and test.
+                             BOTH tiers are measured; a LATENT record is
+                             "recorded, lane limit not applied", and null in
+                             file/line_count means the measurement was
+                             UNAVAILABLE — git could not read the commit
+                             (D-074).
   CT-011 / AC-030            ``check_reported_prompt_hash`` is the one
                              implementation of the pointer-dispatch hash rung,
                              and names both hashes when they differ.
@@ -132,29 +135,176 @@ def test_a_lead_fix_appends_a_record_carrying_every_named_field(run_env):
     assert record["timestamp"] and record["handoff_id"]
 
 
-def test_a_latent_lead_fix_is_recorded_unmeasured(run_env):
-    """ST-004 / CT-006 verbatim: 'a LATENT lead fix is not measured.' The
-    fields are None rather than absent, so the F6 report reads 'unmeasured'
-    from a value instead of from a missing key — every record has one shape."""
+def test_a_latent_lead_fix_is_measured_like_any_other(run_env):
+    """D-074 — ST-004 / CT-006's 'a LATENT lead fix is not measured' is about
+    the lane ELIGIBILITY test, not about whether the numbers are written down.
+    GI-003 states the field list with no tier carve-out, and the caller
+    measures on both lanes, so a LATENT record carries its real file and count
+    and is described as 'recorded, lane limit not applied'."""
     _, fdir = run_env
 
     record = record_lead_fix_handoff(
         fdir,
         defect_id="D-043",
         tier="LATENT",
-        file=None,
-        line_count=None,
+        files=[
+            {
+                "path": "src/foundry_mcp/tools/foundry_report.py",
+                "added": 48,
+                "deleted": 16,
+                "renamed_from": None,
+            }
+        ],
         test="tests/test_sweep.py::test_covers_both_roots",
         fix_commit="def5678",
     )
 
-    assert record["file"] is None
-    assert record["line_count"] is None
-    assert "file" in record and "line_count" in record
+    assert record["file"] == "src/foundry_mcp/tools/foundry_report.py"
+    assert record["line_count"] == 64
     assert record["fix_commit"] == "def5678", (
         "fix_commit is required on EVERY lead fix regardless of tier; only the "
-        "MEASUREMENT is skipped for LATENT"
+        "lane LIMIT is not applied to LATENT"
     )
+    mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
+    assert "lane: recorded, lane limit not applied (LATENT)" in mirror
+    assert "unmeasured" not in mirror
+
+
+def test_none_in_the_measurement_means_git_could_not_read_the_commit(run_env):
+    """D-074 — with the caller measuring on both lanes, the ONLY remaining way
+    a record reaches None is git failing to read the commit. Labelling that
+    'unmeasured (LATENT)' asserted a deliberate policy skip in exactly the case
+    where the measurement had FAILED, which is the D-046 failure relocated
+    rather than closed. The fields are None rather than absent so every record
+    has one shape."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-046",
+        tier="LATENT",
+        test="tests/test_sweep.py::test_covers_both_roots",
+        fix_commit="0" * 40,
+    )
+
+    assert record["file"] is None
+    assert record["line_count"] is None
+    assert record["files"] is None
+    assert "file" in record and "line_count" in record
+
+    mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
+    assert "file: measurement unavailable — git could not read the commit" in mirror
+    assert (
+        "line_count: measurement unavailable — git could not read the commit" in mirror
+    )
+    assert "unmeasured" not in mirror
+
+
+def test_a_multi_file_commit_reports_its_files_rather_than_a_blank(run_env):
+    """D-074 — ``file`` is the single path when exactly ONE non-test file
+    changed and None otherwise, so None on a three-file commit is not a failed
+    measurement and must not read as one. The rows are on the record, and the
+    mirror names them."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-047",
+        tier="LIVE",
+        files=[
+            {"path": "src/a.py", "added": 3, "deleted": 1, "renamed_from": None},
+            {"path": "src/b.py", "added": 2, "deleted": 0, "renamed_from": "src/c.py"},
+        ],
+        test="tests/test_ab.py::test_both",
+        fix_commit="feed001",
+    )
+
+    assert record["file"] is None
+    assert record["line_count"] == 6
+    assert [r["path"] for r in record["files"]] == ["src/a.py", "src/b.py"]
+
+    mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
+    assert "file: 2 non-test files: src/a.py, src/b.py" in mirror
+    assert "line_count: 6" in mirror
+    assert "lane: measured against the LIVE lead lane" in mirror
+
+
+def test_the_rows_are_recorded_as_handed_over_not_re_classified(run_env):
+    """FR-016 excludes test files from the count, and ``_numstat_measurement``
+    is where that happens — D-075 made it rename-aware, so a file now living
+    under tests/ but renamed out of src/ is production code and STAYS in the
+    measurement. A second ``is_test_file(path)`` pass here would drop exactly
+    the row that rule keeps, and the audit record would disagree with the lane
+    measurement it exists to make re-derivable. One classifier, at the
+    measurement."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-048",
+        tier="LIVE",
+        files=[
+            {
+                "path": "tests/helpers/sweep.py",
+                "added": 7,
+                "deleted": 2,
+                "renamed_from": "src/sweep.py",
+            }
+        ],
+        test="tests/test_sweep.py::test_guard",
+        fix_commit="feed002",
+    )
+
+    assert record["file"] == "tests/helpers/sweep.py", (
+        "a row the measurement kept is a row the record keeps — this writer "
+        "does not second-guess the classification"
+    )
+    assert record["line_count"] == 9
+    assert [r["path"] for r in record["files"]] == ["tests/helpers/sweep.py"]
+
+
+def test_a_binary_row_counts_a_file_and_no_lines(run_env):
+    """numstat reports ``-`` for both cells on a binary file. It contributes a
+    file and zero lines — the honest reading, and the same one
+    ``_numstat_measurement`` takes — and it never raises on the way through."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-049",
+        tier="LIVE",
+        files=[{"path": "src/logo.png", "added": "-", "deleted": "-", "renamed_from": None}],
+        test="tests/test_assets.py::test_logo",
+        fix_commit="feed003",
+    )
+
+    assert record["file"] == "src/logo.png"
+    assert record["line_count"] == 0
+    mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
+    assert "line_count: 0" in mirror, "a measured zero is not an absent measurement"
+
+
+def test_the_pre_ruling_call_shape_still_records(run_env):
+    """The caller (``foundry_mark_defect_fixed``, casting 3's file) moves to
+    ``files=`` in the same GRIND cycle this writer gained it. A writer that
+    demanded the new shape would make the tree red between the two commits, so
+    ``file``/``line_count`` stay accepted and authoritative when no ``files``
+    list is handed over."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-050",
+        tier="LIVE",
+        file="src/api/handler.py",
+        line_count=11,
+        test="tests/test_handler.py::test_guard",
+        fix_commit="feed004",
+    )
+
+    assert record["file"] == "src/api/handler.py"
+    assert record["line_count"] == 11
+    assert record["files"] is None
 
 
 def test_the_lead_fix_record_is_mirrored_into_handoffs_md(run_env):
@@ -185,10 +335,11 @@ def test_the_lead_fix_record_is_mirrored_into_handoffs_md(run_env):
     assert "cafe123" in mirror
 
 
-def test_a_latent_mirror_says_unmeasured_rather_than_printing_nothing(run_env):
-    """The mirror skips EMPTY values, so a None file would silently vanish
-    from the human channel and read as a fix in no file at all. It is spelled
-    out instead, because 'unmeasured' is the fact — not the absence of one."""
+def test_the_mirror_names_a_failed_measurement_rather_than_printing_nothing(run_env):
+    """The mirror skips EMPTY values, so a None file would silently vanish from
+    the human channel and read as a fix in no file at all. It is spelled out
+    instead — and D-074 fixed WHAT it spells: the fact is that git could not
+    read the commit, not that a measurement was deliberately skipped."""
     _, fdir = run_env
 
     record_lead_fix_handoff(
@@ -202,8 +353,14 @@ def test_a_latent_mirror_says_unmeasured_rather_than_printing_nothing(run_env):
     )
 
     mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
-    assert "file: unmeasured (LATENT)" in mirror
-    assert "line_count: unmeasured (LATENT)" in mirror
+    assert "file: measurement unavailable — git could not read the commit" in mirror
+    assert (
+        "line_count: measurement unavailable — git could not read the commit" in mirror
+    )
+    assert "unmeasured (LATENT)" not in mirror, (
+        "the label asserted a deliberate policy skip in the one case where the "
+        "measurement had FAILED"
+    )
 
 
 def test_lead_fix_records_share_the_log_with_ordinary_handoffs(run_env):

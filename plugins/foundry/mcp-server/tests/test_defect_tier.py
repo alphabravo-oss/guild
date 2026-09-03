@@ -463,30 +463,156 @@ def test_the_validator_names_the_offending_field(overrides, field):
 
 def test_the_validator_check_order_is_locked():
     """The order is LOCKED so both doors name the same field first for the same
-    bad filing. A finding wrong in every way must report ``tier`` — if the
-    order drifted, the single door and the batch door would send two streams
-    looking at two different fields for one finding."""
+    bad filing — if it drifted, the single door and the batch door would send
+    two streams looking at two different fields for one finding.
+
+    D-061 put the security denylist FIRST. A LATENT filing whose description
+    asserts a security property is refused for THAT, whatever else is also
+    wrong with it, because the tripwire the doors fire keys on the returned
+    refusal and an audit control a filer can switch off by also omitting a
+    field is not a control (AC-007 / OT-005 / CT-003)."""
     everything_wrong = _finding(
-        tier="",
+        tier="LATENT",
         **{"class": ""},
         reproduction_attempted="",
         description="the endpoint does not verify the auth token",
     )
 
-    assert validate_defect_filing(everything_wrong)["field"] == "tier"
-
-    # ...and with the tier supplied, class is next, not the LATENT checks.
-    everything_wrong["tier"] = "LATENT"
-    assert validate_defect_filing(everything_wrong)["field"] == "class"
-
-    # ...then the statement, and only then the denylist.
-    everything_wrong["class"] = "MISSING_AUTH_GUARD"
-    assert validate_defect_filing(everything_wrong)["field"] == "reproduction_attempted"
-
-    everything_wrong["reproduction_attempted"] = "AST sweep of both roots finds 0 sites"
     refusal = validate_defect_filing(everything_wrong)
     assert refusal["field"] == "description"
     assert refusal["denylist_class"] == SECURITY_PROPERTY_CLAIM
+
+    # ...and with the security claim out of the description, tier is next.
+    everything_wrong["description"] = "the handler is registered but never called"
+    everything_wrong["tier"] = ""
+    assert validate_defect_filing(everything_wrong)["field"] == "tier"
+
+    # ...then class, not the LATENT checks.
+    everything_wrong["tier"] = "LATENT"
+    assert validate_defect_filing(everything_wrong)["field"] == "class"
+
+    # ...and last the negative-result statement.
+    everything_wrong["class"] = "UNWIRED_HANDLER"
+    assert validate_defect_filing(everything_wrong)["field"] == "reproduction_attempted"
+
+    everything_wrong["reproduction_attempted"] = "AST sweep of both roots finds 0 sites"
+    assert validate_defect_filing(everything_wrong) is None
+
+
+def test_the_denylist_outranks_a_tier_outside_the_vocabulary():
+    """CT-003 scopes the denylist to LATENT, and the first rung keys on the tier
+    the caller DECLARED. A filing with no tier is not a LATENT filing: it is
+    refused naming ``tier`` exactly as it always was, so the new rung cannot
+    swallow the tier refusal for a finding that never claimed the lane."""
+    for tier in ("", None, "MINOR", "LIVE"):
+        refusal = validate_defect_filing(
+            _finding(
+                tier=tier,
+                description="the endpoint does not verify the auth token",
+            )
+        )
+        if tier == "LIVE":
+            assert refusal is None, (
+                "a LIVE security-property filing is exactly what the denylist "
+                "wants — driven and observed — and is never refused"
+            )
+        else:
+            assert refusal["field"] == "tier", tier
+            assert "denylist_class" not in refusal
+
+
+@pytest.mark.parametrize(
+    "earlier_rung",
+    [
+        {"reproduction_attempted": ""},
+        {"reproduction_attempted": "n/a"},
+        {"defect_class": ""},
+    ],
+    ids=["no-statement", "placeholder-statement", "no-class"],
+)
+def test_the_security_tripwire_fires_even_when_an_earlier_rung_fails(
+    run_env, earlier_rung
+):
+    """D-061 / AC-007 / OT-005 — 'a LATENT filing whose description matches the
+    security-property predicate is refused naming SECURITY_PROPERTY_CLAIM and a
+    tripwire record is written'. Unconditional on the description matching: the
+    doors fire ``record_denylist_tripwire`` only when the refusal they got back
+    carries ``denylist_class``, so with the denylist behind the tier, class and
+    reproduction_attempted rungs a hand-waved security claim with no
+    negative-result evidence — the exact shape a stream files LATENT — left no
+    audit trace at all."""
+    project_root, fdir = run_env
+
+    args = {
+        "cycle": 0,
+        "source": "prove",
+        "defect_type": "PARTIAL",
+        "description": (
+            "the login endpoint does not verify the authentication token "
+            "signature"
+        ),
+        "defect_class": "MISSING_AUTH_GUARD",
+        "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of both roots finds 0 sites",
+        "project_root": project_root,
+    }
+    args.update(earlier_rung)
+
+    result = foundry_add_defect(**args)
+
+    assert result["ok"] is False, result
+    assert result["field"] == "description", result
+    assert result["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert SECURITY_PROPERTY_CLAIM in result["error"]
+    assert len(_tripwire(fdir)) == 1, "the attempt is what the audit record is for"
+    assert _defects(fdir) == [], "a refused filing must persist nothing"
+
+
+@pytest.mark.parametrize(
+    "earlier_rung",
+    [
+        {"reproduction_attempted": ""},
+        {"reproduction_attempted": "n/a"},
+        {"class": ""},
+    ],
+    ids=["no-statement", "placeholder-statement", "no-class"],
+)
+def test_the_batch_door_fires_the_tripwire_on_the_same_filing(run_env, earlier_rung):
+    """The adjacent path: ``foundry_sync_defects`` is the OTHER caller of
+    ``validate_defect_filing``, and it is the door a whole INSPECT stream files
+    through — so a hole there is the common path, not the rare one. Both doors
+    fire the audit record off the same returned ``denylist_class``, which is
+    why the reorder had to happen inside the shared validator rather than at
+    either call site (D-061)."""
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    finding = {
+        "source": "prove",
+        "type": "PARTIAL",
+        "description": (
+            "the login endpoint does not verify the authentication token "
+            "signature"
+        ),
+        "spec_ref": "",
+        "symbol": "",
+        "file": "src/api/login.py",
+        "class": "MISSING_AUTH_GUARD",
+        "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of both roots finds 0 sites",
+    }
+    finding.update(earlier_rung)
+
+    result = foundry_sync_defects(
+        cycle=0, findings=[finding], project_root=project_root
+    )
+
+    assert "refusals" in result, result
+    assert result["refusals"][0]["field"] == "description"
+    assert result["refusals"][0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert len(_tripwire(fdir)) == 1
+    assert _defects(fdir) == [], "the whole batch is refused, nothing recorded"
 
 
 def test_the_validator_reads_the_mapping_and_nothing_else(tmp_path):

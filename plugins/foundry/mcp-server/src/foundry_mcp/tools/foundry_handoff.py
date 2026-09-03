@@ -68,8 +68,11 @@ def _append_handoff_record(
 
     ``entry`` is written to handoffs.jsonl verbatim, so each caller owns its
     own record shape — the lead_fix record carries defect_id/tier/file/
-    line_count/test/fix_commit as FIRST-CLASS keys, not prose squeezed into a
-    summary field, because the F6 report reads them back by name. ``md_fields``
+    line_count/files/test/fix_commit as FIRST-CLASS keys, not prose squeezed
+    into a summary field, because the F6 report reads them back by name. The
+    two channels do NOT carry identical text: the JSONL keeps the raw values
+    (None for an unavailable measurement) and ``md_fields`` carries the
+    reader's rendering of them (D-074). ``md_fields``
     is the ordered human mirror; empty values are skipped, mirroring
     ``foundry._ledger_mirror``'s rule so an absent field prints nothing rather
     than an empty bullet.
@@ -93,15 +96,39 @@ def _append_handoff_record(
         f.write("\n")
 
 
+MEASUREMENT_UNAVAILABLE = "measurement unavailable — git could not read the commit"
+LANE_NOT_APPLIED = "recorded, lane limit not applied (LATENT)"
+LANE_APPLIED = "measured against the LIVE lead lane"
+
+
+def _numstat_count(value: object) -> int:
+    """One ``git show --numstat`` cell as a line count.
+
+    Binary files report ``-`` for both cells, which is zero lines — a binary
+    blob is not twenty lines of anything. Anything else unparseable counts
+    zero rather than raising: this runs under an MCP handler, and a record
+    that cannot be written is worse than a count that under-reports a shape
+    git does not actually emit.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return 0
+
+
 def record_lead_fix_handoff(
     run_dir: Path,
     *,
     defect_id: str,
     tier: str,
-    file: str | None,
-    line_count: int | None,
     test: str,
     fix_commit: str,
+    files: list[dict] | None = None,
+    file: str | None = None,
+    line_count: int | None = None,
 ) -> dict:
     """Append the server's own ``lead_fix`` record. Returns the record.
 
@@ -114,16 +141,85 @@ def record_lead_fix_handoff(
     decision — which defect, at which tier, in which file, how many lines, and
     the test that holds it — plus the commit those were measured from.
 
-    ``file`` and ``line_count`` are None for a LATENT lead fix, which lands
-    unmeasured (ST-004 / CT-006: "a LATENT lead fix is not measured"). They
-    are None rather than absent so every record has one shape and the report
-    reads "unmeasured" from a value instead of from a missing key.
+    THE MEASUREMENT AND THE LANE ARE DIFFERENT FACTS (D-046, then D-074)
+    -------------------------------------------------------------------
+    Both tiers are MEASURED. What is LIVE-only is the lane ELIGIBILITY test
+    (ST-004 / CT-006 / FR-046) — a limit on the numbers, not a reason to stop
+    reading them. D-046 fixed the caller so a LATENT lead fix records its real
+    file and count; this docstring went on claiming the opposite ("file and
+    line_count are None for a LATENT lead fix, which lands unmeasured"), and
+    the markdown mirror went on printing ``unmeasured (LATENT)`` for a None.
+
+    That relocated D-046 rather than closing it. With the caller measuring on
+    both lanes, the ONLY remaining way a LATENT record reaches None is git
+    failing to read the commit — so the label asserted a deliberate policy
+    skip in exactly the case where the measurement had FAILED. Driven: a
+    LATENT lead fix carrying ``fix_commit = "0" * 40`` was accepted (there is
+    no measurement gate on the LATENT lane) and handoffs.md read
+    ``file: unmeasured (LATENT)``.
+
+    So, LEAD RULING, GRIND cycle 4:
+
+    * ``files`` is the measurement — the ``git show --numstat`` rows the lane
+      was measured over, each ``{"path", "added", "deleted", "renamed_from"}``.
+      ``file`` is the single path when exactly one non-test file changed and
+      None otherwise; ``line_count`` is added-plus-deleted over the listed
+      rows.
+
+      The rows arrive ALREADY classified and this does not re-classify them.
+      ``_numstat_measurement`` drops the test rows on its way to building them
+      (FR-016), and D-075 made that classification rename-aware — a rename out
+      of the tests tree changes production code and stays in. Re-running a
+      plain ``is_test_file(path)`` here would silently drop exactly the rows
+      that rule keeps, and the audit record would then disagree with the lane
+      measurement it exists to make re-derivable. One classifier, at the
+      measurement, as its own comment says.
+    * A LATENT record is "recorded, lane limit not applied". Never
+      "unmeasured".
+    * None in ``file``/``line_count`` means the measurement was UNAVAILABLE —
+      git could not read the commit — and the mirror says exactly that.
+
+    ``files``, ``file`` and ``line_count`` all default to None so the call
+    shape that predates this ruling keeps working while the caller
+    (``foundry_mark_defect_fixed``, casting 3's file) moves to ``files=`` in
+    the same cycle: a writer that demanded the new shape would make the tree
+    red between the two commits. When ``files`` is given it is authoritative
+    and ``file``/``line_count`` are derived from it — two sources for one
+    measurement is how they come to disagree.
 
     Takes ``run_dir`` rather than ``project_root`` because its one caller —
     ``foundry_mark_defect_fixed``, which has just written the defect ledger —
     already holds the resolved run dir. Re-resolving it here would be a second
     derivation of a path the caller has, and the two could disagree.
     """
+    measured: list[dict] | None = None
+    if files is not None:
+        measured = [row for row in files if isinstance(row, dict)]
+        file = str(measured[0].get("path")) if len(measured) == 1 else None
+        line_count = sum(
+            _numstat_count(row.get("added")) + _numstat_count(row.get("deleted"))
+            for row in measured
+        )
+
+    # ``line_count`` is the availability signal, not ``file``: a commit
+    # touching three non-test files has a real count and NO single path, and
+    # calling that "unavailable" would be the same lie one shape along.
+    if line_count is None:
+        file_label = MEASUREMENT_UNAVAILABLE
+        line_label = MEASUREMENT_UNAVAILABLE
+    else:
+        line_label = str(line_count)
+        if file is not None:
+            file_label = file
+        elif measured is None:
+            file_label = "more than one non-test file (no single path)"
+        elif not measured:
+            file_label = "no non-test file in the commit"
+        else:
+            file_label = f"{len(measured)} non-test files: " + ", ".join(
+                str(row.get("path")) for row in measured
+            )
+
     timestamp = datetime.now(timezone.utc).isoformat()
     entry = {
         "handoff_id": _hash_str(f"{timestamp}|{HANDOFF_EVENT_LEAD_FIX}|{defect_id}"),
@@ -133,6 +229,11 @@ def record_lead_fix_handoff(
         "tier": tier,
         "file": file,
         "line_count": line_count,
+        # D-074: the rows themselves, so a reader of a record whose ``file`` is
+        # None can see WHICH files rather than infer from a blank cell. None
+        # rather than absent when the caller passed none, so every record has
+        # one shape.
+        "files": measured,
         "test": test,
         "fix_commit": fix_commit,
     }
@@ -142,11 +243,9 @@ def record_lead_fix_handoff(
         [
             ("defect_id", f"`{defect_id}`"),
             ("tier", tier),
-            ("file", file if file is not None else "unmeasured (LATENT)"),
-            (
-                "line_count",
-                str(line_count) if line_count is not None else "unmeasured (LATENT)",
-            ),
+            ("lane", LANE_NOT_APPLIED if tier == "LATENT" else LANE_APPLIED),
+            ("file", file_label),
+            ("line_count", line_label),
             ("test", f"`{test}`"),
             ("fix_commit", f"`{fix_commit}`"),
         ],

@@ -996,8 +996,40 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     rare one.
 
     THE CHECK ORDER IS LOCKED, so that the two doors name the same field first
-    for the same bad filing: tier, then class, then — for LATENT only —
-    reproduction_attempted, then the security denylist.
+    for the same bad filing: the security denylist, then tier, then class,
+    then — for LATENT only — reproduction_attempted.
+
+    D-061 — THE AUDIT TRIPWIRE MAY NOT BE RUNG-DEPENDENT (AC-007 / OT-005 /
+    CT-003)
+    ----------------------------------------------------------------------
+    The denylist rung used to sit LAST, behind tier, class and
+    reproduction_attempted, and both doors fire ``record_denylist_tripwire``
+    only when the refusal they got back carries ``denylist_class``. So a
+    LATENT filing whose description asserted a security property escaped the
+    audit control entirely whenever the SAME filing also failed an earlier
+    rung. Driven on both doors, ``observations.json`` tripwire length 0 in
+    every case: tier LATENT + "the login endpoint does not verify the
+    authentication token signature" with no reproduction_attempted; the same
+    with ``reproduction_attempted="n/a"``; the same with ``class=""``. That is
+    precisely the shape a stream files — a hand-waved security claim with no
+    negative-result evidence — so the hole was on the likely path, not a
+    corner of it.
+
+    AC-007 and OT-005 are unconditional on the DESCRIPTION matching the
+    predicate ("A LATENT filing whose description matches the security-property
+    predicate is refused naming SECURITY_PROPERTY_CLAIM and a tripwire record
+    is written"), and A-AUTO-005 names this denylist as the mechanism that
+    keeps a security-property claim from being demoted. An audit control a
+    filer can switch off by ALSO omitting a field is not a control. So the
+    predicate is consulted FIRST and the ordering property is preserved by the
+    two doors still sharing this one function — LEAD RULING, GRIND cycle 4,
+    superseding the tier-first order this docstring pinned before.
+
+    It keys on the tier the caller DECLARED (``== "LATENT"``, before the tier
+    rung has judged it) rather than on a validated one, because the rung that
+    would validate it is the very rung this must outrank. A filing with no
+    tier, or a tier outside DEFECT_TIERS, is not a LATENT filing and is refused
+    naming ``tier`` as it always was — CT-003 scopes the denylist to LATENT.
 
     WHY THE LATENT GATE CONSULTS THE SECURITY PREDICATE AND NOT
     ``never_demote_class`` (CT-003)
@@ -1018,6 +1050,32 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     through the existing exported path before returning it.
     """
     tier = finding.get("tier")
+
+    # D-061: FIRST rung, ahead of tier/class/reproduction_attempted, so the
+    # audit record is written for every LATENT security claim rather than only
+    # for the ones that were otherwise well-formed. See the docstring.
+    if tier == "LATENT" and is_security_property_text(
+        str(finding.get("description", ""))
+    ):
+        return {
+            "ok": False,
+            "error": (
+                f"Refused: {SECURITY_PROPERTY_CLAIM} — a security-property "
+                f"claim may never be filed as LATENT."
+            ),
+            "hint": (
+                "A claim that a security property is broken is never a gap "
+                "reasoned about: drive it, and file what you observed as "
+                "LIVE. Do NOT re-word the description to get past this "
+                "refusal — the same predicate guards the never-demote "
+                "denylist, and an audit tripwire has already recorded this "
+                "attempt. Fixing the other fields will not get you past it "
+                "either: this rung is reached before them."
+            ),
+            "field": "description",
+            "denylist_class": SECURITY_PROPERTY_CLAIM,
+        }
+
     if not isinstance(tier, str) or tier not in DEFECT_TIERS:
         return {
             "ok": False,
@@ -1071,25 +1129,10 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
             "field": "reproduction_attempted",
         }
 
-    if is_security_property_text(str(finding.get("description", ""))):
-        return {
-            "ok": False,
-            "error": (
-                f"Refused: {SECURITY_PROPERTY_CLAIM} — a security-property "
-                f"claim may never be filed as LATENT."
-            ),
-            "hint": (
-                "A claim that a security property is broken is never a gap "
-                "reasoned about: drive it, and file what you observed as "
-                "LIVE. Do NOT re-word the description to get past this "
-                "refusal — the same predicate guards the never-demote "
-                "denylist, and an audit tripwire has already recorded this "
-                "attempt."
-            ),
-            "field": "description",
-            "denylist_class": SECURITY_PROPERTY_CLAIM,
-        }
-
+    # The security denylist is NOT here any more (D-061); it is the first rung
+    # of this function. Nothing follows the reproduction_attempted rung, so a
+    # LATENT filing that reaches this line named its negative result and did
+    # not assert a security property.
     return None
 
 
