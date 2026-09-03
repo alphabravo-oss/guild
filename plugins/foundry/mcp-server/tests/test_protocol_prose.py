@@ -5041,3 +5041,179 @@ def test_skill_evidence_axis_constraint_closes_on_no_discretion(path: Path) -> N
         f"that states an obligation without closing it is one a stream reads "
         f"as advice."
     )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 5 -- the shared filing block, and the surface that took four of five
+# ---------------------------------------------------------------------------
+
+#: The five rules of agents/assayer.md's filing register, in the order their
+#: back-references need. Two of them refer upward: the no-severity bullet names
+#: "the `tier` axis the next rule makes required", and the `target_kind`
+#: bullet's "That refusal is not automatic" and "the split above did nothing"
+#: are both the comment-prose bullet. The block is ordered, not a set.
+#:
+#: A surface takes this register one of two ways, and the two are pinned
+#: separately below because conflating them fails honest prose. sight and
+#: temper take the block WHOLESALE -- they have no stream-specific voice for
+#: it, so their copies are byte-identical to the source. The four stream agents
+#: adapt three of the five to their own subject (tracer's class bullet counts
+#: UNWIRED symbols behind an unregistered router; its comment-prose bullet ends
+#: on wiring verdicts rather than the severity tier) and share only the two
+#: tier rules verbatim, which is what
+#: ``test_stream_agents_share_one_tier_rule_verbatim`` already pins.
+_SHARED_FILING_BULLET_HEADS = (
+    "- **Name the class when instances share a root cause.**",
+    "- **No severity classification.**",
+    "- **Set `tier` on every filing;",
+    "- **Comment-prose findings are observations, not defects.**",
+    "- **Declare `target_kind` on every filing.**",
+)
+
+_COMMENT_PROSE_HEAD = _SHARED_FILING_BULLET_HEADS[3]
+_TARGET_KIND_HEAD = _SHARED_FILING_BULLET_HEADS[4]
+
+#: The phrases in the `target_kind` bullet that point UP at the comment-prose
+#: bullet. Located in the referring text rather than in a roster: what makes
+#: the antecedent required is that this file's own sentence reaches for it, so
+#: a surface writing a self-contained `target_kind` rule owes nothing --
+#: agents/coverage-diff.md is exactly that case and is correct without the
+#: comment-prose bullet.
+_TARGET_KIND_BACK_REFERENCES = ("That refusal", "the split above")
+
+
+def _shared_bullet(path: Path, head: str) -> str | None:
+    """The one line in `path` opening with `head`, or None if it carries none."""
+    hits = [line for line in _read(path).splitlines() if line.startswith(head)]
+    assert len(hits) < 2, (
+        f"{_rel(path)} carries {len(hits)} bullets opening {head!r}. Two copies "
+        f"of one shared rule drift apart a clause at a time, and the doors "
+        f"report ONE refusal per violation -- so the stream is taught two "
+        f"vocabularies and the refusal matches at most one of them."
+    )
+    return hits[0] if hits else None
+
+
+#: Surfaces that take the register WHOLESALE, derived by the bullet that marks
+#: the wholesale copy: a file whose class bullet is byte-identical to the
+#: source did not adapt the register to its own voice, so every other bullet in
+#: the block is a copy too and is checked as one. Deriving is the point --
+#: sight was reachable by every corpus in this module and still lost a bullet,
+#: because nothing asked whether a surface that copies the block copies ALL of
+#: it.
+VERBATIM_FILING_BLOCK_SURFACES = tuple(
+    p
+    for p in DEFECT_FILING_SURFACES
+    if _shared_bullet(p, _SHARED_FILING_BULLET_HEADS[0])
+    == _shared_bullet(ASSAYER, _SHARED_FILING_BULLET_HEADS[0])
+)
+
+
+def test_the_verbatim_filing_block_roster_is_derived() -> None:
+    """Floor check: a roster that lost sight would pass every pin below."""
+    rel = {_rel(p) for p in VERBATIM_FILING_BLOCK_SURFACES}
+    for expected in (ASSAYER, SIGHT_SKILL, TEMPER_SKILL):
+        assert _rel(expected) in rel, (
+            f"{_rel(expected)} no longer copies the class bullet verbatim, so "
+            f"nothing below checks it carries the register whole. A surface "
+            f"drops out of this derivation by rewording that bullet -- which "
+            f"is legitimate for a stream with its own subject, and is why the "
+            f"four stream agents are not swept here. If this file grew a voice "
+            f"of its own, say so; if the bullet merely drifted, re-copy it."
+        )
+    assert TRACER not in VERBATIM_FILING_BLOCK_SURFACES, (
+        "agents/tracer.md derived into the verbatim roster. It adapts three of "
+        "the five bullets to wiring -- its class bullet counts UNWIRED symbols "
+        "behind an unregistered router -- so demanding a byte-identical paste "
+        "would pin away prose written for its own stream on purpose."
+    )
+
+
+@pytest.mark.parametrize("path", VERBATIM_FILING_BLOCK_SURFACES, ids=_rel)
+@pytest.mark.parametrize("head", _SHARED_FILING_BULLET_HEADS, ids=lambda h: h[5:28])
+def test_a_surface_copying_the_filing_block_copies_all_of_it(
+    path: Path, head: str
+) -> None:
+    """D-092's neighbour: the block is five rules, and four is not most of it.
+
+    skills/sight/SKILL.md carried four -- it dropped the comment-prose bullet
+    and kept the `target_kind` bullet that points at it. Each missing bullet is
+    a rule the stream does not have while filing into the same ledger through
+    the same doors, and the doors do not soften for a surface that failed to
+    mention one.
+    """
+    source = _shared_bullet(ASSAYER, head)
+    assert source is not None, (
+        f"agents/assayer.md no longer carries {head!r}, so there is no source "
+        f"to copy. It is the register the other surfaces mirror; fix it there "
+        f"rather than dropping this check."
+    )
+    assert _shared_bullet(path, head) == source, {
+        "file": _rel(path),
+        "bullet": head,
+        "carries_it_at_all": _shared_bullet(path, head) is not None,
+        "why": (
+            "this surface copies the filing register wholesale and either "
+            "omits this bullet or words it differently. Copy the line from "
+            "agents/assayer.md byte for byte; if the rule itself is wrong, "
+            "change it at the source and re-copy everywhere it landed."
+        ),
+    }
+
+
+@pytest.mark.parametrize("path", VERBATIM_FILING_BLOCK_SURFACES, ids=_rel)
+def test_the_verbatim_filing_block_keeps_its_order(path: Path) -> None:
+    """Presence is not enough when two bullets refer upward."""
+    text = _read(path)
+    bullets = [_shared_bullet(path, head) for head in _SHARED_FILING_BULLET_HEADS]
+    assert all(b is not None for b in bullets), (
+        f"{_rel(path)} is missing a shared filing bullet; the per-bullet "
+        f"assertion above names which one."
+    )
+    positions = [text.index(b) for b in bullets]
+    assert positions == sorted(positions), (
+        f"{_rel(path)}'s filing bullets are out of order. Expected "
+        f"{list(_SHARED_FILING_BULLET_HEADS)}: the no-severity bullet names "
+        f"'the `tier` axis the next rule makes required', so the tier bullet "
+        f"follows it, and the `target_kind` bullet's 'That refusal' and 'the "
+        f"split above' are the comment-prose bullet, so it precedes."
+    )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_a_back_referencing_target_kind_rule_has_its_antecedent(path: Path) -> None:
+    """The defect sight actually shipped: a pointer with nothing under it.
+
+    sight's `target_kind` bullet opened "That refusal is not automatic" and
+    closed "the split above did nothing" while the split it names -- the
+    comment-prose bullet -- was absent from the file. A reader who cannot find
+    an antecedent supplies one, and the nearest candidate two bullets up is the
+    no-severity rule, which turns "that refusal" into the severity ban and
+    reads `target_kind` as something the server already handles.
+
+    Derived from the REFERRING TEXT, not from a roster: a surface that writes a
+    self-contained `target_kind` rule owes no antecedent, which is why
+    agents/coverage-diff.md passes without a comment-prose bullet.
+    """
+    rule = _shared_bullet(path, _TARGET_KIND_HEAD)
+    if rule is None:
+        pytest.skip(f"{_rel(path)} states no `target_kind` bullet")
+    refs = [phrase for phrase in _TARGET_KIND_BACK_REFERENCES if phrase in rule]
+    if not refs:
+        pytest.skip(f"{_rel(path)}'s `target_kind` rule refers to nothing above it")
+    antecedent = _shared_bullet(path, _COMMENT_PROSE_HEAD)
+    assert antecedent is not None, (
+        f"{_rel(path)}'s `target_kind` rule says {refs} and the file carries no "
+        f"comment-prose bullet for those to mean. Either paste "
+        f"agents/assayer.md's {_COMMENT_PROSE_HEAD!r} bullet above it, or "
+        f"rewrite the `target_kind` rule to stand on its own the way "
+        f"agents/coverage-diff.md's does. A dangling back-reference is worse "
+        f"than a missing rule: the reader resolves it against whatever is "
+        f"nearest."
+    )
+    text = _read(path)
+    assert text.index(antecedent) < text.index(rule), (
+        f"{_rel(path)}'s comment-prose bullet sits BELOW the `target_kind` rule "
+        f"that says {refs}. 'The split above' is a direction, and a reader who "
+        f"looks up and finds the wrong rule does not keep looking."
+    )
