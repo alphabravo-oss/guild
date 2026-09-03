@@ -939,6 +939,12 @@ def record_denylist_tripwire(
         ``foundry_orchestrator.py`` — audit only: the finding stays a defect
         either way, and the record captures that a denylist entry is what
         rescued it.
+      * ``server.py``'s ``_audit_security_claim_on_refusal`` — the PRE-DISPATCH
+        rung (D-146). `call_tool` validates arguments against the advertised
+        schema before dispatch, so a filing refused there never reaches a
+        handler; this fires the tripwire for a refused filing whose prose
+        matches the security predicate, so a filer cannot switch the audit
+        record off by also getting an unrelated field wrong.
 
     This roster is load-bearing and it has been WRONG once. It used to name
     "``foundry_sync_defects``'s auto-demotion branch", which D-098 deleted when
