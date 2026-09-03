@@ -5,13 +5,16 @@ Two-mode CLI: per-run JSON extractor + cohort --matrix aggregator. Mirrors
 Phase 4-8 closed-vocabulary discipline (stdlib only; no runtime deps).
 Three frozensets locked at module top: KNOWN_PHASE9_STREAM_IDS (15),
 KNOWN_PHASE9_FAILURE_TOKENS (9), KNOWN_PHASE9_COHORT_IDS (10). Wall-clock =
-first/last handoffs.jsonl timestamp delta (Pitfall 5 / 09-RESEARCH.md).
-Exit 0 OK; 1 on token rejection / gate FAIL; 2 on usage error.
+first/last handoffs.jsonl timestamp delta (Pitfall 5 / 09-RESEARCH.md), null
+when the ledger cannot supply two timestamps — never 0.0 (D-087).
 
-Both halves of that exit contract run through ``_exit_status`` — see its
-docstring for why a MISSING gate is a 0 and only a blown one is a 1. Every
-entry point that evaluates gates returns through it, so a verdict can never
-again be printed without reaching the process status (D-105).
+EXIT CONTRACT: 0 OK; 1 when an artifact would not READ (the seven
+UNREADABLE_ARTIFACT_TOKENS); 2 on usage error. THE NUMBERS ARE NOT A GATE
+(NFR-001 / D-086) — no verdict in this payload reaches the process status, and
+neither do the two tokens that name a measurement nobody took
+(PHASE9_WALL_CLOCK_UNAVAILABLE, PHASE9_CONTEXT_FILE_MISSING). Every entry
+point still returns through ``_exit_status``, which is D-105's structural
+lesson kept while its calibration is replaced; see that function's docstring.
 
 The stream roster is DERIVED from foundry_mcp.schemas.vocab (FR-013): this
 script was one of six independently re-typed copies of the same vocabulary.
@@ -54,9 +57,12 @@ make the command exit nonzero on a healthy archive. The baseline's own two
 numbers are therefore READ FROM vocab.THUNDER_VIPER_BASELINE, not derived from
 the archive that cannot hold them.
 
-NFR-001 says the numbers are "the target, not a gate", and nothing in this
-paragraph reaches ``_compute_gate_verdicts`` or ``_exit_status``. Missing the
-convergence target is reported; it is never a refusal.
+NFR-001 says the numbers are "the target, not a gate", and nothing anywhere in
+this payload reaches ``_exit_status``. Missing the convergence target is
+reported; it is never a refusal. The whole ``baseline_comparison`` object is
+`foundry_report._baseline_comparison_section`'s — imported, not re-derived, so
+this CLI and the F6 report cannot print different comparisons of the same two
+archives (D-085 / D-088).
 
 ``cycles`` in the payload is a COUNT. The server's counter is 0-based, so the
 count is the final index + 1 — the conversion happens exactly once, in
@@ -84,8 +90,13 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_stream_id,
         defect_tier,
     )
+    from foundry_mcp.tools.foundry_report import (
+        _archive_metrics,
+        _baseline_comparison_section,
+    )
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
+        handoffs_wall_clock_seconds,
         read_json,
         read_text_file,
     )
@@ -106,8 +117,13 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_stream_id,
         defect_tier,
     )
+    from foundry_mcp.tools.foundry_report import (
+        _archive_metrics,
+        _baseline_comparison_section,
+    )
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
+        handoffs_wall_clock_seconds,
         read_json,
         read_text_file,
     )
@@ -143,14 +159,22 @@ KNOWN_PHASE9_COHORT_IDS = frozenset({
     "no_PROBE_01", "no_TEST_01", "no_INTENT_01",
 })  # 10 cohorts
 
-# RUN-01 quantitative gate thresholds (locked per CONTEXT.md).
+# RUN-01 quantitative advisory thresholds.
 #
-# MAX_CYCLES_FOR_CONVERGENCE is a COUNT of cycles, and both paths that evaluate
-# it now feed it one: the per-run extractor (which converts the server's 0-based
-# index once, in _extract_per_run) and the operator-supplied
-# ``--evaluate-gates --cycles N``. Feeding the raw index down the first path
-# admitted one cycle more than this number names, at every threshold value.
-MAX_CYCLES_FOR_CONVERGENCE = 8
+# D-086 — THERE IS NO SECOND CYCLE THRESHOLD ANY MORE.
+#
+# ``MAX_CYCLES_FOR_CONVERGENCE = 8`` used to live here beside
+# ``vocab.CONVERGENCE_TARGET["grind_cycles"] = 12``: two thresholds for ONE
+# number, both evaluated in the same payload. Driven on a synthetic 10-cycle
+# run, ``baseline_comparison.meets_target.grind_cycles`` was true (10 <= 12)
+# while ``gate_verdicts.cycles`` was FAIL (10 > 8) — and the FAILING verdict
+# was the one that reached the process status. An operator running the effort's
+# own acceptance instrument on a run that MEETS the effort's stated target was
+# told it had failed.
+#
+# The cycles verdict is now `_cycles_meet` against ``CONVERGENCE_TARGET``,
+# which is the same comparison ``meets_target`` publishes, computed once. The
+# constant is READ from vocab and never re-typed here (FR-013).
 DEFECT_YIELD_PCT_MIN = 5.0
 DEFECT_YIELD_PCT_MAX = 50.0
 MAX_F2_CONTEXT_PCT = 50.0
@@ -178,7 +202,11 @@ class MeasureResult:
     cycles: int | None = None
     per_stream_defects: dict[str, int] = field(default_factory=dict)
     f2_context_pct: float | None = None
-    wall_clock_seconds: float = 0.0
+    # None, never 0.0, when no `handoffs.jsonl` could supply a span (D-087):
+    # "took no measurable time" and "nobody measured it" are different facts,
+    # and `foundry_report` has always refused to print the first for the
+    # second. The two are columns of ONE comparison (NFR-001).
+    wall_clock_seconds: float | None = None
     gate_verdicts: dict[str, str] = field(default_factory=dict)
     failure_tokens: list[str] = field(default_factory=list)
     disable_lever: str = ""
@@ -268,36 +296,27 @@ def _read_cohort_json(run_dir: Path, strict: bool) -> tuple[str | None, str, lis
     return cohort_id, lever, []
 
 
-def _read_handoffs_wall_clock(run_dir: Path) -> tuple[float, list[str]]:
-    UNAVAIL = ["PHASE9_WALL_CLOCK_UNAVAILABLE"]
-    path = run_dir / "handoffs.jsonl"
-    if not path.exists():
-        return 0.0, UNAVAIL
-    # D-141: `except OSError` alone leaks UnicodeDecodeError, which is the same
-    # residual one rung up from `_load_json`'s. handoffs.jsonl is a run
-    # artifact like any other, so it is read the same way.
-    text, problem = read_text_file(path)
-    if problem is not None:
-        return 0.0, UNAVAIL
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return 0.0, UNAVAIL
-    first_ts = last_ts = None
-    for ln in lines:
-        try:
-            entry = json.loads(ln)
-        except json.JSONDecodeError:
-            return 0.0, UNAVAIL
-        ts = _parse_iso8601(entry.get("timestamp")) if isinstance(entry, dict) else None
-        if ts is None:
-            continue
-        if first_ts is None:
-            first_ts = ts
-        last_ts = ts
-    if first_ts is None or last_ts is None:
-        return 0.0, UNAVAIL
-    seconds = (last_ts - first_ts).total_seconds()
-    return (0.0, UNAVAIL) if seconds < 0 else (float(seconds), [])
+def _read_handoffs_wall_clock(run_dir: Path) -> tuple[float | None, list[str]]:
+    """The run's wall clock in seconds, or ``(None, [token])``. D-087.
+
+    NONE, NEVER 0.0. This walked the ledger itself and published ``0.0`` for
+    every run it could not measure, while `foundry_report._wall_clock_minutes`
+    published ``null`` for the same input and its docstring forbade the other
+    spelling by name — "a run that took no measurable time and a run nobody
+    measured are different facts, and NFR-001's comparison is unreadable if
+    they print the same". Both are surfaces of that one comparison, so this
+    command was fabricating exactly the number the report module refuses to
+    fabricate, in the one table where the two sit side by side.
+
+    The ledger walk, the timestamp parse and the None rule are now
+    `foundry_state.handoffs_wall_clock_seconds`', hosted beside
+    `derive_cycle_count` for the same reason that one is hosted there (D-036):
+    it is the only module both readers already import. What stays here is this
+    command's own vocabulary — turning "there is no number" into the named
+    PHASE9_* token its payload speaks in.
+    """
+    seconds, problem = handoffs_wall_clock_seconds(run_dir)
+    return (None, ["PHASE9_WALL_CLOCK_UNAVAILABLE"]) if problem else (seconds, [])
 
 
 def _read_cycle_count(run_dir: Path) -> tuple[int | None, list[str]]:
@@ -528,7 +547,10 @@ def _read_spend(run_dir: Path) -> dict[str, Any] | None:
     by_phase: dict[str, dict[str, Any]] = {}
     by_cycle: dict[str, dict[str, Any]] = {}
     total = _new_spend_bucket()
-    agents: set[str] = set()
+    # Agent NAMES per bucket, so `agents` can be a count of the SET rather than
+    # of the rows (D-090). Keyed by the same ("scope", key) pair the buckets
+    # are, so the two maps cannot fall out of step.
+    seen: dict[tuple[str, str], set[str]] = {}
     for line in text.splitlines():
         if not line.strip():
             continue
@@ -542,24 +564,29 @@ def _read_spend(run_dir: Path) -> dict[str, Any] | None:
         duration_ms = _as_count(entry.get("duration_ms"))
         phase = entry.get("phase")
         cycle = entry.get("cycle")
+        agent = entry.get("agent")
 
-        buckets = [total]
+        buckets = [(("run", "total"), total)]
         if isinstance(phase, str) and phase:
-            buckets.append(by_phase.setdefault(phase, _new_spend_bucket()))
+            buckets.append((("by_phase", phase),
+                            by_phase.setdefault(phase, _new_spend_bucket())))
         if isinstance(cycle, int) and not isinstance(cycle, bool) and cycle >= 0:
-            buckets.append(by_cycle.setdefault(str(cycle), _new_spend_bucket()))
-        for bucket in buckets:
+            buckets.append((("by_cycle", str(cycle)),
+                            by_cycle.setdefault(str(cycle), _new_spend_bucket())))
+        for scope, bucket in buckets:
             bucket["tokens"] += tokens
             bucket["duration_ms"] += duration_ms
-            bucket["agents"] += 1
+            bucket["records"] += 1
+            if isinstance(agent, str) and agent:
+                seen.setdefault(scope, set()).add(agent)
 
-        agent = entry.get("agent")
-        if isinstance(agent, str) and agent:
-            agents.add(agent)
-
-    for bucket in (*by_phase.values(), *by_cycle.values(), total):
+    for scope, bucket in (
+        *((("by_phase", k), v) for k, v in by_phase.items()),
+        *((("by_cycle", k), v) for k, v in by_cycle.items()),
+        (("run", "total"), total),
+    ):
         bucket["minutes"] = round(bucket["duration_ms"] / 60_000.0, 2)
-    total["distinct_agents"] = len(agents)
+        bucket["agents"] = len(seen.get(scope, ()))
     return {
         "by_phase": {k: by_phase[k] for k in sorted(by_phase)},
         "by_cycle": {k: by_cycle[k] for k in sorted(by_cycle, key=_cycle_sort_key)},
@@ -568,7 +595,22 @@ def _read_spend(run_dir: Path) -> dict[str, Any] | None:
 
 
 def _new_spend_bucket() -> dict[str, Any]:
-    return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "agents": 0}
+    """A spend bucket. ``records`` counts ROWS; ``agents`` counts AGENTS.
+
+    D-090: these were one key, and it meant ROWS here and in
+    `foundry_report._read_spend` while `foundry_orchestrator._spend_summary`
+    published the same key as a count of DISTINCT agents (D-038 made it so,
+    over a set, from this same ledger). One field name, two meanings, across
+    three surfaces of one run — and they parted the moment any agent reported
+    twice, which a re-dispatched GRIND teammate does every cycle.
+
+    So ``agents`` means DISTINCT agents everywhere now, and the row count keeps
+    its own honest name. ``distinct_agents`` is gone from ``total`` with it: it
+    existed only because ``agents`` had been taken, and two spellings of one
+    number in one bucket is the same defect one shape smaller.
+    """
+    return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "records": 0,
+            "agents": 0}
 
 
 def _as_count(value: Any) -> int:
@@ -604,7 +646,6 @@ def _read_inspect_modes(run_dir: Path) -> dict[str, Any] | None:
 
     per_cycle: dict[str, dict[str, Any]] = {}
     by_mode: dict[str, int] = dict.fromkeys(sorted(INSPECT_MODES), 0)
-    post_verification: set[int] = set()
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -618,15 +659,21 @@ def _read_inspect_modes(run_dir: Path) -> dict[str, Any] | None:
             "mode": mode if isinstance(mode, str) else None,
             "rule": entry.get("rule") if isinstance(entry.get("rule"), str) else None,
         }
-        if phase == "F5":
-            post_verification.add(cycle)
     for decision in per_cycle.values():
         if decision["mode"] in by_mode:
             by_mode[decision["mode"]] += 1
+    # COUNTED OFF `per_cycle`, so the last-entry-wins rule applies to this
+    # number too. It used to be accumulated in the loop above, over EVERY entry
+    # rather than the surviving one, which is a second rule for one fact:
+    # a cycle whose F5 INSPECT was followed by an F2 one counted here and not
+    # in `foundry_report._archive_metrics`, and the two publish this number
+    # into the same NFR-001 comparison (D-088).
     return {
         "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=_cycle_sort_key)},
         "by_mode": by_mode,
-        "post_verification_cycles": len(post_verification),
+        "post_verification_cycles": sum(
+            1 for d in per_cycle.values() if d["phase"] == "F5"
+        ),
     }
 
 
@@ -668,62 +715,34 @@ def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
     }
 
 
-def _baseline_comparison(
-    run_dir: Path, cycles: int | None, post_verification_cycles: int | None
-) -> dict[str, Any]:
+def _baseline_comparison(run_dir: Path) -> dict[str, Any]:
     """NFR-001 / AC-039 / OT-030 — this run's numbers beside thunder-viper's.
 
-    The baseline is READ from vocab, never re-typed here: OT-030 asks for 22
-    cycles and 8 post-verification cycles, and thunder-viper's own archive
-    cannot supply either (its cycle counter stayed at 0 and it wrote no
-    inspect_modes). Re-deriving them from its defect ledger would reproduce 22
-    today by coincidence and silently drift the moment a record moved.
+    ONE derivation, and it is not this file's (D-088). AC-039 requires this
+    command to report "cycles, defects by tier, tokens and wall clock for a run
+    beside the thunder-viper baseline"; only CYCLES were ever beside it. The
+    other three were top-level current-run-only keys with no baseline cell at
+    all, while `foundry_report._archive_metrics` derived all five for BOTH
+    columns from whichever archive it was handed — so the F6 report did the
+    side-by-side that the CLI named in the requirement did not.
 
-    NFR-001: "Numbers are the target, not a gate." Nothing here feeds
-    ``_compute_gate_verdicts`` or ``_exit_status`` — missing the target is
-    reported, never refused. `meets_target` is None for a number this archive
-    could not supply, because "did not meet" and "cannot say" are different
-    answers.
+    The whole section is therefore `foundry_report._baseline_comparison_section`'s
+    now, imported rather than re-assembled. Assembling it twice is what let the
+    two surfaces disagree about the floor rule (D-085) even while they agreed
+    about the cycle COUNT (D-036) — a side-by-side table is exactly the surface
+    where a half-unit of drift is invisible and decisive.
+
+    THE IMPORT COSTS THIS SCRIPT'S STDLIB-ONLY CONTRACT NOTHING, on the same
+    terms as `foundry_state`'s (D-141): `foundry_report` imports
+    `schemas.vocab` and `tools.foundry_state` at module level and nothing else,
+    and both are stdlib-only.
+
+    D-022's floor rule is gone from here because it is gone from there. The
+    recorded constant is now the baseline COLUMN unconditionally and the
+    archive's own derivation is published beside it as `baseline_derived`; a
+    floor that could be EXCEEDED did not protect the constant it named.
     """
-    target_cycles = CONVERGENCE_TARGET["grind_cycles"]
-    target_post = CONVERGENCE_TARGET["post_verification_cycles"]
-
-    # D-022 — the RECORDED baseline is a floor for the baseline's OWN archive.
-    #
-    # thunder-viper's counter never moved, so measuring its archive used to
-    # yield 1 against a constant of 22 and this command printed
-    # `meets_target: true` for it: the acceptance instrument certifying the
-    # very run whose 22 cycles are the entire reason CONVERGENCE_TARGET exists.
-    # `_read_cycle_count`'s third source now derives 22 from that archive
-    # directly, and this is the belt beside it — a derivation that comes in
-    # UNDER the number the baseline is on record as having run is measuring
-    # wrong, not measuring a better run.
-    if cycles is not None and run_dir.name == THUNDER_VIPER_BASELINE["run"]:
-        cycles = max(cycles, THUNDER_VIPER_BASELINE["grind_cycles"])
-    if (
-        post_verification_cycles is not None
-        and run_dir.name == THUNDER_VIPER_BASELINE["run"]
-    ):
-        post_verification_cycles = max(
-            post_verification_cycles,
-            THUNDER_VIPER_BASELINE["post_verification_cycles"],
-        )
-
-    return {
-        "baseline": dict(THUNDER_VIPER_BASELINE),
-        "target": dict(CONVERGENCE_TARGET),
-        "current": {
-            "run": run_dir.name,
-            "grind_cycles": cycles,
-            "post_verification_cycles": post_verification_cycles,
-        },
-        "meets_target": {
-            "grind_cycles": _cycles_meet(cycles, target_cycles),
-            "post_verification_cycles": _cycles_meet(
-                post_verification_cycles, target_post
-            ),
-        },
-    }
+    return _baseline_comparison_section(run_dir)
 
 
 def _read_context_pct(
@@ -766,20 +785,37 @@ def _yield_band_verdict(per_stream_defects: dict[str, int]) -> str:
     return "PASS"
 
 
+def _verdict_of(met: bool | None) -> str:
+    """`_cycles_meet`'s three answers in this payload's verdict vocabulary.
+
+    D-086: the cycles verdict and ``meets_target.grind_cycles`` are ONE
+    comparison. They used to be two, against two different constants, and they
+    contradicted each other in the same document. There is one comparison now
+    and this is the only place it is spelled twice — as a word instead of a
+    bool.
+    """
+    return "MISSING" if met is None else "PASS" if met else "FAIL"
+
+
 def _compute_gate_verdicts(
     cycles: int | None, per_stream_defects: dict[str, int],
     f2_context_pct: float | None, wall_clock_regression_pct: float | None,
 ) -> dict[str, str]:
-    # D-022 — an UNMEASURED cycle count is MISSING, never PASS. The count used
-    # to be forced to an int, so an archive no ledger could speak for arrived
-    # here as 1 and passed the convergence gate on a number nobody had. MISSING
-    # is the same verdict the two operator-supplied gates use for the same
-    # reason, and `_exit_status` maps it to 0: an unmeasured gate is honest,
-    # not failed.
+    """The ADVISORY verdict table. Nothing here reaches the process status.
+
+    D-086 / NFR-001 verbatim: "Numbers are the target, not a gate." These
+    verdicts are published for an operator to gate on; this command does not
+    gate on them itself. `_exit_status` reads only whether the archive could be
+    READ — see its docstring.
+
+    D-022 — an UNMEASURED cycle count is MISSING, never PASS. The count used to
+    be forced to an int, so an archive no ledger could speak for arrived here
+    as 1 and reported PASS on a number nobody had. MISSING is the same verdict
+    the two operator-supplied measurements use, for the same reason.
+    """
     return {
-        "cycles": (
-            "MISSING" if not isinstance(cycles, int) or isinstance(cycles, bool)
-            else "PASS" if cycles <= MAX_CYCLES_FOR_CONVERGENCE else "FAIL"
+        "cycles": _verdict_of(
+            _cycles_meet(cycles, CONVERGENCE_TARGET["grind_cycles"])
         ),
         "defect_yield_per_stream": _yield_band_verdict(per_stream_defects),
         "f2_context_pct": (
@@ -802,36 +838,64 @@ def _overall_verdict(verdicts: dict[str, str]) -> str:
     return "PASS"
 
 
+#: The tokens that mean AN ARTIFACT WOULD NOT READ, as against the two that
+#: mean a measurement was simply unavailable. Only the first kind is a nonzero
+#: process status (D-086). Splitting the vocabulary is what lets "the archive
+#: is broken" and "this run never recorded a context percentage" stop sharing
+#: an exit code — the asymmetry `_exit_status` named and did not fix.
+UNREADABLE_ARTIFACT_TOKENS = frozenset({
+    "PHASE9_RUN_DIR_INVALID", "PHASE9_SCHEMA_INVALID",
+    "PHASE9_DEFECTS_FILE_MALFORMED", "PHASE9_CYCLE_COUNT_INVALID",
+    "PHASE9_UNKNOWN_STREAM", "PHASE9_UNKNOWN_COHORT", "PHASE9_NO_COHORTS",
+})  # 7 of the 9; the other two are PHASE9_WALL_CLOCK_UNAVAILABLE and
+# PHASE9_CONTEXT_FILE_MISSING, which name a measurement nobody took.
+
+assert UNREADABLE_ARTIFACT_TOKENS <= KNOWN_PHASE9_FAILURE_TOKENS, sorted(
+    UNREADABLE_ARTIFACT_TOKENS - KNOWN_PHASE9_FAILURE_TOKENS
+)
+
+
 def _exit_status(gate_verdicts: dict[str, str], failure_tokens: list[str]) -> int:
-    """The process status the module docstring's exit contract promises.
+    """Nonzero only for an artifact this command could not READ. D-086.
 
-    D-105: the contract names two halves — "1 on token rejection / gate FAIL" —
-    and only the first was implemented. Gate verdicts were computed, rolled up,
-    printed, and then dropped: _emit_per_run and _emit_matrix derived status
-    from failure_tokens alone and _emit_evaluate_gates returned 0
-    unconditionally, printing overall_verdict FAIL on its way out. On the
-    canonical baseline archive (grand-vulture, NFR-001's "18 cycles, 168
-    defects") two hard gates FAIL and the process exited 0.
+    NFR-001 verbatim: "Numbers are the target, not a gate." This command is the
+    effort's acceptance instrument and it used to gate on the numbers and exit
+    nonzero, against a threshold that disagreed with the effort's own stated
+    target: a 10-cycle run had ``meets_target.grind_cycles`` true (10 <= the
+    CONVERGENCE_TARGET of 12) and ``gate_verdicts.cycles`` FAIL (10 > the local
+    constant of 8), and the FAILING verdict was the one that reached the
+    process status. An operator was told a converging run had failed.
 
-    The asymmetry is what made it decisive rather than cosmetic: the tool DID
-    exit 1 for a purely informational token — an archive with no handoffs.jsonl
-    emits PHASE9_WALL_CLOCK_UNAVAILABLE and exits 1 with every gate PASS. It
-    failed loud on "could not measure the wall clock" and stayed silent on "the
-    convergence gate FAILED". NFR-001 makes this the effort's acceptance
-    instrument, and a gate whose verdict never reaches its exit status is not a
-    gate.
+    So verdicts are PUBLISHED and gate nothing here. The status answers one
+    question — could this command read what it was pointed at — because that is
+    the only thing an exit code can say that the payload cannot say better.
+    Usage errors are 2 and are returned by `main` before anything is read.
 
-    MISSING maps to 0 deliberately: an unmeasured gate is honest, not failed.
-    Two of the four gates read measurements no archive holds (f2_context_pct,
-    wall_clock_regression_pct — see _read_context_pct), so MISSING is the
-    ordinary state of any run measured without --context-pct /
-    --baseline-seconds. Mapping it to 1 would fail nearly every real run, which
-    is the over-firing calibration D-034 already had to undo. Only FAIL — a
-    gate that WAS measured and was blown — is a nonzero status.
+    WHAT THIS KEEPS FROM D-105. That defect's real finding was an ASYMMETRY:
+    the tool "failed loud on 'could not measure the wall clock' and stayed
+    silent on 'the convergence gate FAILED'". D-105 closed it by making the
+    quiet half loud; NFR-001 requires the other direction, so it is closed here
+    by making the loud half quiet. PHASE9_WALL_CLOCK_UNAVAILABLE and
+    PHASE9_CONTEXT_FILE_MISSING name a measurement nobody took — the ordinary
+    state of every archive written before this release, and of every run
+    measured without ``--context-pct`` — and they are reported in
+    ``failure_tokens`` where an operator and a cohort matrix can both see them.
+    The seven tokens that name a BROKEN artifact still exit 1: an archive that
+    will not parse is not a measurement, it is a fault in the input.
+
+    ``gate_verdicts`` is still a parameter so that every emit path keeps
+    routing through this one function. D-105's structural lesson stands even
+    though its calibration does not: a status derived at three call sites is
+    how one of them came to forget.
     """
-    if failure_tokens:
-        return 1
-    return 1 if _overall_verdict(gate_verdicts) == "FAIL" else 0
+    del gate_verdicts  # advisory; NFR-001 forbids gating the status on it
+    # Split on ``:`` first: two emitters qualify the token with the offending
+    # value (``PHASE9_UNKNOWN_STREAM:FOO``), so a bare membership test would
+    # read every qualified token as unknown and exit 0 on a genuinely
+    # unreadable archive. The token NAME is the part before the colon.
+    return 1 if any(
+        t.split(":", 1)[0] in UNREADABLE_ARTIFACT_TOKENS for t in failure_tokens
+    ) else 0
 
 
 def _is_saturated(
@@ -882,14 +946,15 @@ def _extract_per_run(
     r.spend = _read_spend(run_dir)
     r.inspect_modes = _read_inspect_modes(run_dir)
     r.escalation = _read_escalation(run_dir)
-    r.baseline_comparison = _baseline_comparison(
-        run_dir,
-        r.cycles,
-        None if r.inspect_modes is None else r.inspect_modes["post_verification_cycles"],
-    )
+    r.baseline_comparison = _baseline_comparison(run_dir)
     context_pct, ctxf = _read_context_pct(run_dir, strict, context_pct_override)
     r.f2_context_pct = context_pct; failure_tokens.extend(ctxf)
-    if baseline_wall_clock is not None and baseline_wall_clock > 0:
+    # An UNMEASURED wall clock cannot produce a regression percentage either.
+    # It used to produce 0.0/x = -100%, which is a measurement of nothing
+    # (D-087).
+    if wall_clock is None:
+        r.wall_clock_regression_pct = None
+    elif baseline_wall_clock is not None and baseline_wall_clock > 0:
         r.wall_clock_regression_pct = (wall_clock / baseline_wall_clock - 1.0) * 100.0
     elif baseline_wall_clock == 0:
         r.wall_clock_regression_pct = 0.0
@@ -924,7 +989,10 @@ def _matrix_row(result: MeasureResult) -> list[str]:
         result.cohort_id, result.disable_lever, str(result.cycles),
         json.dumps(result.per_stream_defects, sort_keys=True),
         "" if result.f2_context_pct is None else f"{result.f2_context_pct:.2f}",
-        f"{result.wall_clock_seconds:.2f}",
+        # Empty, not "0.00": the same D-087 distinction the payload makes, in
+        # the column a cohort matrix is read from.
+        "" if result.wall_clock_seconds is None
+        else f"{result.wall_clock_seconds:.2f}",
         "" if result.wall_clock_regression_pct is None else f"{result.wall_clock_regression_pct:.2f}",
         overall, ";".join(result.failure_tokens),
     ]
@@ -1002,7 +1070,12 @@ def _emit_compute_regression(baseline: float, cohort: float) -> int:
 
 def _emit_evaluate_gates(cycles: int, yield_pct: float, context_pct: float, regression_pct: float) -> int:
     verdicts = {
-        "cycles": "PASS" if cycles <= MAX_CYCLES_FOR_CONVERGENCE else "FAIL",
+        # One threshold for one number (D-086): the same `_cycles_meet` against
+        # the same `CONVERGENCE_TARGET` the per-run path publishes as
+        # `meets_target`. This path used to read a second constant.
+        "cycles": _verdict_of(
+            _cycles_meet(cycles, CONVERGENCE_TARGET["grind_cycles"])
+        ),
         "defect_yield_per_stream": "PASS" if DEFECT_YIELD_PCT_MIN <= yield_pct <= DEFECT_YIELD_PCT_MAX else "FAIL",
         "f2_context_pct": "PASS" if context_pct < MAX_F2_CONTEXT_PCT else "FAIL",
         "wall_clock_regression_pct": "PASS" if regression_pct < MAX_WALL_CLOCK_REGRESSION_PCT else "FAIL",

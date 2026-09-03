@@ -63,6 +63,7 @@ from foundry_mcp.schemas.vocab import (
 )
 from foundry_mcp.tools.foundry_state import (
     derive_cycle_count,
+    handoffs_wall_clock_seconds,
     read_document,
     read_jsonl,
     read_text_file,
@@ -359,6 +360,13 @@ def _read_lead_fix_records(run_dir: Path) -> tuple[dict, str | None]:
             "tier": r.get("tier"),
             "file": r.get("file"),
             "line_count": r.get("line_count"),
+            # D-078: the numstat rows themselves, carried through instead of
+            # dropped. `file` is None for every multi-file fix, so a report
+            # built from `file` alone answered "in which file" with a blank
+            # cell for exactly the fixes where the question is hardest — and
+            # printed that same blank for a commit git could not read at all.
+            "files": r.get("files"),
+            "file_rows": _lead_fix_file_rows(r),
             "test": r.get("test"),
             "fix_commit": r.get("fix_commit"),
         }
@@ -366,6 +374,74 @@ def _read_lead_fix_records(run_dir: Path) -> tuple[dict, str | None]:
         if r.get("event") == HANDOFF_EVENT_LEAD_FIX
     ]
     return {"count": len(rows), "records": rows}, None
+
+
+def _lead_fix_file_rows(record: dict) -> list[dict]:
+    """One row per non-test file a `lead_fix` record measured. AC-022 / D-078.
+
+    Returns ``[{"path": str, "line_count": int | None}]`` — one entry per
+    ``files`` row, so the markdown table can print a line per file and the JSON
+    carries the same rows the markdown draws (FR-038).
+
+    THE FOUR CASES ARE THE WRITER'S FOUR CASES, NOT A FIFTH OPINION (D-078)
+    ----------------------------------------------------------------------
+    `foundry_handoff.record_lead_fix_handoff` already distinguishes them in the
+    handoffs.md mirror: the single path, the N-file list, "no non-test file in
+    the commit", and MEASUREMENT_UNAVAILABLE. This report rendered ONE cell for
+    all four — empty — so a five-file LATENT fix and a fix whose commit git
+    could not read were the same row, while the mirror beside them said which
+    was which. AC-022 makes this the audit trail for a fix nobody else
+    reviewed and names "in which file" as one of the five things a reader must
+    be able to re-derive.
+
+    ``MEASUREMENT_UNAVAILABLE`` and ``_numstat_count`` are IMPORTED from the
+    writer, not re-typed here, for the reason `_agent_id_for_casting` above
+    imports its spelling: a second copy of the sentinel drifts silently the day
+    the writer's wording changes, and re-parsing a numstat cell with a second
+    parser is how the audit record comes to disagree with the lane measurement
+    it exists to make re-derivable. The import is function-local and closes no
+    cycle — it runs at call time, when every module in the chain is built.
+
+    ``line_count`` is the availability signal, exactly as it is at the writer:
+    a commit touching three non-test files has a real count and NO single path,
+    and calling that "unavailable" would be the same lie one shape along.
+    """
+    from foundry_mcp.tools.foundry_handoff import (
+        MEASUREMENT_UNAVAILABLE,
+        _numstat_count,
+    )
+
+    files = record.get("files")
+    line_count = record.get("line_count")
+    measured = line_count is not None
+
+    if isinstance(files, list):
+        rows = [row for row in files if isinstance(row, dict)]
+        if not rows:
+            # `files: []` is a MEASURED commit that changed no non-test file —
+            # a real answer, and a different one from "git could not read it".
+            return [{"path": "no non-test file in the commit",
+                     "line_count": line_count if measured else 0}]
+        return [
+            {
+                "path": str(row.get("path")),
+                "line_count": (
+                    _numstat_count(row.get("added"))
+                    + _numstat_count(row.get("deleted"))
+                ),
+            }
+            for row in rows
+        ]
+
+    # No `files` key: a record written before D-074 added the rows. `file` and
+    # `line_count` are all there is, and they still separate the three shapes
+    # that pre-date the rows.
+    if not measured:
+        return [{"path": MEASUREMENT_UNAVAILABLE, "line_count": None}]
+    if isinstance(record.get("file"), str) and record["file"]:
+        return [{"path": record["file"], "line_count": line_count}]
+    return [{"path": "more than one non-test file (no single path)",
+             "line_count": line_count}]
 
 
 def _read_state(run_dir: Path) -> tuple[dict, str | None]:
@@ -432,7 +508,19 @@ def _as_count(value: Any) -> int:
 
 
 def _new_spend_bucket() -> dict[str, Any]:
-    return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "agents": 0}
+    """A ledger bucket. ``records`` counts ROWS; ``agents`` counts AGENTS.
+
+    D-090: these were one key. ``agents`` was incremented once per ledger row
+    here while `foundry_orchestrator._spend_summary` published the same key as
+    a count of DISTINCT agent ids, so report.json carried
+    ``by_phase.F3.agents: 3`` beside ``state_rollup.agents: 2`` for the same
+    phase — one field name, two meanings, side by side in one document, and
+    they disagreed BY CONSTRUCTION on every run where any agent reported twice.
+    ``agents`` is filled from the roll-up in `_read_spend`; nothing in this
+    module counts it a second way.
+    """
+    return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "records": 0,
+            "agents": None, "unreported": None}
 
 
 def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
@@ -448,50 +536,145 @@ def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
     maintained by hand in a second place — the house anti-pattern, and one
     that is wrong the day a model's price changes.
 
-    The ledger is the authority and `state.json.spend` is carried beside it as
-    `state_rollup`, never instead of it: the server writes that roll-up as it
-    goes, and the two disagreeing is a fact worth being able to see rather than
-    one to resolve silently here.
+    The ledger is the authority for TOKENS AND MINUTES and `state.json.spend`
+    is carried beside it as `state_rollup`, never instead of it: the server
+    writes that roll-up as it goes, and the two disagreeing is a fact worth
+    being able to see rather than one to resolve silently here.
+
+    ONE FIELD NAME, ONE MEANING (D-090)
+    -----------------------------------
+    "The two disagreeing is a fact worth seeing" was the right rule applied to
+    the wrong pair. `foundry_orchestrator._spend_summary` counts `agents` as
+    DISTINCT agents (D-038 made it so, over a set, from this same ledger); this
+    reader counted `agents` as RECORDS. So report.json carried
+    ``by_phase.F3 {tokens 240000, agents 3}`` beside
+    ``state_rollup {tokens 240000, agents 2}`` — one key, two meanings, in one
+    document — and they parted BY CONSTRUCTION the moment any agent reported
+    twice. A drift signal that is permanently noisy detects no drift at all.
+
+    So `agents` and `unreported` are READ from the roll-up, which is the
+    orchestrator's derivation and the only one; the row count keeps its own
+    honest name, `records`; and what is CHECKED is the pair that really is two
+    derivations of one number — the roll-up's tokens and milliseconds against
+    the ledger's. A mismatch is NAMED in `disagreements`, per bucket and per
+    field, instead of being printed twice under one label.
+
+    `agents` is None, never 0, on a run whose `state.json` carries no `spend`
+    roll-up: "nobody recorded how many agents" and "no agents ran" are
+    different facts, and this section already refuses to conflate that pair for
+    the wall clock.
     """
     records, problem = read_jsonl(run_dir / SPEND_LEDGER_FILENAME)
     if problem is not None:
         return {}, problem
 
+    state_rollup = state.get("spend")
+    state_rollup = state_rollup if isinstance(state_rollup, dict) else None
+
+    def _rollup_bucket(section: str | None, key: str | None) -> dict:
+        if state_rollup is None:
+            return {}
+        if section is None:
+            found = state_rollup.get("total")
+        else:
+            group = state_rollup.get(section)
+            found = group.get(key) if isinstance(group, dict) else None
+        return found if isinstance(found, dict) else {}
+
     by_phase: dict[str, dict[str, Any]] = {}
     by_cycle: dict[str, dict[str, Any]] = {}
     total = _new_spend_bucket()
-    agents: set[str] = set()
+    # Agent NAMES per bucket. NOT published — `agents` is the roll-up's number
+    # and only the roll-up's. This is the CHECK: the orchestrator derives its
+    # count as distinct names over this same ledger, so the two must agree, and
+    # a bucket where they do not is a stale roll-up worth naming.
+    seen: dict[tuple[str, str], set[str]] = {}
     for entry in records:
         tokens = _as_count(entry.get("tokens"))
         duration_ms = _as_count(entry.get("duration_ms"))
         phase = entry.get("phase")
         cycle = entry.get("cycle")
+        agent = entry.get("agent")
 
-        buckets = [total]
+        buckets = [(("run", "total"), total)]
         if isinstance(phase, str) and phase:
-            buckets.append(by_phase.setdefault(phase, _new_spend_bucket()))
+            buckets.append((("by_phase", phase),
+                            by_phase.setdefault(phase, _new_spend_bucket())))
         if isinstance(cycle, int) and not isinstance(cycle, bool) and cycle >= 0:
-            buckets.append(by_cycle.setdefault(str(cycle), _new_spend_bucket()))
-        for bucket in buckets:
+            buckets.append((("by_cycle", str(cycle)),
+                            by_cycle.setdefault(str(cycle), _new_spend_bucket())))
+        for scope, bucket in buckets:
             bucket["tokens"] += tokens
             bucket["duration_ms"] += duration_ms
-            bucket["agents"] += 1
+            bucket["records"] += 1
+            if isinstance(agent, str) and agent:
+                seen.setdefault(scope, set()).add(agent)
 
-        agent = entry.get("agent")
-        if isinstance(agent, str) and agent:
-            agents.add(agent)
+    # A phase or cycle the roll-up knows and the ledger does not is the run
+    # where every `Foundry-Spend` call was forgotten — the one whose gap most
+    # needs a line. `_overlay_unreported` creates exactly those buckets, so
+    # dropping them here would hide the case the field exists for.
+    for section, target in (("by_phase", by_phase), ("by_cycle", by_cycle)):
+        group = (state_rollup or {}).get(section)
+        if isinstance(group, dict):
+            for key in group:
+                if isinstance(key, str):
+                    target.setdefault(key, _new_spend_bucket())
 
-    for bucket in (*by_phase.values(), *by_cycle.values(), total):
+    disagreements: list[dict] = []
+    for section, key, bucket in (
+        *(("by_phase", k, v) for k, v in by_phase.items()),
+        *(("by_cycle", k, v) for k, v in by_cycle.items()),
+        (None, "total", total),
+    ):
         bucket["minutes"] = round(bucket["duration_ms"] / 60_000.0, 2)
-    total["distinct_agents"] = len(agents)
+        scope = "run" if section is None else section
+        recorded = _rollup_bucket(section, key)
+        for field in ("agents", "unreported"):
+            value = recorded.get(field)
+            bucket[field] = (
+                value if isinstance(value, int) and not isinstance(value, bool)
+                else None
+            )
+        # `agents` is checked against the ledger's distinct names and `tokens`
+        # and `duration_ms` against the ledger's sums: three fields the
+        # orchestrator and this reader both derive from the same rows, so
+        # three places a stale roll-up shows. The ledger's agent count is
+        # NEVER written into the bucket — publishing it there is what made
+        # `agents` mean two things (D-090).
+        ledger_side = {
+            "tokens": bucket["tokens"],
+            "duration_ms": bucket["duration_ms"],
+            "agents": len(seen.get((scope, key), ())),
+        }
+        for field, ledger_value in ledger_side.items():
+            value = recorded.get(field)
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value != ledger_value
+            ):
+                disagreements.append({
+                    "scope": scope,
+                    "key": key,
+                    "field": field,
+                    "ledger": ledger_value,
+                    "state_rollup": value,
+                })
 
-    state_rollup = state.get("spend")
     return {
         "records": len(records),
         "by_phase": {k: by_phase[k] for k in sorted(by_phase)},
         "by_cycle": {k: by_cycle[k] for k in sorted(by_cycle, key=_cycle_sort_key)},
         "total": total,
-        "state_rollup": state_rollup if isinstance(state_rollup, dict) else None,
+        "state_rollup": state_rollup,
+        "disagreements": disagreements,
+        "note": (
+            "Tokens and minutes are the ledger's; agents and unreported are "
+            "state.json.spend's, which is the orchestrator's own derivation "
+            "and counts DISTINCT agents. `records` counts ledger rows, which "
+            "is a different number whenever an agent reported twice (D-090)."
+        ),
     }, None
 
 
@@ -623,23 +806,19 @@ def _wall_clock_minutes(run_dir: Path) -> float | None:
     the ledger is absent, empty or carries no parseable timestamp: a run that
     took no measurable time and a run nobody measured are different facts, and
     NFR-001's comparison is unreadable if they print the same.
+
+    D-087 — THE READ IS NOT THIS MODULE'S ANY MORE, ONLY THE UNIT IS.
+    ------------------------------------------------------------------
+    The paragraph above was TRUE here and false one surface along:
+    `measure-run.py` had its own copy of this walk and published `0.0` for the
+    unmeasured run this one publishes `None` for. Both print NFR-001's
+    wall-clock column, and on a run with no `handoffs.jsonl` they printed
+    different facts. `foundry_state.handoffs_wall_clock_seconds` now owns the
+    ledger walk and the None rule for both; what stays here is the conversion
+    to MINUTES, which is this document's unit and nobody else's.
     """
-    records, problem = read_jsonl(run_dir / HANDOFFS_FILENAME)
-    if problem is not None or not records:
-        return None
-    moments: list[datetime] = []
-    for record in records:
-        raw = record.get("timestamp")
-        if not isinstance(raw, str) or not raw:
-            continue
-        try:
-            moments.append(datetime.fromisoformat(raw.replace("Z", "+00:00")))
-        except ValueError:
-            continue
-    if len(moments) < 2:
-        return None
-    span = (max(moments) - min(moments)).total_seconds()
-    return None if span < 0 else round(span / 60.0, 1)
+    seconds, _problem = handoffs_wall_clock_seconds(run_dir)
+    return None if seconds is None else round(seconds / 60.0, 1)
 
 
 def _archive_metrics(
@@ -712,7 +891,9 @@ def _archive_metrics(
 
 
 def _baseline_comparison_section(
-    run_dir: Path, inspect_modes: dict, state: dict
+    run_dir: Path,
+    inspect_modes: dict | None = None,
+    state: dict | None = None,
 ) -> dict:
     """NFR-001 / AC-036 — this run's numbers beside thunder-viper's.
 
@@ -724,10 +905,26 @@ def _baseline_comparison_section(
     The archive itself is read too, when it is beside this run under the same
     `foundry-archive/` root, and that is what supplies NFR-001's other three
     columns (D-037). Every value it yields is derived by `_archive_metrics`,
-    the same function that derives this run's — see its docstring. The recorded
-    constants remain the FLOOR for the baseline's own cycles: if its archive
-    derives fewer than the 22 it is on record as having run, the derivation is
-    measuring wrong, not measuring a better run, and the recorded number wins.
+    the same function that derives this run's — see its docstring.
+
+    THE CONSTANT IS NOT A FLOOR. IT IS THE BASELINE (D-085)
+    -------------------------------------------------------
+    The recorded numbers used to be a floor — `max(derived, recorded)` — which
+    is one-sided in exactly the direction that breaks it: a derivation that
+    comes in UNDER 22 loses, and a derivation that comes in OVER 22 silently
+    REPLACES the constant this section names in its own footnote. Driven: a
+    thunder-viper archive whose `state.json.cycle` had been migrated to 22
+    rendered the GRIND-cycles baseline cell as 23 while the note under the same
+    table still read "cycles from vocab.THUNDER_VIPER_BASELINE". A floor that
+    can be exceeded does not protect the constant it names, and a table that
+    contradicts its own footnote is worse than either number alone.
+
+    So the baseline COLUMN is `THUNDER_VIPER_BASELINE`, always, for the two
+    numbers that constant records. What the archive derives is published
+    BESIDE it as `baseline_derived` and named in the note; when the two differ
+    the difference is stated rather than resolved, because a derivation that
+    disagrees with the recorded baseline is a fact about the archive (or about
+    a migration that touched it) and not a better measurement of the run.
 
     `dict(...)` copies rather than embedding the module objects. The two
     constants are plain dicts (they have to be — `report.json` is
@@ -749,36 +946,60 @@ def _baseline_comparison_section(
     """
     target = dict(CONVERGENCE_TARGET)
     baseline_recorded = dict(THUNDER_VIPER_BASELINE)
+    if state is None:
+        state, _problem = read_document(run_dir / STATE_FILENAME)
+    if inspect_modes is None:
+        inspect_modes = _inspect_modes_section(state)
     current = _archive_metrics(run_dir, state=state, inspect_modes=inspect_modes)
 
     baseline_dir = run_dir.parent / str(baseline_recorded.get("run", ""))
+    absent = {
+        "run": baseline_recorded.get("run"),
+        "grind_cycles": None,
+        "post_verification_cycles": None,
+        "defects_by_tier": None,
+        "tokens": None,
+        "wall_clock_minutes": None,
+    }
+    present = baseline_dir.is_dir() and baseline_dir.resolve() != run_dir.resolve()
+    baseline_derived = _archive_metrics(baseline_dir) if present else dict(absent)
+
+    # The published baseline column: the two recorded cycle numbers, never
+    # overridden (D-085), and the three columns the constant does not record,
+    # which can only come from the archive.
+    baseline = dict(baseline_derived)
+    for key in ("grind_cycles", "post_verification_cycles"):
+        baseline[key] = baseline_recorded.get(key)
+    baseline["run"] = baseline_recorded.get("run")
+
     baseline_note = (
-        f"cycles from vocab.THUNDER_VIPER_BASELINE; the other columns are "
-        f"derived from {baseline_dir.name}/ when that archive sits beside this "
-        f"run."
+        f"GRIND cycles and post-verification cycles in the Baseline column are "
+        f"vocab.THUNDER_VIPER_BASELINE "
+        f"({baseline_recorded.get('grind_cycles')} / "
+        f"{baseline_recorded.get('post_verification_cycles')}) and are never "
+        f"replaced by a derivation. Defects by tier, tokens and wall clock have "
+        f"no recorded constant, so they are derived from {baseline_dir.name}/ "
+        f"when that archive sits beside this run."
     )
-    if baseline_dir.is_dir() and baseline_dir.resolve() != run_dir.resolve():
-        baseline = _archive_metrics(baseline_dir)
-    else:
-        baseline = {
-            "run": baseline_recorded.get("run"),
-            "grind_cycles": None,
-            "post_verification_cycles": None,
-            "defects_by_tier": None,
-            "tokens": None,
-            "wall_clock_minutes": None,
-        }
+    if not present:
         baseline_note += (
             " That archive is not present here, so those three columns are "
-            "null rather than fabricated."
+            "null rather than fabricated, and nothing was derived."
         )
-    # The recorded numbers are the floor for the baseline's own cycles.
-    for key in ("grind_cycles", "post_verification_cycles"):
-        recorded = baseline_recorded.get(key)
-        derived = baseline.get(key)
-        baseline[key] = (
-            recorded if not isinstance(derived, int) else max(derived, recorded)
-        )
+    else:
+        differs = {
+            key: baseline_derived.get(key)
+            for key in ("grind_cycles", "post_verification_cycles")
+            if baseline_derived.get(key) != baseline_recorded.get(key)
+        }
+        if differs:
+            baseline_note += (
+                " That archive currently DERIVES "
+                + ", ".join(f"{k} {v}" for k, v in sorted(differs.items()))
+                + ", shown in the Derived column. The recorded constant stands;"
+                " a derivation that disagrees with it is a fact about the"
+                " archive, not a better measurement of the run."
+            )
 
     def _meets(value: object, limit: object) -> bool | None:
         if not isinstance(value, int) or isinstance(value, bool):
@@ -788,6 +1009,9 @@ def _baseline_comparison_section(
     return {
         "baseline": baseline_recorded,
         "baseline_metrics": baseline,
+        # D-085: what the baseline's own archive says, published beside the
+        # constant instead of allowed to overwrite it.
+        "baseline_derived": baseline_derived if present else None,
         "target": target,
         "current": current,
         "meets_target": {
@@ -939,13 +1163,25 @@ def _render_section(key: str, value: dict) -> list[str]:
             )
         )
     if key == "lead_fix_records":
+        # D-078: ONE ROW PER FILE. A multi-file fix has no single path, so the
+        # record's `file` is None and a table built on it printed a blank cell
+        # — the same blank a commit git could not read printed, which made the
+        # two indistinguishable in the one document that is supposed to make a
+        # lead fix re-derivable. `Lines` is that FILE's added-plus-deleted; the
+        # record's total is the sum of its rows.
+        rows = []
+        for r in value.get("records", []):
+            for entry in r.get("file_rows") or [{"path": r.get("file"),
+                                                 "line_count": r.get("line_count")}]:
+                rows.append([r.get("defect_id"), r.get("tier"),
+                             entry.get("path"), entry.get("line_count"),
+                             r.get("test"), r.get("fix_commit")])
         return (
-            [f"{value.get('count', 0)} lead-authored fixes (GI-003 / AC-022).", ""]
+            [f"{value.get('count', 0)} lead-authored fixes (GI-003 / AC-022), "
+             f"{len(rows)} file rows. One row per non-test file the fix "
+             "touched; `Lines` is that file's added-plus-deleted.", ""]
             + _md_table(
-                ["Defect", "Tier", "File", "Lines", "Test", "Fix commit"],
-                [[r.get("defect_id"), r.get("tier"), r.get("file"),
-                  r.get("line_count"), r.get("test"), r.get("fix_commit")]
-                 for r in value.get("records", [])],
+                ["Defect", "Tier", "File", "Lines", "Test", "Fix commit"], rows,
             )
         )
     if key == "inspect_modes_per_cycle":
@@ -961,21 +1197,45 @@ def _render_section(key: str, value: dict) -> list[str]:
         )
     if key == "spend_per_phase_and_cycle":
         total = value.get("total") or {}
-        rows = [["phase", k, v.get("tokens"), v.get("minutes"), v.get("agents")]
+
+        def _spend_row(scope: str, name: str, bucket: dict) -> list[Any]:
+            return [scope, name, bucket.get("tokens"), bucket.get("minutes"),
+                    bucket.get("records"), bucket.get("agents"),
+                    bucket.get("unreported")]
+
+        rows = [_spend_row("phase", k, v)
                 for k, v in (value.get("by_phase") or {}).items()]
-        rows += [["cycle", k, v.get("tokens"), v.get("minutes"), v.get("agents")]
+        rows += [_spend_row("cycle", k, v)
                  for k, v in (value.get("by_cycle") or {}).items()]
-        rows.append(["run", "total", total.get("tokens"), total.get("minutes"),
-                     total.get("agents")])
+        rows.append(_spend_row("run", "total", total))
+        # D-090: Records and Agents are DIFFERENT COLUMNS because they are
+        # different numbers — a teammate that reported twice is two records and
+        # one agent. The markdown already said "Records" over a cell the JSON
+        # called `agents`; now both documents call each number what it is.
+        disagreements = value.get("disagreements") or []
+        trailer = []
+        if disagreements:
+            trailer = ["", "The ledger and `state.json.spend` disagree on:"] + [
+                f"- {d.get('scope')} {d.get('key')} {d.get('field')}: "
+                f"ledger {d.get('ledger')}, state.json.spend "
+                f"{d.get('state_rollup')}"
+                for d in disagreements
+            ]
         return (
             # "Reported as", not "Cost is": NFR-002 bans the money frame, and
             # the word invites a reader to supply the rate table the section
             # deliberately does not keep. `test_report.py`'s currency scan
             # drove this — it matched the generator's own sentence.
-            [f"{value.get('records', 0)} spend records; "
-             f"{total.get('distinct_agents', 0)} distinct agents. Reported as "
+            [f"{value.get('records', 0)} spend records over "
+             f"{total.get('agents')} distinct agents. Reported as "
              "tokens and minutes only (NFR-002).", ""]
-            + _md_table(["Scope", "Key", "Tokens", "Minutes", "Records"], rows)
+            + _md_table(
+                ["Scope", "Key", "Tokens", "Minutes", "Records", "Agents",
+                 "Unreported"],
+                rows,
+            )
+            + trailer
+            + ["", str(value.get("note", ""))]
         )
     if key == "unreported_dispatches":
         rows = [[phase, ", ".join(agents)]
@@ -1007,21 +1267,34 @@ def _render_section(key: str, value: dict) -> list[str]:
         # tokens, wall clock". A row whose baseline cell is blank is a column
         # thunder-viper's archive cannot supply, not one nobody thought to
         # print — `baseline_note` below says which.
+        #
+        # D-085: Baseline and Derived are SEPARATE COLUMNS. The Baseline cell
+        # for the two cycle rows is vocab.THUNDER_VIPER_BASELINE and cannot be
+        # overwritten by what the archive happens to derive today; Derived
+        # shows that derivation beside it, so a migration that moved the
+        # archive's counter is visible instead of silently becoming the
+        # baseline the footnote still credits to the constant.
+        derived = value.get("baseline_derived") or {}
         return (
             _md_table(
-                ["Metric", f"Baseline ({baseline.get('run')})", "Target",
+                ["Metric", f"Baseline ({baseline.get('run')}, recorded)",
+                 "Baseline (derived)", "Target",
                  f"This run ({current.get('run')})"],
                 [["GRIND cycles", metrics.get("grind_cycles"),
+                  derived.get("grind_cycles"),
                   target.get("grind_cycles"), current.get("grind_cycles")],
                  ["Post-verification cycles",
                   metrics.get("post_verification_cycles"),
+                  derived.get("post_verification_cycles"),
                   target.get("post_verification_cycles"),
                   current.get("post_verification_cycles")],
-                 ["Defects by tier", _tiers(metrics.get("defects_by_tier")),
+                 ["Defects by tier", None,
+                  _tiers(derived.get("defects_by_tier")),
                   None, _tiers(current.get("defects_by_tier"))],
-                 ["Tokens", metrics.get("tokens"), None,
+                 ["Tokens", None, derived.get("tokens"), None,
                   current.get("tokens")],
-                 ["Wall clock (minutes)", metrics.get("wall_clock_minutes"),
+                 ["Wall clock (minutes)", None,
+                  derived.get("wall_clock_minutes"),
                   None, current.get("wall_clock_minutes")]],
             )
             + ["", str(value.get("baseline_note", "")),

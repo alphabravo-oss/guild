@@ -175,6 +175,68 @@ def read_jsonl(path: Path) -> tuple[list[dict], str | None]:
     return records, None
 
 
+def handoffs_wall_clock_seconds(run_dir: Path) -> tuple[float | None, str | None]:
+    """Seconds spanned by `handoffs.jsonl`, or ``(None, why)``. ONE derivation.
+
+    Returns ``(seconds, problem)`` and never raises. ``seconds`` is the delta
+    between the earliest and latest parseable ``timestamp`` in the ledger;
+    ``problem`` names why there is no number when there is none.
+
+    WHY THIS LIVES IN THE LEAF MODULE (D-087)
+    -----------------------------------------
+    Two surfaces published NFR-001's wall-clock column and they printed
+    different things for the same unmeasured run. ``measure-run.py`` emitted
+    ``wall_clock_seconds: 0.0``; ``foundry_report._wall_clock_minutes`` emitted
+    ``null`` and its docstring forbade the other spelling by name — "a run that
+    took no measurable time and a run nobody measured are different facts, and
+    NFR-001's comparison is unreadable if they print the same". Driven on a run
+    with no ``handoffs.jsonl``: the CLI fabricated exactly the number the report
+    module refuses to fabricate, and NFR-001's comparison is the one surface
+    where the two sit in the same table.
+
+    So the read is hosted HERE, beside ``derive_cycle_count``, for the same
+    reason D-036 put that one here: this is the only module both readers
+    already import, and it is reachable from either without closing a cycle in
+    the import graph.
+
+    TWO ENDPOINTS OR NOTHING. A single record cannot bound a span, so one
+    parseable timestamp is ``(None, ...)`` and not ``0.0`` — that is the
+    report's rule, adopted whole, because it is the rule the requirement's own
+    wording names.
+
+    ``datetime`` IS IMPORTED INSIDE THE FUNCTION. The leaf contract at the top
+    of this file is about the MODULE's import list — it is what lets
+    ``measure-run.py`` state a stdlib-only, package-free import cost and what
+    keeps ``foundry.py`` and ``foundry_orchestrator.py`` free of an import
+    cycle. A call-time import adds nothing to that list, so the contract reads
+    exactly as it did before this function existed. The alternative — hand-
+    parsing ISO-8601 to avoid the import — would be a third timestamp parser in
+    a module written to end second derivations.
+    """
+    from datetime import datetime
+
+    records, problem = read_jsonl(run_dir / "handoffs.jsonl")
+    if problem is not None:
+        return None, problem
+    if not records:
+        return None, "handoffs.jsonl is absent or empty"
+    moments: list[datetime] = []
+    for record in records:
+        raw = record.get("timestamp")
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            moments.append(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    if len(moments) < 2:
+        return None, "handoffs.jsonl carries fewer than two parseable timestamps"
+    span = (max(moments) - min(moments)).total_seconds()
+    if span < 0:
+        return None, "handoffs.jsonl timestamps span a negative interval"
+    return float(span), None
+
+
 def derive_cycle_count(run_dir: Path) -> dict:
     """The run's GRIND cycle count. ONE derivation, read by every surface.
 

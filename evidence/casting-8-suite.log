@@ -64,28 +64,28 @@
 ........................................................................ [ 23%]
 ........................................................................ [ 26%]
 ........................................................................ [ 28%]
-........................................................................ [ 31%]
+........................................................................ [ 30%]
 ........................................................................ [ 33%]
 ........................................................................ [ 35%]
 ........................................................................ [ 38%]
 .................................s...................................... [ 40%]
-.s...................................................................... [ 42%]
+........................................................................ [ 42%]
 ........................................................................ [ 45%]
 ........................................................................ [ 47%]
-........................................................................ [ 50%]
+........................................................................ [ 49%]
 ........................................................................ [ 52%]
 ........................................................................ [ 54%]
 ........................................................................ [ 57%]
 ........................................................................ [ 59%]
-........................................................................ [ 62%]
+........................................................................ [ 61%]
 ........................................................................ [ 64%]
 ........................................................................ [ 66%]
 ........................................................................ [ 69%]
 ........................................................................ [ 71%]
-........................................................................ [ 74%]
+........................................................................ [ 73%]
 ........................................................................ [ 76%]
-.....................s..s.s..s.......................................... [ 78%]
-.............................
+..........................s..s.s..s..................................... [ 78%]
+........................................
 === report.json top-level keys ===
   generated_at
   run
@@ -123,9 +123,11 @@
   D-007  status fixed  UNWIRED_SURFACE
 === escalated classes (AC-004) ===
   FALSE_DOCUMENTED_CONTRACT  status=CLEARED  exit_reason=budget  cleared_at_cycle=5  packets=2  open_latent=['D-004', 'D-005']
-=== lead_fix records (AC-022) ===
-  D-002  tier=LIVE  file=src/foundry_mcp/tools/evidence.py  lines=11  test=tests/test_evidence.py::test_the_sweep_reports_elapsed_per_log
-  D-003  tier=LATENT  file=src/foundry_mcp/tools/foundry_report.py  lines=64  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
+=== lead_fix records, one line per file touched (AC-022) ===
+  D-002  tier=LIVE  test=tests/test_evidence.py::test_the_sweep_reports_elapsed_per_log
+      src/foundry_mcp/tools/evidence.py  lines=11
+  D-003  tier=LATENT  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
+      src/foundry_mcp/tools/foundry_report.py  lines=64
 === INSPECT mode per cycle (AC-036) ===
   cycle 1  F2    FULL  first_of_phase
   cycle 2  F2    DELTA delta
@@ -133,10 +135,16 @@
   cycle 4  F2    FULL  verifier_touched
   cycle 5  F5    FULL  final_gate
 === spend: tokens and minutes only, no money (NFR-002) ===
-  phase F1    tokens=930000    minutes=42.0
-  phase F2    tokens=980000    minutes=50.0
-  phase F3    tokens=610000    minutes=30.0
-  run   total tokens=2520000   minutes=122.0
+  phase F1    tokens=930000    minutes=42.0   records=2 agents=3
+  phase F2    tokens=980000    minutes=50.0   records=2 agents=2
+  phase F3    tokens=610000    minutes=30.0   records=1 agents=1
+  run   total tokens=2520000   minutes=122.0  records=5 agents=6
+  disagreement: by_phase F1 tokens ledger=930000 state_rollup=1240000
+  disagreement: by_phase F1 duration_ms ledger=2520000 state_rollup=3000000
+  disagreement: by_phase F1 agents ledger=2 state_rollup=3
+  disagreement: run total tokens ledger=2520000 state_rollup=2830000
+  disagreement: run total duration_ms ledger=7320000 state_rollup=7800000
+  disagreement: run total agents ledger=5 state_rollup=6
 === unreported dispatches, advisory only (AC-034) ===
   F1     ['casting-8']
   F2     ['research_audit', 'test', 'test01']
@@ -145,24 +153,25 @@
   baseline thunder-viper: grind=22 post_verification=8
   target: grind=12 post_verification=3
   this run: grind=6 post_verification=1
+  baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-........................................... [ 81%]
+................................ [ 80%]
 ........................................................................ [ 83%]
 ........................................................................ [ 85%]
 ........................................................................ [ 88%]
 ........................................................................ [ 90%]
-........................................................................ [ 93%]
+........................................................................ [ 92%]
 ........................................................................ [ 95%]
 ........................................................................ [ 97%]
-..............................................................           [100%]
+........................................................................ [ 99%]
+.                                                                        [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-final/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1833: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-final/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
 SKIPPED [1] tests/test_protocol_prose.py:5203: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3005 passed, 9 skipped, 3 deselected in 122.67s
+3017 passed, 8 skipped, 3 deselected in 120.46s

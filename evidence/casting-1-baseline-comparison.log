@@ -55,6 +55,15 @@
       "grind_cycles": 22,
       "post_verification_cycles": 8
     },
+    "baseline_metrics": {
+      "run": "thunder-viper",
+      "grind_cycles": 22,
+      "post_verification_cycles": 8,
+      "defects_by_tier": null,
+      "tokens": null,
+      "wall_clock_minutes": null
+    },
+    "baseline_derived": null,
     "target": {
       "grind_cycles": 12,
       "post_verification_cycles": 3
@@ -62,12 +71,28 @@
     "current": {
       "run": "thunder_viper_shape",
       "grind_cycles": 6,
-      "post_verification_cycles": null
+      "post_verification_cycles": null,
+      "defects_by_tier": {
+        "LATENT": 0,
+        "LIVE": 0,
+        "unknown": 6
+      },
+      "tokens": null,
+      "wall_clock_minutes": 1470.8
     },
     "meets_target": {
       "grind_cycles": true,
       "post_verification_cycles": null
-    }
+    },
+    "metrics": [
+      "grind_cycles",
+      "post_verification_cycles",
+      "defects_by_tier",
+      "tokens",
+      "wall_clock_minutes"
+    ],
+    "baseline_note": "GRIND cycles and post-verification cycles in the Baseline column are vocab.THUNDER_VIPER_BASELINE (22 / 8) and are never replaced by a derivation. Defects by tier, tokens and wall clock have no recorded constant, so they are derived from thunder-viper/ when that archive sits beside this run. That archive is not present here, so those three columns are null rather than fabricated, and nothing was derived.",
+    "note": "Numbers are the target, not a gate (NFR-001)."
   },
   "gate_verdicts": {
     "cycles": "PASS",

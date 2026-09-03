@@ -354,13 +354,37 @@ def test_missing_handoffs_jsonl_rejected(
     make_run_dir: Callable[..., Path],
 ) -> None:
     """Test 4 — empty run dir (no handoffs.jsonl) fires
-    PHASE9_WALL_CLOCK_UNAVAILABLE.
+    PHASE9_WALL_CLOCK_UNAVAILABLE, reports a NULL wall clock, and exits 0.
+
+    D-087 / D-086 re-point the two halves of this test.
+
+    The wall clock is `None`, never 0.0. `foundry_report._wall_clock_minutes`
+    has always published null here and its docstring forbids the other
+    spelling by name — "a run that took no measurable time and a run nobody
+    measured are different facts, and NFR-001's comparison is unreadable if
+    they print the same" — and this command publishes the OTHER column of that
+    same comparison, so it cannot fabricate what the report refuses to.
+
+    The status is 0 because "nobody measured the wall clock" is not an
+    unreadable artifact. D-105 named this exact asymmetry — the tool "failed
+    loud on 'could not measure the wall clock' and stayed silent on 'the
+    convergence gate FAILED'" — and closed it by making the quiet half loud;
+    NFR-001 ("numbers are the target, not a gate") requires the other
+    direction. The TOKEN still fires, which is what an operator and a cohort
+    matrix actually read.
     """
     run_dir = make_run_dir(omit_handoffs=True)
     exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
-    assert exit_code != 0
     combined = stdout + stderr
     assert "PHASE9_WALL_CLOCK_UNAVAILABLE" in combined, combined
+    payload = json.loads(stdout)
+    assert payload["wall_clock_seconds"] is None, (
+        "0.0 would be a fabricated measurement; the report module prints null "
+        "for this same run (D-087)"
+    )
+    assert exit_code == 0, (
+        "an unmeasured wall clock is not an unreadable artifact (D-086)"
+    )
 
 
 def test_missing_cycle_field_rejected(
@@ -382,15 +406,24 @@ def test_strict_flag_rejects_missing_context(
     """Test 6 — ``--strict`` with missing context-at-f2.txt fires
     PHASE9_CONTEXT_FILE_MISSING; without ``--strict`` returns
     ``context_pct: None`` and no failure token.
+
+    D-086 re-points the STATUS half only. ``--strict`` still decides whether
+    the token FIRES — that is the whole of what the flag is for, and the
+    cohort-study workflow reads the token — but a missing measurement is not
+    an unreadable artifact, so it does not reach the exit code. NFR-001:
+    "Numbers are the target, not a gate."
     """
     # Strict mode + missing context file -> failure token.
     run_dir_strict = make_run_dir(context_pct=None)
     exit_code, stdout, stderr = _invoke_measure_run(
         "--strict", str(run_dir_strict)
     )
-    assert exit_code != 0
     combined = stdout + stderr
     assert "PHASE9_CONTEXT_FILE_MISSING" in combined, combined
+    assert "PHASE9_CONTEXT_FILE_MISSING" in json.loads(stdout)["failure_tokens"]
+    assert exit_code == 0, (
+        "--strict names the gap in the payload; it does not gate the status"
+    )
 
     # Non-strict mode + missing context file -> exit 0, context_pct None.
     run_dir_loose = make_run_dir(
@@ -658,25 +691,45 @@ def test_wall_clock_regression_pct_arithmetic(tmp_path: Path) -> None:
 
 
 def test_run_01_quantitative_gates() -> None:
-    """Test 13 — 4 RUN-01 gates per cohort:
-       cycles ≤ 8 -> PASS; yield 5-50% -> PASS;
-       context < 50% -> PASS; wall-clock regression < 50% -> PASS;
+    """Test 13 — 4 RUN-01 advisory verdicts per cohort:
+       cycles ≤ CONVERGENCE_TARGET["grind_cycles"] -> PASS; yield 5-50% ->
+       PASS; context < 50% -> PASS; wall-clock regression < 50% -> PASS;
        out-of-band -> FAIL.
 
-    Exercises the gate-evaluation function directly via the
+    Exercises the verdict-evaluation function directly via the
     ``--evaluate-gates`` helper (Plan 09-02 territory). Table-driven across
     boundary cases.
+
+    D-086 RE-POINTS BOTH HALVES OF THIS TEST.
+
+    The cycles band is `vocab.CONVERGENCE_TARGET["grind_cycles"]` and no
+    longer a second constant of 8 kept in this script. Two thresholds for one
+    number lived in one payload: a 10-cycle run had
+    ``baseline_comparison.meets_target.grind_cycles`` true (10 <= 12) and
+    ``gate_verdicts.cycles`` FAIL (10 > 8), side by side. The boundary cases
+    below are therefore READ from the constant rather than written as
+    literals, which is what stops this table from becoming the third copy.
+
+    And the status is 0 on every row, FAIL included. NFR-001 verbatim:
+    "Numbers are the target, not a gate." An operator may gate on the verdict
+    this command prints; the command does not gate on it and exit nonzero, and
+    that is the whole of D-086 — the failing verdict was the one driving the
+    exit status, on runs that MET the effort's stated target.
     """
+    from foundry_mcp.schemas.vocab import CONVERGENCE_TARGET
+
+    at = CONVERGENCE_TARGET["grind_cycles"]
+    over = at + 1
     cases = [
         # (cycles, yield_pct, context_pct, regression_pct, expected_verdict)
-        (8, 25.0, 42.0, 30.0, "PASS"),    # all in-band
-        (9, 25.0, 42.0, 30.0, "FAIL"),    # cycles over
-        (8, 4.9, 42.0, 30.0, "FAIL"),     # yield under
-        (8, 50.1, 42.0, 30.0, "FAIL"),    # yield over
-        (8, 25.0, 49.9, 30.0, "PASS"),    # context just under cap
-        (8, 25.0, 50.0, 30.0, "FAIL"),    # context at cap (cap is < 50)
-        (8, 25.0, 42.0, 49.9, "PASS"),    # regression just under cap
-        (8, 25.0, 42.0, 50.0, "FAIL"),    # regression at cap
+        (at, 25.0, 42.0, 30.0, "PASS"),    # all in-band
+        (over, 25.0, 42.0, 30.0, "FAIL"),  # cycles over
+        (at, 4.9, 42.0, 30.0, "FAIL"),     # yield under
+        (at, 50.1, 42.0, 30.0, "FAIL"),    # yield over
+        (at, 25.0, 49.9, 30.0, "PASS"),    # context just under cap
+        (at, 25.0, 50.0, 30.0, "FAIL"),    # context at cap (cap is < 50)
+        (at, 25.0, 42.0, 49.9, "PASS"),    # regression just under cap
+        (at, 25.0, 42.0, 50.0, "FAIL"),    # regression at cap
     ]
     for cycles, yld, ctx, reg, expected in cases:
         exit_code, stdout, stderr = _invoke_measure_run(
@@ -691,14 +744,9 @@ def test_run_01_quantitative_gates() -> None:
             f"case={cycles, yld, ctx, reg}: "
             f"expected {expected}, got {payload['overall_verdict']}"
         )
-        # D-105: this path printed overall_verdict FAIL and then returned 0
-        # unconditionally, and this loop asserted that 0 on all eight cases —
-        # five of which it simultaneously asserted were FAIL. The verdict and
-        # the status must agree at every boundary, or the band constants below
-        # are documentation rather than gates.
-        assert exit_code == (1 if expected == "FAIL" else 0), (
-            f"case={cycles, yld, ctx, reg}: verdict {expected} "
-            f"but exit {exit_code}{stderr}"
+        assert exit_code == 0, (
+            f"case={cycles, yld, ctx, reg}: verdict {expected} reached the "
+            f"process status, which NFR-001 forbids{stderr}"
         )
 
 
@@ -825,9 +873,13 @@ def test_legacy_stream_key_still_counted(
 
     The claim under test is "no REJECTION", which is ``failure_tokens == []``
     — a strictly sharper assertion than the exit code this used to read. A
-    one-record ledger puts 100% of the yield on a single stream, so post-D-105
-    the yield gate FAILs and the status is 1; that says nothing about the
-    legacy key, and asserting 0 here would have re-pinned the bug D-105 fixed.
+    one-record ledger puts 100% of the yield on a single stream, so the yield
+    verdict FAILs; that says nothing about the legacy key.
+
+    D-086 re-points the status. The verdict still FAILs and is still printed;
+    the process still exits 0, because NFR-001 makes these numbers a report
+    and not a gate. The sharper assertion — no token — is unchanged and is
+    what the test is actually for.
     """
     run_dir = make_run_dir()
     (run_dir / "defects.json").write_text(
@@ -840,11 +892,11 @@ def test_legacy_stream_key_still_counted(
     assert payload["failure_tokens"] == [], (
         "the legacy `stream` key is being rejected, not merely gated"
     )
-    # The nonzero status is the yield band on a single-record ledger, and
-    # nothing else — every other gate is clean.
+    # The yield band fails on a single-record ledger and every other verdict
+    # is clean — reported, and reaching nothing (D-086).
     assert payload["gate_verdicts"]["defect_yield_per_stream"] == "FAIL"
     assert payload["gate_verdicts"]["cycles"] == "PASS"
-    assert exit_code == 1, (stdout, stderr)
+    assert exit_code == 0, (stdout, stderr)
 
 
 def test_assay_and_temper_sourced_defects_are_counted_not_discarded(
@@ -1186,37 +1238,56 @@ GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
 def test_convergence_gate_threshold_counts_cycles_not_indices(
     make_run_dir: Callable[..., Path],
 ) -> None:
-    """The gate half of D-063.
+    """The gate half of D-063, re-pointed by D-086.
 
-    A run at index 8 executed NINE cycles. The gate must FAIL it against a
-    threshold of 8, and the boundary case (index 7 = eight cycles) must PASS.
+    A run at index N executed N+1 cycles, and the verdict must be evaluated
+    against the COUNT. The threshold is `vocab.CONVERGENCE_TARGET`, which is
+    now the only one: `MAX_CYCLES_FOR_CONVERGENCE` was a SECOND constant for
+    the same number, eight against the target's twelve, and both were
+    evaluated in one payload — a 10-cycle run read `meets_target: true` and
+    `gate_verdicts.cycles: FAIL` in the same document, with the FAIL driving
+    the exit status.
+
+    So the boundary is read from the constant, the two spellings of the one
+    comparison are asserted to AGREE, and nothing here reaches the status.
     """
+    from foundry_mcp.schemas.vocab import CONVERGENCE_TARGET
+
     module = _load_measure_run_module()
-    assert module.MAX_CYCLES_FOR_CONVERGENCE == 8
+    assert not hasattr(module, "MAX_CYCLES_FOR_CONVERGENCE"), (
+        "the second cycle threshold is back; there is one, and it is "
+        "vocab.CONVERGENCE_TARGET (D-086)"
+    )
+    at_count = CONVERGENCE_TARGET["grind_cycles"]
 
     over = make_run_dir(
-        rollup=_rollup_doc({"8": {"prove": _entry(10, 10, 0)}}),
+        rollup=_rollup_doc({str(at_count): {"prove": _entry(10, 10, 0)}}),
         cohort_id="no_TYPE_01",
     )
     payload = json.loads(_invoke_measure_run(str(over))[1])
-    assert payload["cycles"] == 9, "index 8 is the ninth cycle"
+    assert payload["cycles"] == at_count + 1, "index N is the (N+1)th cycle"
     assert payload["gate_verdicts"]["cycles"] == "FAIL"
+    # The verdict and `meets_target` are ONE comparison, and this is the pin
+    # that they cannot part again.
+    assert payload["baseline_comparison"]["meets_target"]["grind_cycles"] is False
 
     at_threshold = make_run_dir(
-        rollup=_rollup_doc({"7": {"prove": _entry(10, 10, 0)}}),
+        rollup=_rollup_doc({str(at_count - 1): {"prove": _entry(10, 10, 0)}}),
         cohort_id="no_TYPE_02",
     )
     payload = json.loads(_invoke_measure_run(str(at_threshold))[1])
-    assert payload["cycles"] == 8
+    assert payload["cycles"] == at_count
     assert payload["gate_verdicts"]["cycles"] == "PASS"
+    assert payload["baseline_comparison"]["meets_target"]["grind_cycles"] is True
 
-    # The operator-supplied path already spoke in COUNTS; both paths now agree.
+    # The operator-supplied path already spoke in COUNTS; both paths read the
+    # same constant.
     exit_code, stdout, _ = _invoke_measure_run(
-        "--evaluate-gates", "--cycles", "9",
+        "--evaluate-gates", "--cycles", str(at_count + 1),
         "--yield-pct", "25.0", "--context-pct", "42.0", "--regression-pct", "30.0",
     )
     assert json.loads(stdout)["gate_verdicts"]["cycles"] == "FAIL"
-    assert exit_code == 1, "a blown convergence gate is a nonzero status (D-105)"
+    assert exit_code == 0, "NFR-001: the numbers are the target, not a gate"
 
 
 @pytest.mark.skipif(
@@ -1254,18 +1325,22 @@ def test_grand_vulture_reports_nfr_001s_two_baseline_numbers(tmp_path: Path) -> 
     # about grand-vulture is malformed or unreadable.
     assert payload["failure_tokens"] == [], payload["failure_tokens"]
 
-    # D-105 — the gate half. Those same two numbers are BOTH out of band:
-    # 18 cycles against a convergence threshold of 8, and a defect yield
-    # concentrated past the 50% ceiling. That is the whole premise of NFR-001,
-    # which names grand-vulture as the baseline this effort must improve ON.
-    # The instrument therefore has to say so out loud. It previously printed
-    # both FAILs and exited 0 — the acceptance instrument certifying the very
-    # run whose gates it had just watched blow.
+    # The verdict half. Those same two numbers are BOTH out of band: 18 cycles
+    # against a convergence target of 12, and a defect yield concentrated past
+    # the 50% ceiling. That is the whole premise of NFR-001, which names
+    # grand-vulture as the baseline this effort must improve ON, so the
+    # instrument has to say so out loud — in the payload, which is where it
+    # says everything else.
     assert payload["gate_verdicts"]["cycles"] == "FAIL"
     assert payload["gate_verdicts"]["defect_yield_per_stream"] == "FAIL"
-    assert exit_code == 1, (
-        "measure-run reports success on the baseline archive whose gates it "
-        f"just failed: {payload['gate_verdicts']} / {stderr}"
+    # D-086 re-points the STATUS. Saying it out loud is not the same as
+    # refusing: NFR-001 is "numbers are the target, not a gate", and a healthy,
+    # fully readable archive that merely missed the target must not exit
+    # nonzero. Nothing about grand-vulture is malformed — asserted above —
+    # so there is nothing left to make the status anything but 0.
+    assert exit_code == 0, (
+        "a readable archive that missed the target is not a failed read: "
+        f"{payload['gate_verdicts']} / {stderr}"
     )
 
     # And the real archive was never touched.
@@ -1273,28 +1348,38 @@ def test_grand_vulture_reports_nfr_001s_two_baseline_numbers(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
-# D-105 — a gate verdict must reach the exit status.
+# D-086 — NO VERDICT REACHES THE EXIT STATUS.
 #
-# All three gate-evaluating entry points derived their status from
-# failure_tokens alone, so a run could blow a gate, print the FAIL, and exit 0.
-# The calibration was exactly backwards: a purely informational token
+# D-105 found a real ASYMMETRY here: a purely informational token
 # (PHASE9_WALL_CLOCK_UNAVAILABLE, pinned by Test 4) exited 1 with every gate
-# PASSing, while a blown convergence gate exited 0. NFR-001 makes this the
-# effort's acceptance instrument; a gate whose verdict never reaches the exit
-# status is not a gate.
+# PASSing, while a blown convergence gate exited 0. It closed the asymmetry by
+# making the quiet half loud — every verdict routed to the status.
+#
+# NFR-001 requires the other direction, verbatim: "Numbers are the target, not
+# a gate." Driven on a synthetic 10-cycle run, `meets_target.grind_cycles` was
+# true (10 <= the CONVERGENCE_TARGET of 12) while `gate_verdicts.cycles` was
+# FAIL (10 > the second, local constant of 8) and the FAILING verdict drove
+# exit 1 — an operator was told a converging run had failed by the effort's own
+# acceptance instrument.
+#
+# So the asymmetry stays closed and the calibration flips: the status answers
+# ONLY "could this command read what it was pointed at". The seven
+# UNREADABLE_ARTIFACT_TOKENS exit 1; verdicts and the two could-not-measure
+# tokens are reported in the payload and reach nothing.
 # ---------------------------------------------------------------------------
 
 
-def test_a_blown_gate_alone_is_a_nonzero_status(
+def test_a_blown_gate_alone_is_not_a_nonzero_status(
     make_run_dir: Callable[..., Path],
 ) -> None:
-    """The per-run path, with a gate FAIL as the ONLY thing wrong.
+    """The per-run path, with a verdict FAIL as the ONLY thing wrong.
 
     ``--context-pct 50.0`` is the cleanest isolation available: it blows one
-    gate (the cap is a strict ``<``) while leaving failure_tokens empty, so the
-    status can come from nowhere else. 49.9 is the control — one tenth of a
-    point away, the same code path, exit 0. Together they also pin the band
-    boundary itself, which D-105 verified as consistent and must not move.
+    band (the cap is a strict ``<``) while leaving failure_tokens empty, so the
+    status can come from nowhere else — which makes it the sharpest possible
+    pin that a verdict alone moves nothing. 49.9 is the control, one tenth of a
+    point away. Together they still pin the band boundary itself, which D-105
+    verified as consistent and must not move.
     """
     run_dir = make_run_dir()
 
@@ -1303,11 +1388,11 @@ def test_a_blown_gate_alone_is_a_nonzero_status(
     )
     payload = json.loads(stdout)
     assert payload["failure_tokens"] == [], (
-        "isolation broken — the status could come from a token, not the gate"
+        "isolation broken — the status could come from a token, not the verdict"
     )
     assert payload["gate_verdicts"]["f2_context_pct"] == "FAIL"
-    assert exit_code == 1, (
-        f"gate FAIL printed but not routed to the exit status: {stderr}"
+    assert exit_code == 0, (
+        f"a verdict reached the exit status, which NFR-001 forbids: {stderr}"
     )
 
     exit_code, stdout, stderr = _invoke_measure_run(
@@ -1316,6 +1401,30 @@ def test_a_blown_gate_alone_is_a_nonzero_status(
     payload = json.loads(stdout)
     assert payload["gate_verdicts"]["f2_context_pct"] == "PASS"
     assert exit_code == 0, (stdout, stderr)
+
+
+def test_an_unreadable_artifact_is_still_a_nonzero_status(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The half D-086 keeps: a BROKEN input is a fault, not a measurement.
+
+    "Gates on nothing" is about the NUMBERS. An archive whose defects.json will
+    not parse produced no numbers at all, and reporting success for it would
+    make every downstream reading of the payload a guess. This is the isolation
+    from the other side of `test_a_blown_gate_alone_is_not_a_nonzero_status`:
+    every verdict is clean or MISSING and the status is 1 anyway, so the two
+    tests together show exactly which input moves it.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text("{not json", encoding="utf-8")
+
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    assert "PHASE9_DEFECTS_FILE_MALFORMED" in payload["failure_tokens"]
+    assert "FAIL" not in payload["gate_verdicts"].values(), (
+        "isolation broken — a verdict could be supplying the status"
+    )
+    assert exit_code == 1, (stdout, stderr)
 
 
 def test_a_missing_gate_is_honest_not_failed(
@@ -1339,14 +1448,18 @@ def test_a_missing_gate_is_honest_not_failed(
     assert exit_code == 0, (stdout, stderr)
 
 
-def test_matrix_gate_fail_reaches_the_exit_status(tmp_path: Path) -> None:
-    """The --matrix path, reproducing the exact row D-105 describes.
+def test_matrix_gate_fail_is_rendered_and_does_not_move_the_exit_status(
+    tmp_path: Path,
+) -> None:
+    """The --matrix path, on the exact row D-105 describes, re-pointed by D-086.
 
     A row rendering ``gate_verdict_overall=FAIL`` beside an EMPTY
-    ``failure_tokens_csv`` was the visible shape of the bug: the aggregator
-    read only the tokens column it had just printed blank. One cohort is given
-    a single-record ledger, which puts 100% of the yield on one stream and
-    blows the band with no token attached.
+    ``failure_tokens_csv`` was the visible shape of D-105's bug. What that row
+    proves under NFR-001 is the opposite: the verdict must be RENDERED — a
+    cohort matrix is unreadable if the column is blank — and must not move the
+    status, because nothing about this arm is unreadable. One cohort is given a
+    single-record ledger, which puts 100% of the yield on one stream and blows
+    the band with no token attached, so the isolation is exact.
     """
     runs = _populate_runs_dir(tmp_path)
     (runs / "no_TYPE_01" / "defects.json").write_text(
@@ -1363,8 +1476,8 @@ def test_matrix_gate_fail_reaches_the_exit_status(tmp_path: Path) -> None:
     assert row[header.index("failure_tokens_csv")] == "", (
         "isolation broken — this row must fail on its VERDICT, not a token"
     )
-    assert exit_code == 1, (
-        f"a FAIL row in the matrix left the exit status at 0: {stderr}"
+    assert exit_code == 0, (
+        f"a FAIL row in the matrix moved the exit status: {stderr}"
     )
 
 
@@ -1560,6 +1673,14 @@ def test_spend_is_rolled_up_per_phase_per_cycle_and_in_total(
     Minutes are reported beside milliseconds because the question an operator
     asks is "how long did F3 take", and a column that requires dividing by
     60_000 in your head stops being read.
+
+    D-090 — `agents` COUNTS AGENTS AND `records` COUNTS ROWS. They were one
+    key here, meaning ROWS, while `foundry_orchestrator._spend_summary`
+    published the same key over the same ledger meaning DISTINCT agents — one
+    field name, two meanings, across three surfaces of one run, parting the
+    moment any agent reported twice. The comment below this assertion already
+    said "two dispatches but one agent" beneath an assertion of 4; the
+    assertion now says what the comment always meant.
     """
     run_dir = make_run_dir()
     (run_dir / "spend.jsonl").write_text(
@@ -1582,17 +1703,24 @@ def test_spend_is_rolled_up_per_phase_per_cycle_and_in_total(
     spend = payload["spend"]
 
     assert spend["by_phase"]["F1"] == {
-        "tokens": 1500, "duration_ms": 90_000, "minutes": 1.5, "agents": 2,
+        "tokens": 1500, "duration_ms": 90_000, "minutes": 1.5,
+        "records": 2, "agents": 2,
     }
     assert spend["by_phase"]["F2"]["tokens"] == 2000
     assert spend["by_cycle"]["1"] == {
-        "tokens": 2250, "duration_ms": 135_000, "minutes": 2.25, "agents": 2,
+        "tokens": 2250, "duration_ms": 135_000, "minutes": 2.25,
+        "records": 2, "agents": 2,
     }
     assert spend["total"]["tokens"] == 3750
     assert spend["total"]["minutes"] == 3.75
     # Two records from teammate-1 are two dispatches but one agent.
-    assert spend["total"]["agents"] == 4
-    assert spend["total"]["distinct_agents"] == 3
+    assert spend["total"]["records"] == 4
+    assert spend["total"]["agents"] == 3
+    assert "distinct_agents" not in spend["total"], (
+        "`distinct_agents` existed only because `agents` had been taken by the "
+        "row count; two spellings of one number in one bucket is the same "
+        "defect one shape smaller (D-090)"
+    )
 
 
 def test_a_torn_spend_line_costs_only_that_line(
@@ -1899,6 +2027,61 @@ def test_an_archive_with_no_cycle_evidence_reports_missing_not_pass(
     assert "PHASE9_CYCLE_COUNT_INVALID" in payload["failure_tokens"]
 
 
+@pytest.mark.skipif(
+    not THUNDER_VIPER.exists(),
+    reason=(
+        f"thunder-viper archive not present in this checkout: {THUNDER_VIPER} "
+        "(foundry-archive/ is git-ignored)"
+    ),
+)
+def test_migrating_the_baseline_archive_still_derives_its_22_cycles(
+    tmp_path: Path,
+) -> None:
+    """D-084 — migrate-archive.py turned the 22-cycle baseline into 23.
+
+    `_observed_max_cycle` maxed `cycle`, `fixed_in_cycle` and
+    `reopened_in_cycle` into one number and wrote it to `state.json["cycle"]`,
+    which `foundry_state.derive_cycle_count` then reads as a 0-based INDEX and
+    publishes as index + 1. thunder-viper is the archive where those diverge:
+    max `cycle` 21, max `fixed_in_cycle` 22. Migrating it moved the counter
+    from 0 to 22 and this command then printed 23, permanently — re-running the
+    migration is a no-op, so nothing ever healed it. OT-030 requires 22.
+
+    No test migrated this archive before: test_migrate_archive.py uses
+    synthetic fixtures and grand-vulture, whose `cycle` and `fixed_in_cycle`
+    both max at 17, so the one archive with the shape was the one nobody drove.
+
+    Driven on a COPY, twice, with the real archive's digest asserted unchanged
+    on the way out — the baseline is only meaningful while it stays as found.
+    """
+    before = _tree_digest(THUNDER_VIPER)
+    dest = tmp_path / "thunder-viper"
+    shutil.copytree(THUNDER_VIPER, dest)
+
+    recorded = json.loads(_invoke_measure_run(str(dest))[1])["cycles"]
+    assert recorded == 22, "premise: the pristine archive derives 22 (OT-030)"
+
+    for attempt in (1, 2):
+        migrate = subprocess.run(
+            [sys.executable, str(MIGRATE_SCRIPT), str(dest)],
+            capture_output=True, text=True,
+        )
+        assert migrate.returncode == 0, migrate.stderr
+        payload = json.loads(_invoke_measure_run(str(dest))[1])
+        assert payload["cycles"] == 22, (
+            f"migration {attempt} moved the baseline off OT-030's 22: "
+            f"{payload['cycles']}"
+        )
+
+    # The written value is the INDEX, which is what `derive_cycle_count` reads
+    # it as. index + 1 == count is the whole of the contract the two share.
+    state_cycle = json.loads((dest / "state.json").read_text())["cycle"]
+    assert state_cycle == 21, state_cycle
+    assert state_cycle + 1 == 22
+
+    assert _tree_digest(THUNDER_VIPER) == before, "the real archive was touched"
+
+
 def test_measure_run_and_the_report_derive_the_cycle_count_identically(
     make_run_dir: Callable[..., Path],
 ) -> None:
@@ -1924,6 +2107,88 @@ def test_measure_run_and_the_report_derive_the_cycle_count_identically(
     shared = derive_cycle_count(run_dir)["count"]
     assert payload["cycles"] == shared
     assert report["baseline_comparison"]["current"]["grind_cycles"] == shared
+
+
+def test_all_four_nfr_001_columns_are_beside_the_baseline_not_only_cycles(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-039 verbatim: 'cycles, defects by tier, tokens and wall clock for a
+    run beside the thunder-viper baseline.'
+
+    D-088 — only CYCLES were beside it. `_baseline_comparison`'s baseline and
+    current objects carried `grind_cycles` and `post_verification_cycles` and
+    nothing else, while `defects_by_tier`, `spend` and `wall_clock_seconds`
+    were top-level current-run-only keys with no baseline cell at all. The F6
+    report did the side-by-side that the CLI named in the requirement did not,
+    because `foundry_report._archive_metrics` derives all five for BOTH columns
+    from whichever archive it is handed.
+
+    The whole section is that function's output now, so this asserts the four
+    columns are present on both sides AND that the baseline archive planted
+    beside the run is actually read for the three it can supply.
+    """
+    from foundry_mcp.schemas.vocab import THUNDER_VIPER_BASELINE
+
+    run_dir = make_run_dir()
+    baseline_dir = run_dir.parent / THUNDER_VIPER_BASELINE["run"]
+    baseline_dir.mkdir()
+    (baseline_dir / "state.json").write_text(
+        json.dumps({"phase": "F6", "cycle": 21}), encoding="utf-8"
+    )
+    (baseline_dir / "defects.json").write_text(
+        json.dumps({"defects": [{"id": "D-001", "cycle": 21, "tier": "LIVE"}]}),
+        encoding="utf-8",
+    )
+    (baseline_dir / "handoffs.jsonl").write_text(
+        '{"timestamp": "2026-08-01T00:00:00+00:00"}\n'
+        '{"timestamp": "2026-08-02T00:30:00+00:00"}\n',
+        encoding="utf-8",
+    )
+
+    comparison = json.loads(_invoke_measure_run(str(run_dir))[1])["baseline_comparison"]
+
+    for column in ("grind_cycles", "post_verification_cycles", "defects_by_tier",
+                   "tokens", "wall_clock_minutes"):
+        assert column in comparison["current"], column
+        assert column in comparison["baseline_metrics"], column
+
+    # The two recorded numbers are the constant, never the derivation (D-085).
+    assert comparison["baseline_metrics"]["grind_cycles"] == (
+        THUNDER_VIPER_BASELINE["grind_cycles"]
+    )
+    # The three with no recorded constant come off the archive itself.
+    assert comparison["baseline_metrics"]["defects_by_tier"] == {
+        "LATENT": 0, "LIVE": 1, "unknown": 0,
+    }
+    assert comparison["baseline_metrics"]["wall_clock_minutes"] == 1470.0
+    assert comparison["baseline_metrics"]["tokens"] is None, "no spend ledger"
+
+
+def test_the_cli_and_the_report_publish_one_baseline_comparison(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-088's structural half — the two surfaces are ONE object.
+
+    NFR-001's comparison is printed by this CLI and by the F6 report, and a
+    side-by-side table is exactly the surface where a half-unit of drift is
+    invisible and decisive: D-036 (the cycle count) and D-085 (the baseline
+    floor) were both that shape. Assembling the section twice is what let them
+    diverge, so `_baseline_comparison` delegates to
+    `foundry_report._baseline_comparison_section` and this drives both over one
+    archive to pin that the payloads are equal, key for key.
+    """
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    run_dir = make_run_dir(rollup=_rollup_doc({"4": {"prove": _entry(9, 9, 1)}}))
+    cli = json.loads(_invoke_measure_run(str(run_dir))[1])["baseline_comparison"]
+
+    result = generate_report(run_dir.parent, run_dir)
+    assert result["ok"] is True, result
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+
+    # `metrics` is a tuple in the module and a list once round-tripped through
+    # JSON on both sides, so the documents compare directly.
+    assert cli == report["baseline_comparison"]
 
 
 def _tree_digest(root: Path) -> str:

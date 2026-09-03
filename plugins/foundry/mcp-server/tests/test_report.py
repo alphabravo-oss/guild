@@ -487,6 +487,118 @@ def test_lead_fix_records_lists_every_lead_fix_handoff(report_env):
     assert set(live) == set(latent), sorted(set(live) ^ set(latent))
 
 
+def test_a_multi_file_lead_fix_names_every_file_and_an_unmeasured_one_says_so(
+    report_env,
+):
+    """D-078 — the report is the audit trail, so it cannot answer "in which
+    file" with a blank cell.
+
+    AC-022 / GI-003 make the `lead_fix` record the trail for a fix nobody else
+    reviewed, and name "in which file" as one of the five things a reader must
+    be able to re-derive. `record_lead_fix_handoff` writes the `git show
+    --numstat` rows as `files` beside the derived `file`/`line_count`, and its
+    handoffs.md mirror renders four distinct labels from them. This reader
+    dropped `files` and printed the bare `file`, which is None for every
+    multi-file fix — so a five-file fix and a commit git could not read at all
+    rendered the SAME empty cell, in the document that exists to tell them
+    apart.
+
+    Driven through the real WRITER, so the shapes under test are the shapes a
+    run actually produces rather than hand-built records.
+    """
+    from foundry_mcp.tools.foundry_handoff import (
+        MEASUREMENT_UNAVAILABLE,
+        record_lead_fix_handoff,
+    )
+
+    (report_env / "handoffs.jsonl").write_text("", encoding="utf-8")
+    record_lead_fix_handoff(
+        report_env, defect_id="D-101", tier="LATENT",
+        test="tests/test_x.py::test_a", fix_commit="a" * 40,
+        files=[{"path": f"pkg/m{n}.py", "added": 50, "deleted": 50}
+               for n in range(5)],
+    )
+    record_lead_fix_handoff(
+        report_env, defect_id="D-102", tier="LATENT",
+        test="tests/test_x.py::test_b", fix_commit="0" * 40,
+        files=None, file=None, line_count=None,
+    )
+
+    _generate(report_env)
+    section = _document(report_env)["lead_fix_records"]
+    by_defect = {r["defect_id"]: r for r in section["records"]}
+
+    measured = by_defect["D-101"]
+    # The rows themselves reach report.json, not just the derived summary.
+    assert [row["path"] for row in measured["files"]] == [
+        f"pkg/m{n}.py" for n in range(5)
+    ]
+    assert measured["line_count"] == 500
+    assert measured["file"] is None, "a multi-file fix has no single path"
+    assert [row["path"] for row in measured["file_rows"]] == [
+        f"pkg/m{n}.py" for n in range(5)
+    ]
+    assert all(row["line_count"] == 100 for row in measured["file_rows"])
+
+    unavailable = by_defect["D-102"]
+    assert unavailable["files"] is None
+    assert unavailable["line_count"] is None
+    assert unavailable["file_rows"] == [
+        {"path": MEASUREMENT_UNAVAILABLE, "line_count": None}
+    ]
+
+    # And the two are DISTINGUISHABLE in the markdown, which is the surface the
+    # filing measured. Every path appears; the unavailable one says so in the
+    # words the handoffs.md mirror uses, read from the writer rather than
+    # re-typed here.
+    markdown = _markdown(report_env)
+    for n in range(5):
+        assert f"pkg/m{n}.py" in markdown
+    assert MEASUREMENT_UNAVAILABLE in markdown
+    rows = [ln for ln in markdown.splitlines() if ln.startswith("| D-101 |")]
+    assert len(rows) == 5, ("one markdown row per file", rows)
+
+
+def test_the_wall_clock_reader_and_the_lead_fix_reader_share_one_handoff_ledger(
+    report_env,
+):
+    """The ADJACENT PATH to D-078's fix: the OTHER reader of handoffs.jsonl.
+
+    `_read_lead_fix_records` is not the only thing that walks this ledger.
+    `foundry_state.handoffs_wall_clock_seconds` walks the same file for
+    NFR-001's wall-clock column, reached through `_archive_metrics` rather
+    than through the lead-fix section, and `report_status` reads the document
+    the two of them write into. A lead-fix record appended by the real writer
+    carries an ISO timestamp like every other handoff, so it participates in
+    the span — and this pins that the D-078 rows changed what the lead-fix
+    section prints without disturbing what the wall-clock reader derives from
+    the same bytes.
+    """
+    from foundry_mcp.tools.foundry_handoff import record_lead_fix_handoff
+    from foundry_mcp.tools.foundry_state import handoffs_wall_clock_seconds
+
+    before, problem = handoffs_wall_clock_seconds(report_env)
+    assert problem is None and isinstance(before, float), (before, problem)
+
+    record_lead_fix_handoff(
+        report_env, defect_id="D-103", tier="LIVE",
+        test="tests/test_x.py::test_c", fix_commit="b" * 40,
+        files=[{"path": "pkg/one.py", "added": 3, "deleted": 1}],
+    )
+    after, problem = handoffs_wall_clock_seconds(report_env)
+    assert problem is None
+    assert after >= before, "a record appended now can only extend the span"
+
+    _generate(report_env)
+    doc = _document(report_env)
+    assert "D-103" in {r["defect_id"] for r in doc["lead_fix_records"]["records"]}
+    # The same number, through the other caller, in the other section.
+    assert doc["baseline_comparison"]["current"]["wall_clock_minutes"] == round(
+        after / 60.0, 1
+    )
+    assert report_status(report_env)["missing_sections"] == []
+
+
 def test_the_lead_fix_event_token_is_read_from_vocab_not_typed(report_env):
     """The falsifier for the test above. If the reader spelled `"lead_fix"`
     itself rather than reading HANDOFF_EVENT_LEAD_FIX, renaming the token in
@@ -555,6 +667,120 @@ def test_spend_reports_tokens_and_minutes_and_no_money_at_all(report_env):
     # And nowhere in either whole document either.
     assert not money.search(json.dumps(_document(report_env)))
     assert not money.search(_markdown(report_env))
+
+
+def test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does(
+    report_env,
+):
+    """D-090 — one field name, two meanings, side by side in one document.
+
+    CT-013 / AC-033 / FR-021. `foundry_orchestrator._spend_summary` publishes
+    `agents` as a count of DISTINCT agents — D-038 made it so, over a set, from
+    this same ledger — and this reader published the same key as a count of
+    RECORDS. So `report.json` carried `by_phase.F3 {tokens 240000, agents 3}`
+    beside `state_rollup {tokens 240000, agents 2}` and the two disagreed BY
+    CONSTRUCTION on every run where any agent reported twice, which a
+    re-dispatched GRIND teammate does every cycle. The docstring justified
+    carrying both because "the two disagreeing is a fact worth being able to
+    see" — but a drift signal that is permanently noisy detects no drift.
+
+    Driven exactly as the filing describes it: three spend calls in one phase
+    from two agents.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import _spend_summary
+
+    (report_env / SPEND_LEDGER_FILENAME).write_text(
+        "\n".join(
+            json.dumps(row) for row in [
+                {"agent": "casting-1", "phase": "F3", "cycle": 2,
+                 "tokens": 80_000, "duration_ms": 300_000},
+                {"agent": "casting-1", "phase": "F3", "cycle": 2,
+                 "tokens": 80_000, "duration_ms": 300_000},
+                {"agent": "casting-2", "phase": "F3", "cycle": 2,
+                 "tokens": 80_000, "duration_ms": 330_000},
+            ]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    state = _read_json(report_env, "state.json")
+    state["spend"] = {
+        "by_phase": {"F3": {"tokens": 240_000, "duration_ms": 930_000,
+                            "agents": 2, "unreported": 1}},
+        "by_cycle": {"2": {"tokens": 240_000, "duration_ms": 930_000,
+                           "agents": 2, "unreported": 1}},
+        "total": {"tokens": 240_000, "duration_ms": 930_000,
+                  "agents": 2, "unreported": 1},
+    }
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    section = _document(report_env)["spend_per_phase_and_cycle"]
+    bucket = section["by_phase"]["F3"]
+
+    assert bucket["records"] == 3, "three ledger rows"
+    assert bucket["agents"] == 2, "two agents — the orchestrator's own number"
+    assert bucket["unreported"] == 1
+    assert bucket["tokens"] == 240_000, "tokens stay the LEDGER's"
+
+    # The pin that closes it: the orchestrator's roll-up and this section
+    # cannot answer the question differently, because there is one answer.
+    rollup = _spend_summary(report_env)
+    assert bucket["agents"] == rollup["by_phase"]["F3"]["agents"]
+    assert section["total"]["agents"] == rollup["total"]["agents"]
+    assert section["disagreements"] == [], section["disagreements"]
+
+    # And the markdown gives each number its own column, so neither can be
+    # read as the other. It already said "Records" over the cell the JSON
+    # called `agents`.
+    table = _markdown(report_env).split("## Spend per phase and cycle", 1)[1]
+    header = next(ln for ln in table.splitlines() if ln.startswith("| Scope |"))
+    assert "Records" in header and "Agents" in header, header
+
+
+def test_a_ledger_and_rollup_disagreement_is_named_not_printed_twice(report_env):
+    """D-090's other half — what "worth being able to see" now MEANS.
+
+    Carrying both numbers was the right instinct aimed at the wrong pair. The
+    pair that really is two derivations of one fact is the roll-up's tokens
+    against the ledger's, and when those part the report says so in words
+    rather than printing two values under one label. The shipped fixture has
+    exactly this shape: its `state.json.spend` records more tokens than its
+    `spend.jsonl` accounts for.
+    """
+    _generate(report_env)
+    section = _document(report_env)["spend_per_phase_and_cycle"]
+
+    rollup_f1 = _read_json(report_env, "state.json")["spend"]["by_phase"]["F1"]
+    assert section["by_phase"]["F1"]["tokens"] != rollup_f1["tokens"], (
+        "fixture premise: the two sources disagree about F1"
+    )
+    named = {
+        (d["scope"], d["key"], d["field"]) for d in section["disagreements"]
+    }
+    assert ("by_phase", "F1", "tokens") in named, section["disagreements"]
+    assert ("run", "total", "tokens") in named, section["disagreements"]
+    # `agents` is checked too, against the ledger's DISTINCT names — the same
+    # derivation the orchestrator makes. The fixture's roll-up claims three
+    # agents in F1 where the ledger names two, and a report that published the
+    # roll-up's number with no signal would hide exactly the staleness the
+    # cross-check exists to expose. The ledger's count is never written into
+    # the bucket: that is what made `agents` mean two things.
+    assert ("by_phase", "F1", "agents") in named, section["disagreements"]
+    agents_entry = next(d for d in section["disagreements"]
+                        if (d["scope"], d["key"], d["field"])
+                        == ("by_phase", "F1", "agents"))
+    assert agents_entry == {"scope": "by_phase", "key": "F1", "field": "agents",
+                            "ledger": 2, "state_rollup": 3}
+    assert section["by_phase"]["F1"]["agents"] == 3, "published value is the roll-up's"
+
+    entry = next(d for d in section["disagreements"]
+                 if (d["scope"], d["key"], d["field"]) == ("by_phase", "F1", "tokens"))
+    assert entry["ledger"] == section["by_phase"]["F1"]["tokens"]
+    assert entry["state_rollup"] == rollup_f1["tokens"]
+
+    markdown = _markdown(report_env)
+    assert "The ledger and `state.json.spend` disagree on:" in markdown
+    assert "by_phase F1 tokens" in markdown
 
 
 def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
@@ -889,13 +1115,17 @@ def test_the_baseline_comparison_prints_nfr_001s_four_metrics(report_env, tmp_pa
         assert key in metrics, key
         assert key in current, key
 
-    # Cycles: the recorded constant is the FLOOR for the baseline's own run.
-    # Its counter stayed at 0, its ledger proves 21, and 22 is what it is on
-    # record as having executed — a derivation that undercounts the baseline is
-    # measuring wrong, not measuring a better run.
+    # Cycles: the recorded constant IS the baseline column (D-085 — it used to
+    # be only a floor, which is one-sided; see the test below). Its counter
+    # stayed at 0 and its ledger proves 21, but 22 is what it is on record as
+    # having executed, and a derivation is published beside it rather than
+    # over it.
     assert metrics["grind_cycles"] == THUNDER_VIPER_BASELINE["grind_cycles"]
     assert metrics["post_verification_cycles"] == (
         THUNDER_VIPER_BASELINE["post_verification_cycles"]
+    )
+    assert section["baseline_derived"]["grind_cycles"] == 22, (
+        "what the planted archive itself yields, published beside the constant"
     )
     # Defects by tier and wall clock come off the archive itself.
     assert metrics["defects_by_tier"] == {"LATENT": 0, "LIVE": 1, TIER_UNKNOWN: 1}
@@ -909,6 +1139,51 @@ def test_the_baseline_comparison_prints_nfr_001s_four_metrics(report_env, tmp_pa
     for label in ("GRIND cycles", "Post-verification cycles", "Defects by tier",
                   "Tokens", "Wall clock"):
         assert label in table, label
+
+
+def test_a_derivation_that_exceeds_the_recorded_baseline_never_replaces_it(
+    report_env,
+):
+    """D-085 — a FLOOR does not protect the constant it names.
+
+    The baseline cell was `max(derived, recorded)`, which is one-sided in
+    exactly the direction that breaks it: a derivation coming in UNDER 22 loses
+    and a derivation coming in OVER 22 silently REPLACES the constant. Driven
+    when D-084's migration bug moved thunder-viper's counter: the GRIND-cycles
+    baseline cell rendered 23 while the footnote under the same table still
+    read "cycles from vocab.THUNDER_VIPER_BASELINE". A table that contradicts
+    its own footnote is worse than either number alone.
+
+    The over-deriving archive is planted directly here rather than reached by
+    re-running the migration, so this test holds whatever migrate-archive.py
+    later does — the property is about THIS module's arithmetic.
+    """
+    baseline_dir = report_env.parent / THUNDER_VIPER_BASELINE["run"]
+    baseline_dir.mkdir()
+    _write_json(baseline_dir, "state.json", {"phase": "F6", "cycle": 30})
+    _write_json(baseline_dir, "defects.json", {"defects": []})
+
+    _generate(report_env)
+    section = _document(report_env)["baseline_comparison"]
+
+    assert section["baseline_derived"]["grind_cycles"] == 31
+    assert section["baseline_metrics"]["grind_cycles"] == (
+        THUNDER_VIPER_BASELINE["grind_cycles"]
+    ), "a derivation that EXCEEDS the constant must not become the baseline"
+    # And the footnote no longer credits a number the table does not show: it
+    # names both, and says which one stands.
+    note = section["baseline_note"]
+    assert "vocab.THUNDER_VIPER_BASELINE" in note
+    assert "DERIVES grind_cycles 31" in note, note
+    assert "The recorded constant stands" in note, note
+
+    # The markdown carries them as SEPARATE columns, so neither can be read as
+    # the other.
+    table = _markdown(report_env).split("## Baseline comparison", 1)[1]
+    assert "Baseline (thunder-viper, recorded)" in table
+    assert "Baseline (derived)" in table
+    row = next(ln for ln in table.splitlines() if ln.startswith("| GRIND cycles |"))
+    assert "| 22 | 31 |" in row, row
 
 
 def test_an_absent_baseline_archive_is_null_columns_not_fabricated_ones(report_env):
@@ -925,6 +1200,58 @@ def test_an_absent_baseline_archive_is_null_columns_not_fabricated_ones(report_e
     assert "null rather than fabricated" in section["baseline_note"]
     # The two recorded cycle numbers still print — they come from vocab.
     assert metrics["grind_cycles"] == THUNDER_VIPER_BASELINE["grind_cycles"]
+
+
+def test_an_unmeasured_wall_clock_is_null_on_both_surfaces(report_env, tmp_path):
+    """D-087 — the two surfaces of NFR-001's comparison printed different
+    things for the same unmeasured run.
+
+    `measure-run.py` emitted `wall_clock_seconds: 0.0` where this module
+    emitted `null`, and this module's docstring forbids the other spelling by
+    name: "a run that took no measurable time and a run nobody measured are
+    different facts, and NFR-001's comparison is unreadable if they print the
+    same". The CLI was fabricating exactly the number the report module refuses
+    to fabricate, in the one table where the two sit side by side.
+
+    Both now call `foundry_state.handoffs_wall_clock_seconds`, which is where
+    the None rule lives. Asserted through the FUNCTION rather than by shelling
+    out, and cross-checked against the CLI's own reader so the two cannot part
+    again.
+    """
+    import importlib.util
+    import sys
+
+    from foundry_mcp.tools.foundry_state import handoffs_wall_clock_seconds
+
+    unmeasured = tmp_path / "no-handoffs"
+    unmeasured.mkdir()
+
+    seconds, problem = handoffs_wall_clock_seconds(unmeasured)
+    assert seconds is None and problem, (seconds, problem)
+    assert fr._wall_clock_minutes(unmeasured) is None
+
+    # The CLI's reader, loaded from the script itself (it is not importable as
+    # a module name — the filename has a hyphen).
+    script = (
+        Path(fr.__file__).parents[4] / "scripts" / "measure-run.py"
+    )
+    assert script.is_file(), script
+    spec = importlib.util.spec_from_file_location("_measure_run_d087", script)
+    module = importlib.util.module_from_spec(spec)
+    # measure-run.py defines a @dataclass, whose annotation resolution looks
+    # the defining module up in sys.modules — register before exec_module.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    cli_seconds, tokens = module._read_handoffs_wall_clock(unmeasured)
+    assert cli_seconds is None, "0.0 is the fabrication D-087 names"
+    assert tokens == ["PHASE9_WALL_CLOCK_UNAVAILABLE"]
+
+    # And on a run that CAN be measured, the two agree to the unit.
+    measured, problem = handoffs_wall_clock_seconds(report_env)
+    assert problem is None
+    assert module._read_handoffs_wall_clock(report_env)[0] == measured
+    assert fr._wall_clock_minutes(report_env) == round(measured / 60.0, 1)
 
 
 def test_the_report_and_measure_run_derive_the_cycle_count_the_same_way(report_env):
@@ -1325,8 +1652,16 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     # body-level import and it is body-level for the SAME reason as the first:
     # `foundry_orchestrator` imports this module, so naming it at module level
     # is the cycle the rule above is actually about.
+    # `foundry_mcp.tools.foundry_handoff` is the third, added by D-078: the
+    # `lead_fix` renderer reads MEASUREMENT_UNAVAILABLE and `_numstat_count`
+    # from the module that WRITES the record rather than re-typing either. A
+    # second spelling of the sentinel drifts the day the writer's wording
+    # changes, and a second numstat parser is how the audit row comes to
+    # disagree with the lane measurement it exists to make re-derivable —
+    # which is the same trade D-013 already ruled on, one module along.
     assert nested == {
         "foundry_mcp.tools",
+        "foundry_mcp.tools.foundry_handoff",
         "foundry_mcp.tools.foundry_spawn",
     }, sorted(nested)
 
@@ -1360,23 +1695,52 @@ def test_the_lazy_spawn_import_works_from_a_cold_interpreter():
 def test_foundry_state_still_imports_nothing_from_its_own_package():
     """`foundry_state` is the package's leaf module, imported by both
     `foundry.py` and `foundry_orchestrator.py`, and its stated contract is
-    absolute: json and pathlib and nothing else, not even from its own package.
+    absolute: json and pathlib at MODULE level, and nothing from its own
+    package at any level.
 
-    `read_jsonl` was added there by this casting, and this is the pin that the
-    addition held the contract — a reader that reached for a vocab constant
-    would close the cycle the whole module exists to keep open."""
+    `read_jsonl` was added there by this casting and
+    `handoffs_wall_clock_seconds` by D-087, and this is the pin that both
+    additions held the contract — a reader that reached for a vocab constant
+    would close the cycle the whole module exists to keep open.
+
+    SPLIT BY DEPTH, for the reason the report module's own pin above is split
+    by depth (D-013). The module-level list is what `foundry.py` and
+    `foundry_orchestrator.py` pay on import and what `measure-run.py`'s
+    stdlib-only contract quotes, so it stays exactly json + pathlib.
+    `handoffs_wall_clock_seconds` needs `datetime` to parse an ISO-8601 stamp,
+    and it takes it at CALL time: that adds nothing to the module-level list,
+    while the alternative — a hand-rolled timestamp parser to avoid the import
+    — would be a third parser of one format in the module written to end
+    second derivations. What is forbidden at EVERY depth is `foundry_mcp`,
+    because that is the import the cycle is actually made of."""
     import ast
 
     from foundry_mcp.tools import foundry_state
 
     source = Path(foundry_state.__file__).read_text(encoding="utf-8")
-    modules: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+
+    def _imported(node: ast.AST) -> set[str]:
         if isinstance(node, ast.ImportFrom):
-            modules.add(node.module or "")
-        elif isinstance(node, ast.Import):
-            modules.update(alias.name for alias in node.names)
-    assert modules == {"__future__", "json", "pathlib"}, sorted(modules)
+            return {node.module or ""}
+        if isinstance(node, ast.Import):
+            return {alias.name for alias in node.names}
+        return set()
+
+    module_level: set[str] = set()
+    for node in tree.body:
+        module_level |= _imported(node)
+    assert module_level == {"__future__", "json", "pathlib"}, sorted(module_level)
+
+    everywhere: set[str] = set()
+    for node in ast.walk(tree):
+        everywhere |= _imported(node)
+    assert everywhere == {"__future__", "json", "pathlib", "datetime"}, sorted(
+        everywhere
+    )
+    assert not {m for m in everywhere if m.startswith("foundry_mcp")}, (
+        "the leaf module reached back into its own package"
+    )
 
 
 def test_read_jsonl_reports_undecodable_bytes_and_skips_torn_lines(tmp_path):
@@ -1468,22 +1832,34 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
                 f"open_latent={row['open_latent_defect_ids']}"
             )
 
-        print("=== lead_fix records (AC-022) ===")
+        print("=== lead_fix records, one line per file touched (AC-022) ===")
         for row in doc["lead_fix_records"]["records"]:
-            print(
-                f"  {row['defect_id']}  tier={row['tier']}  file={row['file']}  "
-                f"lines={row['line_count']}  test={row['test']}"
-            )
+            print(f"  {row['defect_id']}  tier={row['tier']}  test={row['test']}")
+            for entry in row["file_rows"]:
+                print(f"      {entry['path']}  lines={entry['line_count']}")
 
         print("=== INSPECT mode per cycle (AC-036) ===")
         for cycle, row in doc["inspect_modes_per_cycle"]["per_cycle"].items():
             print(f"  cycle {cycle}  {row['phase']:<5} {row['mode']:<5} {row['rule']}")
 
         print("=== spend: tokens and minutes only, no money (NFR-002) ===")
-        for phase, row in doc["spend_per_phase_and_cycle"]["by_phase"].items():
-            print(f"  phase {phase:<5} tokens={row['tokens']:<9} minutes={row['minutes']}")
-        total = doc["spend_per_phase_and_cycle"]["total"]
-        print(f"  run   total tokens={total['tokens']:<9} minutes={total['minutes']}")
+        spend = doc["spend_per_phase_and_cycle"]
+        for phase, row in spend["by_phase"].items():
+            print(f"  phase {phase:<5} tokens={row['tokens']:<9} "
+                  f"minutes={row['minutes']:<6} records={row['records']} "
+                  f"agents={row['agents']}")
+        total = spend["total"]
+        print(f"  run   total tokens={total['tokens']:<9} "
+              f"minutes={total['minutes']:<6} records={total['records']} "
+              f"agents={total['agents']}")
+        # D-090: `agents` is the orchestrator's DISTINCT-agent count and
+        # `records` is the ledger row count. Where the roll-up and the ledger
+        # disagree the report NAMES it rather than printing two numbers under
+        # one label.
+        for entry in spend["disagreements"]:
+            print(f"  disagreement: {entry['scope']} {entry['key']} "
+                  f"{entry['field']} ledger={entry['ledger']} "
+                  f"state_rollup={entry['state_rollup']}")
 
         print("=== unreported dispatches, advisory only (AC-034) ===")
         for phase, agents in doc["unreported_dispatches"]["by_phase"].items():
@@ -1498,6 +1874,9 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
               f"post_verification={bc['target']['post_verification_cycles']}")
         print(f"  this run: grind={bc['current']['grind_cycles']} "
               f"post_verification={bc['current']['post_verification_cycles']}")
+        # D-085: what the baseline's own archive derives, published BESIDE the
+        # recorded constant and never over it.
+        print(f"  baseline derived from the archive: {bc['baseline_derived']}")
 
         print("=== report_status, the DONE gate's read (GI-006 / OT-025) ===")
         status = report_status(report_env)
@@ -1510,6 +1889,11 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
     assert [d["id"] for d in doc["unknown_tier_defects"]["defects"]] == ["D-007"]
     assert doc["escalated_classes"]["classes"][0]["exit_reason"] == "budget"
     assert doc["lead_fix_records"]["count"] == 2
+    assert all(r["file_rows"] for r in doc["lead_fix_records"]["records"])
+    assert doc["spend_per_phase_and_cycle"]["total"]["records"] == 5
+    assert doc["baseline_comparison"]["baseline_metrics"]["grind_cycles"] == (
+        THUNDER_VIPER_BASELINE["grind_cycles"]
+    )
     assert doc["inspect_modes_per_cycle"]["by_mode"] == {"DELTA": 2, "FULL": 3}
     assert doc["unreported_dispatches"]["count"] > 0
     assert report_status(report_env)["present"] is True

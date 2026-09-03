@@ -92,18 +92,21 @@
         "tokens": 800000,
         "duration_ms": 3300000,
         "minutes": 55.0,
+        "records": 2,
         "agents": 2
       },
       "F2": {
         "tokens": 400000,
         "duration_ms": 1500000,
         "minutes": 25.0,
+        "records": 2,
         "agents": 2
       },
       "F3": {
         "tokens": 95000,
         "duration_ms": 420000,
         "minutes": 7.0,
+        "records": 1,
         "agents": 1
       }
     },
@@ -112,18 +115,21 @@
         "tokens": 800000,
         "duration_ms": 3300000,
         "minutes": 55.0,
+        "records": 2,
         "agents": 2
       },
       "1": {
         "tokens": 400000,
         "duration_ms": 1500000,
         "minutes": 25.0,
+        "records": 2,
         "agents": 2
       },
       "2": {
         "tokens": 95000,
         "duration_ms": 420000,
         "minutes": 7.0,
+        "records": 1,
         "agents": 1
       }
     },
@@ -131,8 +137,8 @@
       "tokens": 1295000,
       "duration_ms": 5220000,
       "minutes": 87.0,
-      "agents": 5,
-      "distinct_agents": 4
+      "records": 5,
+      "agents": 4
     }
   },
   "f2_context_pct": null,
@@ -143,6 +149,15 @@
       "grind_cycles": 22,
       "post_verification_cycles": 8
     },
+    "baseline_metrics": {
+      "run": "thunder-viper",
+      "grind_cycles": 22,
+      "post_verification_cycles": 8,
+      "defects_by_tier": null,
+      "tokens": null,
+      "wall_clock_minutes": null
+    },
+    "baseline_derived": null,
     "target": {
       "grind_cycles": 12,
       "post_verification_cycles": 3
@@ -150,12 +165,28 @@
     "current": {
       "run": "converged_run",
       "grind_cycles": 7,
-      "post_verification_cycles": 2
+      "post_verification_cycles": 2,
+      "defects_by_tier": {
+        "LATENT": 2,
+        "LIVE": 3,
+        "unknown": 1
+      },
+      "tokens": 1295000,
+      "wall_clock_minutes": 390.0
     },
     "meets_target": {
       "grind_cycles": true,
       "post_verification_cycles": true
-    }
+    },
+    "metrics": [
+      "grind_cycles",
+      "post_verification_cycles",
+      "defects_by_tier",
+      "tokens",
+      "wall_clock_minutes"
+    ],
+    "baseline_note": "GRIND cycles and post-verification cycles in the Baseline column are vocab.THUNDER_VIPER_BASELINE (22 / 8) and are never replaced by a derivation. Defects by tier, tokens and wall clock have no recorded constant, so they are derived from thunder-viper/ when that archive sits beside this run. That archive is not present here, so those three columns are null rather than fabricated, and nothing was derived.",
+    "note": "Numbers are the target, not a gate (NFR-001)."
   },
   "gate_verdicts": {
     "cycles": "PASS",

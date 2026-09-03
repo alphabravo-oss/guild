@@ -58,7 +58,11 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+    from foundry_mcp.tools.foundry_state import (
+        derive_cycle_count,
+        read_json,
+        read_text_file,
+    )
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
@@ -70,7 +74,11 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+    from foundry_mcp.tools.foundry_state import (
+        derive_cycle_count,
+        read_json,
+        read_text_file,
+    )
 
 
 # The schema generation this tool brings an archive to. Bump when a migration
@@ -560,31 +568,17 @@ def _marker_max_cycle(run_dir: Path) -> int:
     return highest
 
 
-def _rollup_max_cycle(run_dir: Path) -> int:
-    """Highest cycle key in the roll-up ALREADY ON DISK.
-
-    Step 3 leaves a server-written document exactly as found, and that
-    document's keys are the server's own counter values. Reading them here
-    keeps the post-condition unconditional even for a roll-up this tool did
-    not derive.
-    """
-    data = _load_json(run_dir / "stream-rollup.json")
-    cycles = data.get("cycles") if isinstance(data, dict) else None
-    if not isinstance(cycles, dict):
-        return 0
-    highest = 0
-    for raw_cycle in cycles:
-        try:
-            cycle = int(raw_cycle)
-        except (TypeError, ValueError):
-            continue
-        if cycle > highest:
-            highest = cycle
-    return highest
+# `_rollup_max_cycle` used to live here — "highest cycle key in the roll-up
+# ALREADY ON DISK", which is what keeps step 6's post-condition unconditional
+# even for a roll-up this tool did not derive (D-060). It is gone because
+# `derive_cycle_count` reads exactly that axis, and D-084 is what a SECOND
+# reader of one artifact costs: keeping a private copy of the rollup rule
+# beside a private copy of the defect rule is how this tool came to write an
+# index `derive_cycle_count` then read as a different number.
 
 
 def _observed_max_cycle(run_dir: Path) -> int:
-    """Highest cycle the run's own data proves it reached.
+    """The 0-based cycle INDEX the run's own data proves it reached.
 
     MUST consult every source step 3 keys the roll-up on. Reading only
     defects.json + verdicts.json left state.json BEHIND stream-rollup.json's
@@ -596,34 +590,47 @@ def _observed_max_cycle(run_dir: Path) -> int:
     (D-060). grand-vulture masked it by coincidence: all three of its markers
     carry cycle=17, equal to its max defect cycle.
 
-    Four sources, none invented:
+    THE VALUE WRITTEN TO ``state.json["cycle"]`` IS AN INDEX (D-084)
+    ----------------------------------------------------------------
+    ``foundry_state.derive_cycle_count`` reads that field as the server's
+    0-based counter and publishes ``index + 1`` as the cycle COUNT, so this
+    tool and that reader have to agree about which of the two numbers the
+    field holds. They did not. This folded ``fixed_in_cycle`` and
+    ``reopened_in_cycle`` into the index while ``derive_cycle_count``'s defect
+    source reads ``cycle`` alone, and thunder-viper is the archive where those
+    diverge: max ``cycle`` 21, max ``fixed_in_cycle`` 22. Driven twice on
+    copies — measure-run on the pristine archive printed ``cycles 22``;
+    migrate then measure printed ``cycles 23``, with ``state.json["cycle"]``
+    moved from 0 to 22. OT-030 requires 22, re-running the migration is a
+    no-op so the corruption never healed, and no test migrated the one archive
+    that has the shape.
 
-      * defects.json — ``cycle`` / ``fixed_in_cycle`` / ``reopened_in_cycle``
+    So the defect-ledger axis is `derive_cycle_count`'s, called rather than
+    re-derived: one rule about which fields prove an index, hosted where both
+    readers already reach. A fix ``cycle`` stamp is not discarded information —
+    it is a stamp made by whichever door filed the fix, and the counter it
+    would inflate is the one every later count is built on.
+
+    Sources, none invented:
+
+      * `derive_cycle_count` — defects.json ``cycle``, the roll-up's highest
+        key, and the recorded counter, reconciled by the one function that
+        owns that reconciliation
       * verdicts.json — ``cycle``
       * each ``.{stream}-complete`` marker — the cycle it terminates
-      * the roll-up already on disk — a server-written document's own keys
 
     The marker source is what makes the derivation self-contained under
     ``--dry-run``, where step 3 writes nothing: the reported ``observed`` is
     identical to the value a real run would record.
     """
-    observed = 0
-    data = _load_json(run_dir / "defects.json")
-    records = data.get("defects") if isinstance(data, dict) else None
-    if isinstance(records, list):
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            for key in ("cycle", "fixed_in_cycle", "reopened_in_cycle"):
-                cycle = _as_cycle(record.get(key))
-                if cycle is not None and cycle > observed:
-                    observed = cycle
+    derived = derive_cycle_count(run_dir)["index"]
+    observed = derived if isinstance(derived, int) else 0
     verdicts = _load_json(run_dir / "verdicts.json")
     if isinstance(verdicts, dict):
         cycle = _as_cycle(verdicts.get("cycle"))
         if cycle is not None and cycle > observed:
             observed = cycle
-    return max(observed, _marker_max_cycle(run_dir), _rollup_max_cycle(run_dir))
+    return max(observed, _marker_max_cycle(run_dir))
 
 
 def _migrate_state(

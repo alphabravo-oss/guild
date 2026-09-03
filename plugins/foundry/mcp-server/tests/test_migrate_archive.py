@@ -467,8 +467,13 @@ def test_step_5_progress_directory_created_empty(archive: Path) -> None:
 def test_step_6_cycle_repaired_from_the_runs_own_data(archive: Path) -> None:
     """FI-1: state.json["cycle"] is written once as 0 and never incremented.
 
-    The fixture's defects span cycles 0-5 with a fixed_in_cycle of 6, so the
-    run's own data proves it reached cycle 6.
+    The fixture's defects span cycles 0-5 and its `.prove-complete` marker
+    records cycle=6, so the run's own data proves it reached index 6.
+
+    D-084 re-points the SOURCE, not the number. The fixture also carries a
+    `fixed_in_cycle` of 6, and that used to be what supplied this value; the
+    marker supplies it now, and the test below pins that the fix stamp alone
+    can no longer inflate the index.
     """
     summary = _migrate(archive)
     step = summary["steps"]["state_cycle"]
@@ -476,6 +481,57 @@ def test_step_6_cycle_repaired_from_the_runs_own_data(archive: Path) -> None:
     assert step["recorded"] == 0
     assert step["observed"] == 6
     assert json.loads((archive / "state.json").read_text())["cycle"] == 6
+
+
+def test_step_6_writes_the_index_derive_cycle_count_reads_not_a_fix_stamp(
+    archive: Path,
+) -> None:
+    """D-084 — the field is an INDEX, and one function decides what proves it.
+
+    `state.json["cycle"]` is read by `foundry_state.derive_cycle_count` as the
+    server's 0-based counter and republished as index + 1, so this tool and
+    that reader have to agree about which number the field holds. They did
+    not: this folded `fixed_in_cycle` and `reopened_in_cycle` in, while
+    `derive_cycle_count`'s defect axis reads `cycle` alone. On thunder-viper —
+    max `cycle` 21, max `fixed_in_cycle` 22 — migrating turned a 22-cycle run
+    into 23, permanently, because re-running the migration is a no-op.
+
+    Driven here on the isolated shape: every other source is stripped, one
+    record is stamped `cycle: 3` and `fixed_in_cycle: 9`, and the fix stamp
+    must move nothing. `test_migrating_the_baseline_archive_still_derives_its_
+    22_cycles` in test_measure_run.py drives the same property on the real
+    archive; this one holds when that archive is not in the checkout.
+    """
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    for marker in archive.glob(".*-complete"):
+        marker.unlink()
+    (archive / "verdicts.json").unlink()
+    (archive / "defects.json").write_text(
+        json.dumps({"defects": [
+            {"id": "D-001", "cycle": 3, "status": "fixed", "fixed_in_cycle": 9},
+        ]}),
+        encoding="utf-8",
+    )
+
+    summary = _migrate(archive)
+    step = summary["steps"]["state_cycle"]
+    assert step["observed"] == 3, (
+        "a fix stamp is not evidence of an index the counter reached"
+    )
+    written = json.loads((archive / "state.json").read_text())["cycle"]
+    assert written == 3
+
+    # The contract the two share, asserted as the identity it is.
+    derived = derive_cycle_count(archive)
+    assert derived["index"] == written
+    assert derived["count"] == written + 1
+
+    # And migrating again changes nothing — the corruption D-084 describes was
+    # permanent precisely because this step is idempotent.
+    _migrate(archive)
+    assert json.loads((archive / "state.json").read_text())["cycle"] == written
+    assert derive_cycle_count(archive)["count"] == derived["count"]
 
 
 def test_step_6_never_lowers_an_already_higher_value(archive: Path) -> None:
