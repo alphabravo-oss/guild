@@ -742,6 +742,46 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "**Both doors into ASSAY check the width by name, and both refuse a `DELTA` cycle:**",
     ),
+    # AC-016 / US-004 (D-169): the lead-in above says both doors check the
+    # WIDTH, and the sentence that followed it named a RULE -- "ASSAY is only
+    # opened by an INSPECT whose recorded rule is final_gate". The gate's own
+    # checklist entry is `inspect_ran_at_full_width` and its `ok` is
+    # `mode == "FULL"`; the rule is interpolated into the refusal text and read
+    # by nothing. Driven at `Foundry-Gate(phase='assay')` on runs recorded
+    # FULL/first_of_phase, FULL/final_gate and FULL/verifier_touched: all three
+    # returned ok True. So the paragraph contradicted itself, and the half a
+    # lead acts on was the false half.
+    (
+        "assay-doors-test-width-never-the-rule",
+        "AC-016",
+        START_MD,
+        "**WIDTH is the whole condition. The `rule` printed beside it is a "
+        "label on HOW that width was reached, and neither door tests it.**",
+    ),
+    (
+        "every-full-rule-opens-assay",
+        "AC-016",
+        START_MD,
+        "Every member of `INSPECT_FULL_RULES` opens ASSAY — `first_of_phase`, "
+        "`final_gate` and `verifier_touched` alike",
+    ),
+    # US-004: a verifier-touching GRIND is the ordinary cycle on a run that
+    # builds the verifier, and the retired sentence charged every one of them a
+    # widening cycle it does not owe -- exactly the ceremony US-004 removes.
+    (
+        "verifier-touched-owes-no-widening-cycle",
+        "US-004",
+        START_MD,
+        "owes no extra widening cycle",
+    ),
+    # AC-016: the lead has to recognise the gate's refusal by the name the
+    # checklist prints, which is the predicate rather than the prose beside it.
+    (
+        "assay-gate-names-its-width-check",
+        "AC-016",
+        START_MD,
+        "a checklist entry literally named `inspect_ran_at_full_width`",
+    ),
     # US-007 / FR-021 (D-126): the lead was steered by a Foundry-Next field
     # that no longer exists, so the trigger could never fire. The replacement
     # steers by the roll-up `Foundry-Next` actually carries.
@@ -1018,6 +1058,20 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "F5.5, `Foundry-Phase(\"nyquist_done\")` out of it, and "
         "`Foundry-Phase(\"done\")` at F6",
     ),
+    # D-169 / AC-016: the condition NO door evaluates. start.md copied the
+    # inspect_clean refusal verbatim, and the refusal named a rule while the
+    # check beside it -- `inspect_ran_at_full_width`, `ok` = `mode == "FULL"`
+    # -- named a width. Driven at `Foundry-Gate(phase='assay')` on recorded
+    # widths FULL/first_of_phase, FULL/final_gate and FULL/verifier_touched:
+    # ok True on all three, so a FULL/verifier_touched INSPECT does open ASSAY
+    # and the sentence was false about the ordinary cycle of this very run.
+    (
+        "ASSAY is only opened by an INSPECT whose recorded rule is final_gate",
+        "AC-016",
+        "both doors test the recorded WIDTH: every member of "
+        "INSPECT_FULL_RULES opens ASSAY, and the rule beside the mode is a "
+        "label on how FULL was reached rather than a second test",
+    ),
 )
 
 
@@ -1270,6 +1324,124 @@ def test_the_f6_sequence_sweeps_before_it_strips() -> None:
         f"{_rel(START_MD)} states the strip command before it states that the "
         f"gate runs first. A lead reads this paragraph top to bottom and runs "
         f"what it reaches; the sweep must be the thing it reaches first."
+    )
+
+
+_ASSAY_DOOR_LEAD_IN = (
+    "**Both doors into ASSAY check the width by name, and both refuse a "
+    "`DELTA` cycle:**"
+)
+
+
+def _assay_door_paragraph() -> str:
+    """start.md's ASSAY-door paragraph, flattened.
+
+    Scoped to the ONE paragraph rather than to ``### F2: INSPECT``: the
+    width-decision paragraph higher in that section already names all three
+    FULL rules while explaining how a mode gets decided, so a section-wide
+    search would be satisfied by that paragraph alone and would see nothing at
+    all about which recorded widths open the door.
+    """
+    text = _read(START_MD)
+    start = text.find(_ASSAY_DOOR_LEAD_IN)
+    assert start != -1, (
+        f"{_rel(START_MD)} no longer carries the ASSAY-door lead-in "
+        f"{_ASSAY_DOOR_LEAD_IN!r}. That sentence is where the crossing rule is "
+        f"stated; if it was reworded, retarget this helper -- do not drop the "
+        f"assertions built on it."
+    )
+    end = text.find("\n\n", start)
+    return " ".join(text[start : end if end != -1 else len(text)].split())
+
+
+def test_the_assay_door_paragraph_names_every_full_rule_as_opening_it() -> None:
+    """AC-016 / US-004 / D-169: the doors read WIDTH; the prose named a RULE.
+
+    ``foundry_gate``'s assay branch appends a checklist entry named
+    ``inspect_ran_at_full_width`` whose ``ok`` is ``mode == "FULL"``, and the
+    recorded rule is interpolated into the refusal string and read by nothing.
+    start.md nevertheless quoted the refusal verbatim -- "ASSAY is only opened
+    by an INSPECT whose recorded rule is final_gate" -- two clauses after its
+    own lead-in saying both doors check the width by name. Driven at
+    ``Foundry-Gate(phase='assay')`` on synthetic runs whose recorded width was
+    FULL/first_of_phase, FULL/final_gate and FULL/verifier_touched: ok True on
+    all three. A verifier-touching GRIND is the ordinary cycle of a run that
+    edits the verifier, so the false half of the paragraph charged the lead a
+    widening cycle the server does not ask for.
+
+    The expected rules are DERIVED from ``INSPECT_FULL_RULES``: a rule added to
+    the closed vocabulary without a mention here fails this test rather than
+    silently inheriting a claim the paragraph never made about it.
+    """
+    from foundry_mcp.schemas import vocab
+
+    para = _assay_door_paragraph()
+    assert vocab.INSPECT_FULL_RULES, (
+        "vocab.INSPECT_FULL_RULES is empty, which would make the check below "
+        "vacuous. The FULL rules are a closed vocabulary; an empty one is a "
+        "defect in vocab.py, not a licence to skip this assertion."
+    )
+    missing = sorted(r for r in vocab.INSPECT_FULL_RULES if f"`{r}`" not in para)
+    assert not missing, (
+        f"{_rel(START_MD)}'s ASSAY-door paragraph does not name {missing} as "
+        f"opening ASSAY. Every member of INSPECT_FULL_RULES records mode FULL, "
+        f"and FULL is the whole of what both doors check -- a rule the "
+        f"paragraph leaves out reads as a width that still owes a widening "
+        f"cycle (D-169)."
+    )
+    assert f"`{vocab.INSPECT_DELTA_RULE}`" not in para or "DELTA" in para, (
+        f"{_rel(START_MD)}'s ASSAY-door paragraph names the delta rule without "
+        f"naming the DELTA width it refuses on."
+    )
+
+
+def test_the_assay_door_correction_sits_under_the_claim_it_qualifies() -> None:
+    """AC-016 / D-169: the POSITION is the guard, and no phrase pin sees it.
+
+    Every phrase this module pins can be present with the width ruling filed in
+    some other section, and a lead reads ``### F2: INSPECT`` top to bottom and
+    acts on the first crossing rule it meets. The routing sentence states the
+    width, the lead-in says both doors check it, and the ruling that WIDTH is
+    the whole condition has to arrive after both -- in the same section, not in
+    F4 and not in the escalation section, where a lead deciding this crossing
+    has already stopped reading.
+    """
+    text = _read(START_MD)
+    start = text.find("\n### F2: INSPECT")
+    assert start != -1, (
+        f"{_rel(START_MD)} has no `### F2: INSPECT` section. The crossing rule "
+        f"lives inside it; if the heading was renamed, retarget this test -- "
+        f"do not drop it."
+    )
+    end = text.find("\n### ", start + 1)
+    section = " ".join(text[start : end if end != -1 else len(text)].split())
+
+    routing = section.find("**Zero blocking defects does not by itself open ASSAY")
+    lead_in = section.find(_ASSAY_DOOR_LEAD_IN)
+    ruling = section.find("**WIDTH is the whole condition.")
+    rules = section.find("Every member of `INSPECT_FULL_RULES` opens ASSAY")
+    owes = section.find("owes no extra widening cycle")
+
+    for label, found in (
+        ("the width-decides-the-crossing routing sentence", routing),
+        ("the both-doors-check-the-width lead-in", lead_in),
+        ("the ruling that WIDTH is the whole condition", ruling),
+        ("the roster of FULL rules that open ASSAY", rules),
+        ("the statement that a verifier-touched cycle owes no widening", owes),
+    ):
+        assert found != -1, (
+            f"{_rel(START_MD)}'s `### F2: INSPECT` section is missing {label}. "
+            f"All five belong to the same paragraph: the lead decides this "
+            f"crossing there and nowhere else (D-169)."
+        )
+
+    assert routing < lead_in < ruling < rules < owes, (
+        f"{_rel(START_MD)} states the width ruling out of order. A "
+        f"qualification a reader meets before the claim it qualifies reads as "
+        f"a different rule, and one they meet after they have already crossed "
+        f"is not read at all: routing, then the two doors, then WIDTH is the "
+        f"whole condition, then which rules satisfy it, then what that costs "
+        f"a verifier-touching cycle (nothing)."
     )
 
 

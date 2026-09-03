@@ -1,0 +1,14 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import pathlib,sys; sys.path.insert(0,"src"); from foundry_mcp.schemas import vocab; BT=chr(96); NL=chr(10); S=pathlib.Path("../commands/start.md").read_text(encoding="utf-8"); T=pathlib.Path("tests/test_lead_prose.py").read_text(encoding="utf-8"); LEAD="**Both doors into ASSAY check the width by name, and both refuse a "+BT+"DELTA"+BT+" cycle:**"; i=S.find(LEAD); para=" ".join(S[i:S.find(NL+NL,i)].split()); sec=" ".join(S.split(NL+"### F2: INSPECT")[1].split(NL+"### ")[0].split()); RETIRED="ASSAY is only opened by an INSPECT whose recorded rule is final_gate"; print("=== D-169: both ASSAY doors test the recorded WIDTH, never the rule ==="); print("  vocab INSPECT_FULL_RULES:", sorted(vocab.INSPECT_FULL_RULES)); print("  vocab INSPECT_DELTA_RULE:", vocab.INSPECT_DELTA_RULE); print("  FULL rules the ASSAY-door paragraph names as opening it:", [r for r in sorted(vocab.INSPECT_FULL_RULES) if BT+r+BT in para]); print("  start.md retired the rule-condition claim (want 0):", " ".join(S.split()).count(RETIRED)); print("  the retirement is guarded in test_lead_prose.py (want 1):", T.count(RETIRED)); print("  start.md states WIDTH is the whole condition (want 1):", para.count("**WIDTH is the whole condition.")); print("  start.md names the gate checklist entry (want 1):", para.count("a checklist entry literally named "+BT+"inspect_ran_at_full_width"+BT)); print("  start.md says a verifier-touched cycle owes nothing extra (want 1):", para.count("owes no extra widening cycle")); ORDER=["**Zero blocking defects does not by itself open ASSAY", LEAD, "**WIDTH is the whole condition.", "Every member of "+BT+"INSPECT_FULL_RULES"+BT+" opens ASSAY", "owes no extra widening cycle"]; pos=[sec.find(x) for x in ORDER]; print("  the five claims sit in the F2 section, in order:", pos==sorted(pos) and -1 not in pos)'
+# evidence-for: AC-016, US-004, FR-011, FR-049
+# evidence-timeout: 300
+
+=== D-169: both ASSAY doors test the recorded WIDTH, never the rule ===
+  vocab INSPECT_FULL_RULES: ['final_gate', 'first_of_phase', 'verifier_touched']
+  vocab INSPECT_DELTA_RULE: delta
+  FULL rules the ASSAY-door paragraph names as opening it: ['final_gate', 'first_of_phase', 'verifier_touched']
+  start.md retired the rule-condition claim (want 0): 0
+  the retirement is guarded in test_lead_prose.py (want 1): 1
+  start.md states WIDTH is the whole condition (want 1): 1
+  start.md names the gate checklist entry (want 1): 1
+  start.md says a verifier-touched cycle owes nothing extra (want 1): 1
+  the five claims sit in the F2 section, in order: True
