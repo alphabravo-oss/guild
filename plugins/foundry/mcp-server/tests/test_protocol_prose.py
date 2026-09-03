@@ -4609,3 +4609,435 @@ def test_teammate_commits_its_own_evidence_logs() -> None:
         "logs and that nothing sweeps them by hand (FR-043). The server "
         "re-executes what was COMMITTED; an uncommitted log is invisible to it."
     )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 5 -- D-092 / D-093 / D-096: the survivors a phrase list misses
+# ---------------------------------------------------------------------------
+#
+# All three defects were graded prose sitting in a file that ALSO bans the
+# grade, and all three passed 839 tests. The pins that should have caught them
+# could not: ``_APPROVING_SEVERITY_USES`` is a hand-typed tuple of comparative
+# shapes, and "HOLLOW verdicts are highest priority", "Critical path gaps" and
+# "Do NOT flag cosmetic/style issues" are none of them. A fourth survivor would
+# not be on that tuple either.
+#
+# So the sweep below is derived on every axis it can be. The token set is read
+# out of the ban clause itself, so a seventh banned spelling added to the rule
+# is swept the moment it lands. The corpus is DEFECT_FILING_SURFACES, so a new
+# filing surface is swept the moment it names a door. Only the innocent uses
+# are hand-listed -- as an EXACT set, so a new one fails until somebody writes
+# down why it is the English word rather than the grade, in a diff a reviewer
+# reads. That written act is the thing that never happened for "highest
+# priority", and it is the whole point of recording rather than excusing.
+
+#: The banned work-effort spellings, READ from the shared ban clause rather
+#: than re-typed here -- the ``_EXPECTED_TYPE_ENUM`` discipline applied to
+#: prose. The clause names each one as a code span behind the word "no", which
+#: is a shape a USE never takes: a document reaching for the axis writes "high
+#: severity" or "highest priority", never "no `severity`".
+_BANNED_GRADE_RE = re.compile(r"no `([a-z]+)`")
+
+#: The other shape a banned spelling only ever takes when it is being RULED
+#: OUT: "a channel, not a severity tier", "a channel statement, not a severity
+#: one". A document reaching FOR the axis never phrases it as a denial, so this
+#: is derived rather than recorded per file -- which matters because the same
+#: denial sentence is shared prose that lands in a surface the moment it joins
+#: the corpus, and a ledger entry for it would be a debt owed to whichever
+#: casting happened to commit first.
+_AXIS_DENIAL_RE_TEMPLATE = r"(?:not|never) an? (?:%s)"
+
+
+def _banned_grade_tokens() -> frozenset[str]:
+    """The spellings the shared rule bans, parsed out of the rule."""
+    return frozenset(_BANNED_GRADE_RE.findall(_tier_rule(ASSAYER)))
+
+
+def test_the_banned_grade_tokens_derive_from_the_ban_clause() -> None:
+    """Floor check: a derivation that silently returns {} sweeps nothing.
+
+    Every assertion below is parametrised on this set. If the regex stops
+    matching -- the rule reflows, the backticks go, the enumeration moves to a
+    table -- the sweeps do not fail, they go vacuous, and a vacuous guard is
+    how D-092 lived through four GRIND cycles. This is the assertion that
+    fails instead.
+    """
+    tokens = _banned_grade_tokens()
+    assert "severity" in tokens, (
+        f"the ban-clause derivation found {sorted(tokens)} and not the "
+        f"historical name of the axis. agents/assayer.md's shared rule is the "
+        f"source; either it stopped enumerating the banned spellings as "
+        f"`no \\`x\\`` code spans -- which is itself the FR-030 violation, "
+        f"because the enumeration is what makes the ban a ban -- or "
+        f"_BANNED_GRADE_RE no longer matches the shape it takes. Fix whichever "
+        f"moved; do not re-type the members here."
+    )
+    assert len(tokens) >= 6, (
+        f"the ban clause now names only {sorted(tokens)}. FR-030 requires the "
+        f"work-effort grade to stay banned BY NAME, and a shortened "
+        f"enumeration narrows every sweep below it in one edit."
+    )
+
+
+#: Occurrences of a banned spelling that are the ORDINARY ENGLISH WORD, or a
+#: file's own prohibition of the axis, recorded one by one with the reason.
+#: Asserted as an EXACT set in both directions: a new occurrence fails until it
+#: is deleted or recorded, and a recorded phrase that no longer occurs fails
+#: too, so a stale entry cannot quietly re-open the hole it once described.
+#:
+#: The shared no-severity rule is NOT listed. It is excised mechanically by
+#: ``_tier_rule`` before this ledger is consulted, because it is the same 1924
+#: characters in every file that carries it and pasting it here six times
+#: would be a second copy free to drift from the one the rule pins.
+_RECORDED_GRADE_WORD_USES: dict[str, dict[str, str]] = {
+    "plugins/foundry/agents/assayer.md": {
+        "This ordering is critical": (
+            "spec-before-code ordering, an adjective on a METHOD step. Nothing "
+            "here grades a finding."
+        ),
+        'Never say "minor issue" or "small gap."': (
+            "the No-softening rule banning the word by quoting it. Deleting "
+            "the quotation would delete the prohibition."
+        ),
+        "The word \"minor\" doesn't exist in your vocabulary.": (
+            "the same rule's close, naming the word it abolishes."
+        ),
+    },
+    "plugins/foundry/agents/teammate.md": {
+        "Auto-add missing critical functionality": (
+            "RULE 2's heading. `critical` qualifies functionality every "
+            "production build needs -- validation, auth, error handling -- "
+            "not the importance of a defect."
+        ),
+        "making a major schema migration": (
+            "the SIZE of an architectural change, in RULE 4's examples of what "
+            "a teammate escalates rather than does."
+        ),
+        "- **Impact:** [what breaks or is suboptimal without the architectural change]": (
+            "a concerns.md template field asking WHAT BREAKS. It records a "
+            "consequence, and the lead reads it to decide whether to "
+            "re-decompose -- it ranks nothing against anything."
+        ),
+        "Do not upgrade major versions of build dependencies": (
+            "semver. `major` here is a version component."
+        ),
+        "add critical functionality, fix blockers": (
+            "the SUMMARY section restating RULE 2, same sense as its heading."
+        ),
+    },
+    "plugins/foundry/skills/prove/SKILL.md": {
+        "For each major feature, enumerate reasonable scenarios": (
+            "`major` = principal, scoping which features get scenario "
+            "expansion. It grades no finding; every finding the expansion "
+            "produces is a defect on the same terms."
+        ),
+        "what code does, user impact, files, fix direction": (
+            "a Findings report field naming what a user hits. Describing a "
+            "consequence is what a defect record is FOR; the abolished axis "
+            "was a judgement about whether the consequence was worth fixing."
+        ),
+        "there is no off-the-critical-path exemption": (
+            "the FAIL rule closing that exemption BY NAME (D-041, pinned by "
+            "test_prove_skill_closed_the_critical_path_exemption)."
+        ),
+        "that was the severity axis wearing a different name": (
+            "the same sentence naming the axis it abolishes."
+        ),
+    },
+    "plugins/foundry/skills/sight/SKILL.md": {
+        "**CRITICAL: This skill requires the Playwright MCP browser tools": (
+            "a setup PRECONDITION. Without the browser tools the skill cannot "
+            "run at all; this is not a finding and has no tier."
+        ),
+        "- **User impact:** {what breaks": (
+            "a console-error report template field. Same reading as prove's."
+        ),
+        "- **Impact**: {what user-facing behavior this causes}": (
+            "a network-failure report template field."
+        ),
+        "- **Impact**: {what breaks}": (
+            "a request-failure report template field."
+        ),
+    },
+    "plugins/foundry/skills/trace/SKILL.md": {
+        "For each major feature, walk through the complete workflow": (
+            "`major` = principal, scoping the plumber check."
+        ),
+        "What spec says vs code does, impact.": (
+            "the DEV-N report field naming what the deviation causes."
+        ),
+    },
+}
+
+
+def _grade_word_scan_text(path: Path) -> str:
+    """A surface's prose with every EXCEPTED occurrence blanked out.
+
+    Three exceptions are mechanical -- the shared no-severity rule, the
+    ``no `x``` enumeration form each file bans the axis in, and the "not a
+    `x`" denial form -- and the fourth is the recorded ledger above. What
+    survives all four is a banned spelling this module has never been told
+    about.
+
+    The placeholders substituted in carry no banned spelling of their own. The
+    first draft blanked the shared rule out as ``<shared no-severity rule>``
+    and the sweep then matched its own marker in all six files that carry the
+    rule -- a guard failing on the evidence it just erased.
+    """
+    flat = _flat(path)
+    shared = _tier_rule(path)
+    if shared:
+        flat = flat.replace(shared, " <the shared rule> ")
+    flat = _BANNED_GRADE_RE.sub(" <ban> ", flat)
+    flat = re.sub(
+        _AXIS_DENIAL_RE_TEMPLATE % "|".join(sorted(_banned_grade_tokens())),
+        " <denied> ",
+        flat,
+        flags=re.I,
+    )
+    for phrase in _RECORDED_GRADE_WORD_USES.get(_rel(path), {}):
+        flat = flat.replace(phrase, " <recorded> ")
+    return flat
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_no_filing_surface_grades_a_finding_by_work_effort(path: Path) -> None:
+    """D-092 / D-096 / GI-001 / FR-030, over the corpus that files.
+
+    prove/SKILL.md ranked its own verdicts -- "HOLLOW verdicts are highest
+    priority" -- one screen from the paragraph banning `priority` by name, and
+    asked its assayer for two more gradings besides ("Critical path gaps",
+    "quality confidence (HIGH/MEDIUM/LOW)") in a file whose FAIL rule says
+    there is "no off-the-critical-path exemption, because that was the
+    severity axis wearing a different name". A reader resolves a document that
+    contradicts itself in its own favour, so the file abolished the axis and
+    reinstated it in the same read.
+    """
+    rx = re.compile(
+        r"(?<![A-Za-z])(%s)(?![A-Za-z])" % "|".join(sorted(_banned_grade_tokens())),
+        re.I,
+    )
+    text = _grade_word_scan_text(path)
+    found = [
+        text[max(0, m.start() - 70) : m.end() + 70] for m in rx.finditer(text)
+    ]
+    assert not found, {
+        "file": _rel(path),
+        "why": (
+            "a banned work-effort spelling appears outside this file's own ban "
+            "clause and outside the recorded-use ledger. Two readings, and the "
+            "fix differs: if the word GRADES a finding -- ranks one above "
+            "another, exempts one from being filed, or asks how much a fix is "
+            "worth -- delete it, because GI-001 abolished that axis and `tier` "
+            "records evidence instead. If it is the ordinary English word on "
+            "something that is not a finding, add it to "
+            "_RECORDED_GRADE_WORD_USES with the reason. Recording is not a way "
+            "past this assertion; it is the reviewable act D-092 never had."
+        ),
+        "banned_spellings": sorted(_banned_grade_tokens()),
+        "unrecorded_uses": found,
+    }
+
+
+def test_the_recorded_grade_word_ledger_is_exact() -> None:
+    """A stale exemption re-opens the hole it was written to describe.
+
+    An entry that no longer matches excuses nothing and hides that the sweep
+    above has gone one occurrence narrower than its author believed. Both
+    directions fail here so the ledger tracks the prose rather than outliving
+    it.
+    """
+    swept = {_rel(p) for p in DEFECT_FILING_SURFACES}
+    stale_files = sorted(set(_RECORDED_GRADE_WORD_USES) - swept)
+    assert not stale_files, (
+        f"{stale_files} carry recorded grade-word uses but are no longer "
+        f"filing surfaces. Delete the entries -- an exemption against a file "
+        f"this module does not read excuses nothing."
+    )
+    for rel, uses in _RECORDED_GRADE_WORD_USES.items():
+        path = FOUNDRY_ROOT.parent.parent / rel
+        flat = _flat(path)
+        shared = _tier_rule(path)
+        if shared:
+            flat = flat.replace(shared, " <the shared rule> ")
+        gone = sorted(phrase for phrase in uses if phrase not in flat)
+        assert not gone, (
+            f"{rel} no longer contains recorded use(s) {gone}. Either the "
+            f"prose was rewritten -- in which case delete the entry, the "
+            f"sweep covers the replacement now -- or the phrase drifted and "
+            f"the entry is excusing an occurrence nobody has read."
+        )
+
+
+#: Phrasings that hand a reader DISCRETION over a finding: rank it, hold it
+#: back, or defer it. None of them appears in any ban clause in the corpus --
+#: a rule forbidding the axis says "no exceptions, no deferrals", never "safe
+#: to skip" -- so these need no exception layer at all.
+#:
+#: trace/SKILL.md closed its `## Key Constraints` list with "Do NOT flag
+#: cosmetic/style issues -- only structural completeness gaps" while eight
+#: sibling surfaces closed the same rule with a no-discretion sentence. A
+#: stream told to withhold findings by how much they matter is running the
+#: severity axis under another name, in the release that abolished it.
+_DISCRETION_EXEMPTIONS = (
+    ("highest priority", "ranks one finding above the rest"),
+    ("top priority", "ranks one finding above the rest"),
+    ("higher priority", "ranks one finding against another"),
+    ("lower priority", "ranks one finding against another"),
+    ("priority order", "states a fix order the abolished axis decided"),
+    ("cosmetic/style", "withholds a finding for being slight"),
+    ("purely cosmetic", "withholds a finding for being slight"),
+    ("merely cosmetic", "withholds a finding for being slight"),
+    ("only cosmetic issues", "withholds a finding for being slight"),
+    ("safe to skip", "exempts a finding from being filed"),
+    ("can be skipped", "exempts a finding from being filed"),
+    ("can be deferred", "defers a finding the run refuses to defer"),
+    ("nice to have", "grades a finding as optional"),
+    ("nice-to-have", "grades a finding as optional"),
+)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_no_filing_surface_offers_a_discretion_exemption(path: Path) -> None:
+    """D-093 / D-092 / GI-001: the axis survives as discretion, not as a word.
+
+    A file can lose every banned spelling and still tell its stream which
+    findings to hold back, which is the same instruction with the vocabulary
+    filed off. This sweep is over the whole filing corpus rather than the
+    stream register, because the surfaces that write in their own voice --
+    prove, trace, temper, sight -- are exactly the ones no word-identical pin
+    reaches.
+    """
+    flat = _flat(path).lower()
+    found = sorted(
+        f"{phrase!r} ({why})" for phrase, why in _DISCRETION_EXEMPTIONS
+        if phrase in flat
+    )
+    assert not found, (
+        f"{_rel(path)} hands its stream discretion over a finding: {found}. "
+        f"Every defect gets fixed, so there is nothing for a rank or a "
+        f"deferral to decide. Scope a stream by its SUBJECT if you must -- "
+        f"trace audits wiring, sight audits the rendered surface -- and close "
+        f"the rule the way the sibling surfaces close theirs, with a sentence "
+        f"that gives no discretion at all."
+    )
+
+
+def test_prove_assay_step_states_no_fix_order() -> None:
+    """D-092: deleting the ranking is half; saying what replaced it is the rest.
+
+    "HOLLOW verdicts are highest priority" was a fix-order instruction, and a
+    step that simply stops giving one reads as silence to the next author who
+    wants to split a queue in two -- the same reasoning
+    ``test_sight_routes_its_findings_by_tier_not_by_a_work_effort_grade``
+    records for sight's backlog.
+    """
+    flat = _flat(PROVE_SKILL)
+    assert (
+        "Nothing here ranks one verdict above another: every non-VERIFIED "
+        "verdict is a defect and every defect gets fixed, so there is no fix "
+        "order left for this step to state." in flat
+    ), (
+        "prove/SKILL.md's ASSAY step no longer states that it orders nothing. "
+        "The sentence it replaced ranked HOLLOW above the other verdicts, one "
+        "screen from the paragraph banning `priority` by name."
+    )
+    assert 'No exceptions, no deferrals, no "this one is only cosmetic."' in flat, (
+        "prove/SKILL.md's ASSAY step lost the no-discretion close every other "
+        "filing surface carries. A rule in this register closes on one."
+    )
+
+
+def test_prove_assess_step_describes_the_journey_without_triaging_it() -> None:
+    """D-096: the file's own FAIL rule already ruled on this question.
+
+    Step 2 asked which non-VERIFIED items sit on the core user journey, in a
+    file whose verdict rules say there is "no off-the-critical-path exemption,
+    because that was the severity axis wearing a different name". Asking the
+    question is how the exemption gets computed; the answer is then one step
+    from being acted on.
+    """
+    flat = _flat(PROVE_SKILL)
+    assert (
+        "an item nothing on the happy path reaches is a defect on exactly the "
+        "same terms as one the first click hits" in flat
+    ), (
+        "prove/SKILL.md's Assess step no longer rules that placement on a "
+        "journey changes nothing about a finding. Dropping the triage "
+        "question without the ruling leaves the next author free to re-add it."
+    )
+    assert "Description, never triage" in flat, (
+        "prove/SKILL.md's Assess step does not say which of the two the tally "
+        "is. A journey tally that does not rule itself out of triage is a "
+        "triage tally with a different heading."
+    )
+
+
+def test_prove_report_has_no_confidence_ladder() -> None:
+    """D-096: a HIGH/MEDIUM/LOW rung over a whole report is the axis again.
+
+    `tier` grades the evidence behind ONE finding. A single rung averaged over
+    every finding in the report grades nothing anything downstream can act on,
+    and reintroduces an ordered scale beside the closed two-member one.
+    """
+    flat = _flat(PROVE_SKILL)
+    assert "quality confidence" not in flat, (
+        "prove/SKILL.md's Overall Assessment demands a confidence grade again. "
+        "GI-001 abolished the graded axis; `tier` replaced it per finding, not "
+        "per report."
+    )
+    assert (
+        "No confidence ladder over the report as a whole: `tier` already "
+        "records the evidence behind each finding one finding at a time" in flat
+    ), (
+        "prove/SKILL.md's Overall Assessment no longer says why it asks for no "
+        "confidence rung. Silence invites the ladder back the next time "
+        "somebody wants a one-line summary."
+    )
+
+
+def test_trace_scopes_its_findings_by_subject_not_by_size() -> None:
+    """D-093: 'only structural completeness gaps' was a withholding rule.
+
+    A stream may be scoped by SUBJECT -- trace audits wiring and data flow,
+    sight audits the rendered surface -- and that is a division of labour. It
+    may not be scoped by how much a finding matters, which is what "Do NOT
+    flag cosmetic/style issues" instructed in the release that abolished the
+    axis deciding it.
+    """
+    flat = _flat(TRACE_SKILL)
+    assert "**Scope is the subject, never the size**" in flat, (
+        "trace/SKILL.md's constraints no longer distinguish scoping a stream "
+        "by subject from grading its findings by size. Deleting the cosmetic "
+        "exemption without that distinction loses the legitimate half: TRACE "
+        "genuinely does not own the rendered surface."
+    )
+    assert (
+        "Everything inside TRACE's own subject is a defect however small the "
+        "fix looks, and this rule gives you no discretion to call one "
+        '"cosmetic."' in flat
+    ), (
+        "trace/SKILL.md's scope rule lost its no-discretion close. "
+        "agents/research-auditor.md closes the same ruling the same way, and "
+        "without it a subject boundary reads as permission to judge size."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_evidence_axis_constraint_closes_on_no_discretion(path: Path) -> None:
+    """D-093: eight surfaces closed the rule; these two trailed off.
+
+    Every stream agent's tier rule ends "No exceptions, no deferrals, no 'this
+    one is only cosmetic.'" The two skills stated the same obligations and
+    then stopped, which is the register's way of leaving a rule negotiable.
+    """
+    assert (
+        "`tier` records evidence, never how much work a fix is worth. No "
+        'exceptions, no deferrals, no "this one is only cosmetic."'
+        in _flat(path)
+    ), (
+        f"{_rel(path)}'s evidence-axis constraint no longer closes on the "
+        f"no-exceptions sentence its sibling filing surfaces use. A constraint "
+        f"that states an obligation without closing it is one a stream reads "
+        f"as advice."
+    )

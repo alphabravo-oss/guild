@@ -351,7 +351,8 @@ This JSON format can be passed directly to the foundry defect sync tools.
   wrong result; `LATENT` when you derived the finding and found no reachable instance, in
   which case `reproduction_attempted` names what you drove and what it found or the server
   refuses the filing. A security-property claim can never be `LATENT`. Both tiers are
-  defects and both get fixed — `tier` records evidence, never how much work a fix is worth.
+  defects and both get fixed — `tier` records evidence, never how much work a fix is
+  worth. No exceptions, no deferrals, no "this one is only cosmetic."
 - **Spec-anchored** — every finding references a spec requirement
 - **The symbol is authoritative** — cite `path#Symbol`, never `path:line`. A cite whose
   symbol resolves is valid however stale any line hint beside it has become. No finding
@@ -365,4 +366,8 @@ This JSON format can be passed directly to the foundry defect sync tools.
 - Do NOT mark a function ✓ without Q1+Q2 in the report
 - Do NOT finish with fewer than 3 findings — real codebases always have gaps
 - Do NOT recommend removing code — fix direction is always "fill out the body"
-- Do NOT flag cosmetic/style issues — only structural completeness gaps
+- **Scope is the subject, never the size** — TRACE audits wiring, data flow and
+  scenario completeness. A rendered-surface question belongs to SIGHT, which owns
+  that subject, and that is a division of labour between streams rather than a grade
+  on the findings. Everything inside TRACE's own subject is a defect however small
+  the fix looks, and this rule gives you no discretion to call one "cosmetic."

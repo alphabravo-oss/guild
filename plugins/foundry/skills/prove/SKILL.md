@@ -151,7 +151,10 @@ it shouldn't exist. New features should REPLACE old code, not pile on top.
 
 1. **Tally**: VERIFIED vs each non-verified category. What % is truly implemented?
 2. **Displacement tally**: how many functions/files exist without spec justification?
-3. **Critical path gaps**: which non-VERIFIED items are on the core user journey?
+3. **Journey placement**: name the user journey each non-VERIFIED item sits on, so
+   the report says what a user actually hits. Description, never triage — an item
+   nothing on the happy path reaches is a defect on exactly the same terms as one
+   the first click hits, and this tally hands you no discretion to rank them.
 4. **Cross-cutting concerns**: auth on all protected endpoints? Errors propagated
    with context or swallowed? Race conditions? Input validation at boundaries?
 
@@ -188,8 +191,11 @@ When run standalone, write to `prove-reports/prove-{timestamp}.md`. When run fro
   systemic fix approach
 - **Observable Truths**: per feature — each OT-N with YES/NO verdict
 - **Audit Cross-Reference**: table of findings vs logical/UI audit overlap
-- **Overall Assessment**: 2-3 sentences, quality confidence (HIGH/MEDIUM/LOW),
-  recommendation (PROCEED/FIX_SYSTEMIC_FIRST/SIGNIFICANT_GAPS)
+- **Overall Assessment**: 2-3 sentences naming what you drove and what you only
+  read, plus the recommendation (PROCEED/FIX_SYSTEMIC_FIRST/SIGNIFICANT_GAPS). No
+  confidence ladder over the report as a whole: `tier` already records the evidence
+  behind each finding one finding at a time, and a single rung averaged over all of
+  them is that axis in a form nothing downstream can act on.
 
 ## Step 6: Decide
 
@@ -198,9 +204,11 @@ When run standalone, write to `prove-reports/prove-{timestamp}.md`. When run fro
 **Foundry F4 ASSAY:** return report path, finding counts, and verification %
 via the `Foundry-Verdict` MCP tool. Four parallel `foundry:assayer` agents each
 verify a domain slice with `effort: max`. SP-N patterns become single fix items
-(fix root cause, not instances). HOLLOW verdicts are highest priority. Fix
-direction for HOLLOW/PARTIAL must be "FILL OUT" — stubs exist because something
-belongs there.
+(fix root cause, not instances). Fix direction for HOLLOW/PARTIAL must be
+"FILL OUT" — stubs exist because something belongs there. Nothing here ranks one
+verdict above another: every non-VERIFIED verdict is a defect and every defect
+gets fixed, so there is no fix order left for this step to state. No exceptions,
+no deferrals, no "this one is only cosmetic."
 
 ## MCP Validation (optional)
 
@@ -352,7 +360,8 @@ guarantee valid pointers into the provided document.
   wrong result; `LATENT` when you derived the finding and found no reachable instance, in
   which case `reproduction_attempted` names what you drove and what it found or the server
   refuses the filing. A security-property claim can never be `LATENT`. Both tiers are
-  defects and both get fixed — `tier` records evidence, never how much work a fix is worth.
+  defects and both get fixed — `tier` records evidence, never how much work a fix is
+  worth. No exceptions, no deferrals, no "this one is only cosmetic."
 - **Spec-anchored** — every finding references exact spec text with `[SPEC:...]` citations
 - **Fresh eyes** — read spec and code BEFORE any audit reports
 - **Exhaustive** — verify every item, no batching or skipping
