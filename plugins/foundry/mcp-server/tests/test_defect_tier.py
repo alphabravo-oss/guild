@@ -618,6 +618,203 @@ def test_the_batch_door_fires_the_tripwire_on_the_same_filing(run_env, earlier_r
     assert _defects(fdir) == [], "the whole batch is refused, nothing recorded"
 
 
+# --- D-128: the tripwire is not rung-dependent at the rungs ABOVE the shared
+# validator either. D-061 moved the denylist to the validator's first rung, but
+# `foundry_add_defect` returned at its own source/defect_type vocabulary rungs
+# BEFORE calling the validator at all, so the ordering property held only for
+# filings that got the vocabulary right. The batch door accumulates those same
+# two rungs and runs the validator anyway, so the two doors disagreed about
+# whether one filing is audited.
+_SECURITY_CLAIM = (
+    "the login endpoint does not verify the authentication token signature"
+)
+
+
+@pytest.mark.parametrize(
+    "vocabulary_rung,named",
+    [
+        ({"source": "bogus"}, "bogus"),
+        ({"defect_type": "COSMETIC"}, "COSMETIC"),
+    ],
+    ids=["unknown-source", "unknown-defect-type"],
+)
+def test_the_security_tripwire_fires_when_a_vocabulary_rung_also_fails(
+    run_env, vocabulary_rung, named
+):
+    """AC-007 / OT-005 / CT-003 / FR-005 — 'A LATENT filing whose description
+    matches the security-property predicate is refused naming
+    SECURITY_PROPERTY_CLAIM and a tripwire record is written.'
+
+    Unconditional on the description matching, which is the whole of D-061's
+    ruling: an audit control a filer can switch off by ALSO getting another
+    field wrong is not a control. D-061 closed that for the rungs INSIDE
+    ``validate_defect_filing``; this door short-circuited one frame further out,
+    at its own source and defect_type checks, so the same hand-waved security
+    claim filed under a misspelt stream id was refused naming only the stream
+    and left ``observations.json`` tripwire delta 0.
+    """
+    project_root, fdir = run_env
+
+    args = {
+        "cycle": 0,
+        "source": "prove",
+        "defect_type": "PARTIAL",
+        "description": _SECURITY_CLAIM,
+        "defect_class": "MISSING_AUTH_GUARD",
+        "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of both roots finds 0 sites",
+        "project_root": project_root,
+    }
+    args.update(vocabulary_rung)
+
+    result = foundry_add_defect(**args)
+
+    assert result["ok"] is False, result
+    # Both faults are named in ONE refusal: the filer fixes the filing in one
+    # pass rather than learning about the second rung only after fixing the
+    # first.
+    assert named in result["error"], result
+    assert SECURITY_PROPERTY_CLAIM in result["error"], result
+    assert result["denylist_class"] == SECURITY_PROPERTY_CLAIM, result
+    # The vocabulary rung is still named FIRST, so the two doors name the same
+    # field first for the same bad filing (the property D-098 pinned).
+    assert result["field"] == next(iter(vocabulary_rung)), result
+    assert "description" in result["fields"], result
+    assert len(_tripwire(fdir)) == 1, "the attempt is what the audit record is for"
+    assert _defects(fdir) == [], "a refused filing must persist nothing"
+
+
+def test_both_doors_audit_the_same_unknown_source_security_filing(run_env):
+    """The D-128 divergence stated directly: ONE filing, both doors, one answer.
+
+    Driven in-process, because no MCP call can reach either handler with an
+    unknown source — ``server._argument_refusal`` refuses it pre-dispatch on
+    both tools — so the doors could disagree here indefinitely without any
+    stream being able to observe it. That is what makes it a LATENT defect and
+    not a reason to leave the doors disagreeing.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
+    project_root, fdir = run_env
+    shared = {
+        "description": _SECURITY_CLAIM,
+        "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of both roots finds 0 sites",
+    }
+
+    single = foundry_add_defect(
+        cycle=0, source="bogus", defect_type="PARTIAL",
+        defect_class="MISSING_AUTH_GUARD", project_root=project_root, **shared,
+    )
+    single_tripwires = len(_tripwire(fdir))
+
+    batch = foundry_sync_defects(
+        cycle=0,
+        findings=[{
+            "source": "bogus", "type": "PARTIAL", "spec_ref": "", "symbol": "",
+            "file": "src/api/login.py", "class": "MISSING_AUTH_GUARD", **shared,
+        }],
+        project_root=project_root,
+    )
+    batch_tripwires = len(_tripwire(fdir)) - single_tripwires
+
+    # Each door audits the attempt exactly once.
+    assert single_tripwires == 1, single
+    assert batch_tripwires == 1, batch
+    # And each names BOTH faults, under the same two names.
+    for answer in (single["error"], batch["error"]):
+        assert "bogus" in answer, answer
+        assert SECURITY_PROPERTY_CLAIM in answer, answer
+    assert single["field"] == batch["refusals"][0]["field"] == "source"
+    assert single["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert _defects(fdir) == [], "neither door records a refused filing"
+
+
+def test_one_failing_rung_still_returns_that_rungs_refusal_unchanged(run_env):
+    """The merge is reached ONLY by a filing that failed several rungs.
+
+    D-128's fix walks the ladder instead of short-circuiting it, and the cost of
+    getting that wrong is silent: every refusal this door already returned would
+    gain a `Refused on N rungs` preamble and a `refusals` list that no caller
+    asked for. A filing wrong in exactly one way is the overwhelmingly common
+    refusal, and it must read exactly as it did before.
+    """
+    project_root, fdir = run_env
+
+    only_bad_source = foundry_add_defect(
+        cycle=0, source="bogus", defect_type="PARTIAL",
+        description="the handler is registered but never called",
+        defect_class="UNWIRED_HANDLER", tier="LIVE", project_root=project_root,
+    )
+
+    assert "bogus" in only_bad_source["error"], only_bad_source
+    assert "Refused on" not in only_bad_source["error"], only_bad_source
+    assert "refusals" not in only_bad_source, only_bad_source
+    assert "fields" not in only_bad_source, only_bad_source
+    assert _defects(fdir) == []
+
+
+def test_the_renderer_shows_every_named_rung_of_a_merged_refusal(run_env):
+    """ADJACENT PATH — ``display.py#_fmt_foundry_add_defect``.
+
+    A different caller of this door's result than the MCP dispatch the defect
+    was found through: ``server.py`` returns the dict, and this renderer is what
+    a lead actually READS. It reads ``r["error"]`` and nothing else — not
+    ``refusals``, not ``fields`` — so every rung has to survive in that one
+    string or the screen silently loses the ones the structured keys carry, and
+    a lead fixes the named fault, re-files, and meets the next one.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    project_root, fdir = run_env
+
+    merged = foundry_add_defect(
+        cycle=0, source="bogus", defect_type="PARTIAL",
+        description=_SECURITY_CLAIM, defect_class="MISSING_AUTH_GUARD",
+        tier="LATENT", reproduction_attempted="AST sweep finds 0 sites",
+        project_root=project_root,
+    )
+    rendered = re.sub(r"\x1b\[[0-9;]*m", "", format_result("Foundry-Defect", merged))
+
+    assert "bogus" in rendered, rendered
+    assert SECURITY_PROPERTY_CLAIM in rendered, rendered
+
+
+def test_the_retier_transition_still_reaches_the_ledger(run_env):
+    """ADJACENT PATH — the re-tier transition through this same door.
+
+    A DIFFERENT transition than the refusal ladder the defect was found on: it
+    is reached only by a filing that passes every rung and then matches an open
+    untiered record, so it sits past the exact code D-128 restructured. Walking
+    the ladder instead of returning from it must leave the accepting path
+    untouched — a filing that fails nothing must still classify D-001 in place
+    rather than appending beside it (FR-051 / D-077).
+    """
+    project_root, fdir = run_env
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [{
+            "id": "D-001", "cycle": 0, "source": "trace", "type": "UNWIRED",
+            "description": "filed before the tier axis existed", "spec_ref": "",
+            "symbol": "handle", "file": "src/api/a.py", "status": "open",
+            "fixed_in_cycle": None,
+        }]}),
+        encoding="utf-8",
+    )
+
+    result = foundry_add_defect(
+        cycle=0, source="trace", defect_type="UNWIRED",
+        description="the same finding, re-filed with a tier",
+        symbol="handle", file_path="src/api/a.py",
+        defect_class="UNWIRED_SURFACE", tier="LATENT",
+        reproduction_attempted="drove every caller; none reach it",
+        project_root=project_root,
+    )
+
+    assert result["retiered_ids"] == ["D-001"], result
+    assert [d["id"] for d in _defects(fdir)] == ["D-001"], "classified, not appended"
+    assert _defects(fdir)[0]["tier"] == "LATENT"
+
+
 def test_the_validator_reads_the_mapping_and_nothing_else(tmp_path):
     """Its locked contract: 'Reads the mapping and nothing else — no ledger
     read, no run-dir resolution, no write — so the batch door can call it once

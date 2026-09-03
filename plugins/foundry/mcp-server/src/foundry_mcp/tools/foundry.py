@@ -832,8 +832,14 @@ def asserts_code_behaviour(finding: dict) -> bool:
     less of), while a false negative blocks a real defect (the failure mode
     vocab.py calls unacceptable).
 
-    Exported because ``foundry_sync_defects``'s auto-demotion branch faces the
-    mirror of the same question and must not re-derive an answer to it.
+    D-144 — WHO ACTUALLY CALLS THIS. Its only caller is ``_observation_refusal``
+    below, which both filing doors run. This said it was "exported because
+    ``foundry_sync_defects``'s auto-demotion branch faces the mirror of the same
+    question and must not re-derive an answer to it" — the same retired branch
+    ``record_denylist_tripwire``'s roster named, deleted by the same D-098 fix,
+    which moved that decision into ``_observation_refusal`` precisely so no
+    second caller re-derives it. The guarantee survived the caller; the sentence
+    naming the caller did not.
 
     Pure and total over a malformed mapping — a missing or non-``str``
     description is simply no match, matching vocab's never-raise contract.
@@ -902,23 +908,51 @@ def record_denylist_tripwire(
     --------------------------------------
     The tripwire used to live inside ``foundry_add_observation``'s body, which
     made it reachable only by a caller that actually attempted the write. Every
-    production caller pre-filtered instead: ``foundry_sync_defects`` calls the
-    observation writer only once ``never_demote_class`` has already returned
+    production caller pre-filtered instead: ``foundry_sync_defects`` then called
+    the observation writer only once ``never_demote_class`` had already returned
     None, so the writer's inner denylist branch could not fire by construction
     and ``observations.json.tripwire`` stayed empty across every denylist
     scenario. An audit signal that only fires for callers who did not need
-    auditing is not a control.
+    auditing is not a control. (That pre-filtering caller is itself history now
+    — D-098 removed the batch door's demotion routing entirely — but the reason
+    this lives outside the writer survives it.)
 
-    So the decision and the signal are one exported call, and any path that is
-    about to route a finding away from the defect ledger makes it FIRST —
-    ``foundry_add_observation`` below, and ``foundry_sync_defects``'s
-    auto-demotion branch in ``foundry_orchestrator.py``. Both attempts are
-    audited by the same code, which is also what keeps the two filing paths
-    from drifting apart about what a demotion is.
+    So the decision and the signal are one exported call, and every path that
+    routes a finding away from the defect ledger — or refuses one on the
+    denylist — makes it. All four callers are audited by the same code, which
+    is what keeps the filing paths from drifting apart about what a denylisted
+    finding is.
 
-    Takes ``fdir`` rather than ``project_root`` because both callers already
-    hold the resolved run dir; re-resolving it here would be a third derivation
-    of a path the caller has.
+    THE CALLERS, AS THEY STAND (D-144)
+    ----------------------------------
+      * ``foundry_add_observation`` below — the one remaining DEMOTION path:
+        the finding is about to be written to ``observations.json``, and a
+        non-None return is what keeps it a defect instead.
+      * ``foundry_add_defect``'s LATENT security refusal — fires when
+        ``validate_defect_filing`` returns a refusal carrying
+        ``denylist_class``, so the ATTEMPT is audited even though nothing is
+        written to either ledger.
+      * ``foundry_sync_defects``'s refusal loop in ``foundry_orchestrator.py``
+        — the same rung at the batch door, over every refused finding in the
+        batch.
+      * ``foundry_sync_defects``'s declared-comment branch in
+        ``foundry_orchestrator.py`` — audit only: the finding stays a defect
+        either way, and the record captures that a denylist entry is what
+        rescued it.
+
+    This roster is load-bearing and it has been WRONG once. It used to name
+    "``foundry_sync_defects``'s auto-demotion branch", which D-098 deleted when
+    the batch door stopped routing comment prose into ``observations.json`` and
+    began refusing it in the validation loop instead. So the docstring
+    advertised a demotion path that no longer existed, beside a shared
+    validator it never mentioned, and a reader auditing "who can write a
+    tripwire" was reading the pre-D-098 shape. Re-derive this list from
+    ``grep -rn 'record_denylist_tripwire' src/`` when you change a caller;
+    do not trust it because it is written down.
+
+    Takes ``fdir`` rather than ``project_root`` because every caller above
+    already holds the resolved run dir; re-resolving it here would be another
+    derivation of a path the caller has.
     """
     denied = never_demote_class(finding)
     if denied is None and not _subject_is_declared_comment(finding):
@@ -1905,6 +1939,65 @@ def foundry_init(
     }
 
 
+def _merged_door_refusal(problems: list[dict]) -> dict:
+    """One refusal naming EVERY rung a single filing failed, in rung order.
+
+    D-128 — THE SINGLE DOOR ACCUMULATES ITS RUNGS, AS THE BATCH DOOR ALWAYS
+    HAS (AC-007 / OT-005 / CT-003 / FR-005)
+    ---------------------------------------------------------------------
+    ``foundry_add_defect`` used to RETURN at the source and defect_type
+    vocabulary rungs, so a filing that was wrong there never reached
+    ``validate_defect_filing`` at all — and the D-061 ruling that moved the
+    security denylist to the validator's FIRST rung, precisely so the audit
+    tripwire could not be switched off by also failing an earlier rung, was
+    silently undone one frame further out. ``foundry_sync_defects`` appends its
+    source and type problems to ``refusals`` and runs the validator anyway, so
+    the two doors disagreed about whether one filing is audited: driven
+    in-process with tier LATENT, an authentication-property description and
+    ``source="bogus"``, the single door refused naming ``source`` with
+    ``observations.json`` tripwire delta 0, and the batch door refused the same
+    filing naming BOTH ``source`` and SECURITY_PROPERTY_CLAIM with delta 1.
+
+    So this door collects rather than returns, and this function is how the
+    collection becomes one answer. A caller that fails exactly one rung gets
+    that rung's refusal dict UNCHANGED — byte-identical to what this door
+    returned before D-128 — because the merge is only ever reached by a filing
+    that failed more than one, which is the only case that used to be lossy.
+
+    ``field`` is the FIRST failing rung, so the two doors still name the same
+    field first for the same bad filing (the property D-098 pinned); the whole
+    ordered roster is in ``fields`` and ``refusals``. ``denylist_class``,
+    ``refused_class`` and ``observation_classes`` are hoisted to the top level
+    so a caller reads them off a merged refusal exactly where it reads them off
+    a single-rung one — a key that moves depending on how many rungs failed is
+    how the next reader comes to miss the audit class.
+    """
+    return {
+        "ok": False,
+        "error": (
+            f"Refused on {len(problems)} rungs — nothing was recorded. "
+            + "; ".join(f"{p.get('field', '?')}: {p['error']}" for p in problems)
+        ),
+        # Every rung's hint, not just the first: the filer has to fix all of
+        # them to get this filing in, and a hint naming one rung reads as the
+        # whole remedy.
+        "hint": " ".join(p["hint"] for p in problems if p.get("hint")),
+        "field": problems[0].get("field", ""),
+        "fields": [p.get("field", "") for p in problems],
+        # `field` + `reason` are the batch door's per-refusal key names, minus
+        # the `index` that means nothing when there is one filing.
+        "refusals": [
+            {"field": p.get("field", ""), "reason": p["error"]} for p in problems
+        ],
+        **{
+            key: p[key]
+            for key in ("denylist_class", "refused_class", "observation_classes")
+            for p in problems
+            if key in p
+        },
+    }
+
+
 @ledger_refusals
 def foundry_add_defect(
     cycle: int,
@@ -1973,6 +2066,15 @@ def foundry_add_defect(
         when the vocabulary check, the comment-prose check, or
         ``validate_defect_filing`` rejects the filing.
 
+        D-128: the rungs are WALKED, not short-circuited. A filing that fails
+        one rung gets that rung's refusal unchanged; one that fails several
+        gets a single merged refusal naming every one of them (``fields`` and
+        ``refusals`` carry the ordered roster, ``field`` the first). The
+        security tripwire therefore fires for a LATENT security-property claim
+        however else the same filing is malformed — see
+        ``_merged_door_refusal`` for the divergence from the batch door that
+        short-circuiting caused.
+
         FR-051 / D-077: when the filing matches an OPEN UNTIERED record on
         ``(source, type, file, symbol)``, that record is classified in place
         and no new one is appended — ``defect_id`` is the existing record's id,
@@ -1991,12 +2093,20 @@ def foundry_add_defect(
     if (corrupt := _artifact_guard(fdir, "defects.json", "state.json")):
         return corrupt
 
+    # D-128 \u2014 EVERY RUNG BELOW APPENDS; NOTHING RETURNS UNTIL THE LADDER IS
+    # WALKED. See `_merged_door_refusal` for the driven divergence this closes.
+    # The batch door has always accumulated, and the D-061 ruling (the security
+    # denylist is the validator's FIRST rung so the audit tripwire is never
+    # rung-dependent) is only true of THIS door if the validator is reached
+    # whatever else the filing got wrong.
+    problems: list[dict] = []
+
     # Server-side vocabulary validation (CT-002). Only the client schema
     # guarded these before, and `foundry_sync_defects` silently rewrote an
     # unknown source to "trace" \u2014 so a finding could be attributed to a stream
     # that never filed it. Rejection replaces coercion on both surfaces.
     if source not in DEFECT_SOURCE_IDS:
-        return {
+        problems.append({
             "error": (
                 f"Invalid source: {source!r}. Must be one of: "
                 f"{', '.join(sorted(DEFECT_SOURCE_IDS))}"
@@ -2006,9 +2116,12 @@ def foundry_add_defect(
                 "stream. File under the id of the stream that actually found "
                 "this, or extend schemas/vocab.py via a phase-level RFC."
             ),
-        }
+            # The field name the batch door's refusal also carries, so a caller
+            # reading either door's answer keys on one spelling (D-128).
+            "field": "source",
+        })
     if defect_type not in DEFECT_TYPES:
-        return {
+        problems.append({
             "error": (
                 f"Invalid defect_type: {defect_type!r}. Must be one of: "
                 f"{', '.join(sorted(DEFECT_TYPES))}"
@@ -2017,7 +2130,8 @@ def foundry_add_defect(
                 "Use the closest member of the canonical set, or extend "
                 "schemas/vocab.py via a phase-level RFC."
             ),
-        }
+            "field": "defect_type",
+        })
 
     # Comment-prose refusal (AC-001). Engages only when the caller declared
     # the subject is a comment and no denylist entry outranks the class \u2014 see
@@ -2034,7 +2148,7 @@ def foundry_add_defect(
     )
     refused_class = _observation_refusal(finding)
     if refused_class is not None:
-        return {
+        problems.append({
             "error": (
                 f"Refused: {refused_class} is a comment-prose observation "
                 f"class, not a defect. The comment-prose classes are: "
@@ -2053,7 +2167,11 @@ def foundry_add_defect(
             ),
             "refused_class": refused_class,
             "observation_classes": sorted(OBSERVATION_CLASSES),
-        }
+            # The field the batch door names for this same rung
+            # (`foundry_sync_defects` appends `"field": "description"` beside
+            # its own copy of this text), so the two doors' refusals key alike.
+            "field": "description",
+        })
 
     # The tier/class/LATENT gate (CT-001 / CT-002 / CT-003 / AC-006 / AC-007 /
     # AC-010). Shared with the batch door rather than re-spelled here — see
@@ -2065,9 +2183,19 @@ def foundry_add_defect(
     # missing tier would send them to add a field to a record that should never
     # reach this ledger. The refusal a caller gets first is the one that
     # decides which LEDGER the finding belongs in.
-    filing_refusal = validate_defect_filing(finding)
-    if filing_refusal is not None:
-        if filing_refusal.get("denylist_class"):
+    #
+    # D-128: SKIPPED only for comment prose, exactly as the batch door skips it
+    # (`filing_problem = None` under its own `refused_class` branch) — and
+    # reached for every OTHER failing rung, which is the divergence D-128
+    # reports. A bad `source` is not a reason to leave a security claim
+    # unaudited; it is a reason to name both faults at once.
+    if refused_class is None:
+        filing_refusal = validate_defect_filing(finding)
+        if filing_refusal is not None:
+            problems.append(filing_refusal)
+
+    if problems:
+        if any(p.get("denylist_class") for p in problems):
             # The audit signal is fired through the ONE exported tripwire
             # writer, before the refusal is returned, exactly as
             # `foundry_add_observation` and `foundry_sync_defects` fire it. A
@@ -2108,10 +2236,23 @@ def foundry_add_defect(
             # sibling for the batch one — pinned at the doors rather than only
             # at the predicate tuple, because it is the DOOR that writes the
             # two artifacts an auditor later compares.
+            #
+            # D-128: `source` here may be the very value the source rung just
+            # refused. Recorded RAW, exactly as the batch door records it
+            # (`normalized[...]["source"]` is the caller's stripped value, not a
+            # validated one): the tripwire's subject is the ATTEMPT, and an
+            # attempt made under an unknown stream id is one an auditor most
+            # needs to see. Coercing or blanking it here would re-file the
+            # attempt under a stream that did not make it, which is the
+            # mis-attribution CT-002 exists to stop.
             record_denylist_tripwire(
                 fdir, finding, cycle=_server_cycle(fdir), source=source
             )
-        return filing_refusal
+        # D-128: a filing that failed ONE rung gets that rung's dict unchanged,
+        # so every refusal this door returned before this change is
+        # byte-identical after it. The merge is reached only by a filing that
+        # failed several, which is the case that used to lose all but the first.
+        return problems[0] if len(problems) == 1 else _merged_door_refusal(problems)
 
     # Canonical spelling, not the caller's (FR-013 / D-018). MISPLACED and
     # ARCHITECTURAL_PLACEMENT are ONE type under two live spellings \u2014 agent
