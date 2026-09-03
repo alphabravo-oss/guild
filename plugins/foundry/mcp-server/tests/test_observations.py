@@ -17,9 +17,19 @@ One regression test per acceptance criterion:
                    source preserved verbatim.
   AC-025           concurrently filed defects get unique ids and BOTH survive.
   CT-002           unknown source / defect_type are rejected server-side with a
-                   named error; source is never coerced onto "trace".
+                   named error; source is never coerced onto "trace"; and the
+                   root-cause `class` is REQUIRED, refused by name when absent.
   FR-023           the ledger is typed, per-run, and never mixed into
                    defects.json.
+
+Every filing below goes through ``_file_defect``, which supplies the ``tier``
+(CT-001 / FR-004) and ``class`` (CT-002 / FR-007) both doors now require. Those
+two fields are stated once there rather than at twenty-five call sites whose
+subject they are not; the refusals themselves are driven in
+``tests/test_defect_tier.py``, where they ARE the subject. One filing reaches
+past the wrapper on purpose — the class-required half of
+``test_defect_class_is_required_and_persisted_under_the_class_key``, which must
+arrive without the very field the wrapper exists to supply.
 
 The safety property this file guards hardest is the one that is NOT stated as
 an AC but is the whole point of A-004: the split must never weaken the defect
@@ -187,6 +197,44 @@ def _drop_server_cycle(fdir: Path) -> None:
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
+#: The root-cause class every filing in this module supplies when its own
+#: subject is not the class field. Named as a fixture value rather than
+#: borrowed from a real taxonomy, because a reader must not mistake it for a
+#: finding this file is making about the code under test.
+FIXTURE_CLASS = "FIXTURE_ROOT_CAUSE"
+
+
+def _file_defect(**kwargs) -> dict:
+    """``foundry_add_defect`` with the two fields CT-001 and CT-002 now require.
+
+    WHY THIS WRAPPER EXISTS
+    -----------------------
+    ``tier`` (CT-001 / FR-004 / AC-006) and ``class`` (CT-002 / FR-007 /
+    AC-010) became REQUIRED at both filing doors, so the twenty-five filings in
+    this module — every one of which predates the evidence axis — would
+    otherwise be refused before reaching the behaviour each test is actually
+    about. Not one of those tests is ABOUT the tier: their subjects are the
+    observation/defect split, the never-demote tripwire, the reconciled
+    vocabulary, cycle stamping, and the persistence layer under a malformed
+    ledger. The two fields are therefore stated ONCE, here, rather than
+    twenty-five times at sites whose subject they are not.
+
+    ``LIVE`` is the honest default for all of them: each drives the door and
+    asserts what came back, which is the reproduction LIVE means. A test whose
+    subject IS a LATENT filing passes ``tier="LATENT"`` and its own
+    ``reproduction_attempted``; a test whose subject IS the class field passes
+    its own ``defect_class``. ``setdefault`` is what makes both overrides win.
+
+    NOTHING IS WEAKENED HERE. This calls the real door with the real
+    arguments — no bypass, no relaxed validator, no default supplied inside
+    ``foundry.py``. The refusals themselves are driven in
+    ``tests/test_defect_tier.py``, where they are the subject.
+    """
+    kwargs.setdefault("tier", "LIVE")
+    kwargs.setdefault("defect_class", FIXTURE_CLASS)
+    return foundry_add_defect(**kwargs)
+
+
 # --- AC-001 / OT-001 --------------------------------------------------------
 @pytest.mark.parametrize(
     "description,expected_class",
@@ -203,7 +251,7 @@ def test_comment_prose_filed_as_defect_is_refused(
     """AC-001 — each of the four comment-prose classes is refused by
     Foundry-Defect, with an error naming the offending class AND the legal
     set."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="WRONG",
@@ -235,7 +283,7 @@ def test_refused_finding_is_accepted_as_an_observation(
     """AC-001 — the SAME finding the defect ledger refused is recordable in the
     observations ledger, and lands there with its class."""
     _set_server_cycle(run, 2)
-    refusal = foundry_add_defect(
+    refusal = _file_defect(
         cycle=2,
         source="prove",
         defect_type="WRONG",
@@ -295,7 +343,7 @@ def test_undeclared_subject_is_never_refused(run: Path, tmp_path: Path) -> None:
     the declaration once D-093 made a substantive finding pass regardless: the
     pair would have gone green for a second reason and stopped guarding this
     one."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
@@ -313,7 +361,7 @@ def test_same_prose_is_refused_once_declared_a_comment(
     """The mirror of the test above: the identical description IS refused once
     the caller declares the subject is a comment. Declaration is the whole
     discriminator — the two calls differ in exactly one argument."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
@@ -344,7 +392,7 @@ def test_a_substantive_finding_is_never_refused_however_its_prose_reads(
     before the change meant to strengthen it. A declaration must be able to
     route a finding to the right ledger; it must never be able to delete one.
     """
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
@@ -373,7 +421,7 @@ def test_security_property_claims_always_file_as_defects(
     declaration: the finding IS about a comment, one that lies. That
     declaration is exactly what used to make the filing refusable.
     """
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="prove",
         defect_type="WRONG",
@@ -418,7 +466,7 @@ def test_a_substantive_finding_with_no_security_vocabulary_still_files(
         "exercises the promote-direction guard at all"
     )
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="assay",
         defect_type="WRONG",
@@ -495,7 +543,7 @@ def test_denylist_outranks_observation_class(
     """OT-002 / AC-002 — a finding matching BOTH a denylist entry and an
     observation class is a DEFECT. The denylist outranks the observation
     class, so the filing succeeds rather than being refused."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="assay",
         defect_type="WRONG",
@@ -680,7 +728,7 @@ def test_partial_defect_type_is_accepted_and_stored_verbatim(
 ) -> None:
     """AC-019 / OT-008 — Foundry-Defect accepts PARTIAL and stores it
     verbatim."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="flow_trace",
         defect_type="PARTIAL",
@@ -710,7 +758,7 @@ def test_both_placement_spellings_persist_as_one_canonical_type(
     This is normalisation, not the coercion CT-002 forbids: that rule governs
     UNKNOWN values, which the membership check rejects by name."""
     for i, spelling in enumerate(("MISPLACED", "ARCHITECTURAL_PLACEMENT")):
-        result = foundry_add_defect(
+        result = _file_defect(
             cycle=1,
             source="trace",
             defect_type=spelling,
@@ -738,7 +786,7 @@ def test_unknown_source_is_rejected_without_coercion(
     set. Emphatically NOT coerced onto "trace", which is what the old sync
     path did and what made a finding show up under a stream that never filed
     it."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="bogus_stream",
         defect_type="WRONG",
@@ -753,7 +801,7 @@ def test_unknown_source_is_rejected_without_coercion(
 
 def test_unknown_defect_type_is_rejected(run: Path, tmp_path: Path) -> None:
     """CT-002 — unknown defect_type is refused by name."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="COSMETIC",
@@ -766,12 +814,26 @@ def test_unknown_defect_type_is_rejected(run: Path, tmp_path: Path) -> None:
     assert _defects(run) == []
 
 
-def test_defect_class_field_is_persisted_under_the_class_key(
+def test_defect_class_is_required_and_persisted_under_the_class_key(
     run: Path, tmp_path: Path
 ) -> None:
-    """The optional root-cause field is named exactly "class" — escalation
-    keys on it."""
-    foundry_add_defect(
+    """The root-cause field is named exactly "class" — escalation keys on it.
+
+    RENAMED, because this test's subject moved (CT-002 / FR-007 / AC-010). It
+    used to say "the OPTIONAL root-cause field", and optional is what made the
+    field worthless where it mattered: escalation counts consecutive cycles per
+    declared class, so a filing without one cannot recur as anything — it is
+    invisible to ST-002 however many times its root cause comes back, and the
+    path fallback that stood in for it survives only for READING pre-change
+    archives.
+
+    The persistence assertion below is unchanged. What is added is the other
+    half of the same property, which is now the Locked one: omitting the field
+    is a refusal naming it, and nothing is filed. Keeping only the first half
+    would leave this file asserting that a class is stored when one is given
+    while saying nothing about the case that used to be legal.
+    """
+    _file_defect(
         cycle=1,
         source="trace",
         defect_type="MISSING",
@@ -780,6 +842,23 @@ def test_defect_class_field_is_persisted_under_the_class_key(
         project_root=str(tmp_path),
     )
     assert _defects(run)[0]["class"] == "UNWIRED_DISPATCH"
+
+    # The behaviour this test used to be named for: filing with no class at
+    # all. Driven through the REAL door rather than the module's wrapper,
+    # because the wrapper's whole job is to supply the field this half must
+    # arrive without.
+    refused = foundry_add_defect(
+        cycle=1,
+        source="trace",
+        defect_type="MISSING",
+        description="fourth instance of the same root cause",
+        tier="LIVE",
+        project_root=str(tmp_path),
+    )
+    assert refused["ok"] is False, refused
+    assert refused["field"] == "class"
+    assert "class" in refused["error"]
+    assert len(_defects(run)) == 1, "the refused filing must persist nothing"
 
 
 # --- AC-025 / FR-020 --------------------------------------------------------
@@ -797,7 +876,7 @@ def test_concurrent_defects_get_unique_ids_and_all_survive(
 
     def _file(n: int) -> None:
         barrier.wait(timeout=30)
-        r = foundry_add_defect(
+        r = _file_defect(
             cycle=1,
             source="trace",
             defect_type="MISSING",
@@ -831,7 +910,7 @@ def test_observations_and_defects_are_separate_ledgers(
 ) -> None:
     """FR-023 — the separation is the locked part: observations are typed,
     persisted per run, and never mixed into defects.json."""
-    foundry_add_defect(
+    _file_defect(
         cycle=1,
         source="trace",
         defect_type="MISSING",
@@ -928,7 +1007,7 @@ def test_ledger_transaction_can_mutate_existing_records(
     """The reopen-a-regression pass mutates records already in the ledger and
     appends new ones in ONE critical section — an append-only helper could not
     make that atomic, which is why the exported surface is a transaction."""
-    foundry_add_defect(
+    _file_defect(
         cycle=1,
         source="trace",
         defect_type="MISSING",
@@ -1004,7 +1083,7 @@ def test_defect_is_stamped_with_the_server_cycle_not_the_callers(
     consecutive cycles per class and the roll-up is keyed by cycle: both are
     meaningless against a number the caller picked."""
     _set_server_cycle(run, 7)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=99,  # the lead's assertion — wrong, and ignored
         source="trace",
         defect_type="WRONG",
@@ -1068,7 +1147,7 @@ def test_an_absent_counter_stamps_zero_and_keeps_the_callers_claim(
     The caller is not silently overruled — its 12 is on the record.
     """
     _drop_server_cycle(run)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=12,
         source="trace",
         defect_type="WRONG",
@@ -1123,7 +1202,7 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
         state["cycle"] = bogus
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=8,
         source="trace",
         defect_type="WRONG",
@@ -1146,7 +1225,7 @@ def test_a_healthy_counter_still_outranks_the_caller_and_keeps_the_claim(
     real counter is still the authority and the caller's number is still
     ignored — it is now merely recorded as well."""
     _set_server_cycle(run, 6)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=99,
         source="trace",
         defect_type="WRONG",
@@ -1284,7 +1363,7 @@ def test_tools_guard_on_no_active_run(tmp_path: Path, call) -> None:
 
 def test_query_defects_still_reports_only_defects(run: Path, tmp_path: Path) -> None:
     """No-regression — the pre-existing defect query is unchanged by the split."""
-    foundry_add_defect(
+    _file_defect(
         cycle=1, source="trace", defect_type="MISSING",
         description="a real one", project_root=str(tmp_path),
     )
@@ -1336,7 +1415,7 @@ def test_filing_a_defect_against_a_corrupt_ledger_is_a_named_refusal(
     to repair.
     """
     _write_defects(run, raw)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1, source="trace", defect_type="WRONG",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1364,7 +1443,7 @@ def test_a_corrupt_ledger_is_never_written_over(run: Path, tmp_path: Path) -> No
     cannot."""
     raw = '{"defects": [{"id": "D-00'
     _write_defects(run, raw)
-    foundry_add_defect(
+    _file_defect(
         cycle=1, source="trace", defect_type="WRONG",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1391,7 +1470,7 @@ def test_object_valued_defects_container_refuses_without_destroying(
     }
     _write_defects(run, json.dumps(prior))
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1, source="trace", defect_type="WRONG",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1418,7 +1497,7 @@ def test_a_malformed_record_does_not_discard_the_new_filing(
         "defects": ["i am not a record", {"id": "D-002", "status": "open"}],
     }))
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1, source="trace", defect_type="PARTIAL",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
