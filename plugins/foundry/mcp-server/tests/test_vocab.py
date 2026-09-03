@@ -961,6 +961,22 @@ def test_the_full_roster_is_ordered_and_every_member_is_a_real_stream() -> None:
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/server.py",
+        # D-033 — the five gate-path modules the old basename alternation
+        # missed. `report_status` in foundry_report.py IS the DONE
+        # precondition and `_manifest_shape_problem` in foundry_spawn.py is
+        # called by `foundry_gate`, so a diff moving either was being judged
+        # by a DELTA roster.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
+        # And the modules no report has named yet, which is the point of
+        # matching the package rather than a roster of basenames.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/intent_coverage.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/parsers/spec.py",
         "plugins/foundry/agents/assayer.md",
         "plugins/foundry/agents/tracer.md",
         "plugins/foundry/skills/prove/SKILL.md",
@@ -988,12 +1004,23 @@ def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+        # Offline CLIs. They read a finished archive and print; no gate
+        # consults either, so a diff touching one moves no judgement.
         "plugins/foundry/scripts/measure-run.py",
+        "plugins/foundry/scripts/migrate-archive.py",
+        # The server's OWN tests. D-033 widened the rule to the whole
+        # `foundry_mcp/` package and stopped there on purpose: these are the
+        # pins, not the judgement, and the TEST stream re-runs them at every
+        # width. They are also the file a self-targeting GRIND cycle touches
+        # most, so keeping them out is what leaves that run a real DELTA case.
+        "plugins/foundry/mcp-server/tests/test_vocab.py",
+        "plugins/foundry/mcp-server/tests/conftest.py",
         "README.md",
+        "plugins/foundry/README.md",
         "src/myschemas.py",          # `schemas` inside a name is not a segment
         "docs/agents.md",            # `agents` as a FILE is not the directory
         "skills/README.md",          # a skill dir's non-SKILL file
+        "src/myfoundry_mcp/tools/x.py",  # `foundry_mcp` inside a name, again
         "",
     ],
 )
@@ -1005,6 +1032,40 @@ def test_an_ordinary_path_is_not_a_verifier_path(path: str) -> None:
     reporting DELTA as available.
     """
     assert not vocab.is_verifier_path(path)
+
+
+def test_the_whole_server_package_is_verifier_machinery() -> None:
+    """D-033, driven over the package as it stands rather than over a roster.
+
+    The reported defect was an ENUMERATION going stale: five `tools/`
+    basenames, so `foundry_report.py` — whose `report_status` is the DONE
+    precondition — answered False. A parametrized list of the five that were
+    missing would pass while the sixth module added next week misses again, so
+    the pin walks the real package and asserts every module in it answers True.
+    """
+    package = (
+        REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
+    )
+    assert package.is_dir(), f"{package} is gone; point this pin at the server"
+
+    modules = sorted(
+        p for p in package.rglob("*.py") if "__pycache__" not in p.parts
+    )
+    assert len(modules) >= 20, (
+        f"only {len(modules)} modules found under {package}; the walk is not "
+        f"reaching the package, so this pin would prove nothing"
+    )
+
+    missed = [
+        str(p.relative_to(REPO_ROOT))
+        for p in modules
+        if not vocab.is_verifier_path(str(p.relative_to(REPO_ROOT)))
+    ]
+    assert not missed, (
+        f"{missed} sit inside the server package and answer False, so a GRIND "
+        f"diff moving one would be judged by a DELTA roster (ST-006). That is "
+        f"D-033: widen VERIFIER_PATH_PATTERNS, do not add rows here."
+    )
 
 
 def test_the_spec_is_matched_by_the_argument_not_by_a_pattern() -> None:

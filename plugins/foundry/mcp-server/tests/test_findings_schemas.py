@@ -672,15 +672,91 @@ def test_the_tier_property_never_mentions_the_abolished_axis() -> None:
 def test_tier_and_reproduction_attempted_are_optional_not_required() -> None:
     """NFR-002 — the widening narrows nothing.
 
-    Three shipped skills, an entire archive of past reports and casting 6's
-    in-flight prose all predate the axis. Requiring it here would refuse every
-    one of them at the validator, which is a narrowing, not a widening.
+    D-039 REPLACED THE REASON THIS TEST USED TO GIVE. It said the shipped
+    skills and casting 6's in-flight prose predate the axis — but that story
+    exempts `class` exactly as well, and `class` IS required here. A split
+    resting on a reason that applies equally to both sides is not a reason.
+
+    The two that actually distinguish them are recorded in full beside
+    `_FINDING_ITEM["required"]`, and both are checkable rather than asserted:
+
+      * the blocks both skills hand their streams require `class` and declare
+        `tier` optional, and this module's stated derivation rule is that the
+        `required` list is what those blocks require — pinned mechanically by
+        `test_the_finding_required_list_is_exactly_what_the_documents_require`,
+        which fails the day a block requires `tier`;
+      * an untiered record has NO legal value to supply, because
+        `vocab.defect_tier` resolves it to TIER_UNKNOWN and TIER_UNKNOWN is
+        deliberately outside the enum below — pinned by
+        `test_the_read_side_sentinel_is_not_a_filable_tier`. A classless record
+        has no such problem: `_defect_class` derives one from its path.
+
+    What stays open is narrow and named: a tier-less finding validates here and
+    is refused at the filing door. That is not this module's to close alone.
     """
     for name, schema in SCHEMAS.items():
         required = schema["properties"]["findings"]["items"]["required"]
         assert "tier" not in required, name
         assert "reproduction_attempted" not in required, name
         assert not _finding_errors(schema, _minimal_finding()), name
+
+
+@pytest.mark.parametrize("path", BLOCK_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_the_finding_required_list_is_exactly_what_the_documents_require(
+    path: Path,
+) -> None:
+    """D-039 — the `tier`/`class` split is DERIVED, not decided here.
+
+    findings.py states its rule for `required` as "what that skill's own block
+    requires". Nothing checked it, so the difference between a required `class`
+    and an optional `tier` read as an unexplained inconsistency, which is
+    exactly how D-039 was filed.
+
+    Asserting equality against the document turns the split into a fact with an
+    owner. It also makes it self-correcting in the one direction that matters:
+    when the blocks add `tier` to their `required` lists, this fails naming the
+    field, and findings.py has to follow before the suite is green again. The
+    reverse is covered too — a field quietly added here that no block requires
+    would make this module stricter than the document, which is D-071.
+    """
+    block = _documented_block(path)
+    documented = block["properties"]["findings"]["items"].get("required") or []
+    served = SCHEMAS[_documented_schema_name(path)]
+    enforced = served["properties"]["findings"]["items"]["required"]
+
+    assert sorted(enforced) == sorted(documented), (
+        f"{_rel(path)} requires {sorted(documented)} of a finding and "
+        f"SCHEMAS[{_documented_schema_name(path)!r}] enforces {sorted(enforced)}. "
+        f"findings.py derives its `required` list from these blocks, so the two "
+        f"cannot differ: if the block moved, move the schema to match — do not "
+        f"relax this assertion."
+    )
+
+
+def test_the_read_side_sentinel_is_not_a_filable_tier() -> None:
+    """D-039's second reason, as a fact rather than a claim.
+
+    The recorded reason `tier` may stay optional while `class` is required is
+    that an untiered finding has no legal value to supply. That holds only
+    while TIER_UNKNOWN is outside the enum — put it in and the reason
+    evaporates, and with it the read-side guarantee FR-051 rests on (an
+    unclassified record blocks like LIVE precisely because no door can write
+    `unknown`).
+    """
+    for name, schema in SCHEMAS.items():
+        enum = schema["properties"]["findings"]["items"]["properties"]["tier"]["enum"]
+        assert vocab.TIER_UNKNOWN not in enum, (
+            f"SCHEMAS[{name!r}] accepts {vocab.TIER_UNKNOWN!r} as a tier. That "
+            f"makes the read-side sentinel filable, which CT-001 refuses at the "
+            f"door, and removes the reason `tier` is exempt from `required`."
+        )
+        assert sorted(enum) == sorted(vocab.DEFECT_TIERS), name
+
+    assert vocab.TIER_UNKNOWN not in vocab.DEFECT_TIERS
+    assert vocab.defect_tier({}) == vocab.TIER_UNKNOWN, (
+        "a record with no tier key must READ as unknown; that is the value the "
+        "finding item has no way to accept, which is the whole argument"
+    )
 
 
 def test_the_tier_enum_is_read_from_vocab_and_not_re_typed() -> None:

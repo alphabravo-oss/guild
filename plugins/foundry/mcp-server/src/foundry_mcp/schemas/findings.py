@@ -69,6 +69,11 @@ statement is REFUSED at the door (CT-001), which no grade ever was.
 narrows nothing: the abolished axis is still rejected here by name. The
 matching widening of `_ALLOWED_ENUM_KEYS` in tests/test_protocol_prose.py
 covers the SKILL.md blocks, which this module does not read.
+
+`tier` is a declared property and is NOT on the finding item's `required`
+list, while `class` — added by the same release, refused at the same door — is.
+That split is deliberate and its two reasons are recorded beside the list
+itself (D-039); do not close it by editing this module alone.
 """
 
 from __future__ import annotations
@@ -98,6 +103,43 @@ _FINDING_ITEM: dict = {
     # close. Requiring it here covers temper too, whose T-N findings sync
     # through the same door and whose SKILL.md ships no block of its own -- an
     # exemption shaped to fit temper would be the same defect one stream over.
+    #
+    # WHY `tier` IS NOT ON THIS LIST WHEN `class` IS (D-039 / FR-004 / FR-051)
+    # -----------------------------------------------------------------------
+    # Both axes arrived in the same release and `validate_defect_filing`
+    # refuses a filing missing either — tier FIRST, in its locked check order.
+    # So "the validator must not be laxer than the door it feeds", the reason
+    # `class` joined this list, argues for `tier` too, and the split needs a
+    # reason of its own rather than the backward-compatibility story it was
+    # first given (that story exempts `class` exactly as well, which is D-039).
+    # There are two, and they are facts rather than preferences:
+    #
+    #   1. THE DERIVATION RULE ABOVE. This list is what the skills' own blocks
+    #      require. Both shipped blocks list `class` in their `required` and
+    #      declare `tier` as an optional property. Requiring it here would make
+    #      this module STRICTER than the document its own stream is handed,
+    #      which is D-071 in the other direction — and this module cannot close
+    #      that gap alone, because those blocks are another casting's files.
+    #      `test_the_finding_required_list_is_exactly_what_the_documents_require`
+    #      is that rule made mechanical: the day a block requires `tier`, that
+    #      pin fails and this list has to follow. The split cannot go stale.
+    #
+    #   2. THE ARCHIVE FACT, which is where the two axes genuinely differ.
+    #      A classless record is REPAIRABLE on read: `_defect_class` falls back
+    #      to `type@file-cluster`, so a pre-change record still resolves to a
+    #      real cluster. A tier-less record is not. `vocab.defect_tier` resolves
+    #      it to TIER_UNKNOWN, which is deliberately NOT a DEFECT_TIERS member
+    #      (FR-051: reading an unclassified record as LATENT silently clears
+    #      gates), and the enum below is DEFECT_TIERS. So there is no legal
+    #      value an untiered finding could carry: requiring `tier` would refuse
+    #      it with nothing it could be given, and the obvious repair — putting
+    #      `unknown` in the enum — makes the read-side sentinel filable, which
+    #      CT-001 forbids at the door.
+    #
+    # The gap this leaves is narrow and named: a tier-less finding validates
+    # here and is refused at the filing door one surface later. The stream is
+    # told so by the door's refusal hint and by the blocks' own `tier`
+    # description, and closing it is one edit to those blocks away.
     "required": [
         "id", "classification", "type", "class", "file", "symbol", "description",
     ],

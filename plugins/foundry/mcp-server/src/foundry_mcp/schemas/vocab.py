@@ -429,22 +429,52 @@ PROVE_DELTA_SAMPLE_SIZE = 10
 # wherever `state.json.spec_path` says (and again at
 # `foundry-archive/{run}/spec.md`) — a static pattern would either miss it or
 # sweep in every unrelated spec.md in the tree.
+#
+# WHY THE SERVER PACKAGE IS MATCHED WHOLE AND NOT MODULE BY MODULE (D-033)
+# ------------------------------------------------------------------------
+# This pattern was an alternation of five `foundry_mcp/tools/` basenames, and
+# an enumeration of the modules that judge the build is a list that goes stale
+# the first time one is added. Driven: `is_verifier_path` over all 55 key_files
+# of this run's own manifest returned False for `foundry_mcp/tools/`
+# foundry_report.py — whose `report_status` IS the DONE precondition —
+# foundry_spawn.py (`_manifest_shape_problem`, called by `foundry_gate`),
+# foundry_state.py, display.py and citation.py. Every one of those is imported
+# by a gate path, so a GRIND diff moving the DONE precondition itself would
+# have been judged by a DELTA roster.
+#
+# Naming the five misses would have fixed the instance and kept the class, so
+# the rule is now the PACKAGE: every module under a `foundry_mcp/` segment is
+# verifier machinery, because everything in it is a gate, an orchestrator, a
+# stream, or something one of those imports. The alternative shapes were both
+# rejected: matching all of `plugins/foundry/` sweeps in README.md and the
+# plugin manifest (a README edit is not the verifier moving) and would delete
+# DELTA outright for a self-targeting run; deriving the set from the
+# orchestrator's import graph is exact but needs filesystem and AST work,
+# which the PURITY RULE at the top of this module forbids.
+#
+# The cost is bounded and deliberate. A run building anything other than
+# foundry never has `foundry_mcp/` in its diff, so the saving DELTA exists for
+# is untouched there; in a self-targeting run the verifier genuinely is
+# moving. The server's own tests are NOT swept in: they are the
+# pins, not the judgement, the TEST stream re-runs them at every width, and
+# leaving them out keeps a real DELTA case in the run that edits this file
+# most.
 # Extend only via phase-level RFC.
 VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
     # The canonical vocabulary itself, wherever it sits.
     r"(?:^|/)vocab\.py$",
     # Any schema module — the finding/report shapes every stream validates on.
     r"(?:^|/)schemas/",
-    # Gate and orchestrator code.
-    r"(?:^|/)foundry_mcp/tools/"
-    r"(?:foundry_orchestrator|foundry|foundry_handoff|evidence|foundry_validate)\.py$",
-    r"(?:^|/)foundry_mcp/server\.py$",
+    # The whole server package: gates, orchestrator, streams, parsers, and
+    # every module those import. See the D-033 note above for why this is one
+    # segment rule and not a roster of basenames.
+    r"(?:^|/)foundry_mcp/(?:[^/]+/)*[^/]+\.py$",
     # Agent and skill prose — the contracts the streams actually execute.
     r"(?:^|/)agents/[^/]+\.md$",
     r"(?:^|/)skills/[^/]+/SKILL\.md$",
     # Run-protocol prose.
     r"(?:^|/)commands/[^/]+\.md$",
-)  # 7 patterns
+)  # 6 patterns
 
 _VERIFIER_PATH_RES: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern) for pattern in VERIFIER_PATH_PATTERNS
