@@ -421,6 +421,67 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "refuses when the report is absent or a section is missing",
     ),
+    # --- D7 / D-149: the F6 evidence step is SWEEP then STRIP ---------------
+    # GI-002 sweeps the whole corpus "before ASSAY/NYQUIST/DONE", and this file
+    # is the only thing that orders the two F6 acts against each other on the
+    # guided path. It used to mandate the strip "after the report, before
+    # Foundry-Phase('done')" -- with no gate in between -- which voided the
+    # sweep the door was built to take. Driven at a run held at F5.5 with one
+    # committed log whose command no longer reproduced: before the strip the
+    # door refused naming that log; the mandated `git rm -r evidence/ && git
+    # commit ... -- evidence/` was run verbatim; the identical door then passed,
+    # because the strip is a COMMIT, it moved HEAD, and the re-sweep re-globbed
+    # a directory that was no longer there. The sequence pin below is what keeps
+    # the gate between the report and the strip.
+    (
+        "evidence-f6-sequence-gates-before-strip",
+        "GI-002",
+        START_MD,
+        '`Foundry-Report` → `Foundry-Gate(phase="done")` → strip consumed '
+        'evidence → `Foundry-Phase("done")`',
+    ),
+    (
+        "evidence-gate-runs-before-the-rm",
+        "GI-002",
+        START_MD,
+        "runs BEFORE the `git rm`, never after",
+    ),
+    # The pass has to OUTLIVE the strip commit or the ordering buys nothing:
+    # HEAD moves, so the door can only be satisfied by a pass recorded against
+    # the commit that still carried the corpus.
+    (
+        "evidence-pass-recorded-pre-strip",
+        "GI-002",
+        START_MD,
+        "records that pass in `.evidence-swept-at-head.json` under "
+        "`last_full_pass`",
+    ),
+    (
+        "evidence-strip-first-refusal-token",
+        "FR-042",
+        START_MD,
+        "`EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP`",
+    ),
+    # AC-014: the rung reported only `mismatches`, and a sweep that re-executed
+    # NOTHING reports zero of them -- byte-identical to a clean whole-corpus
+    # pass. The log count is the field that tells the two apart, so the lead
+    # reading the checklist has to be told to read it.
+    (
+        "evidence-rung-names-the-log-count",
+        "AC-014",
+        START_MD,
+        "`evidence_reproduces_at_head (logs=N, mismatches=M)`",
+    ),
+    # GI-002 again: a --nyquist run leaves F5.5 through `nyquist_done`, so prose
+    # that named only `Foundry-Phase('done')` left the other terminal door
+    # undocumented and the strip free to precede it.
+    (
+        "evidence-both-terminal-doors",
+        "GI-002",
+        START_MD,
+        '`Foundry-Phase("nyquist_done")` out of F5.5 and '
+        '`Foundry-Phase("done")` at F6 sweep the same corpus by the same rule',
+    ),
     # --- D8: the --plugin-dir convention ------------------------------------
     # GI-004 / AC-029: all three surfaces carry it, because whichever one an
     # operator happens to read is the one that has to say it.
@@ -1070,6 +1131,83 @@ def test_the_report_step_names_every_required_section() -> None:
         f"{_rel(START_MD)}'s F6 report step does not name {missing}. Every "
         f"member of REPORT_REQUIRED_SECTIONS needs a row: the done gate "
         f"refuses by these names and the lead has to recognise them."
+    )
+
+
+def test_the_f6_sequence_sweeps_before_it_strips() -> None:
+    """GI-002 / D-149: the ORDER is the guard, and no phrase pin can see it.
+
+    Every sentence this section needs can be present while the two acts sit in
+    the wrong order, and in the wrong order they cancel: the strip is a commit,
+    so it moves ``HEAD``, and the whole-corpus sweep the terminal door takes
+    then re-globs a directory that is no longer there. Driven on a run held at
+    F5.5 with one committed log whose command no longer reproduced -- the door
+    refused naming that log, the mandated ``git rm -r evidence/ && git commit
+    ... -- evidence/`` was run verbatim, and the identical door passed. A
+    sweep that re-executed nothing reports the same zero mismatches an earned
+    pass reports, so the pass was indistinguishable from the refusal it
+    replaced.
+
+    Asserted as POSITIONS, in the two places the order is actually stated: the
+    one-line F6 sequence, and the mandate paragraph that tells the lead when to
+    run the ``git rm``. A reorder that kept every pinned sentence would fail
+    here and nowhere else.
+    """
+    text = _read(START_MD)
+    parts = text.split("### F6: DONE", 1)
+    assert len(parts) == 2, (
+        f"{_rel(START_MD)} has no `### F6: DONE` section. The F6 ordering "
+        f"rules are asserted inside it; if the heading was renamed, retarget "
+        f"this test -- do not drop it."
+    )
+    section = parts[1].split("\n## ", 1)[0]
+
+    line = next(
+        (ln for ln in section.splitlines() if ln.startswith("Shut down all teammates")),
+        None,
+    )
+    assert line is not None, (
+        f"{_rel(START_MD)}'s F6 section no longer opens with the one-line "
+        f"`Shut down all teammates ...` sequence. That line is where the lead "
+        f"reads the order of the whole phase."
+    )
+    steps = (
+        "`Foundry-Report`",
+        '`Foundry-Gate(phase="done")`',
+        "strip consumed evidence",
+        '`Foundry-Phase("done")`',
+    )
+    at = [line.find(step) for step in steps]
+    missing = [step for step, pos in zip(steps, at) if pos == -1]
+    assert not missing, (
+        f"{_rel(START_MD)}'s F6 sequence line does not name {missing}. The "
+        f"gate is the step that re-executes the committed corpus and records "
+        f"the pass; without it in the sequence the strip runs first and the "
+        f"door is asked about a corpus that is gone."
+    )
+    assert at == sorted(at), (
+        f"{_rel(START_MD)}'s F6 sequence runs {steps} in the order "
+        f"{[s for _, s in sorted(zip(at, steps))]}. It must gate BEFORE it "
+        f"strips: the strip is a commit, it moves HEAD, and a sweep taken "
+        f"after it re-executes nothing and reports zero mismatches -- a pass "
+        f"that proves nothing."
+    )
+
+    gate = section.find('`Foundry-Gate(phase="done")` runs BEFORE')
+    strip = section.find("git rm -r evidence/")
+    assert gate != -1, (
+        f"{_rel(START_MD)}'s evidence-lifecycle step no longer states that "
+        f"`Foundry-Gate(phase=\"done\")` runs before the `git rm`. The "
+        f"sequence line alone is a summary; this is the mandate."
+    )
+    assert strip != -1, (
+        f"{_rel(START_MD)}'s evidence-lifecycle step no longer carries the "
+        f"`git rm -r evidence/` strip command."
+    )
+    assert gate < strip, (
+        f"{_rel(START_MD)} states the strip command before it states that the "
+        f"gate runs first. A lead reads this paragraph top to bottom and runs "
+        f"what it reaches; the sweep must be the thing it reaches first."
     )
 
 
