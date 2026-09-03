@@ -84,6 +84,17 @@ SPAWNS_FILENAME = "spawns.log"
 STATE_FILENAME = "state.json"
 ROLLUP_FILENAME = "stream-rollup.json"
 
+#: What a defect row prints where its filing recorded no location. D-103.
+#:
+#: FR-005 is Locked and the GRIND-5 ruling that briefly required `file_path` on
+#: every LATENT filing was REVERSED (`state.json.spec_ambiguities[6]`): the
+#: doors refuse a LATENT filing for a missing tier, a missing or placeholder
+#: `reproduction_attempted`, a missing class or the SECURITY_PROPERTY_CLAIM
+#: denylist, and never for a missing location. So an unlocated row is a LEGAL
+#: filing, and the report has to render it as one. An empty cell reads as a
+#: dropped value; this reads as the measurement it is.
+NO_LOCATION_CELL = "(none recorded)"
+
 
 def _agent_id_for_casting(casting_id: int | str) -> str:
     """The ledger agent id for a casting's teammate — the CANONICAL spelling.
@@ -188,6 +199,62 @@ def _read_verdict_matrix(run_dir: Path) -> tuple[dict, str | None]:
     }, None
 
 
+def _location_fields(record: dict) -> dict[str, Any]:
+    """`file` and `symbol`, plus a STATEMENT when the filing carried neither.
+
+    Returns ``{"file", "symbol", "located", "location_note"}``. `file` and
+    `symbol` are the record's own values, normalised to None when absent or
+    blank — the same `(d.get("file") or "")` normalisation
+    `foundry.retier_matching_untiered` matches on, so a row here cannot claim a
+    location the re-tier door would treat as empty.
+
+    WHY A ROW STATES WHAT IT DOES NOT HAVE (D-103, and the D-089 reversal)
+    ----------------------------------------------------------------------
+    D-089 saw a LATENT row with empty File and Symbol cells under a header
+    reading "Each row names where the work is", and the GRIND-5 remedy was to
+    require `file_path` at both filing doors. TEST-01 then showed that ruling
+    contradicts FR-005, CT-001 and CT-003 — all Locked, all saying the server
+    refuses a LATENT filing only for a security-property claim, a missing tier,
+    a missing class or a missing reproduction statement — and the ruling was
+    REVERSED (`state.json.spec_ambiguities[6]`). The rung came out of the doors
+    and the header that motivated it survived, so the report was left promising
+    a location the protocol does not collect.
+
+    The reversal named the report-side close: "the LATENT backlog renders an
+    unlocated row honestly (stating the filing carried no file) and its header
+    does not promise what the door does not require". That is this function.
+    `location_note` is the statement, carried in `report.json` so a mechanical
+    reader gets the same answer the markdown cell gives — the filing observed
+    both documents rendering `null` and blank with no statement anywhere.
+
+    `located` keys on the FILE, because the file is the rung the reversal
+    removed and the field a reader routes on; `location_note` names whichever
+    of the two the filing actually lacked, so "no file, real symbol" and "no
+    file, no symbol" are different sentences rather than one shrug.
+    """
+    file_value = record.get("file")
+    symbol_value = record.get("symbol")
+    file_value = (
+        file_value if isinstance(file_value, str) and file_value.strip() else None
+    )
+    symbol_value = (
+        symbol_value if isinstance(symbol_value, str) and symbol_value.strip() else None
+    )
+    missing = [
+        name
+        for name, value in (("file", file_value), ("symbol", symbol_value))
+        if value is None
+    ]
+    return {
+        "file": file_value,
+        "symbol": symbol_value,
+        "located": file_value is not None,
+        "location_note": (
+            None if not missing else "the filing carried no " + " and no ".join(missing)
+        ),
+    }
+
+
 def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
     """Three sections off ONE parse of `defects.json` (FR-051 / NFR-003).
 
@@ -203,7 +270,15 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
     printed them as LIVE would tell an operator that a stream classified them,
     which is the one thing that did not happen. "Nobody ever tiered this" and
     "a stream drove the door and saw it fail" are different facts and get
-    different rows.
+    different rows. Being the blocking section is also why its rows carry
+    `source`, `type`, `file` and `symbol` (D-120): those four ARE the re-tier
+    match key the DONE refusal's hint sends the lead to use, and a section a
+    lead must act on has to be actionable from the document in front of them.
+
+    Both row builders take their location through `_location_fields`, which
+    states what a filing did not carry instead of printing an empty cell
+    (D-103). A LATENT filing is never refused for a missing location (FR-005),
+    so "unlocated" is a legal shape on both of these lists.
 
     Every member of `DEFECT_TIER_OR_UNKNOWN` is always present, including
     zeros: "0 LATENT defects" is a measurement, and omitting the key would make
@@ -243,8 +318,12 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
                 {
                     "id": record.get("id"),
                     "class": record.get("class"),
-                    "file": record.get("file"),
-                    "symbol": record.get("symbol"),
+                    # D-103: `file` and `symbol` come from `_location_fields`,
+                    # which also says so when the filing carried neither. The
+                    # doors do not require a location on a LATENT filing
+                    # (FR-005), so a row with none is a legal filing and this
+                    # list has to render it as one.
+                    **_location_fields(record),
                     "source": record.get("source"),
                     "type": record.get("type"),
                     "spec_ref": record.get("spec_ref"),
@@ -254,10 +333,24 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
                 }
             )
         if tier == TIER_UNKNOWN:
+            # D-120 — THE FOUR FIELDS THE REMEDY MATCHES ON TRAVEL WITH THE ROW.
+            #
+            # This is the one section that BLOCKS: an untiered record holds the
+            # DONE gate shut exactly as a LIVE one does, and the refusal's hint
+            # names the way out — "either door matches the open untiered record
+            # on (source, type, file, symbol) and re-tiers it IN PLACE". The
+            # row carried id, class, description, status and cycle, which is
+            # none of those four, so the one section a lead must act on was the
+            # one that could not be acted on from the report. The adjacent
+            # LATENT backlog had carried its location since D-029 for a weaker
+            # reason (it does not block), and the fix was never carried across.
             unknown_rows.append(
                 {
                     "id": record.get("id"),
                     "class": record.get("class"),
+                    "source": record.get("source"),
+                    "type": record.get("type"),
+                    **_location_fields(record),
                     "description": record.get("description"),
                     "status": status,
                     "cycle": record.get("cycle"),
@@ -285,7 +378,11 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
                 "A record with no tier key, or tier null, reads as "
                 f"{TIER_UNKNOWN!r}. It blocks the gates exactly like LIVE and "
                 "is listed here rather than among the LIVE rows because "
-                "nobody ever classified it."
+                "nobody ever classified it. The way out is a re-filing "
+                "through Foundry-Defect or Foundry-Sync: either door matches "
+                "the open untiered record on (source, type, file, symbol) and "
+                "re-tiers it IN PLACE, keeping its id — so those four fields "
+                "travel with every row here (D-120)."
             ),
         },
     }, None
@@ -452,20 +549,44 @@ def _read_state(run_dir: Path) -> tuple[dict, str | None]:
 
 
 def _inspect_modes_section(state: dict) -> dict:
-    """AC-036 — the FULL/DELTA decision per cycle, with the rule that fired.
+    """FR-023 / AC-036 — EVERY recorded FULL/DELTA decision, per cycle and phase.
 
-    `inspect_modes` is an append-only LIST and one cycle can appear twice: an
-    F2 INSPECT and a later F5 one each record their own entry. The per-cycle
-    map therefore takes the LAST entry for a cycle, which is C-4's own "the
-    current decision is the last entry" rule; `entries` keeps the full history
-    beside it so nothing is lost to that collapse.
+    `inspect_modes` is append-only and one cycle carries one entry per INSPECT
+    it opened, so `per_cycle` maps a cycle to the LIST of its decisions, in the
+    order the server recorded them. `count` counts DECISIONS, `cycle_count`
+    counts cycles, and `by_mode` is a census of every decision.
+
+    LAST-ENTRY-WINS FABRICATED A WIDTH FOR THE ORDINARY RUN (D-119)
+    ---------------------------------------------------------------
+    This kept one row per cycle, taking the last entry, on C-4's "the current
+    decision is the last entry" rule. That rule is about which decision is
+    CURRENT — what Foundry-Next reports and what the next gate reads — and this
+    section is not that question. FR-023 asks for "the full-versus-delta
+    decisions per cycle", and a census that keeps one of two answers is not a
+    census.
+
+    The collapse was not a corner case, it was the F2-to-F5 path: the server
+    counter does not advance entering F5, so TEMPER's entry is stamped with the
+    cycle the preceding F2 INSPECT already used. Driven on four real recorded
+    decisions — (1, F2, FULL), (2, F2, DELTA), (3, F2, DELTA), (3, F5, FULL) —
+    the truth is FULL 2 and DELTA 2 over three cycles; `report.json` returned
+    `by_mode {DELTA 1, FULL 2}` with `count 3`, and REPORT.md's table showed
+    cycle 3 as FULL / first_of_phase with no DELTA row for it anywhere. A lead
+    auditing whether DELTA ever fired at cycle 3 was told FULL. `entries` was
+    beside it the whole time and this docstring claimed nothing was lost to the
+    collapse, which was false for `count`, for `by_mode` and for the table — a
+    reader has no reason to re-derive a census the section says it computed.
+
+    `entries` still carries the raw list, because it holds the fields this
+    section does not lift (`stream_scope`, `touched_files`, `prove_sample`).
     """
     entries = state.get("inspect_modes")
     if not isinstance(entries, list):
         entries = []
-    per_cycle: dict[str, dict] = {}
+    per_cycle: dict[str, list[dict]] = {}
     by_mode = dict.fromkeys(sorted(INSPECT_MODES), 0)
     history: list[dict] = []
+    decisions = 0
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -473,7 +594,7 @@ def _inspect_modes_section(state: dict) -> dict:
         cycle = entry.get("cycle")
         if isinstance(cycle, bool) or not isinstance(cycle, int):
             continue
-        per_cycle[str(cycle)] = {
+        decision = {
             "cycle": cycle,
             "phase": entry.get("phase"),
             "mode": entry.get("mode"),
@@ -481,15 +602,32 @@ def _inspect_modes_section(state: dict) -> dict:
             "decided_by": entry.get("decided_by"),
             "required_streams": entry.get("required_streams"),
         }
-    for decision in per_cycle.values():
+        per_cycle.setdefault(str(cycle), []).append(decision)
+        decisions += 1
         if decision["mode"] in by_mode:
             by_mode[decision["mode"]] += 1
     return {
-        "count": len(per_cycle),
+        "count": decisions,
+        "cycle_count": len(per_cycle),
         "by_mode": by_mode,
         "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=_cycle_sort_key)},
         "entries": history,
     }
+
+
+def _inspect_decisions(inspect_modes: dict) -> list[dict]:
+    """Every decision `_inspect_modes_section` recorded, cycle order preserved.
+
+    The flattening lives here rather than in each reader, so the markdown table
+    and `_archive_metrics` walk one list built one way. Two flattenings of one
+    append-only ledger is how the collapse D-119 names got two different answers
+    out of the same `inspect_modes` in the first place.
+    """
+    return [
+        decision
+        for group in (inspect_modes.get("per_cycle") or {}).values()
+        for decision in group
+    ]
 
 
 def _cycle_sort_key(raw: str) -> tuple[int, int | str]:
@@ -859,10 +997,22 @@ def _archive_metrics(
     recorded_modes = state.get("inspect_modes")
     post_verification: int | None = None
     if isinstance(recorded_modes, list):
+        # DISTINCT CYCLES THAT OPENED AN F5 INSPECT, over every recorded
+        # decision (D-119). It used to walk the collapsed per-cycle map, which
+        # answered this question by luck: the counter does not advance entering
+        # F5, so a cycle's F5 entry is always recorded AFTER its F2 one and
+        # therefore always survived the collapse.
+        #
+        # D-088 unified this number with `measure-run.py::_read_inspect_modes`,
+        # which still counts off ITS collapsed map, and the two still agree on
+        # every archive the server can write for exactly that reason. Where
+        # they could part — a cycle whose F5 entry is followed by an F2 one —
+        # this now counts the cycle and that surface does not, which is the
+        # direction that is right: the cycle did open an F5 INSPECT.
         post_verification = len(
             {
                 decision.get("cycle")
-                for decision in inspect_modes.get("per_cycle", {}).values()
+                for decision in _inspect_decisions(inspect_modes)
                 if decision.get("phase") == "F5"
             }
         )
@@ -1124,26 +1274,45 @@ def _render_section(key: str, value: dict) -> list[str]:
             + _md_table(["Tier", "Status", "Count", "IDs"], rows)
         )
     if key == "latent_backlog":
+        # D-103: the header says what the row CARRIES, not what it names. The
+        # doors never require a location on a LATENT filing (FR-005), so a
+        # promise that "each row names where the work is" was a promise the
+        # protocol does not keep — and it stood directly above rows whose File
+        # and Symbol cells were blank. The reason for carrying the location
+        # when there is one (D-029) is unchanged and still stated.
         return (
             [f"{value.get('open_count', 0)} open LATENT defects carried forward "
-             "(NFR-003). Each row names where the work is, because this list "
-             "is read by a lead who has no defects.json to join against "
-             "(D-029).", ""]
+             "(NFR-003). Each row carries the location its filing recorded, "
+             "because this list is read by a lead who has no defects.json to "
+             f"join against (D-029) — and a cell reading `{NO_LOCATION_CELL}` "
+             "is a filing that named none, not a value this report dropped: "
+             "FR-005 refuses a LATENT filing for a missing tier, reproduction "
+             "statement or class and never for a missing location.", ""]
             + _md_table(
                 ["ID", "Class", "Cycle", "File", "Symbol", "Source",
                  "Reproduction attempted", "Description"],
-                [[d.get("id"), d.get("class"), d.get("cycle"), d.get("file"),
-                  d.get("symbol"), d.get("source"),
+                [[d.get("id"), d.get("class"), d.get("cycle"),
+                  d.get("file") or NO_LOCATION_CELL,
+                  d.get("symbol") or NO_LOCATION_CELL, d.get("source"),
                   d.get("reproduction_attempted"), d.get("description")]
                  for d in value.get("defects", [])],
             )
         )
     if key == "unknown_tier_defects":
+        # D-120: Source, Type, File and Symbol are the re-tier match key the
+        # DONE refusal tells the lead to use. This is the section that BLOCKS,
+        # so it is the section that has to be actionable without opening
+        # defects.json — the argument D-029 made for the LATENT backlog, which
+        # blocks nothing.
         return (
             [str(value.get("note", "")), ""]
             + _md_table(
-                ["ID", "Class", "Status", "Cycle", "Description"],
+                ["ID", "Class", "Status", "Cycle", "Source", "Type", "File",
+                 "Symbol", "Description"],
                 [[d.get("id"), d.get("class"), d.get("status"), d.get("cycle"),
+                  d.get("source"), d.get("type"),
+                  d.get("file") or NO_LOCATION_CELL,
+                  d.get("symbol") or NO_LOCATION_CELL,
                   d.get("description")] for d in value.get("defects", [])],
             )
         )
@@ -1185,14 +1354,22 @@ def _render_section(key: str, value: dict) -> list[str]:
             )
         )
     if key == "inspect_modes_per_cycle":
+        # D-119: ONE ROW PER DECISION. A cycle that opened two INSPECTs — the
+        # F2 one and the F5 one TEMPER opens without advancing the counter —
+        # has two rows here, because collapsing them printed one of the two
+        # widths as though it were the cycle's answer.
         return (
-            [f"{value.get('count', 0)} cycles; by mode: {value.get('by_mode')}", ""]
+            [f"{value.get('count', 0)} recorded INSPECT-opening decisions over "
+             f"{value.get('cycle_count', 0)} cycles; by mode: "
+             f"{value.get('by_mode')}. One row per decision: a cycle carries "
+             "two rows when an F5 INSPECT reopened it after its F2 one, and "
+             "neither is dropped.", ""]
             + _md_table(
                 ["Cycle", "Phase", "Mode", "Rule", "Decided by", "Required streams"],
                 [[d.get("cycle"), d.get("phase"), d.get("mode"), d.get("rule"),
                   d.get("decided_by"),
                   ", ".join(str(s) for s in (d.get("required_streams") or []))]
-                 for d in (value.get("per_cycle") or {}).values()],
+                 for d in _inspect_decisions(value)],
             )
         )
     if key == "spend_per_phase_and_cycle":

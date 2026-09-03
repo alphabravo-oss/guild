@@ -403,6 +403,70 @@ def test_unknown_tier_defects_are_listed_separately_from_live_and_latent(report_
     assert "D-007" not in live_ids
 
 
+def test_the_unknown_tier_section_carries_the_fields_the_retier_matches_on(
+    report_env,
+):
+    """AC-008 / FR-051, and the DONE refusal's own hint, verbatim: 'either door
+    matches the open untiered record on (source, type, file, symbol) and
+    re-tiers it IN PLACE'.
+
+    D-120: this is the one section that BLOCKS — an untiered record holds the
+    DONE gate shut exactly as a LIVE one does — and it was the one section that
+    could not be acted on. It rendered id, class, status, cycle and description
+    in both documents: not one of the four fields the remedy matches on. The
+    adjacent LATENT backlog has carried its location since D-029 for a weaker
+    reason (it blocks nothing), and the fix was never carried across."""
+    defects = _read_json(report_env, "defects.json")
+    for record in defects["defects"]:
+        if record["id"] == "D-007":
+            record["file"] = "src/deep/nested/legacy.py"
+            record["symbol"] = "legacy_handler"
+            record["source"] = "trace"
+            record["type"] = "UNWIRED"
+    _write_json(report_env, "defects.json", defects)
+    _generate(report_env)
+
+    row = _document(report_env)["unknown_tier_defects"]["defects"][0]
+    assert row["id"] == "D-007"
+    assert row["source"] == "trace"
+    assert row["type"] == "UNWIRED"
+    assert row["file"] == "src/deep/nested/legacy.py"
+    assert row["symbol"] == "legacy_handler"
+
+    # And in the document a lead actually reads, with the match named.
+    section = _markdown(report_env).split("## Unknown-tier defects", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    for cell in ("trace", "UNWIRED", "src/deep/nested/legacy.py", "legacy_handler"):
+        assert cell in section, cell
+    assert "(source, type, file, symbol)" in section
+
+
+def test_an_untiered_record_with_no_location_says_so_in_the_blocking_section(
+    report_env,
+):
+    """D-120 with D-103's rule: the blocking section renders a record that
+    carries no location as one, rather than printing two blank cells beside the
+    fields the re-tier matches on. An empty `file` is what the door itself
+    matches (`(d.get("file") or "")`), so the row has to say the filing carried
+    none rather than leave a reader guessing which."""
+    defects = _read_json(report_env, "defects.json")
+    for record in defects["defects"]:
+        if record["id"] == "D-007":
+            record["file"] = ""
+            record["symbol"] = None
+    _write_json(report_env, "defects.json", defects)
+    _generate(report_env)
+
+    row = _document(report_env)["unknown_tier_defects"]["defects"][0]
+    assert row["located"] is False
+    assert row["location_note"] == "the filing carried no file and no symbol"
+    section = _markdown(report_env).split("## Unknown-tier defects", 1)[1]
+    line = next(
+        line for line in section.splitlines() if line.startswith("| D-007 |")
+    )
+    assert line.count(fr.NO_LOCATION_CELL) == 2, line
+
+
 def test_the_cross_tab_carries_every_tier_including_the_empty_ones(report_env):
     """A tier with no defects is a MEASUREMENT, and omitting its key would make
     'zero LATENT defects in this run' indistinguishable from 'nobody measured'.
@@ -628,16 +692,90 @@ def test_inspect_modes_per_cycle_names_the_mode_and_the_rule(report_env):
     _generate(report_env)
     section = _document(report_env)["inspect_modes_per_cycle"]
     assert section["by_mode"] == {"DELTA": 2, "FULL": 3}
-    rules = {c: d["rule"] for c, d in section["per_cycle"].items()}
+    # One list per cycle (D-119); this fixture records one decision in each.
+    rules = {c: [d["rule"] for d in group] for c, group in section["per_cycle"].items()}
     assert rules == {
-        "1": "first_of_phase",
-        "2": "delta",
-        "3": "delta",
-        "4": "verifier_touched",
-        "5": "final_gate",
+        "1": ["first_of_phase"],
+        "2": ["delta"],
+        "3": ["delta"],
+        "4": ["verifier_touched"],
+        "5": ["final_gate"],
     }
-    assert section["per_cycle"]["5"]["phase"] == "F5"
-    assert section["per_cycle"]["5"]["decided_by"] == "temper"
+    assert section["per_cycle"]["5"][0]["phase"] == "F5"
+    assert section["per_cycle"]["5"][0]["decided_by"] == "temper"
+
+
+def _two_inspects_in_cycle_three(report_env) -> None:
+    """Four real decisions where cycle 3 opened an F2 INSPECT and then an F5 one.
+
+    This is the ordinary F2-to-F5 path, not a corner case: the server counter
+    does not advance entering F5, so TEMPER's entry is stamped with the cycle
+    the preceding F2 INSPECT already used (D-119)."""
+    state = _read_json(report_env, "state.json")
+    state["inspect_modes"] = [
+        {"cycle": 1, "phase": "F2", "mode": "FULL", "rule": "first_of_phase",
+         "decided_by": "cast", "required_streams": ["trace", "prove"]},
+        {"cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+         "decided_by": "inspect_start", "required_streams": ["trace"]},
+        {"cycle": 3, "phase": "F2", "mode": "DELTA", "rule": "delta",
+         "decided_by": "inspect_start", "required_streams": ["trace"]},
+        {"cycle": 3, "phase": "F5", "mode": "FULL", "rule": "final_gate",
+         "decided_by": "temper", "required_streams": ["trace", "prove"]},
+    ]
+    _write_json(report_env, "state.json", state)
+
+
+def test_both_inspects_of_one_cycle_are_reported_not_collapsed(report_env):
+    """FR-023 verbatim: 'full-vs-delta decisions per cycle'. AC-036: 'the FULL
+    or DELTA decision per cycle'.
+
+    D-119: the section built its per-cycle map last-entry-wins, so a cycle that
+    opened two INSPECTs kept one of them and `count`, `by_mode` and the table
+    were all derived from the survivor. On these four recorded decisions the
+    truth is FULL 2 and DELTA 2 over three cycles; the report answered
+    `by_mode {DELTA 1, FULL 2}`, `count 3`, and rendered cycle 3 as FULL /
+    first_of_phase with no DELTA row for it anywhere — a lead auditing whether
+    DELTA fired at cycle 3 was told FULL. `entries` sat beside it carrying the
+    full history, which is not a census a reader has any reason to re-derive."""
+    _two_inspects_in_cycle_three(report_env)
+    _generate(report_env)
+
+    section = _document(report_env)["inspect_modes_per_cycle"]
+    assert section["count"] == 4, "decisions, not cycles"
+    assert section["cycle_count"] == 3
+    assert section["by_mode"] == {"DELTA": 2, "FULL": 2}
+    assert [(d["phase"], d["mode"], d["rule"]) for d in section["per_cycle"]["3"]] == [
+        ("F2", "DELTA", "delta"),
+        ("F5", "FULL", "final_gate"),
+    ]
+
+    table = _markdown(report_env).split("## INSPECT mode per cycle", 1)[1]
+    table = table.split("\n## ", 1)[0]
+    rows = [line for line in table.splitlines() if line.startswith("| 3 |")]
+    assert len(rows) == 2, rows
+    assert "DELTA" in rows[0] and "F2" in rows[0]
+    assert "FULL" in rows[1] and "F5" in rows[1]
+
+
+def test_the_f5_reopen_of_a_cycle_counts_one_post_verification_cycle(report_env):
+    """NFR-001's post-verification column, off the same `inspect_modes` ledger
+    the census reads — the ADJACENT reader (`_archive_metrics`), which walks
+    the per-cycle map for a different question.
+
+    The number is DISTINCT CYCLES that opened an F5 INSPECT, so a cycle whose
+    F2 INSPECT was reopened in F5 counts once and not twice. D-088 unified this
+    with `measure-run.py`, which counts off its own collapsed map; both answer 1
+    here, which is what keeps the two surfaces from publishing different numbers
+    into the same comparison."""
+    _two_inspects_in_cycle_three(report_env)
+    _generate(report_env)
+
+    current = _document(report_env)["baseline_comparison"]["current"]
+    assert current["post_verification_cycles"] == 1
+
+    from foundry_mcp.tools.foundry_report import _archive_metrics
+
+    assert _archive_metrics(report_env)["post_verification_cycles"] == 1
 
 
 def test_spend_reports_tokens_and_minutes_and_no_money_at_all(report_env):
@@ -1081,6 +1219,71 @@ def test_the_latent_backlog_says_where_each_defect_lives(report_env):
     backlog = markdown.split("## LATENT backlog", 1)[1].split("\n## ", 1)[0]
     for row in rows:
         assert str(row["file"]) in backlog, row["id"]
+
+
+def test_an_unlocated_latent_row_says_the_filing_carried_no_location(report_env):
+    """FR-005 (Locked) and the reversal recorded in `state.json`'s
+    `spec_ambiguities`: 'the LATENT backlog renders an unlocated row honestly
+    (stating the filing carried no file) and its header does not promise what
+    the door does not require.'
+
+    D-103 is D-089's class drawn from the other side. D-089 saw a location-free
+    row under a header reading 'Each row names where the work is', and the
+    GRIND-5 remedy added a `file_path` rung to both filing doors. TEST-01 then
+    showed that rung contradicts FR-005, CT-001 and CT-003 — the server refuses
+    a LATENT filing for a missing tier, a missing or placeholder reproduction
+    statement, a missing class or a security-property claim, and never for a
+    missing location — so the ruling was REVERSED and the rung came out. The
+    header that motivated it was the survivor: it went on promising a location
+    the protocol does not collect, above rows whose cells were blank and a
+    `report.json` rendering `file: null` with no statement anywhere."""
+    defects = _read_json(report_env, "defects.json")
+    for record in defects["defects"]:
+        if record["id"] == "D-004":
+            record["file"] = None
+            record["symbol"] = ""
+    _write_json(report_env, "defects.json", defects)
+    _generate(report_env)
+
+    rows = {d["id"]: d for d in _document(report_env)["latent_backlog"]["defects"]}
+    assert rows["D-004"]["located"] is False
+    assert rows["D-004"]["file"] is None and rows["D-004"]["symbol"] is None
+    assert rows["D-004"]["location_note"] == "the filing carried no file and no symbol"
+    # The located row beside it renders exactly as it did before.
+    assert rows["D-005"]["located"] is True
+    assert rows["D-005"]["location_note"] is None
+    assert rows["D-005"]["file"] == "src/foundry_mcp/tools/foundry_report.py"
+
+    backlog = _markdown(report_env).split("## LATENT backlog", 1)[1]
+    backlog = backlog.split("\n## ", 1)[0]
+    header, table = backlog.split("| ID |", 1)
+    assert "names where the work is" not in header, header
+    assert "FR-005" in header and fr.NO_LOCATION_CELL in header, header
+    unlocated = next(
+        line for line in table.splitlines() if line.startswith("| D-004 |")
+    )
+    assert unlocated.count(fr.NO_LOCATION_CELL) == 2, unlocated
+    assert "|  |" not in unlocated, unlocated
+
+
+def test_a_latent_row_missing_only_its_symbol_names_only_that(report_env):
+    """The statement is about what the filing ACTUALLY lacked. 'No file, real
+    symbol' and 'no file, no symbol' are different facts and a single shrug
+    would lose the difference — the same reason the unknown-tier section is
+    kept apart from the LIVE rows rather than folded in (FR-051)."""
+    defects = _read_json(report_env, "defects.json")
+    for record in defects["defects"]:
+        if record["id"] == "D-004":
+            record["symbol"] = None
+    _write_json(report_env, "defects.json", defects)
+    _generate(report_env)
+
+    row = next(
+        d for d in _document(report_env)["latent_backlog"]["defects"]
+        if d["id"] == "D-004"
+    )
+    assert row["located"] is True, "the file is still there"
+    assert row["location_note"] == "the filing carried no symbol"
 
 
 def test_the_baseline_comparison_prints_nfr_001s_four_metrics(report_env, tmp_path):
@@ -1817,10 +2020,18 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
         print("=== LATENT backlog (NFR-003 / AC-002) ===")
         for row in doc["latent_backlog"]["defects"]:
             print(f"  {row['id']}  cycle {row['cycle']}  {row['class']}")
+            # D-103: the location a filing recorded, or the statement that it
+            # recorded none. FR-005 never refuses a LATENT filing for that.
+            print(f"      located={row['located']}  file={row['file']}  "
+                  f"symbol={row['symbol']}  note={row['location_note']}")
 
         print("=== unknown-tier defects, listed separately (FR-051) ===")
         for row in doc["unknown_tier_defects"]["defects"]:
             print(f"  {row['id']}  status {row['status']}  {row['class']}")
+            # D-120: the four fields either door matches on to re-tier the
+            # record in place — the remedy the DONE refusal names.
+            print(f"      source={row['source']}  type={row['type']}  "
+                  f"file={row['file']}  symbol={row['symbol']}")
 
         print("=== escalated classes (AC-004) ===")
         for row in doc["escalated_classes"]["classes"]:
@@ -1838,9 +2049,11 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
             for entry in row["file_rows"]:
                 print(f"      {entry['path']}  lines={entry['line_count']}")
 
-        print("=== INSPECT mode per cycle (AC-036) ===")
-        for cycle, row in doc["inspect_modes_per_cycle"]["per_cycle"].items():
-            print(f"  cycle {cycle}  {row['phase']:<5} {row['mode']:<5} {row['rule']}")
+        print("=== INSPECT mode per cycle, every decision (AC-036 / D-119) ===")
+        for cycle, group in doc["inspect_modes_per_cycle"]["per_cycle"].items():
+            for row in group:
+                print(f"  cycle {cycle}  {row['phase']:<5} {row['mode']:<5} "
+                      f"{row['rule']}")
 
         print("=== spend: tokens and minutes only, no money (NFR-002) ===")
         spend = doc["spend_per_phase_and_cycle"]
