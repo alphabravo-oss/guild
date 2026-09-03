@@ -13,7 +13,7 @@
 ........................................................................ [ 13%]
 ........................................................................ [ 16%]
 ........................................................................ [ 18%]
-....
+..........
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -60,8 +60,8 @@
     declared 300s                       : 300
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
-.................................................................... [ 20%]
-........................................................................ [ 23%]
+.............................................................. [ 20%]
+........................................................................ [ 22%]
 ........................................................................ [ 25%]
 ........................................................................ [ 27%]
 ........................................................................ [ 29%]
@@ -69,24 +69,24 @@
 ........................................................................ [ 34%]
 ........................................................................ [ 36%]
 ........................................................................ [ 39%]
-...s........................................s.s......................... [ 41%]
+.........s........................................s.s................... [ 41%]
 ........................................................................ [ 43%]
-........................................................................ [ 46%]
+........................................................................ [ 45%]
 ........................................................................ [ 48%]
 ........................................................................ [ 50%]
 ........................................................................ [ 52%]
 ........................................................................ [ 55%]
 ........................................................................ [ 57%]
 ........................................................................ [ 59%]
-........................................................................ [ 62%]
+........................................................................ [ 61%]
 ........................................................................ [ 64%]
 ........................................................................ [ 66%]
-........................................................................ [ 69%]
+........................................................................ [ 68%]
 ........................................................................ [ 71%]
 ........................................................................ [ 73%]
 ........................................................................ [ 75%]
-..s..s.s..s............................................................. [ 78%]
-...........................................................
+........s..s.s..s....................................................... [ 78%]
+...................................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -160,24 +160,24 @@
   baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-............. [ 80%]
+..... [ 80%]
 ........................................................................ [ 82%]
-........................................................................ [ 85%]
+........................................................................ [ 84%]
 ........................................................................ [ 87%]
 ........................................................................ [ 89%]
-........................................................................ [ 92%]
+........................................................................ [ 91%]
 ........................................................................ [ 94%]
 ........................................................................ [ 96%]
 ........................................................................ [ 98%]
-................................                                         [100%]
+........................................                                 [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt-longer-path/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt-longer-path/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt-longer-path/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-ev/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-ev/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-ev/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5207: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3118 passed, 10 skipped, 3 deselected in 126.06s
+3126 passed, 10 skipped, 3 deselected in 130.12s
