@@ -1402,10 +1402,18 @@ _SMUGGLED_CLAIM = "the login endpoint does not verify the authentication token s
 
 
 def _coverage_diff_latent(**overrides) -> dict:
-    """`agents/coverage-diff.md`'s documented LATENT defect, verbatim in shape.
+    """`agents/coverage-diff.md`'s documented LATENT defect, in the shape these
+    tests are about: its prose is in `failure`, it carries no `description` key
+    at all, and it is located by `casting_id` rather than a path. That is the
+    shape the driven filing wore.
 
-    Its prose is in `failure`; it carries no `description` key at all. That is
-    the shape the driven filing wore.
+    The `type` is deliberately NOT the one that surface publishes. It files as
+    `MISSING` there — `MISSING_COVERAGE_LIST` is the stream's own flag name for
+    what it found and stays in its report register, which is the distinction
+    `coverage-diff.md`'s "The flag name is not the filed `type`" paragraph
+    draws. A non-member spelling is held here on purpose, so the batch door's
+    vocabulary rung fires ALONGSIDE the claim rung and the tests below have to
+    name the refusal they are about instead of taking whichever came first.
     """
     finding = {
         "type": "MISSING_COVERAGE_LIST",
@@ -1484,13 +1492,14 @@ def test_the_batch_door_refuses_and_audits_a_claim_in_an_invented_key(run_env):
     assert "refusals" in result, result
     assert SECURITY_PROPERTY_CLAIM in result["error"]
 
-    # Located in the list rather than at index 0: the documented shape is
-    # carried here VERBATIM, and it also declares the stream-local `type`
-    # `MISSING_COVERAGE_LIST`, which the batch door's vocabulary rung refuses
-    # alongside this one. That the audit record still fires when an earlier
-    # rung also fails is D-128's property, pinned above; what this test is
-    # about is the invented-key claim channel, so it names its own refusal
-    # instead of depending on the order two unrelated rungs report in.
+    # Located in the list rather than at index 0: the helper holds a `type` no
+    # closed vocabulary admits (`MISSING_COVERAGE_LIST` is coverage-diff.md's
+    # report-register flag name, not what it files), so the batch door's
+    # vocabulary rung refuses alongside this one. That the audit record still
+    # fires when an earlier rung also fails is D-128's property, pinned above;
+    # what this test is about is the invented-key claim channel, so it names
+    # its own refusal instead of depending on the order two unrelated rungs
+    # report in.
     denylist = [r for r in result["refusals"] if r.get("denylist_class")]
     assert len(denylist) == 1, result["refusals"]
     assert denylist[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
@@ -1914,14 +1923,15 @@ def test_every_documented_latent_example_is_accepted_by_both_real_doors(run_env)
     for name, example in examples:
         finding = dict(example)
         finding.setdefault("source", "prove")
-        # The `type` is CANONICALISED rather than carried through. Three of
-        # these surfaces publish a stream-local spelling in their report
-        # register (`MISSING_COVERAGE_LIST`, `CHAIN_BROKEN`,
-        # `RESEARCH_DEVIATION`), and the doors' `type` rung is a different
-        # vocabulary with its own pins in `tests/test_vocab.py`. Holding it
-        # constant is what keeps this sweep a pin on the CLAIM decision: a
-        # refusal reported below is one the claim scan produced, not one the
-        # type vocabulary did.
+        # The `type` is SUPPLIED rather than carried through. The corpus is not
+        # uniform on this key — `agents/assayer.md`'s example declares no `type`
+        # at all, and the rest publish DEFECT_TYPES members (`MISSING`,
+        # `UNWIRED`, `RESEARCH_DEVIATION`) whose own pins live in
+        # `tests/test_vocab.py` and `tests/test_protocol_prose.py`. Holding one
+        # member constant across every example is what keeps this sweep a pin
+        # on the CLAIM decision: a refusal reported below is one the claim scan
+        # produced, not one the type vocabulary did, and not one an example
+        # that never named a type would have drawn at either door.
         finding["type"] = "MISSING"
 
         batch = foundry_sync_defects(

@@ -86,8 +86,9 @@ def _append_handoff_record(
 
     ``entry`` is written to handoffs.jsonl verbatim, so each caller owns its
     own record shape — the lead_fix record carries defect_id/tier/file/
-    line_count/files/test/fix_commit as FIRST-CLASS keys, not prose squeezed
-    into a summary field, because the F6 report reads them back by name. The
+    line_count/files/test/regression_test/fix_commit as FIRST-CLASS keys, not
+    prose squeezed into a summary field, because the F6 report reads them back
+    by name. The
     two channels do NOT carry identical text: the JSONL keeps the raw values
     (None for an unavailable measurement) and ``md_fields`` carries the
     reader's rendering of them (D-074). ``md_fields``
@@ -147,6 +148,7 @@ def record_lead_fix_handoff(
     files: list[dict] | None = None,
     file: str | None = None,
     line_count: int | None = None,
+    regression_test: str | None = None,
 ) -> dict:
     """Append the server's own ``lead_fix`` record. Returns the record.
 
@@ -196,6 +198,30 @@ def record_lead_fix_handoff(
       "unmeasured".
     * None in ``file``/``line_count`` means the measurement was UNAVAILABLE —
       git could not read the commit — and the mirror says exactly that.
+
+    ONE FIELD PER LOCATOR — ``test`` IS NOT A SLOT TWO TESTS COMPETE FOR
+    (D-170)
+    -------------------------------------------------------------------
+    A LIVE lead fix must declare an adjacent-path test; a regression test is
+    additionally allowed on either lane. Both are locators, and this record
+    used to have ONE field for them, so the caller resolved the collision with
+    ``test=regression_ref or test_ref``. Driven at the door: a LIVE lead fix
+    that supplied both was accepted, and the record — plus its handoffs.md
+    mirror row — carried only the optional regression locator, while the
+    MANDATED adjacent-path test appeared in neither channel. AC-022 names the
+    test as one of the five things a reader must be able to re-derive, and for
+    a LIVE lead fix the test that holds the fix is the adjacent-path one, so
+    the audit trail for a fix nobody else reviewed showed a reader a different
+    test than the one the declaration was judged on.
+
+    So ``regression_test`` is its own field and ``test`` keeps carrying
+    whatever the caller passes. It is written ONLY when non-empty — in both
+    channels — rather than as the ``None``-when-absent shape ``files`` takes
+    two paragraphs above. The two rules differ on purpose: ``files`` is a
+    MEASUREMENT, and its absence is a fact about the commit worth recording,
+    whereas an absent regression test is simply a locator nobody claimed. And
+    a key added unconditionally would change the bytes of every record written
+    without one, which is what the committed evidence logs re-execute against.
 
     ``files``, ``file`` and ``line_count`` all default to None so the call
     shape that predates this ruling keeps working while the caller
@@ -253,6 +279,10 @@ def record_lead_fix_handoff(
         # one shape.
         "files": measured,
         "test": test,
+        # D-170: beside ``test``, never instead of it, and present only when a
+        # regression locator was actually named. Both channels put it in this
+        # same position — the log is only useful while they agree.
+        **({"regression_test": regression_test} if regression_test else {}),
         "fix_commit": fix_commit,
     }
     _append_handoff_record(
@@ -265,6 +295,11 @@ def record_lead_fix_handoff(
             ("file", file_label),
             ("line_count", line_label),
             ("test", f"`{test}`"),
+            *(
+                [("regression_test", f"`{regression_test}`")]
+                if regression_test
+                else []
+            ),
             ("fix_commit", f"`{fix_commit}`"),
         ],
     )

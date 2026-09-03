@@ -90,6 +90,21 @@ def _lead_fixes(fdir: Path) -> list[dict]:
     return [r for r in _records(fdir) if r["event"] == HANDOFF_EVENT_LEAD_FIX]
 
 
+def _mirror_labels(fdir: Path) -> list[str]:
+    """The bullet labels of the LAST handoffs.md block, in written order.
+
+    The mirror's ORDER is part of its shape: a reader diffing the two channels
+    reads them side by side, so a field that lands in one position in the JSONL
+    and another in the markdown is a disagreement even when both carry it.
+    """
+    block = (fdir / "handoffs.md").read_text(encoding="utf-8").split("## ")[-1]
+    return [
+        line[2:].split(":", 1)[0]
+        for line in block.splitlines()
+        if line.startswith("- ")
+    ]
+
+
 def _accept(root: str, **overrides) -> dict:
     args = {
         "casting_id": 1,
@@ -305,6 +320,136 @@ def test_the_pre_ruling_call_shape_still_records(run_env):
     assert record["file"] == "src/api/handler.py"
     assert record["line_count"] == 11
     assert record["files"] is None
+
+
+# --- D-170: one field per locator; `test` is not a slot two tests compete for -
+def test_a_regression_test_is_recorded_beside_the_adjacent_path_test(run_env):
+    """GI-003 / AC-022 — the test is one of the five things a reader must be
+    able to re-derive, and for a LIVE lead fix the test that holds the fix is
+    the MANDATED adjacent-path test.
+
+    Driven at the door: a LIVE lead fix supplying both the mandated
+    adjacent-path test and an optional regression test was accepted, and the
+    record — plus its handoffs.md mirror row — carried only the optional
+    regression locator, because the caller resolved a one-field collision with
+    ``test=regression_ref or test_ref``. An auditor asking which test held a
+    fix nobody else reviewed was shown a different one. Two locators, two
+    fields, both channels."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-170",
+        tier="LIVE",
+        file="src/foundry_mcp/tools/foundry_handoff.py",
+        line_count=9,
+        test="tests/test_lane.py::test_retry_branch_still_reaches_helper",
+        regression_test="tests/test_lane.py::test_lane_holds",
+        fix_commit="d170abc",
+    )
+
+    assert record["test"] == (
+        "tests/test_lane.py::test_retry_branch_still_reaches_helper"
+    ), "the optional locator displaced the mandated one again"
+    assert record["regression_test"] == "tests/test_lane.py::test_lane_holds"
+    assert list(record) == [
+        "handoff_id",
+        "timestamp",
+        "event",
+        "defect_id",
+        "tier",
+        "file",
+        "line_count",
+        "files",
+        "test",
+        "regression_test",
+        "fix_commit",
+    ]
+
+    mirror = (fdir / "handoffs.md").read_text(encoding="utf-8")
+    assert "test: `tests/test_lane.py::test_retry_branch_still_reaches_helper`" in mirror
+    assert "regression_test: `tests/test_lane.py::test_lane_holds`" in mirror
+    assert _mirror_labels(fdir) == [
+        "defect_id",
+        "tier",
+        "lane",
+        "file",
+        "line_count",
+        "test",
+        "regression_test",
+        "fix_commit",
+    ], "the two channels order the same field differently"
+
+
+def test_a_fix_naming_no_regression_test_keeps_the_record_shape_it_had(run_env):
+    """The field is emitted ONLY when a regression locator was named — in both
+    channels — so every record written without one is byte-identical to the
+    shape that predates D-170.
+
+    That is not cosmetic: the evidence logs committed against this writer are
+    re-executed byte-for-byte at the GRIND boundary, and a key added
+    unconditionally would fail every one of them for a field nobody claimed.
+    It is also why this differs from ``files``, which IS null-when-absent: an
+    absent measurement is a fact about the commit, an absent regression test is
+    just a locator nobody named."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-171",
+        tier="LIVE",
+        file="src/a.py",
+        line_count=4,
+        test="tests/test_a.py::test_adjacent",
+        fix_commit="d171def",
+    )
+
+    assert "regression_test" not in record
+    assert list(record) == [
+        "handoff_id",
+        "timestamp",
+        "event",
+        "defect_id",
+        "tier",
+        "file",
+        "line_count",
+        "files",
+        "test",
+        "fix_commit",
+    ]
+    assert _mirror_labels(fdir) == [
+        "defect_id",
+        "tier",
+        "lane",
+        "file",
+        "line_count",
+        "test",
+        "fix_commit",
+    ]
+    assert "regression_test" not in (fdir / "handoffs.md").read_text(encoding="utf-8")
+
+
+def test_an_empty_regression_test_is_no_regression_test(run_env):
+    """The caller strips the argument before it arrives, so what reaches here
+    for an unclaimed locator is ``""`` as readily as ``None``. Writing a key
+    whose value is an empty string would put a blank cell in the report's
+    regression column and an empty bullet in the mirror — an auditor reads that
+    as a locator that could not be resolved rather than one nobody claimed."""
+    _, fdir = run_env
+
+    record = record_lead_fix_handoff(
+        fdir,
+        defect_id="D-172",
+        tier="LATENT",
+        file="src/b.py",
+        line_count=2,
+        test="tests/test_b.py::test_regression",
+        regression_test="",
+        fix_commit="d172aaa",
+    )
+
+    assert "regression_test" not in record
+    assert "regression_test" not in (fdir / "handoffs.md").read_text(encoding="utf-8")
 
 
 def test_the_lead_fix_record_is_mirrored_into_handoffs_md(run_env):
