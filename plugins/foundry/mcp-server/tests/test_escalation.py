@@ -896,20 +896,19 @@ def test_the_cleared_class_that_carries_a_latent_backlog_passes_done(run_env):
     assert "ESCALATED" not in outcome["reason"]
 
 
-def test_a_class_whose_defects_all_closed_does_not_deadlock_done(run_env):
-    """The deadlock the ruling must NOT be implemented into.
+def test_a_persisted_escalated_class_blocks_done_even_with_nothing_open(run_env):
+    """ST-010 verbatim: 'every escalated class CLEARED'. D-059.
 
-    Keyed on what `_escalated_classes` returns — "still escalating with open
-    work" — this run finishes, and a guard keyed on `escalation.json`'s status
-    field directly would refuse it forever on a record no gate can change.
-
-    The reason given here used to be that both exit arms iterated
-    `_escalated_classes`, so a fully-fixed class reached neither. D-043 removed
-    that half: the arms walk the persisted entries now and such a class clears
-    on `clean_cycles`. What survives, and is why the guard stays where it is, is
-    the OVERRIDE half — escalation overrides are filtered inside
-    `_escalated_classes`, so a DONE guard reading the file directly would refuse
-    a run the operator had explicitly de-escalated.
+    The guard measured "still escalated" solely from `_escalated_classes`, whose
+    first two lines are `if not bucket["open"]: continue` and `if run_len <
+    ESCALATION_CYCLES: continue` — so a class with zero open instances was
+    invisible to it WHATEVER escalation.json said. Only the boundary arms write
+    CLEARED, and they need two crossings, while ONE clean crossing is enough to
+    pass ASSAY/TEMPER/NYQUIST and reach DONE. Driven: all instances fixed,
+    escalation.json still `status: ESCALATED` -> Foundry-Gate('done') PASSED
+    with checklist "escalated_classes_cleared (still escalated=0)" while the
+    run's own report said by_status {CLEARED: 0, ESCALATED: 1}. Two artifacts of
+    one run contradicting each other about whether it had finished.
     """
     project_root, fdir = run_env
     defects = _latent_recurring([0, 1, 2])
@@ -927,7 +926,144 @@ def test_a_class_whose_defects_all_closed_does_not_deadlock_done(run_env):
     escalation_check = next(
         k for k in checks if k.startswith("escalated_classes_cleared")
     )
+    assert checks[escalation_check]["ok"] is False, outcome["reason"]
+    assert checks[escalation_check]["persisted_escalated_classes"] == [
+        "FALSE_DOCUMENTED_CONTRACT"
+    ]
+    # The ledger recurrence half sees nothing — which is exactly the blindness.
+    assert checks[escalation_check]["recurring_classes"] == []
+    assert "FALSE_DOCUMENTED_CONTRACT" in outcome["reason"]
+
+
+def test_the_persisted_guard_terminates_through_the_clean_arm(run_env):
+    """...and it is not the deadlock the D-034 ruling forbids.
+
+    A class whose instances have all closed draws zero LIVE instances by
+    construction, so the clean arm counts every crossing and CLEARS it within
+    LIVE_CLEAN_CYCLES_TO_CLEAR boundaries. The guard is therefore a wait, not a
+    wall: the run finishes by doing the thing ST-001 describes.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 3
+    _write_defects(fdir, defects)
+
+    assert fo._done_preconditions(fdir, project_root)["passed"] is False
+
+    for _ in range(3):
+        _cross_boundary(fdir, project_root)
+
+    assert _escalation_entry(fdir)["status"] == "CLEARED"
+    outcome = fo._done_preconditions(fdir, project_root)
+    checks = {c["check"]: c for c in outcome["checklist"]}
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
     assert checks[escalation_check]["ok"] is True, outcome["reason"]
+
+
+def test_an_operator_override_still_clears_the_persisted_guard(run_env):
+    """The half of the D-034 ruling that keeps the guard where it is.
+
+    Escalation overrides are filtered inside `_escalated_classes`, and
+    `_persisted_escalations` applies exactly the same filter — so a DONE guard
+    reading the union still does not refuse a run the operator explicitly
+    de-escalated. A guard that read escalation.json raw would.
+    """
+    project_root, fdir = run_env
+    defects = _latent_recurring([0, 1, 2])
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 2
+    _ready_for_f6(fdir, defects)
+    (fdir / "escalation.json").write_text(json.dumps({"classes": {
+        "FALSE_DOCUMENTED_CONTRACT": {"status": "ESCALATED", "exit_reason": None}
+    }}), encoding="utf-8")
+    foundry_inject_directive(
+        fo._override_instruction("FALSE_DOCUMENTED_CONTRACT"),
+        project_root=project_root,
+    )
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    checks = {c["check"]: c for c in outcome["checklist"]}
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
+    assert checks[escalation_check]["ok"] is True, outcome["reason"]
+
+
+def test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice(run_env):
+    """D-057: the clean arm counted inspect_start CALLS, not server cycles.
+
+    `foundry_mark_phase_complete` increments `state['cycle']` only when the
+    previous phase was F3, but called the clean arm unconditionally, and the arm
+    did `live_clean_cycles += 1` with no record of which cycles it had counted.
+    Driven through real doors: escalate at cycle 3, one honest crossing, then two
+    further Foundry-Phase(inspect_start) calls — phase already F2, so the counter
+    does not move — and `live_clean_cycles` reached 2, CLEARING the class after
+    ONE real cycle had ended.
+
+    Both guards are asserted here, because either alone leaves the count
+    steerable: the F2->F2 call is now REFUSED on a FULL cycle, and
+    `live_clean_cycles_counted` records the closed cycles already evaluated so a
+    call that did land could not count one twice.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    _cross_boundary(fdir, project_root)  # closes cycle 3; nothing counted yet
+
+    entry = _escalation_entry(fdir)
+    assert entry["live_clean_cycles"] == 0
+    assert entry["live_clean_cycles_counted"] == []
+
+    _cross_boundary(fdir, project_root)  # closes cycle 4 — one clean
+    entry = _escalation_entry(fdir)
+    assert entry["live_clean_cycles"] == 1
+    assert entry["live_clean_cycles_counted"] == [4]
+
+    # Now the call D-057 drove: inspect_start again, WITHOUT returning to F3.
+    for _ in range(2):
+        _arm(fdir)
+        again = foundry_mark_phase_complete("inspect_start", project_root)
+        assert "error" in again, again
+        assert "nothing to widen" in again["error"]
+
+    entry = _escalation_entry(fdir)
+    assert entry["live_clean_cycles"] == 1, "one real cycle has ended, not two"
+    assert entry["status"] == "ESCALATED"
+    assert _current_cycle(fdir) == 5, "a refused transition moves no counter"
+
+
+def test_the_clean_arm_records_every_closed_cycle_it_evaluated(run_env):
+    """D-057's guard, stated as the property rather than the symptom.
+
+    A cycle is EVALUATED AT MOST ONCE, whichever way it goes — a cycle that drew
+    a LIVE instance is recorded as counted too, because re-evaluating it on a
+    later call would be the same defect with the sign flipped. This is the
+    budget arm's `structural_packet_cycles` guard one field over.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    _cross_boundary(fdir, project_root)  # closes 3 (the escalation cycle)
+    _cross_boundary(fdir, project_root)  # closes 4 — clean
+
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    defects.append(_defect("D-050", 5, **{
+        "class": "FALSE_DOCUMENTED_CONTRACT", "tier": "LIVE",
+    }))
+    _write_defects(fdir, defects)
+    _cross_boundary(fdir, project_root)  # closes 5 — a LIVE instance, reset
+
+    entry = _escalation_entry(fdir)
+    assert entry["live_clean_cycles"] == 0
+    assert entry["live_clean_cycles_counted"] == [4, 5], (
+        "the resetting cycle is recorded as evaluated too, or a second call "
+        "could re-evaluate it"
+    )
 
 
 def test_a_reproduced_instance_of_an_escalated_class_still_blocks_done(run_env):
@@ -2416,7 +2552,13 @@ def test_two_clean_cycles_clear_the_class_and_stop_the_structural_packet(run_env
     entry = _escalation_entry(fdir)
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "clean_cycles"
-    assert entry["cleared_at_cycle"] == 5
+    # D-057's ruling: `cleared_at_cycle` is the counter AFTER the boundary that
+    # applied the exit. The exit is applied BY this crossing, so dating it to
+    # the cycle that just ended would put it inside the cycle whose work earned
+    # it — and the same rule holds for both arms, so a report reading the field
+    # never has to ask which one fired to know what the number means.
+    assert entry["cleared_at_cycle"] == 6
+    assert third["cycle"] == 6
     assert third["escalation_cleared"][0]["class"] == "FALSE_DOCUMENTED_CONTRACT"
 
     # And the packet stops. This is the half AC-001 is actually about: a CLEARED
@@ -2512,7 +2654,8 @@ def test_a_class_whose_instances_were_all_fixed_clears_on_the_clean_arm(run_env)
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "clean_cycles"
     assert entry["exit_reason"] in ESCALATION_EXIT_REASONS
-    assert entry["cleared_at_cycle"] == 5
+    assert entry["cleared_at_cycle"] == 6  # the counter AFTER the boundary
+    assert third["cycle"] == 6
     assert isinstance(entry["structural_packets_dispatched"], int)
     assert third["escalation_cleared"][0]["class"] == "FALSE_DOCUMENTED_CONTRACT"
 
@@ -2520,30 +2663,77 @@ def test_a_class_whose_instances_were_all_fixed_clears_on_the_clean_arm(run_env)
 def test_the_exit_arms_read_the_escalation_ledger_not_the_open_work(run_env):
     """THE PROPERTY, derived from the source rather than from the one symptom.
 
-    D-043's cause is a roster, not a count: both arms asked
-    `_escalated_classes` — a function whose contract is "classes with open work
-    that are still escalating" — for the answer to "which classes has the run
-    recorded as ESCALATED". Those are different questions, and a future edit
-    that puts either arm back on the first one re-opens every symptom at once.
+    D-043's cause is a roster, not a count: the arms asked `_escalated_classes`
+    — a function whose contract is "classes with open work that are still
+    escalating" — for the answer to "which classes has the run recorded as
+    ESCALATED". Those are different questions, and a future edit that puts an
+    arm back on the first one re-opens every symptom at once.
+
+    D-058 moved BOTH arms into `_advance_escalation_exits`, so that is the one
+    function this property is about now. `_spend_structural_budget` is asserted
+    separately, and in the opposite direction: it dispatches, and it must key on
+    what the CALLER escalated, never on the persisted roster — counting a packet
+    against a class that drew none is the mirror-image defect.
     """
     import ast
     import inspect
     import textwrap
 
-    for fn in (fo._advance_escalation_clean_cycles, fo._spend_structural_budget):
+    def _calls(fn) -> set[str]:
         tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-        called = {
+        return {
             node.func.id
             for node in ast.walk(tree)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
-        assert "_escalated_classes" not in called, (
-            f"{fn.__name__} iterates _escalated_classes again, which omits a "
-            "class with no open instances — D-043's exact blindness."
-        )
-        assert "_persisted_escalations" in called, (
-            f"{fn.__name__} no longer reads the persisted ESCALATED roster, so "
-            "a class the ledger records as escalated can be unreachable again."
+
+    exits = _calls(fo._advance_escalation_exits)
+    assert "_escalated_classes" not in exits, (
+        "_advance_escalation_exits iterates _escalated_classes again, which "
+        "omits a class with no open instances — D-043's exact blindness."
+    )
+    assert "_persisted_escalations" in exits, (
+        "_advance_escalation_exits no longer reads the persisted ESCALATED "
+        "roster, so a class the ledger records as escalated can be unreachable "
+        "again."
+    )
+
+    spend = _calls(fo._spend_structural_budget)
+    assert "_escalated_classes" not in spend
+    assert "_persisted_escalations" not in spend, (
+        "the dispatcher must count only against the classes this call actually "
+        "packeted (D-043); reading the persisted roster here would increment a "
+        "budget for a class that got no packet."
+    )
+
+
+def test_the_dispatcher_holds_no_exit_arm(run_env):
+    """D-058, as the property rather than the one call sequence.
+
+    ST-002's trigger is the second structural packet CLOSING, and
+    `foundry_defects_to_tasks` cannot observe a close — it is the call that
+    OPENS the work. So no writer of `status`, `exit_reason` or
+    `cleared_at_cycle` may live on the dispatch path, and both arms live at the
+    boundary that knows a cycle ended.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    exit_fields = {"status", "exit_reason", "cleared_at_cycle"}
+    for fn in (fo._spend_structural_budget, fo.foundry_defects_to_tasks):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        written = {
+            target.slice.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Subscript)
+            and isinstance(target.slice, ast.Constant)
+        }
+        assert not (written & exit_fields), (
+            f"{fn.__name__} writes {sorted(written & exit_fields)} — an exit "
+            "applied on the dispatch path retracts the packet it just emitted."
         )
 
 
@@ -2678,7 +2868,7 @@ def test_the_clean_arm_fires_across_real_grind_cycles_not_just_boundaries(
     assert entry["live_clean_cycles"] == 2
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "clean_cycles"
-    assert entry["cleared_at_cycle"] == 5
+    assert entry["cleared_at_cycle"] == 6  # the counter AFTER the boundary
 
 
 def test_every_writer_of_the_escalation_date_treats_it_as_a_latch(run_env):
@@ -2695,7 +2885,7 @@ def test_every_writer_of_the_escalation_date_treats_it_as_a_latch(run_env):
     writers = (
         fo._record_escalation_proposals,
         fo._spend_structural_budget,
-        fo._advance_escalation_clean_cycles,
+        fo._advance_escalation_exits,
     )
     bare: list[str] = []
     for fn in writers:
@@ -2765,14 +2955,17 @@ def test_the_escalation_cycle_itself_is_never_counted_as_clean(run_env):
     assert _escalation_entry(fdir)["status"] == "ESCALATED"
 
 
-def test_the_second_structural_packet_clears_the_class_on_the_budget_arm(run_env):
-    """ST-002 / FR-002: 'One structural pass plus one retry.'
+def test_the_second_structural_packet_clears_the_class_when_it_closes(run_env):
+    """ST-002 verbatim: 'the structural-pass budget for the class is exhausted
+    (second structural packet CLOSED)'. AC-002: 'CLEARED after the second
+    structural packet CLOSES.'
 
-    AC-002's exit. Two passes is not a judgement that the class is fixed — it is
-    the statement that structural work has had its turn. The class being cleared
-    STILL GETS the second packet: the budget is spent BY that pass, not instead
-    of it, so `structural_packet_cycles` records both and the NEXT call emits
-    nothing.
+    A packet CLOSES when the GRIND cycle it was dispatched in ends, and the
+    event that knows a cycle ended is the `inspect_start` boundary — so the
+    class is still ESCALATED for the whole of the cycle its last packet is
+    being worked in, and CLEARS on the crossing out of it. Two passes is not a
+    judgement that the class is fixed; it is the statement that structural work
+    has had its turn.
     """
     project_root, fdir = run_env
     _escalate(fdir, project_root)
@@ -2785,18 +2978,59 @@ def test_the_second_structural_packet_clears_the_class_on_the_budget_arm(run_env
     second = foundry_defects_to_tasks(project_root)
 
     assert second["structural_tasks"] == 1, "the retry is dispatched, not skipped"
+    assert second["structural_packets_counted"] == ["FALSE_DOCUMENTED_CONTRACT"]
     entry = _escalation_entry(fdir)
     assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
     assert entry["structural_packet_cycles"] == [3, 4]
+    assert entry["status"] == "ESCALATED", (
+        "the packet has been dispatched, not closed — the class is still "
+        "escalated while cycle 4's GRIND works it"
+    )
+
+    crossing = _cross_boundary(fdir, project_root)  # closes cycle 4
+
+    entry = _escalation_entry(fdir)
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "budget"
-    assert entry["cleared_at_cycle"] == 4
-    assert second["escalation_cleared"][0]["exit_reason"] == "budget"
+    assert entry["cleared_at_cycle"] == crossing["cycle"] == 5
+    assert crossing["escalation_cleared"][0]["exit_reason"] == "budget"
 
-    _write_state(fdir, phase="F2", cycle=5)
     third = foundry_defects_to_tasks(project_root)
     assert third["structural_tasks"] == 0
     assert third["escalated_classes"] == []
+
+
+def test_the_budget_arm_does_not_retract_the_packet_it_just_dispatched(run_env):
+    """D-058: `Foundry-Tasks` DISPATCHES and COUNTS; it never clears.
+
+    The budget arm ran inside `foundry_defects_to_tasks`, BEFORE the packets
+    were built, so it flipped the class to CLEARED in the same call that emitted
+    packet 2 — and `_escalated_classes` skips a CLEARED class. Driven: escalate
+    at cycle 3, advance to cycle 4, call Foundry-Tasks (structural_tasks 1,
+    status CLEARED), then call it AGAIN in the SAME cycle -> structural_tasks 0
+    and escalated_classes [], while the packet just dispatched was still being
+    worked. Foundry-Tasks is explicitly a tool a lead may call twice in one
+    cycle, which is the whole reason `structural_packet_cycles` exists.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    _write_state(fdir, phase="F2", cycle=4)
+
+    second = foundry_defects_to_tasks(project_root)
+    assert second["structural_tasks"] == 1
+
+    again = foundry_defects_to_tasks(project_root)
+
+    assert again["structural_tasks"] == 1, (
+        "the class is still being worked structurally in this cycle; re-reading "
+        "the task list must show the packet that was dispatched"
+    )
+    assert again["escalated_classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
+    # ...and the second read spent nothing: one packet per class per cycle.
+    assert "structural_packets_counted" not in again
+    entry = _escalation_entry(fdir)
+    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
+    assert entry["structural_packet_cycles"] == [3, 4]
 
 
 def test_calling_tasks_twice_in_one_cycle_spends_one_pass(run_env):

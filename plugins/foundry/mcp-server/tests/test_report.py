@@ -147,33 +147,127 @@ def test_the_fixture_encodes_the_finer_boundary_scenario():
     assert state["cycle"] == 5
 
 
-def test_the_fixture_class_cleared_on_the_budget_arm_not_the_clean_cycles_arm():
+def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
     """AC-004 verbatim: 'escalation.json records for the class a status, the
     exit reason (clean-cycles or budget), the cycle it cleared and the
     structural packets it consumed.'
 
-    The gap is deliberate and is what makes the exit reason unambiguous: the
-    budget arm reaches STRUCTURAL_PASS_BUDGET at cycle 4 while
-    live_clean_cycles is still 1, one short of LIVE_CLEAN_CYCLES_TO_CLEAR. A
-    fixture where both arms fired would prove nothing about which one did."""
+    D-060 — THE FIXTURE IS DRIVEN, NOT TYPED.
+    -----------------------------------------
+    This test read the committed JSON off disk and asserted its fields while
+    calling ZERO production functions, so every number in it was a human's
+    claim about what the run would have done. They were not what production
+    does: the file recorded `cleared_at_cycle: 4` and `live_clean_cycles: 1`,
+    and the key assertion — `entry["live_clean_cycles"] <
+    LIVE_CLEAN_CYCLES_TO_CLEAR` — checked a number a person had typed, and one
+    production cannot produce (the clean arm skips while `completed_cycle <=
+    escalated_at`, so the first countable crossing closes cycle 4 and the class
+    clears on the budget arm at that same boundary with the counter still 0).
+    A fixture asserting a state no code path can reach proves nothing about the
+    code, and casting 3's escalation tests key on this directory.
+
+    So the scenario is REPLAYED through the real doors here — Foundry-Tasks for
+    each structural packet, `Foundry-Phase(inspect_start)` for each boundary —
+    and the committed record must equal what those calls wrote. The defect ids
+    and cycles stay as the Fixture contract freezes them; the numbers are
+    whatever production produces. Only the two timestamps are pinned in the
+    committed copy, so the artifact is reproducible.
+    """
     from foundry_mcp.schemas.vocab import (
         LIVE_CLEAN_CYCLES_TO_CLEAR,
         STRUCTURAL_PASS_BUDGET,
     )
+    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools import foundry_state
 
-    entry = _read_json(FIXTURE_DIR, "escalation.json")["classes"][
-        "FALSE_DOCUMENTED_CONTRACT"
-    ]
-    assert entry["status"] == "CLEARED"
-    assert entry["exit_reason"] == "budget"
-    assert entry["cleared_at_cycle"] == 4
-    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
-    assert entry["structural_packet_cycles"] == [3, 4]
-    assert entry["live_clean_cycles"] < LIVE_CLEAN_CYCLES_TO_CLEAR, (
-        "the clean-cycles arm must NOT also have fired, or `budget` is not "
-        "the reason this class cleared"
+    klass = "FALSE_DOCUMENTED_CONTRACT"
+    by_id = {d["id"]: d for d in _read_json(FIXTURE_DIR, "defects.json")["defects"]}
+
+    def _open(did: str) -> dict:
+        return {**by_id[did], "status": "open", "fixed_in_cycle": None}
+
+    run_dir = tmp_path / "foundry-archive" / "finer-boundary-run"
+    (run_dir / "castings").mkdir(parents=True)
+    project_root = str(tmp_path)
+
+    def _ledger(ids_open: list[str], ids_fixed: list[str]) -> None:
+        rows = [_open(d) for d in ids_open] + [by_id[d] for d in ids_fixed]
+        (run_dir / "defects.json").write_text(
+            json.dumps({"defects": rows}), encoding="utf-8"
+        )
+
+    def _state(phase: str, cycle: int) -> None:
+        (run_dir / "state.json").write_text(
+            json.dumps({"phase": phase, "cycle": cycle}), encoding="utf-8"
+        )
+
+    def _cross() -> dict:
+        (run_dir / ".next-action-called").write_text(
+            f"{fo._now()}\n", encoding="utf-8"
+        )
+        return fo.foundry_mark_phase_complete("inspect_start", project_root)
+
+    original_scan = fo._check_active_teams
+    fo._check_active_teams = lambda _pr: {
+        "active": False, "teams": [], "live_panes": []
+    }
+    foundry_state.set_active_run("finer-boundary-run")
+    try:
+        # Cycle 3: the third consecutive LIVE filing escalates the class, and
+        # Foundry-Tasks dispatches structural packet 1.
+        _ledger(["D-001", "D-002", "D-003"], ["D-006", "D-007"])
+        _state("F2", 3)
+        assert fo.foundry_defects_to_tasks(project_root)["structural_tasks"] == 1
+
+        # The GRIND closes two instances; the boundary closes cycle 3.
+        _ledger(["D-003"], ["D-001", "D-002", "D-006", "D-007"])
+        _state("F3", 3)
+        assert _cross()["cycle"] == 4
+
+        # Cycle 4: PROVE files one LATENT instance at a finer boundary, and
+        # Foundry-Tasks dispatches packet 2 — the last the budget allows.
+        _ledger(["D-003", "D-004"], ["D-001", "D-002", "D-006", "D-007"])
+        assert fo.foundry_defects_to_tasks(project_root)["structural_tasks"] == 1
+
+        # The boundary that closes cycle 4 CLOSES that packet, and the budget
+        # arm applies the exit there (ST-002: "second structural packet
+        # CLOSED").
+        _ledger(["D-004"], ["D-001", "D-002", "D-003", "D-006", "D-007"])
+        _state("F3", 4)
+        clearing = _cross()
+        assert clearing["cycle"] == 5
+        assert clearing["escalation_cleared"][0]["exit_reason"] == "budget"
+
+        # Cycle 5: the second LATENT instance, at a finer boundary still.
+        (run_dir / "defects.json").write_text(
+            json.dumps({"defects": list(by_id.values())}), encoding="utf-8"
+        )
+        assert fo.foundry_defects_to_tasks(project_root)["structural_tasks"] == 0
+
+        produced = _read_json(run_dir, "escalation.json")["classes"][klass]
+    finally:
+        foundry_state.clear_active_run()
+        fo._check_active_teams = original_scan
+
+    committed = _read_json(FIXTURE_DIR, "escalation.json")["classes"][klass]
+
+    volatile = {"recorded_at"}
+    assert {k: v for k, v in committed.items() if k not in volatile} == {
+        k: v for k, v in produced.items() if k not in volatile
+    }, "the committed fixture is not what these transitions write"
+
+    # And the claim the fixture is FOR: it cleared on the budget arm, with the
+    # clean arm demonstrably short — a fixture where both fired would prove
+    # nothing about which one did.
+    assert committed["status"] == "CLEARED"
+    assert committed["exit_reason"] == "budget"
+    assert committed["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
+    assert committed["structural_packet_cycles"] == [3, 4]
+    assert committed["cleared_at_cycle"] == 5, (
+        "the counter AFTER the boundary that applied the exit"
     )
-    assert entry["open_latent_defect_ids"] == ["D-004", "D-005"]
+    assert committed["live_clean_cycles"] < LIVE_CLEAN_CYCLES_TO_CLEAR
+    assert committed["open_latent_defect_ids"] == ["D-004", "D-005"]
 
 
 # --------------------------------------------------------------------------- #
@@ -329,7 +423,7 @@ def test_escalated_classes_carries_status_exit_reason_cycle_and_packets(report_e
     assert entry["class"] == "FALSE_DOCUMENTED_CONTRACT"
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "budget"
-    assert entry["cleared_at_cycle"] == 4
+    assert entry["cleared_at_cycle"] == 5  # D-060: the counter AFTER the clearing boundary
     assert entry["structural_packets_dispatched"] == 2
     assert entry["open_latent_defect_ids"] == ["D-004", "D-005"]
 

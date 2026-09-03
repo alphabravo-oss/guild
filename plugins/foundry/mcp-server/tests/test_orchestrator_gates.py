@@ -144,16 +144,27 @@ def run_env(tmp_path, monkeypatch):
 
     Patches ``_check_active_teams`` inactive so gate/router logic never
     depends on the ambient tmux session or ~/.claude/teams directories.
+
+    D-076 made the team scan a load-bearing input to the stall detector, so the
+    patch reads a per-test flag rather than answering a constant: a test that
+    needs the ACTIVE arm calls ``_teams_active(True)``. Reset to inactive on
+    every entry, so the default every other test relies on is unchanged and no
+    test can leak its team state into the next one.
     """
     project_root = tmp_path
     run_name = "c3-test-run"
     fdir = project_root / "foundry-archive" / run_name
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
 
+    _TEAM_SCAN["active"] = False
     monkeypatch.setattr(
         fo,
         "_check_active_teams",
-        lambda _pr: {"active": False, "teams": [], "live_panes": []},
+        lambda _pr: {
+            "active": _TEAM_SCAN["active"],
+            "teams": ["c3-team"] if _TEAM_SCAN["active"] else [],
+            "live_panes": [],
+        },
     )
 
     foundry_state.set_active_run(run_name)
@@ -161,6 +172,16 @@ def run_env(tmp_path, monkeypatch):
         yield str(project_root), fdir
     finally:
         foundry_state.clear_active_run()
+
+
+#: Whether the patched `_check_active_teams` reports a registered team.
+#: Reset by `run_env` on every test; flipped by `_teams_active`.
+_TEAM_SCAN = {"active": False}
+
+
+def _teams_active(active: bool) -> None:
+    """Make the patched team scan report an active team, or not (D-076)."""
+    _TEAM_SCAN["active"] = active
 
 
 def _write_spec(fdir: Path, ids: list[str]) -> None:
@@ -1727,7 +1748,10 @@ def _handler_phase_tokens() -> set[str]:
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo.foundry_mark_phase_complete)))
+    # D-067 moved the branch chain into `_phase_transition` so the ordering
+    # token is consumed only by a transition that succeeded. The branches — and
+    # therefore the accepted token set — live there now.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._phase_transition)))
     tokens: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Compare):
@@ -8496,6 +8520,10 @@ def test_a_long_gap_with_agents_progressing_reports_waiting_not_a_stall(run_env)
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
     _progressing_ledger(fdir)
     _stale_stall_clock(fdir, 600)
+    # AC-032's first half says "With an ACTIVE TEAM and a progressing ledger",
+    # and D-076 made both halves load-bearing: the fixture patches the team scan
+    # inactive by default, so the active arm has to be asked for explicitly.
+    _teams_active(True)
 
     nxt = foundry_next_action(project_root)
 
@@ -8664,30 +8692,66 @@ def test_a_registered_team_with_dead_ledgers_does_not_suppress_the_stall(
     assert "silently deliberating" in nxt["instructions"]
 
 
-def test_a_progressing_ledger_still_reports_waiting_with_no_team_registered(
-    run_env
-):
-    """The other direction, and the reason the team scan is gone rather than
-    demoted: the F2 stream agents are background Agents, never tmux teammates,
-    so a team scan cannot see them at all. Requiring a registered team would
-    have made every INSPECT wait read as a stall."""
+def test_a_progressing_ledger_with_no_team_registered_reports_the_stall(run_env):
+    """AC-032's second half verbatim: 'with no active teams it reports the
+    stall.' D-076.
+
+    This asserted the OPPOSITE — waiting on the strength of the ledgers alone —
+    which is where the declared input went missing. CT-012 declares the inputs
+    as ".last-next-at, ACTIVE TEAMS, Foundry-Liveness roster" and FR-020
+    (Locked, verbatim) reads "Foundry-Next checks active teams AND
+    Foundry-Liveness". Driven: `_check_active_teams` inactive, one ledger with a
+    60s-old line, `.last-next-at` 600s in the past -> the notice read "WAITING
+    ON 1 AGENT(S)" and `stall_detected_seconds` was ABSENT.
+    """
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=1)
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
     _progressing_ledger(fdir, agent="prove")
     _stale_stall_clock(fdir, 600)
+    _teams_active(False)
 
     waiting = fo._waiting_on_agents(project_root)
 
-    assert waiting["waiting"] is True
-    assert waiting["count"] == 1
-    assert "stall_detected_seconds" not in foundry_next_action(project_root)
+    assert waiting["waiting"] is False
+    assert waiting["teams_active"] is False
+    assert waiting["progressing_agents"] == 1, (
+        "the ledger half still answered; it is the AND that decides"
+    )
+    assert "stall_detected_seconds" in foundry_next_action(project_root)
 
 
-def test_the_waiting_check_does_not_consult_the_team_scan(run_env):
-    """D-021's cause was an evidence source that could only add false
-    positives. Asserted on the source, because "which sources it asked" is not
-    observable from a return value that agrees on the tested cases."""
+def test_a_registered_but_dead_team_still_reports_the_stall(run_env):
+    """D-021, which the AND must not undo.
+
+    A team dir that was never cleaned up is not an agent that is running. The
+    old code returned `waiting: True` on exactly that and Foundry-Next rendered
+    "that gap is the agents working, not you deliberating" forever, on a run
+    where nothing was working. Either source answering "nothing is running" is
+    enough to let the watchdog speak, so the stale directory can no longer
+    suppress it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stale_stall_clock(fdir, 600)
+    _teams_active(True)
+
+    waiting = fo._waiting_on_agents(project_root)
+
+    assert waiting["waiting"] is False
+    assert waiting["teams_active"] is True
+    assert waiting["progressing_agents"] == 0
+    assert "stall_detected_seconds" in foundry_next_action(project_root)
+
+
+def test_the_waiting_check_consults_both_declared_inputs(run_env):
+    """CT-012's input list, asserted on the SOURCE — because "which sources it
+    asked" is not observable from a return value that agrees on the tested
+    cases, and that is exactly how a declared input came to have a test
+    guarding its ABSENCE (`test_the_waiting_check_does_not_consult_the_team_scan`
+    AST-walked this function and failed if `_check_active_teams` appeared).
+    """
     import inspect
     import textwrap
 
@@ -8697,9 +8761,13 @@ def test_the_waiting_check_does_not_consult_the_team_scan(run_env):
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-    assert "_check_active_teams" not in called, (
+    assert "_check_active_teams" in called, (
+        "FR-020 verbatim: 'Foundry-Next checks active teams AND "
+        "Foundry-Liveness'. Both, or the notice is not the one CT-012 declares."
+    )
+    assert "foundry_liveness" in called, (
         "a registered team is not evidence that an agent is running; the "
-        "progress ledgers are the only source that answers FR-020's question"
+        "progress ledgers are the half that answers that (D-021)."
     )
 
 
@@ -8793,3 +8861,603 @@ def test_the_optional_rule_has_one_spelling(run_env):
     # No imperative says it in its own words.
     for text in fo._ACTION_IMPERATIVES.values():
         assert text.count("OPTIONAL") == (1 if note in text else 0)
+
+
+# --------------------------------------------------------------------------- #
+# D-055 / D-056 / D-072 — the router routes on the tier, and every imperative
+# it emits names a call the shipped server accepts
+# --------------------------------------------------------------------------- #
+
+
+def _router_defect(did: str, **extra) -> dict:
+    d = {
+        "id": did,
+        "cycle": 1,
+        "source": "prove",
+        "type": "WRONG",
+        "description": f"{did} description",
+        "spec_ref": "FR-006",
+        "symbol": "handler",
+        "file": "src/api/a.py",
+        "status": "open",
+        "fixed_in_cycle": None,
+        "class": "SCAN_GAP",
+        "tier": "LIVE",
+    }
+    d.update(extra)
+    return d
+
+
+def _router_ledger(fdir: Path, rows: list[dict]) -> None:
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": rows}), encoding="utf-8"
+    )
+
+
+def _streams_done(fdir: Path, streams=("trace", "prove", "test")) -> None:
+    for stream in streams:
+        (fdir / f".{stream}-complete").write_text("x\n", encoding="utf-8")
+
+
+def test_a_latent_only_backlog_is_not_routed_back_into_grind(run_env):
+    """FR-006 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass
+    when the only open defects are LATENT.' AC-008. D-055.
+
+    The GATES were made tier-aware and the ROUTER was not: `_compute_next_action`
+    counted raw open records and the F2 branch routed on `open_count > 0`, so a
+    LATENT-only backlog was sent back into GRIND forever — the exact
+    non-termination FR-006 exists to end. commands/start.md orders the lead to
+    follow Foundry-Next literally and not deliberate, so the run could not reach
+    ASSAY while any LATENT instance stayed open, contradicting AC-002's "the run
+    reaches NYQUIST" and NFR-003's "LATENT stays open, tracked, and listed in
+    the report".
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001", tier="LATENT",
+                                         reproduction_attempted="drove it; nothing")])
+    _streams_done(fdir)
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_assay", action
+    assert action["details"]["latent_backlog"] == ["D-001"]
+    assert "D-001" not in action["instructions"] or "block" in action["instructions"]
+
+
+def test_one_live_defect_still_routes_into_grind(run_env):
+    """The other side, unchanged: the tier is an evidence grade, not a waiver.
+    A reproduced failure routes to GRIND exactly as every open defect used to."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [
+        _router_defect("D-001", tier="LATENT",
+                       reproduction_attempted="drove it; nothing"),
+        _router_defect("D-002", tier="LIVE"),
+    ])
+    _streams_done(fdir)
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_grind"
+    assert action["details"]["live_defects"] == ["D-002"]
+    assert action["details"]["latent_backlog"] == ["D-001"]
+
+
+def test_an_untiered_defect_routes_into_grind_like_a_live_one(run_env):
+    """FR-051: an open pre-change record with no tier 'blocks like LIVE'. The
+    router reads the same `_blocking_defects` the gates do, so the two cannot
+    answer differently about one ledger."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    untiered = _router_defect("D-009")
+    del untiered["tier"]
+    _router_ledger(fdir, [untiered])
+    _streams_done(fdir)
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_grind"
+    assert action["details"]["unknown_tier_defects"] == ["D-009"]
+
+
+def test_the_grind_imperative_names_a_foundry_fix_the_server_accepts(run_env):
+    """AC-020 / AC-011 / CT-005. D-056.
+
+    The F3 arm dictated `Foundry-Fix(defect_id, cycle, adjacent_path_statement,
+    adjacent_path_test)` and stated beside it that "the two declarations are
+    required and the call is refused without them". The shipped schema's
+    required list is ['defect_id', 'cycle', 'authored_by'], so that exact
+    argument set is refused — a lead following Foundry-Next literally was
+    refused on its FIRST fix of every cycle. The sentence was wrong for LATENT
+    defects too, where AC-012 forbids demanding the adjacent-path pair.
+
+    Asserted against the ADVERTISED SCHEMA rather than against a remembered
+    field list, so the imperative and the tool cannot drift apart again.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001")])
+
+    instructions = fo._compute_next_action(project_root)["instructions"]
+
+    tools = asyncio.run(foundry_server.list_tools())
+    fix = next(t for t in tools if t.name == "Foundry-Fix")
+    for field in fix.inputSchema["required"]:
+        assert field in instructions, (
+            f"{field} is required by the advertised schema and the imperative "
+            "does not name it — the lead's first fix of the cycle is refused"
+        )
+    # ...and both lanes are described, so a LATENT defect is not sent the LIVE
+    # ceremony (AC-012).
+    assert "regression_test" in instructions
+    assert "LATENT" in instructions
+
+
+def test_the_grind_imperative_names_the_recorded_width_not_full(run_env):
+    """FR-011 / GI-009. D-072's first half.
+
+    The F3 arm ended "run full INSPECT again", and that arm is the state DELTA
+    is reachable from — so it instructed full width while the very next
+    transition would record a DELTA roster. Foundry-Next REPORTS the recorded
+    decision and the next crossing DECIDES the next one; neither is a claim this
+    arm may make.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001")])
+
+    action = fo._compute_next_action(project_root)
+
+    assert "run full INSPECT again" not in action["instructions"]
+    assert action["details"]["inspect_mode"] == "DELTA"
+    assert action["details"]["inspect_rule"] == "delta"
+    assert "DELTA" in action["instructions"]
+
+
+def test_the_f1_imperative_names_the_tool_that_enters_f2(run_env):
+    """GI-009 verbatim: 'whichever Foundry-Phase transition opens an INSPECT
+    records the mode.' D-072's second half.
+
+    The F1 arm said "then update state to F2", naming no tool. The only thing
+    that records the F2 entry's mode is `Foundry-Phase(phase='cast')`, so
+    hand-editing state.json produced exactly GI-009's named violation — a first
+    INSPECT of a phase with no recorded mode.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [])
+    (fdir / ".cast-complete").write_text("x\n", encoding="utf-8")
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_inspect"
+    assert "Foundry-Phase(phase='cast')" in action["instructions"]
+    assert "update state to F2" not in action["instructions"]
+
+
+def test_a_clean_delta_cycle_is_told_to_widen_not_to_open_assay(run_env):
+    """AC-016 / D-068's ruling, on the router side: the imperative names the
+    crossing that actually works. Naming `inspect_clean` here would send the
+    lead into the refusal the transition now returns."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=3, inspect_modes=[{
+        "cycle": 3, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [])
+    _streams_done(fdir)
+
+    action = fo._compute_next_action(project_root)
+
+    assert action["action"] == "widen_inspect"
+    assert "inspect_start" in action["instructions"]
+    assert "final_gate" in action["instructions"]
+
+
+# --------------------------------------------------------------------------- #
+# D-067 — the ordering token is consumed by a transition that HAPPENED
+# --------------------------------------------------------------------------- #
+
+
+def test_a_refused_transition_leaves_the_ordering_token_in_place(run_env):
+    """AC-013 / CT-007 / ST-005. D-067.
+
+    `.next-action-called` was unlinked before ANY branch ran, so a REFUSED
+    transition burned it and every refusal whose hint says "fix this and re-call
+    Foundry-Phase" named a call that was then refused for a second, different
+    reason. Driven on the sweep refusal: repair the log, do exactly what the
+    hint says, get "Must call Foundry-Next before phase transitions".
+
+    Driven here on a refusal with no filesystem apparatus — an unknown phase
+    token — because the property is about the TOKEN, not about which branch
+    refused.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _arm_ordering_token(fdir)
+
+    refused = fo.foundry_mark_phase_complete("not_a_real_token", project_root)
+
+    assert refused.get("ok") is not True
+    assert (fdir / ".next-action-called").exists(), (
+        "the token means 'a Foundry-Next preceded this transition', and no "
+        "transition happened — the remedy the refusal names has to work"
+    )
+
+
+def test_the_sweep_refusals_prescribed_remedy_works(run_env):
+    """D-067's driven case, end to end: the refusal names a retry, and the retry
+    is accepted without a second Foundry-Next.
+
+    `_sweep_refusal` carries a `token` parameter for no purpose other than
+    naming the right transition to retry, so the remedy was engineered to be
+    directly actionable and the token consumption made it not.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [])
+    _arm_ordering_token(fdir)
+
+    calls = {"n": 0}
+
+    def _sweep(fdir_, project_root_, entry, *, full):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "ok": False, "record": {"scope": "full", "logs_reexecuted": [],
+                                        "mismatches": [], "elapsed_seconds": 0.0,
+                                        "pool_size": 0, "per_log": []},
+                "mismatches": [{"log": "evidence/casting-3-gates.log",
+                                "reason": "output mismatch"}],
+                "error": "",
+            }
+        return {
+            "ok": True, "record": {"scope": "full", "logs_reexecuted": [],
+                                   "mismatches": [], "elapsed_seconds": 0.0,
+                                   "pool_size": 0, "per_log": []},
+            "mismatches": [], "error": "",
+        }
+
+    fo._sweep_evidence_at_boundary = _sweep
+    try:
+        refused = fo.foundry_mark_phase_complete("inspect_start", project_root)
+        assert refused.get("ok") is not True
+        assert "casting-3-gates.log" in refused["error"]
+        assert "inspect_start" in refused["hint"]
+        assert fo._current_cycle(fdir) == 1, "the counter did not move"
+
+        # The log is repaired. Do EXACTLY what the hint said — no Foundry-Next.
+        retried = fo.foundry_mark_phase_complete("inspect_start", project_root)
+    finally:
+        importlib.reload(fo)
+
+    assert retried["ok"] is True, retried
+    assert retried["cycle"] == 2
+
+
+def test_a_successful_transition_still_consumes_the_token(run_env):
+    """The half that must not be lost: the token is a HANDSHAKE, so a
+    transition that happened consumes it and the next one needs a fresh
+    Foundry-Next."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0", cycle=0)
+    _arm_ordering_token(fdir)
+
+    assert fo.foundry_mark_phase_complete("start_cast", project_root)["ok"] is True
+    assert not (fdir / ".next-action-called").exists()
+
+    again = fo.foundry_mark_phase_complete("start_cast", project_root)
+    assert again.get("ok") is not True
+    assert "Foundry-Next" in again["error"]
+
+
+# --------------------------------------------------------------------------- #
+# D-071 — the TRACE auto-skip cannot satisfy a FULL roster
+# --------------------------------------------------------------------------- #
+
+
+def test_the_trace_skip_never_fires_on_a_full_cycle(run_env):
+    """AC-017 / FR-012 / GI-007. D-071.
+
+    FR-012 sanctions exactly two exceptions to the FULL roster — a stream in
+    `manifest.stream_skips`, or a `research_skipped` record — and the TRACE
+    auto-skip is neither. It predates the width rule and referenced it not at
+    all, so on a cycle recorded FULL/final_gate (the INSPECT before ASSAY) whose
+    GRIND touched a non-key_file, Foundry-Next auto-stamped `.trace-complete`
+    and the streams check returned complete with TRACE never run.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / ".trace-clean-at").write_text(
+        json.dumps({"head_sha": "0" * 40}), encoding="utf-8"
+    )
+
+    decision = fo._maybe_skip_trace(fdir, project_root)
+
+    assert decision["skip"] is False, decision
+    assert "FULL" in decision["reason"]
+    assert not (fdir / ".trace-complete").exists()
+    assert "trace" in fo._check_streams_complete(project_root)["missing"]
+
+
+def test_the_trace_skip_fires_on_a_delta_cycle_with_an_empty_diff(run_env):
+    """...and is not removed, which would be GI-007 from the other side.
+
+    In DELTA mode TRACE's scope is "the symbols the GRIND commits touched"
+    (AC-019). An empty diff has no symbols to walk, which is the one case where
+    skipping and running are the same answer.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    decision = fo._maybe_skip_trace(fdir, project_root)
+
+    assert decision["skip"] is True, decision
+    assert (fdir / ".trace-complete").exists()
+
+
+def test_the_trace_skip_does_not_fire_on_a_delta_cycle_with_a_diff(run_env):
+    """The other DELTA arm: files were touched, so there are symbols to walk."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [],
+        "touched_files": ["src/api/a.py"],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    decision = fo._maybe_skip_trace(fdir, project_root)
+
+    assert decision["skip"] is False, decision
+    assert not (fdir / ".trace-complete").exists()
+
+
+# --------------------------------------------------------------------------- #
+# D-064 — the batch door REFUSES a non-dict finding, naming it
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("bad", ["not-a-dict", None, 42, ["nested"]])
+def test_a_non_dict_finding_refuses_the_batch_naming_the_index(run_env, bad):
+    """CT-002 verbatim: 'batch door refuses the whole batch' — naming the
+    offending finding. AC-010. D-064.
+
+    The INPUT side of the loop was unguarded while the STORED side was not:
+    `findings=['not-a-dict']` raised `AttributeError: 'str' object has no
+    attribute 'get'` on the first `finding.get(...)`. `@ledger_refusals` does
+    not catch it, so server.py's outer net converted it into "This is an
+    unhandled server-side error, not a refusal", naming no index and no field.
+    The module's own D-128 comment celebrates fixing exactly this class for
+    `_dict_records` — the stored half of the same loop.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        1,
+        [_finding(), bad, _finding(symbol="other")],
+        project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert "findings[1]" in result["error"], result
+    assert result["refusals"][0]["index"] == 1
+    assert result["refusals"][0]["field"] == "finding"
+    assert type(bad).__name__ in result["refusals"][0]["reason"]
+    # All-or-nothing: the two GOOD findings did not land either.
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert ledger["defects"] == []
+
+
+def test_a_non_dict_finding_does_not_misalign_the_refusal_report(run_env):
+    """The adjacent path the guard opens, closed deliberately.
+
+    The refusal loop indexes `normalized[refused["index"]]["source"]`, so the
+    two lists must stay index-aligned — a `continue` that skipped the
+    `normalized` append would make every later refusal name the WRONG finding.
+    Driven with a bad finding BEFORE a genuinely invalid one.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = fo.foundry_sync_defects(
+        1,
+        [None, _finding(source="not-a-stream")],
+        project_root,
+    )
+
+    assert result.get("ok") is not True
+    by_index = {r["index"]: r for r in result["refusals"]}
+    assert by_index[0]["field"] == "finding"
+    assert by_index[1]["field"] == "source"
+    assert by_index[1]["value"] == "not-a-stream"
+
+
+# --------------------------------------------------------------------------- #
+# D-062 — FR-051's exit: a re-filing CLASSIFIES the untiered record
+# --------------------------------------------------------------------------- #
+
+
+def _untiered_open(fdir: Path) -> dict:
+    """One open pre-change record: no `tier` key at all, which is the point."""
+    record = {
+        "id": "D-001", "cycle": 0, "source": "trace", "type": "UNWIRED",
+        "description": "filed before the tier axis existed",
+        "spec_ref": "CT-013", "symbol": "foundry_next",
+        "file": "src/api/a.py", "status": "open", "fixed_in_cycle": None,
+        "class": "UNWIRED_SURFACE",
+    }
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [record]}), encoding="utf-8"
+    )
+    _write_state(fdir, phase="F2", cycle=3)
+    return record
+
+
+def test_re_filing_an_untiered_record_classifies_it_in_place(run_env):
+    """FR-051 verbatim: 'Blocks like LIVE UNTIL A STREAM RE-FILES IT WITH A
+    TIER.' AC-008. D-062.
+
+    The exit FR-051 names was unimplemented, and following the server's own
+    hint made the ledger worse. `_blocking_defects` says "have the filing
+    stream re-file each untiered defect with tier=LIVE or tier=LATENT"; the
+    batch door only reopened records already `fixed` or appended new ones, so
+    the identical finding came back as a SECOND open record beside the untiered
+    one. Driven: {'added': 1, 'total_open': 2}, D-001 still untiered, blocking
+    unchanged at 1. A resumed pre-change run had no cheap exit at all.
+    """
+    project_root, fdir = run_env
+    _untiered_open(fdir)
+    assert fo._blocking_defects(fdir)["unknown"] == ["D-001"]
+
+    result = fo.foundry_sync_defects(
+        3,
+        [{
+            "source": "trace", "type": "UNWIRED", "symbol": "foundry_next",
+            "file": "src/api/a.py", "class": "UNWIRED_SURFACE",
+            "tier": "LATENT",
+            "reproduction_attempted": (
+                "drove every caller of the display path; none reaches the "
+                "branch, so nothing reproduced"
+            ),
+            "description": "re-filed with the tier the record never carried",
+        }],
+        project_root,
+    )
+
+    assert result["ok"] is True, result
+    assert result["added"] == 0, "a re-filing classifies; it does not duplicate"
+    assert result["retiered"] == 1
+    assert result["retiered_ids"] == ["D-001"]
+    assert result["total_open"] == 1
+
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert len(ledger["defects"]) == 1
+    record = ledger["defects"][0]
+    assert record["id"] == "D-001", "the id survives, so every citation does"
+    assert record["tier"] == "LATENT"
+    assert record["retiered_in_cycle"] == 3
+    assert record["reproduction_attempted"]
+
+    # ...and the gate that was blocked now passes, which is the whole exit.
+    assert fo._blocking_defects(fdir)["blocking"] == 0
+    assert fo._blocking_defects(fdir)["latent"] == ["D-001"]
+
+
+def test_re_filing_an_untiered_record_as_live_leaves_it_blocking(run_env):
+    """The other direction: classifying is not clearing. A stream that drives
+    the failure re-files it LIVE, and the record blocks exactly as it did —
+    with the difference that now somebody has said so."""
+    project_root, fdir = run_env
+    _untiered_open(fdir)
+
+    result = fo.foundry_sync_defects(
+        3,
+        [{
+            "source": "trace", "type": "UNWIRED", "symbol": "foundry_next",
+            "file": "src/api/a.py", "class": "UNWIRED_SURFACE", "tier": "LIVE",
+            "description": "drove the door and read the wrong result back",
+        }],
+        project_root,
+    )
+
+    assert result["retiered"] == 1
+    blocking = fo._blocking_defects(fdir)
+    assert blocking["live"] == ["D-001"]
+    assert blocking["unknown"] == []
+
+
+def test_a_different_finding_is_not_folded_into_an_untiered_record(run_env):
+    """The adjacent path: identity is (source, type, file, symbol), so a
+    finding that differs on ANY of them is a new defect and lands as one. A
+    matcher that swallowed unrelated findings would lose real work."""
+    project_root, fdir = run_env
+    _untiered_open(fdir)
+
+    result = fo.foundry_sync_defects(
+        3,
+        [{
+            "source": "trace", "type": "UNWIRED", "symbol": "some_other_symbol",
+            "file": "src/api/a.py", "class": "UNWIRED_SURFACE", "tier": "LIVE",
+            "description": "a different symbol in the same file",
+        }],
+        project_root,
+    )
+
+    assert result["added"] == 1
+    assert result["retiered"] == 0
+    assert result["total_open"] == 2
+
+
+def test_a_tiered_open_record_is_not_re_tiered(run_env):
+    """Only an UNTIERED record takes this path. A stream re-filing a finding
+    against a record some stream already classified must not silently rewrite
+    that classification — the record is already answerable for its evidence."""
+    project_root, fdir = run_env
+    record = _untiered_open(fdir)
+    record["tier"] = "LIVE"
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [record]}), encoding="utf-8"
+    )
+
+    result = fo.foundry_sync_defects(
+        3,
+        [{
+            "source": "trace", "type": "UNWIRED", "symbol": "foundry_next",
+            "file": "src/api/a.py", "class": "UNWIRED_SURFACE", "tier": "LATENT",
+            "reproduction_attempted": "drove it; nothing reproduced this time",
+            "description": "same identity, softer claim",
+        }],
+        project_root,
+    )
+
+    assert result["retiered"] == 0
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert ledger["defects"][0]["tier"] == "LIVE"

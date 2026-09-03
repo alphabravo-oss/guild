@@ -386,13 +386,37 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Fix",
+            # GI-003 / AC-011 / D-066 — THE DESCRIPTION IS THE SURFACE A CALLER
+            # READS WHEN IT CHOOSES ARGUMENTS, SO IT STATES BOTH LANES.
+            #
+            # This still described the pre-change contract: the adjacent-path
+            # pair as unconditional, no mention of LATENT, regression_test or
+            # tier anywhere in it. The per-property strings below WERE updated
+            # correctly (`regression_test` says "REQUIRED on a LATENT defect";
+            # `adjacent_path_statement` says "Not demanded on a LATENT defect"),
+            # so only the top-level text was left stale — and it is the text an
+            # agent reads first. Driven: a caller following it verbatim on a
+            # LATENT defect, supplying a valid adjacent_path_statement and
+            # adjacent_path_test, is refused with missing_fields
+            # ['regression_test']. US-003's whole purpose — ceremony
+            # proportional to the evidence tier — was negated at the one place a
+            # teammate decides what to send.
             description=(
-                "Mark a defect as fixed in this cycle. Requires an adjacent-path "
-                "statement (who else calls this, what else transitions here, what "
-                "runs concurrently) and a reference to a test that drives at least "
-                "one of those adjacent paths. The call is REFUSED without both, "
-                "naming each missing field — a fix whose blast radius is undeclared "
-                "is how a defect closes and a regression opens in the same cycle."
+                "Mark a defect as fixed in this cycle. `authored_by` is always "
+                "required: 'teammate' (name the prompt_hash and casting_id it "
+                "was dispatched with) or 'lead' (name fix_commit). The rest of "
+                "the ceremony is proportional to the defect's TIER. LIVE, or a "
+                "pre-change record with no tier: an adjacent-path statement "
+                "(who else calls this, what else transitions here, what runs "
+                "concurrently) AND a reference to a test that drives one of "
+                "those adjacent paths — the call is REFUSED without both, "
+                "naming each missing field, because a fix whose blast radius is undeclared "
+                "is how a defect closes and a regression opens in the same "
+                "cycle. LATENT: a `regression_test` locator of the form "
+                "path::test and nothing else — the adjacent-path pair is NOT "
+                "demanded, and no failing-then-passing statement is taken here "
+                "(that belongs in your completion report). A LIVE lead fix is "
+                "additionally measured against the lead lane from its commit."
             ),
             inputSchema={
                 "type": "object",
@@ -450,9 +474,14 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "REQUIRED when authored_by is 'lead', whatever the "
                             "tier - it is what the server's lead_fix handoff "
-                            "record carries. On a LIVE defect it is also measured "
-                            "with `git show --numstat`; on a LATENT defect it is "
-                            "recorded unmeasured."
+                            "record carries. It is measured with `git show "
+                            "--numstat` on BOTH tiers, and the record carries "
+                            "the files and the line count either way; what is "
+                            "LIVE-only is the LANE LIMIT the measurement is "
+                            "judged against. On a LATENT defect the fix is "
+                            "recorded with the lane limit not applied - never "
+                            "'unmeasured', which is what a record reads when "
+                            "git could not read the commit at all."
                         ),
                     },
                     "prompt_hash": {

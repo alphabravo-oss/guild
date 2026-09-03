@@ -1,28 +1,28 @@
 {
   "classes": {
     "FALSE_DOCUMENTED_CONTRACT": {
-      "proposal": "One structural pass over every docstring in evidence.py and foundry_report.py that states a contract, checked against the handler beneath it.",
-      "escalated_at_cycle": 3,
-      "consecutive_cycles": 3,
-      "defect_ids": [
-        "D-001",
-        "D-002",
-        "D-003"
-      ],
-      "recorded_at": "2026-09-02T06:00:00+00:00",
       "status": "CLEARED",
       "exit_reason": "budget",
-      "cleared_at_cycle": 4,
+      "cleared_at_cycle": 5,
       "structural_packets_dispatched": 2,
       "structural_packet_cycles": [
         3,
         4
       ],
-      "live_clean_cycles": 1,
+      "live_clean_cycles": 0,
+      "live_clean_cycles_counted": [],
       "open_latent_defect_ids": [
         "D-004",
         "D-005"
-      ]
+      ],
+      "proposal": "STRUCTURAL FIX REQUIRED \u2014 defect class 'FALSE_DOCUMENTED_CONTRACT' (stream-declared) has recurred for 5 consecutive cycles (cycles seen: 1, 2, 3, 4, 5) and still has 2 open instance(s) across 2 file(s), 5 symbol(s). Per-instance fixes have not held. Find the single root cause these instances share and fix it there, then confirm every listed defect closes as a consequence. Closure is NOT waived: all of D-004, D-005 must reach fixed. If this class is genuinely not systemic, the lead can restore per-instance packets with Foundry-Directive('escalation-override: FALSE_DOCUMENTED_CONTRACT').",
+      "escalated_at_cycle": 3,
+      "consecutive_cycles": 5,
+      "defect_ids": [
+        "D-004",
+        "D-005"
+      ],
+      "recorded_at": "2026-09-02T09:30:00+00:00"
     }
   },
   "updated_at": "2026-09-02T09:30:00+00:00"

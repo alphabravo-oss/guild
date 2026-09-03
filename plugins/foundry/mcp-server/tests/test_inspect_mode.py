@@ -50,6 +50,7 @@ from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.foundry_orchestrator import (
     _check_streams_complete,
+    _current_cycle,
     _current_inspect_mode,
     _decide_inspect_mode,
     foundry_mark_phase_complete,
@@ -387,12 +388,19 @@ def test_the_runs_own_spec_forces_full_though_it_is_no_static_pattern(run_env):
     assert result["inspect_rule"] == "verifier_touched"
 
 
-def test_a_cleared_ledger_records_full_with_rule_final_gate(run_env):
-    """AC-016: FULL 'when it is the INSPECT before ASSAY, NYQUIST or DONE'.
+def test_a_cleared_ledger_records_delta_not_final_gate(run_env):
+    """AC-016 verbatim: '...and DELTA otherwise'. D-068.
 
-    With no blocking defect left, the next gate IS assay — so this INSPECT is
-    the one those gates will read, and the gates that end a run are never handed
-    a narrow answer.
+    THE ORDINARY CYCLE, which is the one US-004 exists for. The `final_gate` arm
+    read `_blocking_defects(fdir)["blocking"] == 0` — true after ANY GRIND that
+    fixed what INSPECT filed, which is exactly the state Foundry-Next instructs
+    the lead to reach before crossing. So DELTA was unreachable on the guided
+    path and every cycle ran the full roster: the thunder-viper behaviour
+    US-004 exists to end, reproduced by the rule meant to end it.
+
+    LEAD RULING, GRIND cycle 4: "the next gate is ASSAY" is a fact about the
+    TRANSITION, not about the defect ledger. A clean DELTA cycle earns the
+    widening re-open (asserted below), and THAT crossing is the final gate.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=1)
@@ -403,8 +411,135 @@ def test_a_cleared_ledger_records_full_with_rule_final_gate(run_env):
 
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
-    assert result["inspect_mode"] == "FULL"
-    assert result["inspect_rule"] == "final_gate"
+    assert result["inspect_mode"] == "DELTA"
+    assert result["inspect_rule"] == "delta"
+
+
+def test_an_empty_ledger_records_delta_too(run_env):
+    """The same proxy, from the other direction: `blocking == 0` was true of a
+    run that had filed nothing at all, so a first-GRIND cycle with an empty
+    ledger also recorded FULL/final_gate."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["inspect_mode"] == "DELTA"
+    assert result["inspect_rule"] == "delta"
+
+
+def test_a_latent_only_backlog_records_delta(run_env):
+    """And the third shape D-068 drove: a LATENT-only backlog leaves
+    `_blocking_defects` at zero, so it too recorded FULL/final_gate. A
+    never-reproduced backlog is not a reason to re-verify everything."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{
+        **_open_live(),
+        "tier": "LATENT",
+        "reproduction_attempted": "drove every caller; none reaches the branch",
+    }])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["inspect_mode"] == "DELTA"
+    assert result["inspect_rule"] == "delta"
+
+
+def test_a_clean_delta_cycle_widens_to_full_before_assay(run_env):
+    """AC-016 / US-004: 'every final gate still runs everything at full width.'
+
+    The path DELTA opens onto, driven end to end. A DELTA INSPECT that comes
+    back clean does not open ASSAY — `inspect_clean` refuses naming the rule —
+    and the lead re-calls `inspect_start` from F2. That crossing advances the
+    counter, records FULL / final_gate, requires the full roster, and THEN
+    inspect_clean opens ASSAY. Without this the ruling would trade one
+    non-termination for a narrower final gate.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    delta = foundry_mark_phase_complete("inspect_start", project_root)
+    assert delta["inspect_mode"] == "DELTA"
+    assert delta["cycle"] == 2
+
+    # The DELTA roster runs and comes back clean, which is the whole premise:
+    # the refusal below is about the WIDTH, not about unfinished streams.
+    for stream in delta["required_streams"]:
+        (fdir / f".{stream}-complete").write_text("x\n", encoding="utf-8")
+
+    # The gate is refused while the recorded width is DELTA, by rule name.
+    _arm(fdir)
+    refused = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert refused.get("ok") is not True
+    assert "final_gate" in refused["error"]
+    assert refused["inspect_mode"] == "DELTA"
+
+    # ...and the widening re-open is the crossing that opens it.
+    _arm(fdir)
+    widened = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert widened["ok"] is True, widened
+    assert widened["inspect_mode"] == "FULL"
+    assert widened["inspect_rule"] == "final_gate"
+    assert widened["widened"] is True
+    assert widened["cycle"] == 3, "the widening re-open is a cycle of its own"
+    assert widened["evidence_sweep"]["scope"] == "full"
+
+
+def test_the_widening_re_open_is_refused_while_live_defects_are_open(run_env):
+    """The ruling's guard on the re-open: open LIVE or unknown-tier defects go
+    to GRIND first. Widening an INSPECT over code the run is about to change
+    re-verifies a tree that will not exist."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+    assert foundry_mark_phase_complete("inspect_start", project_root)["inspect_mode"] == "DELTA"
+
+    # The DELTA INSPECT files a LIVE defect.
+    _write_defects(fdir, [{**_open_live(), "id": "D-009", "cycle": 2}])
+    _arm(fdir)
+    refused = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert refused.get("ok") is not True, refused
+    assert "D-009" in refused["error"]
+    assert _current_cycle(fdir) == 2, "a refused transition moves no counter"
+
+
+def test_the_re_open_is_refused_when_the_cycle_already_ran_full(run_env):
+    """The other guard, which is also D-057's second lock: a cycle whose
+    recorded width is already FULL has nothing to widen, so a stray second
+    `inspect_start` is named as the mistake it is rather than silently
+    advancing the run a cycle."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/schemas/vocab.py")
+    _arm(fdir)
+    first = foundry_mark_phase_complete("inspect_start", project_root)
+    assert first["inspect_mode"] == "FULL"
+
+    _arm(fdir)
+    refused = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert refused.get("ok") is not True, refused
+    assert "nothing to widen" in refused["error"]
+    assert _current_cycle(fdir) == 2
 
 
 def test_a_grind_entered_from_assay_feedback_records_full(run_env):
@@ -1048,9 +1183,11 @@ def test_the_full_rule_sweeps_the_whole_corpus(run_env):
     partial answer about either.
     """
     project_root, fdir = run_env
+    # D-068: the FULL rule that fires here is `verifier_touched` — the GRIND
+    # diff moved schemas/. A cleared defect ledger is no longer a FULL rule, so
+    # the sweep scope is driven by a real widening cause rather than by the
+    # proxy that made every cycle full.
     _write_state(fdir, phase="F3", cycle=1)
-    # No blocking defect left, so the next gate is ASSAY and the rule is
-    # `final_gate`.
     _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
     (fdir / "castings" / "manifest.json").write_text(
         json.dumps({"castings": [
@@ -1063,13 +1200,13 @@ def test_the_full_rule_sweeps_the_whole_corpus(run_env):
     _evidence_log(project_root, "casting-2-other.log", "echo two", "two\n")
     _git(Path(project_root), "add", "-A")
     _git(Path(project_root), "commit", "-qm", "evidence")
-    _grind_touching(project_root, fdir, "src/handler.py")
+    _grind_touching(project_root, fdir, "src/handler.py", "src/schemas/vocab.py")
     _arm(fdir)
 
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
     assert result["ok"] is True, result
-    assert result["inspect_rule"] == "final_gate"
+    assert result["inspect_rule"] == "verifier_touched"
     sweep = result["evidence_sweep"]
     assert sweep["scope"] == "full"
     assert sorted(Path(p).name for p in sweep["logs_reexecuted"]) == [
@@ -1205,7 +1342,10 @@ def test_the_sweep_runs_before_the_state_transaction_opens(run_env):
     """
     import inspect
 
-    source = inspect.getsource(fo.foundry_mark_phase_complete)
+    # D-067 moved the branch chain into `_phase_transition` so the ordering
+    # token is consumed only by a transition that succeeded; the branches, and
+    # therefore this order, live there now.
+    source = inspect.getsource(fo._phase_transition)
     body = source[source.index('elif phase == "inspect_start"'):]
     sweep_at = body.index("_sweep_evidence_at_boundary")
     decide_at = body.index("_decide_inspect_mode")
@@ -1352,7 +1492,7 @@ def test_every_transition_that_opens_an_inspect_sweeps(run_env):
     import textwrap
 
     tree = ast.parse(textwrap.dedent(
-        inspect.getsource(foundry_mark_phase_complete)
+        inspect.getsource(fo._phase_transition)
     ))
 
     def _calls(node) -> set[str]:
@@ -1481,3 +1621,78 @@ def test_a_fix_landing_during_f3_leaves_the_next_inspect_alone(run_env):
 
     modes = _read_state(fdir)["inspect_modes"]
     assert "fixes_after_decision" not in modes[-1]
+
+
+# --------------------------------------------------------------------------- #
+# D-070 — the F5 entry does not overwrite the preceding INSPECT's rollup row
+# --------------------------------------------------------------------------- #
+
+
+def test_the_temper_entry_keeps_the_preceding_inspects_rollup_row(run_env):
+    """CT-009 verbatim: the decision is recorded 'in state AND stream-rollup at
+    the transition'. GI-009. D-070.
+
+    `_record_cycle_rollup` keyed the bucket by `str(cycle)` and did
+    `bucket.update(fields)`, and the F5 entry decides with
+    `cycle=_current_cycle(fdir)` — a counter that does NOT advance entering F5.
+    So the temper decision landed in the same bucket as the last
+    `inspect_start` and DESTROYED it. Driven: inspect_start recorded cycle 2 as
+    DELTA/delta; after `Foundry-Phase('temper')`, `cycles['2']` read
+    FULL/first_of_phase and the DELTA `stream_scope` was gone. The state list
+    survived because it is append-only; any reader taking the roll-up as the
+    per-cycle width — the F6 report's cycle table among them — saw a fabricated
+    FULL for a cycle that ran DELTA.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    delta = foundry_mark_phase_complete("inspect_start", project_root)
+    assert delta["inspect_mode"] == "DELTA"
+    cycle = str(delta["cycle"])
+
+    _arm(fdir)
+    temper = foundry_mark_phase_complete("temper", project_root)
+    assert temper["inspect_mode"] == "FULL"
+    assert temper["inspect_rule"] == "first_of_phase"
+
+    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    bucket = rollup["cycles"][cycle]
+
+    # The INSPECT's own row is intact...
+    assert bucket["inspect_mode"] == "DELTA"
+    assert bucket["inspect_rule"] == "delta"
+    assert bucket["stream_scope"], "the DELTA per-stream scope was overwritten"
+    # ...and the F5 entry is recorded beside it, under its own key.
+    entry = bucket[fo.TEMPER_ENTRY_ROLLUP_KEY]
+    assert entry["inspect_mode"] == "FULL"
+    assert entry["inspect_rule"] == "first_of_phase"
+    assert entry["evidence_sweep"]["scope"] == "full"
+
+    # Both survive in state.json too, which is the record they must agree with.
+    modes = json.loads((fdir / "state.json").read_text(encoding="utf-8"))["inspect_modes"]
+    assert [(m["decided_by"], m["mode"]) for m in modes[-2:]] == [
+        ("inspect_start", "DELTA"), ("temper", "FULL"),
+    ]
+
+
+def test_the_inspect_start_row_is_written_flat_not_nested(run_env):
+    """The sub-bucket is for the F5 entry ALONE. Every crossing that owns its
+    cycle number writes flat, so no existing reader of
+    `cycles[<cycle>]['inspect_mode']` has to learn a second key grammar."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    bucket = rollup["cycles"][str(result["cycle"])]
+    assert "inspect_mode" in bucket
+    assert fo.TEMPER_ENTRY_ROLLUP_KEY not in bucket

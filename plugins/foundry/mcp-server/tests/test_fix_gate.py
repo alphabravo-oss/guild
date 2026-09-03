@@ -1856,8 +1856,8 @@ def test_a_reference_naming_a_test_file_is_not_judged_for_linkage(run_env):
     project_root, fdir = run_env
     _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
 
-    assert not fo._ref_names_a_test_function("tests/test_billing.py")
-    assert fo._ref_names_a_test_function(UNLINKED_TEST)
+    assert not fo._ref_singles_out_a_leaf("tests/test_billing.py")
+    assert fo._ref_singles_out_a_leaf(UNLINKED_TEST)
 
     result = _drive_mcp(
         project_root,
@@ -2691,10 +2691,20 @@ def test_the_latent_lane_records_the_measurement_without_applying_it(run_env):
         for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
     ][0]
-    # The FIRST non-test path git reported, and the count over ALL of them —
-    # the same reduction the LIVE lane measures, recorded rather than judged.
+    # D-073: the count is over ALL non-test files, so `file` is None — it names
+    # a single path or it names nothing. This assertion used to read
+    # `record["file"] in ("src/sweeper.py", "src/other.py")`, which CONCEDED
+    # that the record could not say which file it named while `line_count` was
+    # the total for both: a reader of REPORT.md's row concluded 41 lines changed
+    # in src/sweeper.py, where 21 did.
     assert record["line_count"] == 41
-    assert record["file"] in ("src/sweeper.py", "src/other.py")
+    assert record["file"] is None
+    assert [row["path"] for row in record["files"]] == [
+        "src/other.py", "src/sweeper.py",
+    ]
+    assert {row["path"]: row["lines"] for row in record["files"]} == {
+        "src/sweeper.py": 21, "src/other.py": 20,
+    }
 
 
 def test_a_teammate_fix_writes_no_lead_fix_record(run_env):
@@ -2947,3 +2957,267 @@ def test_the_comparison_is_equality_not_an_upper_bound(run_env):
         "the lane is EXACTLY one non-test file (lead ruling on FR-014 vs "
         "FR-016); an upper-bound comparison would admit a test-only fix"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-065 — the LATENT lane's locator names a TEST, or it names nothing
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "locator,because",
+    [
+        (
+            "src/auth/session.py::refresh_session",
+            "the defect's OWN production symbol in its OWN file — the code the "
+            "fix changed, offered as the test that holds it",
+        ),
+        (
+            "src/auth/session.py::helper",
+            "some other symbol in the defect's own production file",
+        ),
+        (
+            "src/nonexistent.py::whatever",
+            "a production path that resolves to nothing at all",
+        ),
+        ("a::b", "two letters either side of a separator"),
+        ("the fix::works now", "prose with a separator in it"),
+    ],
+)
+def test_a_latent_locator_that_names_no_test_is_refused(run_env, locator, because):
+    """AC-012 verbatim: 'Foundry-Fix on a LATENT defect with no regression_test,
+    OR ONE THAT DOES NOT NAME A TEST, is refused.' ST-003's guard: 'the locator
+    names a real test.' CT-004's errors column: 'refusal only when the locator
+    is absent or does not name a test.'
+
+    D-065: every row here was ACCEPTED and closed the defect. The lane's only
+    "is it a test" rung was `_ref_names_a_test_function`, whose body is
+    `_TEST_REF_EXTENSION.search(leaf) is None` — "the leaf has no file
+    extension" — so nothing asked whether the target was a test. Worse, the
+    filesystem rung then resolved `src/auth/session.py`, found `def
+    refresh_session`, and CONFIRMED the broken production function as the
+    regression test for its own fix.
+
+    The parametrised test that existed had six rows, every one either a
+    `tests/test_*` path or a structurally broken locator, so the omitted rung
+    was never exercised. These five are the shapes that walked through it.
+    """
+    project_root, fdir = run_env
+    _seed_tiered(fdir, "LATENT", symbol="refresh_session",
+                 file="src/auth/session.py")
+    (Path(project_root) / "src" / "auth").mkdir(parents=True, exist_ok=True)
+    (Path(project_root) / "src" / "auth" / "session.py").write_text(
+        "def refresh_session():\n    return None\n"
+        "\n\ndef helper():\n    return None\n",
+        encoding="utf-8",
+    )
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        regression_test=locator, project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (because, result)
+    assert result["missing_fields"] == ["regression_test"], result
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert ledger["defects"][0]["status"] == "open", (
+        "a refused fix closes nothing"
+    )
+
+
+def test_the_latent_locator_ladder_applies_the_rungs_its_sibling_has(run_env):
+    """D-065 as the property: the two ladders judge different fields and must
+    not disagree about what "names a test" means.
+
+    `_test_ref_problem` (the LIVE lane) applies a whitespace/prose rung and
+    `_TEST_REF_NAMES_A_TEST`; `_regression_test_problem` called neither, which
+    is the whole defect. Asserted on the behaviour of both, so a future edit
+    that weakens one ladder is caught by the other's expectations.
+    """
+    project_root, fdir = run_env
+    _seed_tiered(fdir, "LATENT", symbol="refresh_session",
+                 file="src/auth/session.py")
+
+    # A path that is not a test file, however test-shaped the leaf is.
+    assert fo._regression_test_problem(
+        "src/auth/session.py::test_refresh", project_root
+    ) is not None
+    # A test file whose leaf names no test.
+    assert fo._regression_test_problem(
+        "tests/test_auth.py::refresh_session", project_root
+    ) is not None
+    # Both ladders reject prose outright.
+    assert fo._regression_test_problem("the fix::works now", project_root)
+    assert fo._test_ref_problem("the fix works now", "", "")
+    # ...and a real locator clears it.
+    assert fo._regression_test_problem(
+        "tests/test_auth.py::test_refresh_session_expiry", project_root
+    ) is None
+
+
+# --------------------------------------------------------------------------- #
+# D-075 / D-073 — the measurement parses what git actually prints
+# --------------------------------------------------------------------------- #
+
+
+def test_a_rename_is_measured_at_its_destination_path(run_env):
+    """FR-016 / FR-034 / CT-006. D-075.
+
+    `git show --numstat` renders a rename as ONE field carrying git's display
+    compaction — `src/{f20.py => f20_renamed.py}` — and the parse took field 3
+    as a path verbatim. So the lead_fix record's `file`, which GI-003 makes the
+    audit field, carried a git rendering rather than a path a reader can
+    resolve.
+    """
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    _git(root, "mv", "src/sweeper.py", "src/sweeper_renamed.py")
+    _git(root, "commit", "-qm", "rename")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    measured = fo._numstat_measurement(commit, project_root)
+
+    assert measured["ok"] is True, measured
+    assert measured["files"] == ["src/sweeper_renamed.py"]
+    assert measured["per_file"][0]["renamed_from"] == "src/sweeper.py"
+
+
+def test_a_rename_into_the_tests_tree_is_still_a_source_change(run_env):
+    """FR-016 verbatim: 'test files excluded from the count' — and a rename
+    INTO tests/ is not a test file being edited, it is a production file being
+    removed. D-075: `is_test_file('{src => tests}/a.py')` answered False, so the
+    entry escaped the classifier in one direction; parsing it to `tests/a.py`
+    would have made it escape the LANE in the other. EITHER side non-test makes
+    the entry non-test.
+    """
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    (root / "tests" / "sweeper.py").parent.mkdir(parents=True, exist_ok=True)
+    _git(root, "mv", "src/sweeper.py", "tests/sweeper.py")
+    _git(root, "commit", "-qm", "rename into tests")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    measured = fo._numstat_measurement(commit, project_root)
+
+    assert measured["files"] == ["tests/sweeper.py"], measured
+    assert measured["per_file"][0]["renamed_from"] == "src/sweeper.py"
+    # ...and the lane counts it, so the one-file budget is spent on it.
+    assert fo._lead_lane_problem(commit, project_root) is None
+
+
+def test_the_rename_parse_handles_both_spellings_git_emits():
+    """The braced form (with the common prefix and suffix factored out) and the
+    bare `old => new`. Both are DISPLAY strings; the path they name is the
+    destination."""
+    assert fo._numstat_rename_paths("src/{f20.py => f20_renamed.py}") == (
+        "src/f20_renamed.py", "src/f20.py",
+    )
+    assert fo._numstat_rename_paths("{src => tests}/a.py") == (
+        "tests/a.py", "src/a.py",
+    )
+    assert fo._numstat_rename_paths("old.py => new.py") == ("new.py", "old.py")
+    assert fo._numstat_rename_paths("src/plain.py") == ("src/plain.py", "")
+
+
+def test_the_lead_fix_record_never_names_one_file_beside_a_total(run_env):
+    """GI-003 / AC-022 / OT-010. D-073, as the property rather than the case.
+
+    The record is the audit trail for a fix nobody else reviewed, so `file` and
+    `line_count` must describe the same thing. They did not: `file` was
+    `measured['files'][0]` and `line_count` was the sum over ALL non-test files,
+    so a 5-file by 100-line commit recorded `{'file': 'pkg/m0.py',
+    'line_count': 500}` and REPORT.md rendered `| D-001 | LATENT | pkg/m0.py |
+    500 |`. A reader concludes 500 lines changed in pkg/m0.py; 100 did.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    commit = _commit_changing(
+        project_root, {f"pkg/m{n}.py": 100 for n in range(5)}
+    )
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        regression_test=locator, project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    record = [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
+    ][0]
+
+    assert record["line_count"] == 500
+    assert record["file"] is None, (
+        "five files were touched; naming one of them beside the total for all "
+        "five is the field that was wrong"
+    )
+    assert len(record["files"]) == 5
+    assert all(row["lines"] == 100 for row in record["files"]), record["files"]
+
+
+# --------------------------------------------------------------------------- #
+# D-066 — the tool DESCRIPTION is the surface a caller reads when it chooses
+# arguments, so it describes the contract the handler actually enforces
+# --------------------------------------------------------------------------- #
+
+
+def test_the_advertised_fix_description_states_both_lanes():
+    """GI-003 / AC-011 / FR-008. D-066.
+
+    The description advertised the adjacent-path pair as UNCONDITIONAL and
+    never mentioned LATENT, regression_test or tier: over the live MCP surface
+    it contained no occurrence of any of the three. The per-property strings
+    below it WERE updated correctly (`regression_test` says "REQUIRED on a
+    LATENT defect"; `adjacent_path_statement` says "Not demanded on a LATENT
+    defect"), so only the top-level text was stale — and it is the text an
+    agent reads FIRST. US-003's whole purpose is negated at the one place a
+    teammate decides what to send.
+    """
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    description = next(t for t in tools if t.name == "Foundry-Fix").description
+
+    for token in ("LATENT", "LIVE", "regression_test", "authored_by", "tier"):
+        assert token in description, (
+            f"{token!r} is absent from the surface a caller reads when it "
+            "chooses arguments"
+        )
+    # The refusal is still stated outright — the half D-039 put here on purpose,
+    # because the validator cannot name two missing fields at once.
+    assert "REFUSED" in description
+
+
+def test_a_caller_following_the_description_closes_a_latent_defect(run_env):
+    """D-066 driven from the caller's side: the arguments the description tells
+    a caller to send for a LATENT defect are accepted, and the arguments it used
+    to tell them to send were refused.
+
+    That is the whole cost of a stale description — not a documentation nit but
+    a refused call on the first fix of every LATENT defect.
+    """
+    project_root, fdir = run_env
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    # What the OLD description prescribed: the adjacent-path pair, no locator.
+    old_shape = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert old_shape.get("ok") is not True
+    assert old_shape["missing_fields"] == ["regression_test"]
+
+    # What the current one prescribes.
+    new_shape = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, regression_test=locator,
+        project_root=project_root,
+    )
+    assert new_shape["ok"] is True, new_shape
+    assert new_shape["tier"] == "LATENT"
