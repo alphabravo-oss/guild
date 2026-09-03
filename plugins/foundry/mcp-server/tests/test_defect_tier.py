@@ -34,7 +34,11 @@ from pathlib import Path
 
 import pytest
 
-from foundry_mcp.schemas.vocab import DEFECT_TIERS, SECURITY_PROPERTY_CLAIM
+from foundry_mcp.schemas.vocab import (
+    DEFECT_TIERS,
+    SECURITY_PROPERTY_CLAIM,
+    is_security_property_text,
+)
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_init,
@@ -1448,39 +1452,56 @@ def test_a_security_claim_in_a_key_other_than_description_is_refused():
     )
 
 
-def test_the_defect_door_refuses_and_audits_a_claim_outside_the_description(run_env):
+def test_the_batch_door_refuses_and_audits_a_claim_in_an_invented_key(run_env):
     """OT-005 / AC-007: refused naming SECURITY_PROPERTY_CLAIM 'and a tripwire
-    record appears'.
+    record appears' — driven end to end through the door that HAS the channel.
 
-    The single door builds its finding from named parameters, so its smuggling
-    channel is not an invented key but `reproduction_attempted` — the one other
-    prose field a LATENT filing must carry. Driven end to end: refused, nothing
-    persisted, and the audit record written under the class the refusal named."""
+    RETIRED SHAPE (D-158). This test used to drive the SINGLE door with the
+    claim in `reproduction_attempted`, on the argument that the single door
+    builds its finding from named parameters so its only channel besides the
+    description is that field. The argument was wrong about the field:
+    `reproduction_attempted` reports what a search did NOT find, so treating
+    it as a claim channel refused the LATENT filings AC-007 clause 2 and
+    OT-005 clause 2 require the door to accept. See the D-158 block below for
+    the two filings that drove that.
+
+    The invented-key channel is real and it belongs to the BATCH door, which
+    hands the caller's finding dict straight through — so that is the door
+    driven here, in `agents/coverage-diff.md`'s documented shape: no
+    `description` key at all, the sentence in `failure`. Refused whole,
+    nothing persisted, and the audit record written under the class the
+    refusal named."""
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
     project_root, fdir = run_env
 
-    result = foundry_add_defect(
-        cycle=0,
-        source="prove",
-        defect_type="MISSING",
-        description="",
-        defect_class="SCAN_COVERAGE_GAP",
-        tier="LATENT",
-        reproduction_attempted=(
-            f"Swept both roots and found 0 sites, so nothing drove it: {_SMUGGLED_CLAIM}"
-        ),
-        project_root=project_root,
+    smuggled = _coverage_diff_latent(failure=_SMUGGLED_CLAIM, source="coverage_diff")
+
+    result = foundry_sync_defects(
+        cycle=0, findings=[smuggled], project_root=project_root
     )
 
-    assert result["ok"] is False, result
+    assert "refusals" in result, result
     assert SECURITY_PROPERTY_CLAIM in result["error"]
-    assert result["denylist_class"] == SECURITY_PROPERTY_CLAIM
+
+    # Located in the list rather than at index 0: the documented shape is
+    # carried here VERBATIM, and it also declares the stream-local `type`
+    # `MISSING_COVERAGE_LIST`, which the batch door's vocabulary rung refuses
+    # alongside this one. That the audit record still fires when an earlier
+    # rung also fails is D-128's property, pinned above; what this test is
+    # about is the invented-key claim channel, so it names its own refusal
+    # instead of depending on the order two unrelated rungs report in.
+    denylist = [r for r in result["refusals"] if r.get("denylist_class")]
+    assert len(denylist) == 1, result["refusals"]
+    assert denylist[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert denylist[0]["field"] == "description"
     assert _defects(fdir) == [], "the filing must not be persisted"
 
     fired = _tripwire(fdir)
     assert len(fired) == 1, fired
     assert fired[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
     assert "authentication token" in fired[0]["description"], (
-        "the audit record quotes the empty description instead of the prose "
+        "the audit record quotes the absent description instead of the prose "
         "that matched, so an auditor reading it learns nothing"
     )
 
@@ -1616,3 +1637,325 @@ def test_the_scan_text_is_deterministic_for_a_given_filing():
 
     assert security_scan_text(finding) == security_scan_text(dict(finding))
     assert validate_defect_filing(finding)["denylist_class"] == SECURITY_PROPERTY_CLAIM
+
+
+# --- D-158: the predicate reads what a filing CLAIMS, never what it SEARCHED
+# FOR (AC-007 clause 2 / OT-005 clause 2 / CT-003 / FR-005)
+#
+# D-147's fix widened the denylist rung from `description` to every prose value
+# a filing carries, and swept in `reproduction_attempted` — the one field whose
+# documented job (`skills/prove/SKILL.md`, `skills/trace/SKILL.md`: "Required on
+# a LATENT finding: what was driven and what it found") is to say what was
+# searched for and NOT found. So the rung began refusing the filings the spec
+# requires it to ACCEPT, and the refusal named `description` while the
+# description was innocent. Its hint read "Do NOT re-word the filing to get past
+# this refusal", leaving a stream that followed the documented LATENT protocol
+# with no path to file at all.
+#
+# The two filings below are the ones driven on both real doors at 148b3ae. Each
+# is paired with a control that differs ONLY in the negative-space statement, so
+# the pin fails if the door ever again decides a filing on that field.
+_NEGATIVE_SPACE_STATEMENTS = (
+    (
+        "grepped both roots for a security section and found 0 sites",
+        "grepped both roots for a minutes column and found 0 sites",
+    ),
+    (
+        "drove the CLI with no credentials configured; 0 prompts appeared",
+        "drove the CLI with no config present; 0 prompts appeared",
+    ),
+)
+
+
+def _renderer_gap(statement: str) -> dict:
+    """A LATENT filing with a spec_ref and a non-security description.
+
+    AC-007 clause 2 and OT-005 clause 2 name exactly this shape as one the door
+    must ACCEPT. Only `reproduction_attempted` varies across the pairs above.
+    """
+    return {
+        "source": "prove",
+        "type": "MISSING",
+        "description": "The report renderer omits the per-cycle minutes column.",
+        "spec_ref": "NFR-002",
+        "symbol": "",
+        "file": "src/report/render.py",
+        "class": "report-renderer-gap",
+        "tier": "LATENT",
+        "reproduction_attempted": statement,
+    }
+
+
+@pytest.mark.parametrize(
+    "matched,control", _NEGATIVE_SPACE_STATEMENTS, ids=("security", "credentials")
+)
+def test_a_negative_space_statement_never_decides_a_filing(matched, control):
+    """FR-005 verbatim: 'Server refuses LATENT only when the DESCRIPTION
+    matches the security-property regex.'
+
+    The statement names a security term because the filer SEARCHED for one and
+    found nothing — which is the evidence CT-001 demands of a LATENT filing.
+    Asserted as a pair so the property is 'this field is not consulted' rather
+    than 'this sentence happens to pass'."""
+    assert is_security_property_text(matched) is True, (
+        "the statement no longer contains a term the predicate matches, so "
+        "this pair has stopped being the regression it was written for"
+    )
+    assert is_security_property_text(control) is False
+
+    assert validate_defect_filing(_renderer_gap(matched)) is None, (
+        "a LATENT filing was refused for what its filer searched for and did "
+        "not find. CT-001 asks for that statement; the denylist may not then "
+        "refuse the filing on it."
+    )
+    assert validate_defect_filing(_renderer_gap(control)) is None
+
+
+@pytest.mark.parametrize(
+    "matched,control", _NEGATIVE_SPACE_STATEMENTS, ids=("security", "credentials")
+)
+def test_both_real_doors_accept_the_negative_space_statement(run_env, matched, control):
+    """AC-007 clause 2 verbatim: 'a LATENT filing with a spec_ref and a
+    non-security description is accepted.' OT-005 clause 2 says the same.
+
+    Driven through both REAL doors rather than the shared validator, because
+    D-158 shipped on both and the batch door is the one a whole INSPECT stream
+    files through. Persisted, and the audit ledger untouched — a tripwire for
+    an accepted filing would be the refusal's other half surviving alone."""
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    single = foundry_add_defect(
+        cycle=0,
+        source="prove",
+        defect_type="MISSING",
+        description="The report renderer omits the per-cycle minutes column.",
+        spec_ref="NFR-002",
+        file_path="src/report/render.py",
+        defect_class="report-renderer-gap",
+        tier="LATENT",
+        reproduction_attempted=matched,
+        project_root=project_root,
+    )
+    assert "error" not in single, single
+    assert single["defect_id"]
+
+    batch = foundry_sync_defects(
+        cycle=0,
+        findings=[_renderer_gap(control)],
+        project_root=project_root,
+    )
+    assert "error" not in batch, batch
+
+    persisted = _defects(fdir)
+    assert len(persisted) == 2, persisted
+    assert {d["reproduction_attempted"] for d in persisted} == {matched, control}
+    assert _tripwire(fdir) == [], (
+        "an accepted filing fired the audit tripwire, so the refusal was "
+        "retired at one rung and not the other"
+    )
+
+
+def test_a_claim_in_the_description_is_still_refused_beside_an_innocent_statement(
+    run_env,
+):
+    """The refuse side, held while the accept side lands (AC-007 clause 1).
+
+    D-158 is a narrowing, and the failure mode of a narrowing is taking the
+    refusal with it. This is the same filing shape as the pair above with the
+    claim moved into the description and the statement left innocent: still
+    refused, still audited."""
+    project_root, fdir = run_env
+
+    result = foundry_add_defect(
+        cycle=0,
+        source="prove",
+        defect_type="MISSING",
+        description=_SMUGGLED_CLAIM,
+        spec_ref="NFR-002",
+        defect_class="report-renderer-gap",
+        tier="LATENT",
+        reproduction_attempted="grepped both roots for a minutes column and found 0 sites",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is False, result
+    assert result["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert _defects(fdir) == []
+    assert len(_tripwire(fdir)) == 1
+
+
+def test_the_claim_scan_is_the_complement_of_one_named_field_set():
+    """The mechanism this packet delivers: ONE explicit, documented partition.
+
+    The class this defect belongs to is
+    security-denylist-tripwire-is-rung-dependent — D-128, D-146/D-147, D-158 —
+    and every instance was a rung reading a different set of fields than the
+    rung beside it. So the field set is named once, derived from its four
+    partitions rather than re-listed, and this is what fails if a member is
+    added to a partition and missed in the union."""
+    from foundry_mcp.tools.foundry import (
+        _FILING_ESCALATION_KEYS,
+        _FILING_LOCATOR_KEYS,
+        _FILING_NEGATIVE_SPACE_KEYS,
+        _FILING_VOCABULARY_KEYS,
+        NON_CLAIM_FILING_KEYS,
+        security_scan_text,
+    )
+
+    partitions = (
+        _FILING_VOCABULARY_KEYS,
+        _FILING_LOCATOR_KEYS,
+        _FILING_ESCALATION_KEYS,
+        _FILING_NEGATIVE_SPACE_KEYS,
+    )
+
+    assert NON_CLAIM_FILING_KEYS == set().union(*partitions)
+    assert sum(len(p) for p in partitions) == len(NON_CLAIM_FILING_KEYS), (
+        "the partitions overlap, so a member's documented reason for being "
+        "excluded is no longer the reason it is excluded"
+    )
+    assert _FILING_NEGATIVE_SPACE_KEYS == {"reproduction_attempted"}, (
+        "the negative-space partition is what D-158 added and what its own "
+        "block documents; a member joining or leaving it is a contract change"
+    )
+
+    scanned = security_scan_text(
+        _renderer_gap("grepped both roots for a security section and found 0 sites")
+    )
+    assert "0 sites" not in scanned, (
+        "the negative-space statement is in the text the predicate judges"
+    )
+    assert "per-cycle minutes column" in scanned, (
+        "the description dropped out of the claim scan, which is D-147"
+    )
+
+
+def test_the_pre_dispatch_rung_and_the_handler_build_one_mapping():
+    """`server.py`'s pre-dispatch rung must judge the filing the handler would.
+
+    D-146 put a rung ahead of dispatch so a schema-invalid argument set cannot
+    switch off the tripwire. That rung re-spelled `foundry_add_defect`'s eight
+    argument names as `args.get("...")` literals, so a field added to one
+    spelling and missed in the other is two rungs reading different filings —
+    the class, exactly. `filing_finding_mapping` is the one spelling both use;
+    this pin is what fails if a claim-bearing parameter is added to the door
+    and not to it."""
+    import inspect
+
+    from foundry_mcp.tools.foundry import (
+        _FILING_ARGUMENT_NAMES,
+        filing_finding_mapping,
+    )
+
+    door_params = set(inspect.signature(foundry_add_defect).parameters)
+    assert set(_FILING_ARGUMENT_NAMES) <= door_params, (
+        f"{sorted(set(_FILING_ARGUMENT_NAMES) - door_params)} is not a "
+        f"parameter of the filing door, so the pre-dispatch rung reads an "
+        f"argument the handler never receives"
+    )
+    unread = door_params - set(_FILING_ARGUMENT_NAMES) - {
+        "cycle",  # the server's counter is the authority (ST-001)
+        "source",  # a closed vocabulary, and passed separately by the rung
+        "defect_type",  # a closed vocabulary
+        "project_root",  # not part of the filing
+    }
+    assert unread == set(), (
+        f"{sorted(unread)} reached the filing door without reaching "
+        f"`filing_finding_mapping`. Either it carries claim prose — in which "
+        f"case the pre-dispatch rung is blind to it — or it is a vocabulary "
+        f"or plumbing argument and belongs in the exclusion above, named."
+    )
+
+    built = filing_finding_mapping(
+        {
+            "description": "the handler is registered but never called",
+            "spec_ref": "US-002",
+            "target_kind": None,
+            "symbol": "handle",
+            "file_path": "src/api/handler.py",
+            "tier": "LIVE",
+            "defect_class": "UNWIRED_HANDLER",
+        }
+    )
+    assert built == _finding(
+        description="the handler is registered but never called",
+        spec_ref="US-002",
+        symbol="handle",
+    )
+    assert built["target_kind"] == "" and built["reproduction_attempted"] == "", (
+        "an absent argument arrived as something other than the empty string, "
+        "so a filing off the wire is judged on a value no filer wrote"
+    )
+
+
+def test_every_documented_latent_example_is_accepted_by_both_real_doors(run_env):
+    """The protocol's own examples, driven end to end (D-158's structural pin).
+
+    `test_every_documented_latent_example_passes_the_filing_door` above drives
+    this corpus through the shared validator, which is where D-101's rung
+    lived. D-158's rung lived there too — but the refusal it produced only
+    BECAME a refused filing at the doors, and the tripwire it wrote only
+    appeared there. So the same corpus is driven through both real doors here:
+    a change to the claim scan that refuses a shape `agents/assayer.md`,
+    `agents/tracer.md`, `agents/coverage-diff.md`, `agents/flow-tracer.md`,
+    `agents/research-auditor.md` or `skills/sight/SKILL.md` publishes fails
+    with that surface named, and so does one that fires an audit record for a
+    filing the doors accepted."""
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    examples = _documented_latent_examples()
+    assert len(examples) >= 5, examples
+
+    refused: list[tuple[str, str, object]] = []
+    for name, example in examples:
+        finding = dict(example)
+        finding.setdefault("source", "prove")
+        # The `type` is CANONICALISED rather than carried through. Three of
+        # these surfaces publish a stream-local spelling in their report
+        # register (`MISSING_COVERAGE_LIST`, `CHAIN_BROKEN`,
+        # `RESEARCH_DEVIATION`), and the doors' `type` rung is a different
+        # vocabulary with its own pins in `tests/test_vocab.py`. Holding it
+        # constant is what keeps this sweep a pin on the CLAIM decision: a
+        # refusal reported below is one the claim scan produced, not one the
+        # type vocabulary did.
+        finding["type"] = "MISSING"
+
+        batch = foundry_sync_defects(
+            cycle=0, findings=[finding], project_root=project_root
+        )
+        if "error" in batch:
+            refused.append((name, "Foundry-Sync", batch["error"]))
+
+        single = foundry_add_defect(
+            cycle=0,
+            source="prove",
+            defect_type="MISSING",
+            description=str(example.get("description") or ""),
+            spec_ref=str(example.get("spec_ref") or ""),
+            symbol=str(example.get("symbol") or ""),
+            file_path=str(example.get("file") or ""),
+            target_kind=str(example.get("target_kind") or ""),
+            defect_class=str(example.get("class") or ""),
+            tier="LATENT",
+            reproduction_attempted=str(example.get("reproduction_attempted") or ""),
+            project_root=project_root,
+        )
+        if "error" in single:
+            refused.append((name, "Foundry-Defect", single["error"]))
+
+    assert refused == [], (
+        f"a real filing door refuses {len(refused)} of the LATENT shapes the "
+        f"streams' own instructions publish: {refused}. A stream that copies "
+        f"its own example meets a refusal naming a field those instructions "
+        f"never taught it. Fix the door or fix the surface — never this "
+        f"assertion."
+    )
+    assert _tripwire(fdir) == [], (
+        "a documented LATENT example fired the security audit tripwire. The "
+        "filing was accepted, so the record names an attempt nobody made and "
+        "an auditor reading the ledger by class finds a false positive."
+    )

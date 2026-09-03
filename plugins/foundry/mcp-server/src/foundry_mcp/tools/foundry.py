@@ -740,6 +740,68 @@ def _finding_mapping(
     }
 
 
+#: The MCP argument names a single-door filing call carries, in the order
+#: ``_finding_mapping`` takes them. Named ONCE (D-158) — see
+#: ``filing_finding_mapping`` for why a second spelling is the whole defect
+#: class.
+_FILING_ARGUMENT_NAMES = (
+    "description",
+    "spec_ref",
+    "target_kind",
+    "symbol",
+    "file_path",
+    "tier",
+    "defect_class",
+    "reproduction_attempted",
+)  # 8 items
+
+
+def filing_finding_mapping(arguments: Mapping[str, object]) -> dict:
+    """The finding mapping a single-door ``Foundry-Defect`` argument set files.
+
+    WHY THIS IS PUBLIC AND WHY server.py CALLS IT (D-158, closing D-128 /
+    D-146 / D-147's class)
+    ---------------------------------------------------------------------
+    Two rungs judge a single-door filing: ``foundry_add_defect`` here, and
+    ``server.py``'s pre-dispatch rung, which must write the denylist tripwire
+    for a filing refused against the advertised schema before any handler runs
+    (see ``_audit_security_claim_on_refusal``). Both need the SAME mapping,
+    because both hand it to ``validate_defect_filing`` and
+    ``tripwire_finding``.
+
+    They used to build it twice. This module built it from
+    ``foundry_add_defect``'s parameters; ``server.py`` imported the private
+    ``_finding_mapping`` and re-spelled the same eight names as
+    ``args.get("...")`` string literals. Two spellings of "which arguments
+    carry claim prose" is the arrangement that produced this defect class
+    three cycles running — D-128 (the handler ladder returned early), D-146 /
+    D-147 (the pre-dispatch rung and the one-field scan), D-158 (the scan
+    over-reached into the negative-space field). A field added to one spelling
+    and missed in the other is a rung reading a different filing than the rung
+    beside it, which is the class by definition.
+
+    So the spelling lives here, once, in ``_FILING_ARGUMENT_NAMES``, and the
+    pre-dispatch rung calls this. Every value is coerced to ``str`` because
+    the arguments arrive off the wire, where ``None`` and a stray number are
+    both reachable and neither is prose.
+    """
+    args = arguments or {}
+    values = {
+        name: "" if args.get(name) is None else str(args.get(name))
+        for name in _FILING_ARGUMENT_NAMES
+    }
+    return _finding_mapping(
+        values["description"],
+        values["spec_ref"],
+        values["target_kind"],
+        symbol=values["symbol"],
+        file_path=values["file_path"],
+        tier=values["tier"],
+        defect_class=values["defect_class"],
+        reproduction_attempted=values["reproduction_attempted"],
+    )
+
+
 # The promote-direction fail-safe (D-093). See the module docstring.
 #
 # Grouped by the kind of assertion each term makes about the code, not by any
@@ -1011,23 +1073,53 @@ def record_denylist_tripwire(
     return tripwire
 
 
-# D-147 — THE KEYS THE SECURITY PREDICATE MAY NOT READ, AND WHY EACH IS HERE.
+# D-147 / D-158 — THE FILING FIELDS THE SECURITY PREDICATE MAY NOT READ.
 #
-# The denylist gate used to read `description` and nothing else, so a LATENT
-# filing whose security claim rode in ANY other key was accepted. Driven
-# through `server.call_tool('Foundry-Sync', ...)` in the filing shape
-# `agents/coverage-diff.md` documents — description '', the sentence in a
-# `failure` key, tier LATENT — the filing was ACCEPTED (+1 Added, persisted
-# with tier LATENT) and `observations.json.tripwire` grew by 0. The batch door
-# hands the caller's finding dict straight through, so every key a stream
-# invents is a channel, and the shipped stream prose invents plenty:
-# `failure`, `source_entry`, `expected_destination` (coverage-diff),
+# THE QUESTION THIS PARTITION ANSWERS. The predicate asks whether a filing
+# CLAIMS a security property is broken. Every key a filing carries is
+# therefore one of four things, and only the fourth is a claim:
+#
+#   vocabulary      a closed-vocabulary token the doors already validate;
+#   locator         where the finding points;
+#   escalation key  which sibling bucket it recurs in;
+#   negative space  what the filer searched for and did NOT find;
+#   claim prose     everything else — what the filing asserts.
+#
+# The first four are named below, member by member with the driven reason for
+# each. The fifth is the complement, and it is a COMPLEMENT rather than an
+# allowlist on purpose: an allowlist would have to name a claim key before a
+# stream invents one, which is the race D-147 already lost once.
+#
+# D-147 — WHY THE COMPLEMENT IS WIDE. The gate used to read `description` and
+# nothing else, so a LATENT filing whose security claim rode in ANY other key
+# was accepted. Driven through `server.call_tool('Foundry-Sync', ...)` in the
+# filing shape `agents/coverage-diff.md` documents — description '', the
+# sentence in a `failure` key, tier LATENT — the filing was ACCEPTED (+1
+# Added, persisted with tier LATENT) and `observations.json.tripwire` grew by
+# 0. The batch door hands the caller's finding dict straight through, so every
+# key a stream invents is a channel, and the shipped stream prose invents
+# plenty: `failure`, `source_entry`, `expected_destination` (coverage-diff),
 # `fix_hint` (flow-tracer), `spec_text_cited` (assayer), `evidence`, `page`,
 # `element` (sight), `recommendation` (research-auditor).
 #
-# So the scan is an EXCLUSION list, never an allowlist: an allowlist would
-# have to name a key before a stream invents it, which is the same race
-# D-147 already lost once. What is excluded, and the reason each is:
+# D-158 — AND WHY IT IS NOT WIDER STILL. Widening it to "every prose value"
+# swept in `reproduction_attempted`, the one field whose documented job is to
+# say what was searched for and NOT found — so the denylist began refusing the
+# filings the spec requires it to ACCEPT. Driven on both real doors at
+# 148b3ae: tier LATENT, spec_ref NFR-002, class report-renderer-gap,
+# description "The report renderer omits the per-cycle minutes column.",
+# reproduction_attempted "grepped both roots for a security section and found
+# 0 sites" → `{ok: False, denylist_class: SECURITY_PROPERTY_CLAIM, field:
+# 'description'}` at `foundry_add_defect` and a whole-batch refusal at
+# `foundry_sync_defects`; the byte-identical filing whose statement read
+# "...for a minutes column..." was accepted. Reproduced on a second subject:
+# "drove the CLI with no credentials configured; 0 prompts appeared" refused,
+# "with no config present" accepted. Two consequences, both shipped: the
+# refusal named `description` while the description was innocent, and its hint
+# reads "Do NOT re-word the filing to get past this refusal", so a stream that
+# followed the documented LATENT protocol had no path to file at all.
+#
+# The members, and the driven reason each is here:
 #
 #   closed vocabularies  tier / type / source / target_kind / status — the
 #                        caller does not write prose into them; the doors
@@ -1056,28 +1148,73 @@ def record_denylist_tripwire(
 #                        and `tests/test_protocol_prose.py#
 #                        test_every_documented_latent_example_survives_the_
 #                        filing_door` is what fails if this line moves.
+#   negative space       reproduction_attempted — the field is a REPORT OF AN
+#                        ABSENCE, not an assertion. FR-005 verbatim scopes the
+#                        predicate to the description ("Server refuses LATENT
+#                        only when the description matches the
+#                        security-property regex"), AC-007 clause 2 and OT-005
+#                        clause 2 require a LATENT filing with a spec_ref and
+#                        a non-security description to be ACCEPTED, and CT-003
+#                        says spec_ref alone never refuses. A statement that a
+#                        search for a security property found nothing is the
+#                        evidence CT-001 DEMANDS of a LATENT filing; refusing
+#                        it makes the tier's own protocol unfileable whenever
+#                        the subject is security-adjacent — which is the
+#                        subject A-AUTO-005 most needs filed.
 #
-# Everything else — known prose, and every key nobody has invented yet — is
-# read. Over-matching costs the filer a refusal that names what to do (drive
-# it, file LIVE); under-matching is A-AUTO-005's unacceptable failure mode.
-_NON_PROSE_FILING_KEYS = frozenset({
-    # closed vocabularies
+# WHAT IS DELIBERATELY LEFT OPEN, so nobody closes it by accident. A filer
+# could put a bare claim in `reproduction_attempted` with an empty
+# description. That is not smuggling past a rung — it is writing an assertion
+# into a field labelled "what I drove and what it found", producing a backlog
+# row whose description is empty. The alternative — a fifth LATENT rung
+# demanding claim prose — is D-101's REVERSED shape exactly (FR-005's "only"
+# is the whole word, and the `file_path` rung added in GRIND cycle 5 was
+# reversed in cycle 6 for breaking it), so it is not added here.
+#
+# Over-matching costs the filer a refusal naming what to do (drive it, file
+# LIVE); under-matching is A-AUTO-005's unacceptable failure mode. D-158 is
+# the proof that over-matching is not free either: it cost the filer every
+# path at once.
+_FILING_VOCABULARY_KEYS = frozenset({
     "tier",
     "type",
     "source",
     "target_kind",
     "status",
-    # locators
+})  # 5 items
+
+_FILING_LOCATOR_KEYS = frozenset({
     "file",
     "symbol",
     "spec_ref",
-    # the escalation key
+})  # 3 items
+
+_FILING_ESCALATION_KEYS = frozenset({
     "class",
-})  # 9 items
+})  # 1 item
+
+_FILING_NEGATIVE_SPACE_KEYS = frozenset({
+    "reproduction_attempted",
+})  # 1 item
+
+#: The four partitions above, unioned. PUBLIC because it is the field set the
+#: whole class of defect turns on: every rung that consults the security
+#: predicate reads THIS, and none of them re-types a member. Derived from the
+#: four sets rather than re-listed, so a member cannot be added to one and
+#: missed here.
+NON_CLAIM_FILING_KEYS = frozenset(
+    _FILING_VOCABULARY_KEYS
+    | _FILING_LOCATOR_KEYS
+    | _FILING_ESCALATION_KEYS
+    | _FILING_NEGATIVE_SPACE_KEYS
+)  # 10 items
 
 
 def _collect_prose(value: object, into: list[str], depth: int = 0) -> None:
-    """Append every prose string reachable from ``value``, locators skipped.
+    """Append every CLAIM-prose string reachable from ``value``.
+
+    "Claim prose" is the complement of ``NON_CLAIM_FILING_KEYS`` — see that
+    block for the four partitions it excludes and the driven reason for each.
 
     Recurses because a finding is JSON the caller shaped: `{"evidence":
     {"note": "..."}}` and `{"observations": ["..."]}` are both a sentence a
@@ -1099,7 +1236,7 @@ def _collect_prose(value: object, into: list[str], depth: int = 0) -> None:
         return
     if isinstance(value, Mapping):
         for key, item in value.items():
-            if isinstance(key, str) and key in _NON_PROSE_FILING_KEYS:
+            if isinstance(key, str) and key in NON_CLAIM_FILING_KEYS:
                 continue
             _collect_prose(item, into, depth + 1)
         return
@@ -1119,12 +1256,22 @@ def _collect_prose(value: object, into: list[str], depth: int = 0) -> None:
 
 
 def security_scan_text(finding: Mapping[str, object]) -> str:
-    """Every prose value a filing carries, joined for the security predicate.
+    """Every CLAIM-prose value a filing carries, joined for the predicate.
+
+    "Claim prose" is precisely the complement of `NON_CLAIM_FILING_KEYS`: not
+    the closed vocabularies, not the locators, not the escalation key, and not
+    `reproduction_attempted`, whose documented job is to report what a search
+    did NOT find (D-158). Read that block for the driven reason each partition
+    is out.
 
     This is what `is_security_property_text` is asked about (D-147), and it is
-    ONE derivation because two callers need the same answer: the LATENT
-    denylist rung in `validate_defect_filing`, and `tripwire_finding` below,
-    which is how the audit record comes to name the class the refusal named.
+    ONE derivation because three rungs need the same answer: the LATENT
+    denylist rung in `validate_defect_filing`, `tripwire_finding` below —
+    which is how the audit record comes to name the class the refusal named —
+    and `server.py`'s pre-dispatch rung, which reaches both of those through
+    `filing_finding_mapping`. A rung that derived its own answer is the
+    security-denylist-tripwire-is-rung-dependent class (D-128, D-146/D-147,
+    D-158), so there is one derivation and no second reading of a filing.
 
     `description` leads, then the remaining keys in sorted order — so the
     joined text is deterministic for a given filing (a dict's insertion order
@@ -1211,15 +1358,25 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     why that one is scoped and shaped the way it is rather than as a
     `description`-key check.
 
-    D-147 — WHAT THE DENYLIST RUNG READS
-    ------------------------------------
-    Every prose value the filing carries (`security_scan_text`), not
-    `description` alone. The batch door hands the caller's dict straight
-    through, so a claim in any key a stream invents used to ride past this
-    gate; the driven filing put it in `failure`, which is the key
-    `agents/coverage-diff.md` documents. Locators, closed vocabularies and the
-    escalation `class` are excluded — see `_NON_PROSE_FILING_KEYS` for the
-    driven reason each is.
+    D-147 / D-158 — WHAT THE DENYLIST RUNG READS
+    --------------------------------------------
+    Every CLAIM-prose value the filing carries (`security_scan_text`) — not
+    `description` alone, and not every value either.
+
+    D-147: the batch door hands the caller's dict straight through, so a claim
+    in any key a stream invents used to ride past this gate; the driven filing
+    put it in `failure`, which is the key `agents/coverage-diff.md` documents.
+
+    D-158: the widened reading then swept `reproduction_attempted`, the one
+    field whose documented job is to say what was searched for and NOT found,
+    so the rung began refusing the filings AC-007 clause 2 and OT-005 clause 2
+    require it to ACCEPT — a LATENT filing about a security-adjacent subject
+    became unfileable at both doors while its hint told the filer not to
+    re-word it.
+
+    The four excluded partitions (closed vocabularies, locators, the
+    escalation `class`, and the negative-space `reproduction_attempted`) are
+    named in `NON_CLAIM_FILING_KEYS`, with the driven reason for each.
 
     D-061 — THE AUDIT TRIPWIRE MAY NOT BE RUNG-DEPENDENT (AC-007 / OT-005 /
     CT-003)
@@ -1277,10 +1434,11 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     # audit record is written for every LATENT security claim rather than only
     # for the ones that were otherwise well-formed. See the docstring.
     #
-    # D-147: asked of `security_scan_text(finding)` — every prose value the
-    # filing carries — and no longer of `description` alone. See that
-    # function for what is excluded and the driven filing that got past the
-    # one-field reading.
+    # D-147 / D-158: asked of `security_scan_text(finding)` — every CLAIM-prose
+    # value the filing carries. Not `description` alone (D-147's driven filing
+    # put the claim in `failure`), and not `reproduction_attempted` either
+    # (D-158: that field reports what a search did NOT find, so scanning it
+    # refused the protocol's own LATENT shapes). See `NON_CLAIM_FILING_KEYS`.
     if tier == "LATENT" and is_security_property_text(security_scan_text(finding)):
         return {
             "ok": False,
@@ -1291,13 +1449,15 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
             "hint": (
                 "A claim that a security property is broken is never a gap "
                 "reasoned about: drive it, and file what you observed as "
-                "LIVE. Do NOT re-word the filing to get past this "
-                "refusal — every prose field is read, not just the "
+                "LIVE. Do NOT re-word the claim to get past this refusal — "
+                "every field that CARRIES a claim is read, not just the "
                 "description (D-147); the same predicate guards the "
-                "never-demote "
-                "denylist, and an audit tripwire has already recorded this "
-                "attempt. Fixing the other fields will not get you past it "
-                "either: this rung is reached before them."
+                "never-demote denylist, and an audit tripwire has already "
+                "recorded this attempt. Fixing the other fields will not get "
+                "you past it either: this rung is reached before them. What "
+                "you say you SEARCHED for is never what is refused, so a "
+                "reproduction_attempted statement naming a security term you "
+                "looked for and did not find is fine as it stands (D-158)."
             ),
             "field": "description",
             "denylist_class": SECURITY_PROPERTY_CLAIM,
