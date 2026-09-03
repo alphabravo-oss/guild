@@ -1405,6 +1405,66 @@ def test_an_absent_baseline_archive_is_null_columns_not_fabricated_ones(report_e
     assert metrics["grind_cycles"] == THUNDER_VIPER_BASELINE["grind_cycles"]
 
 
+def test_the_note_says_the_archive_was_read_when_the_archive_was_read(tmp_path):
+    """OT-030 verbatim: 'measure-run.py compares any archive with
+    thunder-viper.' D-135 — THE NOTE DESCRIBED A READ THAT DID NOT HAPPEN, AND
+    DENIED ONE THAT DID.
+
+    `present` was `is_dir() and resolve() != run_dir.resolve()` — one flag over
+    TWO different reasons not to derive — and the note hung off its false
+    branch alone. So running OT-030's own invocation against the baseline
+    itself (`measure-run.py foundry-archive/thunder-viper`, which imports this
+    very function) printed the archive's real numbers in the Current column
+    and, underneath them, "That archive is not present here ... and nothing was
+    derived".
+
+    Both branches are driven here against archives on disk, because the claim
+    under test is about what the generator DID with a directory, and a mocked
+    directory cannot be read.
+    """
+    archive = tmp_path / "foundry-archive"
+
+    # (a) SELF: the run IS thunder-viper. The archive is present and is read —
+    #     it supplies the Current column — but a run is never its own baseline.
+    own = archive / THUNDER_VIPER_BASELINE["run"]
+    own.mkdir(parents=True)
+    _write_json(own, "state.json", {"phase": "F6", "cycle": 4})
+    _write_json(own, "defects.json", {"defects": [{"id": "D-1", "tier": "LIVE"}]})
+
+    assert generate_report(tmp_path, own)["ok"] is True
+    section = _document(own)["baseline_comparison"]
+
+    note = section["baseline_note"]
+    assert "not present here" not in note, (
+        "the archive IS present and was read; D-135 is exactly this sentence"
+    )
+    assert "This run IS thunder-viper" in note, note
+    assert "never its own baseline" in note, note
+    # The read it DID do is the Current column, off that same directory.
+    assert section["current"]["run"] == THUNDER_VIPER_BASELINE["run"]
+    assert section["current"]["defects_by_tier"]["LIVE"] == 1
+    # ...and the three derived columns stay null rather than comparing the
+    # archive with itself.
+    assert section["baseline_derived"] is None
+    assert section["baseline_metrics"]["defects_by_tier"] is None
+
+    # (b) DERIVED: a different run, with thunder-viper beside it. Same code
+    #     path, third outcome, and the note says the archive was read.
+    other = archive / "some-later-run"
+    other.mkdir()
+    _write_json(other, "state.json", {"phase": "F6", "cycle": 2})
+    _write_json(other, "defects.json", {"defects": []})
+
+    assert generate_report(tmp_path, other)["ok"] is True
+    derived = _document(other)["baseline_comparison"]
+
+    assert "not present here" not in derived["baseline_note"]
+    assert "This run IS" not in derived["baseline_note"]
+    assert derived["baseline_derived"]["defects_by_tier"] == {
+        tier: (1 if tier == "LIVE" else 0) for tier in sorted(DEFECT_TIER_OR_UNKNOWN)
+    }
+
+
 def test_an_unmeasured_wall_clock_is_null_on_both_surfaces(report_env, tmp_path):
     """D-087 — the two surfaces of NFR-001's comparison printed different
     things for the same unmeasured run.
@@ -1686,6 +1746,62 @@ def test_a_section_heading_deleted_from_report_md_is_named_back(report_env):
     assert status["missing_sections"] == ["latent_backlog"]
     assert status["missing_from_markdown"] == ["latent_backlog"]
     assert status["missing_from_json"] == []
+
+
+def test_the_renderers_docstring_describes_the_read_that_actually_happens(report_env):
+    """GI-006 verbatim: 'The lead may append prose but cannot omit a section.'
+
+    D-141 — STALE PROSE SURVIVING BESIDE NEW PROSE. `_render_markdown`'s
+    docstring read "`report_status` reads the JSON, not the markdown, so
+    appended prose can never make a section look missing". D-015 moved the read
+    onto BOTH documents and rewrote `report_status`'s own docstring to say so;
+    this sentence was left describing the retired read, one function away.
+
+    So each half of the replacement prose is DRIVEN here rather than grepped
+    for, and the retired sentence is asserted gone. A docstring nobody can
+    falsify is how the first one survived.
+    """
+    import inspect as _inspect
+
+    doc = _inspect.getdoc(fr._render_markdown) or ""
+
+    # 1. The markdown IS read: delete it and the gate says so.
+    _generate(report_env)
+    (report_env / REPORT_MD_FILENAME).unlink()
+    gone = report_status(report_env)
+    assert gone["present"] is False
+    assert len(gone["missing_from_markdown"]) == len(REPORT_REQUIRED_SECTIONS)
+    assert gone["problem"] == f"{REPORT_MD_FILENAME} does not exist"
+    assert gone["missing_from_json"] == [], (
+        "the JSON is intact — the refusal came from the markdown alone, which "
+        "is the half the retired sentence said was never consulted"
+    )
+
+    # 2. Appended prose is harmless BECAUSE the match is a whole line anywhere,
+    #    not because the document is unread.
+    _generate(report_env)
+    md_path = report_env / REPORT_MD_FILENAME
+    md_path.write_text(
+        "## Lead's appendix\n\nprose the lead added below the report.\n"
+        + md_path.read_text(encoding="utf-8")
+        + "\n## Another appendix\n\nand more.\n",
+        encoding="utf-8",
+    )
+    assert report_status(report_env)["present"] is True
+
+    # 3. ...and a heading with a suffix bolted on reads as the edit it is.
+    md_path.write_text(
+        md_path.read_text(encoding="utf-8").replace(
+            "## LATENT backlog", "## LATENT backlog (see below)", 1
+        ),
+        encoding="utf-8",
+    )
+    assert report_status(report_env)["missing_sections"] == ["latent_backlog"]
+
+    # 4. The retired claim is not still sitting in the docstring beside the new
+    #    one. Both halves of it, because either alone misleads.
+    assert "reads the JSON, not the markdown" not in doc, doc
+    assert "can never make a section look missing" not in doc, doc
 
 
 def test_a_failed_markdown_write_leaves_no_json_for_the_gate_to_pass(report_env):

@@ -1057,6 +1057,17 @@ def _baseline_comparison_section(
     columns (D-037). Every value it yields is derived by `_archive_metrics`,
     the same function that derives this run's — see its docstring.
 
+    There are exactly three outcomes, named once by the local
+    `baseline_source` and stated to the reader by `baseline_note`: `derived`
+    (the archive is beside this run and was read), `self` (the archive IS this
+    run — OT-030's own invocation, where the three columns stay null because a
+    run is not its own baseline), and `absent` (no such directory). D-135: the
+    note used to be written against the FALSE branch of a single `present`
+    flag, so `self` printed `absent`'s sentence and the report denied reading
+    the archive it had just read. The outcome is deliberately NOT published as
+    a section key — no requirement names one, and `baseline_note` is the
+    surface the requirement does name.
+
     THE CONSTANT IS NOT A FLOOR. IT IS THE BASELINE (D-085)
     -------------------------------------------------------
     The recorded numbers used to be a floor — `max(derived, recorded)` — which
@@ -1111,7 +1122,28 @@ def _baseline_comparison_section(
         "tokens": None,
         "wall_clock_minutes": None,
     }
-    present = baseline_dir.is_dir() and baseline_dir.resolve() != run_dir.resolve()
+    # D-135 — ONE VALUE DECIDES BOTH THE READ AND THE SENTENCE ABOUT IT.
+    #
+    # `present` used to be the whole decision and the note was written against
+    # its FALSE branch alone, so the two reasons for not deriving — the archive
+    # is not here, and the archive IS this run — printed the same sentence. The
+    # second one is a lie, and it is the one OT-030's own invocation hits:
+    # `measure-run.py foundry-archive/thunder-viper` reads that archive as the
+    # CURRENT column (162 defects, 1469 wall-clock minutes, all off disk) while
+    # the note under the table read "That archive is not present here ... and
+    # nothing was derived". A report that misdescribes the archive it just read
+    # is worse than one that declines to read it.
+    #
+    # So the outcome is named ONCE, here, and both the derivation and the
+    # sentence are driven from the name. A fourth outcome cannot be added
+    # without giving it a sentence, which is the property that was missing.
+    if not baseline_dir.is_dir():
+        baseline_source = "absent"
+    elif baseline_dir.resolve() == run_dir.resolve():
+        baseline_source = "self"
+    else:
+        baseline_source = "derived"
+    present = baseline_source == "derived"
     baseline_derived = _archive_metrics(baseline_dir) if present else dict(absent)
 
     # The published baseline column: the two recorded cycle numbers, never
@@ -1131,10 +1163,23 @@ def _baseline_comparison_section(
         f"no recorded constant, so they are derived from {baseline_dir.name}/ "
         f"when that archive sits beside this run."
     )
-    if not present:
+    if baseline_source == "absent":
+        # WORDING IS FROZEN. Two committed evidence logs quote this sentence
+        # verbatim (`evidence/casting-1-baseline-comparison.log`,
+        # `evidence/casting-1-convergence-columns.log`), both captured against
+        # a run directory whose sibling really has no thunder-viper archive —
+        # where the sentence is true. Re-word it and those logs stop
+        # re-executing byte-identically at the GI-002 sweep boundary.
         baseline_note += (
             " That archive is not present here, so those three columns are "
             "null rather than fabricated, and nothing was derived."
+        )
+    elif baseline_source == "self":
+        baseline_note += (
+            f" This run IS {baseline_dir.name}: the archive is present and was "
+            f"read for the Current column, but a run is never its own "
+            f"baseline, so those three columns are null rather than a "
+            f"comparison of the archive with itself."
         )
     else:
         differs = {
@@ -1231,9 +1276,29 @@ def _md_table(headers: list[str], rows: list[list[Any]]) -> list[str]:
 def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
     """One `## ` heading per section, in `REPORT_REQUIRED_SECTIONS` order.
 
-    The lead may append prose BELOW this document; `report_status` reads the
+    THE HEADING TEXT IS LOAD-BEARING, BECAUSE THIS DOCUMENT IS READ BACK
+    -------------------------------------------------------------------
+    `report_status` reads BOTH documents off disk — `report.json`'s top-level
+    keys AND this file's headings (`_markdown_missing_sections`) — and the DONE
+    gate refuses on the union. So a heading rendered here with different text
+    than `_SECTION_TITLES` holds is a section the gate reports missing, even
+    though the JSON carries it.
+
+    What the lead may still do is APPEND prose (GI-006), and that stays safe
+    because the markdown scan matches a whole trimmed `## <title>` line
+    ANYWHERE in the document, at any depth and in any order — not a prefix and
+    not a position. What the lead cannot do is delete a heading, or bolt a
+    suffix onto one, and still reach DONE.
+
+    D-141 — WHAT THIS PARAGRAPH USED TO SAY. It read "`report_status` reads the
     JSON, not the markdown, so appended prose can never make a section look
-    missing. What the lead cannot do is delete a heading and still reach DONE.
+    missing", which was true until D-015 moved the read onto both documents and
+    is now false on both halves: the markdown IS read, and the reason appended
+    prose is harmless is the whole-line match, not an absence of looking.
+    Driven at HEAD: generate, `rm REPORT.md`, and `report_status` returns
+    `present False`, `missing_from_markdown 11`, problem "REPORT.md does not
+    exist". A maintainer trusting the retired sentence would have treated the
+    heading text as cosmetic.
     """
     lines: list[str] = [
         f"# Foundry run report — {run_name}",
