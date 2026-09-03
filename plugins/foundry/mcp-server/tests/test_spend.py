@@ -1284,3 +1284,269 @@ def test_foundry_next_and_the_report_name_the_same_unreported_pairs(run_env):
         (row["agent"], row["phase"]) for row in fo._unreported_dispatches(fdir)
     }
     assert from_next == from_report == {("casting-4", "F3")}
+
+
+# --------------------------------------------------------------------------- #
+# D-179 / AC-034 / FR-022 — THE NUMBER ON SCREEN IS THE NUMBER THE RESULT STATES
+#
+# `format_result_blocks` puts a rendered box and the whole result dict on ONE
+# response, so every integer the box draws sits beside the field it claims to
+# report. Where the display derives its own, the two are free to disagree — and
+# they did: driven at the real MCP surface on this run's live archive, one
+# Foundry-Next response carried `spend.unreported_count 19` in its JSON and
+# rendered "Unreported: 58" in the box above it, then spelled each entry
+# "agent@phase" so `prove@F2` printed ten times under a header that counted
+# per-cycle ROWS. `_fmt_foundry_record_spend` held the same expression on the
+# same two keys.
+#
+# D-162 fixed this one rung lower — `_overlay_unreported` had the same two
+# axes and the same wrong pick — and the class survived because the renderer
+# kept a derivation of its own and the D-162 guard asserted only over the
+# `_spend_summary` dict, never over a rendered line. So these drive the WIRE,
+# and the last one fails when a new labelled count line is added without being
+# tied to the field its result states.
+# --------------------------------------------------------------------------- #
+
+
+def _drive_mcp_text(name: str, arguments: dict) -> str:
+    """Call a tool through the MCP REQUEST HANDLER, not through `call_tool`.
+
+    The transport a client actually uses, and the same helper shape
+    `test_inspect_mode.py`'s D-173 pin uses: this defect is about what a lead
+    READS beside what a stream PARSES, and both only exist on the far side of
+    the boundary.
+    """
+    import asyncio
+
+    from mcp import types
+
+    import foundry_mcp.server as srv
+
+    handler = srv.server.request_handlers[types.CallToolRequest]
+    request = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(name=name, arguments=arguments),
+    )
+    return asyncio.run(handler(request)).root.content[0].text
+
+
+def _plain(text: str) -> str:
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def _halves(text: str) -> tuple[str, dict]:
+    """(the display the lead reads, the result dict the stream parses)."""
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER
+
+    plain = _plain(text)
+    assert RESULT_JSON_MARKER in plain, "no machine-readable block in the response"
+    head, _, body = plain.partition(RESULT_JSON_MARKER + "\n")
+    return head, json.loads(body)
+
+
+def _rendered_int(rendered: str, pattern: str) -> int:
+    """The single integer a rendered line states, by the pattern that names it."""
+    import re
+
+    match = re.search(pattern, _plain(rendered))
+    assert match, f"no line matching {pattern!r} in:\n{_plain(rendered)}"
+    return int(match.group(1))
+
+
+def _two_axis_run(fdir: Path) -> None:
+    """The fixture where the row axis and the pair axis DIFFER.
+
+    One stream agent missed in three cycles plus one teammate: four rows, two
+    pairs. D-162 names this as the normal shape of a real run, and it is the
+    only shape in which the wrong derivation is visible at all — which is why a
+    fixture with one dispatch per agent could never have caught either half.
+    """
+    _write_state(fdir, phase="F2", cycle=3)
+    _write_spawns(fdir, [{"casting_id": 2, "phase": "cast"}])
+    (fdir / "stream-rollup.json").write_text(
+        json.dumps({"cycles": {
+            str(c): {"trace": {"records": [{"cycle": c}]}} for c in (1, 2, 3)
+        }}),
+        encoding="utf-8",
+    )
+
+
+def test_the_unreported_number_foundry_next_renders_is_the_one_it_states(
+    run_env, monkeypatch
+):
+    """AC-034 verbatim: 'A dispatched agent with no spend record is shown as
+    unreported in Foundry-Next and the report, and no gate refuses on it.'
+
+    ONE response, BOTH halves, and they must state one integer. The display
+    used to render `len(unreported_dispatches)` while the JSON beside it
+    carried `unreported_count`; FR-022 asks for "N agents unreported per
+    phase", and the row list is neither agents nor agent-phase pairs.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _two_axis_run(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    head, payload = _halves(_drive_mcp_text("Foundry-Next", {}))
+    spend = payload["spend"]
+
+    # The two axes really do differ on this fixture, so the assertion below is
+    # falsifiable rather than trivially true.
+    assert spend["unreported_count"] == 2, spend
+    assert spend["unreported_rows"] == 4, spend
+    assert len(spend["unreported_dispatches"]) == 4, spend
+
+    assert _rendered_int(head, r"Unreported:\s+(\d+)\s") == spend["unreported_count"]
+
+    # ...and the names beside it are on that same axis: one entry per pair, not
+    # one per cycle the stream was missed in.
+    line = next(ln for ln in _plain(head).splitlines() if "Unreported:" in ln)
+    assert line.count("trace@F2") == 1, line
+    assert line.count("casting-2@F1") == 1, line
+
+
+def test_the_unreported_number_the_spend_door_renders_is_the_one_it_states(
+    run_env, monkeypatch
+):
+    """CT-013 verbatim: 'none; unreported dispatches are listed, never refused.'
+
+    The second surface that held the same expression. `foundry_record_spend`
+    published the row LIST and no count at all, so its formatter had nothing to
+    read and derived one — the adjacent path that made this a class rather than
+    a line. Both keys now come off the one `_spend_summary` call the handler
+    already makes.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _two_axis_run(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    head, payload = _halves(_drive_mcp_text("Foundry-Spend", {
+        "agent": "casting-9", "phase": "F1", "tokens": 1_000, "duration_ms": 60_000,
+    }))
+
+    assert payload["ok"] is True, payload
+    assert payload["unreported_count"] == 2, payload
+    assert payload["unreported_rows"] == 4, payload
+    assert len(payload["unreported_dispatches"]) == 4, payload
+
+    assert _rendered_int(head, r"Unreported:\s+(\d+)\s") == payload["unreported_count"]
+    assert "Unreported: 4" not in _plain(head), _plain(head)
+
+
+#: Every labelled Foundry-Next fact line that renders an INTEGER, tied to where
+#: the result states it. `stated` is the path to the field the result publishes;
+#: `rows` is the list the number is about. Where `stated` is None the result
+#: publishes no count, so `len(rows)` is the ONE derivation and there is nothing
+#: for it to disagree with — which is the whole rule this table encodes.
+_NEXT_COUNT_LINES = (
+    ("Unreported", r"Unreported:\s+(\d+)\s",
+     ("spend", "unreported_count"), ("spend", "unreported_dispatches")),
+    ("Spend", r"over (\d+) reported agent\(s\)",
+     ("spend", "total", "agents"), None),
+    ("Waiting", r"Waiting:\s+(\d+) agent\(s\)",
+     ("waiting_on_agents", "count"), None),
+    ("PROVE", r"PROVE:\s+(\d+) row\(s\)",
+     None, ("inspect_mode", "prove_sample")),
+    ("TRACE", r"TRACE:\s+(\d+) file\(s\)",
+     None, ("inspect_mode", "touched_files")),
+)
+
+#: The labelled lines that render no integer at all, so the label set below can
+#: be asserted whole. A new counted line lands in neither collection and fails
+#: `test_every_counted_next_line_renders_the_integer_its_result_states`.
+_NEXT_UNCOUNTED_LABELS = frozenset({
+    "Inspect", "Roster", "Skipped", "By Phase", "By Cycle", "Server", "HALTED",
+})
+
+
+def _dig(payload: dict, path: tuple[str, ...]):
+    value = payload
+    for key in path:
+        value = value[key]
+    return value
+
+
+def test_every_counted_next_line_renders_the_integer_its_result_states():
+    """FR-022 / AC-033 / NFR-005 — the class, not the instance.
+
+    D-179 was one line of `_fmt_foundry_next_lines`; the reason it is a
+    STRUCTURAL packet is that nothing stopped the next line from doing the same
+    thing. So this drives the renderer with a result whose stated integers all
+    DIFFER from the lengths of the lists they describe — five unreported rows
+    collapsing to two pairs, three reported agents, four waiting, seven PROVE
+    rows, six touched files — and asserts each rendered integer against the
+    field the result states rather than against a literal.
+
+    The label assertion is the part that has to survive the next author: every
+    labelled line this function emits is either in the table above (and is
+    pinned to a stated field) or in the uncounted set. A new counted line is in
+    neither, and this fails until it is tied to the field its result states.
+    """
+    import re
+
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+
+    payload = {
+        "phase": "HALTED",
+        "details": {"halted_reason": "--max-cycles 2 reached"},
+        "inspect_mode": {
+            "mode": "DELTA", "rule": "delta", "decided_by": "inspect_start",
+            "required_streams": ["trace", "prove", "test"],
+            "stream_scope": {
+                "trace": {"scope": "delta", "detail": "symbols in 6 file(s)"},
+                "test01": {"scope": "skipped", "detail": "untouched"},
+            },
+            "prove_sample": [f"FR-{n:03d}" for n in range(1, 8)],
+            "touched_files": [f"src/mod_{i}.py" for i in range(6)],
+        },
+        "spend": {
+            "total": {"tokens": 12_345, "duration_ms": 120_000, "agents": 3},
+            "by_phase": {"F2": {"tokens": 12_345, "duration_ms": 120_000}},
+            "by_cycle": {"3": {"tokens": 12_345, "duration_ms": 120_000}},
+            "unreported_dispatches": [
+                {"agent": "trace", "phase": "F2", "cycle": c} for c in (1, 2, 3)
+            ] + [
+                {"agent": "casting-2", "phase": "F1"},
+                {"agent": "casting-2", "phase": "F1"},
+            ],
+            "unreported_count": 2,
+        },
+        "executing_server": {
+            "server_version": "4.10.0", "plugin_version": "4.10.0",
+            "server_root": "/repo/plugins/foundry", "server_commit": "3f9c1a284d6b",
+        },
+        "waiting_on_agents": {"waiting": True, "count": 4,
+                              "detail": "oldest progress 4m 0s ago"},
+    }
+
+    rendered = "\n".join(_fmt_foundry_next_lines(payload))
+
+    for label, pattern, stated, rows in _NEXT_COUNT_LINES:
+        expected = (
+            _dig(payload, stated) if stated is not None
+            else len(_dig(payload, rows))
+        )
+        assert _rendered_int(rendered, pattern) == expected, (
+            f"{label}: the screen and the result disagree"
+        )
+
+    # The row axis never reaches the screen as a count.
+    assert len(payload["spend"]["unreported_dispatches"]) == 5
+    assert "Unreported: 5" not in _plain(rendered), _plain(rendered)
+
+    labels = {
+        m.group(1)
+        for m in re.finditer(
+            r"^\s+([A-Za-z][A-Za-z ]*):", _plain(rendered), flags=re.MULTILINE
+        )
+    }
+    assert labels == {row[0] for row in _NEXT_COUNT_LINES} | _NEXT_UNCOUNTED_LABELS, (
+        "a labelled Foundry-Next line is in neither collection — if it renders a "
+        "count, add it to _NEXT_COUNT_LINES with the field the result states; if "
+        "it renders none, add it to _NEXT_UNCOUNTED_LABELS"
+    )

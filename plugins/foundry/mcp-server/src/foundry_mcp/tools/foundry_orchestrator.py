@@ -4508,6 +4508,20 @@ def foundry_record_spend(
         "by_cycle": summary["by_cycle"],
         "total": summary["total"],
         "unreported_dispatches": summary["unreported_dispatches"],
+        # D-179 — THIS DOOR PUBLISHED THE LIST AND NOT THE COUNT, SO ITS
+        # DISPLAY HAD NOTHING TO READ AND DERIVED ONE.
+        #
+        # `_fmt_foundry_record_spend` rendered "N dispatch(es) still have no
+        # spend record" from `len(unreported_dispatches)`, the per-cycle ROW
+        # list, while `Foundry-Next` beside it published the PAIR count — one
+        # question, one run, two numbers. Both keys come off the SAME
+        # `_spend_summary` call already made above, so this adds a statement
+        # and no second derivation: `unreported_count` is the pair count the
+        # F6 report also publishes and `unreported_rows` is the row list's
+        # length, named so the two axes are distinguishable rather than
+        # confusable (D-162).
+        "unreported_count": summary["unreported_count"],
+        "unreported_rows": summary["unreported_rows"],
     }
     # D-004: present ONLY when something was coerced, so a clean call's result
     # carries no empty key for a reader to interpret, and `ok` stays True either

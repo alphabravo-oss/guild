@@ -502,6 +502,74 @@ def _fmt_foundry_mark_phase_complete(r: dict) -> str:
     ])
 
 
+def _stated_count(source: object, key: str, rows: list) -> int:
+    """The integer the RESULT states under ``key``; ``len(rows)`` only when it
+    states none.
+
+    D-179 — A RENDERED COUNT THAT WAS DERIVED A SECOND TIME, OFF A SECOND AXIS.
+    --------------------------------------------------------------------------
+    Every renderer below draws a number beside a machine-readable body that
+    `format_result_blocks` puts on the same wire. When the handler has already
+    published that number, re-deriving it here does not "check" it — it makes a
+    second answer to one question, and the two are free to differ. They did.
+    Driven at the real MCP surface on this run's own archive: the SAME
+    Foundry-Next response carried `spend.unreported_count 19` in its JSON and
+    rendered "Unreported: 58" in the box above it, because the box counted
+    `len(unreported_dispatches)` — the per-cycle ROW list — under a header that
+    then spelled every entry "agent@phase", the PAIR grammar. `prove@F2`
+    printed ten times under a number that counted rows.
+
+    This is the same defect D-162 fixed one rung lower and the same class
+    D-047 / D-048 / D-013 fixed one rung lower again: two derivations of one
+    number. The rule that ends it here is that the DISPLAY never derives. It
+    reads what the result states, and falls back to `len(rows)` only where the
+    result states nothing — in which case there is no second number for it to
+    disagree with. `_fmt_foundry_defects_to_tasks` has read `r.get("count",
+    len(tasks))` since C-12; this is that shape, named once, for every caller.
+
+    ``source`` is typed loosely because a formatter is handed whatever the
+    handler returned: a non-mapping, or a count key holding a string, must
+    contribute a rendering rather than a raise (this module's standing rule —
+    D-157). A bool is not an int here, for the same reason it is not one at the
+    spend door: `True` is not a count of anything.
+    """
+    if isinstance(source, dict):
+        stated = source.get(key)
+        if isinstance(stated, int) and not isinstance(stated, bool):
+            return stated
+    return len(rows)
+
+
+def _unreported_pairs(source: object) -> tuple[int, list[str]]:
+    """The unreported count the result states, and the pairs it names (D-179).
+
+    ONE READER OF THIS AXIS, so the number and the names cannot drift apart.
+    `Foundry-Next`'s `spend` block and `Foundry-Spend`'s own result both carry
+    `unreported_dispatches` (row-shaped, one row per cycle a stream agent was
+    missed in) beside `unreported_count` (the PAIR count `_spend_summary` and
+    the F6 report both publish). A caller that read the list for its names and
+    its number took two different axes; the names are collapsed to distinct
+    `agent@phase` pairs here so the list it returns is the axis the count is on.
+
+    FR-022 asks for "N agents unreported per phase". Rows are neither agents
+    nor agent-phase pairs, which is why the row list was never the number to
+    render even before the two surfaces disagreed about it.
+    """
+    rows = source.get("unreported_dispatches") if isinstance(source, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+    pairs: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        pair = f"{row.get('agent', '?')}@{row.get('phase', '?')}"
+        if pair not in seen:
+            seen.add(pair)
+            pairs.append(pair)
+    return _stated_count(source, "unreported_count", pairs), pairs
+
+
 def _fmt_foundry_next_lines(r: dict) -> list[str]:
     """The per-fact lines Foundry-Next gained: width, spend, unreported, halt.
 
@@ -582,14 +650,21 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             ]
             if parts:
                 lines.append(f"  {_BWHITE}{label.title()}:{_RESET} {_DIM}{'  '.join(parts)}{_RESET}")
-        unreported = spend.get("unreported_dispatches") or []
-        if unreported:
-            names = ", ".join(
-                f"{u.get('agent', '?')}@{u.get('phase', '?')}" for u in unreported[:6]
+        # D-179: the integer is the one `spend` STATES, and the names beside it
+        # are the same axis. This line used to render `len(unreported_
+        # dispatches)` — the per-cycle row list — and then spell each entry
+        # "agent@phase", so the header counted rows while the list named pairs
+        # and a stream missed in ten cycles printed ten times. See
+        # `_unreported_pairs`.
+        unreported_count, unreported_pairs = _unreported_pairs(spend)
+        if unreported_count or unreported_pairs:
+            names = ", ".join(unreported_pairs[:6])
+            more = (
+                f" (+{len(unreported_pairs) - 6} more)"
+                if len(unreported_pairs) > 6 else ""
             )
-            more = f" (+{len(unreported) - 6} more)" if len(unreported) > 6 else ""
             lines.append(
-                f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{len(unreported)}{_RESET} "
+                f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{unreported_count}{_RESET} "
                 f"{_DIM}{names}{more} — no gate blocks on these{_RESET}"
             )
 
@@ -672,10 +747,14 @@ def _fmt_foundry_record_spend(r: dict) -> str:
         f"  {_BWHITE}Run total:{_RESET} {total.get('tokens', 0):,} tokens  {minutes}m  "
         f"over {total.get('agents', 0)} agent(s)",
     ]
-    unreported = r.get("unreported_dispatches") or []
-    if unreported:
+    # D-179: the same expression `_fmt_foundry_next_lines` held, on the same
+    # two keys, so the same wrong axis reached this box too. Read, never
+    # derived — `foundry_record_spend` publishes `unreported_count` from the
+    # one `_spend_summary` call it already makes.
+    unreported_count, _unreported_names = _unreported_pairs(r)
+    if unreported_count:
         lines.append(
-            f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{len(unreported)}{_RESET} "
+            f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{unreported_count}{_RESET} "
             f"{_DIM}dispatch(es) still have no spend record — nothing blocks on them{_RESET}"
         )
     if row.get("ledger_problem"):
