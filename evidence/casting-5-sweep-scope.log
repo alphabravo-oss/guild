@@ -1,0 +1,44 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider -s tests/test_evidence.py -k demo_sweep_scope
+# evidence-for: GI-002, ST-005, CT-007, AC-014, FR-009, FR-031, FR-042, OT-016, NFR-004, US-003
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+
+=== select_sweep_scope: which logs the boundary re-executes ===
+  FULL rule fired / before ASSAY, NYQUIST or DONE
+    touched=['src/alpha.py']
+    scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
+  DELTA, diff touches casting 1's key_files
+    touched=['src/alpha.py']
+    scope=['casting-1-alpha.log']
+  DELTA, diff touches casting 2's key_files
+    touched=['src/beta.py']
+    scope=['casting-2-beta.log']
+  DELTA, diff touches a file under casting 3's key_files DIRECTORY
+    touched=['tests/fixtures/gamma/rows.json']
+    scope=['wave-report-sections.log']
+  DELTA, diff touches nothing any casting or command names
+    touched=['docs/README.md']
+    scope=[]
+=== the empty DELTA scope costs no worktree and no subprocess ===
+    ok=True  scope_count=0  logs_reexecuted=[]
+    head_commit=None  pool_size=0
+=== a FULL sweep re-executes the whole committed corpus at HEAD ===
+    ok=True  scope_count=3
+    reexecuted evidence/casting-1-alpha.log
+    reexecuted evidence/casting-2-beta.log
+    reexecuted evidence/wave-report-sections.log
+    mismatches=[]
+=== FR-031: the pool size is derived from the corpus ===
+    ceiling (measured from the committed corpus) = 8
+    pool([])            == 0            : True
+    pool(1 log)         == 1            : True
+    pool(3 logs)        <= 3            : True
+    pool(200 logs)      <= ceiling      : True
+    pool(200, override=1) == 1          : True
+=== FR-031: the per-log timeout is the log's own measurement ===
+    declared 300s                       : 300
+    undeclared falls back to the default: True
+    a caller ceiling wins for every log : 30
+.
+1 passed, 249 deselected in 0.46s

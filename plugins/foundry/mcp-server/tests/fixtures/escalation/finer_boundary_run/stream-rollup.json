@@ -1,0 +1,488 @@
+{
+  "cycles": {
+    "1": {
+      "trace": {
+        "items_checked": 48,
+        "items_total": 48,
+        "findings": 3,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T05:30:00+00:00",
+            "items_checked": 48,
+            "items_total": 48,
+            "findings": 3,
+            "declared_cycle": 1
+          }
+        ]
+      },
+      "prove": {
+        "items_checked": 71,
+        "items_total": 71,
+        "findings": 2,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T05:30:00+00:00",
+            "items_checked": 71,
+            "items_total": 71,
+            "findings": 2,
+            "declared_cycle": 1
+          }
+        ]
+      },
+      "test": {
+        "items_checked": 1,
+        "items_total": 1,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T05:30:00+00:00",
+            "items_checked": 1,
+            "items_total": 1,
+            "findings": 0,
+            "declared_cycle": 1
+          }
+        ]
+      },
+      "research_audit": {
+        "items_checked": 0,
+        "items_total": 0,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T05:30:00+00:00",
+            "items_checked": 0,
+            "items_total": 0,
+            "findings": 0,
+            "declared_cycle": 1
+          }
+        ]
+      },
+      "test01": {
+        "items_checked": 16,
+        "items_total": 16,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T05:30:00+00:00",
+            "items_checked": 16,
+            "items_total": 16,
+            "findings": 0,
+            "declared_cycle": 1
+          }
+        ]
+      },
+      "inspect_mode": "FULL",
+      "inspect_rule": "first_of_phase",
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "all castings"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "all requirements"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "all research files"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "all contract rows"
+        }
+      },
+      "evidence_sweep": {
+        "scope": "full",
+        "logs_reexecuted": [
+          "evidence/casting-1-vocabulary.log",
+          "evidence/casting-3-gates.log",
+          "evidence/casting-5-sweep.log",
+          "evidence/casting-5-report.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 41.72,
+        "pool_size": 4,
+        "swept_at": "2026-09-02T05:29:00+00:00"
+      }
+    },
+    "2": {
+      "trace": {
+        "items_checked": 6,
+        "items_total": 48,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T06:30:00+00:00",
+            "items_checked": 6,
+            "items_total": 48,
+            "findings": 1,
+            "declared_cycle": 2
+          }
+        ]
+      },
+      "prove": {
+        "items_checked": 10,
+        "items_total": 71,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T06:30:00+00:00",
+            "items_checked": 10,
+            "items_total": 71,
+            "findings": 1,
+            "declared_cycle": 2
+          }
+        ]
+      },
+      "test": {
+        "items_checked": 1,
+        "items_total": 1,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T06:30:00+00:00",
+            "items_checked": 1,
+            "items_total": 1,
+            "findings": 0,
+            "declared_cycle": 2
+          }
+        ]
+      },
+      "inspect_mode": "DELTA",
+      "inspect_rule": "delta",
+      "stream_scope": {
+        "trace": {
+          "scope": "delta",
+          "detail": "1 casting"
+        },
+        "prove": {
+          "scope": "delta",
+          "detail": "10 rows sampled"
+        },
+        "test": {
+          "scope": "delta",
+          "detail": "2 modules"
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no research file touched"
+        },
+        "test01": {
+          "scope": "skipped",
+          "detail": "no contract row touched"
+        }
+      },
+      "evidence_sweep": {
+        "scope": "delta",
+        "logs_reexecuted": [
+          "evidence/casting-5-sweep.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 8.03,
+        "pool_size": 1,
+        "swept_at": "2026-09-02T06:29:00+00:00"
+      }
+    },
+    "3": {
+      "trace": {
+        "items_checked": 6,
+        "items_total": 48,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T07:30:00+00:00",
+            "items_checked": 6,
+            "items_total": 48,
+            "findings": 1,
+            "declared_cycle": 3
+          }
+        ]
+      },
+      "prove": {
+        "items_checked": 10,
+        "items_total": 71,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T07:30:00+00:00",
+            "items_checked": 10,
+            "items_total": 71,
+            "findings": 1,
+            "declared_cycle": 3
+          }
+        ]
+      },
+      "test": {
+        "items_checked": 1,
+        "items_total": 1,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T07:30:00+00:00",
+            "items_checked": 1,
+            "items_total": 1,
+            "findings": 0,
+            "declared_cycle": 3
+          }
+        ]
+      },
+      "inspect_mode": "DELTA",
+      "inspect_rule": "delta",
+      "stream_scope": {
+        "trace": {
+          "scope": "delta",
+          "detail": "1 casting"
+        },
+        "prove": {
+          "scope": "delta",
+          "detail": "10 rows sampled"
+        },
+        "test": {
+          "scope": "delta",
+          "detail": "1 module"
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no research file touched"
+        },
+        "test01": {
+          "scope": "skipped",
+          "detail": "no contract row touched"
+        }
+      },
+      "evidence_sweep": {
+        "scope": "delta",
+        "logs_reexecuted": [
+          "evidence/casting-5-report.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 7.41,
+        "pool_size": 1,
+        "swept_at": "2026-09-02T07:29:00+00:00"
+      }
+    },
+    "4": {
+      "trace": {
+        "items_checked": 48,
+        "items_total": 48,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T08:30:00+00:00",
+            "items_checked": 48,
+            "items_total": 48,
+            "findings": 0,
+            "declared_cycle": 4
+          }
+        ]
+      },
+      "prove": {
+        "items_checked": 71,
+        "items_total": 71,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T08:30:00+00:00",
+            "items_checked": 71,
+            "items_total": 71,
+            "findings": 1,
+            "declared_cycle": 4
+          }
+        ]
+      },
+      "test": {
+        "items_checked": 1,
+        "items_total": 1,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T08:30:00+00:00",
+            "items_checked": 1,
+            "items_total": 1,
+            "findings": 0,
+            "declared_cycle": 4
+          }
+        ]
+      },
+      "research_audit": {
+        "items_checked": 0,
+        "items_total": 0,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T08:30:00+00:00",
+            "items_checked": 0,
+            "items_total": 0,
+            "findings": 0,
+            "declared_cycle": 4
+          }
+        ]
+      },
+      "test01": {
+        "items_checked": 16,
+        "items_total": 16,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T08:30:00+00:00",
+            "items_checked": 16,
+            "items_total": 16,
+            "findings": 0,
+            "declared_cycle": 4
+          }
+        ]
+      },
+      "inspect_mode": "FULL",
+      "inspect_rule": "verifier_touched",
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "all castings"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "all requirements"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "all research files"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "all contract rows"
+        }
+      },
+      "evidence_sweep": {
+        "scope": "full",
+        "logs_reexecuted": [
+          "evidence/casting-1-vocabulary.log",
+          "evidence/casting-3-gates.log",
+          "evidence/casting-5-sweep.log",
+          "evidence/casting-5-report.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 40.18,
+        "pool_size": 4,
+        "swept_at": "2026-09-02T08:29:00+00:00"
+      }
+    },
+    "5": {
+      "trace": {
+        "items_checked": 48,
+        "items_total": 48,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T09:30:00+00:00",
+            "items_checked": 48,
+            "items_total": 48,
+            "findings": 0,
+            "declared_cycle": 5
+          }
+        ]
+      },
+      "prove": {
+        "items_checked": 71,
+        "items_total": 71,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T09:30:00+00:00",
+            "items_checked": 71,
+            "items_total": 71,
+            "findings": 1,
+            "declared_cycle": 5
+          }
+        ]
+      },
+      "test": {
+        "items_checked": 1,
+        "items_total": 1,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T09:30:00+00:00",
+            "items_checked": 1,
+            "items_total": 1,
+            "findings": 0,
+            "declared_cycle": 5
+          }
+        ]
+      },
+      "research_audit": {
+        "items_checked": 0,
+        "items_total": 0,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T09:30:00+00:00",
+            "items_checked": 0,
+            "items_total": 0,
+            "findings": 0,
+            "declared_cycle": 5
+          }
+        ]
+      },
+      "test01": {
+        "items_checked": 16,
+        "items_total": 16,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-02T09:30:00+00:00",
+            "items_checked": 16,
+            "items_total": 16,
+            "findings": 0,
+            "declared_cycle": 5
+          }
+        ]
+      },
+      "inspect_mode": "FULL",
+      "inspect_rule": "final_gate",
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "all castings"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "all requirements"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "all research files"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "all contract rows"
+        }
+      },
+      "evidence_sweep": {
+        "scope": "full",
+        "logs_reexecuted": [
+          "evidence/casting-1-vocabulary.log",
+          "evidence/casting-3-gates.log",
+          "evidence/casting-5-sweep.log",
+          "evidence/casting-5-report.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 39.66,
+        "pool_size": 4,
+        "swept_at": "2026-09-02T09:29:00+00:00"
+      }
+    }
+  },
+  "updated_at": "2026-09-02T09:20:00+00:00"
+}

@@ -1,0 +1,907 @@
+"""GI-006 / CT-014 / AC-036 — the generated end-of-run report.
+
+Every test here drives `foundry_report.generate_report` against a real run
+directory on disk and reads the two documents back, because the property under
+test is always "what did it WRITE", never "what did it return". A report whose
+return value said eleven sections and whose file carried nine would pass an
+assertion on the return and fail the DONE gate, which reads the file.
+
+The fixture is `tests/fixtures/escalation/finer_boundary_run/` — the synthetic
+archive whose scenario is stated in casting 5's prompt and whose record ids are
+FROZEN there, because casting 3's escalation tests read the same directory.
+`report_env` copies it into `tmp_path` so a test may mutate its copy freely;
+nothing here ever writes into `tests/fixtures/`.
+
+Shape follows `tests/test_escalation.py`: a fixture that yields the run
+directory, small builders beside it, and one docstring per test quoting the
+requirement it proves.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from foundry_mcp.schemas.vocab import (
+    CONVERGENCE_TARGET,
+    DEFECT_TIER_OR_UNKNOWN,
+    HANDOFF_EVENT_LEAD_FIX,
+    REPORT_JSON_FILENAME,
+    REPORT_MD_FILENAME,
+    REPORT_REQUIRED_SECTIONS,
+    RUN_PHASE_HALTED,
+    SPEND_LEDGER_FILENAME,
+    THUNDER_VIPER_BASELINE,
+    TIER_UNKNOWN,
+)
+from foundry_mcp.tools import foundry_report as fr
+from foundry_mcp.tools.foundry_report import generate_report, report_status
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "escalation" / "finer_boundary_run"
+
+#: The eight artifacts the fixture contract freezes. Named here so a test can
+#: assert the SET rather than each file, and so a file added to the fixture
+#: without a contract amendment turns this red rather than passing unnoticed.
+FIXTURE_FILES = frozenset(
+    {
+        "state.json",
+        "defects.json",
+        "escalation.json",
+        "stream-rollup.json",
+        "verdicts.json",
+        "handoffs.jsonl",
+        "spawns.log",
+        SPEND_LEDGER_FILENAME,
+    }
+)  # 8 files
+
+
+@pytest.fixture
+def report_env(tmp_path):
+    """A writable copy of the finer-boundary fixture. Yields the run dir."""
+    run_dir = tmp_path / "foundry-archive" / "finer-boundary-run"
+    run_dir.mkdir(parents=True)
+    for src in FIXTURE_DIR.iterdir():
+        (run_dir / src.name).write_bytes(src.read_bytes())
+    return run_dir
+
+
+def _read_json(run_dir: Path, name: str) -> dict:
+    return json.loads((run_dir / name).read_text(encoding="utf-8"))
+
+
+def _write_json(run_dir: Path, name: str, data: dict) -> None:
+    (run_dir / name).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _generate(run_dir: Path) -> dict:
+    result = generate_report(run_dir.parent.parent, run_dir)
+    assert result["ok"] is True, result
+    return result
+
+
+def _document(run_dir: Path) -> dict:
+    return _read_json(run_dir, REPORT_JSON_FILENAME)
+
+
+def _markdown(run_dir: Path) -> str:
+    return (run_dir / REPORT_MD_FILENAME).read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# The fixture contract itself. Casting 3 reads this directory, so a change to
+# its shape has to break a test in a file somebody owns.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_finer_boundary_fixture_is_the_eight_frozen_artifacts():
+    """AC-002's fixture clause: the synthetic archive is consumable both by
+    casting 3's escalation tests and by this casting's report tests, so its
+    file list is frozen by the prompt's Fixture contract."""
+    assert FIXTURE_DIR.is_dir(), FIXTURE_DIR
+    on_disk = {p.name for p in FIXTURE_DIR.iterdir() if p.is_file()}
+    assert on_disk == set(FIXTURE_FILES), sorted(on_disk ^ set(FIXTURE_FILES))
+
+
+def test_the_fixture_encodes_the_finer_boundary_scenario():
+    """AC-002 verbatim: 'On a synthetic fixture where each cycle's PROVE files
+    one LATENT instance of the escalated class at a finer boundary, the class
+    is CLEARED after the second structural packet closes, the run reaches
+    NYQUIST, and the report names the LATENT instances left.'
+
+    The ids and cycles are the prompt's Fixture contract table, asserted here
+    rather than trusted, because casting 3's budget-exit tests key on them."""
+    defects = _read_json(FIXTURE_DIR, "defects.json")["defects"]
+    by_id = {d["id"]: d for d in defects}
+    assert sorted(by_id) == [f"D-00{n}" for n in range(1, 8)]
+
+    klass = "FALSE_DOCUMENTED_CONTRACT"
+    # Three consecutive LIVE cycles, then two LATENT instances at a finer
+    # boundary and NO further LIVE instance of the class.
+    for did, cycle in (("D-001", 1), ("D-002", 2), ("D-003", 3)):
+        assert by_id[did]["tier"] == "LIVE"
+        assert by_id[did]["class"] == klass
+        assert by_id[did]["cycle"] == cycle
+        assert by_id[did]["status"] == "fixed"
+    for did, cycle in (("D-004", 4), ("D-005", 5)):
+        assert by_id[did]["tier"] == "LATENT"
+        assert by_id[did]["class"] == klass
+        assert by_id[did]["cycle"] == cycle
+        assert by_id[did]["status"] == "open"
+        assert by_id[did]["reproduction_attempted"]
+
+    # D-007 is the pre-change record: NEITHER key, which is the whole point.
+    assert "tier" not in by_id["D-007"]
+    assert "reproduction_attempted" not in by_id["D-007"]
+    assert by_id["D-007"]["status"] == "fixed", (
+        "D-007 is fixed on purpose so the fixture still reaches NYQUIST: an "
+        "OPEN unknown-tier defect blocks like LIVE"
+    )
+
+    # The run reached F5.5 (NYQUIST) at cycle 5.
+    state = _read_json(FIXTURE_DIR, "state.json")
+    assert state["phase"] == "F5.5"
+    assert state["cycle"] == 5
+
+
+def test_the_fixture_class_cleared_on_the_budget_arm_not_the_clean_cycles_arm():
+    """AC-004 verbatim: 'escalation.json records for the class a status, the
+    exit reason (clean-cycles or budget), the cycle it cleared and the
+    structural packets it consumed.'
+
+    The gap is deliberate and is what makes the exit reason unambiguous: the
+    budget arm reaches STRUCTURAL_PASS_BUDGET at cycle 4 while
+    live_clean_cycles is still 1, one short of LIVE_CLEAN_CYCLES_TO_CLEAR. A
+    fixture where both arms fired would prove nothing about which one did."""
+    from foundry_mcp.schemas.vocab import (
+        LIVE_CLEAN_CYCLES_TO_CLEAR,
+        STRUCTURAL_PASS_BUDGET,
+    )
+
+    entry = _read_json(FIXTURE_DIR, "escalation.json")["classes"][
+        "FALSE_DOCUMENTED_CONTRACT"
+    ]
+    assert entry["status"] == "CLEARED"
+    assert entry["exit_reason"] == "budget"
+    assert entry["cleared_at_cycle"] == 4
+    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
+    assert entry["structural_packet_cycles"] == [3, 4]
+    assert entry["live_clean_cycles"] < LIVE_CLEAN_CYCLES_TO_CLEAR, (
+        "the clean-cycles arm must NOT also have fired, or `budget` is not "
+        "the reason this class cleared"
+    )
+    assert entry["open_latent_defect_ids"] == ["D-004", "D-005"]
+
+
+# --------------------------------------------------------------------------- #
+# GI-006 / CT-014 — the sections, in both documents.
+# --------------------------------------------------------------------------- #
+
+
+def test_report_json_top_level_keys_are_exactly_the_required_sections(report_env):
+    """CT-014 / GI-006: `report.json`'s top-level keys are exactly
+    REPORT_REQUIRED_SECTIONS plus `generated_at` and `run`.
+
+    Asserted as set EQUALITY, not containment. A twelfth key would pass a
+    containment check and then be a section `report_status` does not know
+    about, and a missing one would be a section the DONE gate refuses on."""
+    _generate(report_env)
+    doc = _document(report_env)
+    assert set(doc) == set(REPORT_REQUIRED_SECTIONS) | {"generated_at", "run"}
+    # And in DECLARED order, because REPORT.md renders from the same tuple and
+    # a reader diffing the two documents reads them side by side.
+    assert list(doc)[2:] == list(REPORT_REQUIRED_SECTIONS)
+
+
+def test_report_md_carries_one_heading_per_section_in_the_same_order(report_env):
+    """CT-014: 'REPORT.md carries one `## ` heading per section, in the same
+    order.' The count is asserted too — a duplicated heading would keep the
+    order assertion green while rendering a section twice."""
+    _generate(report_env)
+    headings = re.findall(r"^## (.+)$", _markdown(report_env), re.M)
+    assert len(headings) == len(REPORT_REQUIRED_SECTIONS)
+    assert headings == [fr._SECTION_TITLES[k] for k in REPORT_REQUIRED_SECTIONS]
+
+
+def test_every_named_section_carries_content_from_its_own_ledger(report_env):
+    """FR-023 verbatim: 'Sections derived from run artifacts: verdict matrix,
+    defects by tier/status, LATENT backlog, escalated classes with exit reason,
+    lead_fix records, full-vs-delta decisions per cycle, per-phase/per-cycle
+    tokens and minutes, executing server/plugin version and commit.'
+
+    One assertion per section, each on a value that could ONLY have come from
+    the ledger the contract names it against — so a section rendered from the
+    wrong artifact, or from nothing, is caught rather than counted."""
+    _generate(report_env)
+    doc = _document(report_env)
+
+    assert doc["verdict_matrix"]["count"] == 6                      # verdicts.json
+    assert doc["defects_by_tier_and_status"]["total"] == 7          # defects.json
+    assert doc["latent_backlog"]["open_count"] == 2                 # defects.json
+    assert doc["unknown_tier_defects"]["count"] == 1                # defects.json
+    assert doc["escalated_classes"]["count"] == 1                   # escalation.json
+    assert doc["lead_fix_records"]["count"] == 2                    # handoffs.jsonl
+    assert doc["inspect_modes_per_cycle"]["count"] == 5             # state.json
+    assert doc["spend_per_phase_and_cycle"]["records"] == 5         # spend.jsonl
+    assert doc["unreported_dispatches"]["count"] > 0                # spawns + spend
+    assert doc["executing_versions"]["server_commit"].startswith("3f9c1a")
+    assert doc["baseline_comparison"]["baseline"]["run"] == "thunder-viper"
+
+
+def test_the_json_carries_the_same_data_the_markdown_renders(report_env):
+    """FR-038: 'the markdown layout and the report.json key names below the top
+    level are implementer's choice, provided every named section is present and
+    the JSON carries the same data as the markdown.'
+
+    Driven on values a reader would actually cross-check between the two
+    documents: every defect id the JSON names must appear in the markdown, and
+    every escalated class name likewise."""
+    _generate(report_env)
+    doc = _document(report_env)
+    md = _markdown(report_env)
+
+    for defect in doc["latent_backlog"]["defects"]:
+        assert defect["id"] in md, defect["id"]
+    for defect in doc["unknown_tier_defects"]["defects"]:
+        assert defect["id"] in md, defect["id"]
+    for record in doc["lead_fix_records"]["records"]:
+        assert record["defect_id"] in md, record["defect_id"]
+        assert record["fix_commit"] in md, record["fix_commit"]
+    for entry in doc["escalated_classes"]["classes"]:
+        assert entry["class"] in md
+        assert entry["exit_reason"] in md
+    for row in doc["verdict_matrix"]["requirements"]:
+        assert row["id"] in md, row["id"]
+
+
+# --------------------------------------------------------------------------- #
+# The individual section contracts.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_latent_backlog_names_every_open_latent_instance(report_env):
+    """NFR-003 verbatim: 'LATENT stays open, tracked, and listed in the
+    report.' AC-002's closing clause: 'the report names the LATENT instances
+    left.'
+
+    Names, not counts: the reproduction_attempted statement travels with each
+    row, because that statement is the only record of what the filing stream
+    actually drove and is what a later cycle needs in order to re-file the
+    defect as LIVE."""
+    _generate(report_env)
+    backlog = _document(report_env)["latent_backlog"]
+    assert [d["id"] for d in backlog["defects"]] == ["D-004", "D-005"]
+    for row in backlog["defects"]:
+        assert row["class"] == "FALSE_DOCUMENTED_CONTRACT"
+        assert row["reproduction_attempted"], row
+        assert row["description"]
+    # And they are named in the markdown an operator actually reads.
+    md = _markdown(report_env)
+    assert "D-004" in md and "D-005" in md
+
+
+def test_unknown_tier_defects_are_listed_separately_from_live_and_latent(report_env):
+    """FR-051 verbatim: 'Blocks like LIVE until a stream re-files it with a
+    tier' — with the gloss 'the report lists unknown-tier defects separately'.
+
+    The separation is the requirement. Folding an untiered record in with the
+    LIVE rows would tell an operator a stream classified it, which is the one
+    thing that did not happen; the cross-tab therefore keeps a distinct row
+    keyed on TIER_UNKNOWN and the dedicated section names the record."""
+    _generate(report_env)
+    doc = _document(report_env)
+
+    section = doc["unknown_tier_defects"]
+    assert [d["id"] for d in section["defects"]] == ["D-007"]
+
+    cross = doc["defects_by_tier_and_status"]["cross_tab"]
+    assert set(cross) == set(DEFECT_TIER_OR_UNKNOWN)
+    assert TIER_UNKNOWN in cross
+    unknown_ids = {
+        did for bucket in cross[TIER_UNKNOWN].values() for did in bucket["ids"]
+    }
+    assert unknown_ids == {"D-007"}
+    # And emphatically NOT among the LIVE ids.
+    live_ids = {did for bucket in cross["LIVE"].values() for did in bucket["ids"]}
+    assert "D-007" not in live_ids
+
+
+def test_the_cross_tab_carries_every_tier_including_the_empty_ones(report_env):
+    """A tier with no defects is a MEASUREMENT, and omitting its key would make
+    'zero LATENT defects in this run' indistinguishable from 'nobody measured'.
+    Driven by emptying the ledger so every tier is zero at once."""
+    _write_json(report_env, "defects.json", {"defects": []})
+    _generate(report_env)
+    by_tier = _document(report_env)["defects_by_tier_and_status"]["by_tier"]
+    assert set(by_tier) == set(DEFECT_TIER_OR_UNKNOWN)
+    assert set(by_tier.values()) == {0}
+
+
+def test_escalated_classes_carries_status_exit_reason_cycle_and_packets(report_env):
+    """AC-004 verbatim: 'escalation.json records for the class a status, the
+    exit reason (clean-cycles or budget), the cycle it cleared and the
+    structural packets it consumed.' All four reach the report."""
+    _generate(report_env)
+    entry = _document(report_env)["escalated_classes"]["classes"][0]
+    assert entry["class"] == "FALSE_DOCUMENTED_CONTRACT"
+    assert entry["status"] == "CLEARED"
+    assert entry["exit_reason"] == "budget"
+    assert entry["cleared_at_cycle"] == 4
+    assert entry["structural_packets_dispatched"] == 2
+    assert entry["open_latent_defect_ids"] == ["D-004", "D-005"]
+
+
+def test_a_class_written_before_the_status_field_reads_as_escalated(report_env):
+    """A pre-change escalation entry has no `status`. It is reported in the
+    state it was WRITTEN in — ESCALATED — because defaulting it to CLEARED
+    would silently retire a class nobody ever cleared."""
+    data = _read_json(report_env, "escalation.json")
+    del data["classes"]["FALSE_DOCUMENTED_CONTRACT"]["status"]
+    _write_json(report_env, "escalation.json", data)
+    _generate(report_env)
+    section = _document(report_env)["escalated_classes"]
+    assert section["classes"][0]["status"] == "ESCALATED"
+    assert section["by_status"]["ESCALATED"] == 1
+
+
+def test_lead_fix_records_lists_every_lead_fix_handoff(report_env):
+    """AC-022 verbatim: 'A successful lead fix causes the server to append a
+    lead_fix record to handoffs.jsonl carrying the defect id, tier, file, line
+    count and test, and the generated report lists it.'
+
+    Both records are listed, including the LATENT one whose file and line count
+    are null — GI-003 records a LATENT lead fix UNMEASURED, and a report that
+    dropped the row for want of a line count would hide exactly the fixes the
+    lane exists to permit."""
+    _generate(report_env)
+    section = _document(report_env)["lead_fix_records"]
+    assert section["count"] == 2
+    by_defect = {r["defect_id"]: r for r in section["records"]}
+    assert set(by_defect) == {"D-002", "D-003"}
+
+    live = by_defect["D-002"]
+    assert live["tier"] == "LIVE"
+    assert live["file"] == "src/foundry_mcp/tools/evidence.py"
+    assert live["line_count"] == 11
+    assert live["test"].startswith("tests/test_evidence.py::")
+    assert live["fix_commit"]
+
+    latent = by_defect["D-003"]
+    assert latent["tier"] == "LATENT"
+    assert latent["file"] is None and latent["line_count"] is None
+    assert latent["test"] and latent["fix_commit"]
+
+
+def test_the_lead_fix_event_token_is_read_from_vocab_not_typed(report_env):
+    """The falsifier for the test above. If the reader spelled `"lead_fix"`
+    itself rather than reading HANDOFF_EVENT_LEAD_FIX, renaming the token in
+    the ledger would leave the section silently empty instead of red — which is
+    the drift shape schemas/vocab.py exists to make unrepresentable."""
+    lines = (report_env / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for line in lines:
+        record = json.loads(line)
+        if record.get("event") == HANDOFF_EVENT_LEAD_FIX:
+            record["event"] = "NOT_THE_LEAD_FIX_TOKEN"
+        rewritten.append(json.dumps(record))
+    (report_env / "handoffs.jsonl").write_text(
+        "\n".join(rewritten) + "\n", encoding="utf-8"
+    )
+    _generate(report_env)
+    assert _document(report_env)["lead_fix_records"]["count"] == 0
+
+
+def test_inspect_modes_per_cycle_names_the_mode_and_the_rule(report_env):
+    """AC-036 verbatim: '... the FULL or DELTA decision per cycle ...'
+
+    The RULE travels with the mode. GI-009 puts the decision at the transition
+    that opens the INSPECT, so 'FULL' alone does not say whether the width came
+    from a phase entry, a verifier touch or the final gate — and those are
+    three different facts about the run."""
+    _generate(report_env)
+    section = _document(report_env)["inspect_modes_per_cycle"]
+    assert section["by_mode"] == {"DELTA": 2, "FULL": 3}
+    rules = {c: d["rule"] for c, d in section["per_cycle"].items()}
+    assert rules == {
+        "1": "first_of_phase",
+        "2": "delta",
+        "3": "delta",
+        "4": "verifier_touched",
+        "5": "final_gate",
+    }
+    assert section["per_cycle"]["5"]["phase"] == "F5"
+    assert section["per_cycle"]["5"]["decided_by"] == "temper"
+
+
+def test_spend_reports_tokens_and_minutes_and_no_money_at_all(report_env):
+    """NFR-002 verbatim: 'Avoids a second hand-kept price table (the house
+    anti-pattern). The report shows tokens and minutes per phase/cycle and the
+    run total.'
+
+    Two assertions, because the requirement has two halves. Minutes must be
+    THERE and derived (duration_ms / 60000), and money must be ABSENT — no
+    currency symbol, no rate column, no key whose name says cost. A dollar
+    figure would need a per-model rate table kept by hand in a second place,
+    which is the anti-pattern named."""
+    _generate(report_env)
+    section = _document(report_env)["spend_per_phase_and_cycle"]
+
+    assert section["total"]["tokens"] == 2_520_000
+    assert section["total"]["minutes"] == round(
+        section["total"]["duration_ms"] / 60_000.0, 2
+    )
+    assert section["by_phase"]["F2"]["tokens"] == 980_000
+    assert set(section["by_cycle"]) == {"0", "1", "2"}
+
+    money = re.compile(r"[$€£¥]|USD|\bcost\b|\bprice\b|\bdollar", re.I)
+    for bucket in (*section["by_phase"].values(), *section["by_cycle"].values(),
+                   section["total"]):
+        assert not money.search(json.dumps(bucket)), bucket
+    # And nowhere in either whole document either.
+    assert not money.search(json.dumps(_document(report_env)))
+    assert not money.search(_markdown(report_env))
+
+
+def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
+    """AC-034 verbatim: 'A dispatched agent with no spend record is shown as
+    unreported in Foundry-Next and the report, and no gate refuses on it.'
+
+    The 'no gate refuses' half is asserted structurally: generation succeeds
+    with unreported dispatches present, and `report_status` — the read the DONE
+    gate actually makes — reports the report complete. An unreported dispatch
+    is a gap in the MEASUREMENT, not a defect in the build."""
+    _generate(report_env)
+    section = _document(report_env)["unreported_dispatches"]
+
+    # casting-8 was dispatched in CAST and casting-5 in GRIND with no spend
+    # line; `test` and `research_audit` ran as F2 streams and reported none.
+    assert "casting-8" in section["by_phase"]["cast"]
+    assert "casting-5" in section["by_phase"]["grind"]
+    assert {"test", "research_audit"} <= set(section["by_phase"]["F2"])
+    # And the agents that DID report are not listed.
+    assert "casting-1" not in section["by_phase"].get("cast", [])
+    assert "prove" not in section["by_phase"].get("F2", [])
+
+    assert report_status(report_env)["present"] is True
+    assert report_status(report_env)["missing_sections"] == []
+
+
+def test_the_agent_id_spelling_agrees_with_the_spawn_doors(report_env):
+    """The pin on `foundry_report._agent_id_for_casting`'s deliberate copy.
+
+    It cannot IMPORT the original: `foundry_orchestrator` imports this module
+    and `foundry_spawn` imports `foundry_orchestrator`, so reaching for it
+    would close a cycle in the import graph. The copy is only safe while the
+    two spellings agree, and this is where that is checked — key a spawn row
+    `casting-3` in one and `teammate-3` in the other and every teammate is
+    reported unreported forever, because the ledger's ids match neither."""
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting as spawn_spelling
+
+    for casting_id in (1, 5, 42, "7", "wave-3"):
+        assert fr._agent_id_for_casting(casting_id) == spawn_spelling(casting_id)
+
+
+def test_executing_versions_names_the_server_that_ran(report_env):
+    """AC-036 verbatim: '... and the executing server and plugin version and
+    commit.' GI-004's audit trail lands in the report unchanged."""
+    _generate(report_env)
+    versions = _document(report_env)["executing_versions"]
+    state = _read_json(report_env, "state.json")
+    for field in ("server_version", "plugin_version", "server_root", "server_commit"):
+        assert versions[field] == state[field], field
+
+
+def test_baseline_comparison_reads_the_two_vocab_constants(report_env):
+    """AC-036's closing clause and NFR-001. The baseline is READ from vocab,
+    never re-derived: thunder-viper's archive has no roll-up, no inspect_modes
+    and a cycle counter that stayed at 0, so its 22 and 8 are not recoverable
+    from it. `measure-run.py` reads the same two constants, which is what makes
+    the CLI and this report incapable of disagreeing."""
+    _generate(report_env)
+    section = _document(report_env)["baseline_comparison"]
+    assert section["baseline"] == THUNDER_VIPER_BASELINE
+    assert section["target"] == CONVERGENCE_TARGET
+    assert section["current"]["run"] == "finer-boundary-run"
+    assert section["current"]["grind_cycles"] == 5
+
+
+def test_the_report_copies_the_baseline_dicts_rather_than_embedding_them(report_env):
+    """The two comparison dicts are plain dicts, not MappingProxyType, because
+    `report.json` is json.dumps'd wholesale and a mapping proxy is not
+    serializable (casting 1 logged that exception in concerns.md and asked
+    every consumer to copy). Embedding the module object would put a mutable
+    global into the document, so this asserts the copy."""
+    _generate(report_env)
+    doc = _document(report_env)
+    section = doc["baseline_comparison"]
+    section["baseline"]["grind_cycles"] = -1
+    assert THUNDER_VIPER_BASELINE["grind_cycles"] == 22, (
+        "the report handed out a reference to the module-level constant"
+    )
+    result = fr._baseline_comparison_section(report_env, {"per_cycle": {}}, {})
+    assert result["baseline"] is not THUNDER_VIPER_BASELINE
+    assert result["target"] is not CONVERGENCE_TARGET
+
+
+# --------------------------------------------------------------------------- #
+# ST-008 — the HALTED run's report.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_halted_run_report_names_every_open_live_and_latent_defect(report_env):
+    """C-14 / ST-008: 'the report names every open LIVE and LATENT defect' —
+    that is what makes the HALTED transition auditable.
+
+    Driven by re-opening a LIVE defect and halting the run, because on the
+    fixture as shipped every LIVE record is fixed and the assertion would be
+    vacuous. The ids are named in the cross-tab on EVERY run, halted or not,
+    which is why this needs no twelfth section."""
+    state = _read_json(report_env, "state.json")
+    state["phase"] = RUN_PHASE_HALTED
+    state["halted_at_cycle"] = 5
+    state["halted_reason"] = "max_cycles reached"
+    state["max_cycles"] = 5
+    _write_json(report_env, "state.json", state)
+
+    defects = _read_json(report_env, "defects.json")
+    for record in defects["defects"]:
+        if record["id"] == "D-006":
+            record["status"] = "open"
+            record["fixed_in_cycle"] = None
+    _write_json(report_env, "defects.json", defects)
+
+    _generate(report_env)
+    doc = _document(report_env)
+
+    assert doc["run"]["halted"] is True
+    assert doc["run"]["halted_at_cycle"] == 5
+    assert doc["run"]["halted_reason"] == "max_cycles reached"
+
+    cross = doc["defects_by_tier_and_status"]["cross_tab"]
+    assert cross["LIVE"]["open"]["ids"] == ["D-006"]
+    assert set(cross["LATENT"]["open"]["ids"]) == {"D-004", "D-005"}
+
+    md = _markdown(report_env)
+    for did in ("D-006", "D-004", "D-005"):
+        assert did in md, did
+
+
+# --------------------------------------------------------------------------- #
+# CT-014 / OT-025 — `report_status`, the read the DONE gate makes.
+# --------------------------------------------------------------------------- #
+
+
+def test_report_status_reports_absent_before_generation(report_env):
+    """OT-025 verbatim: 'Foundry-Phase done without a generated report is
+    refused naming the report; after Foundry-Report it succeeds and report.json
+    contains every named section.'
+
+    This casting owns `report_status`, which that refusal reads. Before
+    generation EVERY section is missing — the honest answer, since no section
+    can be shown to be there."""
+    status = report_status(report_env)
+    assert status["present"] is False
+    assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
+    assert REPORT_JSON_FILENAME in status["problem"]
+
+    _generate(report_env)
+    after = report_status(report_env)
+    assert after["present"] is True
+    assert after["missing_sections"] == []
+    assert after["generated_at"]
+
+
+def test_report_status_names_the_sections_that_were_removed(report_env):
+    """GI-006 verbatim: 'The lead may append prose but cannot omit a section;
+    `Foundry-Phase('done')` refuses if the report is absent.'
+
+    The omission half, driven: two sections deleted out of a generated
+    report.json are named back, so casting 3's refusal can say which."""
+    _generate(report_env)
+    doc = _document(report_env)
+    del doc["latent_backlog"]
+    del doc["lead_fix_records"]
+    _write_json(report_env, REPORT_JSON_FILENAME, doc)
+
+    status = report_status(report_env)
+    assert status["present"] is False
+    assert status["missing_sections"] == ["latent_backlog", "lead_fix_records"]
+
+
+def test_appended_prose_never_makes_a_section_look_missing(report_env):
+    """GI-006's first half: 'The lead may append prose.'
+
+    `report_status` reads the JSON, not the markdown, precisely so that
+    appending prose, rewording a heading or reflowing a table — all things the
+    lead is allowed to do — cannot make a present section look absent."""
+    _generate(report_env)
+    md_path = report_env / REPORT_MD_FILENAME
+    md_path.write_text(
+        md_path.read_text(encoding="utf-8")
+        + "\n## Lead's postscript\n\nThe cycle-4 verifier touch was mine.\n",
+        encoding="utf-8",
+    )
+    status = report_status(report_env)
+    assert status["present"] is True
+    assert status["missing_sections"] == []
+
+
+def test_report_status_on_a_corrupt_report_names_the_problem(report_env):
+    """A `report.json` that exists and will not decode is not the same as one
+    that was never generated, and the DONE refusal has to be able to say which.
+    Both report `present: False`; only this one carries a `problem`."""
+    (report_env / REPORT_JSON_FILENAME).write_bytes(b"\xff\xfe not json at all")
+    status = report_status(report_env)
+    assert status["present"] is False
+    assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
+    assert REPORT_JSON_FILENAME in status["problem"]
+    assert "could not be read" in status["problem"]
+
+
+# --------------------------------------------------------------------------- #
+# The refusal contract: absent is not unreadable.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    ["defects.json", "verdicts.json", "escalation.json", "state.json",
+     "handoffs.jsonl", SPEND_LEDGER_FILENAME, "spawns.log", "stream-rollup.json"],
+)
+def test_an_unreadable_ledger_is_a_named_refusal_never_a_raise(report_env, ledger):
+    """CT-014: `generate_report` 'refuses — never raises — naming the ledger it
+    could not read.'
+
+    Parametrized over every ledger the generator opens, because a guard added
+    to seven reads and not the eighth is the shape this class keeps recurring
+    as. Driven with real undecodable bytes rather than asserted from the
+    source: the property is 'does not raise', and only running it shows that."""
+    (report_env / ledger).write_bytes(b"\xff\xfe stray continuation \x80\x81\n")
+    result = generate_report(report_env.parent.parent, report_env)
+    assert result["ok"] is False, result
+    assert ledger in result["error"], result
+    assert "could not be read" in result["error"], result
+    assert result["hint"]
+    assert not (report_env / REPORT_JSON_FILENAME).exists(), (
+        "a report generated around a corrupt ledger would be worse than none: "
+        "it would look complete"
+    )
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    ["defects.json", "verdicts.json", "escalation.json", "handoffs.jsonl",
+     SPEND_LEDGER_FILENAME, "spawns.log", "stream-rollup.json"],
+)
+def test_an_absent_ledger_is_an_empty_section_not_a_refusal(report_env, ledger):
+    """The other half of the same distinction, and the reason it matters: a run
+    that never called Foundry-Spend has no spend.jsonl, and refusing its report
+    would make `Foundry-Phase('done')` structurally unreachable for it.
+
+    `state.json` is excluded because a run directory without one is not a run.
+    """
+    (report_env / ledger).unlink()
+    result = generate_report(report_env.parent.parent, report_env)
+    assert result["ok"] is True, result
+    assert report_status(report_env)["present"] is True
+
+
+def test_generate_report_refuses_a_run_directory_that_is_not_there(tmp_path):
+    """The precondition rung. A missing run directory is named, not created —
+    generating a report for a run that does not exist would invent one."""
+    missing = tmp_path / "foundry-archive" / "no-such-run"
+    result = generate_report(tmp_path, missing)
+    assert result["ok"] is False
+    assert str(missing) in result["error"]
+    assert result["hint"]
+
+
+def test_a_torn_final_line_costs_only_that_line(report_env):
+    """The JSONL discipline `foundry_state.read_jsonl` owns: these ledgers are
+    appended by many concurrent agents under an flock, so a torn final line is
+    an ordinary crash artifact. Failing the read over it would cost the other
+    four records, which is a strictly worse answer than reporting four of five.
+    """
+    path = report_env / SPEND_LEDGER_FILENAME
+    path.write_text(
+        path.read_text(encoding="utf-8") + '{"agent": "casting-9", "phase": "gr',
+        encoding="utf-8",
+    )
+    _generate(report_env)
+    assert _document(report_env)["spend_per_phase_and_cycle"]["records"] == 5
+
+
+# --------------------------------------------------------------------------- #
+# The import-graph contract this module's existence depends on.
+# --------------------------------------------------------------------------- #
+
+
+def test_foundry_report_imports_only_the_two_leaf_modules():
+    """`foundry_orchestrator` imports this module (the Foundry-Report tool and
+    the DONE transition both call into it) and `foundry_spawn` imports
+    `foundry_orchestrator`. An import of anything but `schemas.vocab` and
+    `tools.foundry_state` from here therefore risks closing a cycle in the
+    import graph — the same cycle `foundry_state`'s leaf-module contract exists
+    to keep open.
+
+    Asserted on the SOURCE rather than on `sys.modules`, because an import
+    inside a function body would be invisible to the latter and is exactly as
+    dangerous."""
+    import ast
+
+    source = Path(fr.__file__).read_text(encoding="utf-8")
+    reached: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            "foundry_mcp"
+        ):
+            reached.add(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("foundry_mcp"):
+                    reached.add(alias.name)
+    assert reached == {
+        "foundry_mcp.schemas.vocab",
+        "foundry_mcp.tools.foundry_state",
+    }, sorted(reached)
+
+
+def test_foundry_state_still_imports_nothing_from_its_own_package():
+    """`foundry_state` is the package's leaf module, imported by both
+    `foundry.py` and `foundry_orchestrator.py`, and its stated contract is
+    absolute: json and pathlib and nothing else, not even from its own package.
+
+    `read_jsonl` was added there by this casting, and this is the pin that the
+    addition held the contract — a reader that reached for a vocab constant
+    would close the cycle the whole module exists to keep open."""
+    import ast
+
+    from foundry_mcp.tools import foundry_state
+
+    source = Path(foundry_state.__file__).read_text(encoding="utf-8")
+    modules: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            modules.add(node.module or "")
+        elif isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+    assert modules == {"__future__", "json", "pathlib"}, sorted(modules)
+
+
+def test_read_jsonl_reports_undecodable_bytes_and_skips_torn_lines(tmp_path):
+    """The asymmetry `read_jsonl` documents, driven from both sides.
+
+    Bytes that will not DECODE are a problem naming the file — the file is
+    corrupt. A single LINE that will not parse is skipped — the ledger is
+    append-only from concurrent agents and a torn line must not cost the other
+    records. Conflating the two in either direction is the defect."""
+    from foundry_mcp.tools.foundry_state import read_jsonl
+
+    good = tmp_path / "ledger.jsonl"
+    good.write_text(
+        '{"a": 1}\n\n{"b": 2}\n"a bare string"\n{"c": 3\n{"d": 4}\n',
+        encoding="utf-8",
+    )
+    records, problem = read_jsonl(good)
+    assert problem is None
+    assert records == [{"a": 1}, {"b": 2}, {"d": 4}]
+
+    corrupt = tmp_path / "corrupt.jsonl"
+    corrupt.write_bytes(b"\xff\xfe\n")
+    records, problem = read_jsonl(corrupt)
+    assert records == []
+    assert problem is not None and "corrupt.jsonl" in problem
+
+    absent = tmp_path / "never-written.jsonl"
+    assert read_jsonl(absent) == ([], None)
+
+
+# --------------------------------------------------------------------------- #
+# The demonstration test whose captured stdout is committed as evidence.
+#
+# It is a REAL test — every line it prints is also asserted — so it cannot
+# drift from the behaviour it demonstrates the way a hand-written transcript
+# can. Run with `-s` to see the body; the committed log is exactly that body.
+#
+# Nothing environment-dependent is printed: no tmp path, no timestamp, no
+# duration. That is deliberate rather than incidental — the gate re-executes
+# this command in a detached worktree and byte-compares, so a path or a clock
+# reading in the output would be a redaction to declare rather than a fact to
+# report, and the facts here are all properties of the frozen fixture.
+# --------------------------------------------------------------------------- #
+
+
+def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
+    """AC-036 / FR-023 / GI-006 / CT-014 end to end, printed.
+
+    Also AC-002 (the report names the LATENT instances left), AC-004 (the
+    escalated class's status, exit reason, cleared cycle and packets), AC-022
+    (every lead_fix record), AC-034 (unreported dispatches, advisory), FR-051
+    (unknown-tier defects listed separately) and NFR-002 / NFR-003."""
+    with capsys.disabled():
+        _generate(report_env)
+        doc = _document(report_env)
+        md = _markdown(report_env)
+
+        print()
+        print("=== report.json top-level keys ===")
+        for key in doc:
+            print(f"  {key}")
+
+        print("=== REPORT.md headings, in REPORT_REQUIRED_SECTIONS order ===")
+        for heading in re.findall(r"^## (.+)$", md, re.M):
+            print(f"  ## {heading}")
+
+        print("=== defects by tier and status (FR-051: unknown is its own row) ===")
+        for tier in sorted(doc["defects_by_tier_and_status"]["cross_tab"]):
+            for status, bucket in sorted(
+                doc["defects_by_tier_and_status"]["cross_tab"][tier].items()
+            ):
+                print(f"  {tier:<7} {status:<10} {bucket['count']}  {bucket['ids']}")
+
+        print("=== LATENT backlog (NFR-003 / AC-002) ===")
+        for row in doc["latent_backlog"]["defects"]:
+            print(f"  {row['id']}  cycle {row['cycle']}  {row['class']}")
+
+        print("=== unknown-tier defects, listed separately (FR-051) ===")
+        for row in doc["unknown_tier_defects"]["defects"]:
+            print(f"  {row['id']}  status {row['status']}  {row['class']}")
+
+        print("=== escalated classes (AC-004) ===")
+        for row in doc["escalated_classes"]["classes"]:
+            print(
+                f"  {row['class']}  status={row['status']}  "
+                f"exit_reason={row['exit_reason']}  "
+                f"cleared_at_cycle={row['cleared_at_cycle']}  "
+                f"packets={row['structural_packets_dispatched']}  "
+                f"open_latent={row['open_latent_defect_ids']}"
+            )
+
+        print("=== lead_fix records (AC-022) ===")
+        for row in doc["lead_fix_records"]["records"]:
+            print(
+                f"  {row['defect_id']}  tier={row['tier']}  file={row['file']}  "
+                f"lines={row['line_count']}  test={row['test']}"
+            )
+
+        print("=== INSPECT mode per cycle (AC-036) ===")
+        for cycle, row in doc["inspect_modes_per_cycle"]["per_cycle"].items():
+            print(f"  cycle {cycle}  {row['phase']:<5} {row['mode']:<5} {row['rule']}")
+
+        print("=== spend: tokens and minutes only, no money (NFR-002) ===")
+        for phase, row in doc["spend_per_phase_and_cycle"]["by_phase"].items():
+            print(f"  phase {phase:<5} tokens={row['tokens']:<9} minutes={row['minutes']}")
+        total = doc["spend_per_phase_and_cycle"]["total"]
+        print(f"  run   total tokens={total['tokens']:<9} minutes={total['minutes']}")
+
+        print("=== unreported dispatches, advisory only (AC-034) ===")
+        for phase, agents in doc["unreported_dispatches"]["by_phase"].items():
+            print(f"  {phase:<6} {agents}")
+
+        print("=== baseline comparison (AC-036) ===")
+        bc = doc["baseline_comparison"]
+        print(f"  baseline {bc['baseline']['run']}: "
+              f"grind={bc['baseline']['grind_cycles']} "
+              f"post_verification={bc['baseline']['post_verification_cycles']}")
+        print(f"  target: grind={bc['target']['grind_cycles']} "
+              f"post_verification={bc['target']['post_verification_cycles']}")
+        print(f"  this run: grind={bc['current']['grind_cycles']} "
+              f"post_verification={bc['current']['post_verification_cycles']}")
+
+        print("=== report_status, the DONE gate's read (GI-006 / OT-025) ===")
+        status = report_status(report_env)
+        print(f"  present={status['present']}  missing_sections={status['missing_sections']}")
+
+    # Every printed line is also asserted, so the transcript cannot drift.
+    doc = _document(report_env)
+    assert list(doc)[2:] == list(REPORT_REQUIRED_SECTIONS)
+    assert [d["id"] for d in doc["latent_backlog"]["defects"]] == ["D-004", "D-005"]
+    assert [d["id"] for d in doc["unknown_tier_defects"]["defects"]] == ["D-007"]
+    assert doc["escalated_classes"]["classes"][0]["exit_reason"] == "budget"
+    assert doc["lead_fix_records"]["count"] == 2
+    assert doc["inspect_modes_per_cycle"]["by_mode"] == {"DELTA": 2, "FULL": 3}
+    assert doc["unreported_dispatches"]["count"] > 0
+    assert report_status(report_env)["present"] is True

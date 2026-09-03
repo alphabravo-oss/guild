@@ -26,6 +26,8 @@ import os
 import re
 import shlex
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2332,3 +2334,691 @@ def _verify_evidence_v21_body(
         "provenance_records": provenance_records,
         "manifest_updates": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# GI-002 / ST-005 / CT-007 — the GRIND-boundary evidence sweep.
+#
+# WHY THIS IS A NEW CALLER AND NOT A NEW ENGINE
+# ---------------------------------------------
+# `verify_evidence` above already knows how to re-execute a committed log in an
+# isolated checkout and decide whether the bytes still match: the redaction
+# ladder, the D-126 residue floor and the D-135 disagreement guard are all
+# reached through `_compare_byte_match`, and every one of them exists because a
+# specific forgery got past the shape that preceded it. A sweep that re-decided
+# any of that would be a SECOND opinion about what a byte-match is, and the two
+# would drift the first time one of them was hardened — which is the exact
+# failure class `schemas/vocab.py` exists to make unrepresentable one layer up.
+#
+# So the sweep reuses the ladder verbatim and owns only what is genuinely new:
+#
+#   * WHICH logs run (`select_sweep_scope` — delta by default, whole corpus
+#     when the FULL rule fired or the run is about to reach ASSAY, NYQUIST or
+#     DONE), and
+#   * WHERE they run (ONE detached worktree at HEAD of the shared tree, rather
+#     than per-casting worktrees at each casting's own commit).
+#
+# The second difference is the load-bearing one. Acceptance asks "did casting N
+# tell the truth at its own commit"; the sweep asks "does the whole committed
+# corpus still reproduce on the tree the run is about to INSPECT". A GRIND cycle
+# that quietly broke casting 3's evidence while fixing casting 7's defect is
+# invisible to the first question and is precisely what the second one catches.
+#
+# WHY THE SWEEP DOES NOT RE-RUN THE STUB LIBRARY
+# ----------------------------------------------
+# `_check_stub_patterns` is acceptance's step 6 and is deliberately NOT reached
+# here. It judges whether a COMMITTED LOG is a fabrication — too small, replayed
+# by a vacuous command, a bare `PASS`, a timestamp cluster — and that judgment
+# is a property of the log's own bytes, which have not changed since the
+# casting commit where acceptance already made it and passed it. Re-making it
+# at every GRIND boundary could only ever produce the same answer, and the one
+# case where it would NOT is the case where it is wrong: a log whose acceptance
+# passed being refused at cycle 9 for a reason that was true at cycle 1.
+#
+# What the sweep adds over acceptance is the TREE, not the log. Acceptance
+# asked whether the bytes reproduced at the casting's commit; the sweep asks
+# whether they still reproduce on the tree the next INSPECT will read.
+#
+# Neither function writes anything: no manifest append, no provenance record,
+# no state mutation. The refusal, the cycle counter and the `evidence_sweep`
+# roll-up all belong to the `inspect_start` transition that calls these.
+# ---------------------------------------------------------------------------
+
+#: The worktree directory prefix for a sweep, passed to `_setup_worktree`'s
+#: `dir_prefix`. Distinct from the Phase 4 `casting-` default so a sweep in
+#: flight and an acceptance in flight for casting N can never derive the same
+#: path — the D-111 claim would step one of them to a suffix, which is safe but
+#: costs a directory; a distinct prefix means the collision never arises.
+SWEEP_WORKTREE_PREFIX: str = "sweep-"
+
+# FR-031 / NFR-004 — the parallel pool ceiling, DERIVED, not decreed.
+#
+# Measured from the corpus this sweep actually runs. Every `# evidence-cmd:`
+# committed to `evidence/` in this repo is one of: a `uv run ... pytest`
+# invocation, a `python3 scripts/*.py` run, or a `grep`/`awk` pipeline. The
+# first kind dominates (9 of the 13 logs standing when this was written) and
+# each is a SINGLE CPU-bound interpreter process, so useful parallelism is
+# bounded by cores, not by I/O — past that point the workers only contend.
+#
+# The ceiling is 8 rather than "all cores" for two corpus-derived reasons.
+# First, each `uv run --with pytest` materialises its own environment and reads
+# the shared uv cache, so the peak is eight simultaneous interpreters plus
+# their imports, not eight bare `grep`s. Second, the sweep runs INSIDE the
+# `inspect_start` transition on the lead's own machine while nothing else is
+# scheduled to run, and leaving half a typical 16-core box free is what keeps
+# NFR-004 ("well inside the wall time of the INSPECT it precedes") true without
+# making the lead's session unresponsive for the duration.
+#
+# At the observed run scale (A-AUTO-002: ~85 agent spawns, so a corpus around
+# 40-50 logs by DONE) a full sweep is therefore ~6 waves of 8. A DELTA sweep is
+# usually one wave or none at all, which is the point of DELTA.
+SWEEP_POOL_CEILING: int = 8
+
+
+def _sweep_relative_log_name(log: Path, project_root: Path) -> str:
+    """The repo-relative spelling of a log, for the result and the refusal.
+
+    A mismatch record names the log the lead has to go and look at, so it is
+    reported the way the lead types it: `evidence/casting-3-login.log`, never
+    an absolute path through someone's tmpdir and never a bare basename that
+    two directories could both claim. Falls back to the absolute path when the
+    log genuinely sits outside the tree, which is a caller error worth seeing
+    rather than hiding behind a prettier string.
+    """
+    try:
+        return str(log.resolve().relative_to(project_root.resolve()))
+    except (ValueError, OSError):
+        return str(log)
+
+
+def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
+    """Map each requirement ID to the casting ids whose `spec_text` cites it.
+
+    This is the SECOND source for keying a log to a casting, and it exists
+    because the first one is a filename convention. `# evidence-for:` names
+    REQUIREMENTS, not castings, so resolving it needs the manifest: a casting's
+    `spec_text` is the verbatim `<spec_requirements>` block its prompt carried,
+    and the IDs in it are exactly the IDs that casting is answerable for.
+
+    Both sources are used, unioned, because either alone loses logs. A log
+    named off-convention has no filename key; a log with no `# evidence-for:`
+    header has no requirement key. A log with neither is not silently dropped —
+    it simply falls through to the command-reference test in
+    `select_sweep_scope`, and is back in scope the moment `full=True`.
+
+    Reads the requirement grammar from `_REQUIREMENT_ID_RE`, which is
+    `vocab.REQUIREMENT_ID_RE` (D-150) — never a re-typed pattern, because a
+    seventh copy of that regex is how OT- and GI- IDs became invisible last
+    time.
+    """
+    mapping: dict[str, set[str]] = {}
+    castings = manifest.get("castings")
+    if not isinstance(castings, list):
+        return mapping
+    for entry in castings:
+        if not isinstance(entry, dict):
+            continue
+        casting_id = entry.get("id")
+        if casting_id is None:
+            continue
+        spec_text = entry.get("spec_text")
+        if not isinstance(spec_text, str):
+            continue
+        for req_id in _REQUIREMENT_ID_RE.findall(spec_text):
+            mapping.setdefault(req_id, set()).add(str(casting_id))
+    return mapping
+
+
+def _sweep_touched_castings(manifest: dict, touched: list[str]) -> set[str]:
+    """The casting ids whose `key_files` intersect the GRIND diff (GI-002).
+
+    A `key_files` entry is either a file path or a DIRECTORY, spelled with a
+    trailing slash — casting 5's own manifest entry carries
+    `tests/fixtures/escalation/finer_boundary_run/`, and a diff touching a file
+    inside it must count as touching that casting. Comparing the two as bare
+    strings would miss every directory entry, so a trailing-slash entry is
+    matched as a path PREFIX and everything else exactly.
+
+    Paths are compared with forward slashes and no leading `./`, which is how
+    both `git diff --name-only` and the manifest spell them.
+    """
+    def _norm(raw: object) -> str:
+        text = str(raw).replace("\\", "/").strip()
+        while text.startswith("./"):
+            text = text[2:]
+        return text
+
+    touched_norm = {_norm(t) for t in touched if str(t).strip()}
+    hits: set[str] = set()
+    castings = manifest.get("castings")
+    if not isinstance(castings, list):
+        return hits
+    for entry in castings:
+        if not isinstance(entry, dict):
+            continue
+        casting_id = entry.get("id")
+        key_files = entry.get("key_files")
+        if casting_id is None or not isinstance(key_files, list):
+            continue
+        for key_file in key_files:
+            key = _norm(key_file)
+            if not key:
+                continue
+            if key.endswith("/"):
+                if any(t.startswith(key) for t in touched_norm):
+                    hits.add(str(casting_id))
+                    break
+            elif key in touched_norm:
+                hits.add(str(casting_id))
+                break
+    return hits
+
+
+def _sweep_command_references(cmd: str, touched: list[str]) -> bool:
+    """Does this `# evidence-cmd:` reference a file the GRIND diff touched?
+
+    GI-002's second delta arm. The test errs deliberately toward INCLUSION,
+    and the asymmetry is the whole point: a log swept that need not have been
+    costs seconds, while a log NOT swept that should have been is a broken
+    evidence artifact carried silently past the boundary that exists to catch
+    it. When the two errors are that unequal, the loose test is the correct
+    one.
+
+    Matching is on any trailing path-suffix of the touched file, down to the
+    bare basename, because commands do not spell paths the way the diff does:
+    the committed corpus is full of `cd plugins/foundry/mcp-server && ... pytest
+    tests/test_vocab.py`, where the diff says
+    `plugins/foundry/mcp-server/tests/test_vocab.py` and the command says
+    `tests/test_vocab.py`. Requiring the full repo-relative spelling would
+    match none of them.
+
+    A suffix must begin at a path boundary in the command text — start of
+    string, or a character that is not a path character — so `vocab.py` does
+    not match `myvocab.py` and `evidence.py` does not match `test_evidence.py`.
+    """
+    if not cmd:
+        return False
+    for raw in touched:
+        path = str(raw).replace("\\", "/").strip()
+        while path.startswith("./"):
+            path = path[2:]
+        if not path:
+            continue
+        segments = [seg for seg in path.split("/") if seg]
+        # Longest suffix first is only an ordering nicety — any hit is a hit.
+        for start in range(len(segments)):
+            suffix = "/".join(segments[start:])
+            for index in _iter_substring_starts(cmd, suffix):
+                before = cmd[index - 1] if index else ""
+                if before not in _SWEEP_PATH_CHARS:
+                    return True
+    return False
+
+
+#: Characters that may appear immediately before a path without ending it. A
+#: suffix preceded by one of these is the tail of a LONGER path, not a
+#: reference to this file, which is what keeps `test_evidence.py` from
+#: matching a diff that touched `evidence.py`.
+_SWEEP_PATH_CHARS: frozenset[str] = frozenset("abcdefghijklmnopqrstuvwxyz"
+                                              "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                              "0123456789_-.")
+
+
+def _iter_substring_starts(haystack: str, needle: str):
+    """Yield every start index of ``needle`` in ``haystack``. Never raises."""
+    if not needle:
+        return
+    start = haystack.find(needle)
+    while start != -1:
+        yield start
+        start = haystack.find(needle, start + 1)
+
+
+def select_sweep_scope(
+    *,
+    manifest: dict,
+    evidence_dir: Path,
+    touched_files: list[str],
+    full: bool,
+) -> list[Path]:
+    """The evidence logs this boundary must re-execute (GI-002 / AC-014).
+
+    Args:
+        manifest: the run's `castings/manifest.json` as a dict. Read for each
+            casting's `key_files` (the delta intersection) and `spec_text`
+            (the requirement-ID -> casting resolution). An empty or malformed
+            manifest degrades to "no casting can be keyed", never raises.
+        evidence_dir: the directory holding the committed corpus — repo-root
+            `evidence/`, the same directory `verify_evidence` globs inside the
+            casting's worktree.
+        touched_files: repo-relative paths from the GRIND diff since the last
+            sweep. Ignored entirely when `full` is True.
+        full: the FULL-rule outcome the calling transition already computed.
+            GI-009 is emphatic that the decision lives at the transition and
+            nowhere else, so this function is told the answer and never
+            re-derives it.
+
+    Returns:
+        A sorted list of absolute log paths. Sorted because a sweep result is
+        read by a human comparing two cycles, and a set's iteration order would
+        make two identical sweeps look different.
+
+    `full=True` returns EVERY committed log. `full=False` returns every log
+    whose casting's `key_files` intersect `touched_files`, plus every log whose
+    `# evidence-cmd:` references a touched file — and an empty list when
+    neither holds, which is AC-014's "re-executes zero logs" and is a correct
+    answer, not a degenerate one.
+
+    A log is keyed to its casting by BOTH the `casting-{id}-*.log` filename
+    convention and the casting its `# evidence-for:` header resolves to; see
+    `_sweep_requirement_to_castings` for why one source is not enough. A log
+    that cannot be keyed by either is not dropped silently — its only delta
+    test is the command-reference arm, and `full=True` sweeps it regardless.
+    """
+    try:
+        candidates = sorted(p for p in evidence_dir.glob("*.log") if p.is_file())
+    except OSError:
+        # An unreadable evidence directory is not this function's refusal to
+        # make: it returns nothing, and the caller's own sweep reports a corpus
+        # of zero rather than a traceback across the MCP boundary.
+        return []
+    if full:
+        return candidates
+
+    touched = [str(t) for t in (touched_files or []) if str(t).strip()]
+    if not touched:
+        return []
+
+    touched_castings = _sweep_touched_castings(manifest, touched)
+    req_to_castings = _sweep_requirement_to_castings(manifest)
+
+    selected: list[Path] = []
+    for log in candidates:
+        keyed: set[str] = set()
+        name_match = re.match(r"^casting-([^-]+)-", log.name)
+        if name_match:
+            keyed.add(name_match.group(1))
+        header: dict[str, Any] = {"cmd": None, "evidence_for": []}
+        try:
+            header = _parse_evidence_header(
+                log.read_text(encoding="utf-8", errors="replace")
+            )
+        except (OSError, ValueError):
+            # A log whose header will not parse is still a log. It cannot be
+            # keyed by requirement and its command cannot be read, so it falls
+            # out of the DELTA scope — and a FULL sweep will re-execute it and
+            # surface the malformed header as the mismatch it is.
+            pass
+        for req_id in header.get("evidence_for") or []:
+            keyed |= req_to_castings.get(req_id, set())
+        if keyed & touched_castings:
+            selected.append(log)
+            continue
+        if _sweep_command_references(header.get("cmd") or "", touched):
+            selected.append(log)
+    return selected
+
+
+def _derive_sweep_pool_size(logs: list[Path], override: int | None) -> int:
+    """FR-031 — the worker count, derived from the corpus about to be swept.
+
+    Never more workers than there is work (`len(logs)`), never more than the
+    machine can actually run in parallel (`os.cpu_count()`), and never past
+    `SWEEP_POOL_CEILING`, whose derivation from the committed corpus is stated
+    at its definition. An explicit `override` from the caller wins, clamped to
+    at least one, because a lead debugging a flaky log wants to force
+    serialisation and a pool of zero would simply hang.
+    """
+    if override is not None:
+        return max(1, int(override))
+    if not logs:
+        return 0
+    return max(1, min(len(logs), os.cpu_count() or 1, SWEEP_POOL_CEILING))
+
+
+def _sweep_log_timeout(header: dict[str, Any], override: float | None) -> int:
+    """FR-031 — the per-log timeout, taken from the log's own measurement.
+
+    A `# evidence-timeout:` header is the artifact author's own statement about
+    how long their command needs, already validated by `_parse_evidence_header`
+    against `EVIDENCE_TIMEOUT_CEILING_SECONDS`. Honouring it is what keeps the
+    sweep and acceptance agreeing about the same log: `_verify_one_evidence_file`
+    reads exactly this value, and a sweep that imposed its own would kill a
+    300-second integration log that acceptance had already passed.
+
+    Undeclared falls back to `EVIDENCE_TIMEOUT_DEFAULT_SECONDS`, the same
+    default acceptance uses. A caller-supplied `override` wins for every log,
+    which is the knob a lead uses to bound a whole sweep.
+    """
+    if override is not None:
+        return max(1, int(override))
+    declared = header.get("timeout")
+    if isinstance(declared, int) and declared > 0:
+        return declared
+    return EVIDENCE_TIMEOUT_DEFAULT_SECONDS
+
+
+def _sweep_mismatch(
+    *,
+    log_name: str,
+    reason: str,
+    failure_token: str,
+    redacted_log: str | None = None,
+    redacted_captured: str | None = None,
+    exit_code: int | None = None,
+    elapsed_seconds: float = 0.0,
+) -> dict[str, Any]:
+    """One mismatch record, carrying BOTH vocabularies for the same two hashes.
+
+    C-7 names the fields `expected_sha256` / `actual_sha256`; the provenance
+    records `_make_provenance_record` writes name the same two values
+    `redacted_log_sha256` / `redacted_captured_sha256`. A reader that arrives
+    from either direction — a lead reading a sweep refusal, or a tool
+    correlating that refusal against the casting's accepted provenance — must
+    find the value under the spelling it knows, so both are carried and the
+    hash is computed ONCE per side and assigned to both names.
+
+    The four hash fields are `None`, not the hash of the empty string, on every
+    path where redaction never ran (a timeout, a non-zero exit, a header that
+    would not parse). `_hash_str("")` is a real, stable, meaningless value, and
+    publishing it would let a reader compare two logs that were never compared
+    and find them equal.
+    """
+    expected = None if redacted_log is None else _hash_str(redacted_log)
+    actual = None if redacted_captured is None else _hash_str(redacted_captured)
+    return {
+        "log": log_name,
+        "reason": reason,
+        "failure_token": failure_token,
+        "expected_sha256": expected,
+        "actual_sha256": actual,
+        "redacted_log_sha256": expected,
+        "redacted_captured_sha256": actual,
+        "exit_code": exit_code,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+    }
+
+
+def _sweep_one_log(
+    log: Path,
+    *,
+    project_root: Path,
+    worktree_path: Path,
+    timeout_seconds: float | None,
+) -> tuple[str, dict[str, Any] | None]:
+    """Re-execute ONE log at HEAD. Returns ``(log_name, mismatch_or_None)``.
+
+    Runs on a pool worker, so it NEVER raises: an exception here would surface
+    at `future.result()` in the collector and take the whole sweep — and with
+    it the `inspect_start` transition — down with a traceback naming no log.
+    Every failure becomes a named mismatch instead, which is the same rule
+    `_verify_one_evidence_file` holds one layer down.
+
+    The committed bytes are read from INSIDE the worktree, not from the working
+    tree. That is ST-005's "byte-identical at HEAD" taken literally: a log the
+    lead edited but did not commit is not the corpus, and comparing a working-
+    tree log against a HEAD re-execution would report a mismatch that says
+    nothing about whether the committed evidence still reproduces.
+    """
+    log_name = _sweep_relative_log_name(log, project_root)
+    try:
+        try:
+            relative = log.resolve().relative_to(project_root.resolve())
+        except (ValueError, OSError):
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=(
+                    f"{log_name} is not inside the swept tree, so it has no "
+                    f"counterpart at HEAD"
+                ),
+                failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+        head_log = worktree_path / relative
+        if not head_log.is_file():
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=(
+                    f"{log_name} is not committed at HEAD; the sweep compares "
+                    f"the COMMITTED corpus, so an uncommitted log has nothing "
+                    f"to re-execute against"
+                ),
+                failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+
+        log_text = head_log.read_text(encoding="utf-8", errors="replace")
+        try:
+            header = _parse_evidence_header(log_text)
+        except ValueError as exc:
+            msg = str(exc)
+            token = (
+                "EVIDENCE_FOR_MALFORMED"
+                if msg.startswith("EVIDENCE_FOR_MALFORMED")
+                else "EVIDENCE_VOLATILE_MALFORMED"
+            )
+            return log_name, _sweep_mismatch(
+                log_name=log_name, reason=msg, failure_token=token
+            )
+
+        cmd = header.get("cmd")
+        if cmd is None:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=f"no `# evidence-cmd:` header in {log.name}",
+                failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+
+        timeout = _sweep_log_timeout(header, timeout_seconds)
+        exit_code, captured, elapsed = _run_command_with_timeout(
+            cmd=cmd, cwd=worktree_path, timeout=timeout
+        )
+        if exit_code == -1:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=f"command exceeded {timeout}s; killed via SIGTERM/SIGKILL",
+                failure_token="EVIDENCE_TIMEOUT",
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+        if exit_code != 0:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=f"command exited with code {exit_code}",
+                failure_token="EVIDENCE_EXIT_NONZERO",
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+
+        try:
+            matched, diff, redacted_log, redacted_captured = _compare_byte_match(
+                committed=_strip_leading_header_block(log_text),
+                captured=_strip_leading_header_block(captured),
+                volatile_patterns=header.get("volatile", []),
+            )
+        except ValueError as exc:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=str(exc),
+                failure_token="EVIDENCE_VOLATILE_MALFORMED",
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+        if not matched:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=diff or "re-execution output differs from the committed log",
+                failure_token="EVIDENCE_OUTPUT_MISMATCH",
+                redacted_log=redacted_log,
+                redacted_captured=redacted_captured,
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+        return log_name, None
+    except BaseException as exc:  # noqa: BLE001 — see the docstring
+        return log_name, _sweep_mismatch(
+            log_name=log_name,
+            reason=f"sweep worker failed: {type(exc).__name__}: {exc}",
+            failure_token="EVIDENCE_COMMAND_MISSING",
+        )
+
+
+def sweep_evidence_at_head(
+    *,
+    project_root: Path,
+    run_dir: Path,
+    logs: list[Path],
+    pool_size: int | None = None,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Re-execute the in-scope corpus at HEAD (GI-002 / ST-005 / CT-007).
+
+    ONE detached worktree at HEAD of ``project_root`` for the whole sweep, torn
+    down on the success path and on every failure path. Each log's
+    ``# evidence-cmd:`` runs inside it in a bounded thread pool, and each
+    capture goes through the SAME comparison `verify_evidence` uses —
+    `_compare_byte_match`, with the same declared-volatile redaction, the same
+    D-126 residue floor and the same D-135 disagreement guard. None of those
+    rules is re-decided here.
+
+    Args:
+        project_root: the shared tree the run is building in. HEAD of THIS repo
+            is what the sweep checks out — not any casting's own commit, which
+            is acceptance's question and a different one.
+        run_dir: the run directory; the worktree is created beneath it, exactly
+            as acceptance's is.
+        logs: what `select_sweep_scope` returned. An empty list is a complete
+            answer: zero logs re-executed, no worktree created, no subprocess
+            spawned (AC-014).
+        pool_size: optional worker-count override; otherwise derived from the
+            corpus by `_derive_sweep_pool_size`.
+        timeout_seconds: optional per-log timeout override; otherwise each log's
+            own `# evidence-timeout:` is honoured, falling back to
+            `EVIDENCE_TIMEOUT_DEFAULT_SECONDS`.
+
+    Returns:
+        ``{'ok': bool, 'scope_count': int, 'logs_reexecuted': [str],
+        'mismatches': [{'log', 'reason', 'expected_sha256', 'actual_sha256',
+        'redacted_log_sha256', 'redacted_captured_sha256', 'failure_token',
+        'exit_code', 'elapsed_seconds'}], 'elapsed_seconds': float,
+        'pool_size': int, 'head_commit': str | None, 'error': str | None}``.
+
+    ``ok`` is False when any log mismatched OR when the sweep could not run at
+    all (no HEAD to resolve, no worktree to create). ``error`` is non-None only
+    in that second case, and the caller must name it in the refusal — a sweep
+    that could not run is emphatically not a sweep that passed, and returning
+    ``ok: True`` with an empty mismatch list is the shape that would let a
+    broken sweep quietly clear the boundary it exists to hold.
+
+    Never raises. The `inspect_start` transition owns the refusal, the cycle
+    counter and the `evidence_sweep` roll-up record; this function writes
+    nothing and decides nothing about the run.
+    """
+    started = time.monotonic()
+    scope_count = len(logs)
+    result: dict[str, Any] = {
+        "ok": True,
+        "scope_count": scope_count,
+        "logs_reexecuted": [],
+        "mismatches": [],
+        "elapsed_seconds": 0.0,
+        "pool_size": _derive_sweep_pool_size(logs, pool_size),
+        "head_commit": None,
+        "error": None,
+    }
+    if not logs:
+        # AC-014's zero-log case, and the reason it is handled BEFORE anything
+        # else: a DELTA sweep whose GRIND touched nothing in scope must cost no
+        # worktree, no `.git/config.lock` contention and no subprocess at all.
+        # Creating a worktree and immediately tearing it down would be the same
+        # answer at a cost NFR-004 exists to avoid.
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        return result
+
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        result["ok"] = False
+        result["error"] = (
+            f"could not resolve HEAD of {project_root}: {type(exc).__name__}: {exc}"
+        )
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        return result
+    if head.returncode != 0 or not head.stdout.strip():
+        result["ok"] = False
+        result["error"] = (
+            f"could not resolve HEAD of {project_root}: "
+            f"{head.stderr.strip() or 'git rev-parse HEAD produced no output'}"
+        )
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        return result
+    head_commit = head.stdout.strip()
+    result["head_commit"] = head_commit
+
+    try:
+        _prune_orphaned_worktrees(project_root)
+    except (subprocess.SubprocessError, OSError):
+        # D-116, same reasoning as the acceptance path: housekeeping must never
+        # decide a verdict. If it matters, `_setup_worktree` fails next.
+        pass
+
+    worktree_path: Path | None = None
+    try:
+        try:
+            worktree_path = _setup_worktree(
+                project_root,
+                "evidence",
+                head_commit,
+                run_dir,
+                dir_prefix=SWEEP_WORKTREE_PREFIX,
+            )
+        except (RuntimeError, subprocess.SubprocessError, OSError) as exc:
+            result["ok"] = False
+            result["error"] = (
+                f"could not create the sweep worktree at HEAD "
+                f"{head_commit[:12]}: {type(exc).__name__}: {exc}"
+            )
+            result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+            return result
+
+        pool = result["pool_size"]
+        executed: list[str] = []
+        mismatches: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=pool) as executor:
+            for log_name, mismatch in executor.map(
+                lambda log: _sweep_one_log(
+                    log,
+                    project_root=project_root,
+                    worktree_path=worktree_path,
+                    timeout_seconds=timeout_seconds,
+                ),
+                logs,
+            ):
+                executed.append(log_name)
+                if mismatch is not None:
+                    mismatches.append(mismatch)
+        # `executor.map` preserves the INPUT order regardless of completion
+        # order, so two sweeps over the same scope report the same list. A lead
+        # diffing cycle N against cycle N-1 needs that; `as_completed` would
+        # make an unchanged sweep look reshuffled every time.
+        result["logs_reexecuted"] = executed
+        result["mismatches"] = mismatches
+        result["ok"] = not mismatches
+    finally:
+        if worktree_path is not None and worktree_path.exists():
+            try:
+                _teardown_worktree(project_root, worktree_path)
+            except (subprocess.SubprocessError, OSError):
+                # D-116: an exception in a `finally` REPLACES the result the
+                # body computed. A slow git during cleanup must not discard a
+                # sweep that already ran; the worst case is a stale directory
+                # the next prune removes.
+                pass
+
+    result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    return result

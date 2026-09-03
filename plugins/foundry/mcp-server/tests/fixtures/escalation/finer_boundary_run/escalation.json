@@ -1,0 +1,29 @@
+{
+  "classes": {
+    "FALSE_DOCUMENTED_CONTRACT": {
+      "proposal": "One structural pass over every docstring in evidence.py and foundry_report.py that states a contract, checked against the handler beneath it.",
+      "escalated_at_cycle": 3,
+      "consecutive_cycles": 3,
+      "defect_ids": [
+        "D-001",
+        "D-002",
+        "D-003"
+      ],
+      "recorded_at": "2026-09-02T06:00:00+00:00",
+      "status": "CLEARED",
+      "exit_reason": "budget",
+      "cleared_at_cycle": 4,
+      "structural_packets_dispatched": 2,
+      "structural_packet_cycles": [
+        3,
+        4
+      ],
+      "live_clean_cycles": 1,
+      "open_latent_defect_ids": [
+        "D-004",
+        "D-005"
+      ]
+    }
+  },
+  "updated_at": "2026-09-02T09:30:00+00:00"
+}

@@ -124,6 +124,57 @@ def read_document(path: Path) -> tuple[dict, str | None]:
     return value, None
 
 
+def read_jsonl(path: Path) -> tuple[list[dict], str | None]:
+    """Read an append-only JSONL ledger. Returns ``(records, problem)``; never raises.
+
+    The third rung of the same ladder, for the run artifacts that are NOT one
+    document: ``handoffs.jsonl``, ``spend.jsonl``, ``spawns.log``. It exists
+    here rather than in each reader for the reason the module comment gives —
+    the raise set of a read is decided ONCE — and because three separate
+    line-loops had already grown three separate opinions about what a torn
+    line means (``foundry_spawn._latest_teammate_dispatches`` skips it,
+    ``measure-run._read_spend`` skips it, and the report generator would have
+    been the third to re-decide).
+
+    THE ASYMMETRY IS DELIBERATE, and it is the whole reason this is not just
+    ``read_text_file`` plus ``json.loads`` at each call site:
+
+      * bytes that will not DECODE are a PROBLEM. The file is corrupt, the
+        caller names it, and nothing is guessed at — same rule as every reader
+        above.
+      * a single LINE that will not parse is SKIPPED, silently. These ledgers
+        are appended by many concurrent agents under an ``flock``, so a torn
+        final line is an ordinary crash artifact; failing the read over it
+        would cost the other eighty-four records, which is a strictly worse
+        answer than reporting eighty-four of eighty-five.
+
+    A line that parses to something other than an object is skipped on the
+    same grounds: every ledger record in this protocol is a mapping, and a
+    bare string on line 40 is the same class of debris as a torn one.
+
+    ``records`` is ``[]`` whenever there is a problem, so a caller that
+    degrades rather than refuses can ignore the second element entirely — the
+    same shape ``read_document`` holds. An ABSENT ledger is not a problem: a
+    run legitimately has ledgers no agent has written to yet, and conflating
+    "nobody spent anything" with "the spend ledger is corrupt" is exactly the
+    confusion the report's refusal rule turns on.
+    """
+    raw, problem = read_text_file(path)
+    if problem is not None:
+        return [], problem
+    records: list[dict] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records, None
+
+
 def document_refusal(path: Path, problem: str) -> dict:
     """The house named refusal for an unreadable document, shaped ONCE.
 

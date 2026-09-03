@@ -1,0 +1,59 @@
+{
+  "cycle": 5,
+  "requirements": [
+    {
+      "id": "GI-002",
+      "verdict": "VERIFIED",
+      "evidence": "The sweep runs at the inspect_start transition and refuses on mismatch; driven with a corrupted log at cycle 4.",
+      "spec_text_cited": "The SERVER sweeps at the boundary and refuses on mismatch.",
+      "code_location": "src/foundry_mcp/tools/evidence.py#sweep_evidence_at_head",
+      "cycle": 4,
+      "recorded_at": "2026-09-02T07:50:00+00:00"
+    },
+    {
+      "id": "ST-005",
+      "verdict": "VERIFIED",
+      "evidence": "Re-execution happens in a detached worktree at HEAD; the refusal names the log and the cycle counter is unchanged.",
+      "spec_text_cited": "every evidence log in the sweep scope re-executes byte-identical at HEAD in a detached worktree",
+      "code_location": "src/foundry_mcp/tools/evidence.py#_sweep_one_log",
+      "cycle": 4,
+      "recorded_at": "2026-09-02T07:51:00+00:00"
+    },
+    {
+      "id": "CT-007",
+      "verdict": "VERIFIED",
+      "evidence": "Sweep result recorded per log with scope and elapsed seconds.",
+      "spec_text_cited": "sweep result recorded per log with scope (delta or full) and elapsed seconds",
+      "code_location": "src/foundry_mcp/tools/evidence.py#sweep_evidence_at_head",
+      "cycle": 5,
+      "recorded_at": "2026-09-02T08:40:00+00:00"
+    },
+    {
+      "id": "CT-014",
+      "verdict": "VERIFIED",
+      "evidence": "Foundry-Report writes both documents with all eleven sections.",
+      "spec_text_cited": "REPORT.md and report.json with every required section",
+      "code_location": "src/foundry_mcp/tools/foundry_report.py#generate_report",
+      "cycle": 5,
+      "recorded_at": "2026-09-02T08:41:00+00:00"
+    },
+    {
+      "id": "AC-036",
+      "verdict": "THIN",
+      "evidence": "Every section is present, but the baseline comparison row for post-verification cycles reads from inspect_modes only.",
+      "spec_text_cited": "the FULL or DELTA decision per cycle, tokens and minutes per phase and per cycle",
+      "code_location": "src/foundry_mcp/tools/foundry_report.py#_baseline_comparison_section",
+      "cycle": 5,
+      "recorded_at": "2026-09-02T08:42:00+00:00"
+    },
+    {
+      "id": "AC-004",
+      "verdict": "VERIFIED",
+      "evidence": "escalation.json carries status, exit reason, cleared cycle and packets consumed for the escalated class.",
+      "spec_text_cited": "escalation.json records for the class a status, the exit reason, the cycle it cleared and the structural packets it consumed",
+      "code_location": "src/foundry_mcp/tools/foundry_orchestrator.py#_record_escalation",
+      "cycle": 4,
+      "recorded_at": "2026-09-02T07:52:00+00:00"
+    }
+  ]
+}

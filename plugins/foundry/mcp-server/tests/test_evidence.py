@@ -1008,9 +1008,21 @@ def test_accept_casting_surfaces_a_v20_stream_skip_to_the_lead(tmp_path):
     assert result["evidence_stream_skips"][0]["reason"] == "spec_format_version"
 
 
-def test_accept_casting_without_a_commit_reports_no_spec_path(tmp_path):
-    """No-regression — the casting_commit=None backwards-compat shim still
-    bypasses evidence verification entirely."""
+def test_accept_casting_without_a_commit_is_refused_naming_casting_commit(tmp_path):
+    """CT-015 / AC-015 / FR-010 / OT-027 verbatim: 'Foundry-Accept-Casting
+    (casting_commit required) ... refusal naming casting_commit when omitted.'
+
+    THIS TEST'S SUBJECT CHANGED, AND THE ASSERTION GOT STRONGER, NOT WEAKER.
+    It used to pin the `casting_commit=None` backwards-compat shim, which
+    returned `ok: True` with `evidence_verdict: None` — acceptance granted with
+    evidence verification structurally bypassed. That shim is exactly what this
+    effort retires: a casting that cannot name its commit has not been shown to
+    have built anything, so the same call is now a REFUSAL and the refusal is
+    the requirement.
+
+    Kept rather than deleted, and re-pointed rather than relaxed, because the
+    call it drives is the one a lead makes by accident and the answer to it is
+    the whole point of making the parameter required."""
     from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
@@ -1026,9 +1038,15 @@ def test_accept_casting_without_a_commit_reports_no_spec_path(tmp_path):
     finally:
         clear_active_run()
 
-    assert result["evidence_verdict"] is None
-    assert result["evidence_spec_path"] is None
-    assert result["ok"] is True, result["warning"]
+    assert result["ok"] is False, result
+    # The refusal NAMES the missing parameter, in both the machine field and
+    # the prose — a lead who reads either one learns what to pass.
+    assert result["field"] == "casting_commit", result
+    assert "casting_commit" in result["error"], result
+    assert result["hint"], result
+    # And it refuses BEFORE any verification could have happened, so there is
+    # no verdict to report rather than a `None` verdict standing in for one.
+    assert "evidence_verdict" not in result, result
 
 
 def test_verify_evidence_reports_which_spec_drove_the_routing(tmp_path):
@@ -3554,8 +3572,13 @@ def test_the_dispatched_evidence_path_emits_nothing_on_stdout(tmp_path, capsys):
 def test_the_adjacent_dispatch_paths_also_emit_nothing_on_stdout(tmp_path, capsys):
     """The NAMED adjacent paths for D-149.
 
-    Adjacent path 1 — the SAME handler WITHOUT ``casting_commit``, which skips
-    the evidence block entirely and returns through a different branch.
+    Adjacent path 1 — the SAME handler WITHOUT ``casting_commit``, which never
+    reaches the evidence block and returns through a different branch. That
+    branch used to be the backwards-compat shim's `ok: True`; since CT-015 made
+    the parameter required it is the named refusal. Either way it is a
+    DIFFERENT return path than the accepting one above, which is the property
+    this adjacent path was chosen for, so the path still covers what it was
+    written to cover.
 
     Adjacent path 2 — a DIFFERENT tool through the same dispatch table
     (``Foundry-Context``), so the guarantee is shown to be a property of the
@@ -3586,8 +3609,14 @@ def test_the_adjacent_dispatch_paths_also_emit_nothing_on_stdout(tmp_path, capsy
     assert captured.out == "", (
         f"an adjacent dispatch path wrote {captured.out!r} to stdout"
     )
-    assert no_commit["evidence_verdict"] is None, no_commit
-    assert no_commit["evidence_tally"] is None, no_commit
+    # Non-vacuity for adjacent path 1: it really did return through the
+    # non-evidence branch, which since CT-015 is the named refusal rather than
+    # the retired shim. Asserted rather than assumed — a call that had somehow
+    # reached the evidence block would prove nothing about the branch this
+    # adjacent path exists to cover.
+    assert no_commit["ok"] is False, no_commit
+    assert no_commit["field"] == "casting_commit", no_commit
+    assert "evidence_verdict" not in no_commit, no_commit
     assert isinstance(other_tool, dict), other_tool
 
 
@@ -3900,6 +3929,12 @@ def test_an_undecodable_casting_prompt_is_refused_not_raised(tmp_path):
             prompt_hash=env["prompt_hash"],
             completion_report="AC-023 at src/gate.py#accept_casting\n",
             project_root=str(env["project_root"]),
+            # A real commit, now that CT-015 makes the parameter required. The
+            # fixture repo's HEAD is the casting's commit, so no new machinery
+            # is needed — and the subject of this test is unchanged: the
+            # undecodable-prompt refusal answers one rung BEFORE any evidence
+            # work, so supplying a commit cannot make it pass by another route.
+            casting_commit=env["casting_commit"],
         )
     finally:
         clear_active_run()
@@ -3965,3 +4000,836 @@ def test_an_undecodable_spec_is_refused_at_init_not_copied(tmp_path):
     assert "could not be read" in result["error"], result
     copies = list((project_root / "foundry-archive").rglob("spec.md"))
     assert copies == [], f"a spec that could not be decoded was copied: {copies}"
+
+
+# --------------------------------------------------------------------------- #
+# GI-002 / ST-005 / CT-007 / AC-013 / AC-014 / FR-009 / FR-031 / FR-042 /
+# OT-008 / OT-016 — the GRIND-boundary evidence sweep.
+#
+# The sweep is a new CALLER of the machinery above, not a new engine, so these
+# tests drive it against a REAL git repo with a REAL committed corpus and
+# REAL re-execution. Nothing here stubs the comparator: the property under test
+# is "does the committed corpus still reproduce at HEAD", and only running it
+# can show that.
+#
+# The harness lives here rather than in conftest.py. `run_accept_casting_with_
+# evidence` is built around one casting's own commit and around
+# `verify_evidence`'s v2.0 routing, neither of which the sweep has; casting 5
+# does not own conftest.py, and duplicating that fixture's knobs into it to
+# serve a different question would have made both harder to read.
+# --------------------------------------------------------------------------- #
+
+_SWEEP_MANIFEST = {
+    "castings": [
+        {
+            "id": 1,
+            "key_files": ["src/alpha.py", "tests/test_alpha.py"],
+            "spec_text": "- **CT-007**: the sweep re-executes at HEAD\n",
+        },
+        {
+            "id": 2,
+            "key_files": ["src/beta.py"],
+            "spec_text": "- **CT-014**: the report carries every section\n",
+        },
+        {
+            # A directory key_file, spelled with a trailing slash exactly as
+            # casting 5's own manifest entry spells its fixture directory. A
+            # diff touching a file INSIDE it must count as touching casting 3.
+            "id": 3,
+            "key_files": ["tests/fixtures/gamma/"],
+            "spec_text": "- **AC-036**: the report names every section\n",
+        },
+    ]
+}
+
+
+def _build_sweep_repo(tmp_path: Path, *, logs: dict[str, str] | None = None) -> dict:
+    """A repo whose committed `evidence/` corpus reproduces at HEAD.
+
+    Each log is a `cat`-replay of its own body, which is what makes
+    re-execution byte-exact without depending on anything outside the worktree.
+    `cat` is emphatically not a vacuous command under the stub library's rule 2
+    (D-062), but the sweep does not reach that library anyway — see the module
+    comment on `sweep_evidence_at_head`.
+
+    Returns the two paths the sweep takes plus the corpus directory, so a test
+    can perturb one log and re-run.
+    """
+    project_root = tmp_path / "repo"
+    (project_root / "src").mkdir(parents=True)
+    (project_root / "tests" / "fixtures" / "gamma").mkdir(parents=True)
+    _run_git(["init", "-q", "-b", "main"], project_root)
+
+    for name in ("alpha", "beta"):
+        (project_root / "src" / f"{name}.py").write_text(
+            f"def {name}():\n    return {name!r}\n", encoding="utf-8"
+        )
+    (project_root / "tests" / "test_alpha.py").write_text(
+        "def test_alpha():\n    assert True\n", encoding="utf-8"
+    )
+    (project_root / "tests" / "fixtures" / "gamma" / "rows.json").write_text(
+        '{"rows": []}\n', encoding="utf-8"
+    )
+
+    evidence_dir = project_root / "evidence"
+    evidence_dir.mkdir()
+    # Imported from the module under test rather than re-spelled here: the
+    # harness has to strip the header block EXACTLY as the comparator does, or
+    # a replay file would differ from the captured body for a reason that is
+    # the harness's fault and would read as a sweep defect.
+    from foundry_mcp.tools.evidence import _strip_leading_header_block
+
+    corpus = logs if logs is not None else _default_sweep_corpus()
+    for filename, text in corpus.items():
+        (evidence_dir / filename).write_text(text, encoding="utf-8")
+        # The replay file each log's command cats back. Named after the log so
+        # two logs can never replay each other's body.
+        body = _strip_leading_header_block(text)
+        (project_root / f"replay-{Path(filename).stem}.txt").write_text(
+            body, encoding="utf-8"
+        )
+
+    _run_git(["add", "-A"], project_root)
+    _run_git(["commit", "-q", "-m", "committed corpus"], project_root)
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    return {
+        "project_root": project_root,
+        "run_dir": run_dir,
+        "evidence_dir": evidence_dir,
+        "manifest": _SWEEP_MANIFEST,
+    }
+
+
+def _sweep_log(stem: str, *, for_ids: str, cmd: str | None = None,
+               body: str | None = None, extra_headers: str = "") -> str:
+    """One evidence log whose command replays its own body."""
+    command = cmd if cmd is not None else f"cat replay-{stem}.txt"
+    text = body if body is not None else (
+        f"[replay] {stem}\n"
+        "collected 3 items\n"
+        "\n"
+        f"tests/test_{stem.split('-')[-1]}.py::test_one PASSED\n"
+        f"tests/test_{stem.split('-')[-1]}.py::test_two PASSED\n"
+        f"tests/test_{stem.split('-')[-1]}.py::test_three PASSED\n"
+        "\n"
+        "3 passed\n"
+    )
+    return (
+        f"# evidence-cmd: {command}\n"
+        f"# evidence-for: {for_ids}\n"
+        f"{extra_headers}"
+        "\n" + text
+    )
+
+
+def _default_sweep_corpus() -> dict[str, str]:
+    return {
+        # Keyed to casting 1 by BOTH sources: the filename convention and the
+        # `# evidence-for:` header, whose CT-007 resolves through the manifest.
+        "casting-1-alpha.log": _sweep_log("casting-1-alpha", for_ids="CT-007"),
+        # Keyed to casting 2 by filename; its header names CT-014.
+        "casting-2-beta.log": _sweep_log("casting-2-beta", for_ids="CT-014"),
+        # Keyed to NEITHER by filename — the name is off-convention — and only
+        # by its `# evidence-for: AC-036`, which resolves to casting 3.
+        "wave-report-sections.log": _sweep_log(
+            "wave-report-sections", for_ids="AC-036"
+        ),
+    }
+
+
+def _sweep_scope_names(env: dict, touched: list, *, full: bool) -> list:
+    from foundry_mcp.tools.evidence import select_sweep_scope
+
+    return sorted(
+        p.name
+        for p in select_sweep_scope(
+            manifest=env["manifest"],
+            evidence_dir=env["evidence_dir"],
+            touched_files=touched,
+            full=full,
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# select_sweep_scope — WHICH logs run.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_full_sweep_selects_every_committed_log(tmp_path):
+    """GI-002 verbatim: '... and the whole corpus when the FULL rule fires or
+    before ASSAY/NYQUIST/DONE.'
+
+    `touched_files` is deliberately non-empty and irrelevant here: `full=True`
+    is the decision the calling transition already made (GI-009 puts it there
+    and nowhere else), so this function is told the answer and must not
+    re-derive a narrower one from the diff."""
+    env = _build_sweep_repo(tmp_path)
+    assert _sweep_scope_names(env, ["src/alpha.py"], full=True) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ]
+    assert _sweep_scope_names(env, [], full=True) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ]
+
+
+def test_a_delta_sweep_selects_only_the_touched_castings_logs(tmp_path):
+    """OT-016 verbatim: 'A DELTA sweep after a GRIND touching one file
+    re-executes only the logs tied to that file's casting or referencing that
+    file; the sweep before ASSAY re-executes every log.'
+
+    FR-042's first arm: 'casting key_files intersect the diff'."""
+    env = _build_sweep_repo(tmp_path)
+    assert _sweep_scope_names(env, ["src/alpha.py"], full=False) == [
+        "casting-1-alpha.log"
+    ]
+    assert _sweep_scope_names(env, ["src/beta.py"], full=False) == [
+        "casting-2-beta.log"
+    ]
+
+
+def test_a_directory_key_file_is_matched_as_a_prefix(tmp_path):
+    """A `key_files` entry may be a DIRECTORY, spelled with a trailing slash —
+    casting 5's own manifest entry spells its fixture directory that way. A
+    diff touching a file inside it must count as touching that casting;
+    comparing the two as bare strings would miss every directory entry."""
+    env = _build_sweep_repo(tmp_path)
+    assert _sweep_scope_names(
+        env, ["tests/fixtures/gamma/rows.json"], full=False
+    ) == ["wave-report-sections.log"]
+    # And a sibling directory that merely shares a prefix does NOT match.
+    assert _sweep_scope_names(env, ["tests/fixtures/gamma-other/x.json"],
+                              full=False) == []
+
+
+def test_a_log_is_keyed_by_its_evidence_for_header_when_the_name_cannot(tmp_path):
+    """FR-009 / the sweep-scope contract: 'A log is keyed to its casting by the
+    `casting-{id}-*.log` filename convention and by the casting id its
+    `# evidence-for:` header resolves to when that header is present.'
+
+    `wave-report-sections.log` matches no filename convention at all. Its only
+    key is `# evidence-for: AC-036`, resolved through casting 3's `spec_text`
+    in the manifest — so a diff touching casting 3's key_files must still
+    select it. One source is not enough, which is why both are used."""
+    env = _build_sweep_repo(tmp_path)
+    selected = _sweep_scope_names(env, ["tests/fixtures/gamma/rows.json"],
+                                  full=False)
+    assert selected == ["wave-report-sections.log"]
+
+    # The falsifier: strip the header and the same diff selects nothing, so
+    # the selection above cannot have come from the filename.
+    (env["evidence_dir"] / "wave-report-sections.log").write_text(
+        _sweep_log("wave-report-sections", for_ids="AC-036").replace(
+            "# evidence-for: AC-036\n", ""
+        ),
+        encoding="utf-8",
+    )
+    assert _sweep_scope_names(env, ["tests/fixtures/gamma/rows.json"],
+                              full=False) == []
+
+
+def test_a_delta_sweep_selects_a_log_whose_command_references_a_touched_file(tmp_path):
+    """FR-042's second arm: '... or command references a touched file.'
+
+    The log below belongs to no casting the diff touched — the diff is on
+    `src/delta_only.py`, which is in nobody's key_files — and is selected
+    solely because its command names that file."""
+    corpus = _default_sweep_corpus()
+    corpus["casting-9-cmdref.log"] = _sweep_log(
+        "casting-9-cmdref",
+        for_ids="OT-016",
+        cmd="cat src/delta_only.py",
+        body="def delta_only():\n    return 'delta'\n",
+    )
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    selected = _sweep_scope_names(env, ["src/delta_only.py"], full=False)
+    assert selected == ["casting-9-cmdref.log"]
+
+
+def test_a_command_reference_matches_a_path_suffix_but_not_a_longer_name(tmp_path):
+    """The boundary rule inside the command-reference test. Commands do not
+    spell paths the way a diff does — the committed corpus is full of
+    `cd plugins/foundry/mcp-server && pytest tests/test_vocab.py` where the
+    diff says the full repo-relative path — so any trailing suffix counts. But
+    the suffix has to begin at a path boundary, or a diff touching
+    `evidence.py` would select every log whose command runs
+    `tests/test_evidence.py`."""
+    from foundry_mcp.tools.evidence import _sweep_command_references
+
+    cmd = "cd plugins/foundry/mcp-server && pytest tests/test_evidence.py"
+    assert _sweep_command_references(
+        cmd, ["plugins/foundry/mcp-server/tests/test_evidence.py"]
+    )
+    assert not _sweep_command_references(
+        cmd, ["plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py"]
+    )
+    assert _sweep_command_references("grep -n x vocab.py", ["schemas/vocab.py"])
+    assert not _sweep_command_references("grep -n x myvocab.py",
+                                         ["schemas/vocab.py"])
+
+
+def test_a_delta_sweep_over_an_untouched_tree_selects_nothing(tmp_path):
+    """AC-014 verbatim: 'When the GRIND diff touches no casting key_files and
+    no file referenced by a log's command, the sweep re-executes zero logs and
+    records the delta scope.'
+
+    Zero is a complete answer, not a degenerate one — it is the whole point of
+    DELTA and the reason a GRIND cycle does not pay for a full corpus."""
+    env = _build_sweep_repo(tmp_path)
+    assert _sweep_scope_names(env, ["docs/README.md"], full=False) == []
+    assert _sweep_scope_names(env, [], full=False) == []
+
+
+def test_select_sweep_scope_returns_sorted_paths(tmp_path):
+    """A sweep result is read by a human diffing cycle N against cycle N-1. A
+    set's iteration order would make two identical sweeps look different."""
+    from foundry_mcp.tools.evidence import select_sweep_scope
+
+    env = _build_sweep_repo(tmp_path)
+    selected = select_sweep_scope(
+        manifest=env["manifest"], evidence_dir=env["evidence_dir"],
+        touched_files=[], full=True,
+    )
+    assert selected == sorted(selected)
+    assert all(p.is_absolute() for p in selected)
+
+
+def test_select_sweep_scope_on_a_missing_corpus_returns_nothing(tmp_path):
+    """An evidence directory that is not there is not this function's refusal
+    to make: it returns nothing and the caller's own sweep reports a corpus of
+    zero, rather than a traceback crossing the MCP boundary."""
+    from foundry_mcp.tools.evidence import select_sweep_scope
+
+    assert select_sweep_scope(
+        manifest={}, evidence_dir=tmp_path / "nope", touched_files=["a"],
+        full=True,
+    ) == []
+    assert select_sweep_scope(
+        manifest={"castings": "not a list"}, evidence_dir=tmp_path / "nope",
+        touched_files=["a"], full=False,
+    ) == []
+
+
+# --------------------------------------------------------------------------- #
+# sweep_evidence_at_head — the re-execution itself.
+# --------------------------------------------------------------------------- #
+
+
+def _sweep(env: dict, *, full: bool = True, touched: list | None = None, **kwargs):
+    from foundry_mcp.tools.evidence import select_sweep_scope, sweep_evidence_at_head
+
+    logs = select_sweep_scope(
+        manifest=env["manifest"], evidence_dir=env["evidence_dir"],
+        touched_files=touched or [], full=full,
+    )
+    return sweep_evidence_at_head(
+        project_root=env["project_root"], run_dir=env["run_dir"], logs=logs,
+        **kwargs,
+    )
+
+
+def test_the_sweep_re_executes_the_corpus_at_head_and_passes(tmp_path):
+    """ST-005 verbatim: 'every evidence log in the sweep scope (delta by
+    default; whole corpus when the FULL rule fires or before ASSAY, NYQUIST or
+    DONE) re-executes byte-identical at HEAD in a detached worktree'.
+
+    CT-007's output half: 'sweep result recorded per log with scope (delta or
+    full) and elapsed seconds'."""
+    env = _build_sweep_repo(tmp_path)
+    result = _sweep(env, full=True)
+
+    assert result["ok"] is True, result
+    assert result["error"] is None
+    assert result["scope_count"] == 3
+    assert sorted(result["logs_reexecuted"]) == [
+        "evidence/casting-1-alpha.log",
+        "evidence/casting-2-beta.log",
+        "evidence/wave-report-sections.log",
+    ]
+    assert result["mismatches"] == []
+    assert result["elapsed_seconds"] >= 0.0
+    assert result["pool_size"] >= 1
+    # The commit it swept is named, so a reader can tell which tree passed.
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=env["project_root"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert result["head_commit"] == head
+
+
+def test_a_committed_log_that_no_longer_reproduces_is_named(tmp_path):
+    """OT-008 verbatim: 'Foundry-Phase inspect_start on a tree whose committed
+    evidence log no longer reproduces is refused naming that log and the cycle
+    counter is unchanged.'
+
+    AC-013's first half: '... refuses the transition naming any log whose
+    output mismatches.' This casting owns the naming; casting 3 owns the
+    refusal and the counter.
+
+    Driven the way it actually happens: a later commit changes what the command
+    emits while the committed log still holds the old bytes."""
+    env = _build_sweep_repo(tmp_path)
+    replay = env["project_root"] / "replay-casting-2-beta.txt"
+    replay.write_text(
+        replay.read_text(encoding="utf-8").replace("3 passed", "2 passed, 1 failed"),
+        encoding="utf-8",
+    )
+    _run_git(["add", "-A"], env["project_root"])
+    _run_git(["commit", "-q", "-m", "a GRIND cycle broke casting 2's evidence"],
+             env["project_root"])
+
+    result = _sweep(env, full=True)
+
+    assert result["ok"] is False, result
+    assert result["error"] is None, "this is a mismatch, not a sweep that could not run"
+    assert [m["log"] for m in result["mismatches"]] == ["evidence/casting-2-beta.log"]
+    mismatch = result["mismatches"][0]
+    assert mismatch["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH"
+    assert "2 passed, 1 failed" in mismatch["reason"]
+    # The other two logs still reproduced and are not implicated.
+    assert len(result["logs_reexecuted"]) == 3
+
+
+def test_a_mismatch_record_carries_both_hash_vocabularies(tmp_path):
+    """The sweep-scope contract's second clause: 'Carry the provenance
+    spellings `redacted_log_sha256` and `redacted_captured_sha256` ALONGSIDE
+    [`expected_sha256` / `actual_sha256`] in the same mismatch record, so a
+    reader that knows either vocabulary is satisfied. Compute the values once.'
+
+    A reader arriving from a sweep refusal and a reader correlating it against
+    the casting's accepted provenance must find the same two values, so both
+    spellings carry the SAME object."""
+    env = _build_sweep_repo(tmp_path)
+    replay = env["project_root"] / "replay-casting-1-alpha.txt"
+    replay.write_text("totally different output\n", encoding="utf-8")
+    _run_git(["add", "-A"], env["project_root"])
+    _run_git(["commit", "-q", "-m", "break casting 1"], env["project_root"])
+
+    mismatch = _sweep(env, full=True)["mismatches"][0]
+    assert set(mismatch) >= {
+        "log", "reason", "failure_token", "expected_sha256", "actual_sha256",
+        "redacted_log_sha256", "redacted_captured_sha256",
+    }
+    assert mismatch["expected_sha256"] == mismatch["redacted_log_sha256"]
+    assert mismatch["actual_sha256"] == mismatch["redacted_captured_sha256"]
+    assert mismatch["expected_sha256"] != mismatch["actual_sha256"]
+    # Same spelling `_make_provenance_record` writes, so the two are comparable.
+    assert mismatch["expected_sha256"].startswith("sha256:")
+
+
+def test_hashes_are_none_where_redaction_never_ran(tmp_path):
+    """The other half of the same record. `_hash_str("")` is a real, stable,
+    meaningless value, and publishing it on a path where redaction never
+    happened would let a reader compare two logs that were never compared and
+    find them equal. A non-zero exit never reaches the comparator, so all four
+    hash fields are None."""
+    corpus = _default_sweep_corpus()
+    corpus["casting-1-alpha.log"] = _sweep_log(
+        "casting-1-alpha", for_ids="CT-007", cmd="exit 3"
+    )
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    result = _sweep(env, full=True)
+
+    assert result["ok"] is False
+    mismatch = [m for m in result["mismatches"] if "casting-1" in m["log"]][0]
+    assert mismatch["failure_token"] == "EVIDENCE_EXIT_NONZERO"
+    assert mismatch["exit_code"] == 3
+    for field in ("expected_sha256", "actual_sha256", "redacted_log_sha256",
+                  "redacted_captured_sha256"):
+        assert mismatch[field] is None, field
+
+
+def test_the_sweep_honours_declared_volatile_redaction(tmp_path):
+    """GI-002 / the must_have: the sweep 'neither duplicates verify_evidence's
+    comparison logic nor its volatile-redaction rules — both route through the
+    existing helpers.'
+
+    Driven end to end: the command emits a different duration on every run and
+    the log declares that field volatile, so the sweep passes. Remove the
+    declaration and the same corpus fails. If the sweep had its own redaction —
+    or none — one of these two would come out wrong."""
+    body = "collected 3 items\n\n3 passed in 0.41s\n"
+    declared = _sweep_log(
+        "casting-1-alpha", for_ids="CT-007",
+        cmd="printf 'collected 3 items\\n\\n3 passed in 9.87s\\n'",
+        body=body, extra_headers="# evidence-volatile: \\d+\\.\\d+s\n",
+    )
+    env = _build_sweep_repo(tmp_path, logs={"casting-1-alpha.log": declared})
+    assert _sweep(env, full=True)["ok"] is True
+
+    undeclared = declared.replace("# evidence-volatile: \\d+\\.\\d+s\n", "")
+    env2 = _build_sweep_repo(tmp_path / "second",
+                             logs={"casting-1-alpha.log": undeclared})
+    result = _sweep(env2, full=True)
+    assert result["ok"] is False
+    assert result["mismatches"][0]["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH"
+
+
+def test_a_redaction_that_erases_the_log_is_refused_by_the_shared_guard(tmp_path):
+    """The same point one rung deeper. D-126's residue floor and D-135's
+    disagreement guard live inside `_compare_byte_match`, and the sweep must
+    inherit both rather than re-deciding what a byte-match is. A declaration
+    broad enough to erase the log is refused here exactly as it is at
+    acceptance."""
+    body = "collected 3 items\n\n3 passed\n"
+    greedy = _sweep_log(
+        "casting-1-alpha", for_ids="CT-007",
+        cmd=f"printf '{body}'".replace("\n", "\\n"),
+        body=body, extra_headers="# evidence-volatile: .*\n",
+    )
+    env = _build_sweep_repo(tmp_path, logs={"casting-1-alpha.log": greedy})
+    result = _sweep(env, full=True)
+    assert result["ok"] is False
+    assert result["mismatches"][0]["failure_token"] == "EVIDENCE_VOLATILE_MALFORMED"
+
+
+def test_a_log_with_no_command_is_named_rather_than_skipped(tmp_path):
+    """A log the sweep cannot run is a finding, not a silence. The token is the
+    same one acceptance uses for the same fault, because a closed vocabulary
+    that gained a member per caller would not be closed."""
+    corpus = _default_sweep_corpus()
+    corpus["casting-1-alpha.log"] = "# evidence-for: CT-007\n\nno command here\n"
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    result = _sweep(env, full=True)
+    assert result["ok"] is False
+    mismatch = [m for m in result["mismatches"] if "casting-1" in m["log"]][0]
+    assert mismatch["failure_token"] == "EVIDENCE_COMMAND_MISSING"
+    assert "casting-1-alpha.log" in mismatch["reason"]
+
+
+def test_a_log_that_is_not_committed_at_head_is_named(tmp_path):
+    """ST-005 taken literally: the sweep compares the COMMITTED corpus at HEAD.
+
+    A log sitting in the working tree that no commit carries has nothing to
+    re-execute against, and reporting it as a pass would let an uncommitted
+    artifact clear a boundary that exists to check committed ones. Named, not
+    dropped."""
+    env = _build_sweep_repo(tmp_path)
+    (env["evidence_dir"] / "casting-4-uncommitted.log").write_text(
+        _sweep_log("casting-4-uncommitted", for_ids="CT-007"), encoding="utf-8"
+    )
+    result = _sweep(env, full=True)
+    assert result["ok"] is False
+    mismatch = [m for m in result["mismatches"] if "casting-4" in m["log"]][0]
+    assert "not committed at HEAD" in mismatch["reason"]
+
+
+def test_the_sweep_kills_a_log_that_exceeds_its_declared_timeout(tmp_path):
+    """A hung evidence command must not hang the boundary. The declared
+    `# evidence-timeout:` is the author's own measurement and is enforced by
+    the SAME `_run_command_with_timeout` acceptance uses, so the process group
+    is killed rather than the immediate child alone (Pitfall 3)."""
+    corpus = {
+        "casting-1-alpha.log": _sweep_log(
+            "casting-1-alpha", for_ids="CT-007", cmd="sleep 45",
+            body="never emitted\n", extra_headers="# evidence-timeout: 1\n",
+        )
+    }
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    result = _sweep(env, full=True)
+    assert result["ok"] is False
+    mismatch = result["mismatches"][0]
+    assert mismatch["failure_token"] == "EVIDENCE_TIMEOUT"
+    assert "1s" in mismatch["reason"]
+    assert mismatch["elapsed_seconds"] < 30, "the killer did not fire"
+
+
+# --------------------------------------------------------------------------- #
+# AC-014 / NFR-004 / FR-031 — cost, and where it does not go.
+# --------------------------------------------------------------------------- #
+
+
+def test_an_empty_scope_creates_no_worktree_and_spawns_nothing(tmp_path):
+    """AC-014's zero-log case, asserted where it costs: a DELTA sweep whose
+    GRIND touched nothing in scope must not pay for a worktree,
+    `.git/config.lock` contention or a subprocess. Creating one and tearing it
+    straight down would be the same ANSWER at a cost NFR-004 exists to avoid,
+    so the assertion is structural — the worktree machinery is never called."""
+    from foundry_mcp.tools import evidence as ev
+
+    env = _build_sweep_repo(tmp_path)
+    calls: list = []
+    original = ev._setup_worktree
+    try:
+        ev._setup_worktree = lambda *a, **k: calls.append(a) or original(*a, **k)
+        result = _sweep(env, full=False, touched=["docs/README.md"])
+    finally:
+        ev._setup_worktree = original
+
+    assert calls == [], "an empty sweep created a worktree"
+    assert result["ok"] is True
+    assert result["scope_count"] == 0
+    assert result["logs_reexecuted"] == []
+    assert result["pool_size"] == 0
+    assert result["head_commit"] is None
+    assert not (env["run_dir"] / "worktrees").exists()
+
+
+def test_the_whole_sweep_shares_one_worktree(tmp_path):
+    """The C-7 clause: 'creates ONE detached worktree at HEAD of project_root
+    for the WHOLE sweep.'
+
+    One per log would put N concurrent `git worktree add` calls on the same
+    `.git/config.lock` — Pitfall 2, the race `_WORKTREE_LOCK` exists for — and
+    would serialise the setup it was meant to parallelise."""
+    from foundry_mcp.tools import evidence as ev
+
+    env = _build_sweep_repo(tmp_path)
+    calls: list = []
+    original = ev._setup_worktree
+
+    def _spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    try:
+        ev._setup_worktree = _spy
+        result = _sweep(env, full=True)
+    finally:
+        ev._setup_worktree = original
+
+    assert result["scope_count"] == 3
+    assert len(calls) == 1, f"one worktree for the whole sweep, got {len(calls)}"
+    assert calls[0][1]["dir_prefix"] == ev.SWEEP_WORKTREE_PREFIX
+
+
+@pytest.mark.parametrize("break_it", [False, True])
+def test_the_worktree_is_torn_down_on_success_and_on_failure(tmp_path, break_it):
+    """Parametrized over both outcomes on purpose: a teardown that runs only on
+    the success path leaks one directory per GRIND cycle, which at the observed
+    run scale is twenty-odd orphaned checkouts by DONE."""
+    env = _build_sweep_repo(tmp_path)
+    if break_it:
+        replay = env["project_root"] / "replay-casting-1-alpha.txt"
+        replay.write_text("different\n", encoding="utf-8")
+        _run_git(["add", "-A"], env["project_root"])
+        _run_git(["commit", "-q", "-m", "break it"], env["project_root"])
+
+    result = _sweep(env, full=True)
+    assert result["ok"] is not break_it
+
+    leftovers = [
+        p for p in (env["run_dir"] / "worktrees").iterdir() if p.is_dir()
+    ] if (env["run_dir"] / "worktrees").exists() else []
+    assert leftovers == [], f"worktree left behind: {leftovers}"
+
+
+def test_the_pool_size_is_derived_from_the_corpus_not_decreed(tmp_path):
+    """FR-031 verbatim: 'The parallel pool size for the evidence sweep and the
+    per-log timeout are implementer's choice, DERIVED FROM THE COMMITTED CORPUS
+    rather than a generic constant.'
+
+    Derived means it MOVES with the corpus. A three-log sweep asks for at most
+    three workers however many cores the box has; a large corpus is capped by
+    the ceiling; and never more workers than there is work."""
+    from foundry_mcp.tools.evidence import SWEEP_POOL_CEILING, _derive_sweep_pool_size
+
+    assert _derive_sweep_pool_size([], None) == 0
+    assert _derive_sweep_pool_size([Path("a.log")], None) == 1
+    assert _derive_sweep_pool_size([Path(f"{i}.log") for i in range(3)], None) <= 3
+    big = [Path(f"{i}.log") for i in range(200)]
+    assert _derive_sweep_pool_size(big, None) <= SWEEP_POOL_CEILING
+    assert _derive_sweep_pool_size(big, None) >= 1
+    # An explicit override wins, clamped to at least one — a pool of zero would
+    # simply hang, and forcing serialisation is what a lead debugging a flaky
+    # log actually wants.
+    assert _derive_sweep_pool_size(big, 1) == 1
+    assert _derive_sweep_pool_size(big, 0) == 1
+
+    env = _build_sweep_repo(tmp_path)
+    assert _sweep(env, full=True)["pool_size"] == min(
+        3, os.cpu_count() or 1, SWEEP_POOL_CEILING
+    )
+
+
+def test_the_per_log_timeout_comes_from_the_log_that_declared_it(tmp_path):
+    """FR-031's other half. A `# evidence-timeout:` is the artifact author's
+    own measurement, already range-checked by `_parse_evidence_header`.
+
+    Honouring it is what keeps the sweep and acceptance agreeing about the same
+    log: `_verify_one_evidence_file` reads exactly this value, and a sweep that
+    imposed its own would kill a 300-second integration log that acceptance had
+    already passed."""
+    from foundry_mcp.tools.evidence import (
+        EVIDENCE_TIMEOUT_DEFAULT_SECONDS,
+        _sweep_log_timeout,
+    )
+
+    assert _sweep_log_timeout({"timeout": 300}, None) == 300
+    assert _sweep_log_timeout({"timeout": None}, None) == EVIDENCE_TIMEOUT_DEFAULT_SECONDS
+    assert _sweep_log_timeout({}, None) == EVIDENCE_TIMEOUT_DEFAULT_SECONDS
+    # A caller-supplied ceiling wins for every log, which is the knob a lead
+    # uses to bound a whole sweep.
+    assert _sweep_log_timeout({"timeout": 300}, 30) == 30
+
+
+def test_logs_are_reported_in_input_order_however_they_finish(tmp_path):
+    """`executor.map` preserves INPUT order regardless of completion order, and
+    that is load-bearing rather than incidental: a lead diffing cycle N's sweep
+    against cycle N-1's needs an unchanged sweep to look unchanged.
+    `as_completed` would reshuffle it every run."""
+    from foundry_mcp.tools.evidence import select_sweep_scope, sweep_evidence_at_head
+
+    # The first log sleeps, so completion order is the reverse of input order.
+    corpus = _default_sweep_corpus()
+    corpus["casting-1-alpha.log"] = _sweep_log(
+        "casting-1-alpha", for_ids="CT-007",
+        cmd="sleep 0.4; cat replay-casting-1-alpha.txt",
+    )
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    logs = select_sweep_scope(
+        manifest=env["manifest"], evidence_dir=env["evidence_dir"],
+        touched_files=[], full=True,
+    )
+    result = sweep_evidence_at_head(
+        project_root=env["project_root"], run_dir=env["run_dir"], logs=logs
+    )
+    assert result["ok"] is True, result
+    assert result["logs_reexecuted"] == [
+        f"evidence/{p.name}" for p in logs
+    ]
+
+
+def test_a_sweep_that_could_not_run_is_never_reported_as_a_pass(tmp_path):
+    """The shape that would let a broken sweep quietly clear the boundary it
+    exists to hold: `ok: True` with an empty mismatch list, on a sweep that
+    never ran a thing.
+
+    A tree with no HEAD to resolve reports `ok: False` with a named `error`
+    instead, so casting 3's refusal can say what happened rather than passing
+    the transition."""
+    from foundry_mcp.tools.evidence import sweep_evidence_at_head
+
+    env = _build_sweep_repo(tmp_path)
+    not_a_repo = tmp_path / "bare"
+    not_a_repo.mkdir()
+    result = sweep_evidence_at_head(
+        project_root=not_a_repo, run_dir=env["run_dir"],
+        logs=[env["evidence_dir"] / "casting-1-alpha.log"],
+    )
+    assert result["ok"] is False
+    assert result["error"] is not None
+    assert "HEAD" in result["error"]
+    assert result["mismatches"] == []
+
+
+def test_the_sweep_never_raises_across_the_boundary(tmp_path):
+    """The house rule, at the surface casting 3 calls. A worker that raised
+    would surface at `future.result()` and take the whole sweep — and with it
+    the `inspect_start` transition — down with a traceback naming no log.
+
+    Driven with a log that is a DIRECTORY, which makes every read of it raise
+    OSError from somewhere the code does not name."""
+    from foundry_mcp.tools.evidence import sweep_evidence_at_head
+
+    env = _build_sweep_repo(tmp_path)
+    result = sweep_evidence_at_head(
+        project_root=env["project_root"], run_dir=env["run_dir"],
+        logs=[env["evidence_dir"]],  # a directory, not a log
+    )
+    assert result["ok"] is False
+    assert len(result["mismatches"]) == 1
+    assert result["mismatches"][0]["reason"]
+
+
+def test_the_sweep_writes_nothing_into_the_run_or_the_manifest(tmp_path):
+    """The sweep is a READ. The refusal, the cycle counter and the
+    `evidence_sweep` roll-up all belong to the `inspect_start` transition;
+    a sweep that appended provenance at every GRIND boundary would corrupt the
+    acceptance audit trail the manifest keeps."""
+    env = _build_sweep_repo(tmp_path)
+    before = sorted(p.name for p in env["run_dir"].iterdir())
+    _sweep(env, full=True)
+    after = [p.name for p in env["run_dir"].iterdir() if p.name != "worktrees"]
+    assert sorted(after) == before
+
+
+# --------------------------------------------------------------------------- #
+# The demonstration test whose captured stdout is committed as evidence.
+#
+# Real assertions behind every printed line, so the transcript cannot drift
+# from the behaviour. Nothing environment-dependent is printed — no tmp path,
+# no clock reading, and the pool derivation is reported as RELATIONS rather
+# than as raw numbers, because `os.cpu_count()` is a property of the machine
+# and this output is byte-compared in a detached worktree.
+# --------------------------------------------------------------------------- #
+
+
+def test_demo_sweep_scope_and_cost(tmp_path, capsys):
+    """GI-002 / FR-042 / FR-009 / AC-014 / OT-016 / FR-031 / NFR-004, printed.
+
+    The scope selection on a real committed corpus, then the cost derivation
+    that keeps a per-cycle sweep inside the wall time of the INSPECT it
+    precedes."""
+    from foundry_mcp.tools.evidence import (
+        EVIDENCE_TIMEOUT_DEFAULT_SECONDS,
+        SWEEP_POOL_CEILING,
+        _derive_sweep_pool_size,
+        _sweep_log_timeout,
+    )
+
+    env = _build_sweep_repo(tmp_path)
+    scopes = [
+        ("FULL rule fired / before ASSAY, NYQUIST or DONE",
+         True, ["src/alpha.py"]),
+        ("DELTA, diff touches casting 1's key_files",
+         False, ["src/alpha.py"]),
+        ("DELTA, diff touches casting 2's key_files",
+         False, ["src/beta.py"]),
+        ("DELTA, diff touches a file under casting 3's key_files DIRECTORY",
+         False, ["tests/fixtures/gamma/rows.json"]),
+        ("DELTA, diff touches nothing any casting or command names",
+         False, ["docs/README.md"]),
+    ]
+    with capsys.disabled():
+        print()
+        print("=== select_sweep_scope: which logs the boundary re-executes ===")
+        for label, full, touched in scopes:
+            names = _sweep_scope_names(env, touched, full=full)
+            print(f"  {label}")
+            print(f"    touched={touched}")
+            print(f"    scope={names}")
+
+        print("=== the empty DELTA scope costs no worktree and no subprocess ===")
+        empty = _sweep(env, full=False, touched=["docs/README.md"])
+        print(f"    ok={empty['ok']}  scope_count={empty['scope_count']}  "
+              f"logs_reexecuted={empty['logs_reexecuted']}")
+        print(f"    head_commit={empty['head_commit']}  pool_size={empty['pool_size']}")
+
+        print("=== a FULL sweep re-executes the whole committed corpus at HEAD ===")
+        full_sweep = _sweep(env, full=True)
+        print(f"    ok={full_sweep['ok']}  scope_count={full_sweep['scope_count']}")
+        for name in full_sweep["logs_reexecuted"]:
+            print(f"    reexecuted {name}")
+        print(f"    mismatches={full_sweep['mismatches']}")
+
+        print("=== FR-031: the pool size is derived from the corpus ===")
+        print(f"    ceiling (measured from the committed corpus) = {SWEEP_POOL_CEILING}")
+        print(f"    pool([])            == 0            : "
+              f"{_derive_sweep_pool_size([], None) == 0}")
+        print(f"    pool(1 log)         == 1            : "
+              f"{_derive_sweep_pool_size([Path('a.log')], None) == 1}")
+        print(f"    pool(3 logs)        <= 3            : "
+              f"{_derive_sweep_pool_size([Path(f'{i}.log') for i in range(3)], None) <= 3}")
+        print(f"    pool(200 logs)      <= ceiling      : "
+              f"{_derive_sweep_pool_size([Path(f'{i}.log') for i in range(200)], None) <= SWEEP_POOL_CEILING}")
+        print(f"    pool(200, override=1) == 1          : "
+              f"{_derive_sweep_pool_size([Path(f'{i}.log') for i in range(200)], 1) == 1}")
+
+        print("=== FR-031: the per-log timeout is the log's own measurement ===")
+        print(f"    declared 300s                       : "
+              f"{_sweep_log_timeout({'timeout': 300}, None)}")
+        print(f"    undeclared falls back to the default: "
+              f"{_sweep_log_timeout({}, None) == EVIDENCE_TIMEOUT_DEFAULT_SECONDS}")
+        print(f"    a caller ceiling wins for every log : "
+              f"{_sweep_log_timeout({'timeout': 300}, 30)}")
+
+    assert _sweep_scope_names(env, ["src/alpha.py"], full=False) == [
+        "casting-1-alpha.log"
+    ]
+    assert _sweep_scope_names(env, ["docs/README.md"], full=False) == []
+    assert _sweep(env, full=True)["ok"] is True
+    assert _derive_sweep_pool_size([], None) == 0
+    assert _sweep_log_timeout({"timeout": 300}, None) == 300

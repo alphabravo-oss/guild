@@ -1,0 +1,309 @@
+{
+  "phase": "F5.5",
+  "cycle": 5,
+  "spec_path": "forge-specs/foundry-run-convergence/spec.md",
+  "started_at": "2026-09-02T04:00:00+00:00",
+  "updated_at": "2026-09-02T09:30:00+00:00",
+  "temper": true,
+  "nyquist": true,
+  "max_cycles": 0,
+  "phase_times": {
+    "F1": {
+      "started_at": "2026-09-02T04:00:00+00:00",
+      "ended_at": "2026-09-02T04:50:00+00:00",
+      "duration": "50m 0s"
+    },
+    "F2": {
+      "started_at": "2026-09-02T04:50:00+00:00",
+      "ended_at": "2026-09-02T05:40:00+00:00",
+      "duration": "50m 0s"
+    },
+    "F3": {
+      "started_at": "2026-09-02T05:40:00+00:00",
+      "ended_at": "2026-09-02T08:10:00+00:00",
+      "duration": "2h 30m 0s"
+    },
+    "F5": {
+      "started_at": "2026-09-02T08:10:00+00:00",
+      "ended_at": "2026-09-02T09:20:00+00:00",
+      "duration": "1h 10m 0s"
+    },
+    "F5.5": {
+      "started_at": "2026-09-02T09:20:00+00:00"
+    }
+  },
+  "phase_history": [
+    {
+      "phase": "F1",
+      "entered_at": "2026-09-02T04:00:00+00:00"
+    },
+    {
+      "phase": "F2",
+      "entered_at": "2026-09-02T04:50:00+00:00"
+    },
+    {
+      "phase": "F3",
+      "entered_at": "2026-09-02T05:40:00+00:00"
+    },
+    {
+      "phase": "F5",
+      "entered_at": "2026-09-02T08:10:00+00:00"
+    },
+    {
+      "phase": "F5.5",
+      "entered_at": "2026-09-02T09:20:00+00:00"
+    }
+  ],
+  "server_version": "4.10.0",
+  "plugin_version": "4.10.0",
+  "server_root": "/repo/plugins/foundry",
+  "server_commit": "3f9c1a284d6b7e05aa1177c0d4e93b62f8a5c410",
+  "self_target": true,
+  "inspect_modes": [
+    {
+      "cycle": 1,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "first_of_phase",
+      "decided_by": "cast",
+      "decided_at": "2026-09-02T04:50:00+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "all castings"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "all requirements"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "all research files"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "all contract rows"
+        }
+      },
+      "touched_files": [],
+      "prove_sample": []
+    },
+    {
+      "cycle": 2,
+      "phase": "F2",
+      "mode": "DELTA",
+      "rule": "delta",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T06:10:00+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "delta",
+          "detail": "1 casting"
+        },
+        "prove": {
+          "scope": "delta",
+          "detail": "10 rows sampled"
+        },
+        "test": {
+          "scope": "delta",
+          "detail": "2 modules"
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no research file touched"
+        },
+        "test01": {
+          "scope": "skipped",
+          "detail": "no contract row touched"
+        }
+      },
+      "touched_files": [
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py"
+      ],
+      "prove_sample": [
+        "CT-007",
+        "ST-005"
+      ]
+    },
+    {
+      "cycle": 3,
+      "phase": "F2",
+      "mode": "DELTA",
+      "rule": "delta",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T06:55:00+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "delta",
+          "detail": "1 casting"
+        },
+        "prove": {
+          "scope": "delta",
+          "detail": "10 rows sampled"
+        },
+        "test": {
+          "scope": "delta",
+          "detail": "1 module"
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no research file touched"
+        },
+        "test01": {
+          "scope": "skipped",
+          "detail": "no contract row touched"
+        }
+      },
+      "touched_files": [
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py"
+      ],
+      "prove_sample": [
+        "CT-014",
+        "GI-006"
+      ]
+    },
+    {
+      "cycle": 4,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "verifier_touched",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T07:40:00+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "all castings"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "all requirements"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "all research files"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "all contract rows"
+        }
+      },
+      "touched_files": [
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py"
+      ],
+      "prove_sample": []
+    },
+    {
+      "cycle": 5,
+      "phase": "F5",
+      "mode": "FULL",
+      "rule": "final_gate",
+      "decided_by": "temper",
+      "decided_at": "2026-09-02T08:10:00+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "all castings"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "all requirements"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "all research files"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "all contract rows"
+        }
+      },
+      "touched_files": [],
+      "prove_sample": []
+    }
+  ],
+  "spend": {
+    "by_phase": {
+      "F1": {
+        "tokens": 1240000,
+        "duration_ms": 3000000,
+        "agents": 3,
+        "unreported": 1
+      },
+      "F2": {
+        "tokens": 980000,
+        "duration_ms": 3000000,
+        "agents": 2,
+        "unreported": 2
+      },
+      "F3": {
+        "tokens": 610000,
+        "duration_ms": 1800000,
+        "agents": 1,
+        "unreported": 1
+      }
+    },
+    "by_cycle": {
+      "1": {
+        "tokens": 980000,
+        "duration_ms": 3000000,
+        "agents": 2,
+        "unreported": 2
+      },
+      "2": {
+        "tokens": 610000,
+        "duration_ms": 1800000,
+        "agents": 1,
+        "unreported": 1
+      }
+    },
+    "total": {
+      "tokens": 2830000,
+      "duration_ms": 7800000,
+      "agents": 6,
+      "unreported": 4
+    }
+  }
+}

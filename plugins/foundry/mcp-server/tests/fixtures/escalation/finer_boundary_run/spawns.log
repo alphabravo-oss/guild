@@ -1,0 +1,5 @@
+{"timestamp": "2026-09-02T04:00:05+00:00", "casting_id": 1, "phase": "cast", "wave": 1, "prompt_hash": "sha256:9dbe0187a5f7ca72", "bulk": true}
+{"timestamp": "2026-09-02T04:00:05+00:00", "casting_id": 4, "phase": "cast", "wave": 1, "prompt_hash": "sha256:c4fce1378600ed52", "bulk": true}
+{"timestamp": "2026-09-02T04:00:05+00:00", "casting_id": 8, "phase": "cast", "wave": 1, "prompt_hash": "sha256:df455a1dee8f3fc2", "bulk": true}
+{"timestamp": "2026-09-02T05:41:00+00:00", "casting_id": 2, "phase": "grind", "prompt_hash": "sha256:1a2b3c4d5e6f7081"}
+{"timestamp": "2026-09-02T05:41:02+00:00", "casting_id": 5, "phase": "grind", "prompt_hash": "sha256:2b3c4d5e6f708192"}
