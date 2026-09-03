@@ -1178,6 +1178,171 @@ def test_malformed_stream_rollup_is_a_schema_violation(
     assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
 
 
+# ---------------------------------------------------------------------------
+# D-182 — the C-6 cycle-level facts, and the ONE rule that recognises them.
+#
+# `stream-rollup.json`'s cycle bucket has two writers and therefore two kinds
+# of key: the stream tranches `_record_stream_rollup` accumulates, and the
+# cycle-level facts `_record_cycle_facts` writes beside them. No fixture in
+# this file carried the second kind, which is why the roll-up reader could
+# treat every key as a stream id for a whole release without a test noticing.
+# ---------------------------------------------------------------------------
+
+#: Every non-stream key `_record_cycle_facts` writes into a cycle bucket, in
+#: the shape the live archive holds them (two strings, two mappings, plus the
+#: nested `temper_entry` sub-bucket the F5 entry writes under). Spelled from
+#: `foundry-archive/daring-orca/stream-rollup.json` cycle 10 rather than
+#: invented, so the fixture is the document the server actually produces.
+_CYCLE_LEVEL_FACTS: dict[str, Any] = {
+    "inspect_mode": "FULL",
+    "inspect_rule": "verifier_touched",
+    "stream_scope": {
+        "prove": {"scope": "full", "detail": "every item in scope"},
+        "trace": {"scope": "delta", "detail": "3 touched files"},
+    },
+    "evidence_sweep": {
+        "scope": "full",
+        "corpus_size": 60,
+        "logs_reexecuted": ["evidence/casting-5-sweep-engine.log"],
+        "mismatches": [],
+        "elapsed_seconds": 41.2,
+        "pool_size": 8,
+        "swept_at": "2026-09-03T22:10:00+00:00",
+    },
+    "temper_entry": {"inspect_mode": "FULL", "inspect_rule": "first_of_phase"},
+}
+
+
+def test_cycle_level_facts_are_not_read_as_streams(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-182 — the instrument must not call the documented shape a fault.
+
+    The spec's Data Model widened this document: "stream-rollup.json gains the
+    inspect mode, the rule that fired, and per-stream scope for each cycle,
+    plus the evidence sweep result". The roll-up reader was never taught those
+    keys, so it read `inspect_mode` (a string) as a malformed stream entry and
+    `stream_scope` (a mapping) as a stream whose name no roster knows.
+
+    Driven at 056f51a as a real process, this run's own archive produced
+    PHASE9_SCHEMA_INVALID x4 and PHASE9_UNKNOWN_STREAM x2 and exit 1, while
+    thunder-viper — the archive that PREDATES these keys — exited 0. NFR-001
+    says "Numbers are the target, not a gate"; the numbers were right and the
+    verdict on the artifact was not.
+    """
+    run_dir = make_run_dir(
+        rollup=_rollup_doc(
+            {"3": {"prove": _entry(80, 80, 1), **_CYCLE_LEVEL_FACTS}}
+        )
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert payload["failure_tokens"] == [], (
+        "a cycle bucket carrying its own C-6 facts is the documented shape, "
+        "not a broken artifact"
+    )
+    # The coverage the bucket really does carry still lands, and the five
+    # cycle-level keys land nowhere: they are facts about the cycle, not
+    # streams reporting what they checked.
+    assert payload["per_cycle_coverage"] == {
+        "3": {"PROVE": {"items_checked": 80, "items_total": 80, "findings": 1}}
+    }
+
+
+def test_a_roster_key_whose_value_is_not_a_tranche_is_still_a_fault(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-182 — filtering by value alone would trade one silence for another.
+
+    `prove` holding a string is a BROKEN stream record, not a cycle-level
+    fact, and the branch that named it PHASE9_SCHEMA_INVALID before this fix
+    must keep naming it. What tells the two cases apart is the KEY: the roster
+    knows `prove` and does not know `inspect_mode`, so the key is resolved
+    before the value test decides.
+    """
+    run_dir = make_run_dir(rollup=_rollup_doc({"3": {"prove": "FULL"}}))
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    assert exit_code != 0
+    assert "PHASE9_SCHEMA_INVALID" in json.loads(stdout)["failure_tokens"]
+
+
+def test_both_rollup_readers_classify_one_bucket_identically(
+    tmp_path: Path,
+) -> None:
+    """D-182 — the two walkers of one bucket, fed the same bucket.
+
+    `foundry_orchestrator._stream_dispatch_cycles` and `measure-run.py`
+    `_read_stream_rollup` both answer "which keys here are streams", and the
+    whole filing is that they answered differently. The rule now has ONE
+    definition in `foundry_state.is_stream_record`; this drives BOTH readers
+    over a single bucket and asserts they accept and reject exactly the same
+    keys, so the day a third C-6 field is added, whichever reader is not
+    taught it fails here rather than in a live run.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+
+    bucket = {
+        "prove": _entry(80, 80, 1),
+        "trace": _entry(12, 12, 0),
+        **_CYCLE_LEVEL_FACTS,
+    }
+    (tmp_path / "stream-rollup.json").write_text(
+        json.dumps(_rollup_doc({"3": bucket})), encoding="utf-8"
+    )
+
+    orchestrator_streams = set(fo._stream_dispatch_cycles(tmp_path))
+
+    module = _load_measure_run_module()
+    coverage, _highest, tokens = module._read_stream_rollup(tmp_path)
+    # The roll-up reader re-keys onto the canonical UPPERCASE spelling, so the
+    # comparison is made on the wire ids both readers were handed.
+    measure_streams = {
+        wire
+        for wire in bucket
+        if module.canonical_stream_id(wire) in coverage.get("3", {})
+    }
+
+    assert orchestrator_streams == {"prove", "trace"}
+    assert measure_streams == orchestrator_streams, (
+        "the two readers of one cycle bucket disagree about which keys are "
+        "streams — D-182 is back"
+    )
+    assert set(_CYCLE_LEVEL_FACTS) & orchestrator_streams == set()
+    assert tokens == [], (
+        "no cycle-level fact may produce a failure token in either reader"
+    )
+
+
+def test_the_stream_record_rule_has_one_definition() -> None:
+    """D-182 — the rule is READ by the readers I own, never re-typed.
+
+    Behaviour alone would let the two copies drift back apart and stay green
+    until they disagreed on a key neither test covered, which is exactly how
+    this got here: two modules spelled `"records" in entry` inline and a third
+    never learned it. Both readers in this package's own tree must CALL the
+    shared predicate.
+    """
+    import inspect
+
+    from foundry_mcp.tools import foundry_report, foundry_state
+
+    assert callable(foundry_state.is_stream_record)
+    assert foundry_state.is_stream_record({"records": []}) is True
+    assert foundry_state.is_stream_record({"scope": "full"}) is False
+    assert foundry_state.is_stream_record("FULL") is False
+    assert foundry_state.is_stream_record(None) is False
+
+    for owner in (
+        inspect.getsource(_load_measure_run_module()._read_stream_rollup),
+        inspect.getsource(foundry_report._read_dispatch_summary),
+    ):
+        assert "is_stream_record(" in owner, (
+            "a walker of the cycle bucket re-typed the stream-record rule "
+            "instead of reading the one definition (D-182)"
+        )
+
+
 def test_operator_inputs_turn_the_two_missing_gates_real(
     make_run_dir: Callable[..., Path],
 ) -> None:
@@ -2264,3 +2429,115 @@ def test_a_thunder_viper_shaped_archive_prints_the_baseline_and_the_target() -> 
     for column in ("spend", "inspect_modes", "escalation"):
         assert payload[column] is None, column
     assert payload["failure_tokens"] == []
+
+
+# ---------------------------------------------------------------------------
+# D-182 demo — the filing driven as a real process, and its own control.
+# ---------------------------------------------------------------------------
+
+
+def test_demo_grind_cycle_12_the_widened_rollup_at_the_real_door(
+    make_run_dir: Callable[..., Path], capsys
+) -> None:
+    """D-182, driven as the real process the filing drove, plus its control.
+
+    AC-039 / NFR-001 / OT-030. The filing's control was "strip only those keys
+    from a copy of the archive and nothing else changes"; that control is run
+    here as an assertion rather than quoted, so the claim that the C-6 facts
+    changed the VERDICT and not one NUMBER is checked every time this runs.
+    """
+    with capsys.disabled():
+        cycle_bucket = {
+            "prove": _entry(172, 172, 2),
+            "trace": _entry(92, 92, 1),
+            "research_audit": _entry(4, 4, 0),
+        }
+        widened = _rollup_doc({"3": {**cycle_bucket, **_CYCLE_LEVEL_FACTS}})
+        stripped = _rollup_doc({"3": dict(cycle_bucket)})
+
+        print("\n=== D-182 — a cycle bucket carrying its own C-6 facts ===")
+        print("  the five keys `_record_cycle_facts` writes beside the stream")
+        print("  tranches, in the shape the live archive holds them:")
+        for key, value in _CYCLE_LEVEL_FACTS.items():
+            kind = type(value).__name__
+            print(f"    {key:<15} ({kind})")
+
+        run_dir = make_run_dir(rollup=widened)
+        exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+        assert exit_code == 0, (stdout, stderr)
+        widened_payload = json.loads(stdout)
+
+        print("\n  measure-run.py over that archive, as a real process:")
+        print(f"    exit code:      {exit_code}")
+        print(f"    failure_tokens: {widened_payload['failure_tokens']}")
+        print(f"    cycles:         {widened_payload['cycles']}")
+        print(
+            "    coverage read:  "
+            f"{sorted(widened_payload['per_cycle_coverage']['3'])}"
+        )
+        print(
+            "  before this fix the same document produced PHASE9_SCHEMA_INVALID"
+        )
+        print(
+            "  for the two string keys, PHASE9_UNKNOWN_STREAM for the three"
+        )
+        print("  mapping keys, and exit 1 — a schema fault asserted about the")
+        print("  shape the spec's own Data Model widened the document to.")
+
+        # THE FILING'S CONTROL, EXACTLY AS IT WAS DRIVEN: a COPY of the very
+        # archive above with only those keys stripped out of its roll-up. A
+        # second archive built from the fixtures would differ in its cohort id
+        # and leave a real difference to explain away; a copy differs in
+        # nothing, so an empty diff below is the whole claim.
+        # Copied under a SIBLING PARENT rather than a sibling name, so the
+        # copy keeps the archive's own directory name: `baseline_comparison`
+        # publishes the run name, and renaming the copy would put a real
+        # difference in the diff that has nothing to do with the roll-up.
+        control_dir = run_dir.parent / "control" / run_dir.name
+        shutil.copytree(run_dir, control_dir)
+        (control_dir / "stream-rollup.json").write_text(
+            json.dumps(stripped), encoding="utf-8"
+        )
+        control_code, control_stdout, control_stderr = _invoke_measure_run(
+            str(control_dir)
+        )
+        assert control_code == 0, (control_stdout, control_stderr)
+        control_payload = json.loads(control_stdout)
+
+        print("\n=== the filing's own control — the same archive with only")
+        print("=== those keys stripped, and nothing else changed ===")
+        print(f"    exit code:      {control_code}")
+        print(f"    failure_tokens: {control_payload['failure_tokens']}")
+        print(f"    cycles:         {control_payload['cycles']}")
+
+        differing = sorted(
+            key
+            for key in widened_payload
+            if widened_payload[key] != control_payload[key]
+        )
+        assert differing == [], differing
+        print(f"\n  keys differing between the two payloads: {differing}")
+        print("  every published value identical — the five keys carry no")
+        print("  measurement this command publishes. The numbers were never the")
+        print("  defect; the VERDICT on a well-formed artifact was. NFR-001:")
+        print("  'Numbers are the target, not a gate'.")
+
+        print("\n=== one definition, both readers ===")
+        from foundry_mcp.tools import foundry_orchestrator as fo
+        from foundry_mcp.tools.foundry_state import is_stream_record
+
+        (control_dir / "stream-rollup.json").write_text(
+            json.dumps(widened), encoding="utf-8"
+        )
+        orchestrator_view = sorted(fo._stream_dispatch_cycles(control_dir))
+        predicate_view = sorted(
+            key
+            for key, value in {**cycle_bucket, **_CYCLE_LEVEL_FACTS}.items()
+            if is_stream_record(value)
+        )
+        print(f"  foundry_orchestrator._stream_dispatch_cycles: {orchestrator_view}")
+        print(f"  foundry_state.is_stream_record:               {predicate_view}")
+        assert orchestrator_view == predicate_view
+        print("  the same three keys, from the rule stated once rather than")
+        print("  hand-typed a third time — which is how the third walker of")
+        print("  this bucket came to be missing it.")

@@ -403,6 +403,62 @@ def derive_cycle_count(run_dir: Path) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# D-182 — WHICH KEYS IN A CYCLE BUCKET ARE STREAM RECORDS. ONE DEFINITION.
+#
+# ``stream-rollup.json``'s ``cycles[<cycle>]`` bucket holds two kinds of key,
+# because it has two writers. ``_record_stream_rollup`` accumulates one STREAM's
+# tranches under its wire id; ``_record_cycle_facts`` writes the C-6 facts that
+# describe the CYCLE ITSELF -- ``inspect_mode``, ``inspect_rule``,
+# ``stream_scope``, ``evidence_sweep``, and a nested ``temper_entry`` sub-bucket
+# -- BESIDE them, in the same mapping. Three modules walk that bucket and every
+# one of them has to know the difference: ``foundry_orchestrator``
+# ``_stream_dispatch_cycles``, ``foundry_report``
+# ``_read_unreported_dispatches``, and ``measure-run.py``
+# ``_read_stream_rollup``.
+#
+# Two of the three grew the rule by hand and the third never learned it. Driven
+# at 056f51a as a real process,
+# ``python3 plugins/foundry/scripts/measure-run.py foundry-archive/daring-orca``
+# exited 1 with eight failure tokens -- PHASE9_SCHEMA_INVALID x4 for the two
+# string-valued keys of cycles 10 and 11, and
+# PHASE9_UNKNOWN_STREAM:{stream_scope,evidence_sweep} x2 -- declaring the run's
+# own well-formed roll-up a broken artifact, while the SAME command on
+# thunder-viper (an archive predating the C-6 keys) exited 0. AC-039's
+# acceptance instrument was rejecting the shape the spec's own Data Model had
+# widened the document to.
+#
+# So the rule is stated ONCE, here, in the leaf module all three already import
+# -- the same home and the same reason as ``unreported_dispatch_pairs``
+# (D-047 / D-048): two derivations of one question are exactly how the two came
+# to disagree, and a third derivation is not an answer to that.
+#
+# THE TEST IS ON THE VALUE, NEVER A DENYLIST OF KEY NAMES. A denylist of the
+# four keys the filing names would already have been wrong: ``temper_entry`` is
+# a fifth, and the next C-6 field would be a sixth. A stream tranche is exactly
+# a mapping carrying ``records``, because ``_record_stream_rollup`` appends to
+# ``entry["records"]`` on every mark and no cycle-level fact has that key.
+# --------------------------------------------------------------------------- #
+
+
+def is_stream_record(entry: object) -> bool:
+    """True when a ``stream-rollup.json`` cycle-bucket VALUE is a stream tranche.
+
+    The one test that separates ``cycles[<cycle>][<wire stream id>]`` from the
+    cycle-level facts sitting beside it. Pure and total: it takes the VALUE and
+    not the key, and returns False rather than raising on any JSON type.
+
+    A caller that must also tell a CORRUPT tranche from a cycle-level fact
+    resolves the KEY against the stream roster after this returns False -- a key
+    the roster knows whose value is not a tranche is a broken record, while a
+    key the roster does not know is simply not a stream. That second half stays
+    at the call site that already holds the resolver: this module imports
+    ``json`` and ``pathlib`` and nothing else, deliberately (see the module
+    docstring), so ``vocab`` is not reachable from here and must not become so.
+    """
+    return isinstance(entry, dict) and "records" in entry
+
+
 def unreported_dispatch_pairs(
     *,
     dispatch_rows: list[dict],

@@ -64,6 +64,7 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.tools.foundry_state import (
     derive_cycle_count,
     handoffs_wall_clock_seconds,
+    is_stream_record,
     read_document,
     read_jsonl,
     read_text_file,
@@ -1062,13 +1063,23 @@ def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
                 continue
             for stream in bucket:
                 # The C-6 additions (`inspect_mode`, `stream_scope`,
-                # `evidence_sweep`, ...) live in the same bucket as the stream
-                # records, so a key whose value is not a stream record is not a
-                # stream. Testing the VALUE rather than keeping a denylist of
-                # non-stream keys is what stops this from needing an edit every
-                # time the roll-up gains a field.
+                # `evidence_sweep`, `temper_entry`, ...) live in the same bucket
+                # as the stream records, so a key whose value is not a stream
+                # record is not a stream. Testing the VALUE rather than keeping
+                # a denylist of non-stream keys is what stops this from needing
+                # an edit every time the roll-up gains a field.
+                #
+                # D-182 — AND THE TEST ITSELF IS NOW READ, NOT RE-TYPED. This
+                # spelled the rule inline, `foundry_orchestrator`
+                # `_stream_dispatch_cycles` spelled it inline too, and
+                # `measure-run.py` `_read_stream_rollup` — the third walker of
+                # this same bucket — never learned it at all and reported this
+                # run's own roll-up as eight failure tokens and exit 1. Two
+                # hand-typed copies of one rule are how a third comes to be
+                # missing, so the rule lives once in `foundry_state`, beside
+                # `unreported_dispatch_summary`, for D-047's reason.
                 entry = bucket.get(stream)
-                if isinstance(entry, dict) and "records" in entry:
+                if is_stream_record(entry):
                     stream_roster.setdefault("F2", []).append(str(stream))
                     cycles_of_agent.setdefault(str(stream), []).append(
                         str(cycle_key)

@@ -97,6 +97,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
         handoffs_wall_clock_seconds,
+        is_stream_record,
         read_json,
         read_text_file,
     )
@@ -124,6 +125,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
         handoffs_wall_clock_seconds,
+        is_stream_record,
         read_json,
         read_text_file,
     )
@@ -379,6 +381,34 @@ def _read_stream_rollup(
     Absence is NOT a failure: archives written before the roll-up existed are
     precisely the ones this instrumentation has to measure. A file that exists
     but is not the documented shape is PHASE9_SCHEMA_INVALID.
+
+    D-182 — A CYCLE BUCKET IS NOT ALL STREAMS, AND HAS NOT BEEN SINCE C-6.
+    ---------------------------------------------------------------------
+    This walked ``bucket.items()`` treating EVERY key as a stream id, which was
+    true of the document when it was written and stopped being true when the
+    spec's Data Model widened it: ``inspect_mode`` and ``inspect_rule`` are
+    strings and tripped the ``not isinstance(entry, dict)`` branch, while
+    ``stream_scope`` and ``evidence_sweep`` are dicts whose names no stream
+    roster resolves. Driven at 056f51a, this run's own archive produced eight
+    failure tokens and exit 1 while thunder-viper -- which predates those keys
+    -- produced none, so the acceptance instrument NFR-001 calls "the target,
+    not a gate" was asserting a fault about a document that IS the documented
+    shape. The numbers were right the whole time; the verdict on the artifact
+    was not.
+
+    The keys are skipped by VALUE shape through the ONE definition in
+    ``foundry_state.is_stream_record`` -- never a denylist of key names, which
+    would need an edit at every new C-6 field and already misses a fifth
+    (``temper_entry``). See that function's comment for the full history.
+
+    WHAT IS NOT REPUBLISHED HERE, AND WHY. The bucket's ``inspect_mode`` and
+    ``inspect_rule`` now READ cleanly, and this reader still does not return
+    them. ``_read_inspect_modes`` already publishes that decision into the
+    ``inspect_modes`` column from ``state.json``'s append-only ``inspect_modes``
+    list, which is the source C-4 declares authoritative; the roll-up copy is
+    the one D-070 showed a later F5 entry can overwrite in place. A second
+    derivation of one published number is the defect this fix is closing, not a
+    column to add while closing it.
     """
     path = run_dir / "stream-rollup.json"
     if not path.exists():
@@ -400,9 +430,23 @@ def _read_stream_rollup(
         if highest is None or cycle > highest:
             highest = cycle
         for raw_stream, entry in bucket.items():
-            if not isinstance(raw_stream, str) or not isinstance(entry, dict):
+            if not isinstance(raw_stream, str):
                 fts.append("PHASE9_SCHEMA_INVALID"); continue
             stream = canonical_stream_id(raw_stream)
+            if not is_stream_record(entry):
+                # D-182 — a cycle-level fact, not a stream. Skipped in silence,
+                # because it is the document doing what its own Data Model says.
+                #
+                # A key the ROSTER KNOWS whose value is not a tranche is still
+                # the schema fault this branch has always named: `prove` holding
+                # a string is a broken record, not a cycle-level fact, and
+                # filtering by value alone would have traded the old false
+                # alarm for a new silence over the one case that is genuinely
+                # corrupt. The key is what tells the two apart, so it is
+                # resolved before the value test decides.
+                if stream is not None:
+                    fts.append("PHASE9_SCHEMA_INVALID")
+                continue
             if stream is None:
                 fts.append(f"PHASE9_UNKNOWN_STREAM:{raw_stream}"); continue
             counts: dict[str, int] = {}
