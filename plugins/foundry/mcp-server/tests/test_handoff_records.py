@@ -518,6 +518,212 @@ def test_an_undecodable_prompt_file_refuses_in_band(run_env):
     assert "casting-2-prompt.md" in refusal["error"]
 
 
+# --- D-108: the published hash is over the file's BYTES ----------------------
+#
+# The publisher and the checker have to agree with a THIRD party the teammate
+# actually uses: the shell command `agents/teammate.md` documents for producing
+# the hash. Only the bytes digest is computable by all three.
+CRLF_PROMPT = b"# Casting 3\r\n\r\n<spec_requirements>\r\nAC-030\r\n</spec_requirements>\r\n"
+
+
+def _shell_style_digest(path: Path) -> str:
+    """What `sha256sum` / `shasum -a 256` prints, in the published spelling.
+
+    Deliberately NOT routed through either module under test: a pin where both
+    sides derive the value the same wrong way is green on a defect."""
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def test_a_crlf_prompt_hashes_identically_on_both_sides(run_env):
+    """D-108 / CT-011 / AC-030 — the publisher, the checker and the teammate's
+    own shell command produce ONE value.
+
+    Both sides used to hash ``prompt_text.encode("utf-8")`` where the text came
+    from a TEXT read, which applies universal-newline translation — so every
+    ``\\r\\n`` was gone before the digest was taken. The teammate's command
+    hashes the file and cannot translate anything, so on a CRLF prompt the
+    honest report was refused as stale, and the refusal's own remedy ('re-read
+    the prompt file in full') produced the same right answer again."""
+    from foundry_mcp.tools import foundry_spawn as fs
+
+    _, fdir = run_env
+    path = fdir / "castings" / "casting-3-prompt.md"
+    path.write_bytes(CRLF_PROMPT)
+
+    published = fs._published_prompt_hash(path)
+
+    assert published == _shell_style_digest(path), "publisher disagrees with the shell"
+    assert check_reported_prompt_hash(fdir, 3, published) is None, (
+        "the checker refused the value the publisher published"
+    )
+
+
+def test_the_decoded_text_digest_is_a_different_value_and_is_refused(run_env):
+    """The falsifier for the test above: on a CRLF file the two derivations
+    genuinely differ, so the agreement asserted there is not vacuous."""
+    _, fdir = run_env
+    path = fdir / "castings" / "casting-3-prompt.md"
+    path.write_bytes(CRLF_PROMPT)
+
+    text_digest = _hash_str(path.read_text(encoding="utf-8"))
+
+    assert text_digest != _shell_style_digest(path), (
+        "this file's text and bytes digests agree, so it pins nothing — give "
+        "it CRLF line endings"
+    )
+    assert check_reported_prompt_hash(fdir, 3, text_digest) is not None
+
+
+def test_an_lf_prompt_is_unchanged_by_the_bytes_rule(run_env):
+    """...and the change is confined to files the old rule got wrong. Every
+    prompt foundry writes itself is LF, so a run in flight when this landed
+    keeps every hash it had already published."""
+    from foundry_mcp.tools import foundry_spawn as fs
+
+    _, fdir = run_env
+    path = fdir / "castings" / "casting-1-prompt.md"
+
+    assert fs._published_prompt_hash(path) == _hash_str(PROMPT_TEXT)
+    assert check_reported_prompt_hash(fdir, 1, _hash_str(PROMPT_TEXT)) is None
+
+
+def test_neither_spawn_door_derives_a_prompt_hash_inline():
+    """Both publish sites go through the one helper (D-108).
+
+    Two doors that each hash the prompt themselves is the D-119 shape: they
+    agree until one is edited. The structural pin is what keeps the CRLF
+    property from being re-broken at whichever door the next author touches."""
+    import ast
+
+    from foundry_mcp.tools import foundry_spawn as fs
+
+    tree = ast.parse(Path(fs.__file__).read_text(encoding="utf-8"))
+
+    # Asked of the AST rather than of the text, so the prose that EXPLAINS the
+    # old spelling in `_published_prompt_hash`'s docstring cannot fail the pin
+    # that forbids it — a scan a comment can trip teaches the next author to
+    # delete the comment.
+    hashing_functions = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr == "sha256"
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+        )
+    )
+    assert hashing_functions == ["_published_prompt_hash"], (
+        f"{hashing_functions} derive a digest in this module. Exactly one may: "
+        f"two doors that each hash the prompt agree until one is edited, which "
+        f"is how the CRLF gap (D-108) reached both publish sites at once."
+    )
+
+    calls = sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_published_prompt_hash"
+    )
+    assert calls == 2, (
+        f"the helper is called {calls} times; the single door and the bulk "
+        f"door must both publish through it"
+    )
+
+
+# --- D-106: `lead_fix` is a token only the server may write ------------------
+def test_the_public_handoff_door_refuses_the_reserved_lead_fix_event(run_env):
+    """GI-003 / AC-022 — 'the server itself appends a lead_fix handoff record'.
+
+    That is only a guarantee if the token cannot ALSO be written by hand.
+    Driven: `foundry_handoff(event="lead_fix", summary="hand-written, never
+    measured")` returned ok=True, and the generated report then read '2
+    lead-authored fixes (GI-003 / AC-022), 2 file rows' — the forged row
+    rendering as 'measurement unavailable', which is D-078's sentinel for a
+    real record whose git read failed. GI-003's named violation is precisely
+    'a lead fix recorded only as free prose in a hand-written handoff'."""
+    root, fdir = run_env
+
+    result = foundry_handoff(
+        event=HANDOFF_EVENT_LEAD_FIX,
+        summary="hand-written, never measured",
+        project_root=root,
+    )
+
+    assert result["ok"] is False, result
+    assert HANDOFF_EVENT_LEAD_FIX in result["error"]
+    assert "record_lead_fix_handoff" in result["error"]
+    assert "Foundry-Fix" in result["hint"]
+    assert result["field"] == "event"
+    assert result["reserved_event"] == HANDOFF_EVENT_LEAD_FIX
+
+
+def test_a_refused_lead_fix_handoff_writes_to_neither_channel(run_env):
+    """A refusal that had already appended is not a refusal. Both channels —
+    the JSONL the report reads and the markdown a human reads — must be
+    untouched, or the forgery survives in whichever one was written first."""
+    root, fdir = run_env
+
+    foundry_handoff(
+        event=HANDOFF_EVENT_LEAD_FIX, summary="forged", project_root=root
+    )
+
+    assert _records(fdir) == []
+    assert not (fdir / "handoffs.md").exists()
+
+
+def test_the_reserved_rung_is_reached_before_the_run_is_resolved(run_env):
+    """The rung reads its argument and nothing else, so it is the FIRST one —
+    the house precondition-ladder shape, cheapest and most specific first. A
+    caller with no active run still learns the real reason the call is wrong.
+    """
+    root, _fdir = run_env
+    clear_active_run()
+
+    result = foundry_handoff(
+        event=HANDOFF_EVENT_LEAD_FIX, summary="forged", project_root=root
+    )
+
+    assert result["ok"] is False
+    assert result["reserved_event"] == HANDOFF_EVENT_LEAD_FIX, (
+        "with no active run the door answered 'No active foundry run' and "
+        "never reached the reserved-token rung"
+    )
+
+
+def test_the_server_writer_still_appends_the_reserved_event(run_env):
+    """The token is reserved TO the server, not retired. `Foundry-Fix`'s own
+    writer must still land the record the F6 report reads, or reserving the
+    name would have closed the forgery by closing the feature."""
+    root, fdir = run_env
+
+    record_lead_fix_handoff(
+        fdir,
+        defect_id="D-106",
+        tier="LIVE",
+        file="src/a.py",
+        line_count=3,
+        test="tests/test_a.py::test_b",
+        fix_commit="0ddba11",
+    )
+    assert foundry_handoff(
+        event=HANDOFF_EVENT_LEAD_FIX, summary="forged", project_root=root
+    )["ok"] is False
+
+    lead_fixes = _lead_fixes(fdir)
+
+    assert len(lead_fixes) == 1, (
+        "the count a report reads must be the number of fixes the server "
+        "MEASURED, not that plus whatever was typed at it"
+    )
+    assert lead_fixes[0]["defect_id"] == "D-106"
+    assert lead_fixes[0]["fix_commit"] == "0ddba11"
+
+
 def test_the_acceptance_gate_uses_the_shared_hash_check(run_env):
     """CT-011 — one implementation for both gates. The acceptance gate's
     refusal is the helper's, token included, so a lead cannot learn two

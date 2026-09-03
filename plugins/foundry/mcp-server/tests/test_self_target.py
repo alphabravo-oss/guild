@@ -307,13 +307,21 @@ def test_a_refused_init_creates_no_run_directory(server, tmp_path):
     assert _runs(tmp_path) == [], "a refused init left a run directory behind"
 
 
-def test_resume_is_not_gated_by_the_preflight(server, tmp_path):
-    """The gate is on the NEW-RUN path only, and that is deliberate: ST-009 is
-    written about 'F0 init requested' — the creation of a run — and resume is
-    the RECOVERY door. The refusal's own remedy is 'relaunch, then resume', so
-    a resume that refused on drift would strand an operator from the artifacts
-    of a run already on disk at exactly the moment they are reaching for them.
-    """
+# --- D-109: resume is gated by the same preflight, and re-records ------------
+#
+# These three pinned the carve-out that used to exempt resume. The lead
+# REVERSED it in GRIND cycle 6: a resumed run executes on the server that
+# resumed it, and state.json is where every reader — Foundry-Next's display and
+# REPORT.md's executing-versions table — learns what that was.
+def test_resume_is_gated_by_the_same_preflight(server, tmp_path):
+    """ST-009 / FR-017 — a resume onto a drifted build refuses exactly as a
+    fresh init does, naming the reason and the launch command.
+
+    The old carve-out ('resume is the RECOVERY door') was defensible only while
+    resume wrote none of these fields. It re-records them now, so a resume that
+    did NOT refuse would write a TRUE record of the wrong build and let the run
+    continue on it — the report's dual reality US-006 exists to abolish, only
+    harder to spot for being accurate."""
     created = F.foundry_init(project_root=str(tmp_path))
     assert "error" not in created, created
 
@@ -322,8 +330,97 @@ def test_resume_is_not_gated_by_the_preflight(server, tmp_path):
     assert F.foundry_init(project_root=str(tmp_path))["ok"] is False
 
     resumed = F.foundry_init(resume=created["run_name"], project_root=str(tmp_path))
+
+    assert resumed["ok"] is False, resumed
+    assert "resumed" not in resumed
+    assert resumed["mismatch"] == "version"
+    assert "4.10.0" in resumed["error"] and "4.9.0" in resumed["error"]
+    assert resumed["launch_command"].startswith("claude --plugin-dir ")
+
+
+def test_a_refused_resume_does_not_activate_the_run(server, tmp_path):
+    """The refusal is decided BEFORE `set_active_run`, for the same reason the
+    fresh init decides it before `archive.mkdir`: a refused call must leave the
+    session exactly as it found it. An activated run behind a refusal would
+    make every later tool in the session act on a run the operator was just
+    told not to execute."""
+    created = F.foundry_init(project_root=str(tmp_path))
+    from foundry_mcp.tools import foundry_state
+
+    foundry_state.clear_active_run()
+    _write_plugin_manifest(tmp_path, name="foundry", version="4.10.0")
+
+    refused = F.foundry_init(resume=created["run_name"], project_root=str(tmp_path))
+
+    assert refused["ok"] is False
+    assert foundry_state.get_run_dir(str(tmp_path)) is None, (
+        "a refused resume activated the run anyway"
+    )
+
+    # The falsifier: activation is what a resume normally DOES, so the
+    # assertion above is only about the refusal if this one holds too. Bring
+    # BOTH halves of the preflight into agreement, not just the version.
+    _write_plugin_manifest(tmp_path, name="foundry", version="4.9.0")
+    server["commits"][str(tmp_path)] = SERVER_COMMIT
+
+    assert F.foundry_init(resume=created["run_name"], project_root=str(tmp_path))[
+        "resumed"
+    ] is True
+    assert foundry_state.get_run_dir(str(tmp_path)) is not None
+
+
+def test_resume_refreshes_the_recorded_provenance(server, tmp_path):
+    """D-109 / FR-017 / FR-050 / AC-027 — the fields say what the run is
+    EXECUTING on, not what created it.
+
+    Driven as the defect was: a run born under one executing server, resumed
+    under another. Before the fix state.json kept the birth values verbatim and
+    Foundry-Next rendered them as fact; the run was on one build and its own
+    record said another."""
+    created = F.foundry_init(project_root=str(tmp_path))
+    assert _state(created)["server_version"] == "1.8.0"
+    assert _state(created)["server_commit"] == SERVER_COMMIT
+
+    # The session is relaunched on a different build of the same plugin.
+    new_root = Path("/fake/worktree/guild/plugins/foundry")
+    server["server_root"] = new_root
+    server["server_version"] = "1.9.0"
+    server["commits"][str(new_root)] = "3" * 40
+
+    resumed = F.foundry_init(resume=created["run_name"], project_root=str(tmp_path))
     assert resumed["resumed"] is True, resumed
-    assert resumed["run_name"] == created["run_name"]
+
+    state = _state(created)
+    assert state["server_version"] == "1.9.0"
+    assert state["server_root"] == str(new_root)
+    assert state["server_commit"] == "3" * 40
+    assert state["self_target"] is False
+    # Echoed on the result too, exactly as the new-run path echoes it.
+    assert resumed["server_commit"] == "3" * 40
+    # And nothing else about the run was disturbed.
+    assert state["phase"] == "F0"
+    assert state["spec_path"] == ""
+
+
+def test_resume_leaves_the_rest_of_state_alone(server, tmp_path):
+    """The refresh is an UPDATE of five keys, not a rewrite of the document.
+
+    A resume that reseeded state.json would silently discard the phase, cycle
+    and every key a later phase wrote — which is the one thing an operator
+    reaching for the recovery door cannot afford."""
+    created = F.foundry_init(project_root=str(tmp_path))
+    state_path = Path(created["foundry_dir"]) / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"phase": "F3", "cycle": 7, "max_cycles": 12})
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    F.foundry_init(resume=created["run_name"], project_root=str(tmp_path))
+
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert after["phase"] == "F3"
+    assert after["cycle"] == 7
+    assert after["max_cycles"] == 12
+    assert after["server_version"] == "1.8.0"
 
 
 # --- a corrupt third-party manifest is not this run's problem -----------------

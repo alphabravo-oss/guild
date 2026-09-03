@@ -519,6 +519,46 @@ def _seed_progress_ledgers(fdir: Path, seeds: list[tuple[str, str]]) -> None:
         pass
 
 
+def _published_prompt_hash(path: Path) -> str | None:
+    """The prompt hash as PUBLISHED: sha256 over the file's BYTES (D-108).
+
+    ``None`` when the bytes could not be read, which the callers turn into the
+    house ``document_refusal`` — the same answer the decode guard beside them
+    gives, because "I could not read the file" is one answer however it failed.
+
+    WHY BYTES AND NOT THE DECODED TEXT
+    ----------------------------------
+    Both publish sites used to hash ``prompt_text.encode("utf-8")``, where
+    ``prompt_text`` came back from ``read_text_file`` — a TEXT read, which
+    applies universal-newline translation, so every ``\\r\\n`` in the file had
+    already become ``\\n`` before the digest was taken. The teammate is told to
+    state this value back "character for character", and the command
+    ``agents/teammate.md`` documents for producing it is a shell digest of the
+    FILE. A shell cannot translate newlines. So for any prompt file written
+    with CRLF endings the publisher and the teammate computed different
+    values, ``check_reported_prompt_hash`` refused an honest report as stale,
+    and the remedy the refusal offers ("re-read the prompt file in full") could
+    never work — re-reading produces the same right answer that keeps being
+    called wrong.
+
+    Bytes are the only digest both sides can compute independently, so bytes
+    are what is published. ``check_reported_prompt_hash`` compares the same
+    thing, through ``foundry_handoff._hash_file``, in the same spelling.
+
+    THIS IS NOT A HOLE IN THE D-138 READ RULE. That rule closes the DECODE
+    family — ``UnicodeDecodeError`` raised across the MCP boundary from a text
+    read with the wrong handler. ``read_bytes`` decodes nothing and cannot
+    raise it; the ``OSError`` it can raise is handled here, and every caller
+    still routes its text read through ``read_text_file`` first, so the decode
+    contract is unchanged.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    return "sha256:" + hashlib.sha256(raw).hexdigest()[:16]
+
+
 def _dispatch_block(prompt_path: str, prompt_hash: str) -> str:
     """The pointer the lead hands the teammate in place of the prompt text.
 
@@ -1755,8 +1795,11 @@ def foundry_spawn_teammate(
             "hint": "Re-run F0.5 DECOMPOSE to regenerate the prompt file.",
         }
 
-    # Hash the prompt for audit tracking.
-    prompt_hash = "sha256:" + hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+    # Hash the prompt for audit tracking — over the file's BYTES, which is the
+    # only digest the teammate's own shell command can reproduce (D-108).
+    prompt_hash = _published_prompt_hash(prompt_path)
+    if prompt_hash is None:
+        return document_refusal(prompt_path, f"{prompt_path.name} could not be read")
 
     model = _teammate_model()
 
@@ -2110,7 +2153,12 @@ def foundry_cast_wave(
                 "error": f"casting-{cid}-prompt.md is empty (wave {wave})",
                 "hint": "Re-run F0.5 DECOMPOSE to regenerate the prompt file.",
             }
-        prompt_hash = "sha256:" + hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+        # Over the BYTES, for the reason the single door gives (D-108). Both
+        # doors publish through the one helper so they cannot come to disagree
+        # about what the teammate is being asked to state back.
+        prompt_hash = _published_prompt_hash(prompt_path)
+        if prompt_hash is None:
+            return document_refusal(prompt_path, f"{prompt_path.name} could not be read")
         rel_prompt_path = str(
             prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path
         )

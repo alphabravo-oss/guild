@@ -976,8 +976,8 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
 
     Returns None when the filing may be persisted, otherwise the house refusal
     dict: ``{"ok": False, "error": ..., "hint": ..., "field": <"tier" | "class"
-    | "reproduction_attempted" | "file_path" | "description">}`` plus, for the
-    security refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
+    | "reproduction_attempted" | "description">}`` plus, for the security
+    refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
 
     Reads the mapping and nothing else — no ledger read, no run-dir resolution,
     no write — so the batch door can call it once per finding BEFORE it opens
@@ -999,7 +999,9 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
 
     THE CHECK ORDER IS LOCKED, so that the two doors name the same field first
     for the same bad filing: the security denylist, then tier, then class,
-    then — for LATENT only — reproduction_attempted, then file_path (D-089).
+    then — for LATENT only — reproduction_attempted. There is no fifth rung;
+    see the D-101 block at the tail of this function for why a `file_path`
+    rung was added in GRIND cycle 5 and reversed in cycle 6.
 
     D-061 — THE AUDIT TRIPWIRE MAY NOT BE RUNG-DEPENDENT (AC-007 / OT-005 /
     CT-003)
@@ -1131,57 +1133,52 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
             "field": "reproduction_attempted",
         }
 
-    # D-089 — A LATENT FILING MUST NAME A LOCATION, ON BOTH DOORS.
+    # D-101 — THERE IS NO `file_path` RUNG HERE, AND ADDING ONE IS A
+    # REGRESSION (FR-005 / CT-001 / CT-003).
     #
-    # The report's LATENT backlog promises the reader a place to look: the
-    # whole value of a tracked-but-unreproduced gap is that a later cycle can
-    # go and drive it. A LATENT record with no `file` gives the next stream a
-    # description and nothing to open, so the backlog entry is unactionable
-    # and the gap survives every cycle that reads it.
+    # GRIND cycle 5 added a fourth LATENT rung refusing a filing whose `file`
+    # was absent or blank, to close D-089's observation that the report's
+    # LATENT backlog rendered a row promising a location it did not have. The
+    # lead REVERSED that ruling in cycle 6, because the rung contradicts a
+    # Locked requirement three ways over:
     #
-    # It is the LATENT rung and not a universal one because a LIVE filing's
-    # reproduction (the door driven and the wrong result observed) already
-    # locates the failure in the description, and requiring a path from every
-    # LIVE filing would refuse findings whose subject is a missing file. Only
-    # LATENT trades a reproduction for a promise, so only LATENT owes the
-    # location.
+    #   FR-005 verbatim  "Server refuses LATENT only when the description
+    #                    matches the security-property regex ... naming the
+    #                    denylist class". `only` is the whole word.
+    #   CT-001 errors    admits exactly two refusals — the missing tier and
+    #                    the missing negative-result statement.
+    #   CT-003 errors    "spec_ref alone never refuses a LATENT filing", the
+    #                    same shape of promise one field along.
     #
-    # Placed after `reproduction_attempted` rather than before it: a LATENT
-    # filing missing both fields has always been refused naming
-    # `reproduction_attempted` (pinned by
-    # test_a_latent_filing_without_a_statement_is_refused_naming_it), and
-    # reordering would change a shipped refusal no requirement asks to change.
+    # Driven at the reversal (the pre-edit validator at 5dd9dad, run over the
+    # six `tier: LATENT` examples DOCUMENTED on the filing surfaces the streams
+    # copy from): two were refused by this rung, and they are precisely the two
+    # whose subject HAS no file —
     #
-    # The KEY read is `file` — the spelling `_finding_mapping` writes and the
-    # spelling the batch door's own finding dicts already use — while the
-    # FIELD named back is `file_path`, the parameter a Foundry-Defect caller
-    # actually passes. The error text names both so neither door's caller has
-    # to translate.
-    file_value = finding.get("file")
-    if not isinstance(file_value, str) or not file_value.strip():
-        return {
-            "ok": False,
-            "error": (
-                f"Missing file_path on a LATENT filing: {file_value!r}. A "
-                f"LATENT defect is carried as a backlog entry that promises a "
-                f"location (the batch door spells this key `file`)."
-            ),
-            "hint": (
-                "Name the file the gap is in, as a bare repo-relative path "
-                "with no line number. A LATENT filing is one a later cycle is "
-                "meant to go and drive, and it cannot be driven from a "
-                "description alone. If you genuinely cannot locate it, you "
-                "have not looked hard enough to file it as LATENT — the "
-                "reproduction_attempted statement above says you swept "
-                "something, so say where."
-            ),
-            "field": "file_path",
-        }
-
-    # The security denylist is NOT here any more (D-061); it is the first rung
-    # of this function. A LATENT filing that reaches this line named its
-    # negative result, named its location, and did not assert a security
-    # property.
+    #   agents/coverage-diff.md   a casting that declares no coverage_list at
+    #                             all, located by `casting_id: 7`;
+    #   skills/sight/SKILL.md     an empty-state gap in a rendered view,
+    #                             located by `page` and `element`.
+    #
+    # Neither is a filing that forgot its path. A coverage gap belonging to a
+    # whole casting and a UI gap belonging to a route are located by the axis
+    # their own stream works in, and the rung demanded a fifth axis that does
+    # not exist for them. A door that refuses its own documented example
+    # teaches the stream that the prose is wrong, and the stream's next move is
+    # to invent a path — a fabricated location in the backlog is strictly worse
+    # than an absent one, because it is read as evidence.
+    #
+    # D-089's real observation — a location-free LATENT row rendered under a
+    # header promising a location — is closed on the REPORT side, by rendering
+    # such a row honestly (naming that the filing carried no file) rather than
+    # by refusing the filing. A validator is the wrong place to enforce a
+    # renderer's promise: the filing is the evidence, and evidence is not
+    # improved by being refused.
+    #
+    # The security denylist is NOT here either (D-061); it is the first rung of
+    # this function. A LATENT filing that reaches this line named its negative
+    # result and did not assert a security property. That is everything the
+    # contract asks of it.
     return None
 
 
@@ -1611,7 +1608,13 @@ def foundry_init(
     """Initialize a foundry run under foundry-archive/.
 
     Args:
-        resume: Name of existing run to resume (e.g. 'bold-falcon').
+        resume: Name of existing run to resume (e.g. 'bold-falcon'). Runs the
+            SAME self-target preflight as a fresh init (D-109): it refuses on a
+            version or commit mismatch naming the reason and the launch
+            command, and on success it refreshes ``server_version``,
+            ``plugin_version``, ``server_root``, ``server_commit`` and
+            ``self_target`` in state.json so the run's recorded provenance is
+            the build it is executing on rather than the one that created it.
         max_cycles: CT-016 / FR-024 — the GRIND cycle ceiling from the
             ``--max-cycles`` flag. Persisted to BOTH state.json and
             castings/manifest.json. Default 0 means unbounded. The Foundry-Phase
@@ -1650,13 +1653,57 @@ def foundry_init(
         # it. Naming the file is the whole value of the call at that moment.
         if (corrupt := _artifact_guard(run_dir, "state.json")):
             return corrupt
+
+        # D-109 — RESUME RUNS THE SAME PREFLIGHT AND RE-RECORDS THE SAME
+        # FIELDS (FR-017 / FR-050 / CT-010 / ST-009 / US-006).
+        #
+        # This branch used to return before the preflight, and justified it
+        # with "Resume also writes none of these fields, so there is nothing
+        # it could record differently". That sentence was false in the only
+        # way that mattered: the fields it does not write are STILL THERE,
+        # written by the init that created the run, and every reader trusts
+        # them. Driven without hand-editing any artifact — a run created while
+        # the executing server root pointed at the 4.9.0 cache tree, then
+        # resumed on the working-tree build — state.json still said
+        # server_version 1.9.0, plugin_version 4.9.0, server_commit
+        # 259f8402, server_root .../cache/foundry/4.9.0, while the executing
+        # process was 1.9.0 at 5dd9dad under .../guild/plugins/foundry.
+        # Foundry-Next then rendered that stale row as fact, and REPORT.md's
+        # executing-versions table repeated it. US-006 exists precisely so the
+        # report needs no dual-reality section; a resume that carried a run's
+        # birth provenance forward as its execution provenance manufactured
+        # exactly that dual reality.
+        #
+        # So resume re-records, and — because it re-records — it must also
+        # refuse. The old carve-out ("resume is the RECOVERY door") was
+        # defensible only while the fields stayed untouched: once they are
+        # refreshed they are TRUE, and a true record of the wrong build is
+        # still the wrong build shipping this run's fixes. The refusal's own
+        # remedy is the launch command, which reaches the run's artifacts on
+        # the next attempt — an operator is delayed one relaunch, not stranded.
+        #
+        # ORDER: after the exists and corrupt-state guards, before
+        # `set_active_run`. D-095's property is that resuming names the
+        # artifact the operator is reaching for, so "run not found" and
+        # "state.json is corrupt" still outrank drift; and a refused resume
+        # must not leave a run activated behind it.
+        version_fields, preflight_refusal = _self_target_preflight(root)
+        if preflight_refusal is not None:
+            return preflight_refusal
+
         set_active_run(resume)
-        state = _load_json(state_path)
+        with _locked_document(state_path) as document:
+            document.update(version_fields)
+            state = dict(document)
         return {
             "foundry_dir": str(run_dir),
             "run_name": resume,
             "resumed": True,
             "state": state,
+            # D-109 — echoed beside the refreshed copy, exactly as the new-run
+            # result echoes it, so a caller rendering either result reads what
+            # the run is EXECUTING on rather than what it was born on.
+            **version_fields,
             "display": (
                 foundry_hammer(f"F O U N D R Y  Resumed: {resume}")
                 + f"\n  Phase: {state.get('phase', '?')}  Cycle: {state.get('cycle', 0)}"
@@ -1675,13 +1722,13 @@ def foundry_init(
     # leaves the operator relaunching into an archive holding a stillborn run
     # they must now identify and delete.
     #
-    # ONLY THE NEW-RUN PATH IS GATED, and that is deliberate. ST-009 is written
-    # about "F0 init requested" — the creation of a run — and resume is the
-    # RECOVERY door: the refusal's own remedy is "relaunch, then resume", so a
-    # resume that refused on drift would strand an operator from the artifacts
-    # of a run already on disk at exactly the moment they are trying to reach
-    # them. Resume also writes none of these fields, so there is nothing it
-    # could record differently.
+    # BOTH DOORS ARE GATED (D-109). This one is not the only entry into a run:
+    # resume above calls the same helper, refuses on the same mismatch and
+    # re-records the same fields, because a resumed run executes on the
+    # server that resumed it and every reader of state.json is told so. The
+    # carve-out that used to live here — "resume writes none of these fields,
+    # so there is nothing it could record differently" — is the sentence
+    # D-109 falsified; see the block in that branch.
     version_fields, preflight_refusal = _self_target_preflight(root)
     if preflight_refusal is not None:
         return preflight_refusal
@@ -1912,10 +1959,13 @@ def foundry_add_defect(
             description.
 
         file_path: the file the finding is in, bare and repo-relative, never
-            carrying a line number. REQUIRED on a LATENT filing (D-089): the
-            report carries LATENT records as a backlog that promises a
-            location, and one with no path cannot be driven by the later cycle
-            it is filed for.
+            carrying a line number. Optional on EVERY tier (D-101): FR-005
+            refuses a LATENT filing "only when the description matches the
+            security-property regex", so a location-free LATENT filing is
+            accepted and the report renders it naming that it carried no file.
+            Give one whenever you have one — a located backlog entry is the
+            one a later cycle can actually go and drive — but a finding
+            located by ``symbol`` alone is a filing, not an error.
 
     Returns:
         ``{defect_id, cycle, declared_cycle, type, total_defects, open_defects,

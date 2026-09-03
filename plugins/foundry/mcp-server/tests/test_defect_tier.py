@@ -29,6 +29,7 @@ used in those tests is the shape that door passes through.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -647,14 +648,23 @@ def test_the_validator_never_raises_on_a_hostile_mapping():
         assert refusal is not None and refusal["ok"] is False, hostile
 
 
-# --- D-089: a LATENT filing must name a location, on both doors --------------
-def test_a_latent_filing_without_a_file_path_is_refused_naming_it(run_env):
-    """D-089 — the report carries LATENT records as a backlog that PROMISES a
-    location, so the door must require one.
+# --- D-101: a LATENT filing owes NO location; the cycle-5 rung is reversed ---
+#
+# These five pinned the `file_path` rung GRIND cycle 5 added under D-089. The
+# lead REVERSED that ruling in cycle 6 (state.json spec_ambiguities entry 6)
+# because the rung contradicts FR-005's "refuses LATENT only when the
+# description matches the security-property regex", CT-001's two-refusal errors
+# cell and CT-003's "spec_ref alone never refuses a LATENT filing". They are
+# re-pointed rather than deleted: a rung that shipped once and was reversed
+# needs a test asserting the reversal, or the next author reads D-089's comment
+# and puts it back.
+def test_a_latent_filing_without_a_file_path_is_accepted(run_env):
+    """FR-005 verbatim: 'Server refuses LATENT only when the description
+    matches the security-property regex ... naming the denylist class.'
 
-    A LATENT filing is the one a later cycle is meant to go and drive. Filed
-    with a description and no path, the backlog entry names nothing to open,
-    and the gap survives every cycle that reads it."""
+    `only` is the whole word. A LATENT filing that named its tier, its class
+    and its negative result has satisfied every refusal the contract admits,
+    and a location it did not have is not one of them."""
     project_root, fdir = run_env
 
     result = foundry_add_defect(
@@ -662,24 +672,26 @@ def test_a_latent_filing_without_a_file_path_is_refused_naming_it(run_env):
         source="prove",
         defect_type="MISSING",
         description="the sweep covers one root, so a second-root site is unseen",
+        symbol="sweep_roots",
         defect_class="SCAN_COVERAGE_GAP",
         tier="LATENT",
         reproduction_attempted="AST sweep of both roots finds 0 sites",
         project_root=project_root,
     )
 
-    assert result["ok"] is False, result
-    assert result["field"] == "file_path"
-    assert "file_path" in result["error"]
-    assert result["hint"]
-    assert _defects(fdir) == [], "a refused filing must persist nothing"
+    assert result["defect_id"] == "D-001", result
+    record = _defects(fdir)[0]
+    assert record["tier"] == "LATENT"
+    assert record["file"] == "", "the absent location persists as absent"
+    assert record["symbol"] == "sweep_roots"
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
-def test_a_blank_file_path_is_refused_like_an_absent_one(run_env, blank):
-    """Whitespace is not a location. The rung strips before it judges, for the
-    same reason the `class` rung does."""
-    project_root, _ = run_env
+def test_a_blank_file_path_is_accepted_like_an_absent_one(run_env, blank):
+    """Whitespace is not a location either — and neither is refused. The two
+    spellings of "no path" must reach the same verdict, whichever way the
+    reversal went, or the door refuses on invisible characters."""
+    project_root, fdir = run_env
 
     result = foundry_add_defect(
         cycle=0,
@@ -693,15 +705,14 @@ def test_a_blank_file_path_is_refused_like_an_absent_one(run_env, blank):
         project_root=project_root,
     )
 
-    assert result["ok"] is False, blank
-    assert result["field"] == "file_path"
+    assert result["defect_id"] == "D-001", blank
+    assert _defects(fdir)[0]["file"] == blank
 
 
 def test_a_live_filing_without_a_file_path_is_still_accepted(run_env):
-    """D-089 is scoped to LATENT and must stay there. A LIVE filing's
-    reproduction — the door driven and the wrong result observed — already
-    locates the failure in the description, and a universal rung would refuse
-    findings whose whole subject is a file that does not exist."""
+    """Unchanged by the reversal, and kept for exactly that reason: LIVE was
+    never gated on a location, so this is the test that says the reversal made
+    the two tiers agree rather than swapping which one was wrong."""
     project_root, fdir = run_env
 
     result = foundry_add_defect(
@@ -723,13 +734,14 @@ def test_a_live_filing_without_a_file_path_is_still_accepted(run_env):
     [{"file": ""}, {"file": "   "}, {"file": None}, {"file": 3}],
     ids=["empty", "whitespace", "null", "non-string"],
 )
-def test_the_validator_names_file_path_for_the_batch_door_shape(overrides):
-    """D-089 says BOTH doors, and both doors are this one function. Driven on
-    the finding-dict shape ``foundry_sync_defects`` passes straight through,
-    whose key is spelled ``file`` — the refusal names ``file_path``, the
-    parameter a Foundry-Defect caller actually passes, and the error text names
-    both so neither door's caller has to translate."""
-    refusal = validate_defect_filing(
+def test_the_validator_accepts_a_locationless_batch_door_shape(overrides):
+    """The reversal reaches BOTH doors, and both doors are this one function.
+
+    Driven on the finding-dict shape ``foundry_sync_defects`` passes straight
+    through, whose location key is spelled ``file``. Every spelling of "no
+    location" — absent, blank, null, not even a string — is accepted, because
+    the validator no longer reads the key at all."""
+    accepted = validate_defect_filing(
         _finding(
             tier="LATENT",
             reproduction_attempted="AST sweep of both roots finds 0 sites",
@@ -737,25 +749,105 @@ def test_the_validator_names_file_path_for_the_batch_door_shape(overrides):
         )
     )
 
-    assert refusal is not None, overrides
-    assert refusal["ok"] is False
-    assert refusal["field"] == "file_path"
-    assert "file_path" in refusal["error"] and "file" in refusal["error"]
+    assert accepted is None, overrides
 
 
-def test_the_file_path_rung_is_last_and_does_not_displace_the_others():
-    """The rung is placed AFTER ``reproduction_attempted`` deliberately: a
-    LATENT filing missing both fields has always been refused naming the
-    statement, and reordering would change a shipped refusal no requirement
-    asks to change."""
-    missing_both = _finding(tier="LATENT", reproduction_attempted="", file="")
-    assert validate_defect_filing(missing_both)["field"] == "reproduction_attempted"
+def test_reproduction_attempted_is_the_last_latent_rung():
+    """With the cycle-5 rung gone, the negative-result statement is the final
+    thing a LATENT filing owes. A filing that clears it clears the validator,
+    with or without a location — which is the property the removed rung broke.
+    """
+    filing = _finding(tier="LATENT", reproduction_attempted="", file="")
+    assert validate_defect_filing(filing)["field"] == "reproduction_attempted"
 
-    missing_both["reproduction_attempted"] = "AST sweep of both roots finds 0 sites"
-    assert validate_defect_filing(missing_both)["field"] == "file_path"
+    filing["reproduction_attempted"] = "AST sweep of both roots finds 0 sites"
+    assert validate_defect_filing(filing) is None, "no rung may follow this one"
 
-    missing_both["file"] = "src/api/handler.py"
-    assert validate_defect_filing(missing_both) is None
+    filing["file"] = "src/api/handler.py"
+    assert validate_defect_filing(filing) is None
+
+
+# --- D-101: the doors accept their own documented examples -------------------
+#
+# The rung was not caught by any test in this file for a whole cycle because
+# every fixture here is hand-built, and a hand-built fixture is written to
+# satisfy whatever the door currently demands. What it broke was the EXAMPLES —
+# the JSON blocks a stream copies out of its own agent or skill file — and
+# nothing swept those against the validator.
+#
+# The corpus is imported rather than re-derived: `DEFECT_FILING_SURFACES` is
+# `test_protocol_prose`'s derivation over both directories a filing surface can
+# live in (`agents/*.md`, `skills/*/SKILL.md`, filtered to those naming a
+# filing door). A second hand-rolled corpus here would drift from it, and the
+# drift would be invisible in exactly the way this pin exists to prevent.
+def _documented_latent_examples() -> list[tuple[str, dict]]:
+    """Every `tier: LATENT` object in a filing surface's normative examples."""
+    from tests.test_protocol_prose import DEFECT_FILING_SURFACES
+
+    found: list[tuple[str, dict]] = []
+    for path in DEFECT_FILING_SURFACES:
+        text = path.read_text(encoding="utf-8")
+        for block in re.findall(r"^```json\n(.*?)^```$", text, re.S | re.M):
+            try:
+                parsed = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            stack: list[object] = [parsed]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, dict):
+                    if node.get("tier") == "LATENT":
+                        found.append((path.name, node))
+                    stack.extend(node.values())
+                elif isinstance(node, list):
+                    stack.extend(node)
+    return found
+
+
+def test_the_documented_latent_examples_corpus_is_not_empty():
+    """Floor check: the pin below is vacuous if the parse stops finding them.
+
+    A surface that renames its fence, or a corpus that stops deriving, would
+    turn the sweep green by sweeping nothing — which is the shape of failure
+    the rung it guards against had for a cycle."""
+    examples = _documented_latent_examples()
+
+    assert len(examples) >= 5, (
+        f"only {len(examples)} documented LATENT examples found across the "
+        f"filing surfaces. Either the surfaces stopped publishing one, or the "
+        f"fence parse stopped matching. Fix whichever it is rather than "
+        f"lowering this floor."
+    )
+    assert len({name for name, _ in examples}) >= 3, (
+        "the documented LATENT examples now come from fewer than three files, "
+        "so this sweep no longer spans the surfaces it is about."
+    )
+
+
+def test_every_documented_latent_example_passes_the_filing_door():
+    """D-101 — a door that refuses its own documented example is the defect.
+
+    Driven at the reversal, against the pre-edit validator: two of the six
+    `tier: LATENT` examples published on the filing surfaces were refused by
+    the cycle-5 `file_path` rung — `agents/coverage-diff.md`, whose finding is
+    a casting that declares no coverage_list and is located by `casting_id`,
+    and `skills/sight/SKILL.md`, whose finding is an empty-state gap located by
+    `page` and `element`. Neither forgot a path; neither HAS one. A stream that
+    copies the shape its own prose publishes and is refused for it learns that
+    the prose is wrong, and its next move is to invent a location — which the
+    backlog then reads as evidence."""
+    refused = [
+        (name, example.get("description", "")[:60], refusal["field"])
+        for name, example in _documented_latent_examples()
+        if (refusal := validate_defect_filing(example)) is not None
+    ]
+
+    assert refused == [], (
+        f"the filing door refuses {len(refused)} of its own documented LATENT "
+        f"examples: {refused}. Either the door gained a rung the surfaces do "
+        f"not teach, or a surface publishes an example that was never valid. "
+        f"Fix whichever one is wrong — never both, and never neither."
+    )
 
 
 # --- FR-051 / D-077: the untiered exit, at the single door too ---------------

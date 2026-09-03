@@ -37,6 +37,16 @@ from foundry_mcp.tools.foundry_state import (
 
 
 def _hash_file(path: Path) -> str | None:
+    """The published spelling of a FILE's digest: sha256 over its bytes.
+
+    ``None`` when there is no file to hash. This is the value a shell's
+    ``sha256sum`` / ``shasum -a 256`` prints (truncated to the published 16
+    characters), which is why it — and never ``_hash_str`` on decoded text —
+    is what ``check_reported_prompt_hash`` compares a teammate's report
+    against (D-108). Text and bytes differ for any file whose line endings are
+    not already LF, and only one of the two can be computed from outside this
+    process.
+    """
     if not path.exists() or not path.is_file():
         return None
     h = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -44,6 +54,14 @@ def _hash_file(path: Path) -> str | None:
 
 
 def _hash_str(text: str) -> str:
+    """The published spelling of a STRING's digest.
+
+    For values that are strings in the first place — a handoff id assembled
+    from a timestamp and an event, an evidence log's redacted body. NOT for
+    hashing a file: see ``_hash_file`` and D-108. Passing decoded file text
+    here re-introduces the newline-translation gap that made an honest
+    teammate's report of a CRLF prompt read as stale.
+    """
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
@@ -268,27 +286,46 @@ def check_reported_prompt_hash(
     that exists at one door and not the other lets an unread prompt through
     whichever door the lead happens to walk.
 
-    THE COMPARISON VALUE IS THE PUBLISHED SPELLING. ``_hash_str`` produces
-    ``"sha256:" + hexdigest()[:16]``, which is byte-for-byte what
+    THE COMPARISON VALUE IS THE PUBLISHED SPELLING, OVER THE FILE'S BYTES
+    (D-108). ``"sha256:" + hexdigest()[:16]`` is byte-for-byte what
     ``foundry_spawn`` publishes as ``prompt_hash`` and what its dispatch block
     tells the teammate to state back "character for character". A bare
     hexdigest or the full 64 characters here would make every honest report a
     mismatch, so there is exactly one spelling in the package and this reads
     it rather than re-deriving one.
 
+    WHAT IS HASHED IS THE BYTES, NOT THE DECODED TEXT (D-108). ``_hash_file``
+    hashes ``path.read_bytes()``; ``_hash_str`` hashes ``text.encode("utf-8")``
+    AFTER ``read_text_file`` has already translated newlines, which is what
+    this rung used. On a prompt file written with CRLF line endings the two
+    disagree — the text digest is taken over a document with every ``\\r``
+    silently removed — and the teammate's own documented command
+    (``sha256sum`` / ``shasum -a 256`` on the file) can only ever produce the
+    BYTES digest. So the honest report of a CRLF prompt was refused as stale
+    while nothing was stale. The bytes are what both sides can independently
+    compute, so the bytes are what is compared.
+
     An unreadable or missing prompt file returns the house ``document_refusal``
     rather than None: nothing was compared, and "I could not read the file" is
-    not the same answer as "the hashes agree".
+    not the same answer as "the hashes agree". The DECODE guard below stays
+    even though the digest no longer needs the text — a prompt this server
+    cannot decode is one no teammate can be handed, and that answer is owed
+    whether or not a hash would have matched.
     """
     prompt_path = run_dir / "castings" / f"casting-{casting_id}-prompt.md"
     if not prompt_path.exists():
         return document_refusal(prompt_path, f"{prompt_path.name} not found")
 
-    prompt_text, problem = read_text_file(prompt_path)
+    _prompt_text, problem = read_text_file(prompt_path)
     if problem is not None:
         return document_refusal(prompt_path, problem)
 
-    expected = _hash_str(prompt_text)
+    expected = _hash_file(prompt_path)
+    if expected is None:
+        # Lost between the exists check and the read: still "I could not read
+        # the file", still not a match.
+        return document_refusal(prompt_path, f"{prompt_path.name} not found")
+
     if reported_hash == expected:
         return None
 
@@ -327,7 +364,11 @@ def foundry_handoff(
     Args:
         event: One of spec_to_casting, casting_to_teammate, teammate_to_accepted,
             inspect_to_grind, grind_to_inspect, assay_to_done, spec_reread,
-            or a custom short name.
+            or a custom short name — with one RESERVED exception.
+            ``HANDOFF_EVENT_LEAD_FIX`` is refused here: that token names a
+            record only the server writes, through
+            ``record_lead_fix_handoff`` on a successful Foundry-Fix. See the
+            D-106 block below.
         source: Path to the source artifact (relative to project root). If the
             path exists, its hash is recorded automatically.
         destination: Path to the destination artifact.
@@ -351,6 +392,54 @@ def foundry_handoff(
             "warning": str | None
         }
     """
+    # D-106 — THE `lead_fix` TOKEN IS RESERVED TO THE SERVER (GI-003 / AC-022).
+    #
+    # GI-003's named violation is "a lead fix recorded only as free prose in a
+    # hand-written handoff", and the mechanism that answers it is that the
+    # SERVER appends the record itself, carrying the defect id, tier, file,
+    # line count and test it MEASURED. That guarantee is only worth the bytes
+    # it is written in if the token cannot also be written by hand — and it
+    # could be, because this door took `event` as a free string.
+    #
+    # Driven at 5dd9dad, after one real lead fix:
+    # `foundry_handoff(event="lead_fix", summary="hand-written, never
+    # measured")` returned ok=True, and the generated report then read
+    # "2 lead-authored fixes (GI-003 / AC-022), 2 file rows" with the forged
+    # row rendered as "measurement unavailable — git could not read the
+    # commit" and report.json's lead_fix_records.count at 2 — a row whose
+    # defect_id, tier, file and fix_commit were all null. Worse than a bare
+    # forgery: it borrowed D-078's measurement-unavailable sentinel, so it
+    # read as a SERVER record whose git read had merely failed.
+    #
+    # The rung is FIRST, ahead of the run-dir resolution, because it needs
+    # nothing but the argument — the house precondition-ladder shape, cheapest
+    # and most specific rung first. Reserving one token rather than a set:
+    # `lead_fix` is the only event the server writes today, and a frozenset of
+    # one in vocab.py (casting 1's file) would be the same comparison with a
+    # cross-module dependency bolted onto it. When a second server-written
+    # event lands, this becomes a membership test against a named set.
+    if event == HANDOFF_EVENT_LEAD_FIX:
+        return {
+            "ok": False,
+            "error": (
+                f"Refused: {HANDOFF_EVENT_LEAD_FIX!r} is a reserved handoff "
+                f"event. Only the server writes it, through "
+                f"record_lead_fix_handoff, on a successful Foundry-Fix with "
+                f"authored_by=lead."
+            ),
+            "hint": (
+                "A lead fix is recorded by MAKING it: call Foundry-Fix with "
+                "authored_by=lead and fix_commit, and the server appends the "
+                "record itself with the defect id, tier, file, line count and "
+                "test it measured from the commit. GI-003 exists so a "
+                "lead-authored fix cannot be a hand-written claim, so writing "
+                "the record by hand is the one thing this door will not do. "
+                "For a note about a lead fix, use a different event name."
+            ),
+            "field": "event",
+            "reserved_event": HANDOFF_EVENT_LEAD_FIX,
+        }
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"ok": False, "error": "No active foundry run"}
