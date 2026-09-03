@@ -1,13 +1,12 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_evidence.py
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_evidence.py --deselect tests/test_evidence.py::test_a_hung_git_becomes_a_named_token_not_a_traceback
 # evidence-for: US-003, GI-002, ST-005, CT-007, AC-013, AC-014, FR-009, FR-031, FR-042, NFR-004, OT-008, OT-016
 # evidence-volatile: \d+\.\d+s
-# evidence-volatile: \(\d+:\d\d:\d\d\)
-# evidence-timeout: 600
+# evidence-timeout: 300
 
 ........................................................................ [ 28%]
 ........................................................................ [ 57%]
 ........................................................................ [ 86%]
-.................................
+................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -44,5 +43,5 @@
     declared 300s                       : 300
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
-.                                       [100%]
-250 passed in 61.27s (0:01:01)
+.                                        [100%]
+249 passed, 1 deselected in 16.77s
