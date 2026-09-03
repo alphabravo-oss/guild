@@ -1,18 +1,68 @@
-"""Server-side cycle counter and recurring-class escalation.
+"""Server-side cycle counter, recurring-class escalation, and how it STOPS.
 
-FR-005 / FR-006 / FR-007 / FR-008 / FR-024, ST-001 / ST-002 / ST-003,
-AC-008 / AC-009 / AC-010 / AC-011, OT-003.
+EVERY REQUIREMENT ID BELOW NAMES ITS SPEC, BECAUSE TWO SPECS BUILT THIS FILE.
+----------------------------------------------------------------------------
+Their id spaces collide completely: every id this module cites also resolves in
+the other spec, with different text. So the convention here is the one D-178
+established one module over, where an unqualified tag sent a stream to the
+wrong assertion because it resolved in both specs and named neither:
 
-NFR-001 makes the synthetic three-cycle escalation fixture part of what this
-casting delivers rather than an afterthought: "the spec's acceptance is
-structural (each P-item's own acceptance test passes, e.g. ... escalation fires
-on a synthetic 3-cycle fixture)".
+  * a BARE id cites ``forge-specs/foundry-run-convergence/spec.md`` — the
+    effort that gave escalation an EXIT, which is the newer half of this file;
+  * a historical tag is written ``process-fixes AC-008``, naming
+    ``forge-specs/foundry-run-process-fixes/spec.md`` — the effort that built
+    the server-side cycle counter and the three-cycle escalation heuristic,
+    which is the older half this file still drives.
 
-The baseline being fixed: grand-vulture ran FALSE_DOCUMENTED_CONTRACT for eight
-consecutive cycles (9-16), 42 defects, because ``foundry_defects_to_tasks``
-groups by LOCATION rather than by cause — one systemic class spread over 11
-files became 11 unrelated packets, each fixed per-instance, the class itself
-never addressed. The three-cycle rule fires at cycle 11 on that history.
+The header of this module used to open with a bare
+``FR-005 / FR-006 / … / AC-011, OT-003`` list and name no spec at all. Every
+one of those ids is a process-fixes id and every one of them ALSO resolves in
+the convergence spec: bare ``ST-001`` here reads "the server owns the cycle
+number" in one and "class ESCALATED → CLEARED after two clean cycles" in the
+other, and both are behaviours this module drives.
+
+WHAT THIS MODULE DRIVES, IN CONVERGENCE IDS
+-------------------------------------------
+US-001 — an escalated class exits by a rule the server evaluates, "so that a
+prover cannot keep the run open by moving the boundary one level finer each
+cycle". ST-001 / AC-001 / FR-003 are the clean-cycle arm: two consecutive
+server-counted INSPECT cycles in which the class draws zero LIVE instances.
+ST-002 / AC-002 / FR-001 / FR-002 are the budget arm: the second structural
+packet closing, one structural pass plus one retry. AC-004 / FR-028 are the
+persisted exit record — status, exit reason, cleared_at_cycle and the packets
+consumed. AC-003 is the half neither arm waives: an open LIVE instance of a
+CLEARED class still blocks DONE and falls into an ordinary per-instance packet.
+FR-051 is the untiered pre-change record blocking like LIVE beside it, and
+ST-010 / GI-006 / CT-014 are the F6 doors this file drives to prove all of it —
+DONE requires every escalated class CLEARED and a generated report.
+
+AND IN PROCESS-FIXES IDS, THE HALF THAT CAME FIRST
+--------------------------------------------------
+process-fixes FR-005 / FR-006 / FR-007 / FR-008 / FR-024 — the counter's
+increment point, the N=3 consecutive-cycle rule, the stream-declared ``class``
+field, the one structural packet with a recorded proposal, and the fallback
+clustering heuristic. process-fixes ST-001 / ST-002 / ST-003 — the GRIND→
+INSPECT boundary that owns the count, and the class's NORMAL → ESCALATED →
+CLEARED states as that spec defined them. process-fixes AC-008 / AC-009 /
+AC-010 / AC-011 — the counter incrementing without a caller-supplied value, the
+synthetic 3-cycle fixture, exactly one structural task while a class is
+escalated, and escalation never waiving closure. process-fixes OT-003 — one
+class recurring across three consecutive server-counted cycles.
+
+process-fixes NFR-001 makes that synthetic three-cycle escalation fixture part
+of what its casting delivered rather than an afterthought: "the spec's
+acceptance is structural (each P-item's own acceptance test passes, e.g. ...
+escalation fires on a synthetic 3-cycle fixture)".
+
+The baseline the earlier effort was fixing: grand-vulture ran
+FALSE_DOCUMENTED_CONTRACT for eight consecutive cycles (9-16), 42 defects,
+because ``foundry_defects_to_tasks`` groups by LOCATION rather than by cause —
+one systemic class spread over 11 files became 11 unrelated packets, each fixed
+per-instance, the class itself never addressed. The three-cycle rule fires at
+cycle 11 on that history. The convergence effort is the other end of the same
+problem: escalation with no exit rule ruled one class NOT CLEARED at cycles 19,
+20 and 21, each time at a finer boundary and with no live instance driven,
+which is what US-001 above ends.
 
 The counter is a prerequisite, not a separate feature: a per-class
 "consecutive cycles" count is meaningless against numbers the caller asserts,
