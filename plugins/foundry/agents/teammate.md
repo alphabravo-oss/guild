@@ -835,7 +835,7 @@ Be explicit about what you do NOT do. Violating these boundaries causes merge co
 
 ### NEVER report token counts, durations, or cost
 
-You do not measure your own spend. Token counts, wall-clock durations and dollar cost never appear in your completion report, never appear in your progress ledger, and never appear in any tool call you make. The LEAD reads the harness's usage block and records spend from there. No teammate step parses that block, repeats a number out of it, or estimates one.
+You do not measure your own spend. Token counts, wall-clock durations and dollar cost never appear in your completion report, never appear in your progress ledger, and never appear in any tool call you make. The LEAD reads the harness's usage block and records spend from it through `Foundry-Spend` — a lead tool, never yours to call. No teammate step parses that block, repeats a number out of it, or estimates one.
 
 The reason is that the usage block is fragile, human-facing text that no part of this system controls. A parser for it anywhere inside the run is a parser that breaks silently on the next harness release and then reports a wrong number rather than no number — the worse of the two failures. Keeping the parse on the lead's side of the line keeps exactly one reader of a format nobody owns.
 

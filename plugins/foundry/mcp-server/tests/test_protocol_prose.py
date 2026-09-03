@@ -3946,6 +3946,26 @@ def test_teammate_filing_a_defect_sets_tier_and_class() -> None:
 # ---------------------------------------------------------------------------
 
 
+_SPEND_HEADING = "### NEVER report token counts, durations, or cost"
+
+
+def _teammate_section(heading: str) -> str:
+    """One `###` section of teammate.md, flattened and bounded at the next one.
+
+    Bounded for the reason ``_rules_bullet`` is: a file-wide pin on a tool
+    name is satisfiable from anywhere in an 890-line document, and the point
+    of naming `Foundry-Spend` in this rule is that THIS RULE states the
+    mechanism -- not that the string exists somewhere in the file.
+    """
+    flat = _flat(TEAMMATE)
+    start = flat.find(heading)
+    if start == -1:
+        return ""
+    tail = flat[start + len(heading) :]
+    stop = tail.find("### ")
+    return heading + (tail if stop == -1 else tail[:stop])
+
+
 def test_teammate_never_reports_spend() -> None:
     """GI-005: the parser stays out of the run; the lead reads the block.
 
@@ -3954,14 +3974,37 @@ def test_teammate_never_reports_spend() -> None:
     release and then reports a WRONG number rather than no number, which is
     the worse of the two failures. One reader, on the lead's side, is the
     whole ruling.
+
+    The rule has to NAME the tool that reader uses. A prohibition that says
+    only "the lead records spend" is the D-020 / D-061 / D-072 shape this
+    module keeps paying for: a working mechanism with no documented caller.
+    `Foundry-Spend` exists, the lead is the one who calls it, and a teammate
+    that knows neither fact has no way to tell "somebody else records this"
+    from "nobody records this" -- and the second reading is the one that ends
+    with a teammate helpfully estimating a number.
+    ``test_every_tool_named_in_shipped_prose_is_registered`` covers the other
+    half, that the name is one the server actually serves.
     """
-    flat = _flat(TEAMMATE)
-    assert "### NEVER report token counts, durations, or cost" in flat, (
-        "teammate.md does not forbid a teammate reporting its own spend "
-        "(GI-005). Unstated, a diligent teammate estimates one -- and an "
-        "estimate in the ledger is indistinguishable from a measurement."
+    section = _teammate_section(_SPEND_HEADING)
+    assert section, (
+        f"teammate.md has no {_SPEND_HEADING!r} section, so nothing forbids a "
+        f"teammate reporting its own spend (GI-005). Unstated, a diligent "
+        f"teammate estimates one -- and an estimate in the ledger is "
+        f"indistinguishable from a measurement."
     )
-    assert "Spend is not yours to report." in flat, (
+    assert "`Foundry-Spend`" in section, (
+        "teammate.md's spend rule no longer names `Foundry-Spend` as the tool "
+        "the lead records through. Naming the actor without the mechanism "
+        "leaves the teammate unable to distinguish 'someone else records this' "
+        "from 'nobody records this', and only one of those readings ends with "
+        "the teammate leaving the number alone."
+    )
+    assert "never yours to call" in section, (
+        "teammate.md's spend rule names `Foundry-Spend` without ruling it out "
+        "of the teammate's own hands. A tool named in a teammate's protocol "
+        "reads as a tool the teammate may call; this one is the lead's."
+    )
+    assert "Spend is not yours to report." in section, (
         "teammate.md's spend rule lost its closing absolute."
     )
 
