@@ -11,7 +11,7 @@
 ........................................................................ [ 11%]
 ........................................................................ [ 14%]
 ........................................................................ [ 16%]
-..........................................................
+............................................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -58,33 +58,33 @@
     declared 300s                       : 300
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
-.............. [ 19%]
+............ [ 18%]
 ........................................................................ [ 21%]
 ........................................................................ [ 23%]
-........................................................................ [ 26%]
+........................................................................ [ 25%]
 ........................................................................ [ 28%]
 ........................................................................ [ 30%]
 ........................................................................ [ 33%]
 ........................................................................ [ 35%]
-........................................................................ [ 38%]
-.................................s...................................... [ 40%]
-..s.s................................................................... [ 42%]
-........................................................................ [ 45%]
+........................................................................ [ 37%]
+...........................................s............................ [ 40%]
+............s.s......................................................... [ 42%]
+........................................................................ [ 44%]
 ........................................................................ [ 47%]
 ........................................................................ [ 49%]
-........................................................................ [ 52%]
+........................................................................ [ 51%]
 ........................................................................ [ 54%]
-........................................................................ [ 57%]
-........................................................................ [ 59%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
 ........................................................................ [ 61%]
-........................................................................ [ 64%]
+........................................................................ [ 63%]
 ........................................................................ [ 66%]
-........................................................................ [ 69%]
-........................................................................ [ 71%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
 ........................................................................ [ 73%]
-........................................................................ [ 76%]
-..........................s..s.s..s..................................... [ 78%]
-........................................
+........................................................................ [ 75%]
+....................................s..s.s..s........................... [ 77%]
+........................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -117,9 +117,12 @@
   unknown fixed      1  ['D-007']
 === LATENT backlog (NFR-003 / AC-002) ===
   D-004  cycle 4  FALSE_DOCUMENTED_CONTRACT
+      located=True  file=src/foundry_mcp/tools/foundry_report.py  symbol=_render_section  note=None
   D-005  cycle 5  FALSE_DOCUMENTED_CONTRACT
+      located=True  file=src/foundry_mcp/tools/foundry_report.py  symbol=_md_table  note=None
 === unknown-tier defects, listed separately (FR-051) ===
   D-007  status fixed  UNWIRED_SURFACE
+      source=trace  type=UNWIRED  file=src/foundry_mcp/tools/foundry_orchestrator.py  symbol=foundry_next
 === escalated classes (AC-004) ===
   FALSE_DOCUMENTED_CONTRACT  status=CLEARED  exit_reason=budget  cleared_at_cycle=5  packets=2  open_latent=['D-004', 'D-005']
 === lead_fix records, one line per file touched (AC-022) ===
@@ -127,7 +130,7 @@
       src/foundry_mcp/tools/evidence.py  lines=11
   D-003  tier=LATENT  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
       src/foundry_mcp/tools/foundry_report.py  lines=64
-=== INSPECT mode per cycle (AC-036) ===
+=== INSPECT mode per cycle, every decision (AC-036 / D-119) ===
   cycle 1  F2    FULL  first_of_phase
   cycle 2  F2    DELTA delta
   cycle 3  F2    DELTA delta
@@ -155,24 +158,24 @@
   baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-................................ [ 80%]
-........................................................................ [ 83%]
-........................................................................ [ 85%]
-........................................................................ [ 88%]
-........................................................................ [ 90%]
-........................................................................ [ 92%]
-........................................................................ [ 95%]
-........................................................................ [ 97%]
+................ [ 80%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+........................................................................ [ 89%]
+........................................................................ [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
 ........................................................................ [ 99%]
-.                                                                        [100%]
+.............................                                            [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5203: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3015 passed, 10 skipped, 3 deselected in 121.62s
+3043 passed, 10 skipped, 3 deselected in 121.02s
