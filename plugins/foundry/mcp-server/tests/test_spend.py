@@ -917,6 +917,75 @@ def test_the_unreported_bucket_count_is_written_not_left_at_zero(run_env):
     assert _read_state(fdir)["spend"]["total"]["unreported"] == 2
 
 
+def test_next_and_the_report_state_one_unreported_count(run_env):
+    """AC-034 verbatim: 'A dispatched agent with no spend record is shown as
+    unreported in Foundry-Next and the report, and no gate refuses on it.'
+
+    ONE run, ONE question, and D-162 is the two numbers it used to get.
+    `_overlay_unreported` consumed `_unreported_dispatches`' ROW list, which
+    `_dispatched_agents` re-expands into one row per cycle stamp for every F2
+    stream agent, and then incremented `by_phase` per ROW with
+    `total["unreported"] = len(rows)`. The F6 report reads PAIRS. Driven
+    through the real doors on a copy of this run's archive: Foundry-Next
+    returned `unreported_count 51` and rendered "Unreported: 51" with
+    `by_phase unreported {F1 8, F3 6, F2 37}`, while
+    `foundry_report._read_unreported_dispatches` on the same archive returned
+    `count 19` with `by_phase {F1 8, F2 5, F3 6}` — and start.md's SPEND
+    ACCOUNTING section describes both surfaces as one set.
+
+    The trigger is an F2 stream agent unreported across more than one cycle,
+    which is the normal shape of a real run, so the fixture is exactly that:
+    one stream that ran in three cycles and never reported.
+    """
+    from foundry_mcp.tools.foundry_report import _read_unreported_dispatches
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=3)
+    _write_spawns(fdir, [{"casting_id": 2, "phase": "cast"}])
+    (fdir / "stream-rollup.json").write_text(
+        json.dumps({"cycles": {
+            str(c): {"trace": {"records": [{"cycle": c}]}} for c in (1, 2, 3)
+        }}),
+        encoding="utf-8",
+    )
+
+    summary = fo._spend_summary(fdir)
+    report_side, problem = _read_unreported_dispatches(fdir)
+    assert problem is None, problem
+
+    # ONE stream agent across THREE cycles is ONE unreported pair, and the two
+    # surfaces say the same integer because they are one derivation.
+    assert summary["unreported_count"] == report_side["count"], (
+        summary["unreported_count"], report_side["count"]
+    )
+    assert summary["unreported_count"] == 2, summary        # trace + casting-2
+    assert summary["by_phase"]["F2"]["unreported"] == 1, summary["by_phase"]
+    assert summary["total"]["unreported"] == report_side["count"]
+
+    # ...while `by_cycle` stays the per-cycle axis: the stream really was
+    # missed in each of the three cycles, and that is what a cycle bucket is
+    # for. The two axes are allowed to differ; what is not allowed is two
+    # answers to the SAME axis.
+    assert [
+        summary["by_cycle"][str(c)]["unreported"] for c in (1, 2, 3)
+    ] == [1, 1, 1], summary["by_cycle"]
+    assert sum(
+        bucket["unreported"] for bucket in summary["by_cycle"].values()
+    ) >= summary["unreported_count"]
+
+    # And the row list is still row-shaped, so a reader sees the stream under
+    # each cycle it was missed in.
+    assert len(summary["unreported_dispatches"]) == 4
+    assert summary["unreported_rows"] == 4
+
+    # AC-034's last clause, on the same fixture: no gate refuses on any of it.
+    for phase in ("assay", "temper", "nyquist", "done"):
+        result = foundry_gate(phase, project_root)
+        assert "unreported" not in str(result.get("reason") or "").lower(), (
+            phase, result
+        )
+
+
 def test_a_phase_with_no_recorded_spend_still_gets_its_unreported_count(run_env):
     """The run the count matters most on: the lead called Foundry-Spend for
     nothing at all. A bucket that only exists once someone reports would hide

@@ -2231,28 +2231,107 @@ def test_temper_is_refused_from_every_phase_but_f4(run_env):
     assert ok["inspect_rule"] == "first_of_phase"
 
 
-def test_all_three_inspect_opening_tokens_guard_their_source(run_env):
-    """GI-009's 'one rule', asserted as a property rather than three times.
+def test_every_source_guarded_token_guards_its_source(run_env):
+    """GI-009's 'one rule' and ST-010's from-state, as a property.
 
     The cycle-6 ruling guarded `inspect_start` and left `cast` and `temper`
-    open, which is how one fix covered one door of three. This walks the set
-    from the vocabulary the module itself declares, so a fourth
-    INSPECT-opening token added later cannot quietly join without a guard.
+    open, which is how one fix covered one door of three. D-164 is the same
+    omission one table over: the two TERMINAL tokens were never brought under
+    it, so `done` returned ok from F4 on a --temper --nyquist run and
+    `nyquist_done` returned ok from F2. This walks the set from the vocabulary
+    the module itself declares, so a token added later cannot quietly join
+    without a guard.
     """
     project_root, fdir = run_env
     _write_manifest(fdir)
 
-    guarded = set(fo._INSPECT_ENTRY_SOURCES) | {"inspect_start"}
-    assert guarded == {"cast", "temper", "inspect_start"}, guarded
+    guarded = set(fo._PHASE_ENTRY_SOURCES) | {"inspect_start"}
+    assert guarded == {
+        "cast", "temper", "inspect_start", "nyquist_done", "done",
+    }, guarded
 
     for token in sorted(guarded):
-        # F6 is a phase none of the three is accepted from.
+        # F6 is a phase none of them is accepted from.
         _write_state(fdir, phase="F6", cycle=1)
         _arm(fdir)
         result = foundry_mark_phase_complete(token, project_root)
         assert result.get("ok") is not True, (token, result)
         assert "F6" in result["error"], (token, result)
         assert _read_state(fdir)["phase"] == "F6", token
+
+
+def test_the_terminal_doors_refuse_the_phases_the_defect_drove(run_env):
+    """ST-010 verbatim: from-state 'F5.5 or F5 complete', to-state 'F6 DONE'.
+
+    D-164, driven exactly as filed. (1) A run at F4 with `temper` and `nyquist`
+    both set returned ok True and phase F6 from `done` — out of ASSAY, skipping
+    both post-verification phases the run was started with. (2) The same run at
+    F2 returned ok True and "NYQUIST complete -> phase is now F6" from
+    `nyquist_done` — a message asserting a phase that never ran.
+
+    Both halves are asserted with the LEDGERS SATISFIED, so nothing but the
+    source phase can be doing the refusing: `_done_preconditions` would pass on
+    this fixture, which is what made the hole invisible.
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+    (fdir / "spec.md").write_text("- FR-001: the thing works\n", encoding="utf-8")
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": []}), encoding="utf-8"
+    )
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [
+            {"requirement_id": "FR-001", "verdict": "VERIFIED"},
+        ]}), encoding="utf-8"
+    )
+    fo._generate_report(project_root, fdir)
+
+    _write_state(fdir, phase="F4", cycle=2, temper=True, nyquist=True)
+    _arm(fdir)
+    early = foundry_mark_phase_complete("done", project_root)
+    assert early.get("ok") is not True, early
+    assert early["accepted_from"] == ["F5.5"], early
+    assert "post-verification" in early["error"], early
+    assert "temper" in early["hint"], early["hint"]
+    assert _read_state(fdir)["phase"] == "F4"
+
+    _write_state(fdir, phase="F2", cycle=2, temper=True, nyquist=True)
+    _arm(fdir)
+    from_inspect = foundry_mark_phase_complete("nyquist_done", project_root)
+    assert from_inspect.get("ok") is not True, from_inspect
+    assert from_inspect["accepted_from"] == ["F5.5"], from_inspect
+    assert _read_state(fdir)["phase"] == "F2"
+
+
+def test_the_terminal_phase_a_run_may_finish_from_follows_its_own_flags(run_env):
+    """ST-010 / CT-016: the from-state is the LAST phase this run enables.
+
+    A static accepted_from would either refuse every plain run at F4 — where
+    ASSAY is genuinely terminal — or admit the two calls D-164 drove. So the
+    table resolves `done`'s source from the run's own `temper` / `nyquist`
+    flags, and the three configurations are asserted as one discrimination
+    rather than as a single happy path.
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+
+    for flags, terminal in (
+        ({}, "F4"),
+        ({"temper": True}, "F5"),
+        ({"temper": True, "nyquist": True}, "F5.5"),
+        ({"nyquist": True}, "F5.5"),
+    ):
+        _write_state(fdir, phase=terminal, cycle=1, **flags)
+        assert fo._phase_entry_source_problem(fdir, "done") is None, (
+            flags, terminal
+        )
+        for wrong in ("F2", "F3", "F4", "F5", "F5.5"):
+            if wrong == terminal:
+                continue
+            _write_state(fdir, phase=wrong, cycle=1, **flags)
+            problem = fo._phase_entry_source_problem(fdir, "done")
+            assert problem is not None, (flags, wrong)
+            assert problem["accepted_from"] == [terminal], (flags, wrong)
 
 
 # --------------------------------------------------------------------------- #
@@ -2377,36 +2456,89 @@ def test_next_emits_the_trace_half_of_the_delta_roster(run_env):
     assert reported["diff_base"] == recorded["diff_base"]
 
 
-def test_the_trace_prose_reads_the_scope_the_server_records():
-    """AC-019's consumer half. D-140.
+#: D-161 / STRUCTURAL PACKET 1 — EVERY surface that consumes the recorded
+#: width, and the roster field each one is scoped by.
+#:
+#: The guard this table replaces named two files in its docstring and read ONE.
+#: Driven at HEAD: the docstring said "`agents/tracer.md` and
+#: `skills/trace/SKILL.md` contained no occurrence of touched_files,
+#: inspect_mode, DELTA or width", the body bound only
+#: `agents/tracer.md`, and `uv run pytest tests/test_inspect_mode.py -q`
+#: returned 77 passed against a working tree in which `skills/trace/SKILL.md`
+#: contained NONE of the six tokens the assertion demanded of tracer.md — the
+#: suite green over exactly the gap the test names. The PROVE equivalent in
+#: tests/test_protocol_prose.py has been parametrised over a two-surface tuple
+#: since D-104, with the reason stated above it; this is the same shape, and
+#: the axis it adds is that BOTH streams' surfaces are walked here, so a
+#: surface with zero tokens can never be green on either side.
+_WIDTH_COMMON_TOKENS = (
+    # Where the width is READ FROM. GI-008 puts the decision at the transition
+    # and leaves Foundry-Next reporting it; a stream told neither reads no
+    # width and runs the matrix.
+    "Foundry-Next",
+    "inspect_mode.mode",
+    "inspect_mode.cycle",
+    # Both widths named, so the narrowing cannot read as unconditional.
+    "DELTA",
+    "FULL",
+    # What an ABSENT width means. Unstated, a stream that finds no
+    # `inspect_mode` picks a width itself — the lazily-computed mode GI-008 and
+    # GI-009 both name as the violation.
+    "no narrowing was decided",
+)
 
-    `agents/tracer.md` and `skills/trace/SKILL.md` contained no occurrence of
-    `touched_files`, `inspect_mode`, DELTA or width — tracer.md scoped the walk
-    from the spec alone, so a DELTA INSPECT's TRACE could not have honoured the
-    roster even once the server emitted it. D-104 closed the PROVE half by
-    wiring assayer.md to `inspect_mode.prove_sample`; this is the same wiring,
-    one stream over.
+_WIDTH_CONSUMER_SURFACES = (
+    (("agents", "tracer.md"), (
+        "inspect_mode.touched_files", "inspect_mode.stream_scope.trace.scope",
+    )),
+    (("skills", "trace", "SKILL.md"), (
+        "inspect_mode.touched_files", "inspect_mode.stream_scope.trace.scope",
+    )),
+    (("agents", "assayer.md"), ("inspect_mode.prove_sample",)),
+    (("skills", "prove", "SKILL.md"), ("inspect_mode.prove_sample",)),
+)
 
-    Pinned as prose because prose is the whole mechanism: the stream is an
-    agent, and what it reads IS its instructions. Asserted against the same
-    field names the payload emits, so a rename cannot leave the document
-    pointing at a key that no longer arrives.
+
+@pytest.mark.parametrize(
+    "parts,roster_tokens", _WIDTH_CONSUMER_SURFACES, ids=lambda v: "/".join(v)
+    if isinstance(v, tuple) and v and isinstance(v[0], str) and "." in v[-1]
+    else str(v),
+)
+def test_every_width_consuming_surface_reads_the_scope_the_server_records(
+    parts, roster_tokens
+):
+    """AC-019's consumer half, on every surface that consumes it. D-140/D-161.
+
+    AC-019 verbatim: "In DELTA mode TEST still runs full and cold from a clean
+    worktree and TRACE runs over the symbols the GRIND commits touched."
+
+    The stream is an AGENT and a SKILL, and what they read IS their
+    instructions — so prose is the whole mechanism, and a surface the guard
+    does not open is a surface the width never reaches. `agents/tracer.md`
+    scoped the walk from the spec alone until D-140; `skills/trace/SKILL.md`,
+    which `/foundry:trace` runs, carried none of it until D-160 while this test
+    named it in its docstring and asserted nothing about it.
+
+    Asserted against the same field names the payload emits, so a rename cannot
+    leave a document pointing at a key that no longer arrives.
+    """
+    surface = _plugin_root().joinpath(*parts)
+    text = surface.read_text(encoding="utf-8")
+    rel = "/".join(parts)
+    for token in _WIDTH_COMMON_TOKENS + tuple(roster_tokens):
+        assert token in text, f"{rel} never names {token}"
+
+
+def test_the_tracer_agent_still_distinguishes_the_roster_from_its_display():
+    """The two tracer-only rules, kept where they were (D-140).
+
+    They are asserted apart from the cross-surface table because they are about
+    the DISPLAY of a roster rather than about the width: display.py truncates
+    the printed sample, so a stream reading the terminal line reads a prefix and
+    reports a width it never ran.
     """
     tracer = (_plugin_root() / "agents" / "tracer.md").read_text(encoding="utf-8")
 
-    for token in (
-        "inspect_mode.mode",
-        "inspect_mode.touched_files",
-        "inspect_mode.stream_scope.trace.scope",
-        "inspect_mode.cycle",
-        "DELTA",
-        "FULL",
-    ):
-        assert token in tracer, f"tracer.md never names {token}"
-
-    # The three rules that make a roster a roster, in the same shape
-    # assayer.md's Step 0.5 carries for PROVE.
-    assert "Foundry-Next" in tracer
     assert "walk everything" in tracer, (
         "an unrecorded width must mean 'no narrowing was decided'"
     )

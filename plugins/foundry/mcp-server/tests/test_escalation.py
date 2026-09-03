@@ -995,7 +995,7 @@ def test_a_latent_only_escalated_class_still_blocks_done_until_an_arm_fires(run_
     # no-ops for a class with no persisted record — a lead followed it six times
     # and moved nothing.
     assert "Distance to each exit" in outcome["hint"], outcome["hint"]
-    assert "FALSE_DOCUMENTED_CONTRACT: 2 more INSPECT cycle(s)" in outcome["hint"]
+    assert "FALSE_DOCUMENTED_CONTRACT: 3 more INSPECT crossing(s)" in outcome["hint"]
     assert "2 more structural packet(s)" in outcome["hint"]
     assert "CONSECUTIVE" in outcome["hint"]
 
@@ -3547,9 +3547,61 @@ def test_the_done_refusal_names_the_arm_and_the_cycles_remaining(run_env):
 
     assert outcome["passed"] is False
     hint = outcome["hint"]
-    assert "FALSE_DOCUMENTED_CONTRACT: 1 more INSPECT cycle(s)" in hint, hint
+    assert "FALSE_DOCUMENTED_CONTRACT: 1 more INSPECT crossing(s)" in hint, hint
     assert "2 more structural packet(s)" in hint, hint
     assert "inspect_start" in hint, hint
+
+
+def _crossings_the_hint_promises(hint: str, klass: str) -> int:
+    """The integer the DONE hint states for `klass`'s clean arm."""
+    match = re.search(rf"{klass}: (\d+) more INSPECT crossing\(s\)", hint)
+    assert match is not None, hint
+    return int(match.group(1))
+
+
+def test_the_promised_crossings_are_the_crossings_the_arm_actually_takes(run_env):
+    """D-157 — the DONE hint's number, WALKED rather than re-asserted.
+
+    ST-001 / FR-003 verbatim: 'Two consecutive INSPECT cycles with zero LIVE
+    instances of the class', with 'the class must have been escalated before the
+    two cycles began'. The distance the refusal prints and the distance the arm
+    honours were derived two different ways, and in AC-002's own state they
+    disagreed: escalated at cycle 5, counter at 5, every instance LATENT so
+    `_class_drew_live_in_cycle(defects, key, 5)` is False — and the hint said
+    two crossings while the arm needed three, because the crossing closing cycle
+    5 is discarded by the escalated-before guard and banks nothing.
+
+    The guard this replaces asserted the sentence's own arithmetic and never
+    crossed a boundary, so a number the arm would not honour read as correct.
+    This one reads N out of the sentence, crosses N-1 boundaries and requires
+    the class STILL escalated, then crosses the Nth and requires it CLEARED —
+    which fails on any disagreement in either direction.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _latent_recurring([3, 4, 5]))
+    _write_state(fdir, phase="F3", cycle=5)
+
+    hint = fo._done_preconditions(fdir, project_root)["hint"]
+    promised = _crossings_the_hint_promises(hint, "FALSE_DOCUMENTED_CONTRACT")
+    assert promised == 3, hint
+    # The sentence says WHICH crossing banks nothing, so the count and the
+    # guard cannot read as contradicting each other.
+    assert "at or before the cycle this class escalated on (5)" in hint, hint
+
+    for _ in range(promised - 1):
+        _cross_boundary(fdir, project_root)
+    assert _escalation_entry(fdir)["status"] == "ESCALATED", (
+        "cleared EARLY: the arm banked a crossing the hint did not promise"
+    )
+
+    _cross_boundary(fdir, project_root)
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "CLEARED", (
+        "still escalated after every promised crossing: the hint named a "
+        "distance the arm does not honour"
+    )
+    assert entry["exit_reason"] == "clean_cycles", entry
+    assert entry["live_clean_cycles_counted"] == [6, 7], entry
 
 
 # --------------------------------------------------------------------------- #

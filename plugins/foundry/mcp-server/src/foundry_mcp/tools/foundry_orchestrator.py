@@ -14,7 +14,7 @@ import json
 import os
 import re
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1049,7 +1049,7 @@ _CLEAN_CYCLE_CROSSING_DEFAULT = (
 
 
 def _escalation_exit_distances(
-    fdir: Path, classes: list[str], *, crossing: str = ""
+    fdir: Path, project_root: str, classes: list[str], *, crossing: str = ""
 ) -> str:
     """One sentence per still-escalated class: which arm clears it, and how far.
 
@@ -1084,6 +1084,25 @@ def _escalation_exit_distances(
     cycle from where the READER is standing (D-153); it defaults to the
     destination alone, which is all a caller at a terminal phase can say.
 
+    D-157 — AND THE CLEAN DISTANCE IS THE ARM'S OWN WALK, NOT A SECOND SUM.
+    ----------------------------------------------------------------------
+    This said `max(0, LIVE_CLEAN_CYCLES_TO_CLEAR - entry["live_clean_cycles"])`,
+    which consults neither `escalated_at_cycle` nor `live_clean_cycles_counted`
+    — both of which the arm evaluates on every crossing. Driven on AC-002's
+    fixture (escalated at cycle 5, counter at 5, the class drawing zero LIVE
+    instances in cycle 5): this printed "2 more INSPECT cycle(s)" while the arm
+    needed THREE crossings, because the crossing closing cycle 5 is discarded by
+    the escalated-before guard. The number is now produced by
+    `_clean_arm_crossings_left`, which walks `_clean_arm_step` — the arm itself
+    — with every future cycle assumed clean.
+
+    `escalated_at_cycle` comes from the persisted entry when there is one and
+    from the ledger derivation otherwise, because a class with no record yet has
+    that exact value latched by `_record_escalation_proposals` at the next
+    crossing, BEFORE the arm runs on it (see the `inspect_start` branch). When
+    neither source knows it, the arm cannot advance and the sentence says so
+    rather than printing a number no crossing will honour.
+
     Reads, never writes. A class with no entry yet reads as the full distance to
     each arm, which is exactly what it is.
     """
@@ -1093,22 +1112,44 @@ def _escalation_exit_distances(
     if not isinstance(recorded, dict):
         recorded = {}
     buckets = _class_buckets(_load_json(fdir / "defects.json").get("defects", []))
+    derived = _escalated_classes(fdir, project_root)
+    next_completed = _current_cycle(fdir)
     crossing = crossing or _CLEAN_CYCLE_CROSSING_DEFAULT
     parts: list[str] = []
     for key in classes:
         entry = recorded.get(key)
         entry = dict(entry) if isinstance(entry, dict) else {}
         _escalation_entry_defaults(entry)
-        clean_left = max(0, LIVE_CLEAN_CYCLES_TO_CLEAR - entry["live_clean_cycles"])
+        escalated_at = entry.get("escalated_at_cycle")
+        if not isinstance(escalated_at, int) or isinstance(escalated_at, bool):
+            escalated_at = (derived.get(key) or {}).get("escalated_at_cycle")
+        clean_left = _clean_arm_crossings_left(entry, next_completed, escalated_at)
         packets_left = max(
             0, STRUCTURAL_PASS_BUDGET - entry["structural_packets_dispatched"]
         )
         open_count = len((buckets.get(key) or {}).get("open") or [])
-        clean_arm = (
-            f"{key}: {clean_left} more INSPECT cycle(s) drawing zero LIVE "
-            f"instances (clean_cycles arm — {crossing}, and they must be "
-            f"CONSECUTIVE)"
-        )
+        if clean_left is None:
+            clean_arm = (
+                f"{key}: the clean_cycles arm cannot advance — no escalation "
+                f"cycle is recorded for this class, and ST-001 counts only "
+                f"cycles that closed AFTER the one it escalated on. The next "
+                f"crossing records it, and counting starts from the crossing "
+                f"after that"
+            )
+        else:
+            clean_arm = (
+                f"{key}: {clean_left} more INSPECT crossing(s) drawing zero "
+                f"LIVE instances (clean_cycles arm — {crossing}, and they must "
+                f"be CONSECUTIVE)"
+            )
+            if next_completed <= escalated_at:
+                # D-157: say which of those crossings banks nothing, so the
+                # count and the guard cannot read as contradicting each other.
+                clean_arm += (
+                    f"; the first closes cycle {next_completed}, at or before "
+                    f"the cycle this class escalated on ({escalated_at}), which "
+                    f"ST-001's guard does not count"
+                )
         if open_count:
             parts.append(
                 clean_arm
@@ -1495,7 +1536,7 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
             # class with no persisted record BOTH named routes were no-ops. The
             # record is now written at the boundary (see the `inspect_start`
             # branch), so the distance to each arm is a number this can state.
-            + _escalation_exit_distances(fdir, still_escalated)
+            + _escalation_exit_distances(fdir, project_root, still_escalated)
         )
     checklist.append({
         "check": (
@@ -1630,42 +1671,22 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # `git rm`; corpus absent with no such pass, which is refused. A run that
     # committed no evidence at all still passes — it has no corpus history to
     # have stripped, which is what `_evidence_corpus_existed` separates.
-    evidence = _terminal_evidence_sweep(fdir, project_root)
-    sweep_record = evidence.get("record") or {}
-    logs_reexecuted = len(sweep_record.get("logs_reexecuted") or [])
-    corpus_size = int(sweep_record.get("corpus_size") or 0)
-    prior_pass = evidence.get("last_full_pass")
-    prior_pass = prior_pass if isinstance(prior_pass, dict) else None
-    stripped = (
-        bool(evidence["ok"])
-        and corpus_size == 0
-        and prior_pass is None
-        and _evidence_corpus_existed(fdir, project_root)
-    )
-    evidence_ok = bool(evidence["ok"]) and not stripped
-    if not evidence["ok"]:
+    # D-159: the three states are derived by `_terminal_evidence_state` and by
+    # nothing else, so the NYQUIST entry — the third crossing GI-002 names —
+    # refuses on exactly this evaluation rather than on `ok` alone.
+    evidence_state = _terminal_evidence_state(fdir, project_root)
+    evidence = evidence_state["evidence"]
+    sweep_record = evidence_state["record"]
+    logs_reexecuted = evidence_state["logs_reexecuted"]
+    corpus_size = evidence_state["corpus_size"]
+    prior_pass = evidence_state["prior_pass"]
+    stripped = evidence_state["stripped"]
+    evidence_ok = evidence_state["ok"]
+    if not evidence_ok:
         passed = False
-        refusal = _terminal_sweep_refusal(evidence, "mark the run DONE")
-        reason = refusal["error"].replace("Cannot mark the run DONE — ", "")
-        hint = refusal["hint"]
-    elif stripped:
-        passed = False
-        reason = (
-            f"{EVIDENCE_STRIPPED_TOKEN}: the committed evidence corpus is not "
-            f"present at HEAD ({(evidence.get('head') or 'unknown')[:8]}) and "
-            "this run recorded no whole-corpus sweep pass at a commit that "
-            "carried it"
-        )
-        hint = (
-            "Sweep first, strip second. Restore evidence/ (git revert the strip "
-            "commit, or git checkout <pre-strip commit> -- evidence/ and commit "
-            "it), call Foundry-Gate(phase='done') so the whole corpus "
-            "re-executes and the pass is recorded in "
-            f"{TERMINAL_SWEEP_FILENAME} under last_full_pass, and only THEN "
-            "strip. A sweep over a corpus that is no longer there proves "
-            "nothing, and passing on it is how a log that stopped reproducing "
-            "during F5 or F5.5 reaches DONE unread."
-        )
+        refusal = _terminal_evidence_refusal(evidence_state, "mark the run DONE")
+        reason = (refusal or {})["error"].replace("Cannot mark the run DONE — ", "")
+        hint = (refusal or {})["hint"]
     checklist.append({
         # D-149: the number of logs, beside the mismatch count. A vacuous sweep
         # is visibly logs=0; the two numbers used to be one number.
@@ -3664,6 +3685,10 @@ def _halted_state(fdir: Path) -> dict | None:
             or "the configured cycle cap was reached"
         ),
         "max_cycles": state.get("max_cycles", 0),
+        # D-165: what the halt transition's own report generation did. Recorded
+        # by `_halt_if_capped` and read here so the refusal cannot promise a
+        # document the transition failed to write.
+        "halted_report_error": str(state.get("halted_report_error") or "").strip(),
     }
 
 
@@ -3715,26 +3740,69 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
         if isinstance(halted["halted_at_cycle"], int)
         else "its cycle cap"
     )
+    # D-165 — THE REPORT IS ASSERTED ONLY WHERE IT WAS WRITTEN.
+    #
+    # This said "the report says what" and pointed at REPORT.md unconditionally,
+    # because `_halt_if_capped` asserted the same thing unconditionally. On a
+    # halt whose report generation failed (CT-014's designed unreadable-ledger
+    # branch) the operator was sent to read a file that does not exist, from a
+    # state with no exit, with no reason given to regenerate it. Both halves are
+    # read from the record the transition now leaves: the presence of the file,
+    # and the error the generator returned.
+    #
+    # THE FILE'S PRESENCE IS THE GROUND TRUTH, and the recorded error only
+    # supplies the REASON when it is absent. Reading the recorded error as
+    # authoritative would go stale the moment the operator follows this hint and
+    # calls Foundry-Report — a refusal that then still said "NOT written" about
+    # a file sitting on disk would be this same defect with the sign flipped.
+    report_path = fdir / REPORT_MD_FILENAME
+    report_error = halted["halted_report_error"]
+    report_present = report_path.exists()
     return {
         "error": (
             f"Cannot call {surface} — this run is HALTED. It stopped at "
             f"{cycle_text} because {halted['halted_reason']}. HALTED is a "
-            "terminal state and it is NOT DONE: the run ended with open work "
-            "and the report says what."
+            "terminal state and it is NOT DONE: the run ended with open work"
+            + (
+                " and the report says what."
+                if report_present
+                else (
+                    f", and the report was NOT written — {report_error or 'it is not present at ' + str(report_path)}."
+                )
+            )
         ),
         "hint": (
-            f"Nothing leaves HALTED — no phase token, no gate. Read "
-            f"{REPORT_MD_FILENAME}, tell the user what remains open by tier, "
-            "and stop. To carry the remaining work forward, start a NEW run "
-            "(Foundry-Init) with a higher --max-cycles; the cap is not "
-            "overridden in place."
+            (
+                f"Nothing leaves HALTED — no phase token, no gate. Read "
+                f"{REPORT_MD_FILENAME}, tell the user what remains open by "
+                "tier, and stop. To carry the remaining work forward, start a "
+                "NEW run (Foundry-Init) with a higher --max-cycles; the cap is "
+                "not overridden in place."
+            )
+            if report_present
+            else (
+                "Nothing leaves HALTED — no phase token, no gate — but the "
+                "report is not a phase transition and Foundry-Report still "
+                "runs on a halted run. Repair what the error above names, call "
+                f"Foundry-Report to write {REPORT_MD_FILENAME}, then read it, "
+                "tell the user what remains open by tier, and stop. Until it "
+                "is written, read defects.json directly: the open work is "
+                "recorded there whatever the report generator could not "
+                "render. To carry the remaining work forward, start a NEW run "
+                "(Foundry-Init) with a higher --max-cycles; the cap is not "
+                "overridden in place."
+            )
         ),
         "halted": True,
         "phase": RUN_PHASE_HALTED,
         "halted_at_cycle": halted["halted_at_cycle"],
         "halted_reason": halted["halted_reason"],
         "max_cycles": halted["max_cycles"],
-        "report": str(fdir / REPORT_MD_FILENAME),
+        # Named as what it IS rather than always as a path, so a caller cannot
+        # read a promise out of the field's presence.
+        "report": str(report_path) if report_present else None,
+        "report_generated": report_present,
+        "report_error": report_error,
     }
 
 
@@ -3783,9 +3851,45 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     # Generated as PART of this transition rather than left to the lead, because
     # a halted run whose open work was never written down is the outcome the cap
     # is supposed to prevent, not a variant of it.
+    #
+    # D-165 — AND ITS VERDICT IS READ, BECAUSE THE MESSAGE ASSERTS IT.
+    # ---------------------------------------------------------------
+    # `report` was discarded. Driven at the real door: max_cycles 2 at cycle 2,
+    # one open LIVE and one open LATENT defect, and a deliberately corrupt
+    # verdicts.json — this returned ok True, wrote phase HALTED and said "The
+    # report has been generated naming 1 open LIVE, 0 untiered and 1 open LATENT
+    # defect(s)", while REPORT.md did not exist on disk and the nested result
+    # carried ok False, "verdicts.json is not valid JSON". Every later call then
+    # compounded it: `_halted_refusal` told the operator to read a report that
+    # was never written, and HALTED has no exit by design, so nothing would ever
+    # regenerate it. CT-014 SPECIFIES that failure branch (the unreadable-ledger
+    # refusal), so it is designed and reachable, not a theoretical one.
+    #
+    # The transition still HAPPENS — FR-045 is explicit that the cap is "not a
+    # refusal", and a run that ran out of cycles has run out of cycles whether
+    # or not its ledgers can be rendered. What changes is that the outcome is
+    # RECORDED and SAID: the halt names the failure, and every later refusal
+    # names the one call that can still write the report.
     report = _generate_report(project_root, fdir)
+    report_ok = bool(report.get("ok"))
+    report_error = "" if report_ok else str(
+        report.get("error") or "the report generator returned no reason"
+    )
+    if not report_ok:
+        # A second short transaction rather than one around the generator: the
+        # report is generated AFTER `phase` is HALTED so that it renders the
+        # halted run, and `_document_transaction` is an fcntl-locked critical
+        # section that must not be held across it.
+        with _document_transaction(fdir / "state.json") as doc:
+            doc["halted_report_error"] = report_error
+            doc["updated_at"] = _now()
     blocking = _blocking_defects(fdir)
 
+    counts = (
+        f"{len(blocking['live'])} open LIVE, "
+        f"{len(blocking['unknown'])} untiered and "
+        f"{len(blocking['latent'])} open LATENT defect(s)"
+    )
     return {
         "ok": True,
         "halted": True,
@@ -3795,15 +3899,26 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         "halted_reason": reason,
         "requested_token": token,
         "report": report,
+        "report_generated": report_ok,
+        "report_error": report_error,
         "open_live_defects": blocking["live"],
         "open_unknown_tier_defects": blocking["unknown"],
         "open_latent_defects": blocking["latent"],
         "message": (
-            f"Run HALTED — {reason}. The report has been generated naming "
-            f"{len(blocking['live'])} open LIVE, "
-            f"{len(blocking['unknown'])} untiered and "
-            f"{len(blocking['latent'])} open LATENT defect(s). HALTED is not "
-            "DONE: this run stopped with open work, and the report says what."
+            (
+                f"Run HALTED — {reason}. The report has been generated naming "
+                f"{counts}. HALTED is not DONE: this run stopped with open "
+                "work, and the report says what."
+            )
+            if report_ok
+            else (
+                f"Run HALTED — {reason}. The report could NOT be generated: "
+                f"{report_error}. The {counts} named above are read from "
+                "defects.json, which is intact; it is the report that is "
+                "missing. Repair what the error names, then call Foundry-Report "
+                "— it is not a phase transition, so it still runs on a halted "
+                "run. HALTED is not DONE: this run stopped with open work."
+            )
         ),
     }
 
@@ -4017,13 +4132,62 @@ def _unreported_dispatches(fdir: Path) -> list[dict]:
     )
 
 
-def _overlay_unreported(spend: dict, unreported: list[dict]) -> dict:
+def _dispatch_summary(fdir: Path) -> dict:
+    """C-5's unreported COUNTS for this run — casting 5's one deriver, called.
+
+    `foundry_state.unreported_dispatch_summary` is the arithmetic over
+    `unreported_dispatch_pairs`, which is still the RULE. This supplies the
+    run's inputs and nothing else, exactly as `_dispatch_pairs` does for the
+    rule, so `Foundry-Next`, `report.json` and `REPORT.md` publish ONE integer
+    because it is one derivation.
+
+    `cycles_of_agent` is the F2 stream-dispatch cycle map, which is what keeps
+    `by_cycle` a per-cycle axis while `count` and `by_phase` stay keyed on the
+    pair (D-162).
+    """
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+    from foundry_mcp.tools.foundry_state import unreported_dispatch_summary
+
+    return unreported_dispatch_summary(
+        dispatch_rows=_spawn_rows(fdir),
+        stream_roster=_stream_roster(fdir),
+        spend_rows=_spend_ledger_rows(fdir),
+        phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
+        agent_id_of=_agent_id_for_casting,
+        cycles_of_agent=_stream_dispatch_cycles(fdir),
+    )
+
+
+def _overlay_unreported(spend: dict, summary: dict) -> dict:
     """Write the DERIVED unreported counts onto the C-4 buckets (D-031).
 
-    ``unreported`` is `_unreported_dispatches`' output: one row per dispatched
-    agent with no `spend.jsonl` line, each carrying the phase it was dispatched
-    in. This distributes those rows across `by_phase`, `by_cycle` and `total`,
-    and returns the same document it was handed.
+    ``summary`` is `_dispatch_summary`' output — casting 5's
+    `unreported_dispatch_summary`. This distributes its counts across
+    `by_phase`, `by_cycle` and `total`, and returns the same document it was
+    handed.
+
+    D-162 — TWO DERIVATIONS OF ONE NUMBER, AND THE PAIR WAS THE RIGHT ONE.
+    ---------------------------------------------------------------------
+    This took `_unreported_dispatches`' ROW list and incremented `by_phase`
+    once per row, with `total["unreported"] = len(rows)`. `_dispatched_agents`
+    re-expands the pair set into one row per cycle stamp for every F2 stream
+    agent, so a stream agent unreported across nine cycles was NINE rows and
+    ONE pair — and `_dispatched_agents`' own docstring states the intended rule
+    as "by_cycle carry a per-cycle count while by_phase and the F6 report read
+    the pair". Driven through the real doors on a copy of this run's archive:
+    `foundry_next_action` returned `spend.unreported_count 51` and rendered
+    "Unreported: 51", with `by_phase unreported {F1 8, F3 6, F2 37}`, while
+    `foundry_report._read_unreported_dispatches` on the same archive returned
+    `count 19` with `by_phase {F1 8, F2 5, F3 6}`. Two surfaces, one run, one
+    question, two numbers — and `commands/start.md`'s SPEND ACCOUNTING section
+    describes them as one set ("Foundry-Next shows the count and the F6 report
+    lists each unreported agent by name and phase"). The trigger is any F2
+    stream agent unreported across more than one cycle, which is the normal
+    shape of a real run.
+
+    So the counts are READ off the one deriver: `total` and each `by_phase`
+    bucket count PAIRS, `by_cycle` counts the per-cycle appearances, and
+    nothing here re-derives either axis.
 
     D-031 — A FIELD THAT IS INITIALISED AND NORMALISED BUT NEVER WRITTEN.
     --------------------------------------------------------------------
@@ -4060,18 +4224,13 @@ def _overlay_unreported(spend: dict, unreported: list[dict]) -> dict:
         if isinstance(bucket, dict):
             bucket["unreported"] = 0
 
-    for row in unreported:
-        by_phase = spend["by_phase"].setdefault(
-            str(row.get("phase", "")), _empty_spend_bucket()
-        )
-        by_phase["unreported"] = by_phase.get("unreported", 0) + 1
-        cycle = row.get("cycle")
-        if cycle is not None:
-            by_cycle = spend["by_cycle"].setdefault(
-                str(cycle), _empty_spend_bucket()
-            )
-            by_cycle["unreported"] = by_cycle.get("unreported", 0) + 1
-    spend["total"]["unreported"] = len(unreported)
+    for phase, agents in (summary.get("by_phase") or {}).items():
+        bucket = spend["by_phase"].setdefault(str(phase), _empty_spend_bucket())
+        bucket["unreported"] = len(agents)
+    for cycle, agents in (summary.get("by_cycle") or {}).items():
+        bucket = spend["by_cycle"].setdefault(str(cycle), _empty_spend_bucket())
+        bucket["unreported"] = len(agents)
+    spend["total"]["unreported"] = int(summary.get("count") or 0)
     return spend
 
 
@@ -4082,15 +4241,21 @@ def _spend_summary(fdir: Path) -> dict:
     if not isinstance(spend, dict):
         spend = {}
     unreported = _unreported_dispatches(fdir)
+    summary = _dispatch_summary(fdir)
     # Overlaid on a COPY of what state.json holds: this is a read, and a reader
     # that mutated the document it read would make every display call a write.
-    spend = _overlay_unreported(json.loads(json.dumps(spend)), unreported)
+    spend = _overlay_unreported(json.loads(json.dumps(spend)), summary)
     return {
         "by_phase": spend["by_phase"],
         "by_cycle": spend["by_cycle"],
         "total": spend["total"],
+        # The LIST stays row-shaped — a reader wants to see the stream agent
+        # under each cycle it was missed in — while the COUNT is the pair count
+        # the F6 report publishes. D-162: they are different axes, and the
+        # count is the one both surfaces state.
         "unreported_dispatches": unreported,
-        "unreported_count": len(unreported),
+        "unreported_count": int(summary.get("count") or 0),
+        "unreported_rows": len(unreported),
     }
 
 
@@ -4275,7 +4440,7 @@ def foundry_record_spend(
         # D-031: the persisted document carries the unreported counts C-4 names,
         # refreshed from the dispatch record on every spend call, instead of the
         # permanent zero `_empty_spend_bucket` used to leave there.
-        _overlay_unreported(spend, _unreported_dispatches(fdir))
+        _overlay_unreported(spend, _dispatch_summary(fdir))
 
         state["spend"] = spend
         state["updated_at"] = _now()
@@ -4724,6 +4889,115 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
     if memo_out:
         _save_json(memo_path, memo_out)
     return result
+
+
+def _terminal_evidence_state(fdir: Path, project_root: str) -> dict:
+    """GI-002's terminal evidence rung, evaluated ONCE for every crossing.
+
+    Returns the sweep result plus the three-state discrimination D-149
+    established: ``{"evidence", "record", "logs_reexecuted", "corpus_size",
+    "prior_pass", "stripped", "ok"}``.
+
+      * corpus present at HEAD          -> swept now, ok is the sweep's verdict;
+      * corpus absent, pass recorded    -> ok, ON THE RECORDED PRE-STRIP PASS;
+      * corpus absent, no pass recorded -> not ok, `stripped` is True and the
+                                           refusal names
+                                           EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP.
+
+    D-159 — THE RUNG WAS APPLIED TO TWO CROSSINGS OF THE THREE GI-002 NAMES.
+    -----------------------------------------------------------------------
+    D-149 gave `_done_preconditions` the three states, which covers `done`,
+    `nyquist_done` and `Foundry-Gate('done')` because all three read that one
+    evaluation. The `nyquist` branch — the F5 -> F5.5 entry, and the ONE
+    boundary GI-002 names by the word NYQUIST — calls `_terminal_evidence_sweep`
+    itself and refused on `ok` alone, so it kept the pre-D-149 rule.
+
+    Driven through the real door on a run at F5 with one committed log
+    `evidence/casting-1-handler.log` whose command no longer reproduced, then
+    the F6 strip `commands/start.md` mandates verbatim (`git rm -r evidence/ &&
+    git commit -m 'chore(foundry): strip consumed run evidence' -- evidence/`):
+    BEFORE the strip `Foundry-Phase(phase='nyquist')` was refused naming the
+    log; AFTER the identical strip the same call returned ok True, phase F5.5,
+    `evidence_sweep {scope: full, corpus_size: 0, logs_reexecuted: [],
+    mismatches: []}` — a whole-corpus sweep passing over nothing, with no
+    `last_full_pass` ever recorded because the corpus had mismatched and so
+    never earned one. On the same stripped run `nyquist_done` and `done` both
+    refused, naming the token. A --nyquist run had a second route around the
+    rung: enter F5.5 through the door that did not apply it.
+
+    Stated as ONE function with three callers rather than as a second copy in
+    the `nyquist` branch, for the reason `_done_preconditions` itself exists:
+    a terminal evidence rule each door evaluates for itself is a rule each door
+    can evaluate differently, which is precisely how this crossing kept the old
+    one through a whole-suite pass.
+    """
+    evidence = _terminal_evidence_sweep(fdir, project_root)
+    record = evidence.get("record") or {}
+    prior_pass = evidence.get("last_full_pass")
+    prior_pass = prior_pass if isinstance(prior_pass, dict) else None
+    corpus_size = int(record.get("corpus_size") or 0)
+    stripped = (
+        bool(evidence["ok"])
+        and corpus_size == 0
+        and prior_pass is None
+        and _evidence_corpus_existed(fdir, project_root)
+    )
+    return {
+        "evidence": evidence,
+        "record": record,
+        "logs_reexecuted": len(record.get("logs_reexecuted") or []),
+        "corpus_size": corpus_size,
+        "prior_pass": prior_pass,
+        "stripped": stripped,
+        "ok": bool(evidence["ok"]) and not stripped,
+    }
+
+
+def _stripped_corpus_reason(state: dict) -> tuple[str, str]:
+    """The (reason, hint) pair a stripped corpus earns — worded ONCE (D-159).
+
+    Every terminal crossing says the same words, because they are refusing the
+    same fact. `_done_preconditions` uses the pair as its `reason` / `hint`;
+    a transition wraps the reason in its own "Cannot <door> — " prefix.
+    """
+    head = (state["evidence"].get("head") or "unknown")[:8]
+    return (
+        (
+            f"{EVIDENCE_STRIPPED_TOKEN}: the committed evidence corpus is not "
+            f"present at HEAD ({head}) and this run recorded no whole-corpus "
+            "sweep pass at a commit that carried it"
+        ),
+        (
+            "Sweep first, strip second. Restore evidence/ (git revert the strip "
+            "commit, or git checkout <pre-strip commit> -- evidence/ and commit "
+            "it), call Foundry-Gate(phase='done') so the whole corpus "
+            "re-executes and the pass is recorded in "
+            f"{TERMINAL_SWEEP_FILENAME} under last_full_pass, and only THEN "
+            "strip. A sweep over a corpus that is no longer there proves "
+            "nothing, and passing on it is how a log that stopped reproducing "
+            "during F5 or F5.5 reaches DONE unread."
+        ),
+    )
+
+
+def _terminal_evidence_refusal(state: dict, door: str) -> dict | None:
+    """The refusal a terminal crossing owes, or None when the rung passes.
+
+    ``door`` is the phrase that follows "Cannot " — "enter NYQUIST", "mark the
+    run DONE". One entry point for both failing states so no crossing can adopt
+    the mismatch half and miss the stripped half, which is the D-159 shape.
+    """
+    if state["ok"]:
+        return None
+    if state["stripped"]:
+        reason, hint = _stripped_corpus_reason(state)
+        return {
+            "error": f"Cannot {door} — {reason}",
+            "hint": hint,
+            "token": EVIDENCE_STRIPPED_TOKEN,
+            "evidence_sweep": state["record"],
+        }
+    return _terminal_sweep_refusal(state["evidence"], door)
 
 
 def _terminal_sweep_refusal(sweep: dict, door: str) -> dict:
@@ -5260,7 +5534,31 @@ _INSPECT_START_SOURCE_HINTS = {
 #: go unguarded for six cycles. `inspect_start` keeps its own inline guard: it
 #: admits two phases with different meanings (F3 crossing, F2 widening) and
 #: threads `widening` into the decision, which a table cannot express.
-_INSPECT_ENTRY_SOURCES: dict[str, dict] = {
+#:
+#: D-164 — AND THE TWO TERMINAL TOKENS WERE NEVER BROUGHT UNDER IT.
+#:
+#: ST-010's from-state is "F5.5 or F5 complete", and neither `done` nor
+#: `nyquist_done` read `state.phase` at all: both called `_done_preconditions`,
+#: whose checklist (report_generated, escalated_classes_cleared, run_not_halted,
+#: spec_requirements_parsed, all_verified, zero_blocking_defects,
+#: no_active_teams, verdict_coverage, evidence_reproduces_at_head) has no
+#: source-phase entry. Driven twice at the real door:
+#:
+#:   (1) a run at F4 with `temper` and `nyquist` both set, 172/172 VERIFIED,
+#:       zero open defects and a generated report: `Foundry-Phase('done')`
+#:       returned ok True, phase F6, "Run archived." — straight out of ASSAY,
+#:       skipping both post-verification phases the run was STARTED with.
+#:   (2) the same run at F2: `Foundry-Phase('nyquist_done')` returned ok True,
+#:       phase F6, "NYQUIST complete -> phase is now F6 (DONE)" — a message
+#:       asserting a phase that never ran, from inside INSPECT.
+#:
+#: So `accepted_from` may be a CALLABLE of `state.json`, because `done`'s
+#: source phase is a fact about the run's own flags rather than a constant:
+#: the terminal phase is F5.5 when `--nyquist` was passed, else F5 when
+#: `--temper` was, else F4. A static tuple would either refuse every plain run
+#: at F4 or admit the two the defect drove. `nyquist_done` stays a constant —
+#: F5.5 is the only phase NYQUIST can be finished from, whatever the flags.
+_PHASE_ENTRY_SOURCES: dict[str, dict] = {
     "cast": {
         "accepted_from": ("F1",),
         "opens": "F2",
@@ -5268,6 +5566,10 @@ _INSPECT_ENTRY_SOURCES: dict[str, dict] = {
             "the CAST->INSPECT crossing: it closes F1, stamps the CAST "
             "baseline SHA every GRIND cycle-context block is built from, and "
             "records the run's FIRST INSPECT at FULL / first_of_phase"
+        ),
+        "why": (
+            "From any other phase it would record a second INSPECT decision "
+            "against a cycle that already has one."
         ),
         "hints": {
             "F0": (
@@ -5316,6 +5618,10 @@ _INSPECT_ENTRY_SOURCES: dict[str, dict] = {
             "the ASSAY->TEMPER crossing: it enters F5 and opens TEMPER's own "
             "INSPECT at FULL / first_of_phase"
         ),
+        "why": (
+            "From any other phase it would record a second INSPECT decision "
+            "against a cycle that already has one."
+        ),
         "hints": {
             "F0": (
                 "The run has not started. Call "
@@ -5357,34 +5663,154 @@ _INSPECT_ENTRY_SOURCES: dict[str, dict] = {
             ),
         },
     },
+    "nyquist_done": {
+        "accepted_from": ("F5.5",),
+        "opens": "F6",
+        "what": (
+            "the NYQUIST->DONE crossing: it closes F5.5, enters F6 and archives "
+            "the run"
+        ),
+        "why": (
+            "From any other phase its own success message — \"NYQUIST complete\" "
+            "— asserts a phase that never ran."
+        ),
+        "hints": {
+            "F0": (
+                "The run has not started. Call "
+                "Foundry-Phase(phase='start_cast') and build first."
+            ),
+            "F1": (
+                "CAST is still open. Call Foundry-Phase(phase='cast') when the "
+                "wave is down."
+            ),
+            "F2": (
+                "The run is in INSPECT. NYQUIST is reached THROUGH ASSAY and "
+                "TEMPER: close this INSPECT with "
+                "Foundry-Phase(phase='inspect_clean'), pass "
+                "Foundry-Gate(phase='assay'), run ASSAY, and follow "
+                "Foundry-Next from there. `nyquist_done` claims a phase this "
+                "run has not entered."
+            ),
+            "F3": (
+                "The run is in GRIND. Close it with "
+                "Foundry-Phase(phase='inspect_start'), run the roster it names, "
+                "then inspect_clean and ASSAY."
+            ),
+            "F4": (
+                "The run is in ASSAY. NYQUIST has not been entered, so it "
+                "cannot be finished. Follow Foundry-Next: it names "
+                "Foundry-Phase(phase='temper') or "
+                "Foundry-Phase(phase='nyquist') according to the flags this "
+                "run was started with."
+            ),
+            "F5": (
+                "The run is in TEMPER. Enter NYQUIST first with "
+                "Foundry-Phase(phase='nyquist') — which sweeps the whole "
+                "evidence corpus — and finish it with `nyquist_done`."
+            ),
+            "F6": (
+                "The run is already DONE. Start a new run rather than "
+                "re-closing this one."
+            ),
+        },
+    },
+    "done": {
+        # D-164: a CALLABLE, because the terminal phase is the run's own flags.
+        "accepted_from": lambda state: (
+            ("F5.5",)
+            if state.get("nyquist")
+            else ("F5",) if state.get("temper") else ("F4",)
+        ),
+        "opens": "F6",
+        "what": (
+            "the run's terminal transition: it enters F6, archives the run and "
+            "clears the active-run marker"
+        ),
+        "why": (
+            "ST-010 crosses into F6 from the LAST phase this run's own flags "
+            "make terminal — F5.5 with --nyquist, else F5 with --temper, else "
+            "F4 — so from any earlier phase it would finish the run without "
+            "the post-verification phases it was started with."
+        ),
+        "hints": {
+            "F0": (
+                "The run has not started. Call "
+                "Foundry-Phase(phase='start_cast') and build first."
+            ),
+            "F1": (
+                "CAST is still open. Call Foundry-Phase(phase='cast') when the "
+                "wave is down."
+            ),
+            "F2": (
+                "The run is in INSPECT. Close it with "
+                "Foundry-Phase(phase='inspect_clean') and pass "
+                "Foundry-Gate(phase='assay'); DONE is reached through ASSAY, "
+                "never from inside an INSPECT."
+            ),
+            "F3": (
+                "The run is in GRIND. Close it with "
+                "Foundry-Phase(phase='inspect_start'), run the roster it names, "
+                "then inspect_clean and ASSAY."
+            ),
+            "F4": (
+                "ASSAY has passed, but this run was started with "
+                "post-verification phases it has not run. --temper enters "
+                "TEMPER through Foundry-Phase(phase='temper'); --nyquist enters "
+                "NYQUIST through Foundry-Phase(phase='nyquist') and is finished "
+                "with Foundry-Phase(phase='nyquist_done'). Foundry-Next names "
+                "which applies here."
+            ),
+            "F5": (
+                "The run is in TEMPER and --nyquist is set, so F5 is not the "
+                "terminal phase. Call Foundry-Phase(phase='nyquist') to enter "
+                "NYQUIST, then Foundry-Phase(phase='nyquist_done')."
+            ),
+            "F5.5": (
+                "NYQUIST is open. Finish it with "
+                "Foundry-Phase(phase='nyquist_done'), which is the F6 door from "
+                "F5.5."
+            ),
+            "F6": (
+                "The run is already DONE. Start a new run rather than "
+                "re-closing this one."
+            ),
+        },
+    },
 }
 
 
-def _inspect_entry_source_problem(fdir: Path, token: str) -> dict | None:
-    """The refusal an INSPECT-opening token owes from a wrong source phase.
+def _phase_entry_source_problem(fdir: Path, token: str) -> dict | None:
+    """The refusal a guarded token owes from a wrong source phase.
 
     None when the run is in a phase `token` is accepted from. See
-    `_INSPECT_ENTRY_SOURCES` for the two defects this closes and for why the
+    `_PHASE_ENTRY_SOURCES` for the four defects this closes and for why the
     table is one table.
 
     Reads the phase from state.json at call time, exactly as `inspect_start`'s
     inline guard does, and refuses BEFORE any decision, sweep or marker write —
     so a transition the server refused leaves no trace it was attempted.
+
+    D-164: `accepted_from` is a tuple, or a callable of the state document for a
+    token whose source phase depends on the run's own flags. Resolved HERE, so
+    every branch that consults the table gets the same resolution and no branch
+    re-derives "which phase is terminal for this run".
     """
-    spec = _INSPECT_ENTRY_SOURCES.get(token)
+    spec = _PHASE_ENTRY_SOURCES.get(token)
     if spec is None:
         return None
-    current = _load_json(fdir / "state.json").get("phase", "")
+    state = _load_json(fdir / "state.json")
+    current = state.get("phase", "")
     accepted = spec["accepted_from"]
+    if callable(accepted):
+        accepted = accepted(state)
     if current in accepted:
         return None
     return {
         "error": (
             f"Cannot enter {spec['opens']} from phase {current or 'F0'} — "
             f"Foundry-Phase(phase='{token}') is {spec['what']}, accepted from "
-            f"{' or '.join(accepted)} and from nowhere else. From any other "
-            "phase it would record a second INSPECT decision against a cycle "
-            "that already has one."
+            f"{' or '.join(accepted)} and from nowhere else. "
+            + spec["why"]
         ),
         "hint": spec["hints"].get(
             current,
@@ -5429,8 +5855,8 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # Stated FIRST, before the team scan: a run in ASSAY is not a run whose
         # CAST wave might still be up, and the honest answer to
         # `cast` from F4 is "this is not the transition that applies", not
-        # "shut down your teammates". See `_INSPECT_ENTRY_SOURCES`.
-        if (wrong := _inspect_entry_source_problem(fdir, "cast")) is not None:
+        # "shut down your teammates". See `_PHASE_ENTRY_SOURCES`.
+        if (wrong := _phase_entry_source_problem(fdir, "cast")) is not None:
             return wrong
         teams = _check_active_teams(project_root)
         if teams["active"]:
@@ -5919,8 +6345,8 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # D-125 — AND HERE, ON THE SAME TERMS.
         # F5 is reached THROUGH ASSAY. Without this, a DELTA INSPECT reached
         # NYQUIST with ASSAY never opened and no verdict written — the drive is
-        # recorded on `_INSPECT_ENTRY_SOURCES`.
-        if (wrong := _inspect_entry_source_problem(fdir, "temper")) is not None:
+        # recorded on `_PHASE_ENTRY_SOURCES`.
+        if (wrong := _phase_entry_source_problem(fdir, "temper")) is not None:
             return wrong
         # GI-009 / AC-016: the F5 entry opens TEMPER's first INSPECT, so it
         # records FULL / first_of_phase on exactly the same terms as the F2
@@ -5985,9 +6411,23 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # evidence was captured against. Refused BEFORE `_update_phase`, so a
         # refused crossing leaves the run in F5 with no trace it was attempted
         # — the same ordering the INSPECT boundaries hold.
-        nyq_sweep = _terminal_evidence_sweep(fdir, project_root)
-        if not nyq_sweep["ok"]:
-            return _terminal_sweep_refusal(nyq_sweep, "enter NYQUIST")
+        #
+        # D-159 — AND IT TAKES THE SAME THREE-STATE RUNG THE OTHER TWO DO.
+        #
+        # This read `_terminal_evidence_sweep(...)["ok"]` alone, which is the
+        # pre-D-149 rule: a whole-corpus sweep over a corpus that is no longer
+        # in the tree yields zero logs, zero mismatches and ok True. Driven at
+        # cycle 9 through the real door — a run at F5 with one non-reproducing
+        # committed log was REFUSED before the F6 strip and ADMITTED after the
+        # identical strip, phase F5.5, `corpus_size 0`, while `nyquist_done` and
+        # `done` on the same tree both refused naming
+        # EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP. GI-002 names three boundaries
+        # and this is the one it names by the word NYQUIST; a --nyquist run
+        # entered F5.5 through the door that did not apply the rule.
+        nyq_state = _terminal_evidence_state(fdir, project_root)
+        if (refusal := _terminal_evidence_refusal(nyq_state, "enter NYQUIST")):
+            return refusal
+        nyq_sweep = nyq_state["evidence"]
         _update_phase(fdir, "F5.5")
         _record_cycle_rollup(
             fdir,
@@ -6032,6 +6472,15 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # branch and the gate call, on the same terms. Not a copy of the
         # checks: a second implementation of "done" is the drift that produced
         # this defect, not a fix for it.
+        #
+        # D-164 — AND WHICH PHASE IT IS LEAVING IS A PRECONDITION TOO.
+        # `_done_preconditions` reads the ledgers and never `state.phase`, so
+        # this returned ok True from F2 — "NYQUIST complete → phase is now F6"
+        # asserted from inside an INSPECT, on a run where NYQUIST had never
+        # opened. Guarded through the SAME table the three INSPECT-opening
+        # tokens use; see `_PHASE_ENTRY_SOURCES`.
+        if (wrong := _phase_entry_source_problem(fdir, "nyquist_done")) is not None:
+            return wrong
         outcome = _done_preconditions(fdir, project_root)
         if not outcome["passed"]:
             return {
@@ -6061,6 +6510,18 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # runs, exactly its checks and no others. A precondition the gate does
         # not enforce must not be invented here: the transition and the gate
         # disagreeing about what "done" means is the failure this is fixing.
+        #
+        # D-164 — EXCEPT THE ONE THING _done_preconditions CANNOT SEE.
+        # Its checklist reads the ledgers; ST-010 also constrains the FROM-state
+        # ("F5.5 or F5 complete"), and this branch read `state.phase` never.
+        # Driven: a run at F4 with `temper` and `nyquist` both set, every
+        # requirement VERIFIED and no open defects, returned ok True and phase
+        # F6 — out of ASSAY, skipping both post-verification phases the run was
+        # started with. The guard is the same table the INSPECT-opening tokens
+        # use, and it is a SOURCE-PHASE check, not a second closure check: what
+        # "done" means is still `_done_preconditions` and only that.
+        if (wrong := _phase_entry_source_problem(fdir, "done")) is not None:
+            return wrong
         outcome = _done_preconditions(fdir, project_root)
         if not outcome["passed"]:
             return {
@@ -7346,6 +7807,153 @@ def _class_drew_live_in_cycle(defects: list, class_key: str, cycle: int) -> bool
     return False
 
 
+def _clean_arm_step(
+    entry: dict, completed_cycle: int, drew_live: Callable[[int], bool]
+) -> bool:
+    """ST-001's clean arm applied to ONE closed cycle. True when it CLEARS.
+
+    Mutates `entry`'s `live_clean_cycles` and `live_clean_cycles_counted` in
+    place; `drew_live` is called at most once, with `completed_cycle`, and only
+    after the two guards have admitted the cycle — so a caller projecting a
+    hypothetical future passes a constant and a caller judging a real crossing
+    passes the ledger read.
+
+    D-157 — ONE DERIVATION OF "HOW FAR IS THE CLEAN ARM", NOT TWO.
+    -------------------------------------------------------------
+    This body was inline in `_advance_escalation_exits`, and
+    `_escalation_exit_distances` — the sentence the DONE refusal and the F2
+    notice both print — computed the SAME number a second way, as
+    `max(0, LIVE_CLEAN_CYCLES_TO_CLEAR - entry["live_clean_cycles"])`. That
+    expression consults neither guard below, so the two derivations disagree in
+    exactly the state AC-002 describes. Driven on AC-002's own fixture (a class
+    escalated at cycle 5, one LATENT instance per cycle at a finer boundary,
+    counter at 5): `_class_drew_live_in_cycle(defects, key, 5)` is False, so
+    cycle 5 drew zero LIVE instances, and the hint said "2 more INSPECT
+    cycle(s)". The arm needs THREE crossings from there — the one closing cycle
+    5 is discarded by the escalated-before guard, the one closing 6 banks one,
+    and only the one closing 7 clears. The lead was told a distance the arm it
+    names would not honour.
+
+    So the distance is now WALKED THROUGH THIS FUNCTION
+    (`_clean_arm_crossings_left`) rather than computed beside it. A guard added
+    here changes both answers at once, which is the only arrangement in which
+    they cannot come apart.
+    """
+    # ST-001's guard: "the class must have been escalated before the two
+    # cycles began". The cycle a class escalated ON is the cycle whose
+    # third consecutive filing escalated it, so it is by construction not
+    # a clean one, and counting cycles at or before it would let a class
+    # clear on history that predates the escalation entirely.
+    escalated_at = entry.get("escalated_at_cycle")
+    if not isinstance(escalated_at, int) or completed_cycle <= escalated_at:
+        return False
+    # D-057: at most once per closed cycle, whichever way it goes.
+    if completed_cycle in entry["live_clean_cycles_counted"]:
+        return False
+
+    # D-112 — "CONSECUTIVE" IS A TEST THIS ARM DID NOT MAKE.
+    # -----------------------------------------------------
+    # FR-003 is Locked and verbatim: "Two consecutive INSPECT cycles
+    # with zero LIVE instances of the class", and ST-001 repeats "the
+    # second CONSECUTIVE INSPECT cycle". `live_clean_cycles` was a bare
+    # accumulator with no adjacency test at all, so a class cleared on
+    # two clean cycles separated by cycles that drew LIVE instances of
+    # it.
+    #
+    # TWO WAYS THE RUN BREAKS, AND ONLY ONE OF THEM IS A LIVE DRAW.
+    # `_persisted_escalations` filters out an operator-overridden class,
+    # so every boundary crossed while an `escalation-override` directive
+    # is active is skipped ENTIRELY — the arm is never reached, so a
+    # LIVE-draw reset could never fire for those cycles, and the
+    # accumulator survived them untouched. Driven: class FDC escalated at
+    # cycle 3, clean at 4, then Foundry-Directive('escalation-override:
+    # FDC') — the marker the server's OWN structural proposal prints —
+    # held across cycles 5, 6 and 7, each of which drew a LIVE instance
+    # (D-004, D-005, D-006). After Foundry-Clear-Directives the next
+    # crossing recorded status CLEARED, exit_reason clean_cycles,
+    # cleared_at_cycle 9, live_clean_cycles 2,
+    # live_clean_cycles_counted [4, 8] — stamped on the clean arm while
+    # six LIVE instances stood open and three intervening cycles had
+    # drawn them.
+    #
+    # So adjacency is tested against the record that already says which
+    # cycles were EVALUATED. A gap in that list means cycles passed this
+    # arm never judged, and a streak cannot be claimed across them.
+    counted = [
+        c for c in entry["live_clean_cycles_counted"]
+        if isinstance(c, int) and not isinstance(c, bool)
+    ]
+    # The cycle the class escalated ON is the last one before counting
+    # starts, so it is the anchor an empty list measures adjacency from.
+    last_counted = max(counted) if counted else escalated_at
+    contiguous = completed_cycle == last_counted + 1
+
+    if drew_live(completed_cycle):
+        # The streak ENDS here: this cycle is evaluated and dirty. The
+        # counted list is reset to this cycle alone so the next crossing
+        # measures adjacency from the break rather than from a clean
+        # cycle on the far side of it.
+        entry["live_clean_cycles"] = 0
+        entry["live_clean_cycles_counted"] = [completed_cycle]
+    elif not contiguous:
+        # A clean cycle, but cycles between it and the last evaluated
+        # one were never judged. The streak we can VOUCH for is this
+        # cycle alone, so it RESTARTS at 1 rather than resuming at
+        # whatever the accumulator held — and rather than at 0, which
+        # would assert this cycle was dirty when it was not.
+        entry["live_clean_cycles"] = 1
+        entry["live_clean_cycles_counted"] = [completed_cycle]
+    else:
+        entry["live_clean_cycles"] = entry["live_clean_cycles"] + 1
+        entry["live_clean_cycles_counted"].append(completed_cycle)
+
+    return entry["live_clean_cycles"] >= LIVE_CLEAN_CYCLES_TO_CLEAR
+
+
+def _clean_arm_crossings_left(
+    entry: dict, next_completed_cycle: int, escalated_at: object
+) -> int | None:
+    """How many more crossings ST-001's clean arm needs, WALKED not computed.
+
+    `next_completed_cycle` is the cycle the NEXT crossing will close — which is
+    `_current_cycle(fdir)`, since `inspect_start` reads the counter before it
+    advances. `escalated_at` is the cycle the class escalated on, taken from the
+    persisted entry when it has one and from the ledger derivation when it does
+    not (a class with no `escalation.json` record yet has that value latched by
+    `_record_escalation_proposals` at the very next crossing, before the arm
+    runs, so it is the value the arm will see).
+
+    Returns None when the arm cannot advance at all — no escalation cycle is
+    knowable, so there is no number to state and the caller must say that
+    instead of printing one.
+
+    D-157: every future cycle is assumed CLEAN, which is what "distance to the
+    exit" means — the shortest walk from here. The walk is bounded because each
+    crossing consumes one cycle number, the escalated-before guard can skip only
+    the cycles at or before `escalated_at`, and the already-counted guard can
+    skip only cycles the record already lists.
+    """
+    if not isinstance(escalated_at, int) or isinstance(escalated_at, bool):
+        return None
+    probe = {
+        "escalated_at_cycle": escalated_at,
+        "live_clean_cycles": entry["live_clean_cycles"],
+        "live_clean_cycles_counted": list(entry["live_clean_cycles_counted"]),
+    }
+    completed = next_completed_cycle
+    ceiling = (
+        max(0, escalated_at - next_completed_cycle + 1)
+        + len(probe["live_clean_cycles_counted"])
+        + LIVE_CLEAN_CYCLES_TO_CLEAR
+    )
+    for crossings in range(1, ceiling + 1):
+        cleared = _clean_arm_step(probe, completed, lambda _c: False)
+        completed += 1
+        if cleared:
+            return crossings
+    return None
+
+
 def _advance_escalation_exits(
     fdir: Path, project_root: str, completed_cycle: int, boundary_cycle: int
 ) -> list[dict]:
@@ -7449,76 +8057,15 @@ def _advance_escalation_exits(
                 _clear("budget")
                 continue
 
-            # ST-001's guard: "the class must have been escalated before the two
-            # cycles began". The cycle a class escalated ON is the cycle whose
-            # third consecutive filing escalated it, so it is by construction not
-            # a clean one, and counting cycles at or before it would let a class
-            # clear on history that predates the escalation entirely.
-            escalated_at = entry.get("escalated_at_cycle")
-            if not isinstance(escalated_at, int) or completed_cycle <= escalated_at:
-                continue
-            # D-057: at most once per closed cycle, whichever way it goes.
-            if completed_cycle in entry["live_clean_cycles_counted"]:
-                continue
-
-            # D-112 — "CONSECUTIVE" IS A TEST THIS ARM DID NOT MAKE.
-            # -----------------------------------------------------
-            # FR-003 is Locked and verbatim: "Two consecutive INSPECT cycles
-            # with zero LIVE instances of the class", and ST-001 repeats "the
-            # second CONSECUTIVE INSPECT cycle". `live_clean_cycles` was a bare
-            # accumulator with no adjacency test at all, so a class cleared on
-            # two clean cycles separated by cycles that drew LIVE instances of
-            # it.
-            #
-            # TWO WAYS THE RUN BREAKS, AND ONLY ONE OF THEM IS A LIVE DRAW.
-            # `_persisted_escalations` filters out an operator-overridden class,
-            # so every boundary crossed while an `escalation-override` directive
-            # is active is skipped ENTIRELY — the arm is never reached, so a
-            # LIVE-draw reset could never fire for those cycles, and the
-            # accumulator survived them untouched. Driven: class FDC escalated at
-            # cycle 3, clean at 4, then Foundry-Directive('escalation-override:
-            # FDC') — the marker the server's OWN structural proposal prints —
-            # held across cycles 5, 6 and 7, each of which drew a LIVE instance
-            # (D-004, D-005, D-006). After Foundry-Clear-Directives the next
-            # crossing recorded status CLEARED, exit_reason clean_cycles,
-            # cleared_at_cycle 9, live_clean_cycles 2,
-            # live_clean_cycles_counted [4, 8] — stamped on the clean arm while
-            # six LIVE instances stood open and three intervening cycles had
-            # drawn them.
-            #
-            # So adjacency is tested against the record that already says which
-            # cycles were EVALUATED. A gap in that list means cycles passed this
-            # arm never judged, and a streak cannot be claimed across them.
-            counted = [
-                c for c in entry["live_clean_cycles_counted"]
-                if isinstance(c, int) and not isinstance(c, bool)
-            ]
-            # The cycle the class escalated ON is the last one before counting
-            # starts, so it is the anchor an empty list measures adjacency from.
-            last_counted = max(counted) if counted else escalated_at
-            drew_live = _class_drew_live_in_cycle(defects, key, completed_cycle)
-            contiguous = completed_cycle == last_counted + 1
-
-            if drew_live:
-                # The streak ENDS here: this cycle is evaluated and dirty. The
-                # counted list is reset to this cycle alone so the next crossing
-                # measures adjacency from the break rather than from a clean
-                # cycle on the far side of it.
-                entry["live_clean_cycles"] = 0
-                entry["live_clean_cycles_counted"] = [completed_cycle]
-            elif not contiguous:
-                # A clean cycle, but cycles between it and the last evaluated
-                # one were never judged. The streak we can VOUCH for is this
-                # cycle alone, so it RESTARTS at 1 rather than resuming at
-                # whatever the accumulator held — and rather than at 0, which
-                # would assert this cycle was dirty when it was not.
-                entry["live_clean_cycles"] = 1
-                entry["live_clean_cycles_counted"] = [completed_cycle]
-            else:
-                entry["live_clean_cycles"] = entry["live_clean_cycles"] + 1
-                entry["live_clean_cycles_counted"].append(completed_cycle)
-
-            if entry["live_clean_cycles"] >= LIVE_CLEAN_CYCLES_TO_CLEAR:
+            # D-157: the arm's guards, the adjacency test and the accumulator
+            # all live in `_clean_arm_step` now, because the DONE refusal's
+            # "N more crossings" sentence walks that same function to state its
+            # distance. Two derivations of one number is what D-157 filed.
+            if _clean_arm_step(
+                entry,
+                completed_cycle,
+                lambda c, _key=key: _class_drew_live_in_cycle(defects, _key, c),
+            ):
                 _clear("clean_cycles")
         data["updated_at"] = _now()
     return cleared
@@ -11137,7 +11684,7 @@ def _still_escalated_notice(
         "Clearing it is a boundary crossing, and the cheapest place to make "
         "those crossings is HERE, from F2: reaching ASSAY, TEMPER and NYQUIST "
         "first means every remaining crossing is paid for twice."
-        + _escalation_exit_distances(fdir, still, crossing=crossing)
+        + _escalation_exit_distances(fdir, project_root, still, crossing=crossing)
     )
 
 

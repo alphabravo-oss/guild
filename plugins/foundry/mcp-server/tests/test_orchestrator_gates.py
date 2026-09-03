@@ -8584,6 +8584,138 @@ def test_the_call_that_would_exceed_max_cycles_halts_rather_than_refusing(
     assert result["open_unknown_tier_defects"] == ["D-003"]
 
 
+def test_a_halt_whose_report_failed_says_so_and_names_the_call_that_writes_it(
+    run_env, monkeypatch
+):
+    """FR-045 verbatim: 'state.json phase becomes HALTED, the report is written
+    naming every open LIVE and LATENT defect'. D-165.
+
+    `_halt_if_capped` called `_generate_report` and never read its `ok`, so the
+    halt ASSERTED a report it had not written and then parked the run on that
+    assertion. Driven at the real door: max_cycles 2 at cycle 2, one open LIVE
+    and one open LATENT defect, and a deliberately corrupt verdicts.json —
+    `ok True`, phase HALTED, message "The report has been generated naming 1
+    open LIVE, 0 untiered and 1 open LATENT defect(s)", REPORT.md absent from
+    disk, and the nested report result carrying `ok False` with "verdicts.json
+    is not valid JSON". Every later call compounded it: `_halted_refusal`
+    returned "the report says what", the hint "Read REPORT.md ... and stop",
+    and a `report` field holding the absolute path of a file that does not
+    exist. HALTED has no exit by design, so the operator was told to read a
+    document that was never written and given no reason to regenerate it.
+
+    CT-014 SPECIFIES this failure branch (the unreadable-ledger refusal), so it
+    is designed and reachable. The transition still happens — FR-045 makes the
+    cap 'not a refusal' — and what changes is that it stops lying about the
+    artifact and names the one call that can still write it.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LIVE"),
+        _tiered("D-002", "LATENT", reproduction_attempted="AST sweep finds 0 sites"),
+    ])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    # THE WINDOW THAT REALLY EXISTS. `_artifact_guard` runs at the top of the
+    # entry point and the report is generated several frames later, and this
+    # tree is SHARED — five castings commit into it at once. So the artifact is
+    # corrupted between the guard and the generation, and the refusal asserted
+    # below is the REAL generator's (CT-014's unreadable-ledger refusal), not a
+    # stub's.
+    real_generate = fo._generate_report
+
+    def _corrupted_mid_transition(pr, run_dir):
+        (fdir / "verdicts.json").write_text("{not json", encoding="utf-8")
+        return real_generate(pr, run_dir)
+
+    monkeypatch.setattr(fo, "_generate_report", _corrupted_mid_transition)
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+    monkeypatch.setattr(fo, "_generate_report", real_generate)
+
+    # The transition HAPPENED: a run that ran out of cycles has run out of
+    # cycles whether or not its ledgers can be rendered.
+    assert result["ok"] is True, result
+    assert result["halted"] is True
+    assert json.loads((fdir / "state.json").read_text())["phase"] == RUN_PHASE_HALTED
+
+    # ...and it does not claim the document it failed to write.
+    assert not (fdir / "REPORT.md").exists()
+    assert result["report_generated"] is False, result
+    assert result["report"]["ok"] is False, result["report"]
+    assert "could NOT be generated" in result["message"], result["message"]
+    assert "has been generated" not in result["message"], result["message"]
+    assert "Foundry-Report" in result["message"], result["message"]
+    # The counts are still stated, from the ledger that IS intact.
+    assert "1 open LIVE" in result["message"], result["message"]
+    assert "1 open LATENT" in result["message"], result["message"]
+
+    # The operator repairs what the error named — the only move the hint asks
+    # for — and the refusal every later door returns then names the missing
+    # report and the exit that exists, instead of pointing at a file that is
+    # not there.
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _arm_ordering_token(fdir)
+    later = foundry_mark_phase_complete("done", project_root)
+    assert later.get("ok") is not True, later
+    assert "was NOT written" in later["error"], later["error"]
+    assert "the report says what" not in later["error"], later["error"]
+    assert "Foundry-Report" in later["hint"], later["hint"]
+    assert "defects.json" in later["hint"], later["hint"]
+    assert later["report"] is None, later
+    assert later["report_generated"] is False, later
+
+    # And that exit really runs on a halted run: Foundry-Report is not a phase
+    # transition, so it is reachable from HALTED — which is what makes the hint
+    # actionable rather than a second dead end.
+    from foundry_mcp import server as foundry_server
+
+    previous = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        repaired = foundry_server._DISPATCH["Foundry-Report"]({})
+    finally:
+        foundry_server._project_root = previous
+    assert repaired["ok"] is True, repaired
+    assert (fdir / "REPORT.md").exists()
+
+    # ...and once it is written the refusal names it again. The FILE is the
+    # ground truth; a recorded failure that outlived the repair would be this
+    # same defect with the sign flipped.
+    with_report = fo._halted_refusal(fdir, "Foundry-Phase(phase='done')")
+    assert with_report["report_generated"] is True, with_report
+    assert "the report says what" in with_report["error"], with_report["error"]
+
+
+def test_a_halt_whose_report_succeeded_still_names_it(run_env):
+    """The other side of D-165, so the fix is a discrimination and not a
+    deletion: on the ordinary halt the report IS written, and both the
+    transition message and every later refusal say so.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result["report_generated"] is True, result
+    assert "The report has been generated naming" in result["message"], result
+    assert (fdir / "REPORT.md").exists()
+
+    refusal = fo._halted_refusal(fdir, "Foundry-Phase(phase='done')")
+    assert refusal["report_generated"] is True, refusal
+    assert "the report says what" in refusal["error"], refusal["error"]
+    assert refusal["report"] == str(fdir / "REPORT.md"), refusal
+
+
 def test_a_halted_run_issues_no_dispatch(run_env):
     """AC-037's last clause: 'the next Foundry-Next reports the run halted and
     issues no dispatch.'
@@ -11328,15 +11460,38 @@ def test_a_run_that_committed_no_evidence_at_all_still_passes(run_env):
     assert fo._evidence_corpus_existed(fdir, project_root) is False
 
 
-def test_both_terminal_doors_take_the_same_stripped_corpus_refusal(run_env):
-    """ST-010 / the --nyquist route: 'Foundry-Phase("nyquist_done") out of F5.5
-    and Foundry-Phase("done") at F6 sweep the same corpus by the same rule.'
+#: D-159 — every terminal crossing GI-002 names, and the phase each is made
+#: from. Written as a TABLE the test walks rather than as three hand-copied
+#: blocks, because the count is the thing that was wrong: the guard this
+#: replaces drove `nyquist_done`, `done` and `Foundry-Gate('done')` and called
+#: that "both terminal doors", while GI-002's clause reads "before
+#: ASSAY/NYQUIST/DONE" and the NYQUIST ENTRY — the F5 -> F5.5 crossing — was
+#: the one still on the pre-D-149 rule. A crossing added to the protocol and
+#: not to this tuple is the same omission again, so the tuple is derived
+#: against `_phase_transition`'s own branch set below.
+_TERMINAL_EVIDENCE_CROSSINGS = (
+    ("nyquist", "F5", "enter NYQUIST"),
+    ("nyquist_done", "F5.5", "leave NYQUIST for DONE"),
+    ("done", "F5.5", "mark the run DONE"),
+)
+
+
+def test_every_terminal_crossing_takes_the_same_stripped_corpus_refusal(run_env):
+    """GI-002 verbatim: the whole corpus is swept "when the FULL rule fires or
+    before ASSAY/NYQUIST/DONE".
 
     `_done_preconditions` is ONE evaluation with four callers (both gates and
     both transitions), which is the D-037 discipline that keeps the gate and
-    the transition from disagreeing about what DONE means. A --nyquist run
-    leaving F5.5 must not be a second route around the strip refusal, so both
-    transitions are driven on the same stripped tree.
+    the transition from disagreeing about what DONE means. D-159 is that
+    discipline's gap: the `nyquist` branch called `_terminal_evidence_sweep`
+    ITSELF and refused on `ok` alone, so it never saw the three states D-149
+    established. Driven — a stripped corpus refused `nyquist_done` and `done`
+    and ADMITTED `nyquist`, phase F5.5, corpus_size 0. A --nyquist run had a
+    second route around the rung: enter F5.5 through the door that did not
+    apply it.
+
+    So every crossing is driven on the SAME stripped tree, from the phase it is
+    actually made from.
     """
     project_root, fdir = run_env
     _evidence_repo(project_root)
@@ -11346,21 +11501,65 @@ def test_both_terminal_doors_take_the_same_stripped_corpus_refusal(run_env):
     _done_ready(project_root, fdir)
     _strip_evidence(project_root)
 
-    _write_state(fdir, phase="F5.5", cycle=1)
-    _arm_ordering_token(fdir)
-    nyq_done = foundry_mark_phase_complete("nyquist_done", project_root)
-    assert nyq_done.get("ok") is not True, nyq_done
-    assert fo.EVIDENCE_STRIPPED_TOKEN in json.dumps(nyq_done), nyq_done
-
-    _write_state(fdir, phase="F5.5", cycle=1)
-    _arm_ordering_token(fdir)
-    done = foundry_mark_phase_complete("done", project_root)
-    assert done.get("ok") is not True, done
-    assert fo.EVIDENCE_STRIPPED_TOKEN in json.dumps(done), done
+    for token, source_phase, _door in _TERMINAL_EVIDENCE_CROSSINGS:
+        _write_state(fdir, phase=source_phase, cycle=1, temper=True, nyquist=True)
+        _arm_ordering_token(fdir)
+        result = foundry_mark_phase_complete(token, project_root)
+        assert result.get("ok") is not True, (token, result)
+        assert fo.EVIDENCE_STRIPPED_TOKEN in json.dumps(result), (token, result)
+        assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))[
+            "phase"
+        ] == source_phase, (
+            f"{token} moved the run on a refusal; a refused crossing must leave "
+            f"no trace it was attempted"
+        )
 
     gate = foundry_gate("done", project_root)
     assert gate["passed"] is False, gate
     assert fo.EVIDENCE_STRIPPED_TOKEN in gate["reason"], gate
+
+
+def test_the_terminal_crossing_table_names_every_branch_that_sweeps(run_env):
+    """D-159's floor: the guard above is only as good as its roster.
+
+    The retired guard drove two doors and read as exhaustive. So the roster is
+    checked against the source: every branch of `_phase_transition` that calls
+    the terminal evidence rung must appear in `_TERMINAL_EVIDENCE_CROSSINGS`,
+    and a fourth crossing added later fails HERE rather than passing silently.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._phase_transition)))
+    sweeping: set[str] = set()
+    for branch in ast.walk(tree):
+        if not isinstance(branch, ast.If):
+            continue
+        tokens = {
+            node.comparators[0].value
+            for node in ast.walk(branch.test)
+            if isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name)
+            and node.left.id == "phase"
+            and isinstance(node.comparators[0], ast.Constant)
+            and isinstance(node.comparators[0].value, str)
+        }
+        if not tokens:
+            continue
+        calls = {
+            node.func.id
+            for node in ast.walk(ast.Module(body=branch.body, type_ignores=[]))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        if {"_terminal_evidence_state", "_done_preconditions"} & calls:
+            sweeping |= tokens
+
+    named = {token for token, _phase, _door in _TERMINAL_EVIDENCE_CROSSINGS}
+    assert sweeping == named, (
+        f"terminal crossings that take the evidence rung: {sorted(sweeping)}; "
+        f"crossings the guard drives: {sorted(named)}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -11694,7 +11893,7 @@ def test_the_budget_arm_is_not_offered_to_a_class_that_cannot_spend_it(run_env):
     _escalated_fixture(fdir, open_instances=False)
     _write_state(fdir, phase="F2", cycle=4)
 
-    sentence = fo._escalation_exit_distances(fdir, ["FDC"])
+    sentence = fo._escalation_exit_distances(fdir, project_root, ["FDC"])
     assert "cannot advance this class" in sentence, sentence
     assert "more structural packet(s) (budget arm" not in sentence, sentence
 
@@ -11715,7 +11914,7 @@ def test_the_budget_arm_is_offered_while_the_class_still_has_work(run_env):
     _escalated_fixture(fdir, open_instances=True)
     _write_state(fdir, phase="F2", cycle=4)
 
-    sentence = fo._escalation_exit_distances(fdir, ["FDC"])
+    sentence = fo._escalation_exit_distances(fdir, project_root, ["FDC"])
 
     assert "more structural packet(s) (budget arm" in sentence, sentence
     assert "cannot advance this class" not in sentence, sentence

@@ -1,0 +1,58 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_escalation.py tests/test_inspect_mode.py tests/test_orchestrator_gates.py tests/test_spend.py && uv run --quiet python -c "import inspect, json, pathlib, tempfile;from foundry_mcp.tools import foundry_orchestrator as fo;from foundry_mcp.tools.foundry_report import _read_unreported_dispatches;root = pathlib.Path(fo.__file__).resolve().parents[4];entry = {'escalated_at_cycle': 5, 'live_clean_cycles': 0, 'live_clean_cycles_counted': []};surfaces = ((('agents', 'tracer.md'), 'inspect_mode.stream_scope.trace.scope'), (('skills', 'trace', 'SKILL.md'), 'inspect_mode.stream_scope.trace.scope'), (('agents', 'assayer.md'), 'inspect_mode.prove_sample'), (('skills', 'prove', 'SKILL.md'), 'inspect_mode.prove_sample'));tokens = lambda extra: ('Foundry-Next', 'inspect_mode.mode', 'inspect_mode.cycle', 'DELTA', 'FULL', 'no narrowing was decided', extra);named = lambda parts, extra: sum(1 for t in tokens(extra) if t in root.joinpath(*parts).read_text(encoding='utf-8'));src = inspect.getsource(fo._phase_transition);halt = inspect.getsource(fo._halt_if_capped);refusal = inspect.getsource(fo._halted_refusal);print(chr(10) + '=== D-157: the exit distance is the arm walked, not a second sum ===');print('  both the arm and the distance step through _clean_arm_step:', '_clean_arm_step' in inspect.getsource(fo._advance_escalation_exits) and '_clean_arm_step' in inspect.getsource(fo._clean_arm_crossings_left));print('  AC-002 state (escalated at cycle 5, counter at 5) needs crossings:', fo._clean_arm_crossings_left(entry, 5, 5));print('  and the cycle it escalated ON banks nothing:', fo._clean_arm_step(dict(entry), 5, lambda c: False));print(chr(10) + '=== D-159: three terminal crossings, one evidence rung ===');print('  crossings that take it:', ' '.join(t for t in ('nyquist', 'nyquist_done', 'done') if t in src));print('  the nyquist entry consults the three-state rung:', '_terminal_evidence_state' in src);print('  and no longer refuses on the sweep verdict alone:', 'nyq_sweep = _terminal_evidence_sweep' not in src);print('  refusal token:', fo.EVIDENCE_STRIPPED_TOKEN);print(chr(10) + '=== D-161: every width-consuming surface names the recorded scope ===');print(chr(10).join('  %-24s names %d/%d width tokens' % ('/'.join(p) + ':', named(p, e), len(tokens(e))) for p, e in surfaces));print(chr(10) + '=== D-162: Foundry-Next and the F6 report state ONE unreported count ===');tmp = pathlib.Path(tempfile.mkdtemp()) / 'foundry-archive' / 'r';tmp.mkdir(parents=True);(tmp / 'state.json').write_text(json.dumps({'phase': 'F2', 'cycle': 3}), encoding='utf-8');(tmp / 'spawns.log').write_text(json.dumps({'casting_id': 2, 'phase': 'cast'}) + chr(10), encoding='utf-8');(tmp / 'stream-rollup.json').write_text(json.dumps({'cycles': {str(c): {'trace': {'records': [{'cycle': c}]}} for c in (1, 2, 3)}}), encoding='utf-8');summary = fo._spend_summary(tmp);report_side = _read_unreported_dispatches(tmp)[0];print('  one stream missed in three cycles plus one teammate:');print('    Foundry-Next unreported_count:', summary['unreported_count']);print('    report.json  unreported count:', report_side['count']);print('    they agree:', summary['unreported_count'] == report_side['count']);print('    by_phase F2 (the PAIR axis):', summary['by_phase']['F2']['unreported']);print('    by_cycle 1/2/3 (the CYCLE axis):', [summary['by_cycle'][str(c)]['unreported'] for c in (1, 2, 3)]);print('    the row list stays row-shaped:', summary['unreported_rows']);print(chr(10) + '=== D-164: every source-guarded token, including the two terminal ones ===');print('  guarded:', ' '.join(sorted(set(fo._PHASE_ENTRY_SOURCES) | {'inspect_start'})));print(chr(10).join('  %-20s done is accepted only from %s' % (label + ':', fo._PHASE_ENTRY_SOURCES['done']['accepted_from'](flags)[0]) for flags, label in (({}, 'plain'), ({'temper': True}, '--temper'), ({'temper': True, 'nyquist': True}, '--temper --nyquist'), ({'nyquist': True}, '--nyquist'))));print('  nyquist_done is accepted only from', fo._PHASE_ENTRY_SOURCES['nyquist_done']['accepted_from'][0]);print(chr(10) + '=== D-165: the halt does not assert a report it did not write ===');print('  the halt reads the generator verdict:', 'report_ok = bool(report.get(' in halt);print('  it records the failure on state.json:', 'halted_report_error' in halt);print('  and says so instead of claiming the report:', 'could NOT be generated' in halt);print('  the halted refusal names the exit that exists:', 'Foundry-Report' in refusal);print('  and the ledger that is still readable:', 'defects.json' in refusal)"
+# evidence-for: US-001, ST-001, ST-002, ST-005, ST-008, ST-010, GI-002, GI-006, GI-008, GI-009, CT-007, CT-013, CT-016, AC-002, AC-004, AC-014, AC-018, AC-019, AC-034, AC-036, AC-037, FR-002, FR-003, FR-022, FR-042, FR-045, FR-052, OT-024
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 900
+
+........................................................................ [  9%]
+........................................................................ [ 18%]
+........................................................................ [ 27%]
+........................................................................ [ 37%]
+........................................................................ [ 46%]
+........................................................................ [ 55%]
+........................................................................ [ 65%]
+........................................................................ [ 74%]
+........................................................................ [ 83%]
+........................................................................ [ 93%]
+.....................................................                    [100%]
+773 passed in 28.37s
+
+=== D-157: the exit distance is the arm walked, not a second sum ===
+  both the arm and the distance step through _clean_arm_step: True
+  AC-002 state (escalated at cycle 5, counter at 5) needs crossings: 3
+  and the cycle it escalated ON banks nothing: False
+
+=== D-159: three terminal crossings, one evidence rung ===
+  crossings that take it: nyquist nyquist_done done
+  the nyquist entry consults the three-state rung: True
+  and no longer refuses on the sweep verdict alone: True
+  refusal token: EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP
+
+=== D-161: every width-consuming surface names the recorded scope ===
+  agents/tracer.md:        names 7/7 width tokens
+  skills/trace/SKILL.md:   names 7/7 width tokens
+  agents/assayer.md:       names 7/7 width tokens
+  skills/prove/SKILL.md:   names 7/7 width tokens
+
+=== D-162: Foundry-Next and the F6 report state ONE unreported count ===
+  one stream missed in three cycles plus one teammate:
+    Foundry-Next unreported_count: 2
+    report.json  unreported count: 2
+    they agree: True
+    by_phase F2 (the PAIR axis): 1
+    by_cycle 1/2/3 (the CYCLE axis): [1, 1, 1]
+    the row list stays row-shaped: 4
+
+=== D-164: every source-guarded token, including the two terminal ones ===
+  guarded: cast done inspect_start nyquist_done temper
+  plain:               done is accepted only from F4
+  --temper:            done is accepted only from F5
+  --temper --nyquist:  done is accepted only from F5.5
+  --nyquist:           done is accepted only from F5.5
+  nyquist_done is accepted only from F5.5
+
+=== D-165: the halt does not assert a report it did not write ===
+  the halt reads the generator verdict: True
+  it records the failure on state.json: True
+  and says so instead of claiming the report: True
+  the halted refusal names the exit that exists: True
+  and the ledger that is still readable: True

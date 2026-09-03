@@ -1469,12 +1469,24 @@ def _refused_filing_findings(name: str, arguments: dict) -> list[tuple[dict, str
     """The `(finding, source)` pairs a refused filing call was trying to file.
 
     One mapping per finding, in the key shape both doors' validators already
-    judge — built through `foundry.py`'s own `_finding_mapping` for the single
-    door rather than re-spelled here, because a SECOND spelling of the finding
-    shape is how the audit record and the refusal come to describe different
-    things (D-083). The batch door's findings arrive in that shape already.
+    judge — built through `foundry.py`'s own `filing_finding_mapping` for the
+    single door rather than re-spelled here, because a SECOND spelling of the
+    finding shape is how the audit record and the refusal come to describe
+    different things (D-083). The batch door's findings arrive in that shape
+    already.
+
+    D-158 (structural packet 2) — AND THE ARGUMENT NAMES ARE READ, NOT RETYPED.
+    --------------------------------------------------------------------------
+    This called `_finding_mapping` — foundry.py's PRIVATE helper — through an
+    eight-argument block that re-spelled, as `args.get(...)` string literals,
+    the same argument names `foundry_add_defect` carries as parameters. Two
+    spellings of "which arguments carry claim prose" is the arrangement that
+    produced D-128, D-146/D-147 and D-158 in turn. `filing_finding_mapping` is
+    casting 2's public single spelling, and its own guard fails if a
+    claim-bearing parameter is added to the door and not to the mapping, so the
+    pre-dispatch rung and the handler can no longer read different fields.
     """
-    from foundry_mcp.tools.foundry import _finding_mapping
+    from foundry_mcp.tools.foundry import filing_finding_mapping
 
     if name == "Foundry-Sync":
         findings = (arguments or {}).get("findings")
@@ -1487,16 +1499,7 @@ def _refused_filing_findings(name: str, arguments: dict) -> list[tuple[dict, str
         ]
 
     args = arguments or {}
-    finding = _finding_mapping(
-        str(args.get("description") or ""),
-        str(args.get("spec_ref") or ""),
-        str(args.get("target_kind") or ""),
-        symbol=str(args.get("symbol") or ""),
-        file_path=str(args.get("file_path") or ""),
-        tier=str(args.get("tier") or ""),
-        defect_class=str(args.get("defect_class") or ""),
-        reproduction_attempted=str(args.get("reproduction_attempted") or ""),
-    )
+    finding = filing_finding_mapping(args)
     return [(finding, str(args.get("source") or ""))]
 
 
