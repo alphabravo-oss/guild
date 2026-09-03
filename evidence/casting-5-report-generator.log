@@ -2,8 +2,8 @@
 # evidence-for: US-008, GI-006, CT-014, AC-002, AC-004, AC-022, AC-034, AC-036, FR-023, FR-038, FR-051, NFR-002, NFR-003, OT-025
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-
-...................................................................
+........................................................................ [ 97%]
+.
 === report.json top-level keys ===
   generated_at
   run
@@ -36,9 +36,12 @@
   unknown fixed      1  ['D-007']
 === LATENT backlog (NFR-003 / AC-002) ===
   D-004  cycle 4  FALSE_DOCUMENTED_CONTRACT
+      located=True  file=src/foundry_mcp/tools/foundry_report.py  symbol=_render_section  note=None
   D-005  cycle 5  FALSE_DOCUMENTED_CONTRACT
+      located=True  file=src/foundry_mcp/tools/foundry_report.py  symbol=_md_table  note=None
 === unknown-tier defects, listed separately (FR-051) ===
   D-007  status fixed  UNWIRED_SURFACE
+      source=trace  type=UNWIRED  file=src/foundry_mcp/tools/foundry_orchestrator.py  symbol=foundry_next
 === escalated classes (AC-004) ===
   FALSE_DOCUMENTED_CONTRACT  status=CLEARED  exit_reason=budget  cleared_at_cycle=5  packets=2  open_latent=['D-004', 'D-005']
 === lead_fix records, one line per file touched (AC-022) ===
@@ -46,7 +49,7 @@
       src/foundry_mcp/tools/evidence.py  lines=11
   D-003  tier=LATENT  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
       src/foundry_mcp/tools/foundry_report.py  lines=64
-=== INSPECT mode per cycle (AC-036) ===
+=== INSPECT mode per cycle, every decision (AC-036 / D-119) ===
   cycle 1  F2    FULL  first_of_phase
   cycle 2  F2    DELTA delta
   cycle 3  F2    DELTA delta
@@ -74,5 +77,5 @@
   baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-.     [100%]
-68 passed in 0.33s
+.                                                                       [100%]
+74 passed in 0.52s
