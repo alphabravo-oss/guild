@@ -1,0 +1,87 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider -s tests/test_report.py -k demo_grind_cycle_9
+# evidence-for: GI-006, CT-014, US-008, AC-034, AC-036, FR-023, FR-038, FR-051, NFR-002
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# GRIND cycle 9 — four filings against the generated report, each driven
+# through foundry_report.generate_report and read back out of BOTH documents.
+#
+# D-163 (two-derivations-of-one-number-disagree). report.json published
+# spend_per_phase_and_cycle.total.unreported = 0 and by_phase {'F1':
+# {'unreported': 0}} in the same file as unreported_dispatches.count = 1 and
+# by_phase {'F1': ['casting-2']}. `_read_spend` copied the field out of
+# state.json.spend on the premise that the roll-up was "the orchestrator's
+# derivation and the only one" — but _overlay_unreported runs against a
+# throwaway deep copy inside _spend_summary, so the derived count never
+# reaches state.json and the only writer there seeds 0 and never increments.
+# The count now comes from foundry_state.unreported_dispatch_summary, read
+# ONCE by generate_report and handed to both sections, and the roll-up's claim
+# is named in `disagreements` instead of published as the answer.
+#
+# D-166 (report-section-unfiltered-by-status). The unknown-tier section built
+# its rows under `tier == TIER_UNKNOWN` with no status test while the LATENT
+# backlog beside it, on the same parse, used `and status == "open"`. On the
+# live archive that printed 156 FIXED records under a note asserting "It
+# blocks the gates exactly like LIVE" and naming a re-filing as the way out —
+# both false for every row, in the section its own docstring calls the one a
+# lead must act on, while _open_defects_by_tier put the true blocking count at
+# 0. The list is the OPEN records now; the closed ones are counted.
+#
+# D-167 and D-168 (generated-prose-states-null-as-fact), D-150's class on this
+# module's two remaining sentences. The verdict-matrix header interpolated
+# verdicts.json's `cycle` unguarded while guarding its two neighbours in the
+# same f-string, so a document without the key rendered "verdicts at cycle
+# None". The executing-versions section was five bare state.get calls under a
+# table with no prose, the one section that rendered blanks silently: markdown
+# and JSON agreed, so nothing was false, and a reader still could not tell a
+# run that recorded no version fields from a report that dropped them.
+#
+# Every archive read here is synthesized under pytest's tmp_path by the test
+# itself, because foundry-archive/ is git-ignored and this log is re-executed
+# inside a `git worktree add --detach` checkout that holds tracked files only.
+# No tmp path, timestamp or duration is printed, so the only volatile field is
+# pytest's own summary line.
+
+
+=== D-163 — two dispatches, ONE spend record, one report.json ===
+  unreported_dispatches:           count=1 by_phase={'F1': ['casting-2']}
+  spend.total:                     unreported=1
+  spend.by_phase[F1]:                unreported=1
+  the filing observed 0 here beside 1 there; one derivation now: True
+  | phase | F1 | 1000 | 1.0 | 1 |  | 1 |
+
+  a stale state.json.spend claim is NAMED, never published:
+  published=1  state.json.spend claimed=99
+  disagreement: by_phase F1 unreported derived=1 state_rollup=99
+  disagreement: run total unreported derived=1 state_rollup=99
+
+=== D-166 — the unknown-tier section lists OPEN records only ===
+  open (listed, blocking): ['D-003']   closed (counted, not listed): 2 ['D-001', 'D-002']
+  the gate agrees about what blocks: ['D-003']
+  the cross-tab is a census and still counts all three:
+    fixed   2 ['D-001', 'D-002']
+    open    1 ['D-003']
+  no closed id appears under the blocking note: True
+  ...2 untiered record(s) in this run are already closed; they are counted in `closed_count` and not listed, because a fixed record blocks no gate and has no re-filing to do (D-166).
+
+=== D-167 — a verdicts.json with no cycle key ===
+  0 requirements, verdicts at a cycle verdicts.json does not record: {}
+  report.json stays honest — cycle is null, never fabricated: None
+  and cycle 0 is a RECORDED cycle (the server counter is 0-based):
+  0 requirements, verdicts at cycle 0: {}
+
+=== D-168 — the executing-versions section states what it has ===
+  recorded=False  missing=['server_version', 'plugin_version', 'server_root', 'server_commit', 'self_target']
+  state.json carries no server_version, plugin_version, server_root, server_commit, self_target for this run, so the cell(s) below are blank because the run recorded nothing there — not because this report dropped a value. Foundry-Init writes these fields when it runs its self-target preflight (CT-010), so their absence is the finding: nothing compared the executing server against the working tree.
+  
+  | Field | Value |
+  |---|---|
+  | server_version | (none recorded) |
+  | plugin_version | (none recorded) |
+  | server_root | (none recorded) |
+  | server_commit | (none recorded) |
+  | self_target | (none recorded) |
+  a PARTIAL record names the one field it lacks, and self_target False is an answer:
+  recorded=False  missing=['server_commit']  self_target=False
+.
+1 passed, 90 deselected in 0.06s

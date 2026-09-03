@@ -474,6 +474,111 @@ def unreported_dispatch_pairs(
     ]
 
 
+def unreported_dispatch_summary(
+    *,
+    dispatch_rows: list[dict],
+    stream_roster: dict[str, list[str]],
+    spend_rows: list[dict],
+    phase_of_dispatch: dict[str, str],
+    agent_id_of=None,
+    cycles_of_agent: dict[str, list[str]] | None = None,
+) -> dict:
+    """The unreported-dispatch COUNTS, derived once, for every surface.
+
+    Returns, and never raises::
+
+        {"count": int,                            # unreported PAIRS
+         "dispatched": int,                       # every dispatched pair
+         "reported": int,                         # dispatched - count
+         "pairs": [{"agent": str, "phase": str}], # the unreported pairs
+         "by_phase": {phase: [agent ids]},
+         "by_cycle": {str(cycle): [agent ids]}}
+
+    The first five arguments are ``unreported_dispatch_pairs``' arguments,
+    passed straight through — that function is still the RULE and this one is
+    the arithmetic over it, so there is no second opinion about what an
+    unreported dispatch IS.
+
+    WHY THE COUNTS MOVED HERE TOO (D-163)
+    -------------------------------------
+    ``unreported_dispatch_pairs`` ended the two derivations of the RULE
+    (D-047 / D-048) and left two derivations of the NUMBER. One document
+    published both: ``report.json`` carried
+    ``spend_per_phase_and_cycle.total.unreported: 0`` and
+    ``by_phase {"F1": {"unreported": 0}}`` beside
+    ``unreported_dispatches {"count": 1, "by_phase": {"F1": ["casting-2"]}}``,
+    on a run with exactly one unreported dispatch. The spend section copied its
+    number out of ``state.json.spend``, on the stated premise that the
+    orchestrator's roll-up was "the orchestrator's derivation and the only
+    one"; but the orchestrator applies that derivation to a THROWAWAY DEEP COPY
+    inside its display path ("a reader that mutated the document it read would
+    make every display call a write"), so the value that reached the persisted
+    document was the ``0`` its empty-bucket seed put there. A field seeded to
+    zero and never incremented is not a derivation, and the report published it
+    as one beside the true count.
+
+    So both surfaces now call THIS, and the number they publish is the same
+    integer because it is the same object. Hosting it here rather than in
+    either caller is ``derive_cycle_count``'s reason unchanged: this is the
+    only module both readers already import, and the derivation needs ``json``
+    and ``pathlib`` and nothing else, so the leaf contract at the top of this
+    file holds — the verb mapping and the agent-id spelling are still the
+    caller's to pass in.
+
+    THE PAIR AND THE CYCLE ARE DIFFERENT AXES, AND SAYING SO IS THE POINT
+    --------------------------------------------------------------------
+    ``count`` and ``by_phase`` are keyed on the PAIR, because the pair is what
+    FR-022 asks about: "N agents unreported per phase". ``by_cycle`` is keyed
+    on the cycle stamps ``cycles_of_agent`` supplies, and one F2 stream agent
+    unreported across three cycles is ONE pair listed under THREE cycles. So
+    ``sum(len(v) for v in by_cycle.values())`` need not equal ``count``, BY
+    CONSTRUCTION, and a caller writing both into one table has to render them
+    as the different measurements they are rather than reconciling them.
+
+    Args:
+        dispatch_rows, stream_roster, spend_rows, phase_of_dispatch,
+        agent_id_of: exactly as ``unreported_dispatch_pairs`` documents them.
+        cycles_of_agent: ``{agent id: [cycle stamps]}`` for the agents that
+            have one — the F2 stream dispatch cycles, which
+            ``foundry_orchestrator`` builds as ``_stream_dispatch_cycles`` and
+            the report builds from ``stream-rollup.json``'s own cycle keys.
+            Omitted, ``by_cycle`` is empty: no cycle was supplied, so none is
+            claimed. Stamps are stringified so the keys match the ``by_cycle``
+            spelling C-4 uses in ``state.json.spend``.
+
+    ADVISORY, ALWAYS (AC-034), the same as the rule it counts. Nothing here
+    refuses and no gate reads the result.
+    """
+    common = {
+        "dispatch_rows": dispatch_rows,
+        "stream_roster": stream_roster,
+        "phase_of_dispatch": phase_of_dispatch,
+        "agent_id_of": agent_id_of,
+    }
+    pairs = unreported_dispatch_pairs(spend_rows=spend_rows, **common)
+    # The DENOMINATOR is the same rule asked with an empty ledger — "every
+    # dispatched pair, nothing cleared" — rather than a second walk of the two
+    # dispatch sources here. A count and a list that disagreed about what a
+    # dispatch IS is the shape this whole section keeps being fixed for.
+    dispatched = unreported_dispatch_pairs(spend_rows=[], **common)
+
+    by_phase: dict[str, list[str]] = {}
+    by_cycle: dict[str, list[str]] = {}
+    for pair in pairs:
+        by_phase.setdefault(pair["phase"], []).append(pair["agent"])
+        for stamp in (cycles_of_agent or {}).get(pair["agent"], []) or []:
+            by_cycle.setdefault(str(stamp), []).append(pair["agent"])
+
+    return {
+        "count": len(pairs),
+        "dispatched": len(dispatched),
+        "reported": len(dispatched) - len(pairs),
+        "pairs": pairs,
+        "by_phase": {k: sorted(set(v)) for k, v in sorted(by_phase.items())},
+        "by_cycle": {k: sorted(set(v)) for k, v in sorted(by_cycle.items())},
+    }
+
+
 def document_refusal(path: Path, problem: str) -> dict:
     """The house named refusal for an unreadable document, shaped ONCE.
 

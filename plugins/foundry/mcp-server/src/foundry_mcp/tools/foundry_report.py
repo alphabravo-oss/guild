@@ -67,7 +67,7 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
     read_jsonl,
     read_text_file,
-    unreported_dispatch_pairs,
+    unreported_dispatch_summary,
 )
 
 # ---------------------------------------------------------------------------
@@ -275,6 +275,17 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
     match key the DONE refusal's hint sends the lead to use, and a section a
     lead must act on has to be actionable from the document in front of them.
 
+    And being the blocking section is why it lists OPEN records only (D-166).
+    FR-051's gloss and AC-008 both scope the separate listing to an open
+    pre-change record, and `foundry_orchestrator._open_defects_by_tier` — the
+    gate that does the blocking — skips any record whose status is not open.
+    The list was unscoped while the LATENT backlog beside it was scoped on the
+    same parse, so on the live archive it printed 156 FIXED records under a
+    note asserting they hold the gates shut and naming a re-filing as the way
+    out: a blocking claim and a remedy, both false for every row, in the
+    section this docstring calls the one a lead must act on. The closed records
+    are counted in `closed_count` instead of listed.
+
     Both row builders take their location through `_location_fields`, which
     states what a filing did not carry instead of printing an empty cell
     (D-103). A LATENT filing is never refused for a missing location (FR-005),
@@ -296,6 +307,7 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
     }
     latent_backlog: list[dict] = []
     unknown_rows: list[dict] = []
+    closed_unknown: list[Any] = []
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -332,7 +344,25 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
                     "cycle": record.get("cycle"),
                 }
             )
-        if tier == TIER_UNKNOWN:
+        if tier == TIER_UNKNOWN and status != "open":
+            # D-166 — A CLOSED RECORD IS NOT UNDER THE BLOCKING NOTE.
+            #
+            # The rows below stood under a note asserting "It blocks the gates
+            # exactly like LIVE" and naming a re-filing as "the way out". Both
+            # sentences are false of a record that is already fixed, and
+            # `foundry_orchestrator._open_defects_by_tier` — the gate that
+            # actually blocks — skips any record whose status is not open. So
+            # this section listed 156 closed records under a claim the gate
+            # disagreed with, on the live archive, in the one section its own
+            # docstring calls "the one a lead must act on".
+            #
+            # They are COUNTED, not dropped. FR-051 scopes the separate listing
+            # to the OPEN untiered record and AC-008 agrees, but a reader who
+            # knows the run carried untiered records needs to see where they
+            # went; a section that silently omitted them would answer "this run
+            # had none" to a different question than the one it was asked.
+            closed_unknown.append(record.get("id"))
+        elif tier == TIER_UNKNOWN:
             # D-120 — THE FOUR FIELDS THE REMEDY MATCHES ON TRAVEL WITH THE ROW.
             #
             # This is the one section that BLOCKS: an untiered record holds the
@@ -374,15 +404,26 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
         "unknown_tier_defects": {
             "count": len(unknown_rows),
             "defects": unknown_rows,
+            # D-166: the rows are the OPEN untiered records, so the closed ones
+            # are named as a count here rather than listed under a note that is
+            # false of them. Always present, including zero, for the reason the
+            # cross-tab's empty tiers are: "no closed untiered records" is a
+            # measurement and an absent key is not.
+            "closed_count": len(closed_unknown),
+            "closed_ids": closed_unknown,
             "note": (
                 "A record with no tier key, or tier null, reads as "
-                f"{TIER_UNKNOWN!r}. It blocks the gates exactly like LIVE and "
-                "is listed here rather than among the LIVE rows because "
-                "nobody ever classified it. The way out is a re-filing "
-                "through Foundry-Defect or Foundry-Sync: either door matches "
-                "the open untiered record on (source, type, file, symbol) and "
-                "re-tiers it IN PLACE, keeping its id — so those four fields "
-                "travel with every row here (D-120)."
+                f"{TIER_UNKNOWN!r}. An OPEN one blocks the gates exactly like "
+                "LIVE and is listed here rather than among the LIVE rows "
+                "because nobody ever classified it. The way out is a "
+                "re-filing through Foundry-Defect or Foundry-Sync: either "
+                "door matches the open untiered record on (source, type, "
+                "file, symbol) and re-tiers it IN PLACE, keeping its id — so "
+                "those four fields travel with every row here (D-120). "
+                f"{len(closed_unknown)} untiered record(s) in this run are "
+                "already closed; they are counted in `closed_count` and not "
+                "listed, because a fixed record blocks no gate and has no "
+                "re-filing to do (D-166)."
             ),
         },
     }, None
@@ -656,12 +697,19 @@ def _new_spend_bucket() -> dict[str, Any]:
     they disagreed BY CONSTRUCTION on every run where any agent reported twice.
     ``agents`` is filled from the roll-up in `_read_spend`; nothing in this
     module counts it a second way.
+
+    ``unreported`` seeds 0 rather than None because, unlike ``agents``, it is
+    DERIVED here — `_read_spend` fills every bucket from the shared dispatch
+    summary (D-163), so there is no run on which it is unknown. A run with no
+    dispatch record at all has no unreported dispatch, and 0 is that fact.
     """
     return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "records": 0,
-            "agents": None, "unreported": None}
+            "agents": None, "unreported": 0}
 
 
-def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
+def _read_spend(
+    run_dir: Path, state: dict, dispatch_summary: dict | None = None
+) -> tuple[dict, str | None]:
     """NFR-002 — tokens and MINUTES per phase, per cycle, and the run total.
 
     Minutes are reported beside milliseconds because the question an operator
@@ -690,21 +738,55 @@ def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
     document — and they parted BY CONSTRUCTION the moment any agent reported
     twice. A drift signal that is permanently noisy detects no drift at all.
 
-    So `agents` and `unreported` are READ from the roll-up, which is the
-    orchestrator's derivation and the only one; the row count keeps its own
-    honest name, `records`; and what is CHECKED is the pair that really is two
-    derivations of one number — the roll-up's tokens and milliseconds against
-    the ledger's. A mismatch is NAMED in `disagreements`, per bucket and per
-    field, instead of being printed twice under one label.
+    So `agents` is READ from the roll-up, which is the orchestrator's
+    derivation of THAT number and the only one; the row count keeps its own
+    honest name, `records`; and what is CHECKED is every field that really is
+    two derivations of one number — the roll-up's tokens, milliseconds, agents
+    and unreported against this reader's. A mismatch is NAMED in
+    `disagreements`, per bucket and per field, instead of being printed twice
+    under one label.
 
     `agents` is None, never 0, on a run whose `state.json` carries no `spend`
     roll-up: "nobody recorded how many agents" and "no agents ran" are
     different facts, and this section already refuses to conflate that pair for
     the wall clock.
+
+    WHY `unreported` IS NOT ONE OF THE ROLL-UP'S NUMBERS (D-163)
+    ------------------------------------------------------------
+    It was, on the premise stated above — "the orchestrator's derivation and
+    the only one" — and the premise was false for this one field. The
+    orchestrator's `_overlay_unreported` runs inside `_spend_summary`, which
+    applies it to a THROWAWAY DEEP COPY ("a reader that mutated the document it
+    read would make every display call a write"), so the derived count never
+    reached `state.json`. The only writer of the key in the persisted document
+    is `foundry_record_spend`'s `_empty_spend_bucket`, which seeds it to 0 and
+    never increments it. So the field this reader copied was structurally 0 on
+    every run that recorded any spend, and one report.json published
+    `total.unreported: 0` and `by_phase {"F1": {"unreported": 0}}` beside its
+    own `unreported_dispatches {"count": 1, "by_phase": {"F1":
+    ["casting-2"]}}` — a number that is provably false sitting beside the true
+    one, in the same document.
+
+    `unreported` is therefore DERIVED, from the summary `generate_report`
+    hands in and hands to the `unreported_dispatches` section unchanged. Two
+    renderings of one object cannot disagree; two readings of two ledgers can,
+    and did. The roll-up's own claim is not discarded — it is checked, like
+    tokens and milliseconds, so a stale roll-up shows in `disagreements`
+    instead of being published as the answer.
+
+    THE PAIR AXIS AND THE CYCLE AXIS ARE DIFFERENT MEASUREMENTS. `by_phase`
+    and `total` count PAIRS, which is what FR-022 asks about; `by_cycle` names
+    the cycles a pair's agent was dispatched in, so one stream agent unreported
+    across three cycles is 1 in `total` and 1 in each of three cycle buckets.
+    The section `note` says so, because a reader adding the cycle column up and
+    finding more than the total is otherwise reading a contradiction.
     """
     records, problem = read_jsonl(run_dir / SPEND_LEDGER_FILENAME)
     if problem is not None:
         return {}, problem
+    dispatch_summary = dispatch_summary or {}
+    unreported_by_phase = dispatch_summary.get("by_phase") or {}
+    unreported_by_cycle = dispatch_summary.get("by_cycle") or {}
 
     state_rollup = state.get("spend")
     state_rollup = state_rollup if isinstance(state_rollup, dict) else None
@@ -748,16 +830,23 @@ def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
             if isinstance(agent, str) and agent:
                 seen.setdefault(scope, set()).add(agent)
 
-    # A phase or cycle the roll-up knows and the ledger does not is the run
-    # where every `Foundry-Spend` call was forgotten — the one whose gap most
-    # needs a line. `_overlay_unreported` creates exactly those buckets, so
-    # dropping them here would hide the case the field exists for.
-    for section, target in (("by_phase", by_phase), ("by_cycle", by_cycle)):
+    # A phase or cycle the roll-up or the DISPATCH RECORD knows and the ledger
+    # does not is the run where every `Foundry-Spend` call was forgotten — the
+    # one whose gap most needs a line. `_overlay_unreported` creates exactly
+    # those buckets, so dropping them here would hide the case the field exists
+    # for: with no ledger row there is no bucket, and with no bucket the phase
+    # whose every dispatch went unreported would not appear in this table at
+    # all (D-163).
+    for section, target, unreported_keys in (
+        ("by_phase", by_phase, unreported_by_phase),
+        ("by_cycle", by_cycle, unreported_by_cycle),
+    ):
         group = (state_rollup or {}).get(section)
-        if isinstance(group, dict):
-            for key in group:
-                if isinstance(key, str):
-                    target.setdefault(key, _new_spend_bucket())
+        keys = list(group) if isinstance(group, dict) else []
+        keys += list(unreported_keys)
+        for key in keys:
+            if isinstance(key, str):
+                target.setdefault(key, _new_spend_bucket())
 
     disagreements: list[dict] = []
     for section, key, bucket in (
@@ -768,22 +857,34 @@ def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
         bucket["minutes"] = round(bucket["duration_ms"] / 60_000.0, 2)
         scope = "run" if section is None else section
         recorded = _rollup_bucket(section, key)
-        for field in ("agents", "unreported"):
-            value = recorded.get(field)
-            bucket[field] = (
-                value if isinstance(value, int) and not isinstance(value, bool)
-                else None
+        agents = recorded.get("agents")
+        bucket["agents"] = (
+            agents if isinstance(agents, int) and not isinstance(agents, bool)
+            else None
+        )
+        # D-163: `unreported` is DERIVED from the shared dispatch summary, not
+        # copied from the roll-up, because the roll-up's copy of this one field
+        # is structurally 0 — see the docstring. `total` is the PAIR count, so
+        # it is the same integer the `unreported_dispatches` section publishes
+        # as `count`, by construction and not by agreement.
+        if section is None:
+            bucket["unreported"] = _as_count(dispatch_summary.get("count"))
+        else:
+            bucket["unreported"] = len(
+                (unreported_by_phase if section == "by_phase"
+                 else unreported_by_cycle).get(key, ())
             )
-        # `agents` is checked against the ledger's distinct names and `tokens`
-        # and `duration_ms` against the ledger's sums: three fields the
-        # orchestrator and this reader both derive from the same rows, so
-        # three places a stale roll-up shows. The ledger's agent count is
-        # NEVER written into the bucket — publishing it there is what made
-        # `agents` mean two things (D-090).
+        # `agents` is checked against the ledger's distinct names, `tokens` and
+        # `duration_ms` against the ledger's sums, and `unreported` against the
+        # derivation above: four fields the orchestrator and this reader both
+        # produce from the same rows, so four places a stale roll-up shows. The
+        # ledger's agent count is NEVER written into the bucket — publishing it
+        # there is what made `agents` mean two things (D-090).
         ledger_side = {
             "tokens": bucket["tokens"],
             "duration_ms": bucket["duration_ms"],
             "agents": len(seen.get((scope, key), ())),
+            "unreported": bucket["unreported"],
         }
         for field, ledger_value in ledger_side.items():
             value = recorded.get(field)
@@ -808,25 +909,44 @@ def _read_spend(run_dir: Path, state: dict) -> tuple[dict, str | None]:
         "state_rollup": state_rollup,
         "disagreements": disagreements,
         "note": (
-            "Tokens and minutes are the ledger's; agents and unreported are "
+            "Tokens and minutes are the ledger's; `agents` is "
             "state.json.spend's, which is the orchestrator's own derivation "
             "and counts DISTINCT agents. `records` counts ledger rows, which "
-            "is a different number whenever an agent reported twice (D-090)."
+            "is a different number whenever an agent reported twice (D-090). "
+            "`unreported` is derived from the dispatch record and is the same "
+            "derivation the Unreported dispatches section publishes — the run "
+            "total is its `count` (D-163). Per phase it counts (agent, phase) "
+            "pairs; per cycle it names the cycles those agents were dispatched "
+            "in, so one agent unreported across three cycles is 1 in the total "
+            "and 1 in each of three cycle rows, and the cycle column is not "
+            "expected to add up to the total."
         ),
     }, None
 
 
-def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
-    """AC-034 / CT-013 — dispatched agents with no spend record. ADVISORY.
+def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
+    """AC-034 / CT-013 — the run's unreported-dispatch counts, derived ONCE.
 
-    "Never a refusal" is the load-bearing half of AC-034 and it is enforced
-    here by construction: this section is a list, nothing reads it but the
-    report, and no gate in the protocol takes it as an input. An unreported
-    dispatch means a lead forgot to call `Foundry-Spend`, which is a gap in the
-    measurement, not a defect in the build — and a run that could not reach
-    DONE over a missed bookkeeping call would teach the lead to stop measuring.
+    Returns ``(summary, problem)`` where ``summary`` is exactly
+    `foundry_state.unreported_dispatch_summary`'s document. This function only
+    supplies the run's inputs; every judgement about what an unreported
+    dispatch IS, and every number derived from it, belongs to that helper.
 
-    Two sources, because neither alone sees every agent. `spawns.log` records
+    TWO SECTIONS, ONE OBJECT (D-163)
+    --------------------------------
+    `generate_report` calls this ONCE and hands the result to BOTH
+    `_read_spend` (which writes the per-bucket `unreported` counts) and
+    `_unreported_dispatches_section` (which lists the pairs). They used to
+    reach the number two ways: the list came from this walk of the ledgers,
+    while the spend buckets copied `state.json.spend[...]["unreported"]` — a
+    field the spend door seeds to 0 and the orchestrator only ever overlays
+    onto a throwaway copy, so it was structurally 0 on every run. One report
+    therefore published `total.unreported: 0` and `by_phase {"F1":
+    {"unreported": 0}}` beside `unreported_dispatches {"count": 1, "by_phase":
+    {"F1": ["casting-2"]}}`. Reading one object is what makes that pair
+    unrepresentable rather than merely fixed.
+
+    Two SOURCES, because neither alone sees every agent. `spawns.log` records
     teammate dispatches and nothing else; the F2 stream roster lives in
     `stream-rollup.json`, and a prover that ran and never reported spend
     appears in no spawn record at all.
@@ -873,9 +993,15 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
         return {}, problem
 
     stream_roster: dict[str, list[str]] = {}
+    # The cycle each stream agent was dispatched in, for the helper's
+    # `by_cycle` axis. It comes off the SAME walk as the roster because it is
+    # the same fact one key up — the roll-up's cycle bucket — and walking the
+    # document twice is how the two would come to disagree about which cycles
+    # a stream ran in.
+    cycles_of_agent: dict[str, list[str]] = {}
     cycles = rollup.get("cycles")
     if isinstance(cycles, dict):
-        for bucket in cycles.values():
+        for cycle_key, bucket in cycles.items():
             if not isinstance(bucket, dict):
                 continue
             for stream in bucket:
@@ -888,52 +1014,134 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
                 entry = bucket.get(stream)
                 if isinstance(entry, dict) and "records" in entry:
                     stream_roster.setdefault("F2", []).append(str(stream))
+                    cycles_of_agent.setdefault(str(stream), []).append(
+                        str(cycle_key)
+                    )
 
-    dispatch_phases = getattr(
-        foundry_orchestrator, "DISPATCH_PHASE_TO_RUN_PHASE", {}
-    )
-    missing = unreported_dispatch_pairs(
+    return unreported_dispatch_summary(
         dispatch_rows=spawns,
         stream_roster=stream_roster,
         spend_rows=spend,
-        phase_of_dispatch=dispatch_phases,
+        phase_of_dispatch=getattr(
+            foundry_orchestrator, "DISPATCH_PHASE_TO_RUN_PHASE", {}
+        ),
         agent_id_of=_agent_id_for_casting,
-    )
-    # The DENOMINATOR comes from the same function with an empty spend ledger —
-    # "every pair, nothing cleared" — rather than from a second walk of
-    # `spawns.log` here. A count and a list that disagreed about what a
-    # dispatch IS is the shape this whole section keeps being fixed for.
-    dispatched = unreported_dispatch_pairs(
-        dispatch_rows=spawns,
-        stream_roster=stream_roster,
-        spend_rows=[],
-        phase_of_dispatch=dispatch_phases,
-        agent_id_of=_agent_id_for_casting,
-    )
-    by_phase: dict[str, list[str]] = {}
-    for row in missing:
-        by_phase.setdefault(row["phase"], []).append(row["agent"])
+        cycles_of_agent=cycles_of_agent,
+    ), None
+
+
+def _unreported_dispatches_section(summary: dict) -> dict:
+    """The `unreported_dispatches` section, rendered from the shared summary.
+
+    Pure: it adds no number of its own. `count`, `dispatched`, `reported` and
+    `by_phase` are `_read_dispatch_summary`'s, unchanged, so this section and
+    the `unreported` column of the spend section are two RENDERINGS of one
+    derivation rather than two derivations (D-163).
+    """
     return {
-        "count": len(missing),
-        "dispatched": len(dispatched),
-        "reported": len(dispatched) - len(missing),
-        "by_phase": {k: sorted(v) for k, v in sorted(by_phase.items())},
+        "count": summary.get("count", 0),
+        "dispatched": summary.get("dispatched", 0),
+        "reported": summary.get("reported", 0),
+        "by_phase": summary.get("by_phase", {}),
         "note": (
             "Advisory only. An agent listed here was dispatched and never "
-            "reported spend for THAT phase; no gate refuses on it (AC-034)."
+            "reported spend for THAT phase; no gate refuses on it (AC-034). "
+            "The Unreported column of the spend section counts these same "
+            "pairs — one derivation, two renderings (D-163)."
         ),
-    }, None
+    }
+
+
+def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
+    """The `unreported_dispatches` section for a run dir. ADVISORY (AC-034).
+
+    `_read_dispatch_summary` plus `_unreported_dispatches_section`, for a
+    caller that has a run directory and no summary in hand — `test_spend.py`'s
+    cross-surface check is one. `generate_report` does NOT go through here: it
+    holds the summary already, because `_read_spend` needs the same object
+    (D-163), and calling this would re-read the three ledgers to re-derive a
+    number it is holding.
+
+    "Never a refusal" is the load-bearing half of AC-034 and it is enforced by
+    construction: this section is a list, nothing reads it but the report, and
+    no gate in the protocol takes it as an input. An unreported dispatch means
+    a lead forgot to call `Foundry-Spend`, which is a gap in the measurement,
+    not a defect in the build — and a run that could not reach DONE over a
+    missed bookkeeping call would teach the lead to stop measuring. The
+    ``problem`` this returns is an UNREADABLE LEDGER, which is the generator's
+    refusal rule and not a judgement about the dispatches.
+    """
+    summary, problem = _read_dispatch_summary(run_dir)
+    if problem is not None:
+        return {}, problem
+    return _unreported_dispatches_section(summary), None
+
+
+#: The five fields this section publishes, in the order both documents render
+#: them. Named once so the reader, the note and the markdown table cannot come
+#: to disagree about which fields the section is about.
+_EXECUTING_VERSION_FIELDS = (
+    "server_version", "plugin_version", "server_root", "server_commit",
+    "self_target",
+)  # 5 fields
 
 
 def _executing_versions_section(state: dict) -> dict:
-    """GI-004 / CT-010 — which server actually executed this run."""
-    return {
-        "server_version": state.get("server_version"),
-        "plugin_version": state.get("plugin_version"),
-        "server_root": state.get("server_root"),
-        "server_commit": state.get("server_commit"),
-        "self_target": state.get("self_target"),
-    }
+    """GI-004 / CT-010 — which server actually executed this run.
+
+    D-168 — THE ONE SECTION THAT RENDERED BLANKS SILENTLY.
+    ------------------------------------------------------
+    This was five bare `state.get` calls under a two-column table with no
+    prose. Driven over the live archive it printed five rows with every Value
+    cell empty, and `report.json` carried null for each — the two documents
+    agreed, which is why nothing was false, and a reader still could not tell
+    "this run recorded no version fields" from "the report dropped them".
+
+    That distinction is the whole reason AC-036 names this section for a
+    self-targeting run: `Foundry-Init` writes these four fields exactly when it
+    performed the self-target preflight (CT-010), so their ABSENCE is itself
+    the finding — nothing compared the executing server against the working
+    tree — and it is a different finding from a generator that lost them.
+
+    Every sibling that can render an absent value already states why: the spend
+    section says its Agents cells "are blank for want of that source, not
+    because they are zero", the baseline section says its three columns "are
+    null rather than fabricated, and nothing was derived", and the LATENT
+    backlog explains its `(none recorded)` cells (D-103). This says it too, in
+    `report.json` as well as in the markdown, so a mechanical reader gets the
+    same statement the operator does — `_location_fields`' rule, applied one
+    section over.
+
+    `recorded` and `missing` are the fields, not a boolean over the section:
+    "no commit but a version" and "nothing at all" are different states of a
+    preflight and a lead routes on which.
+    """
+    values = {field: state.get(field) for field in _EXECUTING_VERSION_FIELDS}
+    # A field is MISSING when the state document has no key for it or the key
+    # is null — the two are one fact here, and splitting them would give the
+    # markdown a blank cell the note said was recorded. The test is `is None`
+    # and not truthiness: `self_target` is legitimately False on every run that
+    # is not self-targeting, and `or`-style emptiness would report the
+    # commonest healthy run as unmeasured.
+    missing = [
+        field for field in _EXECUTING_VERSION_FIELDS if values[field] is None
+    ]
+    if not missing:
+        note = (
+            "Foundry-Init recorded all five fields for this run (CT-010). "
+            "`server_commit` reading 'unknown' is git being unavailable at "
+            "init, which is never treated as a match."
+        )
+    else:
+        note = (
+            "state.json carries no " + ", ".join(missing) + " for this run, "
+            "so the cell(s) below are blank because the run recorded nothing "
+            "there — not because this report dropped a value. Foundry-Init "
+            "writes these fields when it runs its self-target preflight "
+            "(CT-010), so their absence is the finding: nothing compared the "
+            "executing server against the working tree."
+        )
+    return {**values, "recorded": not missing, "missing": missing, "note": note}
 
 
 def _wall_clock_minutes(run_dir: Path) -> float | None:
@@ -1387,9 +1595,27 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
 
 def _render_section(key: str, value: dict) -> list[str]:
     if key == "verdict_matrix":
+        # D-167, D-150's class one renderer over. `cycle` is `verdicts.json`'s
+        # own key, read through `.get`, and this sentence interpolated it raw
+        # while GUARDING its two neighbours in the same f-string — `count`
+        # defaults to 0 and `by_verdict` falls back to '{}'. A verdicts.json
+        # without the key rendered the operator-facing line "verdicts at cycle
+        # None: {}": a Python None printed as a fact.
+        #
+        # `or` is not the guard. Cycle 0 is a real cycle — the counter is
+        # 0-based (ST-001) and a first-INSPECT verdict set is stamped with it —
+        # so `value.get('cycle') or ...` would report the run's first cycle as
+        # unrecorded. The int test is the module's own, `_as_count`'s and
+        # `derive_cycle_count`'s: an int that is not a bool.
+        cycle = value.get("cycle")
+        at_cycle = (
+            f"at cycle {cycle}"
+            if isinstance(cycle, int) and not isinstance(cycle, bool)
+            else "at a cycle verdicts.json does not record"
+        )
         return (
-            [f"{value.get('count', 0)} requirements, verdicts at cycle "
-             f"{value.get('cycle')}: {value.get('by_verdict') or '{}'}", ""]
+            [f"{value.get('count', 0)} requirements, verdicts {at_cycle}: "
+             f"{value.get('by_verdict') or '{}'}", ""]
             + _md_table(
                 ["ID", "Verdict", "Code location", "Cycle", "Evidence"],
                 [[r.get("id"), r.get("verdict"), r.get("code_location"),
@@ -1551,6 +1777,13 @@ def _render_section(key: str, value: dict) -> list[str]:
         # unknown is stated in WORDS, and the sentence names the blank cells it
         # is describing, which is how the LATENT backlog's prose already
         # handles its own null cells (D-103).
+        #
+        # D-163 narrowed this sentence to the ONE column it is still true of.
+        # It used to say "the Agents and Unreported cells below are blank for
+        # want of that source": `unreported` no longer comes from the roll-up
+        # at all — it is derived from the dispatch record — so it is a real
+        # number on exactly the runs this arm describes, and naming it here
+        # would send a reader to look for a blank cell carrying a count.
         agents = total.get("agents")
         if isinstance(agents, int) and not isinstance(agents, bool):
             headline = (
@@ -1562,9 +1795,10 @@ def _render_section(key: str, value: dict) -> list[str]:
                 f"{value.get('records', 0)} spend records; how many DISTINCT "
                 "agents produced them was not recorded, because "
                 "`state.json.spend` — the roll-up that is the only source for "
-                "that count — carries none. The Agents and Unreported cells "
-                "below are blank for want of that source, not because they "
-                "are zero."
+                "that count — carries none. The Agents cells below are blank "
+                "for want of that source, not because they are zero. The "
+                "Unreported cells are derived from the dispatch record and "
+                "are counts either way."
             )
         return (
             # "Reported as", not "Cost is": NFR-002 bans the money frame, and
@@ -1589,11 +1823,20 @@ def _render_section(key: str, value: dict) -> list[str]:
             + _md_table(["Phase", "Agents"], rows)
         )
     if key == "executing_versions":
-        return _md_table(
-            ["Field", "Value"],
-            [[k, value.get(k)] for k in
-             ("server_version", "plugin_version", "server_root", "server_commit",
-              "self_target")],
+        # D-168: the note comes FIRST and the blank cells carry the same
+        # `(none recorded)` spelling the LATENT backlog uses, so the two
+        # documents make the same statement and an unrecorded field is
+        # distinguishable from a dropped one in either. `is None` and not
+        # falsiness: `self_target: false` is a recorded answer.
+        missing = value.get("missing") or []
+        return (
+            [str(value.get("note", "")), ""]
+            + _md_table(
+                ["Field", "Value"],
+                [[k, NO_LOCATION_CELL if k in missing or value.get(k) is None
+                  else value.get(k)]
+                 for k in _EXECUTING_VERSION_FIELDS],
+            )
         )
     if key == "baseline_comparison":
         baseline = value.get("baseline") or {}
@@ -1704,14 +1947,21 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     if problem is not None:
         return _refusal(HANDOFFS_FILENAME, problem)
 
-    spend, problem = _read_spend(run_dir, state)
-    if problem is not None:
-        return _refusal(SPEND_LEDGER_FILENAME, problem)
-
-    unreported, problem = _read_unreported_dispatches(run_dir)
+    # D-163 — ONE summary, TWO sections. `spend_per_phase_and_cycle`'s
+    # `unreported` column and the `unreported_dispatches` section are rendered
+    # from this single object, so the document cannot carry a count of 0 beside
+    # a list of one. Read BEFORE the spend section, because that section needs
+    # it and the refusal it would raise names these three ledgers rather than
+    # the spend one.
+    dispatch_summary, problem = _read_dispatch_summary(run_dir)
     if problem is not None:
         return _refusal(f"{SPAWNS_FILENAME} / {SPEND_LEDGER_FILENAME} / {ROLLUP_FILENAME}",
                         problem)
+    unreported = _unreported_dispatches_section(dispatch_summary)
+
+    spend, problem = _read_spend(run_dir, state, dispatch_summary)
+    if problem is not None:
+        return _refusal(SPEND_LEDGER_FILENAME, problem)
 
     inspect_modes = _inspect_modes_section(state)
 

@@ -3,6 +3,7 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
+
 === report.json top-level keys ===
   generated_at
   run
@@ -39,8 +40,7 @@
   D-005  cycle 5  FALSE_DOCUMENTED_CONTRACT
       located=True  file=src/foundry_mcp/tools/foundry_report.py  symbol=_md_table  note=None
 === unknown-tier defects, listed separately (FR-051) ===
-  D-007  status fixed  UNWIRED_SURFACE
-      source=trace  type=UNWIRED  file=src/foundry_mcp/tools/foundry_orchestrator.py  symbol=foundry_next
+  open (blocking): 0  closed (not blocking): 1  ['D-007']
 === escalated classes (AC-004) ===
   FALSE_DOCUMENTED_CONTRACT  status=CLEARED  exit_reason=budget  cleared_at_cycle=5  packets=2  open_latent=['D-004', 'D-005']
 === lead_fix records, one line per file touched (AC-022) ===
@@ -70,6 +70,14 @@
   F1     ['casting-8']
   F2     ['research_audit', 'test', 'test01']
   F3     ['casting-5']
+  count=5  spend total unreported=5
+=== executing versions (AC-036 / CT-010 / D-168) ===
+  recorded=True  missing=[]
+  server_version  1.9.0
+  plugin_version  4.10.0
+  server_root     /repo/plugins/foundry
+  server_commit   3f9c1a284d6b7e05aa1177c0d4e93b62f8a5c410
+  self_target     True
 === baseline comparison (AC-036) ===
   baseline thunder-viper: grind=22 post_verification=8
   target: grind=12 post_verification=3
@@ -78,4 +86,4 @@
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
-1 passed, 79 deselected in 0.10s
+1 passed, 90 deselected in 0.10s

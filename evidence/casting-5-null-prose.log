@@ -44,8 +44,8 @@
   no Python repr reaches the prose: True
 
 === D-150 — no spend roll-up, which is the normal state when --max-cycles halts ===
-  0 spend records; how many DISTINCT agents produced them was not recorded, because `state.json.spend` — the roll-up that is the only source for that count — carries none. The Agents and Unreported cells below are blank for want of that source, not because they are zero. Reported as tokens and minutes only (NFR-002).
-  | run | total | 0 | 0.0 | 0 |  |  |
+  0 spend records; how many DISTINCT agents produced them was not recorded, because `state.json.spend` — the roll-up that is the only source for that count — carries none. The Agents cells below are blank for want of that source, not because they are zero. The Unreported cells are derived from the dispatch record and are counts either way. Reported as tokens and minutes only (NFR-002).
+  | run | total | 0 | 0.0 | 0 |  | 0 |
   report.json stays honest — agents is null, never 0: None
 
 === D-150 — a recorded count is still named as a number, same sentence as always ===

@@ -928,7 +928,11 @@ def test_every_named_section_carries_content_from_its_own_ledger(report_env):
     assert doc["verdict_matrix"]["count"] == 6                      # verdicts.json
     assert doc["defects_by_tier_and_status"]["total"] == 7          # defects.json
     assert doc["latent_backlog"]["open_count"] == 2                 # defects.json
-    assert doc["unknown_tier_defects"]["count"] == 1                # defects.json
+    # D-166: the section lists OPEN untiered records, and the fixture's one
+    # untiered record (D-007) is fixed, so the ledger it read is proved by the
+    # CLOSED count rather than the open one.
+    assert doc["unknown_tier_defects"]["count"] == 0                # defects.json
+    assert doc["unknown_tier_defects"]["closed_count"] == 1         # defects.json
     assert doc["escalated_classes"]["count"] == 1                   # escalation.json
     assert doc["lead_fix_records"]["count"] == 2                    # handoffs.jsonl
     assert doc["inspect_modes_per_cycle"]["count"] == 6             # state.json
@@ -997,7 +1001,19 @@ def test_unknown_tier_defects_are_listed_separately_from_live_and_latent(report_
     The separation is the requirement. Folding an untiered record in with the
     LIVE rows would tell an operator a stream classified it, which is the one
     thing that did not happen; the cross-tab therefore keeps a distinct row
-    keyed on TIER_UNKNOWN and the dedicated section names the record."""
+    keyed on TIER_UNKNOWN and the dedicated section names the record.
+
+    D-166: the SECTION lists the open untiered records, so D-007 — fixed in
+    the frozen fixture — is reopened on this copy to put it there. The
+    CROSS-TAB is unfiltered by design and keeps it either way: that table is a
+    census of the whole ledger and its whole job is to show which tier each
+    record landed under."""
+    defects = _read_json(report_env, "defects.json")
+    for record in defects["defects"]:
+        if record["id"] == "D-007":
+            record["status"] = "open"
+            record["fixed_in_cycle"] = None
+    _write_json(report_env, "defects.json", defects)
     _generate(report_env)
     doc = _document(report_env)
 
@@ -1036,6 +1052,10 @@ def test_the_unknown_tier_section_carries_the_fields_the_retier_matches_on(
             record["symbol"] = "legacy_handler"
             record["source"] = "trace"
             record["type"] = "UNWIRED"
+            # D-166: the remedy is for an OPEN record, so the record this
+            # drives the remedy's fields through has to be one.
+            record["status"] = "open"
+            record["fixed_in_cycle"] = None
     _write_json(report_env, "defects.json", defects)
     _generate(report_env)
 
@@ -1067,6 +1087,9 @@ def test_an_untiered_record_with_no_location_says_so_in_the_blocking_section(
         if record["id"] == "D-007":
             record["file"] = ""
             record["symbol"] = None
+            # D-166: the blocking section lists open records, so this is one.
+            record["status"] = "open"
+            record["fixed_in_cycle"] = None
     _write_json(report_env, "defects.json", defects)
     _generate(report_env)
 
@@ -1432,7 +1455,15 @@ def test_spend_reports_tokens_and_minutes_and_no_money_at_all(report_env):
         section["total"]["duration_ms"] / 60_000.0, 2
     )
     assert section["by_phase"]["F2"]["tokens"] == 980_000
-    assert set(section["by_cycle"]) == {"0", "1", "2"}
+    # Cycles 0-2 are the ledger's own rows. Cycles 3-5 have no spend row and
+    # appear because the dispatch record puts an unreported agent in them
+    # (D-163): a phase or cycle whose every dispatch went unaccounted for is
+    # exactly the one whose gap most needs a line, and a table built only from
+    # ledger rows is the table that cannot show it.
+    assert set(section["by_cycle"]) == {"0", "1", "2", "3", "4", "5"}
+    for cycle in ("3", "4", "5"):
+        assert section["by_cycle"][cycle]["records"] == 0
+        assert section["by_cycle"][cycle]["unreported"] > 0
 
     money = re.compile(r"[$€£¥]|USD|\bcost\b|\bprice\b|\bdollar", re.I)
     for bucket in (*section["by_phase"].values(), *section["by_cycle"].values(),
@@ -1493,15 +1524,29 @@ def test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does(
 
     assert bucket["records"] == 3, "three ledger rows"
     assert bucket["agents"] == 2, "two agents — the orchestrator's own number"
-    assert bucket["unreported"] == 1
     assert bucket["tokens"] == 240_000, "tokens stay the LEDGER's"
+    # D-163: `unreported` is DERIVED now, not copied from the roll-up beside
+    # it. The fixture dispatches casting-5 at `grind` and this ledger reports
+    # no F3 row for it, so the derivation is 1 — which is what the roll-up
+    # happens to claim here, and the seeded-wrong case is driven in
+    # `test_the_unreported_count_is_derived_not_copied_from_the_rollup`.
+    assert bucket["unreported"] == 1
 
-    # The pin that closes it: the orchestrator's roll-up and this section
-    # cannot answer the question differently, because there is one answer.
+    # The pin that closes D-090: the orchestrator's roll-up and this section
+    # cannot answer the AGENTS question differently, because there is one
+    # answer.
     rollup = _spend_summary(report_env)
     assert bucket["agents"] == rollup["by_phase"]["F3"]["agents"]
     assert section["total"]["agents"] == rollup["total"]["agents"]
-    assert section["disagreements"] == [], section["disagreements"]
+    # Scoped to the fields this test is about. The roll-up seeded above claims
+    # `unreported: 1` on buckets the dispatch record derives differently, and
+    # D-163's rule is that such a claim is NAMED here rather than published as
+    # the answer — so those rows are expected, and their absence would mean the
+    # copy came back.
+    assert [d for d in section["disagreements"] if d["field"] != "unreported"] == (
+        []
+    ), section["disagreements"]
+    assert {d["field"] for d in section["disagreements"]} == {"unreported"}
 
     # And the markdown gives each number its own column, so neither can be
     # read as the other. It already said "Records" over the cell the JSON
@@ -1571,9 +1616,26 @@ def test_an_unrecorded_agent_count_is_stated_in_words_never_printed_as_None(
     total_row = next(ln for ln in table.splitlines() if ln.startswith("| run |"))
     cells = [c.strip() for c in total_row.split("|")[1:-1]]
     assert cells[:5] == ["run", "total", "0", "0.0", "0"], total_row
-    assert cells[5:] == ["", ""], (
-        f"Agents and Unreported are the blank cells the sentence names: "
-        f"{total_row}"
+    assert cells[5] == "", (
+        f"Agents is the blank cell the sentence names: {total_row}"
+    )
+    # D-163 narrowed the sentence to that ONE column. `unreported` is derived
+    # from the dispatch record now, not read from the roll-up, so it is a real
+    # count on exactly the run this arm describes — and a sentence still
+    # calling it blank would send a reader looking for an empty cell that
+    # carries a number.
+    assert cells[6] == str(section["total"]["unreported"]), total_row
+    assert int(cells[6]) > 0, (
+        "this fixture dispatches agents that never reported spend, so the "
+        "derived count is the thing the old roll-up read could never show"
+    )
+    assert "Agents and Unreported cells below are blank" not in headline, (
+        "the sentence used to call BOTH cells blank; Unreported is a count now"
+    )
+    assert "The Agents cells below are blank" in headline, headline
+    assert "Unreported cells are derived" in headline, (
+        "and it says what the other column is instead, so a reader is not "
+        "left to guess which of the two the 'blank' clause covers"
     )
 
     # (b) THE KNOWN BRANCH is unchanged: a recorded count is still named as a
@@ -2899,6 +2961,330 @@ def test_read_jsonl_reports_undecodable_bytes_and_skips_torn_lines(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# GRIND cycle 9 — four filings against generated prose and generated counts.
+# D-163 (two derivations of one number), D-166 (a section unfiltered by
+# status), D-167 and D-168 (the remaining null-as-fact sentences).
+# --------------------------------------------------------------------------- #
+
+
+def test_the_unreported_count_is_derived_not_copied_from_the_rollup(report_env):
+    """D-163 / AC-034 / FR-022 / CT-013 — the number's SOURCE, driven.
+
+    `_read_spend` copied `unreported` verbatim out of `state.json.spend`, on
+    the stated premise that the roll-up is "the orchestrator's derivation and
+    the only one". It is not: `foundry_orchestrator._overlay_unreported` runs
+    inside `_spend_summary` against a throwaway deep copy, so the derived count
+    never reaches the persisted document, and the only writer of the key there
+    is `_empty_spend_bucket`, which seeds 0 and never increments.
+
+    Driven by seeding the roll-up with a number that is provably not the
+    dispatch record's: the published value must be the DERIVATION, and the
+    roll-up's claim must appear as a named disagreement rather than as the
+    answer."""
+    state = _read_json(report_env, "state.json")
+    state["spend"] = {
+        "by_phase": {"F3": {"tokens": 0, "duration_ms": 0, "agents": 0,
+                            "unreported": 99}},
+        "by_cycle": {},
+        "total": {"tokens": 0, "duration_ms": 0, "agents": 0,
+                  "unreported": 99},
+    }
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+    doc = _document(report_env)
+    section = doc["spend_per_phase_and_cycle"]
+
+    assert section["by_phase"]["F3"]["unreported"] != 99
+    assert section["total"]["unreported"] != 99
+    # The derivation, and the section that lists the same pairs, are one
+    # number — that pair is the filing.
+    assert section["total"]["unreported"] == doc["unreported_dispatches"]["count"]
+    assert section["by_phase"]["F3"]["unreported"] == len(
+        doc["unreported_dispatches"]["by_phase"].get("F3", [])
+    )
+    # The roll-up's claim is not discarded, it is NAMED.
+    stale = {
+        (d["scope"], d["key"], d["state_rollup"])
+        for d in section["disagreements"] if d["field"] == "unreported"
+    }
+    assert ("by_phase", "F3", 99) in stale, section["disagreements"]
+    assert ("run", "total", 99) in stale, section["disagreements"]
+
+
+def test_a_report_cannot_publish_zero_unreported_beside_a_list_of_one(report_env):
+    """D-163's observed shape, driven end to end: two dispatches, one spend
+    record, and the two sections of ONE report.json must not disagree.
+
+    AC-034 / FR-022: "the report shows N agents unreported per phase so the gap
+    is visible". The filing observed `spend_per_phase_and_cycle.total.unreported
+    = 0` and `by_phase {"F1": {"unreported": 0}}` in the same document as
+    `unreported_dispatches {"count": 1, "by_phase": {"F1": ["casting-2"]}}`."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
+    cast_phase = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
+    (report_env / "spawns.log").write_text(
+        json.dumps({"timestamp": "2026-09-03T00:00:00+00:00", "casting_id": 1,
+                    "phase": "cast"}) + "\n"
+        + json.dumps({"timestamp": "2026-09-03T00:00:01+00:00", "casting_id": 2,
+                      "phase": "cast"}) + "\n",
+        encoding="utf-8",
+    )
+    (report_env / SPEND_LEDGER_FILENAME).write_text(
+        json.dumps({"agent": "casting-1", "phase": cast_phase, "cycle": 0,
+                    "tokens": 1000, "duration_ms": 60_000,
+                    "recorded_at": "2026-09-03T00:10:00+00:00"}) + "\n",
+        encoding="utf-8",
+    )
+    (report_env / "stream-rollup.json").write_text(
+        json.dumps({"cycles": {}}), encoding="utf-8"
+    )
+    _generate(report_env)
+    doc = _document(report_env)
+
+    listed = doc["unreported_dispatches"]
+    spend = doc["spend_per_phase_and_cycle"]
+    assert listed["count"] == 1
+    assert listed["by_phase"] == {cast_phase: ["casting-2"]}
+    assert spend["total"]["unreported"] == 1
+    assert spend["by_phase"][cast_phase]["unreported"] == 1
+
+    # And in the document a lead reads, not only the machine one.
+    table = _markdown(report_env).split("## Spend per phase and cycle", 1)[1]
+    row = next(ln for ln in table.splitlines()
+               if ln.startswith(f"| phase | {cast_phase} |"))
+    assert row.rstrip().endswith("| 1 |"), row
+
+
+def test_the_spend_and_dispatch_sections_read_one_object(report_env):
+    """D-163's structural half — the two sections cannot be re-derived apart.
+
+    `generate_report` reads `_read_dispatch_summary` ONCE and hands the same
+    object to `_read_spend` and `_unreported_dispatches_section`; the rule and
+    the arithmetic over it both live in `foundry_state`. Asserted on the
+    signature and on the helper, so a future edit that re-reads the ledgers in
+    the spend reader turns this red rather than turning the report wrong."""
+    import inspect
+
+    from foundry_mcp.tools.foundry_state import unreported_dispatch_summary
+
+    assert "dispatch_summary" in inspect.signature(fr._read_spend).parameters
+
+    summary, problem = fr._read_dispatch_summary(report_env)
+    assert problem is None
+    _generate(report_env)
+    doc = _document(report_env)
+    assert doc["unreported_dispatches"]["count"] == summary["count"]
+    assert doc["spend_per_phase_and_cycle"]["total"]["unreported"] == summary["count"]
+
+    # The helper is the one in the leaf module, called with the run's inputs
+    # and nothing re-decided here.
+    direct = unreported_dispatch_summary(
+        dispatch_rows=[{"agent": "a", "phase": "cast"}],
+        stream_roster={},
+        spend_rows=[],
+        phase_of_dispatch={"cast": "F1"},
+    )
+    assert direct["count"] == 1 and direct["dispatched"] == 1
+    assert direct["reported"] == 0
+    assert direct["by_phase"] == {"F1": ["a"]}
+    assert direct["by_cycle"] == {}, "no cycle was supplied, so none is claimed"
+
+
+def test_a_closed_untiered_record_is_not_listed_under_the_blocking_note(
+    report_env,
+):
+    """D-166 / FR-051 / AC-008 — the unknown-tier section lists OPEN records.
+
+    FR-051's gloss and AC-008 both scope the separate listing to an OPEN
+    pre-change defect. The section built the LATENT backlog beside it under
+    `tier == "LATENT" and status == "open"` and built these rows under
+    `tier == TIER_UNKNOWN` with no status test, so on the live archive it
+    printed 156 FIXED records under a note asserting "It blocks the gates
+    exactly like LIVE" and naming a re-filing as "the way out" — a blocking
+    claim and a remedy, both false for every row. The gate disagreed:
+    `_open_defects_by_tier` skips any record whose status is not open, so the
+    true blocking count was 0."""
+    from foundry_mcp.tools.foundry_orchestrator import _open_defects_by_tier
+
+    _generate(report_env)
+    doc = _document(report_env)
+    section = doc["unknown_tier_defects"]
+
+    # The frozen fixture's one untiered record (D-007) is FIXED.
+    assert section["count"] == 0
+    assert section["defects"] == []
+    assert section["closed_count"] == 1
+    assert section["closed_ids"] == ["D-007"]
+
+    # The gate and the report now agree about what blocks.
+    assert _open_defects_by_tier(report_env)[TIER_UNKNOWN] == []
+
+    # The note still carries the blocking claim and the remedy — scoped to the
+    # open record, and saying what became of the closed ones.
+    assert "An OPEN one blocks the gates" in section["note"]
+    assert "already closed" in section["note"]
+    md = _markdown(report_env).split("## Unknown-tier defects", 1)[1]
+    md = md.split("\n## ", 1)[0]
+    assert "D-007" not in md, (
+        "a closed record must not appear under the blocking note at all"
+    )
+
+
+def test_the_open_untiered_record_is_the_one_the_section_lists(report_env):
+    """D-166's other arm: with one open and one closed untiered record, the
+    section lists exactly the open one and counts the other.
+
+    Driven on both at once, because a filter asserted only on the all-closed
+    fixture would pass just as well if the section listed nothing ever."""
+    defects = _read_json(report_env, "defects.json")
+    closed = next(d for d in defects["defects"] if d["id"] == "D-007")
+    reopened = dict(closed)
+    reopened["id"] = "D-008"
+    reopened["status"] = "open"
+    reopened["fixed_in_cycle"] = None
+    defects["defects"].append(reopened)
+    _write_json(report_env, "defects.json", defects)
+    _generate(report_env)
+
+    section = _document(report_env)["unknown_tier_defects"]
+    assert [d["id"] for d in section["defects"]] == ["D-008"]
+    assert section["count"] == 1
+    assert section["closed_ids"] == ["D-007"]
+
+    # The CROSS-TAB is unfiltered on purpose: it is a census of the ledger, so
+    # both records are still counted under the unknown tier there.
+    cross = _document(report_env)["defects_by_tier_and_status"]["cross_tab"]
+    ids = {did for bucket in cross[TIER_UNKNOWN].values() for did in bucket["ids"]}
+    assert ids == {"D-007", "D-008"}
+
+
+def test_a_verdicts_json_with_no_cycle_states_it_in_words(report_env):
+    """D-167 / AC-036 / FR-023 — D-150's class, one renderer over.
+
+    The verdict-matrix header interpolated `value.get('cycle')` unguarded while
+    GUARDING its two neighbours in the same f-string — `count` defaults to 0
+    and `by_verdict` falls back to '{}'. A verdicts.json with no `cycle` key
+    rendered the operator-facing line "verdicts at cycle None: {}"."""
+    verdicts = _read_json(report_env, "verdicts.json")
+    del verdicts["cycle"]
+    _write_json(report_env, "verdicts.json", verdicts)
+    _generate(report_env)
+
+    header = next(
+        ln for ln in _markdown(report_env)
+        .split("## Verdict matrix", 1)[1].splitlines()
+        if "requirements, verdicts" in ln
+    )
+    assert "None" not in header, header
+    assert "does not record" in header, header
+    # report.json stays honest — null, never a fabricated cycle.
+    assert _document(report_env)["verdict_matrix"]["cycle"] is None
+
+
+def test_cycle_zero_is_a_recorded_cycle_not_an_absent_one(report_env):
+    """D-167's other arm, and why the guard is not `or`.
+
+    The server's counter is 0-based (ST-001), so a first-INSPECT verdict set is
+    stamped `cycle: 0`. `value.get('cycle') or '<unrecorded>'` would report the
+    run's first cycle as unrecorded — the same falsehood one value over."""
+    verdicts = _read_json(report_env, "verdicts.json")
+    verdicts["cycle"] = 0
+    _write_json(report_env, "verdicts.json", verdicts)
+    _generate(report_env)
+
+    header = next(
+        ln for ln in _markdown(report_env)
+        .split("## Verdict matrix", 1)[1].splitlines()
+        if "requirements, verdicts" in ln
+    )
+    assert "at cycle 0" in header, header
+    assert "does not record" not in header, header
+
+
+def test_executing_versions_states_which_fields_the_run_did_not_record(
+    report_env,
+):
+    """D-168 / AC-036 / CT-010 — the one section that rendered blanks silently.
+
+    Five bare `state.get` calls under a two-column table with no prose. On a
+    run with none of the fields it printed five empty Value cells and
+    report.json carried null for each: the two documents agreed, so nothing was
+    false, and a reader still could not tell "this run recorded no version
+    fields" from "the report dropped them". That distinction is what AC-036
+    names the section for — `Foundry-Init` writes these fields exactly when it
+    ran the self-target preflight, so their absence IS the finding.
+
+    Every sibling that can render an absent value states why (D-150 in the
+    spend section, D-151 in the baseline section, D-103 in the LATENT
+    backlog). This says it too, in BOTH documents."""
+    state = _read_json(report_env, "state.json")
+    for field in fr._EXECUTING_VERSION_FIELDS:
+        state.pop(field, None)
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    section = _document(report_env)["executing_versions"]
+    assert section["recorded"] is False
+    assert section["missing"] == list(fr._EXECUTING_VERSION_FIELDS)
+    assert "recorded nothing there" in section["note"]
+    assert "not because this report dropped a value" in section["note"]
+
+    md = _markdown(report_env).split("## Executing server and plugin versions", 1)[1]
+    md = md.split("\n## ", 1)[0]
+    # THE TWO DOCUMENTS MAKE THE SAME STATEMENT. The note is in the markdown,
+    # and the cells carry the backlog's own spelling rather than nothing.
+    assert "recorded nothing there" in md
+    for field in fr._EXECUTING_VERSION_FIELDS:
+        row = next(ln for ln in md.splitlines() if ln.startswith(f"| {field} |"))
+        assert fr.NO_LOCATION_CELL in row, row
+
+
+def test_executing_versions_names_a_partial_record_field_by_field(report_env):
+    """D-168's middle arm: "no commit but a version" and "nothing at all" are
+    different states of the preflight, and a lead routes on which.
+
+    `self_target: false` is a RECORDED answer, so the test for a missing field
+    is `is None` and not truthiness — every run that is not self-targeting
+    would otherwise be reported as unmeasured."""
+    state = _read_json(report_env, "state.json")
+    state["server_commit"] = None
+    state["self_target"] = False
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    section = _document(report_env)["executing_versions"]
+    assert section["missing"] == ["server_commit"]
+    assert section["recorded"] is False
+    assert section["self_target"] is False
+    assert "no server_commit" in section["note"]
+    assert "server_version" not in section["note"], (
+        "a field the run DID record is not named as missing"
+    )
+
+    md = _markdown(report_env).split("## Executing server and plugin versions", 1)[1]
+    md = md.split("\n## ", 1)[0]
+    commit_row = next(
+        ln for ln in md.splitlines() if ln.startswith("| server_commit |")
+    )
+    assert fr.NO_LOCATION_CELL in commit_row, commit_row
+    target_row = next(
+        ln for ln in md.splitlines() if ln.startswith("| self_target |")
+    )
+    assert "False" in target_row, target_row
+
+
+def test_executing_versions_says_so_when_every_field_is_recorded(report_env):
+    """D-168's recorded arm, on the frozen fixture, which carries all five."""
+    _generate(report_env)
+    section = _document(report_env)["executing_versions"]
+    assert section["recorded"] is True
+    assert section["missing"] == []
+    assert "recorded all five fields" in section["note"]
+    md = _markdown(report_env).split("## Executing server and plugin versions", 1)[1]
+    assert fr.NO_LOCATION_CELL not in md.split("\n## ", 1)[0]
+
+
+# --------------------------------------------------------------------------- #
 # The demonstration test whose captured stdout is committed as evidence.
 #
 # It is a REAL test — every line it prints is also asserted — so it cannot
@@ -2950,6 +3336,13 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
                   f"symbol={row['symbol']}  note={row['location_note']}")
 
         print("=== unknown-tier defects, listed separately (FR-051) ===")
+        # D-166: the list is the OPEN untiered records, because the note above
+        # it says they hold the gates shut and the gate skips a closed record.
+        # The closed ones are counted, never listed under that claim.
+        print(f"  open (blocking): {doc['unknown_tier_defects']['count']}  "
+              f"closed (not blocking): "
+              f"{doc['unknown_tier_defects']['closed_count']}  "
+              f"{doc['unknown_tier_defects']['closed_ids']}")
         for row in doc["unknown_tier_defects"]["defects"]:
             print(f"  {row['id']}  status {row['status']}  {row['class']}")
             # D-120: the four fields either door matches on to re-tier the
@@ -3001,6 +3394,18 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
         print("=== unreported dispatches, advisory only (AC-034) ===")
         for phase, agents in doc["unreported_dispatches"]["by_phase"].items():
             print(f"  {phase:<6} {agents}")
+        # D-163: the spend section's Unreported column and this section's count
+        # are two renderings of ONE derivation, so they are printed together —
+        # a report that carried 0 in one and 1 in the other is the filing.
+        print(f"  count={doc['unreported_dispatches']['count']}  "
+              f"spend total unreported="
+              f"{doc['spend_per_phase_and_cycle']['total']['unreported']}")
+
+        print("=== executing versions (AC-036 / CT-010 / D-168) ===")
+        versions = doc["executing_versions"]
+        print(f"  recorded={versions['recorded']}  missing={versions['missing']}")
+        for field in fr._EXECUTING_VERSION_FIELDS:
+            print(f"  {field:<15} {versions[field]}")
 
         print("=== baseline comparison (AC-036) ===")
         bc = doc["baseline_comparison"]
@@ -3023,7 +3428,13 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
     doc = _document(report_env)
     assert list(doc)[2:] == list(REPORT_REQUIRED_SECTIONS)
     assert [d["id"] for d in doc["latent_backlog"]["defects"]] == ["D-004", "D-005"]
-    assert [d["id"] for d in doc["unknown_tier_defects"]["defects"]] == ["D-007"]
+    # D-166: D-007 is fixed in the frozen fixture, so it is COUNTED as closed
+    # and not listed under a note claiming it holds the gates shut.
+    assert [d["id"] for d in doc["unknown_tier_defects"]["defects"]] == []
+    assert doc["unknown_tier_defects"]["closed_ids"] == ["D-007"]
+    # D-163: one derivation, two renderings, in the document a lead reads.
+    assert (doc["spend_per_phase_and_cycle"]["total"]["unreported"]
+            == doc["unreported_dispatches"]["count"])
     assert doc["escalated_classes"]["classes"][0]["exit_reason"] == "budget"
     assert doc["lead_fix_records"]["count"] == 2
     assert all(r["file_rows"] for r in doc["lead_fix_records"]["records"])
@@ -3034,3 +3445,209 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
     assert doc["inspect_modes_per_cycle"]["by_mode"] == {"DELTA": 2, "FULL": 4}
     assert doc["unreported_dispatches"]["count"] > 0
     assert report_status(report_env)["present"] is True
+
+
+# --------------------------------------------------------------------------- #
+# The GRIND cycle 9 demonstration, driven at the real door.
+#
+# Same contract as the transcript above: a REAL test, every printed line also
+# asserted, nothing environment-dependent in the output. The four filings it
+# demonstrates are about what the GENERATOR writes, so each arm builds the
+# minimal archive that reproduces the filed shape and reads both documents
+# back — the number in report.json and the sentence in REPORT.md.
+# --------------------------------------------------------------------------- #
+
+#: The five version fields a run records, with values that are recognisable in
+#: the transcript and carry no clock reading or path from this machine.
+_DEMO_VERSIONS = {
+    "server_version": "4.10.0",
+    "plugin_version": "4.10.0",
+    "server_root": "/repo/plugins/foundry",
+    "server_commit": "abc123",
+    "self_target": True,
+}
+
+
+def _dispatch_phase(verb: str) -> str:
+    """`spawns.log`'s dispatch VERB mapped to the run phase id spend rows use.
+
+    Read from `foundry_orchestrator`, never re-typed: a local copy of that
+    mapping is the drift D-048 closed.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
+    return DISPATCH_PHASE_TO_RUN_PHASE[verb]
+
+
+def _demo_run(tmp_path, name, **over):
+    """A minimal archive with only the ledgers an arm needs. Returns
+    ``(run_dir, report_json, report_md)``."""
+    run_dir = tmp_path / "foundry-archive" / name
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir, "state.json", over.get(
+        "state", {"phase": "F3", "cycle": 1, **_DEMO_VERSIONS}))
+    _write_json(run_dir, "defects.json", {"defects": over.get("defects", [])})
+    _write_json(run_dir, "verdicts.json",
+                over.get("verdicts", {"cycle": 1, "requirements": []}))
+    _write_json(run_dir, "stream-rollup.json", {"cycles": {}})
+    for filename, rows in (("spawns.log", over.get("spawns", [])),
+                           (SPEND_LEDGER_FILENAME, over.get("spend", []))):
+        (run_dir / filename).write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+    return run_dir, _document(run_dir), _markdown(run_dir)
+
+
+def _demo_defect(did: str, status: str) -> dict:
+    """An untiered record — no `tier` key at all, which is what a pre-change
+    filing looks like and what reads as TIER_UNKNOWN."""
+    return {
+        "id": did, "cycle": 1, "source": "trace", "type": "UNWIRED",
+        "description": f"{did} description", "spec_ref": "",
+        "symbol": "handler", "file": "src/legacy.py", "status": status,
+        "fixed_in_cycle": None if status == "open" else 2,
+        "class": "UNWIRED_SURFACE",
+    }
+
+
+def test_demo_grind_cycle_9_filings_at_the_real_door(tmp_path, capsys):
+    """D-163, D-166, D-167 and D-168, each driven through
+    `foundry_report.generate_report` and read back out of both documents.
+
+    AC-034 / FR-022 / CT-013 (D-163), FR-051 / AC-008 (D-166), AC-036 /
+    FR-023 (D-167, D-168)."""
+    from foundry_mcp.tools.foundry_orchestrator import _open_defects_by_tier
+
+    def _section(md: str, heading: str) -> str:
+        return md.split(f"## {heading}", 1)[1].split("\n## ", 1)[0]
+
+    def _line(md: str, heading: str, needle: str) -> str:
+        return next(ln for ln in _section(md, heading).splitlines()
+                    if needle in ln)
+
+    cast = _dispatch_phase("cast")
+    dispatches = [{"timestamp": "t1", "casting_id": 1, "phase": "cast"},
+                  {"timestamp": "t2", "casting_id": 2, "phase": "cast"}]
+    one_report = [{"agent": "casting-1", "phase": cast, "cycle": 0,
+                   "tokens": 1000, "duration_ms": 60_000}]
+
+    with capsys.disabled():
+        print("\n=== D-163 — two dispatches, ONE spend record, one report.json ===")
+        _, doc, md = _demo_run(tmp_path, "d163", spawns=dispatches,
+                               spend=one_report)
+        listed, spend = doc["unreported_dispatches"], doc["spend_per_phase_and_cycle"]
+        print(f"  unreported_dispatches:           count={listed['count']} "
+              f"by_phase={listed['by_phase']}")
+        print(f"  spend.total:                     "
+              f"unreported={spend['total']['unreported']}")
+        print(f"  spend.by_phase[{cast}]:                unreported="
+              f"{spend['by_phase'][cast]['unreported']}")
+        print("  the filing observed 0 here beside 1 there; one derivation now:",
+              spend["total"]["unreported"] == listed["count"])
+        print("  " + _line(md, "Spend per phase and cycle", f"| phase | {cast} |"))
+
+        print("\n  a stale state.json.spend claim is NAMED, never published:")
+        stale = {"tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 99}
+        _, doc2, _ = _demo_run(
+            tmp_path, "d163-stale", spawns=dispatches, spend=one_report,
+            state={"phase": "F3", "cycle": 1, **_DEMO_VERSIONS,
+                   "spend": {"by_phase": {cast: dict(stale)}, "by_cycle": {},
+                             "total": dict(stale)}},
+        )
+        spend2 = doc2["spend_per_phase_and_cycle"]
+        print(f"  published={spend2['total']['unreported']}  "
+              f"state.json.spend claimed={stale['unreported']}")
+        for entry in spend2["disagreements"]:
+            if entry["field"] == "unreported":
+                print(f"  disagreement: {entry['scope']} {entry['key']} "
+                      f"{entry['field']} derived={entry['ledger']} "
+                      f"state_rollup={entry['state_rollup']}")
+
+        print("\n=== D-166 — the unknown-tier section lists OPEN records only ===")
+        run_dir, doc3, md3 = _demo_run(
+            tmp_path, "d166",
+            defects=[_demo_defect("D-001", "fixed"),
+                     _demo_defect("D-002", "fixed"),
+                     _demo_defect("D-003", "open")],
+        )
+        unknown = doc3["unknown_tier_defects"]
+        print(f"  open (listed, blocking): {[d['id'] for d in unknown['defects']]}"
+              f"   closed (counted, not listed): {unknown['closed_count']} "
+              f"{unknown['closed_ids']}")
+        print("  the gate agrees about what blocks:",
+              [d["id"] for d in _open_defects_by_tier(run_dir)[TIER_UNKNOWN]])
+        print("  the cross-tab is a census and still counts all three:")
+        for status, bucket in sorted(
+            doc3["defects_by_tier_and_status"]["cross_tab"][TIER_UNKNOWN].items()
+        ):
+            print(f"    {status:<7} {bucket['count']} {bucket['ids']}")
+        print("  no closed id appears under the blocking note:",
+              all(did not in _section(md3, "Unknown-tier defects")
+                  for did in unknown["closed_ids"]))
+        print("  ..." + unknown["note"].split("(D-120). ", 1)[1])
+
+        print("\n=== D-167 — a verdicts.json with no cycle key ===")
+        _, doc4, md4 = _demo_run(tmp_path, "d167",
+                                 verdicts={"requirements": []})
+        print("  " + _line(md4, "Verdict matrix", "requirements, verdicts"))
+        print("  report.json stays honest — cycle is null, never fabricated:",
+              doc4["verdict_matrix"]["cycle"])
+        _, _, md5 = _demo_run(tmp_path, "d167-zero",
+                              verdicts={"cycle": 0, "requirements": []})
+        print("  and cycle 0 is a RECORDED cycle (the server counter is 0-based):")
+        print("  " + _line(md5, "Verdict matrix", "requirements, verdicts"))
+
+        print("\n=== D-168 — the executing-versions section states what it has ===")
+        _, doc6, md6 = _demo_run(tmp_path, "d168",
+                                 state={"phase": "F3", "cycle": 1})
+        print(f"  recorded={doc6['executing_versions']['recorded']}  "
+              f"missing={doc6['executing_versions']['missing']}")
+        for line in _section(md6, "Executing server and plugin versions").strip().splitlines():
+            print("  " + line)
+        _, doc7, _ = _demo_run(
+            tmp_path, "d168-partial",
+            state={"phase": "F3", "cycle": 1, **_DEMO_VERSIONS,
+                   "server_commit": None, "self_target": False},
+        )
+        print("  a PARTIAL record names the one field it lacks, and "
+              "self_target False is an answer:")
+        print(f"  recorded={doc7['executing_versions']['recorded']}  "
+              f"missing={doc7['executing_versions']['missing']}  "
+              f"self_target={doc7['executing_versions']['self_target']}")
+
+    # Every printed line is also asserted, so the transcript cannot drift.
+    _, doc, md = _demo_run(tmp_path, "d163-assert", spawns=dispatches,
+                           spend=one_report)
+    assert doc["unreported_dispatches"]["count"] == 1
+    assert doc["unreported_dispatches"]["by_phase"] == {cast: ["casting-2"]}
+    assert doc["spend_per_phase_and_cycle"]["total"]["unreported"] == 1
+    assert doc["spend_per_phase_and_cycle"]["by_phase"][cast]["unreported"] == 1
+    assert _line(md, "Spend per phase and cycle",
+                 f"| phase | {cast} |").rstrip().endswith("| 1 |")
+
+    run_dir, doc, md = _demo_run(
+        tmp_path, "d166-assert",
+        defects=[_demo_defect("D-001", "fixed"), _demo_defect("D-002", "fixed"),
+                 _demo_defect("D-003", "open")],
+    )
+    assert [d["id"] for d in doc["unknown_tier_defects"]["defects"]] == ["D-003"]
+    assert doc["unknown_tier_defects"]["closed_ids"] == ["D-001", "D-002"]
+    assert [d["id"] for d in _open_defects_by_tier(run_dir)[TIER_UNKNOWN]] == [
+        "D-003"
+    ]
+    for did in ("D-001", "D-002"):
+        assert did not in _section(md, "Unknown-tier defects")
+
+    _, doc, md = _demo_run(tmp_path, "d167-assert", verdicts={"requirements": []})
+    assert doc["verdict_matrix"]["cycle"] is None
+    assert "None" not in _line(md, "Verdict matrix", "requirements, verdicts")
+
+    _, doc, md = _demo_run(tmp_path, "d168-assert",
+                           state={"phase": "F3", "cycle": 1})
+    assert doc["executing_versions"]["missing"] == list(
+        fr._EXECUTING_VERSION_FIELDS
+    )
+    assert "recorded nothing there" in _section(
+        md, "Executing server and plugin versions"
+    )
