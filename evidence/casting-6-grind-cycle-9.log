@@ -1,0 +1,46 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys,re,json,pathlib,tempfile,subprocess; sys.path.insert(0,"tests"); import test_protocol_prose as T; from foundry_mcp.tools import foundry_orchestrator as O; B="f77d5b8827e77340cf9410bbb0680b8f509e5678"; rel=T._rel; R=T.REPO_ROOT; show=lambda p:subprocess.run(["git","show",B+":"+p],capture_output=True,text=True,cwd=str(R)).stdout; flat=lambda s:" ".join(s.split()); now=lambda p:T._flat(p); short=lambda p:rel(p).split("/")[-2]+"/"+rel(p).split("/")[-1]; TRACE=[T.TRACER,T.TRACE_SKILL]; PROVE=[T.ASSAYER,T.PROVE_SKILL]; RX=re.compile("inspect_mode|touched_file|diff_base",re.I); count=lambda s:sum(1 for ln in s.split(chr(10)) if RX.search(ln)); print("== D-160 as filed: grep -ciE "+chr(39)+"inspect_mode|touched_file|diff_base"+chr(39)+" over the shipped artifacts =="); [print("   %-44s at %s=%-2d now=%d" % (rel(p), B[:7], count(show(rel(p))), count((R/rel(p)).read_text(encoding="utf-8")))) for p in TRACE+PROVE]; print(); print("== D-160: every width clause the pins hold, on BOTH TRACE surfaces =="); [print("   %-22s at %s=%-5s now=%-5s  %s" % (short(p), B[:7], c in flat(show(rel(p))), c in now(p), c[:52])) for p in TRACE for c,_ in T._TRACE_WIDTH_CLAUSES]; print(); print("== the PROVE pair D-140 modelled this on is untouched: the same probe over _PROVE_WIDTH_CLAUSES =="); [print("   %-22s at %s=%d/%d now=%d/%d" % (short(p), B[:7], sum(c in flat(show(rel(p))) for c,_ in T._PROVE_WIDTH_CLAUSES), len(T._PROVE_WIDTH_CLAUSES), sum(c in now(p) for c,_ in T._PROVE_WIDTH_CLAUSES), len(T._PROVE_WIDTH_CLAUSES))) for p in PROVE]; print(); print("== AC-019: the DELTA roster D-160 was driven on, read back by the server that draws it =="); d=pathlib.Path(tempfile.mkdtemp())/"foundry-archive"/"c6d160"; no=d.mkdir(parents=True); rec={"mode":"DELTA","cycle":9,"rule":"delta","stream_scope":{"trace":{"scope":"delta"}},"touched_files":["src/handler.py"]}; no=(d/"state.json").write_text(json.dumps({"phase":"F2","inspect_modes":[rec]}),encoding="utf-8"); dec=O._maybe_skip_trace(d,str(d.parent.parent)); print("   the recorded decision:        mode=%s cycle=%s stream_scope.trace.scope=%s touched_files=%s" % (rec["mode"],rec["cycle"],rec["stream_scope"]["trace"]["scope"],rec["touched_files"])); print("   _maybe_skip_trace reads back: skip=%s reason=%s" % (dec["skip"],dec["reason"])); print("   and hands on the roster:      %s" % dec["details"]["touched_files"]); print("   surfaces naming inspect_mode.touched_files at %s: %s" % (B[:7], [short(p) for p in TRACE if "`inspect_mode.touched_files`" in flat(show(rel(p)))] or "none")); print("   surfaces naming it now:                             %s" % [short(p) for p in TRACE]); print(); print("== D-160: the Step 1d instruction the filing quoted, and what bounds it now =="); S=rel(T.TRACE_SKILL); [print("   %-46s at %s=%-5s now=%s" % (n, B[:7], s in flat(show(S)), s in now(T.TRACE_SKILL))) for n,s in [("the cross-reference the filing quoted","Cross-reference inventory against the spec"),("the width step it now sits under","### Step 0.5: WIDTH"),("the DELTA bound on that cross-reference","run this list over the declarations whose files appear in `inspect_mode.touched_files`"),("the coverage pair tied to the recorded width","Take `items_checked` and `items_total` from the width Step 0.5 read"),("counted against the roster, not the spec","they are counted against `inspect_mode.touched_files`, not against the spec")]]'
+# evidence-for: AC-019, FR-012, US-004, NFR-005
+
+== D-160 as filed: grep -ciE 'inspect_mode|touched_file|diff_base' over the shipped artifacts ==
+   plugins/foundry/agents/tracer.md             at f77d5b8=8  now=8
+   plugins/foundry/skills/trace/SKILL.md        at f77d5b8=0  now=9
+   plugins/foundry/agents/assayer.md            at f77d5b8=8  now=8
+   plugins/foundry/skills/prove/SKILL.md        at f77d5b8=7  now=7
+
+== D-160: every width clause the pins hold, on BOTH TRACE surfaces ==
+   agents/tracer.md       at f77d5b8=True  now=True   Call `Foundry-Next` and read `inspect_mode` out of t
+   agents/tracer.md       at f77d5b8=True  now=True   `inspect_mode.stream_scope.trace.scope`
+   agents/tracer.md       at f77d5b8=True  now=True   walk exactly the symbols declared in `inspect_mode.t
+   agents/tracer.md       at f77d5b8=True  now=True   `inspect_mode.diff_base`
+   agents/tracer.md       at f77d5b8=True  now=True   On `FULL`, walk every declared symbol
+   agents/tracer.md       at f77d5b8=True  now=True   never the terminal line
+   agents/tracer.md       at f77d5b8=True  now=True   five files
+   agents/tracer.md       at f77d5b8=True  now=True   no narrowing was decided
+   agents/tracer.md       at f77d5b8=True  now=True   walk everything
+   trace/SKILL.md         at f77d5b8=False now=True   Call `Foundry-Next` and read `inspect_mode` out of t
+   trace/SKILL.md         at f77d5b8=False now=True   `inspect_mode.stream_scope.trace.scope`
+   trace/SKILL.md         at f77d5b8=False now=True   walk exactly the symbols declared in `inspect_mode.t
+   trace/SKILL.md         at f77d5b8=False now=True   `inspect_mode.diff_base`
+   trace/SKILL.md         at f77d5b8=False now=True   On `FULL`, walk every declared symbol
+   trace/SKILL.md         at f77d5b8=False now=True   never the terminal line
+   trace/SKILL.md         at f77d5b8=False now=True   five files
+   trace/SKILL.md         at f77d5b8=False now=True   no narrowing was decided
+   trace/SKILL.md         at f77d5b8=False now=True   walk everything
+
+== the PROVE pair D-140 modelled this on is untouched: the same probe over _PROVE_WIDTH_CLAUSES ==
+   agents/assayer.md      at f77d5b8=7/7 now=7/7
+   prove/SKILL.md         at f77d5b8=7/7 now=7/7
+
+== AC-019: the DELTA roster D-160 was driven on, read back by the server that draws it ==
+   the recorded decision:        mode=DELTA cycle=9 stream_scope.trace.scope=delta touched_files=['src/handler.py']
+   _maybe_skip_trace reads back: skip=False reason=DELTA width over 1 touched file(s) — TRACE runs over the symbols the GRIND commits touched
+   and hands on the roster:      ['src/handler.py']
+   surfaces naming inspect_mode.touched_files at f77d5b8: ['agents/tracer.md']
+   surfaces naming it now:                             ['agents/tracer.md', 'trace/SKILL.md']
+
+== D-160: the Step 1d instruction the filing quoted, and what bounds it now ==
+   the cross-reference the filing quoted          at f77d5b8=True  now=True
+   the width step it now sits under               at f77d5b8=False now=True
+   the DELTA bound on that cross-reference        at f77d5b8=False now=True
+   the coverage pair tied to the recorded width   at f77d5b8=False now=True
+   counted against the roster, not the spec       at f77d5b8=False now=True

@@ -39,6 +39,19 @@ with zero findings, you failed — go back and look harder.
    THIN implementations that technically satisfy the spec but miss the intent.
 6. Store the spec reference for re-reading in subsequent verification iterations
 
+### Step 0.5: WIDTH — read the scope the run recorded
+
+The checklist is what the spec says. What you must WALK this cycle is what the run recorded — you read the width, you never decide it. Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE, not out of the display:
+
+- `inspect_mode.mode` — `FULL` or `DELTA`, decided by the `Foundry-Phase` transition that opened this INSPECT. Nothing you do changes it and `Foundry-Next` only reports it.
+- `inspect_mode.stream_scope.trace.scope` — `full`, `delta` or `skipped` for YOUR stream; its `detail` names by how much the walk was narrowed. A cycle recorded `DELTA` whose TRACE scope is `full` is still a full walk for you.
+- `inspect_mode.touched_files` — the repo-relative files the GRIND commits touched, measured at the boundary from `inspect_mode.diff_base`. This is the TRACE roster on a `DELTA` cycle.
+- `inspect_mode.cycle` — the cycle that scope belongs to. A scope stamped with a different cycle is not yours; walk everything.
+
+**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`** — every declared symbol whose file appears in that list and no fewer — and report `items_checked` and `items_total` against those files rather than against the spec. **On `FULL`, walk every declared symbol** and report `items_total` as every symbol in scope. **With no recorded `inspect_mode` at all, walk everything**: a missing width means no narrowing was decided, never that you may narrow it yourself.
+
+**Read the array, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files; the roster itself is `inspect_mode.touched_files` in the response body. Copying the five visible files walks five files and reports a width that was never run.
+
 ### Step 1: STATIC ANALYSIS — Map the Wiring
 
 Read the codebase to build a mental model of what exists and how it's connected.
@@ -73,6 +86,14 @@ Cross-reference inventory against the spec:
 - Every data model in spec → type exists? Used in handlers AND repo?
 - Every frontend page in spec → route exists? Calls the right APIs?
 - Every integration in spec → client wired? Actually called?
+
+**The spec is what you cross-reference against; the width Step 0.5 read is how
+much of it you cross-reference this cycle.** On a `DELTA` cycle whose
+`stream_scope.trace.scope` is `delta`, run this list over the declarations whose
+files appear in `inspect_mode.touched_files` and count those — cross-referencing
+the whole spec anyway is not a safe over-delivery, because it spends the cycle
+the `DELTA` width exists to save and reports a coverage pair describing a
+different denominator than the one the gate reads.
 
 **Optional: Serena MCP** — If available, use `find_symbol` and
 `find_referencing_symbols` for deterministic wiring verification. Supplements
@@ -249,8 +270,10 @@ call omitting any of them is rejected at the MCP boundary, and a stream that
 cannot mark itself complete contributes nothing to the cycle's coverage
 roll-up, where its absence reads as no coverage rather than as a broken call.
 Take `cycle` from `Foundry-Next`: the roll-up is keyed by the server's own
-counter, and the value you pass is retained on the record for audit only. F3
-GRIND converts findings into fix items.
+counter, and the value you pass is retained on the record for audit only. Take
+`items_checked` and `items_total` from the width Step 0.5 read — on a `DELTA`
+cycle they are counted against `inspect_mode.touched_files`, not against the
+spec. F3 GRIND converts findings into fix items.
 
 ## MCP Validation (optional)
 

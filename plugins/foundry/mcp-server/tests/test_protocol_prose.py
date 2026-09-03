@@ -5513,6 +5513,205 @@ def test_the_prove_roster_key_the_prose_names_is_the_one_the_gate_reads(
 
 
 # ---------------------------------------------------------------------------
+# D-160 / AC-019 / FR-012 / US-004 -- the recorded TRACE width reaches BOTH
+# of its surfaces, not just the agent one
+# ---------------------------------------------------------------------------
+#
+# D-140 closed the TRACE half of the hole D-104 closed for PROVE -- on one
+# surface. It emitted ``touched_files`` and ``diff_base`` from the recorded
+# decision and taught agents/tracer.md to read them, and left
+# skills/trace/SKILL.md -- the surface ``/foundry:trace`` runs -- scoping the
+# walk from the spec alone, which is the exact pre-D-140 state its own test
+# docstring names. Driven at the filing commit over the shipped artifacts:
+# ``grep -ciE 'inspect_mode|touched_file|diff_base'`` returned 0 for the skill
+# against 8 for the agent, 7 for skills/prove/SKILL.md and 8 for
+# agents/assayer.md, and the skill's Step 1d still said "Cross-reference
+# inventory against the spec" with nothing narrowing it. So on a DELTA cycle
+# whose recorded decision named ``stream_scope.trace.scope == "delta"`` and
+# ``touched_files == ["src/handler.py"]``, ``/foundry:trace`` walked the whole
+# spec and reported a coverage pair against a denominator the gate never drew.
+#
+# The principle was ALREADY written down, thirty lines above this comment:
+# "Both surfaces are pinned because both are load-bearing and neither implies
+# the other: the agent file is what the F2 spawn loads, and the skill is what
+# `/foundry:prove` runs." It was applied to PROVE and not to TRACE. That is
+# what makes this a class rather than a one-file omission, and it is why this
+# pin is parametrised over the SURFACE PAIR from the start: a third TRACE
+# surface joins ``_TRACE_WIDTH_SURFACES`` rather than getting a test of its
+# own, which is the shape that would have caught D-160 at D-140 time.
+
+_TRACE_WIDTH_SURFACES = (TRACER, TRACE_SKILL)
+
+#: One claim per entry, with the failure its absence causes. Word-identical
+#: across both surfaces for the same reason the PROVE clauses are: the two
+#: documents have different voices and different step numbering, but a field
+#: path is a mechanism, and two paraphrases of one are two chances to name a
+#: key the server does not return.
+_TRACE_WIDTH_CLAUSES = (
+    (
+        "Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE",
+        "the surface no longer says WHERE the width is read from. GI-008 puts "
+        "the decision at the transition that opens the INSPECT and leaves "
+        "Foundry-Next only reporting it; a stream told neither reads no width "
+        "at all and walks the whole spec.",
+    ),
+    (
+        "`inspect_mode.stream_scope.trace.scope`",
+        "the surface no longer names the PER-STREAM scope key. `mode` alone is "
+        "not this stream's width: `_decide_inspect_mode` records a DELTA cycle "
+        "on which TRACE's own scope is `full`, and a surface reading only the "
+        "mode narrows a walk the server widened.",
+    ),
+    (
+        "walk exactly the symbols declared in `inspect_mode.touched_files`",
+        "the surface no longer names the TRACE roster field or says the roster "
+        "is the whole walk on a DELTA cycle. `_maybe_skip_trace` reads exactly "
+        "this list to decide whether TRACE has symbols to walk at all.",
+    ),
+    (
+        "`inspect_mode.diff_base`",
+        "the surface no longer says what the touched-file list was measured "
+        "FROM. Unstated, a stream cannot tell the roster the boundary drew "
+        "from a diff it could compute itself, and computing it itself is the "
+        "lazily-derived width GI-008 names as the violation.",
+    ),
+    (
+        "On `FULL`, walk every declared symbol",
+        "the surface no longer says what FULL means, so the narrowing reads as "
+        "unconditional and a final-gate INSPECT silently walks at DELTA width.",
+    ),
+    (
+        "never the terminal line",
+        "the surface no longer distinguishes the roster from the display of "
+        "it. display.py truncates the printed file list, so a stream reading "
+        "the terminal line reads a prefix and reports a width it never ran.",
+    ),
+    (
+        "five files",
+        "the surface no longer states WHERE the display truncates. 'It is "
+        "truncated' with no number leaves a reader unable to tell a short "
+        "roster from a clipped one.",
+    ),
+    (
+        "no narrowing was decided",
+        "the surface no longer says what an ABSENT width means. Unstated, a "
+        "stream that finds no `inspect_mode` picks a width itself, which is "
+        "the lazily-computed mode GI-008 and GI-009 both name as the "
+        "violation.",
+    ),
+    (
+        "walk everything",
+        "the surface no longer names the fallback ACTION for an absent or "
+        "wrong-cycle width. Saying the width is missing without saying what to "
+        "do about it leaves the narrowing as the only instruction on the page.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", _TRACE_WIDTH_SURFACES, ids=_rel)
+@pytest.mark.parametrize("clause,why", _TRACE_WIDTH_CLAUSES, ids=lambda v: v[:44])
+def test_trace_reads_the_width_the_server_recorded(
+    path: Path, clause: str, why: str
+) -> None:
+    """AC-019 / D-160, one claim at a time, on both TRACE surfaces."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+def test_the_trace_skill_scopes_its_coverage_pair_to_the_recorded_width() -> None:
+    """D-160's second surface: the skill also REPORTS against the width.
+
+    Naming the roster in a width step and then telling the stream to count
+    `items_checked` against the spec two screens later is the same defect with
+    an extra step: `_coverage_shortfall` compares the reported pair against the
+    width the server drew, so a pair measured against the manifest reads as a
+    coverage drop on a cycle that walked exactly what it was asked to.
+
+    agents/tracer.md states this inside its width step; skills/trace/SKILL.md
+    states it where the skill actually calls `Foundry-Stream`, which is a
+    different place in the document and therefore its own assertion.
+    """
+    flat = _flat(TRACE_SKILL)
+    assert (
+        "Take `items_checked` and `items_total` from the width Step 0.5 read"
+        in flat
+    ), (
+        "skills/trace/SKILL.md's Foundry-Stream step no longer ties the "
+        "coverage pair to the recorded width. skills/prove/SKILL.md ties its "
+        "own pair the same way, in the same words."
+    )
+    assert (
+        "they are counted against `inspect_mode.touched_files`, not against "
+        "the spec" in flat
+    ), (
+        "skills/trace/SKILL.md no longer names the roster the DELTA pair is "
+        "counted against. 'Use the width' without the field name sends the "
+        "stream back to the spec, which is the denominator D-160 filed."
+    )
+    assert "the width Step 0.5 read" in flat, (
+        "skills/trace/SKILL.md's coverage instruction no longer points back at "
+        "a width step by name; a reader who joined at Step 5 has no way to "
+        "learn one exists."
+    )
+
+
+def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
+    tmp_path: Path,
+) -> None:
+    """D-160's floor, in the shape D-104's floor takes for PROVE.
+
+    Both TRACE surfaces now tell the stream to walk `inspect_mode.touched_files`.
+    If the recorded decision ever spelled that key differently, the instruction
+    would send every DELTA stream to a key that is never there -- and a stream
+    that finds no roster correctly falls back to walking everything, which is
+    indistinguishable from the pre-D-160 behaviour the substring pins above
+    would still call green.
+
+    So the key is driven through ``_maybe_skip_trace`` -- the function that
+    decides, from the recorded decision alone, whether a DELTA cycle leaves
+    TRACE any symbols to walk -- rather than being asserted against a constant
+    re-typed here.
+    """
+    key = "touched_files"
+    for surface in _TRACE_WIDTH_SURFACES:
+        assert f"`inspect_mode.{key}`" in _flat(surface), (
+            f"{_rel(surface)} names a roster field other than {key!r}; this "
+            f"derivation and the prose have come apart."
+        )
+
+    fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d160-roster"
+    fdir.mkdir(parents=True, exist_ok=True)
+    roster = ["src/handler.py"]
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "F2",
+                "inspect_modes": [
+                    {
+                        "mode": "DELTA",
+                        "cycle": 9,
+                        "rule": "delta",
+                        "stream_scope": {"trace": {"scope": "delta"}},
+                        key: roster,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    decision = orch._maybe_skip_trace(fdir, str(tmp_path))
+
+    assert decision is not None and decision["skip"] is False, (
+        f"the recorded decision's {key!r} list is not what the server reads "
+        f"back when it decides whether TRACE has symbols to walk. Both TRACE "
+        f"surfaces tell the stream to walk exactly that list, so a rename here "
+        f"makes the instruction point at nothing -- silently, because a stream "
+        f"that finds no roster correctly falls back to walking everything."
+    )
+    assert decision["details"][key] == roster, decision
+
+
+# ---------------------------------------------------------------------------
 # D-108 / FR-019 -- one hash spelling, driven rather than described
 # ---------------------------------------------------------------------------
 #
