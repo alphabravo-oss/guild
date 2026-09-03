@@ -360,6 +360,28 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
     ("inspect-rule-final", "GI-009", START_MD, "`final_gate`"),
     ("inspect-rule-verifier", "GI-009", START_MD, "`verifier_touched`"),
     ("inspect-delta-test-cold", "GI-008", START_MD, "TEST runs full and cold, every time"),
+    # D-136 instance / FR-024 / CT-016: lead rule 5 promised a TWO-ending run
+    # ("F6 DONE or an error"), which is the ending vocabulary --max-cycles
+    # replaced -- a HALTED stop is a SUCCESSFUL transition, so a lead reading
+    # rule 5 would have had to call it one of the two endings it is not.
+    (
+        "rule-5-states-three-endings",
+        "FR-024",
+        START_MD,
+        "it ends in exactly THREE ways",
+    ),
+    (
+        "rule-5-halted-is-a-successful-transition",
+        "CT-016",
+        START_MD,
+        "a SUCCESSFUL `Foundry-Phase` transition that writes the report",
+    ),
+    (
+        "rule-5-halted-is-neither-of-the-other-two",
+        "FR-024",
+        START_MD,
+        "never report it as a finished run and never report it as a refusal",
+    ),
     # --- D6: Foundry-Spend --------------------------------------------------
     ("spend-section", "FR-021", START_MD, "## SPEND ACCOUNTING"),
     (
@@ -861,6 +883,17 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "AC-016",
         "the recorded width decides the crossing: FULL goes to inspect_clean, "
         "DELTA goes back through inspect_start from F2",
+    ),
+    # D-136 instance / FR-024: the two-ending run. A --max-cycles stop reaches
+    # HALTED through a transition that returns ok, so "an error stops it" was
+    # the only vocabulary rule 5 gave the lead for an ending that is not an
+    # error. This spelling is row seven of the run-wide retired-mechanism
+    # registry in test_orchestrator_gates.py; the pin here is start.md's own.
+    (
+        "runs until F6 DONE or an error stops it",
+        "FR-024",
+        "a run ends three ways: F6 DONE, a HALTED --max-cycles stop reached by "
+        "a successful transition, or an error",
     ),
 )
 
