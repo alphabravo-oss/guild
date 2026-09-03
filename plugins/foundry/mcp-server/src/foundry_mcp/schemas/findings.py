@@ -47,6 +47,28 @@ root containers stay required because both pre-D-071 schemas required them.
 it is what makes "there is no severity field, and adding one is a vocabulary
 violation" (stated in both skills) enforceable at the validator rather than
 only in prose. tests/test_findings_schemas.py drives that both ways.
+
+WHY `tier` IS NOT THE ABOLISHED AXIS RETURNING (GI-001 / AC-009)
+----------------------------------------------------------------
+GI-001 widens this item with an optional `tier`, and the obvious objection is
+that a closed enum on a finding is exactly the shape D-041 removed. It is not,
+and the distinction is the whole point of the axis:
+
+    the removed axis graded HOW MUCH A DEFECT MATTERED, and its failure mode
+    was a real defect written down as "minor" and never fixed;
+    `tier` records WHAT THE FILING STREAM DID — drove the door and saw the
+    wrong result (LIVE), or looked and found nothing (LATENT).
+
+Both tiers are defects, both get fixed, and neither is an excuse to leave one
+open. The tier decides only which GATE a still-open instance blocks. A stream
+cannot use it to downgrade its own finding, because the value is a claim about
+evidence it is answerable for — a LATENT filing without a `reproduction_attempted`
+statement is REFUSED at the door (CT-001), which no grade ever was.
+
+`additionalProperties: False` is unchanged, so this widening is additive and
+narrows nothing: the abolished axis is still rejected here by name. The
+matching widening of `_ALLOWED_ENUM_KEYS` in tests/test_protocol_prose.py
+covers the SKILL.md blocks, which this module does not read.
 """
 
 from __future__ import annotations
@@ -100,6 +122,30 @@ _FINDING_ITEM: dict = {
                 "Optional root-cause group, spelled identically on every "
                 "instance that shares it. Not a tier — it is what lets three "
                 "cycles of one root cause escalate to a single structural fix."
+            ),
+        },
+        "tier": {
+            "type": "string",
+            # GI-001 / AC-009 — derived from vocab, never re-typed. The
+            # enforcement point below still rejects the abolished work-effort
+            # grade by name; this axis is not that axis. See the module
+            # docstring's "WHY `tier` IS NOT THE ABOLISHED AXIS" note.
+            "enum": sorted(vocab.DEFECT_TIERS),
+            "description": (
+                "Evidence tier. LIVE: the stream drove the door and observed "
+                "the wrong result. LATENT: the stream looked for the failure "
+                "and did not find one, and says so in reproduction_attempted. "
+                "Not a work-effort grade — both tiers are defects and both "
+                "get fixed."
+            ),
+        },
+        "reproduction_attempted": {
+            "type": "string",
+            "description": (
+                "Required on a LATENT filing (CT-001/FR-004): what was driven "
+                "and what it found, e.g. 'AST sweep of both roots finds 0 "
+                "sites'. The server refuses a LATENT filing without one; "
+                "vocab.reproduction_attempted_problem is that check."
             ),
         },
         "file": {

@@ -1464,3 +1464,441 @@ def test_no_cohorts_token_joins_the_closed_vocabulary() -> None:
         module.KNOWN_PHASE9_FAILURE_TOKENS
     )
     assert len(module.KNOWN_PHASE9_FAILURE_TOKENS) == 9
+
+
+# ---------------------------------------------------------------------------
+# NFR-001 / AC-039 / OT-030 / FR-051 — the convergence columns.
+#
+# thunder-viper is the archive these columns have to survive. It executed on the
+# 4.7.3 server cache, so it wrote no escalation.json, no spend.jsonl, no
+# stream-rollup.json and no `inspect_modes`, its state.json cycle counter stayed
+# at 0 for all 22 cycles, and none of its 162 defect records carries a tier.
+# OT-030 nonetheless requires this command to read it and print the baseline
+# beside the current run's numbers.
+#
+# Two failure modes are guarded throughout, and they pull in opposite
+# directions: reporting an unmeasured column as 0 (a fabricated number), and
+# reporting it as a failure token (a healthy archive exiting nonzero — the
+# over-firing calibration D-034 had to undo). The honest answer is null.
+# ---------------------------------------------------------------------------
+
+THUNDER_VIPER = REPO_ROOT / "foundry-archive" / "thunder-viper"
+
+
+def _defects(*records: dict[str, Any]) -> str:
+    return json.dumps({"defects": list(records)})
+
+
+def _defect(did: str, source: str = "prove", **extra: Any) -> dict[str, Any]:
+    return {"id": did, "cycle": 0, "source": source, "type": "THIN", **extra}
+
+
+def test_defects_by_tier_counts_live_latent_and_unknown(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-039 — "defects by tier" is three columns, and all three are printed.
+
+    A zero is a real measurement here (the ledger was read and held none), so
+    every member of the vocabulary is present even at 0. Omitting a zero key
+    would make "no LATENT defects" indistinguishable from "LATENT was never
+    measured", which is the exact distinction the null columns below carry.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", tier="LIVE"),
+            _defect("D-002", tier="LIVE"),
+            _defect("D-003", tier="LATENT",
+                    reproduction_attempted="AST sweep finds 0 sites"),
+            _defect("D-004"),                 # pre-change: no tier key at all
+            _defect("D-005", tier=None),      # written, then nulled
+            _defect("D-006", tier="MINOR"),   # a grade is not a tier
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["defects_by_tier"] == {"LIVE": 2, "LATENT": 1, "unknown": 3}
+    # The two ledger columns read the same file and must agree on the total.
+    assert sum(payload["defects_by_tier"].values()) == sum(
+        payload["per_stream_defects"].values()
+    )
+
+
+def test_an_untiered_record_reads_as_unknown_and_never_as_latent(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """FR-051, stated as the negative that matters.
+
+    LATENT stops blocking at TEMPER, NYQUIST and DONE. A reader that resolved
+    a missing tier to LATENT would report every pre-change archive as fully
+    triaged and let three gates pass on records no stream ever looked at.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        _defects(_defect("D-001"), _defect("D-002", tier=None)), encoding="utf-8"
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["defects_by_tier"]["unknown"] == 2
+    assert payload["defects_by_tier"]["LATENT"] == 0
+
+
+def test_a_missing_defect_ledger_reports_null_not_a_row_of_zeros(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """No ledger is not an empty ledger."""
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").unlink()
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["defects_by_tier"] is None
+
+
+def test_spend_is_rolled_up_per_phase_per_cycle_and_in_total(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-039 — "the tokens and minutes each phase and cycle spent".
+
+    Minutes are reported beside milliseconds because the question an operator
+    asks is "how long did F3 take", and a column that requires dividing by
+    60_000 in your head stops being read.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "spend.jsonl").write_text(
+        "\n".join(
+            json.dumps(entry)
+            for entry in [
+                {"agent": "teammate-1", "phase": "F1", "cycle": 0,
+                 "tokens": 1000, "duration_ms": 60_000},
+                {"agent": "teammate-2", "phase": "F1", "cycle": 0,
+                 "tokens": 500, "duration_ms": 30_000},
+                {"agent": "prover", "phase": "F2", "cycle": 1,
+                 "tokens": 2000, "duration_ms": 120_000},
+                {"agent": "teammate-1", "phase": "F3", "cycle": 1,
+                 "tokens": 250, "duration_ms": 15_000},
+            ]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    spend = payload["spend"]
+
+    assert spend["by_phase"]["F1"] == {
+        "tokens": 1500, "duration_ms": 90_000, "minutes": 1.5, "agents": 2,
+    }
+    assert spend["by_phase"]["F2"]["tokens"] == 2000
+    assert spend["by_cycle"]["1"] == {
+        "tokens": 2250, "duration_ms": 135_000, "minutes": 2.25, "agents": 2,
+    }
+    assert spend["total"]["tokens"] == 3750
+    assert spend["total"]["minutes"] == 3.75
+    # Two records from teammate-1 are two dispatches but one agent.
+    assert spend["total"]["agents"] == 4
+    assert spend["total"]["distinct_agents"] == 3
+
+
+def test_a_torn_spend_line_costs_only_that_line(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The ledger is append-only from ~85 concurrent dispatches (A-AUTO-002).
+
+    A half-written final line is an ordinary crash artifact, so it is skipped
+    rather than failing the read — losing 84 real records to one torn one would
+    be the whole measurement.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "spend.jsonl").write_text(
+        json.dumps({"agent": "a", "phase": "F1", "cycle": 0,
+                    "tokens": 10, "duration_ms": 1000})
+        + "\n\n"
+        + '{"agent": "b", "phase": "F1", "cyc',   # torn mid-write
+        encoding="utf-8",
+    )
+    exit_code, stdout, _ = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    assert payload["spend"]["total"]["tokens"] == 10
+    assert payload["failure_tokens"] == [], "a torn line is not a refusal"
+
+
+def test_inspect_modes_are_reported_per_cycle_with_the_f5_count(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-039 — "whether each inspect cycle ran at full or reduced width".
+
+    `post_verification_cycles` counts DISTINCT cycles whose INSPECT was opened
+    in F5. thunder-viper's REPORT.md is the definition: its build was verified
+    at cycle 14 and cycles 15-22 were TEMPER hardening, which is the baseline's
+    8. One cycle appearing in both F2 and F5 is counted once.
+    """
+    run_dir = make_run_dir()
+    state = json.loads((run_dir / "state.json").read_text())
+    state["inspect_modes"] = [
+        {"cycle": 1, "phase": "F2", "mode": "FULL", "rule": "first_of_phase"},
+        {"cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta"},
+        {"cycle": 3, "phase": "F2", "mode": "FULL", "rule": "verifier_touched"},
+        {"cycle": 4, "phase": "F5", "mode": "FULL", "rule": "first_of_phase"},
+        {"cycle": 5, "phase": "F5", "mode": "DELTA", "rule": "delta"},
+    ]
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    modes = payload["inspect_modes"]
+    assert modes["per_cycle"]["3"] == {
+        "phase": "F2", "mode": "FULL", "rule": "verifier_touched",
+    }
+    assert modes["by_mode"] == {"DELTA": 2, "FULL": 3}
+    assert modes["post_verification_cycles"] == 2
+    assert list(modes["per_cycle"]) == ["1", "2", "3", "4", "5"], "numeric order"
+    assert payload["baseline_comparison"]["current"][
+        "post_verification_cycles"
+    ] == 2
+
+
+def test_escalation_exit_reasons_are_counted(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """FR-028 — the exit reason must be machine-readable and appear in a report.
+
+    A class that left ESCALATED did so either on clean cycles or on an
+    exhausted budget, and "which" is why the reason is recorded at all: a
+    status flag alone cannot tell an operator whether the structural work
+    landed or simply ran out of attempts.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "escalation.json").write_text(
+        json.dumps(
+            {
+                "classes": {
+                    "FALSE_DOCUMENTED_CONTRACT": {
+                        "status": "CLEARED", "exit_reason": "clean_cycles",
+                    },
+                    "UNWIRED_TOOL": {"status": "CLEARED", "exit_reason": "budget"},
+                    "THIN_HANDLER": {"status": "ESCALATED", "exit_reason": None},
+                    # Written before this release's fields existed.
+                    "LEGACY_CLASS": {"proposal": "restructure the dispatcher"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    escalation = payload["escalation"]
+    assert escalation["classes"] == 4
+    assert escalation["by_status"] == {"CLEARED": 2, "ESCALATED": 2}
+    assert escalation["by_exit_reason"] == {"budget": 1, "clean_cycles": 1}
+    assert escalation["unknown_status"] == 0
+
+
+def test_the_convergence_columns_never_fire_a_token_or_move_a_gate(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """NFR-001: "Numbers are the target, not a gate."
+
+    The run below misses BOTH convergence targets by a wide margin and has
+    none of the three post-4.7.3 artifacts. It must still exit 0 with empty
+    failure_tokens and the same four gate verdicts as a run that met them —
+    the columns report, they do not judge.
+    """
+    baseline = make_run_dir(omit_cohort=True, context_pct=None)
+    missed = make_run_dir(
+        omit_cohort=True, context_pct=None, cohort_id="no_TYPE_01",
+        rollup=_rollup_doc({"30": {"prove": _entry(10, 10, 0)}}),
+    )
+    state = json.loads((missed / "state.json").read_text())
+    state["cycle"] = 30
+    state["inspect_modes"] = [
+        {"cycle": c, "phase": "F5", "mode": "FULL", "rule": "first_of_phase"}
+        for c in range(20, 31)
+    ]
+    (missed / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    exit_code, stdout, stderr = _invoke_measure_run(str(missed))
+    payload = json.loads(stdout)
+    comparison = payload["baseline_comparison"]
+    assert comparison["current"]["grind_cycles"] == 31
+    assert comparison["current"]["post_verification_cycles"] == 11
+    assert comparison["meets_target"] == {
+        "grind_cycles": False, "post_verification_cycles": False,
+    }
+    # Missing both targets is reported and nothing else.
+    assert payload["failure_tokens"] == [], payload["failure_tokens"]
+    assert "convergence" not in stderr.lower()
+
+    baseline_payload = json.loads(_invoke_measure_run(str(baseline))[1])
+    assert set(payload["gate_verdicts"]) == set(baseline_payload["gate_verdicts"])
+    assert payload["gate_verdicts"]["cycles"] == "FAIL", (
+        "isolation check — the ONLY nonzero-status pressure here is the "
+        "pre-existing convergence gate on `cycles`, not anything new"
+    )
+
+
+def test_a_run_missing_every_new_artifact_still_exits_clean(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The honesty pin, in the shape thunder-viper actually has.
+
+    Three columns null, no tokens, exit 0. A zero in any of them would be a
+    fabricated measurement; a token in any of them would make every archive
+    written before this release exit nonzero on first read.
+    """
+    run_dir = make_run_dir(omit_cohort=True, context_pct=None)
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+    for column in ("spend", "inspect_modes", "escalation"):
+        assert payload[column] is None, (column, payload[column])
+    assert payload["failure_tokens"] == []
+    assert exit_code == 0, (stdout, stderr)
+
+
+def test_the_baseline_and_target_are_read_from_vocab_not_re_typed() -> None:
+    """The measure-run -> vocab key link for the four NFR-001 numbers.
+
+    Re-typing 22 and 8 here would make this script a second source of truth for
+    a baseline the F6 report also prints, and the two would be free to drift —
+    the exact failure FR-013 built vocab.py to end. Checked by IDENTITY of the
+    values and by the absence of the literals from the module source.
+    """
+    from foundry_mcp.schemas import vocab
+
+    module = _load_measure_run_module()
+    assert module.THUNDER_VIPER_BASELINE is vocab.THUNDER_VIPER_BASELINE
+    assert module.CONVERGENCE_TARGET is vocab.CONVERGENCE_TARGET
+    assert module.SPEND_LEDGER_FILENAME is vocab.SPEND_LEDGER_FILENAME
+
+    source = SCRIPT.read_text(encoding="utf-8")
+    for literal in ("grind_cycles\": 22", "post_verification_cycles\": 8"):
+        assert literal not in source, (
+            f"measure-run.py spells {literal!r} itself instead of reading "
+            f"vocab.THUNDER_VIPER_BASELINE"
+        )
+
+
+@pytest.mark.skipif(
+    not THUNDER_VIPER.exists(),
+    reason=(
+        f"thunder-viper archive not present in this checkout: {THUNDER_VIPER} "
+        "(foundry-archive/ is git-ignored)"
+    ),
+)
+def test_thunder_viper_prints_the_baseline_beside_the_current_run() -> None:
+    """OT-030, driven against the real baseline archive, READ-ONLY.
+
+    The archive is opened in place and never copied-then-migrated the way
+    grand-vulture is, because NFR-001 and OT-030 are only meaningful while it
+    stays byte-identical: it is the number every later run is measured against.
+    A tree hash before and after is the proof, and migrate-archive.py is never
+    pointed at it.
+
+    Its 162 records carry no tier, its counter stayed at 0, and it has none of
+    the three post-4.7.3 artifacts — so this is simultaneously the OT-030
+    assertion and the honest-nulls assertion, on real data rather than a
+    fixture built to have the shape.
+    """
+    before = _tree_digest(THUNDER_VIPER)
+
+    exit_code, stdout, stderr = _invoke_measure_run(str(THUNDER_VIPER))
+    assert stdout.strip(), f"no payload; stderr was: {stderr}"
+    payload = json.loads(stdout)
+
+    comparison = payload["baseline_comparison"]
+    assert comparison["baseline"] == {
+        "run": "thunder-viper", "grind_cycles": 22, "post_verification_cycles": 8,
+    }
+    assert comparison["target"] == {
+        "grind_cycles": 12, "post_verification_cycles": 3,
+    }
+    # ...beside the current run's own numbers, read from the archive rather
+    # than from the constant. They disagree with the baseline BECAUSE this
+    # archive cannot supply them: the counter never incremented, so 1 is what
+    # it honestly says, and the 22 comes from the constant that exists for
+    # exactly this reason.
+    assert comparison["current"]["run"] == "thunder-viper"
+    assert comparison["current"]["grind_cycles"] == payload["cycles"]
+    assert comparison["current"]["post_verification_cycles"] is None
+
+    # FR-051 on 162 real unclassified records.
+    assert payload["defects_by_tier"] == {"LIVE": 0, "LATENT": 0, "unknown": 162}
+    assert sum(payload["per_stream_defects"].values()) == 162
+
+    # The three artifacts 4.7.3 never wrote: null, not zero, not a token.
+    for column in ("spend", "inspect_modes", "escalation"):
+        assert payload[column] is None, (column, payload[column])
+    assert payload["failure_tokens"] == [], payload["failure_tokens"]
+
+    # And the baseline archive is byte-identical afterwards.
+    assert _tree_digest(THUNDER_VIPER) == before, (
+        "measure-run wrote into the baseline archive; NFR-001 and OT-030 are "
+        "only meaningful while it stays exactly as found"
+    )
+
+
+def _tree_digest(root: Path) -> str:
+    """Path-sensitive content hash of a tree. Mirrors test_migrate_archive."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        digest.update(str(path.relative_to(root)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# OT-030's committed stand-in.
+#
+# WHY A FIXTURE EXISTS BESIDE THE REAL-ARCHIVE TEST ABOVE
+# -------------------------------------------------------
+# ``foundry-archive/`` is git-ignored, and Foundry-Accept-Casting re-executes
+# every committed ``# evidence-cmd:`` inside a ``git worktree add --detach``
+# checkout of the casting's commit — which contains TRACKED FILES ONLY. So a
+# command that reads foundry-archive/thunder-viper produces one output here and
+# a different one at the gate, and no evidence log can bind OT-030 to the real
+# archive without failing byte-comparison.
+#
+# This fixture is thunder-viper's STRUCTURE, not its data: a run that reached
+# F6 with the cycle counter still at 0, defect records filed by the same five
+# sources with NOT ONE carrying a `tier`, no stream-rollup.json, no
+# escalation.json, no spend.jsonl and no `inspect_modes`. That is exactly the
+# set of gaps the 4.7.3 cache left behind, so the behaviour OT-030 names is
+# committed and re-executable. The real archive keeps its own test above.
+# ---------------------------------------------------------------------------
+
+THUNDER_VIPER_SHAPE = FIXTURES / "thunder_viper_shape"
+
+
+def test_the_fixture_really_has_thunder_vipers_structural_gaps() -> None:
+    """The precondition, or the test below proves nothing about that shape."""
+    assert json.loads((THUNDER_VIPER_SHAPE / "state.json").read_text())["cycle"] == 0
+    state = json.loads((THUNDER_VIPER_SHAPE / "state.json").read_text())
+    assert "inspect_modes" not in state
+    records = json.loads((THUNDER_VIPER_SHAPE / "defects.json").read_text())["defects"]
+    assert records and not any("tier" in r for r in records)
+    for absent in ("stream-rollup.json", "escalation.json", "spend.jsonl"):
+        assert not (THUNDER_VIPER_SHAPE / absent).exists(), absent
+
+
+def test_a_thunder_viper_shaped_archive_prints_the_baseline_and_the_target() -> None:
+    """OT-030 / AC-039 / NFR-001 / FR-039, on committed re-executable data.
+
+    Three things at once, because they are one behaviour: the baseline's 22
+    and 8 print beside the current run's own numbers, the target's 12 and 3
+    print with them, and every column the archive cannot supply is null rather
+    than a fabricated zero. The command exits 0 — a pre-release archive is not
+    a failure.
+    """
+    exit_code, stdout, stderr = _invoke_measure_run(str(THUNDER_VIPER_SHAPE))
+    assert exit_code == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+
+    comparison = payload["baseline_comparison"]
+    assert comparison["baseline"]["grind_cycles"] == 22
+    assert comparison["baseline"]["post_verification_cycles"] == 8
+    assert comparison["target"]["grind_cycles"] == 12
+    assert comparison["target"]["post_verification_cycles"] == 3
+    assert comparison["current"]["grind_cycles"] == payload["cycles"]
+    assert comparison["current"]["post_verification_cycles"] is None
+
+    assert payload["defects_by_tier"] == {"LIVE": 0, "LATENT": 0, "unknown": 6}
+    for column in ("spend", "inspect_modes", "escalation"):
+        assert payload[column] is None, column
+    assert payload["failure_tokens"] == []

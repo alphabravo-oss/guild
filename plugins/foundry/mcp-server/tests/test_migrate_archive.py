@@ -6,7 +6,7 @@ so the tests exercise the real CLI contract including its exit codes.
 
 Three fixtures:
 
-  * a committed SYNTHETIC pre-change archive that exercises all six migration
+  * a committed SYNTHETIC pre-change archive that exercises all seven migration
     steps. Unconditional — migration correctness and idempotency are covered
     on any checkout.
   * a committed CLEAN-LAST-CYCLE archive whose ``.{stream}-complete`` markers
@@ -45,9 +45,10 @@ CLEAN_LAST_CYCLE = FIXTURES / "clean_last_cycle"
 # is present in a working checkout and absent from a clean clone.
 GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
 
-# v2: step 3's output shape changed — v1 wrote a stream-rollup.json that its
+# v2: step 4's output shape changed — v1 wrote a stream-rollup.json that its
 # own consumer (foundry_orchestrator._rollup_totals) could not read (D-029).
-ARCHIVE_SCHEMA_VERSION = 2
+# v3: the evidence-tier step joined the list (GI-001 / FR-051).
+ARCHIVE_SCHEMA_VERSION = 3
 
 
 def _invoke_migrate(*args: str) -> tuple[int, str, str]:
@@ -121,6 +122,9 @@ def test_fixture_is_a_pre_change_archive(archive: Path) -> None:
     records = json.loads((archive / "defects.json").read_text())["defects"]
     assert records, "fixture must carry defect records"
     assert not any("class" in r or "classification" in r for r in records)
+    assert not any("tier" in r for r in records), (
+        "the fixture must predate the evidence tier, or step 2 proves nothing"
+    )
     assert json.loads((archive / "state.json").read_text())["cycle"] == 0
     assert not (archive / "observations.json").exists()
     assert not (archive / "stream-rollup.json").exists()
@@ -128,7 +132,7 @@ def test_fixture_is_a_pre_change_archive(archive: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The six migration steps.
+# The seven migration steps.
 # ---------------------------------------------------------------------------
 
 
@@ -164,7 +168,166 @@ def test_step_1_preserves_values_outside_the_reconciled_vocabulary(
     assert by_id["D-006"]["source"] == "legacy_stream"
 
 
-def test_step_2_observations_ledger_created_empty(archive: Path) -> None:
+# ---------------------------------------------------------------------------
+# Step 2 — the evidence tier (GI-001 / FR-051 / A-044's compatibility regime).
+# ---------------------------------------------------------------------------
+
+
+def test_step_2_defects_gain_the_evidence_tier_fields(archive: Path) -> None:
+    """Every pre-change record gains all five fields, losing nothing.
+
+    A migrated record and a record written fresh by this release then carry
+    the same key set, which is what lets every reader use one shape instead of
+    branching on the archive's provenance.
+    """
+    before = json.loads((archive / "defects.json").read_text())["defects"]
+    summary = _migrate(archive)
+    assert _outcomes(summary)["defect_tier"] == "upgraded"
+
+    step = summary["steps"]["defect_tier"]
+    assert step["records"] == len(before)
+    assert step["upgraded"] == len(before)
+    assert step["fields"] == [
+        "tier", "reproduction_attempted", "regression_test", "authored_by",
+        "fix_commit",
+    ]
+
+    after = json.loads((archive / "defects.json").read_text())["defects"]
+    assert len(after) == len(before), "records must never be dropped"
+    for original, migrated in zip(before, after):
+        for key, value in original.items():
+            assert migrated[key] == value, f"{original['id']} lost {key}"
+        assert migrated["tier"] == "unknown"
+        # Written as null, not omitted — Foundry-Fix and the LATENT door fill
+        # these in later, and a reader must not have to tell "absent" from
+        # "not yet set".
+        for key in ("reproduction_attempted", "regression_test", "authored_by",
+                    "fix_commit"):
+            assert key in migrated and migrated[key] is None, (
+                f"{original['id']} is missing {key}"
+            )
+    assert [r["id"] for r in after] == [r["id"] for r in before]
+
+
+def test_step_2_never_migrates_an_untiered_record_to_latent(archive: Path) -> None:
+    """FR-051 — the load-bearing negative, stated as a negative.
+
+    LATENT stops blocking at TEMPER, NYQUIST and DONE. So migrating records
+    nobody ever classified to LATENT would silently clear three gates on every
+    archive resumed under this release — grand-vulture's 168 and
+    thunder-viper's 162 among them. Unknown blocks like LIVE; LATENT does not.
+    That is the whole difference, and it is why the default is not "the
+    quieter one".
+    """
+    _migrate(archive)
+    records = json.loads((archive / "defects.json").read_text())["defects"]
+    assert records, "fixture must carry records for this to prove anything"
+    tiers = {r["tier"] for r in records}
+    assert tiers == {"unknown"}, tiers
+    assert "LATENT" not in tiers
+    assert "LIVE" not in tiers
+
+
+def test_step_2_reports_the_unknown_count_the_measurer_will_read(
+    archive: Path,
+) -> None:
+    """The migration's count and measure-run's column must be the same number.
+
+    Two tools reading one file and disagreeing about it is D-060's shape.
+    Here the agreement is checked directly rather than assumed.
+    """
+    summary = _migrate(archive)
+    reported = summary["steps"]["defect_tier"]["tier_unknown"]
+    measured = _measure(archive)["defects_by_tier"]
+    assert reported == measured["unknown"] == 6
+    assert measured["LIVE"] == 0 and measured["LATENT"] == 0
+
+
+def test_step_2_leaves_an_already_tiered_record_exactly_as_found(
+    archive: Path,
+) -> None:
+    """Idempotency at the RECORD level, not just the file level (NFR-003).
+
+    A half-migrated ledger is the ordinary state after an interrupted run, and
+    a record already carrying LIVE must keep it. The `tier_unknown` count is
+    still the honest total, because it counts what the file READS as rather
+    than what this invocation happened to stamp.
+    """
+    path = archive / "defects.json"
+    data = json.loads(path.read_text())
+    data["defects"][0]["tier"] = "LIVE"
+    data["defects"][1]["tier"] = "LATENT"
+    data["defects"][1]["reproduction_attempted"] = "AST sweep finds 0 call sites"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    summary = _migrate(archive)
+    records = json.loads(path.read_text())["defects"]
+    assert records[0]["tier"] == "LIVE"
+    assert records[1]["tier"] == "LATENT"
+    assert records[1]["reproduction_attempted"] == "AST sweep finds 0 call sites"
+    assert summary["steps"]["defect_tier"]["tier_unknown"] == 4
+
+
+def test_step_2_counts_a_hand_edited_bogus_tier_as_unknown(archive: Path) -> None:
+    """The count goes through vocab.defect_tier, so the tools cannot disagree.
+
+    An inline ``isinstance(value, str)`` check would have called ``"MINOR"``
+    classified while every gate reads it as unknown — a grade smuggled into
+    the ledger and then reported as if it had been triaged.
+    """
+    path = archive / "defects.json"
+    data = json.loads(path.read_text())
+    data["defects"][0]["tier"] = "MINOR"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    summary = _migrate(archive)
+    assert summary["steps"]["defect_tier"]["tier_unknown"] == 6
+    assert _measure(archive)["defects_by_tier"]["unknown"] == 6
+    # Archived history is preserved verbatim, exactly as step 1 preserves a
+    # `type` outside the reconciled vocabulary.
+    assert json.loads(path.read_text())["defects"][0]["tier"] == "MINOR"
+
+
+def test_steps_1_and_2_share_one_write_of_defects_json(archive: Path) -> None:
+    """Two steps, one read/modify/write — the _migrate_state shape.
+
+    Splitting the write would double the window in which an interrupted
+    migration leaves a ledger with `class` stamped and `tier` not, which is
+    the half-migrated state AC-026 forbids. Proven by the temp file: an atomic
+    write leaves no `defects.tmp` behind, and two writes would have produced
+    two renames of it.
+    """
+    summary = _migrate(archive)
+    assert _outcomes(summary)["defects"] == "upgraded"
+    assert _outcomes(summary)["defect_tier"] == "upgraded"
+    assert not (archive / "defects.tmp").exists()
+    record = json.loads((archive / "defects.json").read_text())["defects"][0]
+    assert record["classification"] == "DEFECT" and record["tier"] == "unknown"
+
+
+def test_migration_creates_no_artifact_the_run_never_produced(archive: Path) -> None:
+    """The regime's other half: additive means ADDING FIELDS, not inventing runs.
+
+    escalation.json, spend.jsonl and state.json's `inspect_modes` are written
+    by a run that executed under this release. Creating empty ones would turn
+    "never measured" into "measured zero" — and measure-run's convergence
+    columns would then report 0 tokens spent and 0 escalated classes for a run
+    that spent 1M tokens and escalated three.
+    """
+    _migrate(archive)
+    assert not (archive / "escalation.json").exists()
+    assert not (archive / "spend.jsonl").exists()
+    assert "inspect_modes" not in json.loads((archive / "state.json").read_text())
+
+    measured = _measure(archive)
+    for column in ("spend", "inspect_modes", "escalation"):
+        assert measured[column] is None, (
+            f"{column} reports {measured[column]!r} for an archive that never "
+            f"produced it; structurally missing is null, never a zero"
+        )
+
+
+def test_step_3_observations_ledger_created_empty(archive: Path) -> None:
     summary = _migrate(archive)
     assert _outcomes(summary)["observations"] == "created"
     payload = json.loads((archive / "observations.json").read_text())
@@ -172,7 +335,7 @@ def test_step_2_observations_ledger_created_empty(archive: Path) -> None:
     assert payload == {"observations": []}
 
 
-def test_step_3_stream_rollup_is_derived_per_cycle(archive: Path) -> None:
+def test_step_4_stream_rollup_is_derived_per_cycle(archive: Path) -> None:
     """D-029 — the migrated document must be the shape its CONSUMER reads.
 
     foundry_orchestrator._rollup_totals looks an entry up as
@@ -218,7 +381,7 @@ def test_step_3_stream_rollup_is_derived_per_cycle(archive: Path) -> None:
     assert step["non_stream_sources"] == {"legacy_stream": 1}
 
 
-def test_step_3_rollup_is_readable_by_its_consumer(archive: Path) -> None:
+def test_step_4_rollup_is_readable_by_its_consumer(archive: Path) -> None:
     """The D-029 regression test — read the migrated file the way the server does.
 
     Imports the real ``_rollup_totals`` rather than re-implementing its lookup,
@@ -241,7 +404,7 @@ def test_step_3_rollup_is_readable_by_its_consumer(archive: Path) -> None:
     assert _rollup_totals(archive, 2, "trace") is None
 
 
-def test_step_3_rebuilds_an_unreadable_v1_document(archive: Path) -> None:
+def test_step_4_rebuilds_an_unreadable_v1_document(archive: Path) -> None:
     """An archive migrated by v1 carries a roll-up its consumer ignores.
 
     The version marker is a fast path, not the detector: step 3 recognises the
@@ -257,7 +420,7 @@ def test_step_3_rebuilds_an_unreadable_v1_document(archive: Path) -> None:
     assert rollup["cycles"]["0"]["trace"]["items_checked"] == 12
 
 
-def test_step_3_never_rebuilds_a_server_written_document(archive: Path) -> None:
+def test_step_4_never_rebuilds_a_server_written_document(archive: Path) -> None:
     """A live roll-up holds records the archive's own data cannot reconstruct.
 
     Re-deriving over it would be data loss, so an already-dict-valued document
@@ -282,7 +445,7 @@ def test_step_3_never_rebuilds_a_server_written_document(archive: Path) -> None:
     assert json.loads((archive / "stream-rollup.json").read_text()) == live
 
 
-def test_step_3_rederivation_is_deterministic(archive: Path, tmp_path: Path) -> None:
+def test_step_4_rederivation_is_deterministic(archive: Path, tmp_path: Path) -> None:
     """Re-deriving from the same archive yields a byte-identical document."""
     _migrate(archive)
     first = (archive / "stream-rollup.json").read_bytes()
@@ -293,7 +456,7 @@ def test_step_3_rederivation_is_deterministic(archive: Path, tmp_path: Path) -> 
     assert (twin / "stream-rollup.json").read_bytes() == first
 
 
-def test_step_4_progress_directory_created_empty(archive: Path) -> None:
+def test_step_5_progress_directory_created_empty(archive: Path) -> None:
     summary = _migrate(archive)
     assert _outcomes(summary)["progress"] == "created"
     progress = archive / "progress"
@@ -301,7 +464,7 @@ def test_step_4_progress_directory_created_empty(archive: Path) -> None:
     assert list(progress.iterdir()) == []
 
 
-def test_step_5_cycle_repaired_from_the_runs_own_data(archive: Path) -> None:
+def test_step_6_cycle_repaired_from_the_runs_own_data(archive: Path) -> None:
     """FI-1: state.json["cycle"] is written once as 0 and never incremented.
 
     The fixture's defects span cycles 0-5 with a fixed_in_cycle of 6, so the
@@ -315,7 +478,7 @@ def test_step_5_cycle_repaired_from_the_runs_own_data(archive: Path) -> None:
     assert json.loads((archive / "state.json").read_text())["cycle"] == 6
 
 
-def test_step_5_never_lowers_an_already_higher_value(archive: Path) -> None:
+def test_step_6_never_lowers_an_already_higher_value(archive: Path) -> None:
     state = json.loads((archive / "state.json").read_text())
     state["cycle"] = 99
     (archive / "state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -324,7 +487,7 @@ def test_step_5_never_lowers_an_already_higher_value(archive: Path) -> None:
     assert json.loads((archive / "state.json").read_text())["cycle"] == 99
 
 
-def test_step_5_repairs_a_non_integer_cycle(archive: Path) -> None:
+def test_step_6_repairs_a_non_integer_cycle(archive: Path) -> None:
     state = json.loads((archive / "state.json").read_text())
     state["cycle"] = "seventeen"
     (archive / "state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -333,7 +496,7 @@ def test_step_5_repairs_a_non_integer_cycle(archive: Path) -> None:
     assert json.loads((archive / "state.json").read_text())["cycle"] == 6
 
 
-def test_step_5_preserves_the_rest_of_state(archive: Path) -> None:
+def test_step_6_preserves_the_rest_of_state(archive: Path) -> None:
     before = json.loads((archive / "state.json").read_text())
     _migrate(archive)
     after = json.loads((archive / "state.json").read_text())
@@ -343,7 +506,7 @@ def test_step_5_preserves_the_rest_of_state(archive: Path) -> None:
         assert after[key] == value, f"state.json lost {key}"
 
 
-def test_step_6_schema_version_marker_recorded(archive: Path) -> None:
+def test_step_7_schema_version_marker_recorded(archive: Path) -> None:
     summary = _migrate(archive)
     assert _outcomes(summary)["archive_schema_version"] == "upgraded"
     state = json.loads((archive / "state.json").read_text())
@@ -371,7 +534,7 @@ def test_each_step_is_individually_idempotent(archive: Path) -> None:
     """The version marker is a fast path, not the safety mechanism.
 
     Stripping the marker from an otherwise-migrated archive must still
-    produce a no-op on every step — proving steps 1-5 guard on absence
+    produce a no-op on every step — proving steps 1-6 guard on absence
     themselves rather than relying on the marker.
     """
     _migrate(archive)
@@ -382,6 +545,7 @@ def test_each_step_is_individually_idempotent(archive: Path) -> None:
     summary = _migrate(archive)
     outcomes = _outcomes(summary)
     assert outcomes["defects"] == "no-op"
+    assert outcomes["defect_tier"] == "no-op"
     assert outcomes["observations"] == "no-op"
     assert outcomes["stream_rollup"] == "no-op"
     assert outcomes["progress"] == "no-op"
@@ -391,7 +555,7 @@ def test_each_step_is_individually_idempotent(archive: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# D-060 — step 5 must consult the same evidence step 3 keys the roll-up on.
+# D-060 — step 6 must consult the same evidence step 4 keys the roll-up on.
 #
 # The ORDINARY case: the last INSPECT cycle's streams come back clean, so their
 # ``.{stream}-complete`` markers record a cycle that no defect record carries.
@@ -420,11 +584,11 @@ def test_clean_last_cycle_fixture_marker_exceeds_every_defect_cycle(
     assert json.loads((clean_archive / "state.json").read_text())["cycle"] == 0
 
 
-def test_step_5_consults_the_markers_step_3_keys_on(clean_archive: Path) -> None:
+def test_step_6_consults_the_markers_step_4_keys_on(clean_archive: Path) -> None:
     """D-060 — the repaired cycle must not sit behind the roll-up's own keys.
 
-    Step 3 keys entries by BOTH defect cycles and each marker's ``cycle=``;
-    step 5 read only defects.json, so it wrote 2 where the roll-up wrote 3.
+    Step 4 keys entries by BOTH defect cycles and each marker's ``cycle=``;
+    step 6 read only defects.json, so it wrote 2 where the roll-up wrote 3.
     """
     summary = _migrate(clean_archive)
     step = summary["steps"]["state_cycle"]
@@ -482,9 +646,9 @@ def test_second_migration_of_a_clean_last_cycle_archive_is_a_no_op(
 def test_dry_run_reports_the_cycle_a_real_run_would_record(
     clean_archive: Path, tmp_path: Path
 ) -> None:
-    """--dry-run writes no roll-up, so step 5's evidence must be self-contained.
+    """--dry-run writes no roll-up, so step 6's evidence must be self-contained.
 
-    Reading the markers directly (rather than the roll-up step 3 would have
+    Reading the markers directly (rather than the roll-up step 4 would have
     written) is what keeps the dry-run report honest.
     """
     dry = _migrate(clean_archive, "--dry-run")
@@ -497,8 +661,8 @@ def test_dry_run_reports_the_cycle_a_real_run_would_record(
     assert real["steps"]["state_cycle"] == dry["steps"]["state_cycle"]
 
 
-def test_step_5_honours_a_server_written_rollups_own_keys(archive: Path) -> None:
-    """Step 3 leaves a live roll-up exactly as found, so step 5 reads its keys.
+def test_step_6_honours_a_server_written_rollups_own_keys(archive: Path) -> None:
+    """Step 4 leaves a live roll-up exactly as found, so step 6 reads its keys.
 
     Without this the post-condition would hold only for roll-ups this tool
     derived itself.
@@ -593,6 +757,15 @@ def test_grand_vulture_migration(tmp_path: Path) -> None:
             assert after[key] == before[key], f"{before['id']} lost {key}"
         assert after["class"] is None
         assert after["classification"] == "DEFECT"
+        # FR-051 on the real acceptance fixture: 168 records nobody ever
+        # classified read as unknown, which blocks like LIVE. Had they migrated
+        # to LATENT, resuming this archive would have walked straight through
+        # TEMPER, NYQUIST and DONE.
+        assert after["tier"] == "unknown"
+    assert summary["steps"]["defect_tier"]["tier_unknown"] == 168
+    assert _measure(dest)["defects_by_tier"] == {
+        "LATENT": 0, "LIVE": 0, "unknown": 168,
+    }
 
     # The 43 records whose types are outside the reconciled vocabulary — they
     # entered through the unvalidated sync path and survive verbatim.

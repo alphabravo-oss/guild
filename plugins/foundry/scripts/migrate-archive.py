@@ -5,20 +5,32 @@ Upgrades ONE old ``foundry-archive/{run}/`` directory, in place, to the run
 schemas this release introduces. Stdlib only; no runtime deps beyond the
 canonical vocabulary module, which is itself stdlib-only.
 
-Six steps, each independently guarded on absence so the whole tool is
+Seven steps, each independently guarded on absence so the whole tool is
 idempotent (NFR-003) even against a hand-edited or half-migrated archive:
 
   1. defects.json     — every record gains ``class: null`` and
                         ``classification: "DEFECT"`` when absent
-  2. observations.json — created as {"observations": []} when absent
-  3. stream-rollup.json — the per-cycle roll-up, re-derived from the
+  2. defects.json     — every record gains the evidence-tier fields this
+                        release adds: ``tier: "unknown"`` (FR-051 — NEVER
+                        LATENT) plus the four companions Foundry-Fix and the
+                        LATENT door later populate. Shares step 1's single
+                        read/modify/write of the file
+  3. observations.json — created as {"observations": []} when absent
+  4. stream-rollup.json — the per-cycle roll-up, re-derived from the
                         archive's own data in the shape its consumer reads
-  4. progress/        — per-agent progress-ledger directory, created empty
-  5. state.json       — ``cycle`` repaired from the run's own data when the
+  5. progress/        — per-agent progress-ledger directory, created empty
+  6. state.json       — ``cycle`` repaired from the run's own data when the
                         recorded value is missing/invalid/too low. Reads the
-                        SAME evidence step 3 keys the roll-up on, so a
+                        SAME evidence step 4 keys the roll-up on, so a
                         migrated archive can never sit behind its own roll-up
-  6. state.json       — ``archive_schema_version`` marker recorded
+  7. state.json       — ``archive_schema_version`` marker recorded
+
+WHAT THIS TOOL DOES **NOT** CREATE. escalation.json, spend.jsonl and
+state.json's ``inspect_modes`` are artifacts of a run that executed under this
+release. A pre-change archive did not produce them, and writing an empty one
+would turn "never measured" into "measured zero" — the lie measure-run.py's
+structurally-missing columns exist to avoid. Their absence is reported as
+missing, never as a zero.
 
 ARCHIVED HISTORY IS NOT NORMALISED. Defect ``type`` and ``source`` values are
 preserved verbatim even when they fall outside the reconciled vocabulary
@@ -41,8 +53,10 @@ from typing import Any
 try:  # Installed (uvx/pip) case — package is already importable.
     from foundry_mcp.schemas.vocab import (
         STREAM_WIRE_IDS,
+        TIER_UNKNOWN,
         WIRE_TO_CANONICAL,
         canonical_stream_id,
+        defect_tier,
     )
     from foundry_mcp.tools.foundry_state import read_json, read_text_file
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
@@ -51,8 +65,10 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         sys.path.insert(0, str(_SRC))
     from foundry_mcp.schemas.vocab import (
         STREAM_WIRE_IDS,
+        TIER_UNKNOWN,
         WIRE_TO_CANONICAL,
         canonical_stream_id,
+        defect_tier,
     )
     from foundry_mcp.tools.foundry_state import read_json, read_text_file
 
@@ -60,19 +76,23 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
 # The schema generation this tool brings an archive to. Bump when a migration
 # step is added (add it to MIGRATION_STEPS below) or when a step's OUTPUT shape
 # changes — v1 wrote a stream-rollup.json its own consumer could not read.
-ARCHIVE_SCHEMA_VERSION = 2
+#
+# v3: the evidence-tier step. A pre-change defect record has no `tier` key, and
+# every gate in this release branches on one.
+ARCHIVE_SCHEMA_VERSION = 3
 
-# CLOSED VOCABULARY — the six migration steps, in execution order. The
+# CLOSED VOCABULARY — the seven migration steps, in execution order. The
 # summary reports one outcome per step under exactly these names.
 # Extend only via phase-level RFC.
 MIGRATION_STEPS = (
     "defects",
+    "defect_tier",
     "observations",
     "stream_rollup",
     "progress",
     "state_cycle",
     "archive_schema_version",
-)  # 6 steps
+)  # 7 steps
 
 # CLOSED VOCABULARY — per-step outcomes.
 # Extend only via phase-level RFC.
@@ -131,44 +151,143 @@ def _as_cycle(value: Any) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — defects.json gains the class + classification fields.
+# Steps 1 + 2 — defects.json gains class/classification, then the tier fields.
+#
+# Two steps, one read/modify/write. Mirrors _migrate_state, which reports the
+# cycle repair and the version marker separately while touching state.json
+# once: two independent schema changes to the same file is a shape this tool
+# already has, and splitting the WRITE would double the window in which an
+# interrupted run leaves a half-migrated ledger.
 # ---------------------------------------------------------------------------
 
 
-def _migrate_defects(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
+# The evidence-tier fields this release adds to a defect record, and the value
+# a PRE-CHANGE record takes for each.
+#
+# `tier` is the load-bearing one and the value is NOT negotiable: FR-051 says a
+# record with no tier reads as unknown and NEVER as LATENT. The distinction is
+# not cosmetic — LATENT stops blocking at TEMPER/NYQUIST/DONE, so migrating 162
+# unclassified thunder-viper records to LATENT would silently clear three gates
+# on defects no stream ever looked at. TIER_UNKNOWN is imported rather than
+# spelled here so the sentinel has exactly one definition (the same discipline
+# that made the vocabulary module exist).
+#
+# The other four are `null` because that is what Foundry-Fix and the LATENT
+# door write before they are populated — a migrated record and a fresh one then
+# carry the same key set, which is what lets every reader use one shape.
+# Extend only via phase-level RFC.
+DEFECT_TIER_FIELDS: tuple[tuple[str, Any], ...] = (
+    ("tier", TIER_UNKNOWN),
+    ("reproduction_attempted", None),
+    ("regression_test", None),
+    ("authored_by", None),
+    ("fix_commit", None),
+)  # 5 fields
+
+
+def _add_missing(record: dict[str, Any], fields: tuple[tuple[str, Any], ...]) -> bool:
+    """Set each absent field to its migration default. True when any was added.
+
+    Absence-guarded per field rather than per record, so a half-migrated
+    ledger (NFR-003) converges instead of being skipped or overwritten. An
+    EXISTING key is never touched, including an existing ``tier: null`` — see
+    the note in ``_migrate_defect_tier``.
+    """
+    touched = False
+    for name, default in fields:
+        if name not in record:
+            record[name] = default
+            touched = True
+    return touched
+
+
+def _migrate_defects_document(run_dir: Path) -> tuple[Path, dict[str, Any] | None]:
+    """(path, document) for defects.json, or (path, None) when it is absent."""
     path = run_dir / "defects.json"
     if not path.exists():
-        return "no-op", {"reason": "defects.json absent"}
+        return path, None
     data = _load_json(path)
     if not isinstance(data, dict) or not isinstance(data.get("defects"), list):
         raise _Malformed("MIGRATE_DEFECTS_FILE_MALFORMED")
-
-    changed = 0
     for record in data["defects"]:
         if not isinstance(record, dict):
             raise _Malformed("MIGRATE_DEFECTS_FILE_MALFORMED")
-        touched = False
-        # Optional stream-declared class field (escalation keys on it).
-        if "class" not in record:
-            record["class"] = None
-            touched = True
-        # The DEFECT / OBSERVATION classification axis. Everything already in
-        # a defect ledger was filed as a defect; migration never reclassifies.
-        if "classification" not in record:
-            record["classification"] = "DEFECT"
-            touched = True
-        if touched:
-            changed += 1
+    return path, data
 
-    if changed == 0:
-        return "no-op", {"records": len(data["defects"]), "upgraded": 0}
-    if not dry_run:
-        _save_json(path, data)
-    return "upgraded", {"records": len(data["defects"]), "upgraded": changed}
+
+def _migrate_defects(
+    run_dir: Path, dry_run: bool
+) -> tuple[str, dict[str, Any], str, dict[str, Any]]:
+    """Steps 1 and 2 over one read/modify/write of defects.json.
+
+    Returns (class_outcome, class_detail, tier_outcome, tier_detail).
+    """
+    path, data = _migrate_defects_document(run_dir)
+    if data is None:
+        absent = {"reason": "defects.json absent"}
+        return "no-op", absent, "no-op", dict(absent)
+
+    records: list[dict[str, Any]] = data["defects"]
+    class_changed = 0
+    for record in records:
+        if _add_missing(
+            record,
+            # Optional stream-declared class field (escalation keys on it), and
+            # the DEFECT / OBSERVATION classification axis. Everything already
+            # in a defect ledger was filed as a defect; migration never
+            # reclassifies.
+            (("class", None), ("classification", "DEFECT")),
+        ):
+            class_changed += 1
+
+    tier_changed, tier_unknown = _migrate_defect_tier(records)
+
+    if class_changed or tier_changed:
+        if not dry_run:
+            _save_json(path, data)
+
+    class_outcome = "upgraded" if class_changed else "no-op"
+    tier_outcome = "upgraded" if tier_changed else "no-op"
+    return (
+        class_outcome,
+        {"records": len(records), "upgraded": class_changed},
+        tier_outcome,
+        {
+            "records": len(records),
+            "upgraded": tier_changed,
+            "tier_unknown": tier_unknown,
+            "fields": [name for name, _ in DEFECT_TIER_FIELDS],
+        },
+    )
+
+
+def _migrate_defect_tier(records: list[dict[str, Any]]) -> tuple[int, int]:
+    """Step 2 — stamp the evidence-tier fields. Returns (changed, unknown).
+
+    ``unknown`` counts every record that READS as unknown-tier afterwards, not
+    just the ones this run stamped: an archive migrated once and measured later
+    must report the same number, and a record that already carried
+    ``tier: null`` (an interrupted write, or a hand edit) is left exactly as
+    found while still counting as unknown. That is the FR-051 rule stated once
+    — absence and null both read as unknown, and neither is ever LATENT.
+
+    The count goes through ``vocab.defect_tier`` rather than an inline test,
+    so this tool and every gate agree on what "unknown" means. A hand-edited
+    ``tier: "MINOR"`` is unknown to the gates; an inline ``isinstance(str)``
+    check here would have called it classified.
+    """
+    changed = 0
+    unknown = 0
+    for record in records:
+        if _add_missing(record, DEFECT_TIER_FIELDS):
+            changed += 1
+        if defect_tier(record) == TIER_UNKNOWN:
+            unknown += 1
+    return changed, unknown
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — observations.json ledger.
+# Step 3 — observations.json ledger.
 # ---------------------------------------------------------------------------
 
 
@@ -184,7 +303,7 @@ def _migrate_observations(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — stream-rollup.json, re-derived from the archive's own data.
+# Step 4 — stream-rollup.json, re-derived from the archive's own data.
 # ---------------------------------------------------------------------------
 
 
@@ -406,7 +525,7 @@ def _migrate_stream_rollup(run_dir: Path, dry_run: bool) -> tuple[str, dict[str,
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — per-agent progress ledger directory.
+# Step 5 — per-agent progress ledger directory.
 # ---------------------------------------------------------------------------
 
 
@@ -422,7 +541,7 @@ def _migrate_progress(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Steps 5 + 6 — state.json cycle repair and schema-version marker.
+# Steps 6 + 7 — state.json cycle repair and schema-version marker.
 # ---------------------------------------------------------------------------
 
 
@@ -571,8 +690,9 @@ def migrate_archive(run_dir: Path, dry_run: bool = False) -> tuple[int, dict[str
 
     steps: dict[str, Any] = {}
     try:
-        outcome, detail = _migrate_defects(run_dir, dry_run)
-        steps["defects"] = {"outcome": outcome, **detail}
+        d_out, d_detail, t_out, t_detail = _migrate_defects(run_dir, dry_run)
+        steps["defects"] = {"outcome": d_out, **d_detail}
+        steps["defect_tier"] = {"outcome": t_out, **t_detail}
         outcome, detail = _migrate_observations(run_dir, dry_run)
         steps["observations"] = {"outcome": outcome, **detail}
         outcome, detail = _migrate_stream_rollup(run_dir, dry_run)

@@ -1,0 +1,69 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && python3 ../scripts/measure-run.py tests/fixtures/measure_run/thunder_viper_shape
+# evidence-for: OT-030, AC-039, NFR-001, FR-039, FR-051, US-008
+
+# The baseline's 22 cycles and 8 post-verification cycles print beside the
+# current run's own numbers, with the <=12 / <=3 target. Both baseline
+# numbers are READ from vocab.THUNDER_VIPER_BASELINE, which exists because
+# thunder-viper ran on the 4.7.3 cache and its archive cannot supply them:
+# its cycle counter stayed at 0 and it wrote no inspect_modes.
+#
+# The run dir here is a COMMITTED fixture carrying thunder-viper's exact
+# structural gaps (cycle 0, untiered records, no rollup/escalation/spend/
+# inspect_modes). It stands in for the real archive because
+# foundry-archive/ is git-ignored and this command is re-executed inside a
+# 'git worktree add --detach' checkout, which holds tracked files only.
+# The real archive is asserted by the skipif-guarded
+# test_thunder_viper_prints_the_baseline_beside_the_current_run.
+#
+# Every column the archive cannot supply is null -- never 0, and never a
+# failure token. Exit 0: a pre-release archive is not a failure.
+
+{
+  "cohort_id": "",
+  "cycles": 1,
+  "per_stream_defects": {
+    "TRACE": 1,
+    "PROVE": 2,
+    "TEST": 1,
+    "ASSAY": 1,
+    "TEMPER": 1
+  },
+  "defects_by_tier": {
+    "LATENT": 0,
+    "LIVE": 0,
+    "unknown": 6
+  },
+  "per_cycle_coverage": {},
+  "inspect_modes": null,
+  "escalation": null,
+  "spend": null,
+  "f2_context_pct": null,
+  "wall_clock_seconds": 88245.0,
+  "baseline_comparison": {
+    "baseline": {
+      "run": "thunder-viper",
+      "grind_cycles": 22,
+      "post_verification_cycles": 8
+    },
+    "target": {
+      "grind_cycles": 12,
+      "post_verification_cycles": 3
+    },
+    "current": {
+      "run": "thunder_viper_shape",
+      "grind_cycles": 1,
+      "post_verification_cycles": null
+    },
+    "meets_target": {
+      "grind_cycles": true,
+      "post_verification_cycles": null
+    }
+  },
+  "gate_verdicts": {
+    "cycles": "PASS",
+    "defect_yield_per_stream": "PASS",
+    "f2_context_pct": "MISSING",
+    "wall_clock_regression_pct": "MISSING"
+  },
+  "failure_tokens": []
+}

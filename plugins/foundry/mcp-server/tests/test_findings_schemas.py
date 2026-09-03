@@ -517,3 +517,181 @@ def test_schemas_registry_matches_the_published_schema_name_enum() -> None:
         "published_but_unserved": sorted(published - {"custom"} - set(SCHEMAS)),
         "served_but_unpublished": sorted(set(SCHEMAS) - published),
     }
+
+
+# ---------------------------------------------------------------------------
+# GI-001 / AC-009 — the evidence tier, and the axis it is NOT.
+#
+# GI-001 widens the finding item with `tier`, and the obvious risk is that a
+# closed enum on a finding is the abolished work-effort grade wearing a new
+# name — `test_skill_schemas_carry_no_enum_outside_the_allowed_axes` in
+# tests/test_protocol_prose.py names "tier" as exactly that hazard. So both
+# directions are driven here at INSTANCE level, on the same schema, in the same
+# file: a finding carrying `tier` validates, and a finding carrying the
+# abolished axis is still rejected BY NAME. A widening that lost the second
+# half would pass every assertion above.
+# ---------------------------------------------------------------------------
+
+
+def _minimal_finding(**extra: object) -> dict:
+    """The six required fields, plus whatever the caller is testing."""
+    return {
+        "id": "L-1",
+        "classification": "DEFECT",
+        "type": "WRONG",
+        "file": "src/example.py",
+        "symbol": "example#Thing",
+        "description": "a description well past the ten-character floor",
+        **extra,
+    }
+
+
+def _finding_errors(schema: dict, finding: dict) -> list[str]:
+    """Validation errors attributable to the FINDING, not to the summary.
+
+    TRACE_SCHEMA's summary requires five fields (verbatim from its skill's own
+    block), so a bare ``{"summary": {}}`` draws five errors that say nothing
+    about the finding item under test. ``test_a_finding_carrying_severity_is_
+    rejected`` works around that by comparing error COUNTS; these assertions
+    want "no error at all", so they filter by path instead. Both the property
+    errors (``findings.0.tier``) and the closed-set error (``findings.0``) live
+    under that prefix.
+    """
+    return [
+        error
+        for error in _errors(schema, {"findings": [finding], "summary": {}})
+        if error.startswith("findings")
+    ]
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+@pytest.mark.parametrize("tier", sorted(vocab.DEFECT_TIERS))
+def test_a_finding_carrying_a_tier_validates(name: str, tier: str) -> None:
+    """AC-009 — the finding schema accepts `tier` on a finding item.
+
+    Driven per schema AND per tier: `additionalProperties: False` rejects an
+    undeclared key, so before this widening a stream filing a LATENT gap
+    against the validator its own skill tells it to call was refused at the
+    one surface it was instructed to use — D-071's exact shape, recurring.
+    """
+    errors = _finding_errors(SCHEMAS[name], _minimal_finding(tier=tier))
+    assert not errors, {"schema": name, "tier": tier, "errors": errors}
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_a_latent_finding_may_carry_its_reproduction_statement(name: str) -> None:
+    """CT-001 / FR-004 — the statement travels on the finding, so it must fit.
+
+    A LATENT filing is refused at the door without a `reproduction_attempted`
+    statement. If the report schema rejected the field, the stream would have
+    to strip the very thing the door demands before it could validate.
+    """
+    errors = _finding_errors(
+        SCHEMAS[name],
+        _minimal_finding(
+            tier="LATENT",
+            reproduction_attempted="AST sweep of both roots finds 0 sites",
+        ),
+    )
+    assert not errors, {"schema": name, "errors": errors}
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_the_tier_enum_is_closed_over_exactly_the_vocab_members(name: str) -> None:
+    """The widening must not be a free-text field wearing an enum's name.
+
+    `unknown` is the interesting rejection: it is a READ-side sentinel for a
+    record nobody classified (FR-051), and a schema that accepted it as a
+    filed value would hand every stream a legal way to decline the axis.
+    """
+    shipped = frozenset(
+        SCHEMAS[name]["properties"]["findings"]["items"]["properties"]["tier"]["enum"]
+    )
+    assert shipped == frozenset(vocab.DEFECT_TIERS), sorted(shipped)
+    for refused in (vocab.TIER_UNKNOWN, "MINOR", "MAJOR", "P0", "live", ""):
+        errors = _finding_errors(SCHEMAS[name], _minimal_finding(tier=refused))
+        assert errors, (
+            f"SCHEMAS[{name!r}] accepts tier={refused!r}. The tier is a CLOSED "
+            f"vocabulary; a validator that shrugs at an unknown value lets the "
+            f"abolished grade back in one spelling at a time."
+        )
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_the_tier_widening_did_not_reopen_the_finding_item(name: str) -> None:
+    """AC-009's other half, and the reason this file exists.
+
+    The cheap way to make `tier` validate is to relax `additionalProperties`.
+    That would also readmit the abolished axis, so the enforcement point is
+    asserted directly rather than only through the `severity` case above: an
+    invented key must still be refused BY NAME.
+    """
+    item = SCHEMAS[name]["properties"]["findings"]["items"]
+    assert item["additionalProperties"] is False, (
+        f"SCHEMAS[{name!r}]'s finding item no longer closes its property set. "
+        f"That flag is what makes 'there is no severity field, and adding one "
+        f"is a vocabulary violation' enforceable at the validator."
+    )
+    errors = _finding_errors(SCHEMAS[name], _minimal_finding(priority="P0"))
+    assert any("priority" in e for e in errors), (
+        f"SCHEMAS[{name!r}] accepts an undeclared `priority` key — a graded "
+        f"axis passes every substring check ever written for the old name: "
+        f"{errors}"
+    )
+
+
+def test_the_tier_property_never_mentions_the_abolished_axis() -> None:
+    """The prose half, guarded where a well-meaning author would break it.
+
+    ``test_no_shipped_schema_mentions_severity_anywhere`` greps the serialized
+    registry, so a `tier` description that explained itself as "replaces
+    severity" would fail there with a confusing message. This says why first.
+    """
+    item = SCHEMAS["trace"]["properties"]["findings"]["items"]["properties"]
+    description = item["tier"]["description"].lower()
+    assert "severity" not in description, (
+        "the tier description names the abolished axis. Describe tier by what "
+        "it measures — what the stream DROVE — not by the grade it is not."
+    )
+    for word in ("live", "latent"):
+        assert word in description, (
+            f"the tier description does not say what {word.upper()} means, so "
+            f"a stream reading the schema cannot tell which value it owes."
+        )
+
+
+def test_tier_and_reproduction_attempted_are_optional_not_required() -> None:
+    """NFR-002 — the widening narrows nothing.
+
+    Three shipped skills, an entire archive of past reports and casting 6's
+    in-flight prose all predate the axis. Requiring it here would refuse every
+    one of them at the validator, which is a narrowing, not a widening.
+    """
+    for name, schema in SCHEMAS.items():
+        required = schema["properties"]["findings"]["items"]["required"]
+        assert "tier" not in required, name
+        assert "reproduction_attempted" not in required, name
+        assert not _finding_errors(schema, _minimal_finding()), name
+
+
+def test_the_tier_enum_is_read_from_vocab_and_not_re_typed() -> None:
+    """The FR-013 key link, at the one surface D-071 found a seventh copy on.
+
+    Sorted equality against vocab is weak on its own (both sides could be the
+    same re-typed literal), so the module source is checked for the derivation
+    too — the same shape test_measure_run pins with `is`.
+    """
+    findings_py = (
+        REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
+        / "schemas" / "findings.py"
+    )
+    source = findings_py.read_text(encoding="utf-8")
+    assert "sorted(vocab.DEFECT_TIERS)" in source, (
+        "schemas/findings.py re-types the tier enum instead of deriving it "
+        "from vocab. That is exactly the drift D-071 found here."
+    )
+    for literal in ('"LIVE"', "'LIVE'", '"LATENT"', "'LATENT'"):
+        assert literal not in source, (
+            f"schemas/findings.py spells {literal} as a literal; the tier "
+            f"vocabulary is declared once, in schemas/vocab.py"
+        )

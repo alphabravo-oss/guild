@@ -1,0 +1,10 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_vocab.py tests/test_findings_schemas.py
+# evidence-for: GI-001, AC-009, CT-001, FR-004, FR-028, FR-032, FR-034, US-001, US-002, US-004, US-005
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+........................................................................ [ 32%]
+........................................................................ [ 65%]
+........................................................................ [ 98%]
+...                                                                      [100%]
+219 passed in 0.38s

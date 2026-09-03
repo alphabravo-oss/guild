@@ -225,6 +225,395 @@ _DEFECT_TYPE_ALIASES: Mapping[str, str] = MappingProxyType(
 FINDING_CLASSES = frozenset({"DEFECT", "OBSERVATION"})  # 2 items
 
 # ---------------------------------------------------------------------------
+# The evidence tier (GI-001 / CT-001 / FR-004).
+#
+# WHY THIS IS NOT THE ABOLISHED GRADE COMING BACK
+# -----------------------------------------------
+# D-041 removed `severity` because a work-effort grade (minor/major/critical)
+# invites a real defect to be quietly downgraded rather than fixed, and
+# `schemas/findings.py` still enforces its absence with
+# `additionalProperties: False`. `tier` measures something else entirely: NOT
+# how much the defect matters, but WHAT THE FILING STREAM ACTUALLY DID.
+#
+#   LIVE    the stream drove the door and observed the wrong result. The
+#           description carries the reproduction.
+#   LATENT  the stream looked for the failure and did not find one — a gap
+#           reasoned about, not reproduced. The filing must carry a
+#           `reproduction_attempted` statement naming what was driven and what
+#           it found (`reproduction_attempted_problem` below is the check).
+#
+# Both tiers are DEFECTS and both get fixed; the axis decides only which GATE
+# a still-open instance blocks (ASSAY blocks on either; TEMPER, NYQUIST and
+# DONE block on LIVE alone). A grade would let a stream write "minor" and move
+# on; this cannot, because neither value is an excuse — it is a statement about
+# evidence the stream is answerable for.
+#
+# Extend only via phase-level RFC — and never with a third value that means
+# "less important than LIVE", which is the grade returning under a new name.
+# ---------------------------------------------------------------------------
+
+# CLOSED VOCABULARY — the evidence tier a filing stream sets on every defect.
+DEFECT_TIERS = frozenset({"LIVE", "LATENT"})  # 2 items
+
+#: READ-SIDE SENTINEL ONLY — never written by a filing door, and deliberately
+#: NOT a member of DEFECT_TIERS. A record persisted before this release has no
+#: `tier` key at all; every reader resolves that absence to this value rather
+#: than guessing. FR-051: an unknown-tier defect blocks exactly like LIVE and
+#: is reported in its own column — reading it as LATENT would silently clear
+#: gates on records nobody ever classified.
+TIER_UNKNOWN = "unknown"
+
+# The full READ vocabulary: what a reader may see, as opposed to what a door
+# may write. Derived from DEFECT_TIERS so adding a tier needs one edit.
+DEFECT_TIER_OR_UNKNOWN = frozenset(DEFECT_TIERS | {TIER_UNKNOWN})  # 3 items
+
+
+def defect_tier(record: Mapping[str, object]) -> str:
+    """The tier a defect record READS as — never raises, never guesses.
+
+    A missing key, a `null`, a non-string and a string outside DEFECT_TIERS
+    all resolve to TIER_UNKNOWN. That last case is deliberate: a record
+    carrying `tier: "MINOR"` is not a tier this protocol knows, and coercing
+    it onto LATENT would be exactly the silent downgrade the axis exists to
+    prevent. Total over DEFECT_TIER_OR_UNKNOWN.
+    """
+    value = record.get("tier")
+    return value if isinstance(value, str) and value in DEFECT_TIERS else TIER_UNKNOWN
+
+
+#: Statements that name no evidence at all. A LATENT filing must say what was
+#: DRIVEN and what it found; these are the spellings of "I did not". Matched
+#: against the whole stripped, lowercased statement, so a real sentence that
+#: happens to contain "none" is unaffected.
+#: Extend only via phase-level RFC.
+REPRODUCTION_PLACEHOLDERS = frozenset(
+    {"", "-", "--", "n/a", "n.a.", "na", "nil", "none", "no", "not attempted",
+     "tbd", "todo", "unknown"}
+)  # 13 items
+
+#: The floor on a `reproduction_attempted` statement. Twenty characters is not
+#: a quality bar — it is the shortest string that can carry a subject and a
+#: negative result ("AST sweep finds 0 sites" is 23). Anything shorter is a
+#: token, and a token is what REPRODUCTION_PLACEHOLDERS already refuses.
+REPRODUCTION_ATTEMPTED_MIN_CHARS = 20
+
+
+def reproduction_attempted_problem(statement: object) -> str | None:
+    """Why this `reproduction_attempted` statement is unacceptable, or None.
+
+    CT-001 / FR-004: the server refuses a LATENT filing without one. This is
+    the named check the two filing doors call so that "a statement naming what
+    was driven and found nothing" is enforced in ONE place rather than
+    re-spelled at each door — the drift shape this whole module exists to stop.
+
+    Returns None when the statement is acceptable, else the refusal reason,
+    phrased for the `error` field of the door's own refusal shape. Never
+    raises: the JSON layer can hand this anything.
+    """
+    if not isinstance(statement, str):
+        return (
+            f"reproduction_attempted must be a string naming what was driven "
+            f"and what it found, got {type(statement).__name__}"
+        )
+    stripped = statement.strip()
+    if stripped.lower() in REPRODUCTION_PLACEHOLDERS:
+        return (
+            f"reproduction_attempted is the placeholder {stripped!r}, which "
+            f"names no evidence. A LATENT filing must say what was driven and "
+            f"what it found (e.g. 'AST sweep of both roots finds 0 sites')."
+        )
+    if len(stripped) < REPRODUCTION_ATTEMPTED_MIN_CHARS:
+        return (
+            f"reproduction_attempted is {len(stripped)} characters; at least "
+            f"{REPRODUCTION_ATTEMPTED_MIN_CHARS} are needed to name what was "
+            f"driven and what it found. Either state the negative result, or "
+            f"file the defect as LIVE with its reproduction."
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Escalation lifecycle (FR-002 / FR-003 / FR-028 / ST-001 / ST-002).
+#
+# A CLASS escalates when the same root cause recurs, and leaves that state by
+# exactly two doors. Both are recorded, because "why did this class stop being
+# escalated" is unanswerable from a status flag alone — and an unanswerable
+# exit is how a class silently stops receiving structural packets while its
+# instances keep arriving.
+# ---------------------------------------------------------------------------
+
+# CLOSED VOCABULARY — the two states a defect class can be in once escalation
+# has looked at it. Extend only via phase-level RFC.
+ESCALATION_STATUSES = frozenset({"ESCALATED", "CLEARED"})  # 2 items
+
+# CLOSED VOCABULARY — how a class reached CLEARED. Machine-readable per
+# FR-028, so the F6 report can say which door each class left by.
+#
+#   clean_cycles  ST-001 — LIVE_CLEAN_CYCLES_TO_CLEAR consecutive INSPECT
+#                 cycles drew zero LIVE instances of the class.
+#   budget        ST-002 — the structural-pass budget was exhausted. Open LIVE
+#                 instances stay blocking and are fixed per-instance; open
+#                 LATENT instances go to the F6 named backlog.
+#
+# Extend only via phase-level RFC.
+ESCALATION_EXIT_REASONS = frozenset({"clean_cycles", "budget"})  # 2 items
+
+# FR-002 — one structural pass plus one retry, and then no more. The cap is
+# what stops a class that structural work cannot fix from consuming every
+# remaining cycle.
+STRUCTURAL_PASS_BUDGET = 2
+
+# FR-003 / ST-001 — consecutive server-counted INSPECT cycles with zero LIVE
+# instances before an escalated class clears. LATENT instances do not reset
+# the count (ST-001), which is what lets a class whose remaining instances are
+# all reasoned-about gaps stop consuming structural packets.
+LIVE_CLEAN_CYCLES_TO_CLEAR = 2
+
+# ---------------------------------------------------------------------------
+# INSPECT width (ST-006 / ST-007 / GI-008 / GI-009 / FR-032).
+#
+# GI-009: the Foundry-Phase transition that OPENS an INSPECT decides the mode
+# and records it. Nothing decides lazily at display time — a mode computed
+# inside Foundry-Next is a decision no artifact holds, which is why the
+# vocabulary lives here and the rule that fired is persisted beside the mode.
+# ---------------------------------------------------------------------------
+
+# CLOSED VOCABULARY — the two widths an INSPECT cycle can run at.
+INSPECT_MODES = frozenset({"FULL", "DELTA"})  # 2 items
+
+# CLOSED VOCABULARY — the rules that force FULL. Exactly one is recorded as
+# the rule that fired.
+#
+#   first_of_phase    the phase-entry transition into F2 or F5
+#   final_gate        the INSPECT immediately before ASSAY, NYQUIST or DONE
+#   verifier_touched  the GRIND diff touched the verifier itself
+#                     (VERIFIER_PATH_PATTERNS / is_verifier_path)
+#
+# Extend only via phase-level RFC.
+INSPECT_FULL_RULES = frozenset(
+    {"first_of_phase", "final_gate", "verifier_touched"}
+)  # 3 items
+
+#: Recorded as the rule when NO member of INSPECT_FULL_RULES fired. Not a
+#: member of that set: "nothing forced FULL" is the absence of a rule, and
+#: enrolling it would make `rule in INSPECT_FULL_RULES` mean the opposite of
+#: what it reads as.
+INSPECT_DELTA_RULE = "delta"
+
+#: The streams a FULL INSPECT requires, in dispatch order. A TUPLE, not a
+#: frozenset: the roster is displayed and the order is the order the lead
+#: reads. `sight` and `probe` join it when the run has a UI / a temper phase,
+#: which is a per-run fact and therefore not baked in here.
+#: Every member is a STREAM_WIRE_IDS member (pinned in tests/test_vocab.py).
+FULL_ROSTER_STREAMS = ("trace", "prove", "test", "research_audit", "test01")
+
+#: ST-007 — the two streams a DELTA INSPECT requires only when the diff
+#: touches a file they cover, and does not require otherwise. Everything else
+#: in FULL_ROSTER_STREAMS is required at both widths.
+DELTA_CONDITIONAL_STREAMS = frozenset({"research_audit", "test01"})  # 2 items
+
+#: How many requirement rows PROVE samples on a DELTA cycle.
+PROVE_DELTA_SAMPLE_SIZE = 10
+
+# FR-032 — THE single constant defining "this diff touched the verifier".
+#
+# One constant, not one literal per caller: the rule is consulted by the
+# inspect-mode decision, by the evidence sweep and by the report, and three
+# copies of a path list is the drift shape D-071 and FR-013 both describe.
+# Anchored with `(?:^|/)` rather than `^` so a repo-relative path and an
+# absolute one answer the same, and every alternative is a SEGMENT boundary —
+# `schemas/` matches the directory, never a file called `myschemas.py`.
+#
+# The SPEC is deliberately absent from this tuple. It is matched by the
+# `spec_path` argument of `is_verifier_path`, because a run's spec lives
+# wherever `state.json.spec_path` says (and again at
+# `foundry-archive/{run}/spec.md`) — a static pattern would either miss it or
+# sweep in every unrelated spec.md in the tree.
+# Extend only via phase-level RFC.
+VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
+    # The canonical vocabulary itself, wherever it sits.
+    r"(?:^|/)vocab\.py$",
+    # Any schema module — the finding/report shapes every stream validates on.
+    r"(?:^|/)schemas/",
+    # Gate and orchestrator code.
+    r"(?:^|/)foundry_mcp/tools/"
+    r"(?:foundry_orchestrator|foundry|foundry_handoff|evidence|foundry_validate)\.py$",
+    r"(?:^|/)foundry_mcp/server\.py$",
+    # Agent and skill prose — the contracts the streams actually execute.
+    r"(?:^|/)agents/[^/]+\.md$",
+    r"(?:^|/)skills/[^/]+/SKILL\.md$",
+    # Run-protocol prose.
+    r"(?:^|/)commands/[^/]+\.md$",
+)  # 7 patterns
+
+_VERIFIER_PATH_RES: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern) for pattern in VERIFIER_PATH_PATTERNS
+)
+
+
+def _normalise_path(path: object) -> str:
+    """Repo-relative POSIX spelling of a path, or "" when unusable.
+
+    Pure string work — the PURITY RULE forbids touching the filesystem, so
+    nothing here resolves, globs or stats. Windows separators are folded and a
+    leading `./` is dropped so the same file compares equal however the caller
+    spelled it.
+    """
+    if not isinstance(path, str):
+        return ""
+    text = path.strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text
+
+
+def is_verifier_path(path: str, spec_path: str | None = None) -> bool:
+    """True when a changed path is part of the verifier itself (FR-032).
+
+    A GRIND diff touching any of these means the machinery that JUDGES the
+    build moved, so the next INSPECT cannot trust a delta roster — it must run
+    FULL (ST-006, rule `verifier_touched`).
+
+    `spec_path` is the run's own spec, passed at call time rather than matched
+    by pattern: see the note on VERIFIER_PATH_PATTERNS. Never raises.
+    """
+    normalised = _normalise_path(path)
+    if not normalised:
+        return False
+    if any(pattern.search(normalised) for pattern in _VERIFIER_PATH_RES):
+        return True
+    spec = _normalise_path(spec_path)
+    return bool(spec) and normalised == spec
+
+
+# ---------------------------------------------------------------------------
+# Lead-authored fixes (GI-003 / ST-004 / CT-005 / CT-006 / FR-034).
+# ---------------------------------------------------------------------------
+
+# CLOSED VOCABULARY — who wrote a fix. Required on every Foundry-Fix, because
+# a lead fix recorded as free prose in a hand-written handoff is a fix nothing
+# can measure or count (GI-003).
+FIX_AUTHORS = frozenset({"lead", "teammate"})  # 2 items
+
+# ST-004 / CT-006 — the lane a LIVE lead-authored fix must fit inside, measured
+# from `git show --numstat` on the fix commit. One non-test file, at most 20
+# added-plus-deleted lines. A LATENT lead fix is NOT measured (CT-006): its
+# fix_commit is recorded and left alone.
+LEAD_LANE_MAX_FILES = 1
+LEAD_LANE_MAX_LINES = 20
+
+#: FR-034 — the basenames pytest itself collects, plus the shared fixture
+#: module. `python_files = ["test_*.py"]` in mcp-server/pyproject.toml is the
+#: repo's own discovery setting; `*_test.py` and `conftest.py` are carried too
+#: because the lane counts NON-TEST files, and a file the repo would not
+#: collect today but every reader calls a test must not silently consume the
+#: one-file budget.
+_TEST_BASENAME_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^test_[^/]*\.py$"),
+    re.compile(r"^[^/]*_test\.py$"),
+    re.compile(r"^conftest\.py$"),
+)
+
+#: Any path segment spelled exactly this is a test tree, whatever the file
+#: inside it is called — fixtures, __init__.py and data files included.
+TEST_DIRECTORY_SEGMENT = "tests"
+
+
+def is_test_file(path: str) -> bool:
+    """True when `path` is a test file for the FR-034 lane count.
+
+    Matches the repo's pytest discovery (`test_*.py`), the two conventional
+    spellings beside it (`*_test.py`, `conftest.py`), and anything under a
+    `tests` directory segment. Pure and never raises.
+    """
+    normalised = _normalise_path(path)
+    if not normalised:
+        return False
+    segments = normalised.split("/")
+    if TEST_DIRECTORY_SEGMENT in segments[:-1]:
+        return True
+    basename = segments[-1]
+    return any(pattern.match(basename) for pattern in _TEST_BASENAME_RES)
+
+
+#: GI-003 — the handoff event the SERVER appends when it accepts a lead fix.
+#: Named here so the writer, the report generator and the F6 section that
+#: lists them all spell it identically.
+HANDOFF_EVENT_LEAD_FIX = "lead_fix"
+
+# ---------------------------------------------------------------------------
+# Run artifacts and terminal states (ST-008 / CT-013 / CT-014 / CT-016 / GI-006).
+# ---------------------------------------------------------------------------
+
+#: ST-008 — a run that hits `max_cycles` reaches this phase by a SUCCESSFUL
+#: transition, not a refusal. HALTED is a named terminal state and is NOT
+#: DONE: the report is generated and every open LIVE and LATENT defect is
+#: named in it.
+RUN_PHASE_HALTED = "HALTED"
+
+#: CT-013 — the per-agent spend ledger, one JSON object per line under
+#: `foundry-archive/{run}/`.
+SPEND_LEDGER_FILENAME = "spend.jsonl"
+
+#: CT-014 / GI-006 — the two documents Foundry-Report writes and the DONE
+#: transition refuses without.
+REPORT_MD_FILENAME = "REPORT.md"
+REPORT_JSON_FILENAME = "report.json"
+
+# CLOSED VOCABULARY — every section the generated report must carry, in order.
+# GI-006: the lead may append prose below them but cannot omit one, and
+# `Foundry-Phase('done')` refuses when a section is missing. `report.json`'s
+# top-level keys are exactly these plus `generated_at` and `run`; REPORT.md
+# carries one `## ` heading per member in this order.
+# Extend only via phase-level RFC.
+REPORT_REQUIRED_SECTIONS = (
+    "verdict_matrix",
+    "defects_by_tier_and_status",
+    "latent_backlog",
+    "unknown_tier_defects",
+    "escalated_classes",
+    "lead_fix_records",
+    "inspect_modes_per_cycle",
+    "spend_per_phase_and_cycle",
+    "unreported_dispatches",
+    "executing_versions",
+    "baseline_comparison",
+)  # 11 sections
+
+# ---------------------------------------------------------------------------
+# NFR-001 / AC-039 / OT-030 — the convergence comparison.
+#
+# WHY THESE ARE CONSTANTS AND NOT DERIVED
+# ---------------------------------------
+# thunder-viper executed on the 4.7.3 server cache, so its archive has no
+# stream-rollup.json, no escalation.json, no spend.jsonl and no inspect_modes,
+# and its state.json cycle counter stayed at 0 for the whole run. Its 22 GRIND
+# cycles and 8 post-verification cycles (cycles 15-22 were TEMPER hardening,
+# per its own REPORT.md) are therefore NOT recoverable from the archive. They
+# are recorded here, once, so that `measure-run.py` and the F6 report print the
+# same two numbers and can never disagree about the baseline they are measured
+# against.
+#
+# Plain dicts rather than MappingProxyType, deliberately: `report.json` is
+# json.dumps'd wholesale by the report generator, and a mapping proxy is not
+# JSON-serializable. tests/test_vocab.py pins the contents instead.
+#
+# NFR-001: "Numbers are the target, not a gate." Nothing in this module or in
+# measure-run.py turns a missed target into a refusal or a nonzero status.
+# ---------------------------------------------------------------------------
+
+THUNDER_VIPER_BASELINE = {
+    "run": "thunder-viper",
+    "grind_cycles": 22,
+    "post_verification_cycles": 8,
+}
+
+CONVERGENCE_TARGET = {
+    "grind_cycles": 12,
+    "post_verification_cycles": 3,
+}
+
+# ---------------------------------------------------------------------------
 # Finding-record vocabularies.
 #
 # Added by D-071. schemas/findings.py was a SEVENTH copy of the vocabularies
@@ -635,6 +1024,19 @@ def is_unresolvable_cite(finding: Mapping[str, object]) -> bool:
 def is_security_property_claim(finding: Mapping[str, object]) -> bool:
     """The finding asserts a security property is broken."""
     return bool(_SECURITY_RE.search(_text(finding, "description")))
+
+
+def is_security_property_text(description: str) -> bool:
+    """The same question, asked of a bare description string (CT-003).
+
+    The LATENT denylist refuses a filing whose description matches the
+    security-property predicate, and it has a description in hand rather than a
+    finding mapping. Delegating (rather than re-searching `_SECURITY_RE` here)
+    is what makes it impossible for the two callers to diverge: D-090 and
+    D-093 both widened that pattern, and a second search site would have had to
+    be found and widened twice.
+    """
+    return is_security_property_claim({"description": description})
 
 
 def is_spec_required_behaviour_claim(finding: Mapping[str, object]) -> bool:

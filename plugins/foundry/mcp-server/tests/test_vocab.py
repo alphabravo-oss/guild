@@ -703,3 +703,452 @@ def test_defect_source_mapping_is_total_and_lands_in_known_names() -> None:
             assert canonical == vocab.WIRE_TO_CANONICAL[wire]
         else:
             assert canonical == wire.upper()
+
+
+# ---------------------------------------------------------------------------
+# The daring-orca Shared Design Contract, section C-1.
+#
+# Castings 2, 3, 4, 5, 6 and 7 build in parallel against these names and import
+# them from here. A name renamed in vocab.py is a name a parallel wave cannot
+# find, and it fails at IMPORT time in another agent's worktree — the one place
+# the failure is hardest to attribute. So the roster is spelled out ONCE, here,
+# with the kind each name must have, and every member is asserted.
+#
+# This is deliberately a re-typed copy rather than a derivation: deriving it
+# from `dir(vocab)` would pass no matter what the module exports, which is the
+# same vacuity `assert shipped.enum == vocab.ENUM` has in
+# tests/test_findings_schemas.py. The transcription IS the pin.
+# ---------------------------------------------------------------------------
+
+#: (name, kind) for every export the C-1 contract names. `kind` is what the
+#: contract spells: a frozenset stays a frozenset, a tuple stays ordered, and
+#: a dict stays JSON-serializable (the report generator json.dumps it).
+C1_CONTRACT_EXPORTS = (
+    ("DEFECT_TIERS", frozenset),
+    ("TIER_UNKNOWN", str),
+    ("DEFECT_TIER_OR_UNKNOWN", frozenset),
+    ("ESCALATION_STATUSES", frozenset),
+    ("ESCALATION_EXIT_REASONS", frozenset),
+    ("STRUCTURAL_PASS_BUDGET", int),
+    ("LIVE_CLEAN_CYCLES_TO_CLEAR", int),
+    ("INSPECT_MODES", frozenset),
+    ("INSPECT_FULL_RULES", frozenset),
+    ("INSPECT_DELTA_RULE", str),
+    ("FULL_ROSTER_STREAMS", tuple),
+    ("DELTA_CONDITIONAL_STREAMS", frozenset),
+    ("PROVE_DELTA_SAMPLE_SIZE", int),
+    ("VERIFIER_PATH_PATTERNS", tuple),
+    ("is_verifier_path", "callable"),
+    ("LEAD_LANE_MAX_FILES", int),
+    ("LEAD_LANE_MAX_LINES", int),
+    ("FIX_AUTHORS", frozenset),
+    ("is_test_file", "callable"),
+    ("HANDOFF_EVENT_LEAD_FIX", str),
+    ("RUN_PHASE_HALTED", str),
+    ("SPEND_LEDGER_FILENAME", str),
+    ("REPORT_MD_FILENAME", str),
+    ("REPORT_JSON_FILENAME", str),
+    ("REPORT_REQUIRED_SECTIONS", tuple),
+    ("THUNDER_VIPER_BASELINE", dict),
+    ("CONVERGENCE_TARGET", dict),
+    ("is_security_property_text", "callable"),
+    ("reproduction_attempted_problem", "callable"),
+)
+
+
+@pytest.mark.parametrize(
+    "name,kind", C1_CONTRACT_EXPORTS, ids=[n for n, _ in C1_CONTRACT_EXPORTS]
+)
+def test_the_c1_contract_name_exists_with_its_contracted_kind(name, kind) -> None:
+    """One assertion per C-1 export — the cross-casting import surface."""
+    assert hasattr(vocab, name), (
+        f"schemas/vocab.py no longer exports {name!r}. Castings 2-7 import it "
+        f"by that spelling; renaming it breaks their imports, not this test's "
+        f"assertion. Restore the name (an alias is fine) rather than editing "
+        f"this roster."
+    )
+    value = getattr(vocab, name)
+    if kind == "callable":
+        assert callable(value), f"{name} must be callable"
+    else:
+        assert isinstance(value, kind), (
+            f"{name} is {type(value).__name__}, but the C-1 contract spells it "
+            f"{kind.__name__}"
+        )
+
+
+def test_the_two_comparison_dicts_are_json_serializable() -> None:
+    """C-10 — the report generator json.dumps `baseline_comparison` wholesale.
+
+    Spelled as plain dicts rather than MappingProxyType, against this module's
+    usual immutability habit, because a mapping proxy raises TypeError inside
+    json.dumps and casting 5's report.json carries both of these verbatim. The
+    contents pin below is what replaces the immutability.
+    """
+    import json
+
+    payload = json.dumps(
+        {"baseline": vocab.THUNDER_VIPER_BASELINE, "target": vocab.CONVERGENCE_TARGET}
+    )
+    assert json.loads(payload)["baseline"]["grind_cycles"] == 22
+
+
+# ---------------------------------------------------------------------------
+# GI-001 / CT-001 / FR-004 — the evidence tier.
+# ---------------------------------------------------------------------------
+
+
+def test_defect_tiers_is_the_two_member_closed_vocabulary() -> None:
+    assert vocab.DEFECT_TIERS == frozenset({"LIVE", "LATENT"})
+    assert isinstance(vocab.DEFECT_TIERS, frozenset)
+
+
+def test_tier_unknown_is_a_read_sentinel_and_not_a_writable_tier() -> None:
+    """FR-051 — a door may never WRITE unknown; a reader must always see it.
+
+    Enrolling the sentinel in DEFECT_TIERS would make it a value a filing
+    stream could legally set, which is precisely the "I did not classify this"
+    escape the tier exists to close.
+    """
+    assert vocab.TIER_UNKNOWN == "unknown"
+    assert vocab.TIER_UNKNOWN not in vocab.DEFECT_TIERS
+    assert vocab.DEFECT_TIER_OR_UNKNOWN == vocab.DEFECT_TIERS | {vocab.TIER_UNKNOWN}
+    assert len(vocab.DEFECT_TIER_OR_UNKNOWN) == 3
+
+
+@pytest.mark.parametrize(
+    "record,expected",
+    [
+        ({}, "unknown"),
+        ({"tier": None}, "unknown"),
+        ({"tier": ""}, "unknown"),
+        ({"tier": "latent"}, "unknown"),      # case matters; not coerced
+        ({"tier": "MINOR"}, "unknown"),       # a grade is not a tier
+        ({"tier": 1}, "unknown"),
+        ({"tier": "LIVE"}, "LIVE"),
+        ({"tier": "LATENT"}, "LATENT"),
+    ],
+)
+def test_defect_tier_reads_anything_unclassified_as_unknown(record, expected) -> None:
+    """FR-051 — never LATENT by default, and never coerced onto a member.
+
+    The LATENT half is the load-bearing one: LATENT stops blocking at TEMPER,
+    NYQUIST and DONE, so a record that defaults to LATENT silently clears three
+    gates on a defect nobody ever classified.
+    """
+    assert vocab.defect_tier(record) == expected
+    assert vocab.defect_tier(record) in vocab.DEFECT_TIER_OR_UNKNOWN
+
+
+def test_reproduction_attempted_accepts_a_real_negative_result() -> None:
+    """CT-001's example, verbatim from the spec's own FR-004 text."""
+    assert vocab.reproduction_attempted_problem(
+        "AST sweep of both roots finds 0 sites"
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [None, 17, [], "", "   ", "n/a", "N/A", "none", "TBD", "todo", "-", "unknown",
+     "not attempted", "too short", "looked, nothing"],
+)
+def test_reproduction_attempted_refuses_a_statement_naming_no_evidence(
+    statement,
+) -> None:
+    """FR-004 — the server refuses a LATENT filing without a real statement.
+
+    Every case here is something a stream might actually type to get past the
+    field. The refusal must NAME why, because a door that says only "invalid"
+    teaches the stream to try another placeholder.
+    """
+    problem = vocab.reproduction_attempted_problem(statement)
+    assert problem is not None, f"{statement!r} was accepted as evidence"
+    assert "reproduction_attempted" in problem
+
+
+def test_reproduction_placeholders_are_all_refused_by_their_own_rule() -> None:
+    """The closed vocabulary and the predicate cannot drift apart."""
+    for placeholder in vocab.REPRODUCTION_PLACEHOLDERS:
+        assert vocab.reproduction_attempted_problem(placeholder) is not None
+        assert vocab.reproduction_attempted_problem(f"  {placeholder.upper()}  ") is not None
+
+
+def test_is_security_property_text_is_the_same_predicate_as_the_denylist() -> None:
+    """CT-003 — the LATENT denylist reuses the existing security predicate.
+
+    D-090 and D-093 each widened `_SECURITY_RE` after real claims slipped
+    past it. A second search site would have had to be found and widened
+    twice, so this asserts the two agree on the whole D-093 battery rather
+    than on one hand-picked string.
+    """
+    for label, description in SECURITY_CLAIM_BATTERY:
+        assert vocab.is_security_property_text(description) is True, label
+        assert vocab.is_security_property_text(description) == (
+            vocab.is_security_property_claim({"description": description})
+        ), label
+    for description in NON_SECURITY_PROSE:
+        assert vocab.is_security_property_text(description) is False, description
+
+
+# ---------------------------------------------------------------------------
+# FR-028 / ST-001 / ST-002 — escalation lifecycle vocabularies.
+# ---------------------------------------------------------------------------
+
+
+def test_escalation_vocabularies_name_both_exit_doors() -> None:
+    """FR-028 — the exit reason must be machine-readable and appear in F6.
+
+    Two doors, both recorded: ST-001 (clean cycles) and ST-002 (budget). A
+    status flag alone cannot answer "why did this class stop being escalated",
+    and an unanswerable exit is how a class quietly stops receiving structural
+    packets while its instances keep arriving.
+    """
+    assert vocab.ESCALATION_STATUSES == frozenset({"ESCALATED", "CLEARED"})
+    assert vocab.ESCALATION_EXIT_REASONS == frozenset({"clean_cycles", "budget"})
+    assert vocab.STRUCTURAL_PASS_BUDGET == 2
+    assert vocab.LIVE_CLEAN_CYCLES_TO_CLEAR == 2
+
+
+# ---------------------------------------------------------------------------
+# ST-006 / ST-007 / GI-009 / FR-032 — INSPECT width.
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_mode_vocabularies() -> None:
+    assert vocab.INSPECT_MODES == frozenset({"FULL", "DELTA"})
+    assert vocab.INSPECT_FULL_RULES == frozenset(
+        {"first_of_phase", "final_gate", "verifier_touched"}
+    )
+
+
+def test_the_delta_rule_is_not_a_full_rule() -> None:
+    """"Nothing forced FULL" is the ABSENCE of a rule, not a member of the set.
+
+    Enrolling it would make `rule in INSPECT_FULL_RULES` read true for the one
+    case that means the opposite.
+    """
+    assert vocab.INSPECT_DELTA_RULE == "delta"
+    assert vocab.INSPECT_DELTA_RULE not in vocab.INSPECT_FULL_RULES
+
+
+def test_the_full_roster_is_ordered_and_every_member_is_a_real_stream() -> None:
+    """A tuple, not a frozenset — the roster is displayed in dispatch order."""
+    assert isinstance(vocab.FULL_ROSTER_STREAMS, tuple)
+    assert vocab.FULL_ROSTER_STREAMS == (
+        "trace", "prove", "test", "research_audit", "test01",
+    )
+    unknown = set(vocab.FULL_ROSTER_STREAMS) - vocab.STREAM_WIRE_IDS
+    assert not unknown, (
+        f"the FULL roster names {sorted(unknown)}, which Foundry-Stream would "
+        f"reject — a roster entry no stream can report against is a "
+        f"streams-complete check that can never pass"
+    )
+    assert vocab.DELTA_CONDITIONAL_STREAMS < set(vocab.FULL_ROSTER_STREAMS), (
+        "ST-007's conditional streams must be a PROPER subset of the FULL "
+        "roster; a conditional stream outside it is required by nothing"
+    )
+    assert vocab.PROVE_DELTA_SAMPLE_SIZE == 10
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_handoff.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/server.py",
+        "plugins/foundry/agents/assayer.md",
+        "plugins/foundry/agents/tracer.md",
+        "plugins/foundry/skills/prove/SKILL.md",
+        "plugins/foundry/skills/trace/SKILL.md",
+        "plugins/foundry/commands/start.md",
+    ],
+)
+def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
+    """FR-032's minimum match set, path by path.
+
+    These are REAL repo paths, not synthetic ones: a pattern that matches
+    `schemas/vocab.py` but not the path git actually prints in a diff is a
+    verifier-touched rule that never fires.
+    """
+    assert vocab.is_verifier_path(path), (
+        f"{path} is verifier machinery, so a GRIND diff touching it must force "
+        f"the next INSPECT to FULL (ST-006, rule verifier_touched)"
+    )
+    assert (REPO_ROOT / path).exists(), (
+        f"{path} no longer exists, so this row proves nothing about a real "
+        f"diff. Point it at the file that replaced it."
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+        "plugins/foundry/scripts/measure-run.py",
+        "README.md",
+        "src/myschemas.py",          # `schemas` inside a name is not a segment
+        "docs/agents.md",            # `agents` as a FILE is not the directory
+        "skills/README.md",          # a skill dir's non-SKILL file
+        "",
+    ],
+)
+def test_an_ordinary_path_is_not_a_verifier_path(path: str) -> None:
+    """The rule has to be able to say no, or every GRIND cycle runs FULL.
+
+    DELTA exists to cut the ~1M-token cost of a five-stream INSPECT; a
+    predicate that over-matches quietly deletes that saving while still
+    reporting DELTA as available.
+    """
+    assert not vocab.is_verifier_path(path)
+
+
+def test_the_spec_is_matched_by_the_argument_not_by_a_pattern() -> None:
+    """FR-032 — a run's spec lives wherever state.json.spec_path says.
+
+    A static `spec\\.md$` pattern would sweep in every unrelated spec in the
+    tree (this repo carries five under forge-specs/), so the run's own spec is
+    passed at call time and compared after normalisation.
+    """
+    spec = "forge-specs/foundry-run-convergence/spec.md"
+    assert not vocab.is_verifier_path(spec)
+    assert vocab.is_verifier_path(spec, spec_path=spec)
+    assert vocab.is_verifier_path("./" + spec, spec_path=spec), "normalised both sides"
+    assert not vocab.is_verifier_path("forge-specs/other/spec.md", spec_path=spec)
+    assert vocab.is_verifier_path(
+        "foundry-archive/daring-orca/spec.md",
+        spec_path="foundry-archive/daring-orca/spec.md",
+    )
+
+
+def test_verifier_patterns_are_one_constant_the_predicate_reads() -> None:
+    """FR-032: "derived from one constant rather than typed in several places"."""
+    assert isinstance(vocab.VERIFIER_PATH_PATTERNS, tuple)
+    assert vocab.VERIFIER_PATH_PATTERNS, "an empty pattern set matches nothing"
+    for pattern in vocab.VERIFIER_PATH_PATTERNS:
+        re.compile(pattern)  # every member must be a valid regex
+    assert len(vocab._VERIFIER_PATH_RES) == len(vocab.VERIFIER_PATH_PATTERNS), (
+        "the compiled set is derived from the constant; a hand-maintained "
+        "second list is the drift FR-032 forbids"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FR-034 / CT-006 — the lead fix lane.
+# ---------------------------------------------------------------------------
+
+
+def test_fix_authors_and_lane_limits() -> None:
+    assert vocab.FIX_AUTHORS == frozenset({"lead", "teammate"})
+    assert vocab.LEAD_LANE_MAX_FILES == 1
+    assert vocab.LEAD_LANE_MAX_LINES == 20
+    assert vocab.HANDOFF_EVENT_LEAD_FIX == "lead_fix"
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("plugins/foundry/mcp-server/tests/test_vocab.py", True),
+        ("tests/conftest.py", True),
+        ("conftest.py", True),
+        ("pkg/thing_test.py", True),
+        ("tests/fixtures/measure_run/state_cycle_3.json", True),
+        ("plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py", False),
+        ("src/latest/handler.py", False),   # `latest` is not `tests`
+        ("src/tests_helper.py", False),     # nor is `tests_helper`
+        ("", False),
+    ],
+)
+def test_is_test_file_matches_pytest_discovery(path: str, expected: bool) -> None:
+    """FR-034 — test files are excluded from the lane's one-file count.
+
+    The lane admits ONE non-test file, so a misclassification in either
+    direction is a real refusal: calling a source file a test lets a lead ship
+    two source files in one lane, and calling a test file source spends the
+    whole budget on the regression test the fix is required to carry.
+    """
+    assert vocab.is_test_file(path) is expected
+
+
+def test_the_repos_own_pytest_discovery_setting_is_covered() -> None:
+    """FR-034 says "the repo's pytest discovery patterns" — read the setting.
+
+    mcp-server/pyproject.toml declares `python_files`; every glob it names must
+    be recognised here, or the lane counts a file pytest collects as source.
+    """
+    text = (REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"python_files\s*=\s*\[([^\]]*)\]", text)
+    assert match is not None, "pyproject.toml no longer declares python_files"
+    for glob in re.findall(r'"([^"]+)"', match.group(1)):
+        sample = glob.replace("*", "sample")
+        assert vocab.is_test_file(sample), (
+            f"pytest collects {glob} (sample: {sample}) but is_test_file calls "
+            f"it a source file, so it would consume the lead lane's one-file "
+            f"budget"
+        )
+
+
+# ---------------------------------------------------------------------------
+# GI-006 / CT-014 / ST-008 / NFR-001 — report, terminal state, baseline.
+# ---------------------------------------------------------------------------
+
+
+def test_report_required_sections_is_the_eleven_gi_006_names_in_order() -> None:
+    """A TUPLE — GI-006 fixes the ORDER as well as the membership.
+
+    report.json's top-level keys are these plus generated_at and run, and
+    REPORT.md carries one `## ` heading per member in this sequence, so a
+    frozenset here would leave the order undefined at both surfaces.
+    """
+    assert vocab.REPORT_REQUIRED_SECTIONS == (
+        "verdict_matrix",
+        "defects_by_tier_and_status",
+        "latent_backlog",
+        "unknown_tier_defects",
+        "escalated_classes",
+        "lead_fix_records",
+        "inspect_modes_per_cycle",
+        "spend_per_phase_and_cycle",
+        "unreported_dispatches",
+        "executing_versions",
+        "baseline_comparison",
+    )
+    assert len(set(vocab.REPORT_REQUIRED_SECTIONS)) == 11, "no duplicate section"
+
+
+def test_run_artifact_filenames_and_the_halted_state() -> None:
+    assert vocab.SPEND_LEDGER_FILENAME == "spend.jsonl"
+    assert vocab.REPORT_MD_FILENAME == "REPORT.md"
+    assert vocab.REPORT_JSON_FILENAME == "report.json"
+    # ST-008 — a named terminal state reached by a SUCCESSFUL transition, and
+    # deliberately not "DONE".
+    assert vocab.RUN_PHASE_HALTED == "HALTED"
+    assert vocab.RUN_PHASE_HALTED != "DONE"
+
+
+def test_the_baseline_and_target_carry_nfr_001s_four_numbers() -> None:
+    """NFR-001 / AC-039 / OT-030 — 22 / 8 baseline, 12 / 3 target.
+
+    thunder-viper's archive cannot supply either baseline number: it executed
+    on the 4.7.3 cache, so its state.json cycle counter stayed at 0 for all 22
+    cycles and it wrote no inspect_modes. Recording them here is what lets
+    measure-run.py and the F6 report print the same two numbers.
+    """
+    assert vocab.THUNDER_VIPER_BASELINE == {
+        "run": "thunder-viper",
+        "grind_cycles": 22,
+        "post_verification_cycles": 8,
+    }
+    assert vocab.CONVERGENCE_TARGET == {
+        "grind_cycles": 12,
+        "post_verification_cycles": 3,
+    }
+    # The target must actually be an improvement, or "meets_target" is noise.
+    for key in ("grind_cycles", "post_verification_cycles"):
+        assert vocab.CONVERGENCE_TARGET[key] < vocab.THUNDER_VIPER_BASELINE[key]

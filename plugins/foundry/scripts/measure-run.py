@@ -35,6 +35,29 @@ by the server cycle counter), state.json (the recorded cycle), handoffs.jsonl
 (wall clock). cohort.json and context-at-f2.txt are cohort-study inputs no run
 writes; their absence is strict-gated, never a schema violation.
 
+THE CONVERGENCE COLUMNS (NFR-001 / AC-039 / OT-030 / FR-051)
+------------------------------------------------------------
+Five more columns say whether a run converged and at what cost:
+``defects_by_tier`` (LIVE / LATENT / unknown — an untiered pre-change record
+reads as unknown and never as LATENT), ``spend`` (tokens and minutes per phase
+and per cycle, from spend.jsonl), ``inspect_modes`` (FULL or DELTA per cycle,
+from state.json), ``escalation`` (the class census and its machine-readable
+exit reasons), and ``baseline_comparison`` (this run's numbers beside
+thunder-viper's 22 cycles / 8 post-verification and the <=12 / <=3 target).
+
+Three of those artifacts postdate thunder-viper, which executed on the 4.7.3
+cache: it has no escalation.json, no spend.jsonl and no ``inspect_modes``, and
+its cycle counter stayed at 0 for all 22 cycles. OT-030 nonetheless requires
+this command to read that archive without a traceback, so every column it
+cannot supply reports ``null`` — never 0, and never a failure token that would
+make the command exit nonzero on a healthy archive. The baseline's own two
+numbers are therefore READ FROM vocab.THUNDER_VIPER_BASELINE, not derived from
+the archive that cannot hold them.
+
+NFR-001 says the numbers are "the target, not a gate", and nothing in this
+paragraph reaches ``_compute_gate_verdicts`` or ``_exit_status``. Missing the
+convergence target is reported; it is never a refusal.
+
 ``cycles`` in the payload is a COUNT. The server's counter is 0-based, so the
 count is the final index + 1 — the conversion happens exactly once, in
 _extract_per_run. NFR-001 states grand-vulture's baseline as "18 cycles, 168
@@ -50,8 +73,16 @@ from typing import Any
 try:  # Installed (uvx/pip) case — package is already importable.
     from foundry_mcp.schemas.vocab import (
         CANONICAL_STREAM_IDS,
+        CONVERGENCE_TARGET,
+        DEFECT_TIER_OR_UNKNOWN,
+        ESCALATION_EXIT_REASONS,
+        ESCALATION_STATUSES,
+        INSPECT_MODES,
+        SPEND_LEDGER_FILENAME,
+        THUNDER_VIPER_BASELINE,
         canonical_defect_source,
         canonical_stream_id,
+        defect_tier,
     )
     from foundry_mcp.tools.foundry_state import read_json, read_text_file
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
@@ -60,8 +91,16 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         sys.path.insert(0, str(_SRC))
     from foundry_mcp.schemas.vocab import (
         CANONICAL_STREAM_IDS,
+        CONVERGENCE_TARGET,
+        DEFECT_TIER_OR_UNKNOWN,
+        ESCALATION_EXIT_REASONS,
+        ESCALATION_STATUSES,
+        INSPECT_MODES,
+        SPEND_LEDGER_FILENAME,
+        THUNDER_VIPER_BASELINE,
         canonical_defect_source,
         canonical_stream_id,
+        defect_tier,
     )
     from foundry_mcp.tools.foundry_state import read_json, read_text_file
 
@@ -135,14 +174,29 @@ class MeasureResult:
     disable_lever: str = ""
     wall_clock_regression_pct: float | None = None
     per_cycle_coverage: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
+    # NFR-001 / AC-039 / FR-051 columns. Each is None when the archive cannot
+    # supply it — see the section comment above _read_defects_by_tier for why
+    # that is not 0 and not a failure token. `baseline_comparison` is never
+    # None: its baseline and target come from vocab constants that are always
+    # available, and the current-run half carries its own None where needed.
+    defects_by_tier: dict[str, int] | None = None
+    spend: dict[str, Any] | None = None
+    inspect_modes: dict[str, Any] | None = None
+    escalation: dict[str, Any] | None = None
+    baseline_comparison: dict[str, Any] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
             "cohort_id": self.cohort_id, "cycles": self.cycles,
             "per_stream_defects": self.per_stream_defects,
+            "defects_by_tier": self.defects_by_tier,
             "per_cycle_coverage": self.per_cycle_coverage,
+            "inspect_modes": self.inspect_modes,
+            "escalation": self.escalation,
+            "spend": self.spend,
             "f2_context_pct": self.f2_context_pct,
             "wall_clock_seconds": self.wall_clock_seconds,
+            "baseline_comparison": self.baseline_comparison,
             "gate_verdicts": self.gate_verdicts,
             "failure_tokens": self.failure_tokens,
         }
@@ -370,6 +424,260 @@ def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
     return counts, fts
 
 
+# ---------------------------------------------------------------------------
+# NFR-001 / AC-039 / FR-051 — the convergence columns.
+#
+# STRUCTURALLY MISSING IS `None`, NEVER 0, AND NEVER A TOKEN.
+# ----------------------------------------------------------
+# Every reader below can be handed an archive that predates the artifact it
+# reads. thunder-viper is the case that matters: it executed on the 4.7.3
+# cache, so it has no escalation.json, no spend.jsonl and no `inspect_modes`,
+# and OT-030 requires this command to read it without a traceback. D-034 is the
+# precedent for how — the two cohort-study inputs no run writes report `None`
+# and emit no failure token, because "not measured" and "measured zero" are
+# different facts and only one of them is true. A zero here would put a real
+# number in a column the run never populated; a token here would make the
+# command exit 1 on a healthy archive, which is the over-firing calibration
+# D-034 already had to undo.
+#
+# `defects_by_tier` is the ONE exception, and deliberately: when defects.json
+# is readable, an untiered record is not unmeasured — FR-051 says it READS as
+# unknown. So the tier counts are real counts over a real ledger, and the
+# `unknown` column is where a pre-change archive's records land.
+# ---------------------------------------------------------------------------
+
+
+def _read_defects_by_tier(run_dir: Path) -> dict[str, int] | None:
+    """Count the defect ledger by evidence tier, or None when there is none.
+
+    A SECOND reader over defects.json rather than an extra return value from
+    ``_read_defects_per_stream``: that function's body is pinned by
+    ``test_the_defect_reader_uses_the_defect_source_resolver``, which inspects
+    its source for the resolver D-091 got wrong. Widening it would put an
+    unrelated axis inside a surface that exists to stay narrow, and these
+    ledgers are small local JSON (~340 KB at the observed ceiling), so the
+    second parse is not a cost worth trading that pin for.
+
+    Failure tokens are ``_read_defects_per_stream``'s to emit — this reader is
+    silent on the same malformed file rather than double-reporting it.
+
+    Every member of DEFECT_TIER_OR_UNKNOWN is always present, including zeros:
+    "0 LATENT defects in this run" is a measurement an operator needs to be
+    able to read, and omitting the key would make it indistinguishable from
+    the unmeasured case this function returns None for.
+    """
+    path = run_dir / "defects.json"
+    if not path.exists():
+        return None
+    data = _load_json(path)
+    if not isinstance(data, dict) or not isinstance(data.get("defects"), list):
+        return None
+    counts = dict.fromkeys(sorted(DEFECT_TIER_OR_UNKNOWN), 0)
+    for record in data["defects"]:
+        if isinstance(record, dict):
+            counts[defect_tier(record)] += 1
+    return counts
+
+
+def _read_spend(run_dir: Path) -> dict[str, Any] | None:
+    """Roll spend.jsonl up per phase and per cycle (CT-013), or None.
+
+    One JSON object per line: agent, phase, cycle, tokens, duration_ms,
+    recorded_at. Minutes are reported beside milliseconds because the question
+    an operator actually asks is "how long did F3 take", and asking them to
+    divide 34_620_000 by 60_000 in their head is how a column stops being read.
+
+    A malformed LINE is skipped rather than failing the read: the ledger is
+    append-only from many concurrent agents, so a torn final line is an
+    ordinary crash artifact and must not cost the other 84 records.
+    """
+    path = run_dir / SPEND_LEDGER_FILENAME
+    if not path.exists():
+        return None
+    text, problem = read_text_file(path)
+    if problem is not None:
+        return None
+
+    by_phase: dict[str, dict[str, Any]] = {}
+    by_cycle: dict[str, dict[str, Any]] = {}
+    total = _new_spend_bucket()
+    agents: set[str] = set()
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        tokens = _as_count(entry.get("tokens"))
+        duration_ms = _as_count(entry.get("duration_ms"))
+        phase = entry.get("phase")
+        cycle = entry.get("cycle")
+
+        buckets = [total]
+        if isinstance(phase, str) and phase:
+            buckets.append(by_phase.setdefault(phase, _new_spend_bucket()))
+        if isinstance(cycle, int) and not isinstance(cycle, bool) and cycle >= 0:
+            buckets.append(by_cycle.setdefault(str(cycle), _new_spend_bucket()))
+        for bucket in buckets:
+            bucket["tokens"] += tokens
+            bucket["duration_ms"] += duration_ms
+            bucket["agents"] += 1
+
+        agent = entry.get("agent")
+        if isinstance(agent, str) and agent:
+            agents.add(agent)
+
+    for bucket in (*by_phase.values(), *by_cycle.values(), total):
+        bucket["minutes"] = round(bucket["duration_ms"] / 60_000.0, 2)
+    total["distinct_agents"] = len(agents)
+    return {
+        "by_phase": {k: by_phase[k] for k in sorted(by_phase)},
+        "by_cycle": {k: by_cycle[k] for k in sorted(by_cycle, key=_cycle_sort_key)},
+        "total": total,
+    }
+
+
+def _new_spend_bucket() -> dict[str, Any]:
+    return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "agents": 0}
+
+
+def _as_count(value: Any) -> int:
+    """A non-negative int, or 0. Bools are not counts (``True`` is not 1 here)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _cycle_sort_key(raw: str) -> tuple[int, int | str]:
+    """Numeric order for cycle keys, with any non-numeric key sorted after."""
+    try:
+        return (0, int(raw))
+    except (TypeError, ValueError):
+        return (1, raw)
+
+
+def _read_inspect_modes(run_dir: Path) -> dict[str, Any] | None:
+    """Per-cycle INSPECT width from state.json's `inspect_modes` (GI-009).
+
+    The list is APPEND-ONLY and one cycle can appear twice — an F2 INSPECT and
+    a later F5 one both carry their own entry — so the map is keyed by cycle
+    with the LAST entry winning, which is the same "current decision is the
+    last entry" rule C-4 states. `post_verification_cycles` counts the distinct
+    cycles whose INSPECT was opened in F5: thunder-viper's REPORT.md records
+    that its build was verified at cycle 14 and cycles 15-22 were TEMPER
+    hardening, which is where the baseline's 8 comes from.
+    """
+    data = _load_json(run_dir / "state.json")
+    entries = data.get("inspect_modes") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return None
+
+    per_cycle: dict[str, dict[str, Any]] = {}
+    by_mode: dict[str, int] = dict.fromkeys(sorted(INSPECT_MODES), 0)
+    post_verification: set[int] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cycle = entry.get("cycle")
+        if isinstance(cycle, bool) or not isinstance(cycle, int):
+            continue
+        mode = entry.get("mode")
+        phase = entry.get("phase")
+        per_cycle[str(cycle)] = {
+            "phase": phase if isinstance(phase, str) else None,
+            "mode": mode if isinstance(mode, str) else None,
+            "rule": entry.get("rule") if isinstance(entry.get("rule"), str) else None,
+        }
+        if phase == "F5":
+            post_verification.add(cycle)
+    for decision in per_cycle.values():
+        if decision["mode"] in by_mode:
+            by_mode[decision["mode"]] += 1
+    return {
+        "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=_cycle_sort_key)},
+        "by_mode": by_mode,
+        "post_verification_cycles": len(post_verification),
+    }
+
+
+def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
+    """Escalated-class census from escalation.json (FR-028), or None.
+
+    Reads the machine-readable exit reason FR-028 requires: a class that left
+    ESCALATED did so either because it drew clean cycles or because its
+    structural-pass budget ran out, and "which" is the whole point of recording
+    it. A class with no `status` predates this release's fields and is counted
+    as ESCALATED — the state it was in when it was written.
+    """
+    data = _load_json(run_dir / "escalation.json")
+    classes = data.get("classes") if isinstance(data, dict) else None
+    if not isinstance(classes, dict):
+        return None
+
+    by_status = dict.fromkeys(sorted(ESCALATION_STATUSES), 0)
+    by_exit_reason = dict.fromkeys(sorted(ESCALATION_EXIT_REASONS), 0)
+    unknown_status = 0
+    for entry in classes.values():
+        if not isinstance(entry, dict):
+            continue
+        status = entry.get("status")
+        if not isinstance(status, str):
+            status = "ESCALATED"
+        if status in by_status:
+            by_status[status] += 1
+        else:
+            unknown_status += 1
+        reason = entry.get("exit_reason")
+        if isinstance(reason, str) and reason in by_exit_reason:
+            by_exit_reason[reason] += 1
+    return {
+        "classes": len(classes),
+        "by_status": by_status,
+        "by_exit_reason": by_exit_reason,
+        "unknown_status": unknown_status,
+    }
+
+
+def _baseline_comparison(
+    run_dir: Path, cycles: int, post_verification_cycles: int | None
+) -> dict[str, Any]:
+    """NFR-001 / AC-039 / OT-030 — this run's numbers beside thunder-viper's.
+
+    The baseline is READ from vocab, never re-typed here: OT-030 asks for 22
+    cycles and 8 post-verification cycles, and thunder-viper's own archive
+    cannot supply either (its cycle counter stayed at 0 and it wrote no
+    inspect_modes). Re-deriving them from its defect ledger would reproduce 22
+    today by coincidence and silently drift the moment a record moved.
+
+    NFR-001: "Numbers are the target, not a gate." Nothing here feeds
+    ``_compute_gate_verdicts`` or ``_exit_status`` — missing the target is
+    reported, never refused. `meets_target` is None for a number this archive
+    could not supply, because "did not meet" and "cannot say" are different
+    answers.
+    """
+    target_cycles = CONVERGENCE_TARGET["grind_cycles"]
+    target_post = CONVERGENCE_TARGET["post_verification_cycles"]
+    return {
+        "baseline": dict(THUNDER_VIPER_BASELINE),
+        "target": dict(CONVERGENCE_TARGET),
+        "current": {
+            "run": run_dir.name,
+            "grind_cycles": cycles,
+            "post_verification_cycles": post_verification_cycles,
+        },
+        "meets_target": {
+            "grind_cycles": cycles <= target_cycles,
+            "post_verification_cycles": (
+                None if post_verification_cycles is None
+                else post_verification_cycles <= target_post
+            ),
+        },
+    }
+
+
 def _read_context_pct(
     run_dir: Path, strict: bool, override: float | None = None
 ) -> tuple[float | None, list[str]]:
@@ -514,6 +822,18 @@ def _extract_per_run(
     r.cycles = final_index + 1; failure_tokens.extend(recf)
     per_stream, df = _read_defects_per_stream(run_dir)
     r.per_stream_defects = per_stream; failure_tokens.extend(df)
+    # The NFR-001 / AC-039 columns. None of them contributes a failure token or
+    # a gate verdict: they are the convergence REPORT, and NFR-001 states in as
+    # many words that the numbers are the target, not a gate.
+    r.defects_by_tier = _read_defects_by_tier(run_dir)
+    r.spend = _read_spend(run_dir)
+    r.inspect_modes = _read_inspect_modes(run_dir)
+    r.escalation = _read_escalation(run_dir)
+    r.baseline_comparison = _baseline_comparison(
+        run_dir,
+        r.cycles,
+        None if r.inspect_modes is None else r.inspect_modes["post_verification_cycles"],
+    )
     context_pct, ctxf = _read_context_pct(run_dir, strict, context_pct_override)
     r.f2_context_pct = context_pct; failure_tokens.extend(ctxf)
     if baseline_wall_clock is not None and baseline_wall_clock > 0:
