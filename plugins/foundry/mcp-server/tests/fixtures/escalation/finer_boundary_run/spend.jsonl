@@ -1,5 +1,5 @@
-{"agent": "casting-1", "phase": "cast", "cycle": 0, "tokens": 520000, "duration_ms": 1500000, "recorded_at": "2026-09-02T04:45:00+00:00"}
-{"agent": "casting-4", "phase": "cast", "cycle": 0, "tokens": 410000, "duration_ms": 1020000, "recorded_at": "2026-09-02T04:47:00+00:00"}
+{"agent": "casting-1", "phase": "F1", "cycle": 0, "tokens": 520000, "duration_ms": 1500000, "recorded_at": "2026-09-02T04:45:00+00:00"}
+{"agent": "casting-4", "phase": "F1", "cycle": 0, "tokens": 410000, "duration_ms": 1020000, "recorded_at": "2026-09-02T04:47:00+00:00"}
 {"agent": "trace", "phase": "F2", "cycle": 1, "tokens": 310000, "duration_ms": 900000, "recorded_at": "2026-09-02T05:20:00+00:00"}
 {"agent": "prove", "phase": "F2", "cycle": 1, "tokens": 670000, "duration_ms": 2100000, "recorded_at": "2026-09-02T05:35:00+00:00"}
-{"agent": "casting-2", "phase": "grind", "cycle": 2, "tokens": 610000, "duration_ms": 1800000, "recorded_at": "2026-09-02T06:05:00+00:00"}
+{"agent": "casting-2", "phase": "F3", "cycle": 2, "tokens": 610000, "duration_ms": 1800000, "recorded_at": "2026-09-02T06:05:00+00:00"}

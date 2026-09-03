@@ -291,6 +291,127 @@ def derive_cycle_count(run_dir: Path) -> dict:
     }
 
 
+def unreported_dispatch_pairs(
+    *,
+    dispatch_rows: list[dict],
+    stream_roster: dict[str, list[str]],
+    spend_rows: list[dict],
+    phase_of_dispatch: dict[str, str],
+    agent_id_of=None,
+) -> list[dict]:
+    """Every dispatched ``(agent, phase)`` with no spend line for THAT phase.
+
+    Returns a sorted ``[{"agent": str, "phase": str}]``, and never raises.
+
+    WHY THIS LIVES IN THE LEAF MODULE (D-047 / D-048)
+    -------------------------------------------------
+    Two surfaces answer this one question — ``Foundry-Next`` renders
+    ``foundry_orchestrator._unreported_dispatches`` and the F6 report renders
+    ``foundry_report._read_unreported_dispatches`` — and they had two
+    derivations of it. D-013 had already unified the agent-ID spelling between
+    them; what it unified was the WRONG rule, adopted verbatim on both sides so
+    that they agreed with each other while both disagreeing with FR-022.
+
+    So the rule is hosted once, HERE, for the reason ``derive_cycle_count``
+    is: this is the only module both readers already import, and it is
+    reachable from either without closing a cycle in the import graph. The
+    derivation needs ``json`` and ``pathlib`` and nothing else, so the leaf
+    contract at the top of this file holds unchanged — a caller that needs a
+    name from ``vocab``, or the dispatch-verb mapping ``foundry_orchestrator``
+    owns, reads it itself and passes it in.
+
+    THE TWO THINGS THE OLD RULE GOT WRONG
+    -------------------------------------
+    D-047 — the axis. The old clause was "an agent that reported spend in ANY
+    phase is a reported agent", so casting-3 dispatched at two phases and
+    accounted for at one of them appeared nowhere. FR-022 verbatim: "the report
+    shows N agents unreported per phase so the gap is visible". A pair is
+    unreported here when NO spend row carries that exact ``(agent, phase)``,
+    full stop; the agent-wide clause is gone.
+
+    D-048 — the vocabulary. That agent-wide clause was not a judgement call; it
+    was a workaround. ``spawns.log`` records the DISPATCH VERB (``cast``,
+    ``grind``) while ``Foundry-Spend``'s schema documents the phase as "e.g.
+    F1, F2, F3", so the exact pair could NEVER match for a teammate dispatch
+    and the fallback was the only clause that ever cleared one. Reconciling the
+    two vocabularies through ``phase_of_dispatch`` is what makes the exact test
+    the workable one, and it is also what stops ``by_phase`` growing a phantom
+    bucket keyed by a verb that is not a phase.
+
+    Args:
+        dispatch_rows: ``spawns.log`` rows. Each contributes ``(agent, phase)``
+            where the phase is the row's dispatch verb mapped through
+            ``phase_of_dispatch``. The agent id must be the one
+            ``foundry_spawn._agent_id_for_casting`` mints — pass rows already
+            carrying it under ``agent``, or hand in ``agent_id_of`` and let a
+            row supply its ``casting_id``. It is never re-spelled here: this
+            module imports nothing from the package, and a local copy of that
+            spelling is the exact drift D-013 closed.
+        stream_roster: ``{run phase id: [stream agent ids]}`` — the F2 streams
+            recorded in ``stream-rollup.json``, which appear in no
+            ``spawns.log`` row at all. Its keys are already run phase ids, so
+            they are NOT mapped.
+        spend_rows: ``spend.jsonl`` rows. A row clears exactly the
+            ``(agent, phase)`` it names.
+        phase_of_dispatch: ``{dispatch verb: run phase id}``, owned by
+            ``foundry_orchestrator`` and passed in. A verb the mapping does not
+            know is kept AS SPELLED rather than dropped: dropping it would hide
+            a dispatch, which is the under-reporting FR-022 exists to prevent,
+            while an oddly named bucket is a visible sign the mapping has gone
+            stale.
+        agent_id_of: optional callable turning a ``casting_id`` into an agent
+            id, for a caller handing over raw ``spawns.log`` rows. A row with
+            neither an ``agent`` key nor a resolvable ``casting_id`` is skipped
+            — there is no id to report it under.
+
+    ADVISORY, ALWAYS (AC-034). Nothing here refuses, and no gate reads the
+    result. An unreported dispatch is a gap in the MEASUREMENT, not a defect in
+    the build, and a run that could not reach DONE over a missed bookkeeping
+    call would teach the lead to stop measuring.
+    """
+    reported: set[tuple[str, str]] = set()
+    for row in spend_rows:
+        if not isinstance(row, dict):
+            continue
+        agent = row.get("agent")
+        phase = row.get("phase")
+        if isinstance(agent, str) and agent and isinstance(phase, str) and phase:
+            reported.add((agent, phase))
+
+    dispatched: set[tuple[str, str]] = set()
+    for row in dispatch_rows:
+        if not isinstance(row, dict):
+            continue
+        agent = row.get("agent") or row.get("agent_id")
+        if not agent and agent_id_of is not None:
+            casting_id = row.get("casting_id")
+            # ``bool`` is an ``int`` subclass, and ``casting-True`` is not an
+            # agent. The same guard the report's reader has always carried.
+            if not isinstance(casting_id, bool) and isinstance(
+                casting_id, (int, str)
+            ):
+                token = str(casting_id).strip()
+                if token:
+                    agent = agent_id_of(token)
+        verb = row.get("phase")
+        if not agent or not isinstance(verb, str) or not verb:
+            continue
+        dispatched.add((str(agent), phase_of_dispatch.get(verb, verb)))
+
+    for phase, agents in stream_roster.items():
+        if not isinstance(phase, str) or not phase:
+            continue
+        for agent in agents or []:
+            if isinstance(agent, str) and agent:
+                dispatched.add((agent, phase))
+
+    return [
+        {"agent": agent, "phase": phase}
+        for agent, phase in sorted(dispatched)
+        if (agent, phase) not in reported
+    ]
+
+
 def document_refusal(path: Path, problem: str) -> dict:
     """The house named refusal for an unreadable document, shaped ONCE.
 

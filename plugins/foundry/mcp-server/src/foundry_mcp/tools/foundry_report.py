@@ -66,6 +66,7 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
     read_jsonl,
     read_text_file,
+    unreported_dispatch_pairs,
 )
 
 # ---------------------------------------------------------------------------
@@ -508,7 +509,38 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
     teammate dispatches and nothing else; the F2 stream roster lives in
     `stream-rollup.json`, and a prover that ran and never reported spend
     appears in no spawn record at all.
+
+    D-047 / D-048 — THE RULE IS NOT DECIDED HERE ANY MORE.
+    ------------------------------------------------------
+    It moved to `foundry_state.unreported_dispatch_pairs`, which
+    `foundry_orchestrator._unreported_dispatches` calls too, so `Foundry-Next`
+    and the report cannot answer the same question two ways. D-013 had already
+    unified the agent-ID spelling between these two surfaces; what it unified
+    was the WRONG rule, adopted verbatim on both sides so that they agreed
+    with each other while both disagreed with FR-022:
+
+      * the axis (D-047) — "an agent that reported spend in ANY phase is a
+        reported agent" cleared every dispatch of that agent, so an agent
+        dispatched at two phases and accounted for at one appeared nowhere.
+        FR-022 wants the gap visible PER PHASE.
+      * the vocabulary (D-048) — that agent-wide clause was a workaround, not a
+        judgement. `spawns.log` records the dispatch VERB (`cast`, `grind`)
+        while `Foundry-Spend`'s schema documents the phase as "e.g. F1, F2,
+        F3", so the exact pair could never match a teammate dispatch and the
+        fallback was the only clause that ever cleared one — while `by_phase`
+        grew a bucket keyed `grind`, which is not a phase.
+
+    `DISPATCH_PHASE_TO_RUN_PHASE` is `foundry_orchestrator`'s constant, read
+    through a FUNCTION-LOCAL import for the reason the module comment gives:
+    that module imports this one, so a module-level import would close a cycle.
+    Read, never re-typed — a local copy of the mapping is the same drift in a
+    new place. Its absence degrades to "no mapping" rather than raising: the
+    verbs then pass through as spelled, which is the pre-fix rendering and a
+    visible sign the constant went missing, and this section refuses on nothing
+    (AC-034).
     """
+    from foundry_mcp.tools import foundry_orchestrator
+
     spawns, problem = read_jsonl(run_dir / SPAWNS_FILENAME)
     if problem is not None:
         return {}, problem
@@ -519,45 +551,7 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
     if problem is not None:
         return {}, problem
 
-    # D-013 — a spend record clears its agent on BOTH surfaces, whichever
-    # spelling of the phase it carries.
-    #
-    # `spawns.log` records `phase: "cast"` and `phase: "grind"`; the
-    # `Foundry-Spend` schema documents the phase as "e.g. F1, F2, F3"; the F2
-    # stream roster is keyed by wire id under a cycle bucket. Matching only on
-    # the exact `(agent, phase)` pair meant a lead who called Foundry-Spend
-    # with the documented spelling cleared NOTHING, and no spelling existed
-    # that cleared this section and Foundry-Next together.
-    #
-    # So the rule is `foundry_orchestrator._unreported_dispatches`'s rule,
-    # adopted verbatim rather than re-decided: an exact pair clears that pair,
-    # and an agent that reported spend in ANY phase is a reported agent. The
-    # section is advisory (AC-034), so the forgiving direction is the correct
-    # one — its job is to show a lead which agents were never accounted for,
-    # not to audit which phase they were accounted for under.
-    reported: set[tuple[str, str]] = set()
-    reported_agents: set[str] = set()
-    for entry in spend:
-        agent = entry.get("agent")
-        phase = entry.get("phase")
-        if not isinstance(agent, str) or not agent:
-            continue
-        reported_agents.add(agent)
-        if isinstance(phase, str) and phase:
-            reported.add((agent, phase))
-
-    dispatched: set[tuple[str, str]] = set()
-    for record in spawns:
-        casting_id = record.get("casting_id")
-        phase = record.get("phase")
-        # `bool` is an `int` subclass, and `casting-True` is not an agent.
-        if isinstance(casting_id, bool) or not isinstance(casting_id, (int, str)):
-            continue
-        token = str(casting_id).strip()
-        if not token or not isinstance(phase, str) or not phase:
-            continue
-        dispatched.add((_agent_id_for_casting(token), phase))
-
+    stream_roster: dict[str, list[str]] = {}
     cycles = rollup.get("cycles")
     if isinstance(cycles, dict):
         for bucket in cycles.values():
@@ -572,16 +566,32 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
                 # time the roll-up gains a field.
                 entry = bucket.get(stream)
                 if isinstance(entry, dict) and "records" in entry:
-                    dispatched.add((str(stream), "F2"))
+                    stream_roster.setdefault("F2", []).append(str(stream))
 
-    missing = sorted(
-        (agent, phase)
-        for agent, phase in dispatched
-        if (agent, phase) not in reported and agent not in reported_agents
+    dispatch_phases = getattr(
+        foundry_orchestrator, "DISPATCH_PHASE_TO_RUN_PHASE", {}
+    )
+    missing = unreported_dispatch_pairs(
+        dispatch_rows=spawns,
+        stream_roster=stream_roster,
+        spend_rows=spend,
+        phase_of_dispatch=dispatch_phases,
+        agent_id_of=_agent_id_for_casting,
+    )
+    # The DENOMINATOR comes from the same function with an empty spend ledger —
+    # "every pair, nothing cleared" — rather than from a second walk of
+    # `spawns.log` here. A count and a list that disagreed about what a
+    # dispatch IS is the shape this whole section keeps being fixed for.
+    dispatched = unreported_dispatch_pairs(
+        dispatch_rows=spawns,
+        stream_roster=stream_roster,
+        spend_rows=[],
+        phase_of_dispatch=dispatch_phases,
+        agent_id_of=_agent_id_for_casting,
     )
     by_phase: dict[str, list[str]] = {}
-    for agent, phase in missing:
-        by_phase.setdefault(phase, []).append(agent)
+    for row in missing:
+        by_phase.setdefault(row["phase"], []).append(row["agent"])
     return {
         "count": len(missing),
         "dispatched": len(dispatched),
@@ -589,7 +599,7 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
         "by_phase": {k: sorted(v) for k, v in sorted(by_phase.items())},
         "note": (
             "Advisory only. An agent listed here was dispatched and never "
-            "reported spend; no gate refuses on it (AC-034)."
+            "reported spend for THAT phase; no gate refuses on it (AC-034)."
         ),
     }, None
 

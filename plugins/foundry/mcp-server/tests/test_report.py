@@ -352,10 +352,19 @@ def test_lead_fix_records_lists_every_lead_fix_handoff(report_env):
     lead_fix record to handoffs.jsonl carrying the defect id, tier, file, line
     count and test, and the generated report lists it.'
 
-    Both records are listed, including the LATENT one whose file and line count
-    are null — GI-003 records a LATENT lead fix UNMEASURED, and a report that
-    dropped the row for want of a line count would hide exactly the fixes the
-    lane exists to permit."""
+    Both records carry the FULL field list, LATENT included.
+
+    D-046 — MEASURING AND RECORDING ARE DIFFERENT THINGS. This used to pin
+    `latent["file"] is None and latent["line_count"] is None`, on the reading
+    that a LATENT lead fix is "recorded unmeasured". GI-003's field list —
+    "the defect id, tier, file, line count and test" — carries no tier
+    carve-out, and AC-022 and OT-010 repeat it unchanged. What IS LIVE-only is
+    the lane ELIGIBILITY test (FR-046 / CT-006 / ST-004), which is a limit on
+    the numbers, not a reason to stop reading them. Conflating the two rendered
+    a blank file and line column for every LATENT lead fix, so a report reader
+    could not tell a deliberately unmeasured fix from a missing measurement."""
+    from foundry_mcp.schemas.vocab import LEAD_LANE_MAX_LINES
+
     _generate(report_env)
     section = _document(report_env)["lead_fix_records"]
     assert section["count"] == 2
@@ -366,13 +375,22 @@ def test_lead_fix_records_lists_every_lead_fix_handoff(report_env):
     assert live["tier"] == "LIVE"
     assert live["file"] == "src/foundry_mcp/tools/evidence.py"
     assert live["line_count"] == 11
+    assert live["line_count"] <= LEAD_LANE_MAX_LINES, "a LIVE lead fix is bounded"
     assert live["test"].startswith("tests/test_evidence.py::")
     assert live["fix_commit"]
 
     latent = by_defect["D-003"]
     assert latent["tier"] == "LATENT"
-    assert latent["file"] is None and latent["line_count"] is None
+    assert latent["file"] == "src/foundry_mcp/tools/foundry_report.py"
+    assert latent["line_count"] == 64
+    # And the lane limit did not fire on the way in: the fixture's LATENT lead
+    # fix is three times the size a LIVE one may be, and it was still recorded.
+    # LATENT of ANY size is lane-eligible, so no line count can refuse it.
+    assert latent["line_count"] > LEAD_LANE_MAX_LINES
     assert latent["test"] and latent["fix_commit"]
+    # Neither row is missing a field the other has. The report cannot show a
+    # measurement it was never handed, so the field list is asserted as a SET.
+    assert set(live) == set(latent), sorted(set(live) ^ set(latent))
 
 
 def test_the_lead_fix_event_token_is_read_from_vocab_not_typed(report_env):
@@ -452,18 +470,47 @@ def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
     The 'no gate refuses' half is asserted structurally: generation succeeds
     with unreported dispatches present, and `report_status` — the read the DONE
     gate actually makes — reports the report complete. An unreported dispatch
-    is a gap in the MEASUREMENT, not a defect in the build."""
+    is a gap in the MEASUREMENT, not a defect in the build.
+
+    D-048 — EVERY BUCKET KEY IS A PHASE. `spawns.log` records the dispatch VERB
+    (`cast`, `grind`); `Foundry-Spend`'s schema documents the phase as "e.g.
+    F1, F2, F3", and the fixture's own `state.json.spend.by_phase` is keyed
+    F1/F2/F3. This section used to bucket under `cast` and `grind`, so the
+    report carried two keys that are not phases and could not be lined up
+    against the roll-up beside them."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
     _generate(report_env)
     section = _document(report_env)["unreported_dispatches"]
 
     # casting-8 was dispatched in CAST and casting-5 in GRIND with no spend
     # line; `test` and `research_audit` ran as F2 streams and reported none.
-    assert "casting-8" in section["by_phase"]["cast"]
-    assert "casting-5" in section["by_phase"]["grind"]
+    cast_phase = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
+    grind_phase = DISPATCH_PHASE_TO_RUN_PHASE["grind"]
+    assert "casting-8" in section["by_phase"][cast_phase]
+    assert "casting-5" in section["by_phase"][grind_phase]
     assert {"test", "research_audit"} <= set(section["by_phase"]["F2"])
     # And the agents that DID report are not listed.
-    assert "casting-1" not in section["by_phase"].get("cast", [])
+    assert "casting-1" not in section["by_phase"].get(cast_phase, [])
     assert "prove" not in section["by_phase"].get("F2", [])
+    # No key is a dispatch verb. That is the whole of D-048 as one assertion.
+    assert not set(section["by_phase"]) & set(DISPATCH_PHASE_TO_RUN_PHASE), (
+        sorted(section["by_phase"])
+    )
+
+    # The DERIVED count agrees with the roll-up the run RECORDED beside it.
+    # `foundry_orchestrator._overlay_unreported` writes the derived number onto
+    # the C-4 buckets, so on a real run these two cannot part; pinning them
+    # against each other rather than each against a literal is what stops this
+    # section drifting away from the state.json a lead reads next to it. (The
+    # fixture carried 4 against a derivation of 5 — the F2 roster names five
+    # streams and the spend ledger accounts for two — which no assertion here
+    # was looking at.)
+    rollup = _read_json(report_env, "state.json")["spend"]
+    assert section["count"] == rollup["total"]["unreported"]
+    assert section["count"] == sum(
+        bucket["unreported"] for bucket in rollup["by_phase"].values()
+    )
 
     assert report_status(report_env)["present"] is True
     assert report_status(report_env)["missing_sections"] == []
@@ -504,33 +551,39 @@ def test_a_live_spawn_row_is_keyed_by_the_canonical_spelling(report_env):
     )
     (report_env / SPEND_LEDGER_FILENAME).write_text("", encoding="utf-8")
 
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
     _generate(report_env)
     section = _document(report_env)["unreported_dispatches"]
+    cast_phase = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
     assert _agent_id_for_casting(9) == "casting-9"
-    assert section["by_phase"]["cast"] == ["casting-9"]
-    assert "9" not in section["by_phase"]["cast"], (
+    assert section["by_phase"][cast_phase] == ["casting-9"]
+    assert "9" not in section["by_phase"][cast_phase], (
         "the bare casting_id is the OTHER surface's old spelling"
     )
 
 
-def test_one_spend_call_clears_the_agent_whatever_phase_it_names(report_env):
-    """D-013's operator-visible half. `spawns.log` records `phase: "cast"`; the
-    `Foundry-Spend` schema documents the phase as "e.g. F1, F2, F3". Matching
-    on the exact pair meant a lead who used the documented spelling cleared
-    NOTHING and no spelling existed that cleared this section and Foundry-Next
-    together.
+def test_the_documented_spend_phase_clears_the_dispatch_verb_it_maps_to(report_env):
+    """D-048. `spawns.log` records `phase: "cast"`; the `Foundry-Spend` schema
+    documents the phase as "e.g. F1, F2, F3". The exact `(agent, phase)` pair
+    could therefore NEVER match a teammate dispatch, and D-013's agent-wide
+    fallback — "an agent that reported spend in ANY phase is a reported agent"
+    — was the only clause that ever cleared one.
 
-    The rule adopted is `foundry_orchestrator._unreported_dispatches`'s own —
-    an agent that reported spend in ANY phase is a reported agent — taken
-    rather than re-decided, because agreeing with the other surface is the
-    whole point of the fix."""
+    That fallback is gone (see the test below), so this property now rests on
+    the thing that should always have carried it: the two vocabularies are
+    reconciled through `DISPATCH_PHASE_TO_RUN_PHASE`, and a lead who spends the
+    documented spelling clears the dispatch it names."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
     (report_env / "spawns.log").write_text(
         json.dumps({"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 9,
                     "phase": "cast"}) + "\n",
         encoding="utf-8",
     )
     (report_env / SPEND_LEDGER_FILENAME).write_text(
-        json.dumps({"agent": "casting-9", "phase": "F1", "cycle": 0,
+        json.dumps({"agent": "casting-9",
+                    "phase": DISPATCH_PHASE_TO_RUN_PHASE["cast"], "cycle": 0,
                     "tokens": 1000, "duration_ms": 60000,
                     "recorded_at": "2026-09-03T01:00:00+00:00"}) + "\n",
         encoding="utf-8",
@@ -539,11 +592,99 @@ def test_one_spend_call_clears_the_agent_whatever_phase_it_names(report_env):
     section = _document(report_env)["unreported_dispatches"]
     named = {a for agents in section["by_phase"].values() for a in agents}
     assert "casting-9" not in named, (
-        "one Foundry-Spend call, whatever phase it named, clears the agent"
+        "the documented spend spelling clears the dispatch verb it maps to"
     )
     # The F2 stream roster in stream-rollup.json still contributes its own
     # unreported agents; this is about casting-9 and nothing else.
     assert named, "the fixture's F2 roster is untouched by this test"
+
+
+def test_a_gap_at_one_phase_is_visible_though_the_agent_reported_at_another(
+    report_env,
+):
+    """D-047 / FR-022 verbatim: 'the report shows N agents unreported per phase
+    so the gap is visible.'
+
+    The old clause cleared an agent EVERYWHERE once it reported spend anywhere,
+    so casting-9 dispatched at two phases and accounted for at one of them
+    appeared nowhere at all — the per-phase gap the requirement names was the
+    one thing the section could not show. A pair is unreported when no spend
+    row carries that exact `(agent, phase)`, and nothing else clears it."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
+    (report_env / "spawns.log").write_text(
+        json.dumps({"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 9,
+                    "phase": "cast"}) + "\n"
+        + json.dumps({"timestamp": "2026-09-03T04:10:00+00:00", "casting_id": 9,
+                      "phase": "grind"}) + "\n",
+        encoding="utf-8",
+    )
+    (report_env / SPEND_LEDGER_FILENAME).write_text(
+        json.dumps({"agent": "casting-9",
+                    "phase": DISPATCH_PHASE_TO_RUN_PHASE["cast"], "cycle": 0,
+                    "tokens": 1000, "duration_ms": 60000,
+                    "recorded_at": "2026-09-03T01:00:00+00:00"}) + "\n",
+        encoding="utf-8",
+    )
+    _generate(report_env)
+    section = _document(report_env)["unreported_dispatches"]
+    cast_phase = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
+    grind_phase = DISPATCH_PHASE_TO_RUN_PHASE["grind"]
+    assert "casting-9" not in section["by_phase"].get(cast_phase, []), (
+        "the phase it DID account for is clear"
+    )
+    assert "casting-9" in section["by_phase"][grind_phase], (
+        "the phase it did NOT account for is the gap FR-022 wants visible"
+    )
+
+
+def test_the_unreported_rule_is_hosted_once_in_the_leaf_module(report_env):
+    """D-047 / D-048's falsifier, and the reason the rule moved at all.
+
+    `Foundry-Next` and the report had two derivations of one question. D-013
+    unified the agent-ID spelling between them and left the RULE duplicated, so
+    the two surfaces agreed with each other while both disagreed with FR-022 —
+    and the next fix had to be applied twice or they would part again.
+
+    The rule now lives in `foundry_state.unreported_dispatch_pairs`, the leaf
+    module both readers already import, and this asserts the report really
+    delegates: feed the helper the same three inputs the report reads and the
+    answers are identical, pair for pair."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting as spelling
+    from foundry_mcp.tools.foundry_state import (
+        read_document,
+        read_jsonl,
+        unreported_dispatch_pairs,
+    )
+
+    _generate(report_env)
+    section = _document(report_env)["unreported_dispatches"]
+    from_report = {
+        (agent, phase)
+        for phase, agents in section["by_phase"].items()
+        for agent in agents
+    }
+
+    spawns, _ = read_jsonl(report_env / "spawns.log")
+    spend, _ = read_jsonl(report_env / SPEND_LEDGER_FILENAME)
+    rollup, _ = read_document(report_env / "stream-rollup.json")
+    roster: dict[str, list[str]] = {}
+    for bucket in rollup["cycles"].values():
+        for stream, entry in bucket.items():
+            if isinstance(entry, dict) and "records" in entry:
+                roster.setdefault("F2", []).append(stream)
+    from_helper = {
+        (row["agent"], row["phase"])
+        for row in unreported_dispatch_pairs(
+            dispatch_rows=spawns,
+            stream_roster=roster,
+            spend_rows=spend,
+            phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
+            agent_id_of=spelling,
+        )
+    }
+    assert from_report == from_helper, sorted(from_report ^ from_helper)
 
 
 def test_the_report_and_foundry_next_name_the_same_unreported_agents(report_env):
@@ -1085,7 +1226,15 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
         if node in tree.body:
             continue
         nested |= _imported(node)
-    assert nested == {"foundry_mcp.tools.foundry_spawn"}, sorted(nested)
+    # `foundry_mcp.tools` is `from foundry_mcp.tools import foundry_orchestrator`
+    # — the D-047/D-048 read of `DISPATCH_PHASE_TO_RUN_PHASE`. It is the second
+    # body-level import and it is body-level for the SAME reason as the first:
+    # `foundry_orchestrator` imports this module, so naming it at module level
+    # is the cycle the rule above is actually about.
+    assert nested == {
+        "foundry_mcp.tools",
+        "foundry_mcp.tools.foundry_spawn",
+    }, sorted(nested)
 
 
 def test_the_lazy_spawn_import_works_from_a_cold_interpreter():

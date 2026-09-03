@@ -4,7 +4,6 @@
 # evidence-timeout: 300
 
 
-
 === report.json top-level keys ===
   generated_at
   run
@@ -44,7 +43,7 @@
   FALSE_DOCUMENTED_CONTRACT  status=CLEARED  exit_reason=budget  cleared_at_cycle=4  packets=2  open_latent=['D-004', 'D-005']
 === lead_fix records (AC-022) ===
   D-002  tier=LIVE  file=src/foundry_mcp/tools/evidence.py  lines=11  test=tests/test_evidence.py::test_the_sweep_reports_elapsed_per_log
-  D-003  tier=LATENT  file=None  lines=None  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
+  D-003  tier=LATENT  file=src/foundry_mcp/tools/foundry_report.py  lines=64  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
 === INSPECT mode per cycle (AC-036) ===
   cycle 1  F2    FULL  first_of_phase
   cycle 2  F2    DELTA delta
@@ -52,14 +51,14 @@
   cycle 4  F2    FULL  verifier_touched
   cycle 5  F5    FULL  final_gate
 === spend: tokens and minutes only, no money (NFR-002) ===
+  phase F1    tokens=930000    minutes=42.0
   phase F2    tokens=980000    minutes=50.0
-  phase cast  tokens=930000    minutes=42.0
-  phase grind tokens=610000    minutes=30.0
+  phase F3    tokens=610000    minutes=30.0
   run   total tokens=2520000   minutes=122.0
 === unreported dispatches, advisory only (AC-034) ===
+  F1     ['casting-8']
   F2     ['research_audit', 'test', 'test01']
-  cast   ['casting-8']
-  grind  ['casting-5']
+  F3     ['casting-5']
 === baseline comparison (AC-036) ===
   baseline thunder-viper: grind=22 post_verification=8
   target: grind=12 post_verification=3
@@ -67,4 +66,4 @@
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
-1 passed, 59 deselected in 0.11s
+1 passed, 61 deselected in 1.15s
