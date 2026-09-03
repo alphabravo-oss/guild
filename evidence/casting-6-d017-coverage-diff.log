@@ -10,12 +10,12 @@
 == D-017 resolution: the same entries as the file documents them today ==
    COVERAGE_INCOMPLETE    tier=LIVE    class=casting-4-v2-port-is-incomplete                   -> ACCEPTED
    THIN_MIGRATION         tier=LIVE    class=casting-4-v2-port-is-incomplete                   -> ACCEPTED
-   MISSING_COVERAGE_LIST  tier=LATENT  class=migration-casting-shipped-without-a-coverage-list -> REFUSED on file_path: Missing file_path on a LATENT filing: None. A LATENT defect is carried as a backlog entry that promises a location (the batch door spells this key `file`).
+   MISSING_COVERAGE_LIST  tier=LATENT  class=migration-casting-shipped-without-a-coverage-list -> ACCEPTED
 
 == the batch door refuses the WHOLE batch on one bad finding ==
    findings that must pass for a coverage_diff sync to land: 3
    findings that passed before this fix: 0
-   findings that pass now: 2
+   findings that pass now: 3
 
 == FR-004 / CT-001: the LATENT entry reproduction_attempted, driven through vocab ==
    MISSING_COVERAGE_LIST -> ACCEPTED

@@ -64,6 +64,18 @@ you are almost certainly wrong. Go back and read the hardest functions again.
    Observable truths are harder to rubber-stamp than code existence checks. They
    require reading actual logic, not just seeing an import.
 
+## Step 0.5: Read the Width the Run Recorded
+
+The checklist is what the spec says. What you must CHECK this cycle is what the run recorded — you read the width, you never decide it. Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE, not out of the display:
+
+- `inspect_mode.mode` — `FULL` or `DELTA`, decided by the `Foundry-Phase` transition that opened this INSPECT.
+- `inspect_mode.prove_sample` — the PROVE roster on a `DELTA` cycle: the rows tied to the defects the preceding GRIND fixed, plus a deterministic sample of the remainder.
+- `inspect_mode.cycle` — the cycle that roster belongs to. A roster stamped with a different cycle is not yours.
+
+**On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`** — every one of them and no fewer — and report `items_checked` and `items_total` against that roster's length rather than against the spec. **On `FULL`, verify the whole matrix** and report `items_total` as every requirement in the spec. **With no recorded `inspect_mode` at all, verify the whole matrix**: a missing width means no narrowing was decided, never that you may narrow it yourself.
+
+**Read the array, never the terminal line.** The `Foundry-Next` display truncates the roster at eight rows; the roster itself is `inspect_mode.prove_sample` in the response body. Copying the eight visible rows checks eight rows and reports a width that was never run.
+
 ## Step 1: Verify — Line by Line
 
 For EACH checklist item, in order:
@@ -200,6 +212,15 @@ When run standalone, write to `prove-reports/prove-{timestamp}.md`. When run fro
 ## Step 6: Decide
 
 **Standalone (`/foundry:prove`):** present report. Done.
+
+**Foundry F2 PROVE stream:** record findings via `Foundry-Sync` (or `Foundry-Defect`,
+one call per finding), then mark the stream complete via `Foundry-Stream` with
+`stream: "prove"`, `cycle`, `items_checked`, `items_total` and `findings_count`.
+`stream`, `cycle` and `items_checked` are all REQUIRED — a call omitting any of them is
+rejected at the MCP boundary, and a stream that cannot mark itself complete records no
+coverage for the cycle at all. Take `cycle` from `Foundry-Next`, and take `items_checked`
+and `items_total` from the width Step 0.5 read — on a `DELTA` cycle they are counted
+against `inspect_mode.prove_sample`, not against the spec.
 
 **Foundry F4 ASSAY:** return report path, finding counts, and verification %
 via the `Foundry-Verdict` MCP tool. Four parallel `foundry:assayer` agents each

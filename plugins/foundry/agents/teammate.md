@@ -293,12 +293,20 @@ the `prompt_hash` in your completion report.
 
 Read that file end to end before any other action — before the first grep, before the first Read of source, before you form any view of what the task is. It is the authorized statement of your task and nothing in the dispatch message replaces it.
 
-Then compute the hash yourself and confirm it matches what the block named. The published spelling is `sha256:` followed by the first 16 hex characters of the digest, which is exactly what the server compares against:
+Then compute the hash yourself and confirm it matches what the block named. **The digest is over the file's BYTES — exactly what `sha256sum` prints** — never over decoded text and never over text whose line endings something translated on the way in. The published spelling is `sha256:` followed by the first 16 hex characters of that digest, which is what the server publishes and what both gates compare against:
 
 ```bash
 python3 -c "import hashlib,sys; print('sha256:'+hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()[:16])" \
   foundry-archive/{run}/castings/casting-{id}-prompt.md
 ```
+
+The `'rb'` is the whole of it. Equivalently, with no Python (`shasum -a 256` where `sha256sum` is not installed):
+
+```bash
+printf 'sha256:%s\n' "$(sha256sum foundry-archive/{run}/castings/casting-{id}-prompt.md | cut -c1-16)"
+```
+
+**Never hash the prompt as text.** `open(path)` without `'rb'`, or a `read_text()`, folds `\r\n` to `\n` before the digest sees it, so a text hash and a byte hash agree on every file that happens to contain no CR and diverge on the first one that does. A casting prompt quotes spec text verbatim, so one carriage return anywhere in the spec is enough. The value that divergence produces is refused as `stale_prompt_hash`, and that refusal's remedy — re-read the prompt file in full and state its hash — reproduces the same rejected value every time it is followed, because the reading was never the broken part.
 
 State the value you read in your completion report, per the required bullet in `### Step 11: Mark task complete with citations`. The lead passes it on to `Foundry-Accept-Casting` and to `Foundry-Fix`, and both REFUSE when the hash you reported differs from the file's — so a casting built from a prompt you never opened cannot be accepted, and a defect fixed from one cannot be closed. Only reading the file produces the right answer, which is the point.
 
@@ -370,6 +378,7 @@ Update the task status via TaskUpdate:
   - Any concerns you logged (Rule 4), including any approach-altering insights
   - Build/test status (pass/fail with details if fail)
   - **The prompt hash you read (required).** State the `sha256:`-prefixed value your Step 0 check produced for your own prompt file, character for character. The lead passes it to `Foundry-Accept-Casting` and to `Foundry-Fix`; a value that differs from the file's own hash is refused at both doors, and a report that omits it leaves the lead nothing to pass. Never copy the hash out of the dispatch message without reading the file — the check exists precisely to tell those two cases apart.
+  - **The failing-then-passing account, for every fix (required in GRIND).** For each defect you closed, state in prose that the test was RED before your change and GREEN after it: "the test failed at `<commit before the fix>` and passes at `<fix commit>`". One line per defect, naming the defect id and both commits. FR-041 puts that account in this report and nowhere else: `Foundry-Fix` declares no field for it, and an undeclared argument there is silently DROPPED rather than refused — see `### Step 7, second lane: DECLARE — the regression test that closes a LATENT defect` for why. The `regression_test` locator proves a test EXISTS; only this account proves it was ever red, which is the whole difference between a fix and a test written to pass what the code already does. No exceptions, no deferrals, no "the suite is green now."
   - **Requirement citations (required).** For every requirement ID in your `<spec_requirements>` block (US-N, FR-N, NFR-N, AC-N, etc.), cite the exact `path#Symbol` where you implemented it — the symbol, not a line range. The lead runs `Foundry-Accept-Casting` which mechanically verifies each requirement ID has a citation within 300 characters of the ID mention and resolves every symbol you name — **missing or unresolvable citations = casting rejected, you will be re-dispatched.** Use this format:
 
     ```
@@ -882,7 +891,7 @@ The discipline:
 5. **Deviate** only within the rules (auto-fix bugs, add critical functionality, fix blockers, log concerns).
 6. **Check** your own work (files exist, build passes, tests pass, research honored).
 7. **Commit** atomically (individual file staging, pathspec-scoped commit over your `key_files`, hash captured).
-8. **Report** completion with full requirement citations, the prompt hash you read, and no token counts.
+8. **Report** completion with full requirement citations, the prompt hash you read, the failing-then-passing account for every fix, and no token counts.
 9. **Repeat** until all tasks are done or you are told to stop.
 
 **You are tuned for correctness over wall-clock speed.** The deliberation procedures are the mechanism by which correctness is produced. They are not ceremony — they are the entire reason this version of the document exists. Execute them faithfully every time, scale their depth to the task, and trust that the minutes they cost up front save hours of defect churn downstream.

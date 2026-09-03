@@ -60,12 +60,16 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from foundry_mcp.schemas import vocab
+from foundry_mcp.tools import foundry as foundry_doors
+from foundry_mcp.tools import foundry_handoff
 from foundry_mcp.tools import foundry_orchestrator as orch
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
@@ -5216,4 +5220,480 @@ def test_a_back_referencing_target_kind_rule_has_its_antecedent(path: Path) -> N
         f"{_rel(path)}'s comment-prose bullet sits BELOW the `target_kind` rule "
         f"that says {refs}. 'The split above' is a direction, and a reader who "
         f"looks up and finds the wrong rule does not keep looking."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-099 -- the shape a surface DOCUMENTS must survive the door it names
+# ---------------------------------------------------------------------------
+#
+# Every pin above this one asks whether a filing surface SAYS the right thing.
+# None of them asks whether the JSON it hands a stream to copy is a filing the
+# doors would accept. That is a different question and it has a different
+# failure mode: the reader who copies the shape never reads the prose beside
+# it, so a shape and a rung can disagree indefinitely while every substring
+# assertion in this module stays green.
+#
+# Driven, at the moment D-099 was filed: five of the six documented
+# `"tier": "LATENT"` examples -- agents/assayer.md, agents/tracer.md,
+# agents/flow-tracer.md, agents/coverage-diff.md and skills/sight/SKILL.md --
+# were REFUSED by ``validate_defect_filing`` naming field `file_path`, because
+# none carried a `file` key. Only agents/research-auditor.md's was accepted. A
+# stream copying the shape its own instructions ship met a refusal naming a
+# field those instructions never mentioned, and had nothing to read to recover.
+# That is D-017's shape exactly: the shape a stream copies is what the door
+# then refuses.
+#
+# The assertion is a DERIVATION over the real validator rather than a list of
+# required keys re-typed here. A key list would have to be re-decided every
+# time a rung moves -- and a rung moving is precisely the event that breaks the
+# examples, so re-typing it would put the bug and its check on the same side of
+# the change.
+
+
+#: The derived tier this sweep selects on. ``vocab.py`` exports the closed SET
+#: and no per-member name, so the member is spelled here once and immediately
+#: checked back against the set -- a rename in vocab fails on the next line
+#: rather than silently emptying every sweep below it.
+_LATENT = "LATENT"
+assert _LATENT in vocab.DEFECT_TIERS, (
+    f"{_LATENT!r} is no longer a member of vocab.DEFECT_TIERS "
+    f"({sorted(vocab.DEFECT_TIERS)}). Every LATENT sweep in this module "
+    f"selects on it and would go silently empty; re-spell it here and in the "
+    f"prose the pins below read."
+)
+
+
+def _documented_latent_examples(path: Path) -> list[dict]:
+    """Every `tier: LATENT` record a surface's normative JSON examples ship."""
+    try:
+        records = _example_records(path)
+    except (json.JSONDecodeError, AssertionError):
+        return []
+    return [r for r in records if r.get("tier") == _LATENT]
+
+
+def test_the_latent_example_sweep_is_not_vacuous() -> None:
+    """Floor check: a sweep that finds no examples asserts nothing.
+
+    The parametrised check below passes trivially on a surface that documents
+    no LATENT example at all, which is correct -- prove, trace, temper and
+    teammate state the tier obligations without shipping a `defects` array. It
+    also means the whole sweep could go silently empty if every stream agent
+    lost its LATENT example in one edit. This is the floor that fails first.
+    """
+    carriers = {
+        _rel(p) for p in DEFECT_FILING_SURFACES if _documented_latent_examples(p)
+    }
+    missing = sorted({_rel(p) for p in STREAM_AGENTS} - carriers)
+    assert not missing, (
+        f"{missing} document no `tier`: {_LATENT!r} example any "
+        f"more. D3 requires at least one entry in each stream agent's report "
+        f"shape showing the LATENT tier beside its `reproduction_attempted` "
+        f"string -- without it a stream has read the rule and never seen the "
+        f"shape, and the sweep below has nothing to drive."
+    )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_every_documented_latent_example_survives_the_filing_door(path: Path) -> None:
+    """D-099 / CT-001 / CT-002: the documented shape is an ACCEPTED filing.
+
+    ``validate_defect_filing`` is the one place both doors decide, so driving
+    the examples through it drives them through ``Foundry-Defect`` and
+    ``Foundry-Sync`` at once -- which is the point, because a shape accepted at
+    one door and refused at the other is worse than a shape refused at both.
+    """
+    for record in _documented_latent_examples(path):
+        refusal = foundry_doors.validate_defect_filing(record)
+        assert refusal is None, {
+            "file": _rel(path),
+            "why": (
+                "this surface documents a LATENT filing shape that the shared "
+                "filing validator REFUSES. A stream that copies its own "
+                "instructions' example meets a refusal naming a field those "
+                "instructions never taught it, and the refusal text is the "
+                "first it hears of the rung. Fix the EXAMPLE (or the rung), "
+                "never this assertion."
+            ),
+            "refused_field": refusal.get("field") if refusal else None,
+            "refusal": refusal,
+            "example_keys": sorted(record),
+        }
+
+
+#: FR-004's location clause, word-identical across the four stream agents. Not
+#: folded into ``_TIER_RULE_CLAUSES`` and not placed inside the shared tier
+#: span, because that span is shared with agents/coverage-diff.md and
+#: skills/sight/SKILL.md, whose own report shapes this rule does not describe.
+_LATENT_LOCATION_RULE = (
+    "- **Name a location on every `LATENT` filing.** A `LATENT` record is carried "
+    "into the report's LATENT backlog as a promise that a later cycle can go and "
+    "drive it, and a row carrying a description and no path is a promise nothing "
+    "can collect."
+)
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_asks_for_a_location_on_a_latent_filing(path: Path) -> None:
+    """D-099: expected, and said to be expected rather than refused.
+
+    The rung that DEMANDED a location was removed deliberately -- a LATENT
+    filing that genuinely cannot be located is better recorded unlocated than
+    re-worded until it claims a path the stream never had. That makes the
+    location a matter of prose, and prose is exactly what the report's backlog
+    quality now rests on. Asserted as one exact sentence across all four files
+    so a three-of-four edit fails, in the discipline
+    ``test_stream_agents_share_one_tier_rule_verbatim`` holds for the rule above
+    it.
+    """
+    assert _LATENT_LOCATION_RULE in _flat(path), (
+        f"{_rel(path)} no longer tells its stream to name a location on a "
+        f"LATENT filing. The doors do not refuse one without it, so nothing "
+        f"else will catch the omission -- it surfaces as a backlog row a later "
+        f"cycle cannot open, one cycle after the stream that could have "
+        f"located it has finished."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_the_location_rule_says_expected_rather_than_required(path: Path) -> None:
+    """D-099's reversal, pinned so it cannot be re-tightened by accident.
+
+    An earlier ruling made `file_path` a rung on the LATENT lane and this rule
+    is what replaced it. Written as a hard requirement the prose would promise
+    a refusal that does not happen, which is the FALSE_DOCUMENTED_CONTRACT
+    class in the other direction -- a stream that reads "required" and cannot
+    locate its finding either files a fabricated path or files nothing.
+    """
+    flat = _flat(path)
+    assert "This one is EXPECTED rather than refused" in flat, (
+        f"{_rel(path)}'s LATENT-location rule no longer says the doors ACCEPT "
+        f"a filing without one. A rule that reads as a rung promises a refusal "
+        f"the server does not issue."
+    )
+    assert "renders that row as unlocated" in flat, (
+        f"{_rel(path)} no longer says what the report does with an unlocated "
+        f"LATENT row. Unstated, 'expected but not refused' reads as 'ignored', "
+        f"and the reason to supply the path disappears with it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-104 / AC-018 / GI-008 -- the recorded PROVE width reaches the stream
+# ---------------------------------------------------------------------------
+#
+# The DELTA roster was computed, recorded, returned and DISPLAYED, and never
+# reached the one agent it scopes. ``_prove_delta_sample`` drew the rows,
+# ``inspect_start`` persisted them as ``prove_sample``, ``foundry_next_action``
+# returned them and display.py rendered "PROVE: N row(s)". The consumer side
+# was silent: agents/assayer.md -- which commands/start.md names as the PROVE
+# agent -- mentioned neither the roster, nor the DELTA width, nor Foundry-Next
+# as somewhere a width is read from, so a DELTA INSPECT still cost a
+# full-width PROVE and AC-018's saving was unrealised on the guided path.
+#
+# start.md states the principle this pin enforces, about the observation split,
+# the tier rule and the progress ledger alike: each reaches the streams
+# "through their own files rather than through anything you paste, so it is in
+# force on a fresh checkout". The roster was the one stream-facing rule written
+# into no agent file, reachable only if the lead remembered to paste it.
+#
+# Both surfaces are pinned because both are load-bearing and neither implies
+# the other: the agent file is what the F2 spawn loads, and the skill is what
+# `/foundry:prove` runs.
+
+_PROVE_WIDTH_SURFACES = (ASSAYER, PROVE_SKILL)
+
+#: One claim per entry, with the failure its absence causes. Word-identical
+#: across both surfaces on purpose -- the two documents have different voices,
+#: but a width is a mechanism, and two paraphrases of a field path are two
+#: chances to name a key the server does not return.
+_PROVE_WIDTH_CLAUSES = (
+    (
+        "Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE",
+        "the surface no longer says WHERE the width is read from. GI-008 puts "
+        "the decision at the transition that opens the INSPECT and leaves "
+        "Foundry-Next only reporting it; a stream told neither reads no width "
+        "at all and runs the matrix.",
+    ),
+    (
+        "On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`",
+        "the surface no longer names the roster field or says the roster is "
+        "the whole job on a DELTA cycle. `_coverage_shortfall`'s DELTA arm "
+        "measures `checked >= len(roster)` against exactly this list.",
+    ),
+    (
+        "On `FULL`, verify the whole matrix",
+        "the surface no longer says what FULL means, so the narrowing reads as "
+        "unconditional and a final-gate INSPECT silently runs at DELTA width.",
+    ),
+    (
+        "`Foundry-Stream` with `stream: \"prove\"`, `cycle`, `items_checked`, "
+        "`items_total` and `findings_count`",
+        "the surface no longer tells PROVE how to report its coverage. A "
+        "stream that cannot mark itself complete contributes no coverage to "
+        "the cycle's roll-up, where its absence reads as no coverage rather "
+        "than as a broken call -- and `Foundry-Phase('inspect_clean')` then "
+        "refuses the cycle naming a stream that did all of its work.",
+    ),
+    (
+        "never the terminal line",
+        "the surface no longer distinguishes the roster from the display of "
+        "it. display.py truncates the printed sample, so a stream reading the "
+        "terminal line reads a prefix and reports a width it never ran.",
+    ),
+    (
+        "eight rows",
+        "the surface no longer states WHERE the display truncates. 'It is "
+        "truncated' with no number leaves a reader unable to tell a short "
+        "roster from a clipped one.",
+    ),
+    (
+        "no narrowing was decided",
+        "the surface no longer says what an ABSENT width means. Unstated, a "
+        "stream that finds no `inspect_mode` picks a width itself, which is "
+        "the lazily-computed mode GI-008 and GI-009 both name as the "
+        "violation.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", _PROVE_WIDTH_SURFACES, ids=_rel)
+@pytest.mark.parametrize("clause,why", _PROVE_WIDTH_CLAUSES, ids=lambda v: v[:44])
+def test_prove_reads_the_width_the_server_recorded(
+    path: Path, clause: str, why: str
+) -> None:
+    """AC-018 / D-104, one claim at a time, on both PROVE surfaces."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+def test_the_prove_roster_key_the_prose_names_is_the_one_the_gate_reads(
+    tmp_path: Path,
+) -> None:
+    """D-104's floor: a field path is only prose until something reads it.
+
+    Both surfaces tell PROVE to read `inspect_mode.prove_sample`. If the
+    recorded decision ever spelled that key differently, the instruction would
+    send every DELTA stream to a key that is never there -- and the stream's
+    honest response to a missing roster is "run the whole matrix", which is
+    indistinguishable from the pre-D-104 behaviour the pins above would still
+    call green.
+
+    So the key is driven through ``_recorded_prove_roster`` -- the function
+    ``_coverage_shortfall`` consults to decide whether a DELTA PROVE covered
+    its width -- rather than being asserted against a constant re-typed here.
+    """
+    key = "prove_sample"
+    for surface in _PROVE_WIDTH_SURFACES:
+        assert f"`inspect_mode.{key}`" in _flat(surface), (
+            f"{_rel(surface)} names a roster field other than {key!r}; this "
+            f"derivation and the prose have come apart."
+        )
+
+    fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d104-roster"
+    fdir.mkdir(parents=True, exist_ok=True)
+    roster = ["FR-007", "US-002"]
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "inspect_modes": [
+                    {"mode": "DELTA", "cycle": 6, "rule": "delta", key: roster}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert orch._recorded_prove_roster(fdir, 6) == roster, (
+        f"the recorded decision's {key!r} list is not what the streams-complete "
+        f"check reads back. Both PROVE surfaces tell the stream to check "
+        f"exactly that list, so a rename here makes the instruction point at "
+        f"nothing -- silently, because a stream that finds no roster correctly "
+        f"falls back to the whole matrix."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-108 / FR-019 -- one hash spelling, driven rather than described
+# ---------------------------------------------------------------------------
+#
+# agents/teammate.md tells every teammate to compute its own prompt hash and
+# state it back, and both consuming gates refuse when the value differs from
+# the file's. That contract holds only while the documented command and the
+# gate compute the SAME digest -- and the two spellings that shipped agreed on
+# every file containing no carriage return and diverged on the first one that
+# did. Driven on a CRLF prompt: the dispatch block advertised one value, the
+# documented command produced another, and Foundry-Accept-Casting refused with
+# `stale_prompt_hash` whose remedy -- "re-read the prompt file in full and
+# state its hash character for character" -- reproduces the same rejected value
+# forever, because the reading was never the broken part. Casting prompts quote
+# spec text verbatim, so one CR in a spec makes that casting's acceptance gate
+# unpassable.
+#
+# A substring pin cannot see this: both spellings contain "sha256" and both are
+# correct-looking. Only running the command the file publishes, on a file with
+# CRLF endings, and handing the result to the gate, can tell them apart.
+
+_HASH_FENCE_RE = re.compile(r"```bash\n(.*?)\n```", re.S)
+_CRLF_PROMPT = b"# Casting 9 prompt\r\n\r\nRead this file in full.\r\n"
+
+
+def _documented_hash_commands() -> list[str]:
+    """Every fenced bash block in teammate.md's Step 0 hash paragraph."""
+    text = _read(TEAMMATE)
+    start = text.index("### Step 0: Read your prompt FILE in full")
+    stop = text.index("### Step 1: Read the task description fully", start)
+    return [block for block in _HASH_FENCE_RE.findall(text[start:stop])]
+
+
+def _crlf_prompt_run_dir(tmp_path: Path) -> tuple[Path, Path]:
+    """A run dir holding one casting prompt written with CRLF line endings."""
+    run_dir = tmp_path / foundry_state.ARCHIVE_DIR / "d108-crlf"
+    castings = run_dir / "castings"
+    castings.mkdir(parents=True, exist_ok=True)
+    prompt = castings / "casting-9-prompt.md"
+    prompt.write_bytes(_CRLF_PROMPT)
+    assert b"\r\n" in prompt.read_bytes(), (
+        "the fixture lost its CRLF endings, so this test can no longer tell "
+        "the byte spelling from the text spelling -- they agree on every other "
+        "file."
+    )
+    return run_dir, prompt
+
+
+def test_the_documented_hash_command_is_the_one_the_gate_accepts(
+    tmp_path: Path,
+) -> None:
+    """D-108 / FR-019: run the published command, hand it to the door.
+
+    ``check_reported_prompt_hash`` is the shared rung both
+    Foundry-Accept-Casting and Foundry-Fix call, so accepting the documented
+    command's output here is acceptance at both doors at once.
+    """
+    blocks = _documented_hash_commands()
+    programs = [
+        m.group(1)
+        for m in (re.search(r'python3 -c "(.+?)"', b, re.S) for b in blocks)
+        if m
+    ]
+    assert programs, (
+        "teammate.md's Step 0 no longer publishes a runnable hash command "
+        "(FR-019). A teammate told to state a hash and given no way to derive "
+        "one copies it out of the dispatch message, which is precisely the "
+        "case the check exists to detect."
+    )
+
+    run_dir, prompt = _crlf_prompt_run_dir(tmp_path)
+    for program in programs:
+        proc = subprocess.run(
+            [sys.executable, "-c", program, str(prompt)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, (
+            f"teammate.md's documented hash command failed to run: "
+            f"{proc.stderr.strip()!r}. A command a teammate cannot execute is "
+            f"a command it will work around."
+        )
+        reported = proc.stdout.strip()
+        refusal = foundry_handoff.check_reported_prompt_hash(run_dir, 9, reported)
+        assert refusal is None, {
+            "why": (
+                "the command agents/teammate.md publishes produces a hash the "
+                "gate REFUSES on a file with CRLF line endings. A teammate "
+                "that follows its own protocol exactly is refused and cannot "
+                "read its way out: the refusal tells it to re-read the file "
+                "and state the hash again, which reproduces the same rejected "
+                "value every time. Fix whichever side moved -- the digest is "
+                "over the file's BYTES -- never this assertion."
+            ),
+            "documented_command_produced": reported,
+            "refusal": refusal,
+        }
+        assert reported == foundry_handoff._hash_file(prompt), (
+            "the documented command and the package's own byte-hash helper "
+            "disagree. check_reported_prompt_hash's docstring claims 'there is "
+            "exactly one spelling in the package'; a disagreement here is that "
+            "claim becoming false again."
+        )
+
+
+def test_teammate_says_the_digest_is_over_the_bytes(tmp_path: Path) -> None:
+    """D-108: the reason, not just the recipe.
+
+    The command alone is a ritual a reader can substitute an equivalent for --
+    and the obvious equivalent, reading the file as text first, is the wrong
+    one. So the file states the property the command has, names the
+    text-reading spellings that break it, and names the refusal that results,
+    which is what lets a teammate recognise the failure when it happens rather
+    than looping on the refusal's own advice.
+    """
+    flat = _flat(TEAMMATE)
+    assert "The digest is over the file's BYTES" in flat, (
+        "teammate.md no longer states that the prompt digest is over the "
+        "file's bytes. The text and byte spellings agree on every file "
+        "containing no CR, so a reader who substitutes a text read sees no "
+        "difference until a spec quotes a CRLF line."
+    )
+    assert "sha256sum" in flat, (
+        "teammate.md no longer offers the sha256sum equivalent. A teammate on "
+        "a box where the python spelling is awkward needs a second way to the "
+        "same digest, and inventing one is how the text spelling comes back."
+    )
+    assert "Never hash the prompt as text" in flat, (
+        "teammate.md no longer rules out hashing the prompt as text -- the "
+        "single substitution that reproduces D-108."
+    )
+    assert "`stale_prompt_hash`" in flat, (
+        "teammate.md no longer names the refusal a wrong spelling produces, so "
+        "a teammate meeting it has no way to connect it to how it hashed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-110 / FR-041 -- the account is in the checklist a teammate actually copies
+# ---------------------------------------------------------------------------
+
+
+def _completion_message_checklist() -> str:
+    """agents/teammate.md's Step 11 'Include in the completion message' list."""
+    text = _read(TEAMMATE)
+    start = text.index("### Step 11: Mark task complete with citations")
+    stop = text.index("### Step 12:", start)
+    return " ".join(text[start:stop].split())
+
+
+def test_teammate_completion_checklist_names_the_failing_then_passing_account() -> None:
+    """FR-041 / D-110: stated once, in the wrong place, is not stated.
+
+    Foundry-Fix correctly refuses to take the failing-then-passing account as
+    an argument, so the completion report is the only place it can live. The
+    file said so -- inside the Step 7.5 LATENT-lane paragraph -- and the Step
+    11 'Include in the completion message' enumeration, which is the checklist
+    a teammate actually copies and which does carry bolded (required) bullets
+    for the prompt hash, the citations and the evidence files, never named it.
+    The requirement existed and was absent from the surface that is
+    operationally consumed.
+
+    So the assertion is SCOPED TO THE CHECKLIST. A whole-file substring check
+    would have been green throughout the gap -- the sentence was always in the
+    file -- which is exactly how the gap survived.
+    """
+    checklist = _completion_message_checklist()
+    assert "**The failing-then-passing account, for every fix (required in GRIND).**" in checklist, (
+        "teammate.md's Step 11 completion-message list does not require the "
+        "failing-then-passing account (FR-041). Stating it only in the Step 7 "
+        "LATENT-lane paragraph puts it outside the list a teammate copies when "
+        "it writes the report, and Foundry-Fix cannot take it as an argument, "
+        "so it lands nowhere."
+    )
+    assert "the test failed at" in checklist and "and passes at" in checklist, (
+        "the Step 11 bullet gives no SHAPE for the account, so the requirement "
+        "is satisfiable by any sentence mentioning a test. FR-041 wants the "
+        "statement: red before the change, green after it, both commits named."
+    )
+    assert "silently DROPPED rather than refused" in checklist, (
+        "the Step 11 bullet no longer says why the account cannot go in the "
+        "Foundry-Fix call. Without the reason a teammate reads the bullet as "
+        "duplication of a field it already passed and drops one of the two."
     )
