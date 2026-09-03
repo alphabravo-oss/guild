@@ -38,7 +38,7 @@
   ...That archive CANNOT DERIVE post_verification_cycles (it recorded no inspect_modes list, so the F5 INSPECTs it opened cannot be counted), so the Derived column is empty on that row rather than showing a number — an absence of measurement, not a measurement of zero. The recorded constant is what the Baseline column shows, exactly as it would be if the derivation agreed.
 
 === D-151 — both arms at once: one derives 31, the other cannot be derived ===
-  | GRIND cycles | 22 | 31 | 12 | 3 |
+  | GRIND cycles | 22 | 31 | 12 | 2 |
   | Post-verification cycles | 8 |  | 3 |  |
   ...That archive currently DERIVES grind_cycles 31, shown in the Derived column. The recorded constant stands; a derivation that disagrees with it is a fact about the archive, not a better measurement of the run. That archive CANNOT DERIVE post_verification_cycles (it recorded no inspect_modes list, so the F5 INSPECTs it opened cannot be counted), so the Derived column is empty on that row rather than showing a number — an absence of measurement, not a measurement of zero. The recorded constant is what the Baseline column shows, exactly as it would be if the derivation agreed.
   no Python repr reaches the prose: True

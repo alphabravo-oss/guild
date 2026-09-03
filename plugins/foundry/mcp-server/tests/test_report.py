@@ -2512,6 +2512,225 @@ def test_a_halted_run_report_names_every_open_live_and_latent_defect(report_env)
         assert did in md, did
 
 
+def _halted_at_the_real_door(
+    tmp_path, *, max_cycles: int, cycle: int, name: str = "halt-run"
+) -> tuple:
+    """Drive the transition that halts, and hand back what it wrote.
+
+    Returns ``(state, report_json, report_md, result)``. The report is
+    generated INSIDE the transition (`_halt_if_capped` calls the generator), so
+    everything here is one call's output and the two documents cannot be
+    reconciled after the fact.
+
+    ``name`` is a parameter because a caller that drives twice under one
+    ``tmp_path`` — the transcript, which prints one run and then asserts over
+    another — needs two run directories; the second call would otherwise land
+    in the first's archive.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools import foundry_state
+
+    run_dir = tmp_path / "foundry-archive" / name
+    (run_dir / "castings").mkdir(parents=True)
+    (run_dir / "spec.md").write_text("# Spec\n\n- **FR-1**: a thing\n",
+                                     encoding="utf-8")
+    _write_json(run_dir, "state.json", {
+        "phase": "F2", "cycle": cycle, "max_cycles": max_cycles,
+        "spec_path": str(run_dir / "spec.md"),
+    })
+    _write_json(run_dir, "verdicts.json", {
+        "cycle": cycle,
+        "requirements": [{"requirement_id": "FR-1", "verdict": "VERIFIED"}],
+    })
+    _write_json(run_dir, "defects.json", {"defects": [
+        {"id": "D-001", "cycle": cycle, "tier": "LIVE", "class": "K",
+         "status": "open", "source": "trace", "type": "UNWIRED",
+         "description": "d", "spec_ref": "", "symbol": "", "file": "src/a.py",
+         "fixed_in_cycle": None},
+    ]})
+    (run_dir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+    (run_dir / ".next-action-called").write_text(f"{fo._now()}\n",
+                                                 encoding="utf-8")
+
+    original = fo._check_active_teams
+    fo._check_active_teams = lambda _pr: {
+        "active": False, "teams": [], "live_panes": []
+    }
+    foundry_state.set_active_run(name)
+    try:
+        result = fo.foundry_mark_phase_complete("grind_start", str(tmp_path))
+    finally:
+        fo._check_active_teams = original
+        foundry_state.clear_active_run()
+    return (_read_json(run_dir, "state.json"), _document(run_dir),
+            _markdown(run_dir), result)
+
+
+def test_a_halted_runs_report_states_the_grind_cycles_its_halt_reason_states(
+    tmp_path,
+):
+    """D-175 / FR-045 / OT-026 — one transition wrote two numbers and they
+    disagreed about the one quantity `--max-cycles` is defined over.
+
+    `derive_cycle_count` published `index + 1` over the server counter, and
+    that counter advances at `inspect_start`, so it counts INSPECTs. Driven end
+    to end at the real doors with max_cycles 2: `Foundry-Phase('grind_start')`
+    halted with the reason 'opening GRIND cycle 3 would exceed it' — so two
+    GRIND cycles ran, which is `_halt_if_capped`'s own arithmetic — and the
+    report it generated in the same call read `grind_cycles: 3` and rendered
+    '| GRIND cycles | 22 | | 12 | 3 |' beside `run.max_cycles: 2`.
+
+    The halt prevents exactly one GRIND, so the count is the index; both
+    numbers now come out of one call and say 2."""
+    state, doc, md, result = _halted_at_the_real_door(
+        tmp_path, max_cycles=2, cycle=2
+    )
+
+    assert result["ok"] is True and result["halted"] is True, result
+    assert state["phase"] == RUN_PHASE_HALTED
+    assert "opening GRIND cycle 3 would exceed it" in state["halted_reason"]
+    # The counter is untouched by the halt: it is the INSPECT count, and the
+    # GRIND that would have opened at counter + 1 is the one refused.
+    assert state["cycle"] == 2 and state["halted_at_cycle"] == 2
+
+    assert doc["run"]["max_cycles"] == 2
+    assert doc["baseline_comparison"]["current"]["grind_cycles"] == 2, (
+        "the report may not claim a GRIND cycle the halt reason says never "
+        "opened"
+    )
+    row = next(ln for ln in md.splitlines() if ln.startswith("| GRIND cycles |"))
+    assert row.rstrip().endswith("| 2 |"), row
+    # The cap is a ceiling and the report now sits under it rather than over.
+    assert doc["baseline_comparison"]["current"]["grind_cycles"] <= (
+        doc["run"]["max_cycles"]
+    )
+
+
+def test_the_cycle_count_drops_only_the_grind_the_halt_prevented(tmp_path):
+    """D-175 — the halt subtracts one GRIND, and nothing else about the
+    derivation moves.
+
+    Keyed on `halted_at_cycle` / `halted_reason`, the two DATA fields
+    `_halt_if_capped` writes beside the phase, because `foundry_state` may not
+    import `vocab` and re-typing `RUN_PHASE_HALTED` there is the hand-copied
+    enum drift the house rule bans. A run with the same counter and no halt
+    record still publishes index + 1, which is what keeps thunder-viper at 22
+    and grand-vulture at 18."""
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    run_dir = tmp_path / "foundry-archive" / "cycles"
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir, "defects.json", {"defects": []})
+
+    _write_json(run_dir, "state.json", {"phase": "F3", "cycle": 2})
+    running = derive_cycle_count(run_dir)
+    assert running["halted"] is False
+    assert (running["index"], running["count"]) == (2, 3), running
+
+    for halt in ({"halted_at_cycle": 2}, {"halted_reason": "max_cycles 2"}):
+        _write_json(run_dir, "state.json",
+                    {"phase": RUN_PHASE_HALTED, "cycle": 2, **halt})
+        halted = derive_cycle_count(run_dir)
+        assert halted["halted"] is True, halt
+        assert halted["index"] == 2, "the counter itself is unchanged by a halt"
+        assert halted["count"] == 2, halt
+
+    # An empty reason is not a halt record — "" is what a writer leaves when it
+    # has nothing to say, and dropping a real cycle on it would be worse than
+    # the defect.
+    _write_json(run_dir, "state.json",
+                {"phase": "F3", "cycle": 2, "halted_reason": "  "})
+    assert derive_cycle_count(run_dir)["count"] == 3
+
+
+def test_the_cycle_rows_cover_only_agents_whose_dispatch_record_stamps_a_cycle(
+    tmp_path,
+):
+    """D-172 — the unreported cycle axis is derived from the one source that
+    stamps a cycle, and the prose beside it said otherwise.
+
+    `cycles_of_agent` can only be built from `stream-rollup.json`, whose
+    buckets ARE keyed by the server counter; `spawns.log` records a teammate
+    dispatch with no cycle at all. Driven over the live archive the axis named
+    ZERO teammates while the note claimed it 'names the cycles those agents
+    were dispatched in' — false for 14 of 19 pairs. Driven here on the filed
+    synthetic shape: three teammates dispatched, one reporting spend, so two
+    unreported pairs that the phase axis carries and no cycle row can."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
+    cast = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
+    run_dir, doc, md = _demo_run(
+        tmp_path, "d172",
+        spawns=[{"timestamp": "t1", "casting_id": n, "phase": "cast"}
+                for n in (1, 2, 3)],
+        spend=[{"agent": "casting-1", "phase": cast, "cycle": 1,
+                "tokens": 10, "duration_ms": 60_000}],
+    )
+
+    listed = doc["unreported_dispatches"]
+    spend = doc["spend_per_phase_and_cycle"]
+    assert listed["count"] == 2
+    assert listed["by_phase"] == {cast: ["casting-2", "casting-3"]}
+    # THE PHASE AXIS CARRIES THEM AND THE CYCLE AXIS CANNOT.
+    assert spend["by_phase"][cast]["unreported"] == 2
+    assert spend["by_cycle"]["1"]["unreported"] == 0
+    assert spend["unreported_without_cycle"] == 2, (
+        "both unreported pairs are teammate dispatches, which carry no cycle"
+    )
+
+    # The sentence states that scope rather than a coverage it does not have,
+    # and carries the number, in BOTH documents.
+    note = spend["note"]
+    assert "appears in NO cycle row" in note
+    assert "of the 2 unreported pairs here, 2 are in that position" in note
+    assert "spawns.log stamps a teammate dispatch with a timestamp and no cycle" in note
+    assert "names the cycles those agents were dispatched in" not in note, (
+        "the sentence the filing quoted, which the archive never derived"
+    )
+    assert note in md, "the markdown carries the same statement as the JSON"
+
+
+def test_a_stream_agent_is_the_one_thing_the_cycle_axis_does_carry(tmp_path):
+    """D-172's other half: the axis is narrow, not empty, and the complement is
+    exact.
+
+    An F2 stream appears in `stream-rollup.json`'s cycle buckets, so it is
+    stamped and reaches the cycle rows; the teammate beside it is not. A fix
+    that emptied the axis rather than scoping it would lose the one real
+    per-cycle measurement the archive can make."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+
+    cast = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
+    run_dir = tmp_path / "foundry-archive" / "d172-stream"
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir, "state.json", {"phase": "F3", "cycle": 2})
+    _write_json(run_dir, "defects.json", {"defects": []})
+    _write_json(run_dir, "verdicts.json", {"cycle": 2, "requirements": []})
+    _write_json(run_dir, "stream-rollup.json", {"cycles": {
+        "1": {"prove": {"records": 1}},
+        "2": {"prove": {"records": 1}},
+    }})
+    (run_dir / "spawns.log").write_text(
+        json.dumps({"timestamp": "t1", "casting_id": 4, "phase": "cast"}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / SPEND_LEDGER_FILENAME).write_text("", encoding="utf-8")
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+
+    doc = _document(run_dir)
+    spend = doc["spend_per_phase_and_cycle"]
+    # One stream pair across two cycles, plus one teammate pair with no cycle.
+    assert doc["unreported_dispatches"]["count"] == 2
+    assert spend["by_cycle"]["1"]["unreported"] == 1
+    assert spend["by_cycle"]["2"]["unreported"] == 1
+    assert spend["by_phase"][cast]["unreported"] == 1
+    assert spend["unreported_without_cycle"] == 1
+    # The identity the note promises: every pair is either stamped or named as
+    # unstamped, and the cycle column still does not add up to the total.
+    assert spend["total"]["unreported"] == 2
+    assert sum(v["unreported"] for v in spend["by_cycle"].values()) == 2
+
+
 # --------------------------------------------------------------------------- #
 # CT-014 / OT-025 — `report_status`, the read the DONE gate makes.
 # --------------------------------------------------------------------------- #
@@ -3651,3 +3870,156 @@ def test_demo_grind_cycle_9_filings_at_the_real_door(tmp_path, capsys):
     assert "recorded nothing there" in _section(
         md, "Executing server and plugin versions"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The GRIND cycle 10 demonstration, driven at the real doors.
+#
+# Same contract as the two transcripts above: a REAL test, every printed line
+# also asserted, nothing environment-dependent in the output. Two filings, both
+# about a number a generated document publishes beside prose describing it —
+# D-175 where the number contradicted the halt reason written by the same
+# transition, and D-172 where the prose claimed an axis covered agents it
+# structurally cannot.
+# --------------------------------------------------------------------------- #
+
+
+def test_demo_grind_cycle_10_filings_at_the_real_door(tmp_path, capsys):
+    """D-175 and D-172, each driven through the door that publishes the number
+    and read back out of both documents.
+
+    FR-023 / FR-024 / FR-045 / NFR-001 / OT-026 / GI-006 (D-175);
+    AC-034 / FR-022 / CT-013 / AC-036 (D-172)."""
+    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    cast = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
+
+    def _row(md: str, prefix: str) -> str:
+        return next(ln for ln in md.splitlines() if ln.startswith(prefix))
+
+    with capsys.disabled():
+        print("\n=== D-175 — the halt reason and the report it generated, "
+              "one call, one number ===")
+        state, doc, md, result = _halted_at_the_real_door(
+            tmp_path, max_cycles=2, cycle=2
+        )
+        print(f"  Foundry-Phase('grind_start') -> ok={result['ok']} "
+              f"halted={result['halted']}  state.phase={state['phase']}")
+        print(f"  state.halted_reason:  {state['halted_reason']}")
+        print(f"  the server counter it was computed from: cycle="
+              f"{state['cycle']}  halted_at_cycle={state['halted_at_cycle']}")
+        print(f"  report.json run.max_cycles:                "
+              f"{doc['run']['max_cycles']}")
+        print(f"  report.json baseline_comparison.current.grind_cycles:  "
+              f"{doc['baseline_comparison']['current']['grind_cycles']}")
+        print("  REPORT.md: " + _row(md, "| GRIND cycles |"))
+        print("  the filing read 3 in both of those, beside a cap of 2 and a "
+              "reason naming GRIND 3 as the one that did NOT open.")
+        print("  under the cap now:",
+              doc["baseline_comparison"]["current"]["grind_cycles"]
+              <= doc["run"]["max_cycles"])
+
+        print("\n  the counter is untouched; only the GRIND it would have "
+              "opened is subtracted:")
+        run_dir = tmp_path / "foundry-archive" / "halt-run"
+        derived = derive_cycle_count(run_dir)
+        print(f"  index={derived['index']}  halted={derived['halted']}  "
+              f"count={derived['count']}")
+        print("  and a run at the same counter with no halt record still "
+              "publishes index + 1, which is what keeps the two published "
+              "baselines reproducing from their own archives:")
+        plain = tmp_path / "foundry-archive" / "not-halted"
+        plain.mkdir(parents=True)
+        _write_json(plain, "state.json", {"phase": "F3", "cycle": 2})
+        _write_json(plain, "defects.json", {"defects": []})
+        running = derive_cycle_count(plain)
+        print(f"  index={running['index']}  halted={running['halted']}  "
+              f"count={running['count']}")
+
+        print("\n=== D-172 — the cycle axis covers what the archive stamps, "
+              "and the prose says which ===")
+        _, doc2, md2 = _demo_run(
+            tmp_path, "d172-demo",
+            spawns=[{"timestamp": "t1", "casting_id": n, "phase": "cast"}
+                    for n in (1, 2, 3)],
+            spend=[{"agent": "casting-1", "phase": cast, "cycle": 1,
+                    "tokens": 10, "duration_ms": 60_000}],
+        )
+        listed2 = doc2["unreported_dispatches"]
+        spend2 = doc2["spend_per_phase_and_cycle"]
+        print(f"  three teammates dispatched at cycle 1, one reported spend:")
+        print(f"  unreported_dispatches: count={listed2['count']}  "
+              f"by_phase={listed2['by_phase']}")
+        print(f"  spend by_phase[{cast}].unreported = "
+              f"{spend2['by_phase'][cast]['unreported']}   "
+              f"spend by_cycle['1'].unreported = "
+              f"{spend2['by_cycle']['1']['unreported']}")
+        print(f"  the filing observed exactly that 2-beside-0 with prose "
+              f"claiming the cycle row 'names the cycles those agents were "
+              f"dispatched in'.")
+        print(f"  the gap is now a derived number: "
+              f"unreported_without_cycle={spend2['unreported_without_cycle']}")
+        print("  ..." + spend2["note"].split("The cycle rows are narrower: ", 1)[1]
+              .split(" One stream agent", 1)[0])
+
+        print("\n  the axis is narrowed, not emptied — a stream agent IS "
+              "stamped, by the roll-up's own cycle bucket:")
+        stream_dir = tmp_path / "foundry-archive" / "d172-demo-stream"
+        stream_dir.mkdir(parents=True)
+        _write_json(stream_dir, "state.json", {"phase": "F3", "cycle": 2})
+        _write_json(stream_dir, "defects.json", {"defects": []})
+        _write_json(stream_dir, "verdicts.json", {"cycle": 2, "requirements": []})
+        _write_json(stream_dir, "stream-rollup.json", {"cycles": {
+            "1": {"prove": {"records": 1}}, "2": {"prove": {"records": 1}},
+        }})
+        (stream_dir / "spawns.log").write_text(
+            json.dumps({"timestamp": "t1", "casting_id": 4, "phase": "cast"})
+            + "\n", encoding="utf-8",
+        )
+        (stream_dir / SPEND_LEDGER_FILENAME).write_text("", encoding="utf-8")
+        assert generate_report(tmp_path, stream_dir)["ok"] is True
+        spend3 = _document(stream_dir)["spend_per_phase_and_cycle"]
+        print(f"  one stream pair over two cycles + one teammate pair: "
+              f"total={spend3['total']['unreported']}  "
+              f"cycle rows={{'1': {spend3['by_cycle']['1']['unreported']}, "
+              f"'2': {spend3['by_cycle']['2']['unreported']}}}  "
+              f"without a cycle={spend3['unreported_without_cycle']}")
+        print("  the cycle column still does not add up to the total, and now "
+              "the note says why rather than only that it does not.")
+
+    # Every printed line is also asserted, so the transcript cannot drift.
+    state, doc, md, result = _halted_at_the_real_door(
+        tmp_path, max_cycles=2, cycle=2, name="halt-run-assert"
+    )
+    assert result["ok"] is True and result["halted"] is True
+    assert "opening GRIND cycle 3 would exceed it" in state["halted_reason"]
+    assert doc["baseline_comparison"]["current"]["grind_cycles"] == 2
+    assert doc["run"]["max_cycles"] == 2
+    assert _row(md, "| GRIND cycles |").rstrip().endswith("| 2 |")
+
+    derived = derive_cycle_count(tmp_path / "foundry-archive" / "halt-run")
+    assert (derived["index"], derived["halted"], derived["count"]) == (2, True, 2)
+    running = derive_cycle_count(tmp_path / "foundry-archive" / "not-halted")
+    assert (running["index"], running["halted"], running["count"]) == (2, False, 3)
+
+    _, doc2, _ = _demo_run(
+        tmp_path, "d172-demo-assert",
+        spawns=[{"timestamp": "t1", "casting_id": n, "phase": "cast"}
+                for n in (1, 2, 3)],
+        spend=[{"agent": "casting-1", "phase": cast, "cycle": 1,
+                "tokens": 10, "duration_ms": 60_000}],
+    )
+    spend2 = doc2["spend_per_phase_and_cycle"]
+    assert doc2["unreported_dispatches"]["count"] == 2
+    assert spend2["by_phase"][cast]["unreported"] == 2
+    assert spend2["by_cycle"]["1"]["unreported"] == 0
+    assert spend2["unreported_without_cycle"] == 2
+    assert "names the cycles those agents were dispatched in" not in spend2["note"]
+
+    spend3 = _document(tmp_path / "foundry-archive" / "d172-demo-stream")[
+        "spend_per_phase_and_cycle"
+    ]
+    assert spend3["total"]["unreported"] == 2
+    assert spend3["unreported_without_cycle"] == 1
+    assert [spend3["by_cycle"][k]["unreported"] for k in ("1", "2")] == [1, 1]

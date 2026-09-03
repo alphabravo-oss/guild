@@ -242,8 +242,9 @@ def derive_cycle_count(run_dir: Path) -> dict:
 
     Returns, and never raises::
 
-        {"count": int | None,     # cycles EXECUTED — index + 1
+        {"count": int | None,     # GRIND cycles that OPENED (see the halt rule)
          "index": int | None,     # the server's 0-based counter at the end
+         "halted": bool,          # state.json carries a halt record
          "sources": {"state_cycle": int | None,
                      "rollup_highest": int | None,
                      "defect_max_cycle": int | None},
@@ -291,6 +292,44 @@ def derive_cycle_count(run_dir: Path) -> dict:
     healthy 4.7.3-era archive exit nonzero, which is the over-firing
     calibration D-034 already had to undo.
 
+    WHY A HALTED RUN IS ``index`` AND NOT ``index + 1`` (D-175)
+    -----------------------------------------------------------
+    The counter advances at ``inspect_start`` and nowhere else, so it counts
+    INSPECTs, and ``index + 1`` is the GRIND that opened AT that counter. On a
+    halted run that GRIND is precisely the one the cap refused to open, so
+    adding it publishes a cycle the run never ran.
+
+    Driven end to end at the real doors with ``--max-cycles 2``: the
+    ``Foundry-Phase('grind_start')`` that would open GRIND 3 returned ok, wrote
+    ``phase`` HALTED and the reason "--max-cycles 2 reached: opening GRIND
+    cycle 3 would exceed it" — so two GRIND cycles ran, which is
+    ``_halt_if_capped``'s own stated arithmetic ("GRIND 1 opens at counter 0,
+    GRIND 2 at counter 1") — and generated the report inside that same call,
+    whose ``baseline_comparison.current.grind_cycles`` read 3 and whose
+    REPORT.md rendered "| GRIND cycles | 22 | | 12 | 3 |" beside
+    ``run.max_cycles`` 2 in the same document. One transition wrote both
+    numbers and they contradicted each other about the one quantity the cap is
+    defined over.
+
+    So the halt subtracts exactly the GRIND it prevented, and nothing else:
+    ``count`` is ``index`` on a halted run and ``index + 1`` on every other,
+    which is why both published baselines still reproduce from their own
+    archives (thunder-viper 21 + 1 = 22, grand-vulture 17 + 1 = 18 — neither
+    halted).
+
+    THE HALT IS READ FROM ``halted_at_cycle`` / ``halted_reason``, NOT FROM
+    ``phase``. ``_halt_if_capped`` writes all three in one transaction, and
+    these two are DATA while the phase value is a vocabulary token — and the
+    leaf contract at the top of this file forbids importing ``vocab``, so
+    keying on the phase would mean re-typing ``RUN_PHASE_HALTED`` here, which
+    is the hand-copied-enum drift the house rule bans outright.
+
+    Re-basing the whole derivation on ``phase_history``'s F3 entries was the
+    alternative and it is worse: thunder-viper's counter never moved and its
+    history carries no per-cycle F3 stamps, so the two archives that calibrate
+    this function would stop reproducing their own published numbers. Fixing
+    one halted run by changing what every run means is not a fix.
+
     ``count`` is None only when NO source could supply a number: "cannot say"
     and "one cycle" are different answers, and the caller that turns this into
     a target verdict has to be able to tell them apart.
@@ -335,11 +374,22 @@ def derive_cycle_count(run_dir: Path) -> dict:
             if value is not None and (defect_max is None or value > defect_max):
                 defect_max = value
 
+    # D-175 — the two fields `_halt_if_capped` writes beside `phase` HALTED, in
+    # the same transaction. Either one present is a halt: a run may be halted
+    # by hand with only the reason recorded, and a report that then claimed the
+    # refused GRIND is the defect either way.
+    halted_reason = state.get("halted_reason")
+    halted = _cycle(state.get("halted_at_cycle")) is not None or bool(
+        isinstance(halted_reason, str) and halted_reason.strip()
+    )
+
     known = [v for v in (state_cycle, rollup_highest, defect_max) if v is not None]
     index = max(known) if known else None
     return {
-        "count": None if index is None else index + 1,
+        # The GRIND at `index + 1` opened, UNLESS the halt is what stopped it.
+        "count": None if index is None else index + (0 if halted else 1),
         "index": index,
+        "halted": halted,
         "sources": {
             "state_cycle": state_cycle,
             "rollup_highest": rollup_highest,
@@ -492,7 +542,8 @@ def unreported_dispatch_summary(
          "reported": int,                         # dispatched - count
          "pairs": [{"agent": str, "phase": str}], # the unreported pairs
          "by_phase": {phase: [agent ids]},
-         "by_cycle": {str(cycle): [agent ids]}}
+         "by_cycle": {str(cycle): [agent ids]},
+         "pairs_without_cycle": [{"agent": str, "phase": str}]}
 
     The first five arguments are ``unreported_dispatch_pairs``' arguments,
     passed straight through — that function is still the RULE and this one is
@@ -528,12 +579,42 @@ def unreported_dispatch_summary(
     THE PAIR AND THE CYCLE ARE DIFFERENT AXES, AND SAYING SO IS THE POINT
     --------------------------------------------------------------------
     ``count`` and ``by_phase`` are keyed on the PAIR, because the pair is what
-    FR-022 asks about: "N agents unreported per phase". ``by_cycle`` is keyed
-    on the cycle stamps ``cycles_of_agent`` supplies, and one F2 stream agent
-    unreported across three cycles is ONE pair listed under THREE cycles. So
+    FR-022 asks about: "N agents unreported per phase". EVERY unreported pair
+    is on that axis. ``by_cycle`` is keyed on the cycle stamps
+    ``cycles_of_agent`` supplies, and one F2 stream agent unreported across
+    three cycles is ONE pair listed under THREE cycles. So
     ``sum(len(v) for v in by_cycle.values())`` need not equal ``count``, BY
     CONSTRUCTION, and a caller writing both into one table has to render them
     as the different measurements they are rather than reconciling them.
+
+    THE CYCLE AXIS IS ALSO NARROWER, AND ``pairs_without_cycle`` SAYS SO
+    -------------------------------------------------------------------
+    D-175's sibling, D-172. The two axes differ in COVERAGE as well as in
+    keying: a pair can only reach ``by_cycle`` if ``cycles_of_agent`` carries
+    its agent, and today the only per-dispatch record in the archive that
+    stamps a cycle is ``stream-rollup.json``'s own cycle bucket — so both
+    callers can supply stamps for the F2 streams and for nothing else.
+    ``spawns.log`` records a teammate dispatch as timestamp, casting_id, phase,
+    wave and prompt_hash, with no cycle anywhere in the row, so a CAST or GRIND
+    teammate CANNOT be attributed to a cycle here however many cycles it ran
+    in.
+
+    Driven over a live archive: 19 unreported pairs, 14 of them CAST and GRIND
+    teammates such as casting-1@F1 and casting-1@F3, and ``by_cycle`` named
+    ZERO teammates in any of cycles 0 through 9 — only the five F2 stream
+    agents ever appeared there — while the report's prose beside that column
+    stated it "names the cycles those agents were dispatched in", which was
+    false for 14 of the 19. The blindness is structural and the sentence
+    described a derivation the archive never made.
+
+    So the pairs the cycle axis cannot carry are RETURNED, not dropped: a
+    caller rendering the cycle column has the number that makes its zeros
+    readable, and no caller has to re-derive the axis's membership to find out
+    what is missing from it. Fabricating a stamp — correlating spawn timestamps
+    against phase windows, say — was the alternative and it is the same defect
+    in a new place: the filing is that the axis is derived from a proxy, and a
+    second proxy does not answer it. What would answer it is a real cycle in
+    the dispatch record, which is the spawn writer's field to add.
 
     Args:
         dispatch_rows, stream_roster, spend_rows, phase_of_dispatch,
@@ -542,9 +623,10 @@ def unreported_dispatch_summary(
             have one — the F2 stream dispatch cycles, which
             ``foundry_orchestrator`` builds as ``_stream_dispatch_cycles`` and
             the report builds from ``stream-rollup.json``'s own cycle keys.
-            Omitted, ``by_cycle`` is empty: no cycle was supplied, so none is
-            claimed. Stamps are stringified so the keys match the ``by_cycle``
-            spelling C-4 uses in ``state.json.spend``.
+            Omitted, ``by_cycle`` is empty and every pair is in
+            ``pairs_without_cycle``: no cycle was supplied, so none is claimed.
+            Stamps are stringified so the keys match the ``by_cycle`` spelling
+            C-4 uses in ``state.json.spend``.
 
     ADVISORY, ALWAYS (AC-034), the same as the rule it counts. Nothing here
     refuses and no gate reads the result.
@@ -564,10 +646,18 @@ def unreported_dispatch_summary(
 
     by_phase: dict[str, list[str]] = {}
     by_cycle: dict[str, list[str]] = {}
+    # D-172 — the complement of the cycle axis, off the SAME walk that builds
+    # it. Deriving it in a caller instead would be a second opinion about which
+    # agents the axis covers, which is the shape this whole section keeps being
+    # fixed for.
+    without_cycle: list[dict] = []
     for pair in pairs:
         by_phase.setdefault(pair["phase"], []).append(pair["agent"])
-        for stamp in (cycles_of_agent or {}).get(pair["agent"], []) or []:
+        stamps = (cycles_of_agent or {}).get(pair["agent"]) or []
+        for stamp in stamps:
             by_cycle.setdefault(str(stamp), []).append(pair["agent"])
+        if not stamps:
+            without_cycle.append(pair)
 
     return {
         "count": len(pairs),
@@ -576,6 +666,7 @@ def unreported_dispatch_summary(
         "pairs": pairs,
         "by_phase": {k: sorted(set(v)) for k, v in sorted(by_phase.items())},
         "by_cycle": {k: sorted(set(v)) for k, v in sorted(by_cycle.items())},
+        "pairs_without_cycle": without_cycle,
     }
 
 

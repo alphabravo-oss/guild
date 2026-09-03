@@ -780,6 +780,26 @@ def _read_spend(
     across three cycles is 1 in `total` and 1 in each of three cycle buckets.
     The section `note` says so, because a reader adding the cycle column up and
     finding more than the total is otherwise reading a contradiction.
+
+    D-172 — AND THEY DIFFER IN COVERAGE, NOT ONLY IN KEYING.
+    --------------------------------------------------------
+    That last sentence was the whole of what the note said about the cycle
+    axis, and it described a coverage the axis does not have. Only an agent
+    whose dispatch record stamps a cycle can appear on it, and
+    `_read_dispatch_summary`'s comment says why that is the F2 streams and
+    nothing else. Driven at this door over the live archive: 19 unreported
+    pairs, 14 of them CAST and GRIND teammates, and the cycle axis named ZERO
+    teammates in any of cycles 0-9 — while the note beside the column stated
+    that it "names the cycles those agents were dispatched in", false for 14 of
+    the 19. Driven on a synthetic run with three teammates dispatched at cycle
+    1 and one reporting spend, REPORT.md rendered the cycle row as 0 unreported
+    while the phase row correctly rendered 2.
+
+    So the note states the scope, and `unreported_without_cycle` publishes the
+    size of the gap as a NUMBER the same summary derived — a zero in a cycle
+    row is then readable rather than merely true. Prose that asserts a
+    derivation without the archive having made it is the class; a count the
+    archive did make is the answer to it.
     """
     records, problem = read_jsonl(run_dir / SPEND_LEDGER_FILENAME)
     if problem is not None:
@@ -901,6 +921,10 @@ def _read_spend(
                     "state_rollup": value,
                 })
 
+    # D-172: the pairs the cycle axis cannot carry, counted by the SAME summary
+    # that built the axis. Published as data and named in the note, so the two
+    # documents state one number and neither has to be parsed out of prose.
+    without_cycle = dispatch_summary.get("pairs_without_cycle") or []
     return {
         "records": len(records),
         "by_phase": {k: by_phase[k] for k in sorted(by_phase)},
@@ -908,6 +932,7 @@ def _read_spend(
         "total": total,
         "state_rollup": state_rollup,
         "disagreements": disagreements,
+        "unreported_without_cycle": len(without_cycle),
         "note": (
             "Tokens and minutes are the ledger's; `agents` is "
             "state.json.spend's, which is the orchestrator's own derivation "
@@ -916,10 +941,20 @@ def _read_spend(
             "`unreported` is derived from the dispatch record and is the same "
             "derivation the Unreported dispatches section publishes — the run "
             "total is its `count` (D-163). Per phase it counts (agent, phase) "
-            "pairs; per cycle it names the cycles those agents were dispatched "
-            "in, so one agent unreported across three cycles is 1 in the total "
-            "and 1 in each of three cycle rows, and the cycle column is not "
-            "expected to add up to the total."
+            "pairs, and EVERY unreported pair is on that axis. The cycle rows "
+            "are narrower: an agent reaches them only if its dispatch record "
+            "stamps a cycle, and the only record that does is "
+            "stream-rollup.json's own cycle bucket, so those rows cover the F2 "
+            "stream agents and nothing else. spawns.log stamps a teammate "
+            "dispatch with a timestamp and no cycle, so a CAST or GRIND "
+            "teammate is counted per phase and appears in NO cycle row, "
+            "however many cycles it ran in — of the "
+            f"{_as_count(dispatch_summary.get('count'))} unreported pairs "
+            f"here, {len(without_cycle)} are in that position and are absent "
+            "from every cycle row below (D-172). One stream agent unreported "
+            "across three cycles is 1 in the total and 1 in each of three "
+            "cycle rows. So the cycle column neither adds up to the total nor "
+            "is meant to."
         ),
     }, None
 
@@ -998,6 +1033,27 @@ def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
     # the same fact one key up — the roll-up's cycle bucket — and walking the
     # document twice is how the two would come to disagree about which cycles
     # a stream ran in.
+    #
+    # D-172 — AND IT IS THE ONLY CYCLE THE ARCHIVE HAS, WHICH IS WHY THE AXIS
+    # IS NARROWER THAN THE PAIR AXIS AND HAS TO SAY SO.
+    # ----------------------------------------------------------------------
+    # Of the two dispatch sources this function reads, only the roll-up stamps
+    # a cycle: its buckets ARE keyed by the server counter. `spawns.log` rows
+    # carry timestamp, casting_id, phase, wave and prompt_hash and no cycle at
+    # all, so a CAST or GRIND teammate can never be attributed to one here.
+    # Driven over the live archive: 19 unreported pairs, 14 of them teammates
+    # (casting-1@F1, casting-1@F3, ...), and `by_cycle` named zero teammates in
+    # any of cycles 0-9 — while the spend section's note beside that column
+    # claimed it "names the cycles those agents were dispatched in".
+    #
+    # The fix is NOT a stamp invented here. Correlating a spawn timestamp
+    # against `phase_history`'s cycle windows would be a second proxy, and "the
+    # cycle axis is derived from a proxy" is the filing. The axis keeps the one
+    # real source, `unreported_dispatch_summary` returns the pairs that source
+    # cannot cover as `pairs_without_cycle`, and the prose states that scope
+    # instead of a coverage it does not have. A per-dispatch `cycle` in the
+    # spawn record is what would widen it, and that field belongs to the spawn
+    # writer, not to a reader of its ledger.
     cycles_of_agent: dict[str, list[str]] = {}
     cycles = rollup.get("cycles")
     if isinstance(cycles, dict):
