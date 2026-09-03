@@ -1280,52 +1280,74 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # `test_both_doors_into_f6_enforce_the_same_preconditions` exists to prevent,
     # one door along.
     #
-    # HOW THIS RECONCILES WITH ST-010's "every escalated class CLEARED", rather
-    # than deleting the guard: escalation is a statement about the SHAPE of
-    # remaining work, and CLEARED is the answer to "has structural work had its
-    # turn". A class whose open instances are all LATENT has no remaining work of
-    # either shape — ST-002 sends its open LATENT instances to the report backlog
-    # and FR-001 says the same — so holding DONE open on the class's status flag
-    # would refuse the run for work the spec has already dispositioned. The
-    # refusal therefore keys on the axis that CARRIES work, `open_live_defect_ids`
-    # (open LIVE and untiered instances, exactly what blocks everywhere else),
-    # and the checklist below still names EVERY still-escalated class and the
-    # LATENT instances it is carrying, so ST-010's guarantee stays visible in the
-    # artifact it is read against instead of becoming an unstated pass.
+    # D-034 — LEAD RULING ON THE ST-010 / FR-006 TENSION: BOTH GUARDS APPLY.
+    #
+    # The D-002 fix keyed this branch on `open_live_defect_ids`, reasoning that
+    # a class carrying only LATENT instances has no remaining work of either
+    # shape and so should not hold DONE open. FR-006 supports that for the
+    # DEFECTS; ST-010 is about the CLASS, and it says "every escalated class
+    # CLEARED". Those are different axes, and the previous reconciliation
+    # silently dropped the second one: a class could sit at status ESCALATED
+    # forever, having had neither structural pass nor two clean cycles, and
+    # DONE would pass it because its open instances all happened to be LATENT.
+    #
+    # The ruling (recorded SPEC_AMBIGUOUS in the run's state.json) is that DONE
+    # requires BOTH: (a) no open LIVE or unknown-tier defect — the tier check
+    # above, which still blocks a LIVE instance of a CLEARED class — and (b)
+    # every class that is still escalating to have left escalation through an
+    # arm. A LATENT-only backlog does not by itself clear a class; ST-001's two
+    # clean cycles or ST-002's structural budget does, and both are mechanical,
+    # so this cannot hold a run open indefinitely.
+    #
+    # KEYED ON THE PERSISTED STATUS, which is what `_escalated_classes` already
+    # reads: it skips any class `escalation.json` records as CLEARED, and it
+    # returns nothing for a class whose defects have all closed. So "still
+    # returned here" IS "still ESCALATED with open work", and a class that
+    # cleared — or emptied — does not appear. Reading `escalation.json`
+    # directly instead would deadlock: both exit arms iterate this same
+    # function, so a class that escalated and was then fully fixed reaches
+    # neither arm, keeps `status: ESCALATED` in the file forever, and DONE
+    # could never be reached again by any means, override included.
     escalated_open = _escalated_classes(fdir, project_root)
-    blocking_classes = {
-        key: info
-        for key, info in escalated_open.items()
-        if info.get("open_live_defect_ids")
-    }
-    latent_only_classes = sorted(set(escalated_open) - set(blocking_classes))
-    if blocking_classes:
+    latent_only_classes = sorted(
+        key for key, info in escalated_open.items()
+        if not info.get("open_live_defect_ids")
+    )
+    if escalated_open:
         passed = False
         blocking_ids = sorted(
             did
-            for info in blocking_classes.values()
-            for did in info["open_live_defect_ids"]
+            for info in escalated_open.values()
+            for did in info.get("open_live_defect_ids", [])
         )
         reason = (
-            f"{len(blocking_classes)} escalated defect class(es) still have open "
-            f"instances: {', '.join(sorted(blocking_classes))}"
+            f"{len(escalated_open)} defect class(es) are still ESCALATED: "
+            f"{', '.join(sorted(escalated_open))}"
         )
         hint = (
-            "A structural fix must still close every defect of the class. "
-            "Escalation is not a waiver. Blocking instances: "
-            + ", ".join(blocking_ids)
-            + "."
+            "ST-010: every escalated class must be CLEARED before DONE. A "
+            "class leaves escalation mechanically — two consecutive INSPECT "
+            f"cycles drawing zero LIVE instances (ST-001), or "
+            f"{STRUCTURAL_PASS_BUDGET} structural packets dispatched (ST-002) "
+            "— and a LATENT-only backlog does not by itself clear one. A "
+            "structural fix must still close every LIVE defect of the class; "
+            "escalation is not a waiver."
+            + (f" Blocking LIVE instances: {', '.join(blocking_ids)}."
+               if blocking_ids else
+               " No LIVE instances remain; run the cycles or spend the "
+               "structural budget so an exit arm fires.")
         )
     checklist.append({
         "check": (
-            f"escalated_classes_closed (open classes={len(blocking_classes)}, "
+            f"escalated_classes_cleared (still escalated={len(escalated_open)}, "
             f"latent_only={len(latent_only_classes)})"
         ),
-        "ok": not blocking_classes,
-        "classes": sorted(blocking_classes),
-        # Named even though they do not block, because ST-010 is read against
-        # this checklist and "escalated, carrying only a LATENT backlog" is a
-        # different state from "not escalated at all".
+        "ok": not escalated_open,
+        "classes": sorted(escalated_open),
+        # Named separately even though both block now, because "escalated and
+        # carrying only a LATENT backlog" and "escalated with LIVE work open"
+        # clear by different routes: the first waits for an arm, the second
+        # needs the defects fixed first.
         "latent_only_classes": latent_only_classes,
     })
 
@@ -3245,6 +3267,47 @@ def foundry_record_spend(
     return result
 
 
+def _note_fix_after_inspect_decision(fdir: Path, defect_id: str) -> None:
+    """Mark the open INSPECT's recorded width as superseded by a fix (D-035).
+
+    D-035 — A DELTA-SWEPT INSPECT COULD OPEN ASSAY.
+    ----------------------------------------------
+    `foundry_mark_defect_fixed` has no phase guard, so a fix landing while the
+    run sits in F2 flips the blocking count to zero AFTER the width was already
+    decided and the sweep already taken. `inspect_clean` then passes and ASSAY
+    opens on a cycle whose sweep never covered the surface that fix changed —
+    the one crossing GI-002 exists to make honest.
+
+    Recorded rather than refused. The fix itself is legitimate work and
+    refusing it would push the lead to fix the defect and not say so, which is
+    strictly worse. What is not legitimate is CARRYING that cycle's decision
+    forward as though it still described the tree, so the entry is stamped and
+    `inspect_clean` refuses until a fresh `inspect_start` re-decides the width
+    and re-sweeps at the new HEAD.
+
+    A no-op outside F2: in F3 GRIND, which is where fixes normally land, the
+    next `inspect_start` decides a width that already accounts for them.
+    """
+    state_path = fdir / "state.json"
+    with _document_transaction(state_path) as state:
+        if state.get("phase") != "F2":
+            return
+        modes = state.get("inspect_modes")
+        if not isinstance(modes, list) or not modes:
+            return
+        current = modes[-1]
+        if not isinstance(current, dict):
+            return
+        superseded = current.get("fixes_after_decision")
+        if not isinstance(superseded, list):
+            superseded = []
+        if defect_id not in superseded:
+            superseded.append(defect_id)
+        current["fixes_after_decision"] = superseded
+        state["inspect_modes"] = modes
+        state["updated_at"] = _now()
+
+
 def _record_inspect_mode(fdir: Path, entry: dict) -> None:
     """Append one decision to `state.json.inspect_modes` and mirror it (C-4/C-6).
 
@@ -3324,7 +3387,7 @@ def _sweep_evidence_at_boundary(
     }
 
 
-def _sweep_refusal(sweep: dict, cycle: int) -> dict:
+def _sweep_refusal(sweep: dict, cycle: int, token: str = "inspect_start") -> dict:
     """The named refusal a mismatched evidence sweep produces (CT-007).
 
     NAMES EACH LOG. A sweep that says "something no longer reproduces" sends
@@ -3333,6 +3396,11 @@ def _sweep_refusal(sweep: dict, cycle: int) -> dict:
 
     Also names the counter it did NOT advance, because the operator's next
     question after a refused transition is always whether the run moved.
+
+    ``token`` is the phase token that was refused, because D-014 gave this
+    refusal three callers rather than one: every transition that OPENS an
+    INSPECT sweeps, and a hint telling a lead to re-call `inspect_start` after
+    a refused `temper` names a transition that is not the one it was making.
     """
     if sweep["error"]:
         return {
@@ -3342,8 +3410,8 @@ def _sweep_refusal(sweep: dict, cycle: int) -> dict:
             ),
             "hint": (
                 "A sweep that could not run is not a sweep that passed. Fix the "
-                "condition named above and re-call Foundry-Phase"
-                "(phase='inspect_start')."
+                f"condition named above and re-call Foundry-Phase"
+                f"(phase='{token}')."
             ),
             "cycle": cycle,
             "evidence_sweep": sweep["record"],
@@ -3359,7 +3427,8 @@ def _sweep_refusal(sweep: dict, cycle: int) -> dict:
             "worktree at HEAD and its output no longer matches what was "
             "committed. Either the behaviour it demonstrates regressed — fix "
             "that — or the log is stale and its owning casting must re-capture "
-            "it. The cycle counter has NOT advanced."
+            f"it. The phase has NOT advanced and the cycle counter has NOT "
+            f"moved; re-call Foundry-Phase(phase='{token}') when it reproduces."
         ),
         "cycle": cycle,
         "mismatches": sweep["mismatches"],
@@ -3603,6 +3672,25 @@ def foundry_mark_phase_complete(
         if teams["active"]:
             return {"error": f"Cannot mark CAST complete \u2014 active teams: {', '.join(teams['teams'])}",
                     "hint": "Shut down all teammates and TeamDelete before marking CAST complete"}
+        # GI-009 / ST-006 / AC-016 / OT-012 \u2014 THE F2 ENTRY RECORDS FULL.
+        #
+        # This branch, not `start_cast`: `start_cast` calls
+        # `_update_phase(fdir, "F1")` and enters CAST, opening no INSPECT at
+        # all. `cast` is the token that enters F2, so it is the transition that
+        # opens the run's first INSPECT and therefore the one that decides its
+        # width \u2014 recorded here, before any Foundry-Next is called (OT-012).
+        entry = _decide_inspect_mode(
+            fdir, project_root, decided_by="cast", phase="F2",
+            cycle=_current_cycle(fdir),
+        )
+        # D-014 / FR-009 / GI-002 \u2014 THE FULL RULE FIRES HERE, SO THE SWEEP RUNS
+        # HERE. Decided and swept BEFORE the first marker is written, so a
+        # refused transition leaves no trace it was attempted \u2014 the same
+        # ordering `inspect_start` holds against its state transaction.
+        sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=True)
+        if not sweep["ok"]:
+            return _sweep_refusal(sweep, _current_cycle(fdir), token="cast")
+
         (fdir / ".cast-complete").write_text(f"{_now()}\n", encoding="utf-8")
         # Stamp the CAST baseline HEAD SHA so GRIND cycles can show teammates
         # what has changed since CAST ended. Used by foundry_spawn_teammate
@@ -3619,29 +3707,24 @@ def foundry_mark_phase_complete(
                 (fdir / ".cast-baseline-sha").write_text(_rev.stdout.strip(), encoding="utf-8")
         except (FileNotFoundError, _sp.TimeoutExpired, OSError):
             pass
-        # GI-009 / ST-006 / AC-016 / OT-012 \u2014 THE F2 ENTRY RECORDS FULL.
-        #
-        # This branch, not `start_cast`: `start_cast` calls
-        # `_update_phase(fdir, "F1")` and enters CAST, opening no INSPECT at
-        # all. `cast` is the token that enters F2, so it is the transition that
-        # opens the run's first INSPECT and therefore the one that decides its
-        # width \u2014 recorded here, before any Foundry-Next is called (OT-012).
-        entry = _decide_inspect_mode(
-            fdir, project_root, decided_by="cast", phase="F2",
-            cycle=_current_cycle(fdir),
-        )
         _update_phase(fdir, "F2")
         _record_inspect_mode(fdir, entry)
+        _record_cycle_rollup(
+            fdir, _current_cycle(fdir), evidence_sweep=sweep["record"]
+        )
         return {
             "ok": True,
             "phase": "F2",
             "inspect_mode": entry["mode"],
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
+            "evidence_sweep": sweep["record"],
             "message": (
                 f"CAST complete \u2192 phase is now F2 (INSPECT), mode {entry['mode']} "
                 f"(rule {entry['rule']}). Required streams: "
-                f"{', '.join(entry['required_streams'])}."
+                f"{', '.join(entry['required_streams'])}. Evidence sweep "
+                f"re-executed {len(sweep['record']['logs_reexecuted'])} log(s) "
+                f"at {sweep['record']['scope']} scope."
             ),
         }
 
@@ -3658,6 +3741,29 @@ def foundry_mark_phase_complete(
         if blocking["blocking"] > 0:
             return {"error": f"Cannot mark INSPECT clean \u2014 {blocking['reason']}",
                     "hint": blocking["hint"]}
+        # D-035 / GI-002: a fix that landed DURING this INSPECT changed the tree
+        # after the width was decided and the sweep taken, so this cycle's
+        # evidence no longer covers what ASSAY is about to be opened on. The
+        # remedy is a boundary crossing, which re-decides and re-sweeps.
+        recorded_mode = _current_inspect_mode(fdir) or {}
+        superseded = recorded_mode.get("fixes_after_decision") or []
+        if superseded:
+            return {
+                "error": (
+                    f"Cannot mark INSPECT clean \u2014 {len(superseded)} defect(s) "
+                    f"were fixed after this INSPECT's width was decided: "
+                    f"{', '.join(superseded)}"
+                ),
+                "hint": (
+                    f"This cycle was swept at {recorded_mode.get('mode', '?')} "
+                    "width before those fixes landed, so its evidence does not "
+                    "cover the surface they changed. Cross the boundary again \u2014 "
+                    "Foundry-Phase(phase='grind_start') then "
+                    "Foundry-Phase(phase='inspect_start') \u2014 which re-decides the "
+                    "width and re-sweeps at the new HEAD, and re-run the streams."
+                ),
+                "fixes_after_decision": list(superseded),
+            }
         (fdir / ".inspect-clean").write_text(f"{_now()}\n", encoding="utf-8")
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
@@ -3812,17 +3918,37 @@ def foundry_mark_phase_complete(
             fdir, project_root, decided_by="temper", phase="F5",
             cycle=_current_cycle(fdir),
         )
+        # D-014 — AND HERE, ON THE SAME TERMS.
+        #
+        # FR-009: the whole corpus is swept "whenever the FULL rule fires", and
+        # this entry records FULL / first_of_phase exactly as the F2 entry does.
+        # It swept nothing, and `_sweep_evidence_at_boundary` had exactly ONE
+        # call site in the server — so on the clean path ASSAY → TEMPER →
+        # NYQUIST → DONE no sweep ran at all, while the lead-lane fixes that
+        # US-005 exists to enable were landing commits throughout F5. The
+        # boundary that opens the LAST inspection of a run was the one boundary
+        # not checking that the run's committed evidence still reproduces.
+        sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=True)
+        if not sweep["ok"]:
+            return _sweep_refusal(sweep, _current_cycle(fdir), token="temper")
+
         _update_phase(fdir, "F5")
         _record_inspect_mode(fdir, entry)
+        _record_cycle_rollup(
+            fdir, _current_cycle(fdir), evidence_sweep=sweep["record"]
+        )
         return {
             "ok": True,
             "phase": "F5",
             "inspect_mode": entry["mode"],
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
+            "evidence_sweep": sweep["record"],
             "message": (
                 f"Phase is now F5 (TEMPER), mode {entry['mode']} "
-                f"(rule {entry['rule']})."
+                f"(rule {entry['rule']}). Evidence sweep re-executed "
+                f"{len(sweep['record']['logs_reexecuted'])} log(s) at "
+                f"{sweep['record']['scope']} scope."
             ),
         }
 
@@ -6348,6 +6474,11 @@ def foundry_mark_defect_fixed(
 
     if refusal is not None:
         return refusal
+
+    # D-035: a fix that lands mid-INSPECT invalidates the width this cycle
+    # already decided and swept at. Stamped after the ledger commits, so a
+    # rolled-back transaction leaves no claim that a fix landed.
+    _note_fix_after_inspect_decision(fdir, defect_id)
 
     # GI-003 / AC-022 — THE SERVER WRITES THE HANDOFF, NOT THE LEAD.
     #

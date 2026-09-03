@@ -606,7 +606,9 @@ def test_done_gate_refuses_while_an_escalated_class_has_open_defects(run_env):
 
     assert result["passed"] is False
     checks = {c["check"]: c for c in result["checklist"]}
-    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
     assert checks[escalation_check]["ok"] is False
     assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
 
@@ -629,7 +631,9 @@ def test_done_gate_escalation_check_passes_once_the_class_closes(run_env):
     result = foundry_gate("done", project_root)
 
     checks = {c["check"]: c for c in result["checklist"]}
-    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
     assert checks[escalation_check]["ok"] is True
     assert checks[escalation_check]["classes"] == []
 
@@ -666,7 +670,9 @@ def test_the_done_transition_itself_refuses_an_open_escalated_class(run_env):
     # The escalated-class check is the one that is visible in the checklist,
     # named, alongside the others the gate enforces.
     checks = {c["check"]: c for c in result["checklist"]}
-    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
     assert checks[escalation_check]["ok"] is False
     assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
 
@@ -779,7 +785,9 @@ def test_the_nyquist_done_transition_refuses_an_open_escalated_class(run_env):
     assert foundry_state.get_active_run() is not None
 
     checks = {c["check"]: c for c in result["checklist"]}
-    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
     assert checks[escalation_check]["ok"] is False
     assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
 
@@ -792,7 +800,9 @@ def test_the_nyquist_done_transition_refuses_an_open_escalated_class(run_env):
 # `_blocking_defects`. Driven: three open LATENT instances of one class across
 # cycles 1-3 gave blocking={live:[], unknown:[], latent:[D-001,D-002,D-003]} and
 # done_preconditions passed=False, "1 escalated defect class(es) still have open
-# instances" — against FR-006 verbatim. And `foundry_gate("nyquist")` consults
+# instances" — against FR-006 verbatim for the DEFECT axis (D-034's lead ruling
+# later restored the CLASS axis: a still-ESCALATED class blocks DONE on its own
+# terms, whatever the tier of its open instances). And `foundry_gate("nyquist")` consults
 # `_escalated_classes` not at all, so the two F6 doors disagreed about identical
 # run state.
 # --------------------------------------------------------------------------- #
@@ -819,30 +829,103 @@ def _ready_for_f6(fdir: Path, defects: list[dict]) -> None:
     )
 
 
-def test_an_escalated_class_carrying_only_latent_instances_does_not_block_done(run_env):
-    """FR-006 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass
-    when the only open defects are LATENT.'
+def test_a_latent_only_escalated_class_still_blocks_done_until_an_arm_fires(run_env):
+    """D-034 — LEAD RULING on the ST-010 / FR-006 tension: BOTH guards apply.
 
-    The escalated-class branch was the one place that did not honour it. Nothing
-    here is reproduced, so there is no work of either shape left: ST-002 sends an
-    escalated class's open LATENT instances to the report backlog, and a backlog
-    is what a run finishes WITH.
+    ST-010's guard is 'every escalated class CLEARED'. This branch used to
+    relax it to 'no open LIVE instance in an escalated class', reasoning from
+    FR-006 that a LATENT-only backlog leaves no work of either shape. But
+    FR-006 is about the DEFECTS and ST-010 is about the CLASS, and the relaxed
+    reading dropped the second axis entirely: a class could sit at ESCALATED
+    forever, having had neither a structural pass nor two clean cycles, and
+    DONE would pass it because its open instances all happened to be LATENT.
+
+    The ruling: a LATENT-only backlog does not by itself clear a class. An arm
+    does — ST-001's two clean cycles or ST-002's structural budget — and both
+    are mechanical, so this cannot hold a run open indefinitely.
     """
     project_root, fdir = run_env
     _ready_for_f6(fdir, _latent_recurring([0, 1, 2]))
 
     outcome = fo._done_preconditions(fdir, project_root)
 
+    assert outcome["passed"] is False
+    assert "still ESCALATED" in outcome["reason"]
+    assert "FALSE_DOCUMENTED_CONTRACT" in outcome["reason"]
     checks = {c["check"]: c for c in outcome["checklist"]}
-    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
-    assert checks[escalation_check]["ok"] is True, outcome["reason"]
-    assert checks[escalation_check]["classes"] == []
-    # ...and the class is still NAMED, because "escalated, carrying only a LATENT
-    # backlog" is not the same state as "never escalated" (ST-010).
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
+    assert checks[escalation_check]["ok"] is False
+    assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
+    # Still named on its own axis, because this class clears by a DIFFERENT
+    # route from one with LIVE work open: it waits for an arm rather than for
+    # defects to be fixed, and the hint has to say so.
     assert checks[escalation_check]["latent_only_classes"] == [
         "FALSE_DOCUMENTED_CONTRACT"
     ]
-    assert "escalated defect class" not in outcome["reason"]
+    assert "No LIVE instances remain" in outcome["hint"]
+
+
+def test_the_cleared_class_that_carries_a_latent_backlog_passes_done(run_env):
+    """The ruling's exit, and the proof it terminates: once an arm has fired
+    and `escalation.json` records CLEARED, the LATENT backlog is carried to the
+    F6 report exactly as FR-001 and ST-002 say, and DONE passes.
+
+    This is the half that makes the guard a precondition rather than a trap.
+    """
+    project_root, fdir = run_env
+    _ready_for_f6(fdir, _latent_recurring([0, 1, 2]))
+    (fdir / "escalation.json").write_text(json.dumps({"classes": {
+        "FALSE_DOCUMENTED_CONTRACT": {
+            "status": "CLEARED",
+            "exit_reason": "budget",
+            "cleared_at_cycle": 2,
+            "structural_packets_dispatched": 2,
+            "open_latent_defect_ids": ["D-001", "D-002", "D-003"],
+        }
+    }}), encoding="utf-8")
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    checks = {c["check"]: c for c in outcome["checklist"]}
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
+    assert checks[escalation_check]["ok"] is True, outcome["reason"]
+    assert "ESCALATED" not in outcome["reason"]
+
+
+def test_a_class_whose_defects_all_closed_does_not_deadlock_done(run_env):
+    """The deadlock the ruling must NOT be implemented into.
+
+    Both exit arms iterate `_escalated_classes`, which returns nothing for a
+    class with no open defects. So a class that escalated and was then fully
+    FIXED reaches neither arm and keeps `status: ESCALATED` in escalation.json
+    forever. Keying the guard on that file directly would make DONE
+    unreachable by any means — overrides included, since they are filtered
+    inside `_escalated_classes` and a direct read bypasses them.
+
+    Keyed on what `_escalated_classes` returns, "still escalating with open
+    work", the same run finishes.
+    """
+    project_root, fdir = run_env
+    defects = _latent_recurring([0, 1, 2])
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 2
+    _ready_for_f6(fdir, defects)
+    (fdir / "escalation.json").write_text(json.dumps({"classes": {
+        "FALSE_DOCUMENTED_CONTRACT": {"status": "ESCALATED", "exit_reason": None}
+    }}), encoding="utf-8")
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    checks = {c["check"]: c for c in outcome["checklist"]}
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
+    assert checks[escalation_check]["ok"] is True, outcome["reason"]
 
 
 def test_a_reproduced_instance_of_an_escalated_class_still_blocks_done(run_env):
@@ -861,11 +944,13 @@ def test_a_reproduced_instance_of_an_escalated_class_still_blocks_done(run_env):
     outcome = fo._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
-    assert "1 escalated defect class(es) still have open instances" in outcome["reason"]
+    assert "1 defect class(es) are still ESCALATED" in outcome["reason"]
     assert "FALSE_DOCUMENTED_CONTRACT" in outcome["reason"]
     assert "D-002" in outcome["hint"]
     checks = {c["check"]: c for c in outcome["checklist"]}
-    escalation_check = next(k for k in checks if k.startswith("escalated_classes_closed"))
+    escalation_check = next(
+        k for k in checks if k.startswith("escalated_classes_cleared")
+    )
     assert checks[escalation_check]["classes"] == ["FALSE_DOCUMENTED_CONTRACT"]
 
 
@@ -880,7 +965,7 @@ def test_an_untiered_instance_of_an_escalated_class_blocks_like_a_live_one(run_e
     outcome = fo._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
-    assert "1 escalated defect class(es) still have open instances" in outcome["reason"]
+    assert "1 defect class(es) are still ESCALATED" in outcome["reason"]
 
 
 def test_the_f6_doors_and_the_nyquist_gate_agree_about_a_latent_only_class(run_env):
@@ -941,8 +1026,7 @@ def test_both_doors_into_f6_enforce_the_same_preconditions(run_env):
     # only the prefix naming which door was tried differs.
     assert nyquist_done["checklist"] == done["checklist"]
     shared_reason = (
-        "1 escalated defect class(es) still have open instances: "
-        "FALSE_DOCUMENTED_CONTRACT"
+        "1 defect class(es) are still ESCALATED: FALSE_DOCUMENTED_CONTRACT"
     )
     assert shared_reason in done["error"]
     assert shared_reason in nyquist_done["error"]

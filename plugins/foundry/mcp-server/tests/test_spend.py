@@ -1050,3 +1050,46 @@ def test_the_init_success_names_which_build_is_executing(run_env):
     assert "4.10.0" in rendered
     assert "3f9c1a284d6b" in rendered
     assert "self" in rendered
+
+
+def test_the_spend_schema_documents_the_spellings_the_run_records(run_env):
+    """D-013's documentation half: 'The Foundry-Spend schema documents the id
+    as "casting-3" and the phase as "e.g. F1, F2, F3" while spawns.log records
+    "cast".'
+
+    A schema description is the only place a lead learns what to type, so a
+    spelling no ledger writes is not a documentation nit — it is the reason no
+    single Foundry-Spend call could clear both the report and Foundry-Next.
+    """
+    import asyncio
+
+    from foundry_mcp import server as foundry_server
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    props = tools["Foundry-Spend"].inputSchema["properties"]
+
+    phase_doc = props["phase"]["description"]
+    assert "'cast'" in phase_doc and "'grind'" in phase_doc, phase_doc
+    assert "'F2'" in phase_doc, phase_doc
+    agent_doc = props["agent"]["description"]
+    assert "casting-" in agent_doc, agent_doc
+    assert "spawns.log" in agent_doc, agent_doc
+
+
+def test_the_documented_phase_spelling_actually_clears_a_dispatch(run_env):
+    """The claim the documentation makes, driven: a lead who types what the
+    schema says clears the dispatch on the exact pair, not merely by the
+    forgiving any-phase fallback."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_spawns(fdir, [{"casting_id": 3, "phase": "cast"}])
+
+    assert fo._unreported_dispatches(fdir) == [
+        {"agent": "casting-3", "phase": "cast"}
+    ]
+
+    foundry_record_spend("casting-3", "cast", 1_000, 1_000,
+                         project_root=project_root)
+
+    assert fo._unreported_dispatches(fdir) == []
+    assert fo._spend_summary(fdir)["by_phase"]["cast"]["tokens"] == 1_000

@@ -947,14 +947,37 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["agent", "phase", "tokens", "duration_ms"],
                 "properties": {
+                    # D-013 — THE DOCUMENTED SPELLINGS ARE THE RECORDED ONES.
+                    #
+                    # These two descriptions named spellings no ledger writes:
+                    # a teammate dispatch is recorded in `spawns.log` with
+                    # phase `cast` or `grind`, never `F1`. A lead typing the
+                    # documented value bucketed its roll-up under a phase
+                    # nothing was dispatched in, and the unreported list only
+                    # cleared because "reported in ANY phase clears the agent"
+                    # is deliberately forgiving. Both halves are stated, so the
+                    # exact pair is typeable and the forgiveness is not a
+                    # secret.
                     "agent": {
                         "type": "string",
                         "description": (
-                            "The agent id, spelled as the progress ledger spells it "
-                            "(e.g. 'casting-3', 'trace')."
+                            "The agent id, spelled as the progress ledger and "
+                            "spawns.log spell it: 'casting-<id>' for a teammate "
+                            "(e.g. 'casting-3'), the stream wire id for an "
+                            "INSPECT stream (e.g. 'trace', 'prove')."
                         ),
                     },
-                    "phase": {"type": "string", "description": "e.g. F1, F2, F3."},
+                    "phase": {
+                        "type": "string",
+                        "description": (
+                            "The phase the agent was DISPATCHED in, as the run "
+                            "recorded it: 'cast' or 'grind' for a teammate, 'F2' "
+                            "for an INSPECT stream agent. Any other value is "
+                            "recorded verbatim and still counts toward the "
+                            "totals; matching the recorded spelling is what "
+                            "makes the per-phase roll-up read correctly."
+                        ),
+                    },
                     "tokens": {"type": "integer", "description": "Total tokens from the usage block."},
                     "duration_ms": {"type": "integer", "description": "Wall-clock duration in milliseconds."},
                     "cycle": {

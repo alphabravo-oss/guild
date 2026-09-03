@@ -1170,3 +1170,233 @@ def test_a_sweep_that_cannot_run_is_a_refusal_not_a_pass(run_env):
     assert result.get("ok") is not True
     assert "could not create the sweep worktree" in result["error"]
     assert _read_state(fdir)["cycle"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# D-014 — the FULL rule fires at the F2 and F5 entries, so the sweep runs there
+#
+# FR-009: the whole corpus is swept "whenever the FULL rule fires". Both phase
+# entries record FULL / first_of_phase and neither swept anything —
+# `_sweep_evidence_at_boundary` had exactly ONE call site in the server. On the
+# clean path ASSAY → TEMPER → NYQUIST → DONE no sweep ran at all, while the
+# lead-lane fixes US-005 exists to enable land commits throughout F5.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_f2_entry_sweeps_and_refuses_a_log_that_no_longer_reproduces(run_env):
+    """GI-002 / FR-009 / AC-014: the `cast` transition records FULL, so it
+    sweeps the whole corpus and refuses on mismatch, naming the log."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest(fdir)
+    _evidence_log(
+        project_root, "casting-1-handler.log",
+        "echo the-handler-calls-the-store", "the-handler-does-not\n",
+    )
+    _git(Path(project_root), "add", "-A")
+    _git(Path(project_root), "commit", "-qm", "evidence")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("cast", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "casting-1-handler.log" in result["error"], result
+    # The hint names the token that was refused, not a different one.
+    assert "phase='cast'" in result["hint"], result
+    # A refused transition leaves no trace it was attempted: no phase change,
+    # no recorded width, and not even the CAST-complete marker.
+    assert _read_state(fdir)["phase"] == "F1"
+    assert "inspect_modes" not in _read_state(fdir)
+    assert not (fdir / ".cast-complete").exists()
+
+
+def test_the_f5_entry_sweeps_and_refuses_a_log_that_no_longer_reproduces(run_env):
+    """The same rule at the other phase entry. This is the boundary that opens
+    the LAST inspection of a run, and it was the one boundary not checking that
+    the run's committed evidence still reproduces."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=3)
+    _write_manifest(fdir)
+    _evidence_log(
+        project_root, "casting-1-handler.log",
+        "echo the-handler-calls-the-store", "the-handler-does-not\n",
+    )
+    _git(Path(project_root), "add", "-A")
+    _git(Path(project_root), "commit", "-qm", "evidence")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("temper", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "casting-1-handler.log" in result["error"], result
+    assert "phase='temper'" in result["hint"], result
+    assert _read_state(fdir)["phase"] == "F4"
+
+
+def test_both_phase_entries_sweep_the_whole_corpus_and_record_it(run_env):
+    """FR-009 / OT-016: 'full corpus at the INSPECT before ASSAY/NYQUIST/DONE
+    and whenever the FULL rule fires.'
+
+    A reproducing corpus costs the run nothing but the time to prove it, and
+    the scope is recorded so the roll-up says what was checked.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest(fdir)
+    _evidence_log(project_root, "casting-1-handler.log", "echo steady", "steady\n")
+    _evidence_log(project_root, "casting-2-other.log", "echo also-steady",
+                  "also-steady\n")
+    _git(Path(project_root), "add", "-A")
+    _git(Path(project_root), "commit", "-qm", "evidence")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("cast", project_root)
+
+    assert result["ok"] is True, result
+    assert result["inspect_mode"] == "FULL"
+    assert result["evidence_sweep"]["scope"] == "full"
+    assert len(result["evidence_sweep"]["logs_reexecuted"]) == 2
+    assert result["evidence_sweep"]["mismatches"] == []
+    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    assert rollup["cycles"]["0"]["evidence_sweep"]["scope"] == "full"
+
+
+def test_every_transition_that_opens_an_inspect_sweeps(run_env):
+    """The property, rather than three separate call sites that happen to
+    agree today. GI-009 names one rule — "whichever Foundry-Phase transition
+    opens an INSPECT" — and the sweep belongs to the same set as the width
+    decision, so the two are asserted against ONE derivation of that set."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(
+        inspect.getsource(foundry_mark_phase_complete)
+    ))
+
+    def _calls(node) -> set[str]:
+        return {
+            n.func.id for n in ast.walk(node)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+
+    opens_inspect: list[str] = []
+    sweeps: list[str] = []
+    for branch in ast.walk(tree):
+        if not isinstance(branch, ast.If):
+            continue
+        test = branch.test
+        if not (isinstance(test, ast.Compare)
+                and isinstance(test.comparators[0], ast.Constant)):
+            continue
+        token = test.comparators[0].value
+        body_calls = set()
+        for stmt in branch.body:
+            body_calls |= _calls(stmt)
+        if "_decide_inspect_mode" in body_calls:
+            opens_inspect.append(token)
+        if "_sweep_evidence_at_boundary" in body_calls:
+            sweeps.append(token)
+
+    assert sorted(opens_inspect) == ["cast", "inspect_start", "temper"]
+    assert sorted(sweeps) == sorted(opens_inspect), (
+        "every transition that opens an INSPECT must sweep the evidence "
+        "corpus: FR-009 sweeps 'whenever the FULL rule fires', and a phase "
+        "entry always records FULL"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-035 — a fix landing mid-INSPECT invalidates a width already decided
+# --------------------------------------------------------------------------- #
+
+#: A LIVE fix keeps the full adjacent-path declaration whoever authored it
+#: (FR-015 / AC-023), so both fixtures below carry one.
+_ADJACENT_STATEMENT = (
+    "Two transitions reach the handler besides the defect's — the retry branch "
+    "in run_retry and the shutdown path in close_pool — and it writes the "
+    "shared cache the reaper thread scans concurrently."
+)
+_ADJACENT_TEST = "tests/test_retry.py::test_run_retry_reuses_the_handler"
+
+
+def _one_file_commit(project_root: str) -> str:
+    """A real one-non-test-file commit, inside the lead lane.
+
+    The lane is measured with `git show --numstat`, so it needs a real commit —
+    the same reason `test_fix_gate.py` builds one rather than naming a SHA.
+    """
+    root = Path(project_root)
+    (root / "src" / "handler.py").write_text(
+        "def handle():\n    return store.get()\n", encoding="utf-8"
+    )
+    _git(root, "add", "src/handler.py")
+    _git(root, "commit", "-qm", "lead-lane fix")
+    return _git(root, "rev-parse", "HEAD").strip()
+
+
+def test_a_fix_landing_during_f2_blocks_inspect_clean(run_env):
+    """D-035: 'foundry_mark_defect_fixed has no phase guard, so a fix landing
+    during F2 flips blocking to 0 after the INSPECT width was already decided —
+    the gate then opens on a cycle whose sweep never covered the newly-changed
+    surface.'
+
+    The fix is legitimate work and is accepted; what is refused is carrying
+    this cycle's decision forward as though it still described the tree.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import foundry_mark_defect_fixed
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start", "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_defects(fdir, [_open_live()])
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text("x\n", encoding="utf-8")
+
+    fixed = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead",
+        fix_commit=_one_file_commit(project_root),
+        adjacent_path_statement=_ADJACENT_STATEMENT,
+        adjacent_path_test=_ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert fixed["ok"] is True, fixed
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_clean", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "D-001" in result["error"], result
+    assert "after this INSPECT's width was decided" in result["error"], result
+    assert "inspect_start" in result["hint"], result
+    assert not (fdir / ".inspect-clean").exists()
+
+
+def test_a_fix_landing_during_f3_leaves_the_next_inspect_alone(run_env):
+    """The normal case, which must stay free: GRIND is where fixes land, and
+    the next `inspect_start` decides a width that already accounts for them.
+    A guard that fired there would refuse every cycle the protocol produces."""
+    from foundry_mcp.tools.foundry_orchestrator import foundry_mark_defect_fixed
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start", "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_defects(fdir, [_open_live()])
+
+    fixed = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead",
+        fix_commit=_one_file_commit(project_root),
+        adjacent_path_statement=_ADJACENT_STATEMENT,
+        adjacent_path_test=_ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert fixed["ok"] is True, fixed
+
+    modes = _read_state(fdir)["inspect_modes"]
+    assert "fixes_after_decision" not in modes[-1]
