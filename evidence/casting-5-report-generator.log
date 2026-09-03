@@ -2,8 +2,9 @@
 # evidence-for: US-008, GI-006, CT-014, AC-002, AC-004, AC-022, AC-034, AC-036, FR-023, FR-038, FR-051, NFR-002, NFR-003, OT-025
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-........................................................................ [ 97%]
-.
+
+........................................................................ [ 92%]
+.....
 === report.json top-level keys ===
   generated_at
   run
@@ -51,10 +52,11 @@
       src/foundry_mcp/tools/foundry_report.py  lines=64
 === INSPECT mode per cycle, every decision (AC-036 / D-119) ===
   cycle 1  F2    FULL  first_of_phase
-  cycle 2  F2    DELTA delta
+  cycle 2  F2    FULL  verifier_touched
   cycle 3  F2    DELTA delta
-  cycle 4  F2    FULL  verifier_touched
-  cycle 5  F5    FULL  final_gate
+  cycle 4  F2    DELTA delta
+  cycle 5  F2    FULL  final_gate
+  cycle 5  F5    FULL  first_of_phase
 === spend: tokens and minutes only, no money (NFR-002) ===
   phase F1    tokens=930000    minutes=42.0   records=2 agents=3
   phase F2    tokens=980000    minutes=50.0   records=2 agents=2
@@ -77,5 +79,5 @@
   baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-.                                                                       [100%]
-74 passed in 0.52s
+.                                                                   [100%]
+78 passed in 1.61s

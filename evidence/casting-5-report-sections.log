@@ -50,10 +50,11 @@
       src/foundry_mcp/tools/foundry_report.py  lines=64
 === INSPECT mode per cycle, every decision (AC-036 / D-119) ===
   cycle 1  F2    FULL  first_of_phase
-  cycle 2  F2    DELTA delta
+  cycle 2  F2    FULL  verifier_touched
   cycle 3  F2    DELTA delta
-  cycle 4  F2    FULL  verifier_touched
-  cycle 5  F5    FULL  final_gate
+  cycle 4  F2    DELTA delta
+  cycle 5  F2    FULL  final_gate
+  cycle 5  F5    FULL  first_of_phase
 === spend: tokens and minutes only, no money (NFR-002) ===
   phase F1    tokens=930000    minutes=42.0   records=2 agents=3
   phase F2    tokens=980000    minutes=50.0   records=2 agents=2
@@ -77,4 +78,4 @@
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
-1 passed, 73 deselected in 0.09s
+1 passed, 77 deselected in 0.27s
