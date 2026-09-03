@@ -3038,3 +3038,203 @@ def test_a_payload_that_will_not_serialise_still_renders_its_display():
     assert "BANNER" in rendered
     assert RESULT_JSON_MARKER in rendered
     assert json.loads(rendered.partition(RESULT_JSON_MARKER + "\n")[2])["x"] == "<opaque>"
+
+
+# --------------------------------------------------------------------------- #
+# D-183 — THE WIDTH REFUSAL IS NOT DISPLACED BY THE CHECK BELOW IT.
+#
+# `foundry_gate`'s assay branch is a ladder of independent checks, each writing
+# `passed`, `reason` and `hint`, so the LAST failing check owns the one line a
+# terminal renders. The `.inspect-clean` check sits below the width check and
+# reassigned both strings whenever `has_fixed > 0` — which is true of every
+# ordinary GRIND cycle, because a GRIND that fixed nothing is not a GRIND.
+#
+# Driven end to end through `server.call_tool` on a DELTA cycle carrying one
+# fixed defect: the gate returned reason "GRIND fixed defects but INSPECT has
+# not re-verified" and hint "…close it with Foundry-Phase(phase='inspect_clean')
+# — that transition writes the .inspect-clean marker this check reads, and it is
+# the only call that does." Following that hint, `inspect_clean` was REFUSED:
+# "cycle N ran at DELTA width (rule delta), and ASSAY is only opened by an
+# INSPECT whose recorded mode is FULL". The gate had computed that very
+# sentence one check earlier and thrown it away.
+#
+# That is D-123's class on D-123's own symbol: the remedy a refusal states is a
+# call the server then rejects. Ruling 4 in the run's `spec_ambiguities` and
+# start.md's ASSAY-door paragraph both make the recorded WIDTH the whole
+# condition — "From a cycle recorded `DELTA`: call
+# `Foundry-Phase(phase='inspect_start')` AGAIN, from F2" — so the width refusal
+# wins and the `.inspect-clean` text may not overwrite it.
+#
+# The checklist was never wrong: `inspect_ran_at_full_width (mode=DELTA
+# rule=delta) ok=False` was correct in both runs. So `reason` and `hint` are
+# pinned here, not just the checklist entry — the checklist is a dict a test
+# reads and the strings are what a lead reads.
+# --------------------------------------------------------------------------- #
+
+
+def _cycle_recorded_with_mode(fdir: Path, mode: str, rule: str, cycle: int = 2) -> None:
+    """A clean, fully-streamed F2 whose recorded width is exactly `mode`.
+
+    `_full_cycle_recorded_with` records FULL; this writes either width from the
+    same shape, so the DELTA and FULL runs below differ in the one field under
+    test and in nothing else.
+    """
+    _full_cycle_recorded_with(fdir, rule, cycle=cycle)
+    state = _read_state(fdir)
+    state["inspect_modes"][-1]["mode"] = mode
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _fixed_defect(did: str = "D-001", cycle: int = 2) -> dict:
+    """One FIXED defect — what a GRIND leaves behind, and what makes
+    `has_fixed > 0` the ordinary state rather than an edge case."""
+    return {
+        "id": did, "cycle": cycle, "source": "trace", "type": "UNWIRED",
+        "description": f"{did} description", "file": "src/handler.py",
+        "symbol": "handle", "status": "fixed", "tier": "LIVE",
+        "class": "K", "fixed_in_cycle": cycle,
+    }
+
+
+def _gate_over_the_wire(project_root: str, fdir: Path, monkeypatch) -> dict:
+    """`Foundry-Gate('assay')` through the MCP request handler.
+
+    Driven over the wire because that is where the lead reads it: the response
+    a client renders carries the machine-readable result after the marker, and
+    `reason` / `hint` are the two fields of it a terminal actually prints.
+    """
+    import foundry_mcp.server as srv
+
+    monkeypatch.setattr(srv, "_project_root", project_root)
+    _arm(fdir)
+    return _machine_readable(_drive_mcp_text("Foundry-Gate", {"phase": "assay"}))
+
+
+def test_a_delta_cycle_carrying_a_fixed_defect_still_refuses_on_its_width(
+    run_env, monkeypatch
+):
+    """AC-016 verbatim: 'Foundry-Next returns the recorded mode and rule name
+    whenever it is called and never computes them'; FR-011: 'FULL when: … the
+    INSPECT before ASSAY/NYQUIST/DONE … Otherwise DELTA.'
+
+    The ORDINARY DELTA cycle: defects were fixed, so `has_fixed > 0`. NFR-005
+    makes the one line a terminal prints the surface that has to be right, and
+    the remedy it names must be a call the server accepts — which
+    `inspect_clean` is not, at a DELTA width. Both halves are asserted: the
+    width sentence survives, and the displaced sentence's call is absent.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "DELTA", INSPECT_DELTA_RULE)
+    _write_defects(fdir, [_fixed_defect()])
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert gate["passed"] is False, gate
+    assert "DELTA width (rule delta)" in gate["reason"], gate["reason"]
+    assert "recorded mode is FULL" in gate["reason"], gate["reason"]
+    assert "has not re-verified" not in gate["reason"], gate["reason"]
+    assert "inspect_start" in gate["hint"], gate["hint"]
+    assert "inspect_clean" not in gate["hint"], gate["hint"]
+
+    # The checklist was already right in the shipped code and stays right: this
+    # defect was never about the entry, it was about the sentence beside it.
+    width = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("inspect_ran_at_full_width")
+    )
+    assert width["ok"] is False, width
+    assert "mode=DELTA" in width["check"], width
+    inspect_clean = next(c for c in gate["checklist"] if c["check"] == "inspect_clean")
+    assert inspect_clean["ok"] is False, inspect_clean
+
+    # ...and the call the shipped hint named IS the one the server refuses, so
+    # the two surfaces cannot disagree about it again.
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean.get("ok") is not True, clean
+    assert "recorded mode is FULL" in clean["error"], clean["error"]
+
+
+def test_the_same_delta_cycle_with_nothing_fixed_reads_identically(
+    run_env, monkeypatch
+):
+    """AC-016. The control that localised D-183.
+
+    The width arm was never broken — driven on this same run with zero fixed
+    defects it produced the correct sentence all along, which is what proved
+    the arm right and merely shadowed. So the two runs are asserted to agree:
+    whether a GRIND fixed something changes the checklist's `inspect_clean`
+    entry and nothing about the width the lead is told.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "DELTA", INSPECT_DELTA_RULE)
+    _write_defects(fdir, [])
+
+    unfixed = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    _write_defects(fdir, [_fixed_defect()])
+    fixed = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert unfixed["reason"] == fixed["reason"], (unfixed["reason"], fixed["reason"])
+    assert unfixed["hint"] == fixed["hint"], (unfixed["hint"], fixed["hint"])
+    assert "DELTA width (rule delta)" in unfixed["reason"], unfixed["reason"]
+
+
+@pytest.mark.parametrize("rule", sorted(INSPECT_FULL_RULES))
+def test_a_full_cycle_carrying_a_fixed_defect_still_names_the_inspect_clean_door(
+    run_env, monkeypatch, rule
+):
+    """FR-006 / AC-008 / FR-044 — D-123's remedy, kept.
+
+    When the width is FULL the `inspect_clean` call the hint names is one the
+    server accepts, so that hint is the right one and must still win. Guarding
+    the width refusal must not silence the check below it on the runs where it
+    is the truthful answer. Parametrised over `INSPECT_FULL_RULES` for the same
+    reason the D-169 tests are: every FULL rule opens ASSAY, so every one of
+    them must reach this hint.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "FULL", rule)
+    _write_defects(fdir, [_fixed_defect()])
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert gate["passed"] is False, gate
+    assert "has not re-verified" in gate["reason"], gate["reason"]
+    assert "Foundry-Phase(phase='inspect_clean')" in gate["hint"], gate["hint"]
+    width = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("inspect_ran_at_full_width")
+    )
+    assert width["ok"] is True, width
+
+
+def test_an_unrecorded_width_carrying_a_fixed_defect_refuses_on_the_width(
+    run_env, monkeypatch
+):
+    """AC-016 / D-117: 'unrecorded' is not full width either.
+
+    The width arm has two branches — `_unrecorded_width_problem` and the
+    positive `mode == "FULL"` test — and the shadowing swallowed BOTH. A
+    resumed pre-change archive carries no `inspect_modes` at all, so this is
+    the branch a legacy run actually lands on, and it must reach the lead
+    intact for the same reason the DELTA one must.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest(fdir)
+    _write_spec(fdir, ["FR-001"])
+    _write_defects(fdir, [_fixed_defect(cycle=1)])
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2026-09-03T00:00:00+00:00 cycle=1\nitems_checked=1\nitems_total=1\n"
+            "coverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert gate["passed"] is False, gate
+    assert "Cannot open ASSAY" in gate["reason"], gate["reason"]
+    assert "has not re-verified" not in gate["reason"], gate["reason"]
+    assert "inspect_clean" not in gate["hint"], gate["hint"]

@@ -2051,25 +2051,62 @@ def foundry_gate(
             has_fixed = sum(1 for d in defects.get("defects", []) if d.get("status") == "fixed")
             if has_fixed > 0:
                 passed = False
-                reason = "GRIND fixed defects but INSPECT has not re-verified"
-                # D-123 / FR-044 / AC-035 — THE REMEDY NAMES A CALL THAT
-                # EXISTS.
+                # D-183 — AND IT DOES NOT DISPLACE THE WIDTH REFUSAL ABOVE IT.
                 #
-                # This hint read "Call foundry_mark_inspect_clean when clean."
-                # `grep -rn foundry_mark_inspect_clean plugins/foundry` found
-                # the name in this string and NOWHERE else: no MCP tool, no
-                # Python function, no prose surface carries it. The door that
-                # closes an INSPECT is Foundry-Phase(phase='inspect_clean'),
-                # which FR-006 and AC-008 name and which FR-044's
-                # Gate-then-Phase sequence relies on. A refusal whose only
-                # stated next move is a call the server would reject is a
-                # refusal with no remedy — the D-011 shape, on this door.
-                hint = (
-                    "Re-run the INSPECT this GRIND owes, then close it with "
-                    "Foundry-Phase(phase='inspect_clean') — that transition "
-                    "writes the .inspect-clean marker this check reads, and it "
-                    "is the only call that does."
-                )
+                # This branch is a ladder: every check writes `passed`, `reason`
+                # and `hint`, so the LAST failing one owns the single line a
+                # terminal renders. `has_fixed > 0` is true of every ordinary
+                # GRIND cycle — a GRIND that fixed nothing is not a GRIND — so
+                # this arm overwrote the width refusal on the normal path.
+                #
+                # Driven through server.call_tool on a DELTA cycle carrying one
+                # fixed defect: the gate answered "GRIND fixed defects but
+                # INSPECT has not re-verified" with the hint below, and
+                # following that hint Foundry-Phase(phase='inspect_clean') was
+                # REFUSED — "ran at DELTA width (rule delta), and ASSAY is only
+                # opened by an INSPECT whose recorded mode is FULL". The gate
+                # had computed that very sentence one check earlier, in the
+                # `elif not assay_width_ok` arm above, and thrown it away. The
+                # control drive on the identical run with zero fixed defects
+                # surfaced the width refusal correctly, which is what proved the
+                # arm right and merely shadowed. This is D-123's own class —
+                # a remedy naming a call the server rejects — reopened on
+                # D-123's own symbol by a later check.
+                #
+                # Ruling 4 in the run's spec_ambiguities and start.md's
+                # ASSAY-door paragraph both make the recorded WIDTH the whole
+                # condition: "From a cycle recorded `DELTA`: call
+                # `Foundry-Phase(phase='inspect_start')` AGAIN, from F2." So the
+                # width refusal wins outright rather than being folded into this
+                # sentence — folding would put the refused call back beside the
+                # widening one and leave the lead to pick. `passed` is still set
+                # here and the checklist entry below is still `ok: False`: the
+                # check has not been weakened, only stopped from speaking over
+                # a refusal that has to be acted on first.
+                if assay_unrecorded is None and assay_width_ok:
+                    reason = "GRIND fixed defects but INSPECT has not re-verified"
+                    # D-123 / FR-044 / AC-035 — THE REMEDY NAMES A CALL THAT
+                    # EXISTS.
+                    #
+                    # This hint read "Call foundry_mark_inspect_clean when
+                    # clean." `grep -rn foundry_mark_inspect_clean
+                    # plugins/foundry` found the name in this string and NOWHERE
+                    # else: no MCP tool, no Python function, no prose surface
+                    # carries it. The door that closes an INSPECT is
+                    # Foundry-Phase(phase='inspect_clean'), which FR-006 and
+                    # AC-008 name and which FR-044's Gate-then-Phase sequence
+                    # relies on. A refusal whose only stated next move is a call
+                    # the server would reject is a refusal with no remedy — the
+                    # D-011 shape, on this door. Which is exactly why the guard
+                    # above is a guard and not a reordering: at a DELTA or
+                    # unrecorded width this call is refused, so naming it here
+                    # would be the same defect stated a second way.
+                    hint = (
+                        "Re-run the INSPECT this GRIND owes, then close it with "
+                        "Foundry-Phase(phase='inspect_clean') — that transition "
+                        "writes the .inspect-clean marker this check reads, and it "
+                        "is the only call that does."
+                    )
             checklist.append({"check": "inspect_clean", "ok": False})
         else:
             checklist.append({"check": "inspect_clean", "ok": True})
