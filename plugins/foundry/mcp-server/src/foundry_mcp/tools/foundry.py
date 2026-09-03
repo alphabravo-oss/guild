@@ -1171,6 +1171,221 @@ _F0_OBSERVATION_DEFECT_RULING = (
 )
 
 
+# ---------------------------------------------------------------------------
+# The F0 self-target preflight (GI-004 / ST-009 / CT-010 / FR-017 / FR-018 /
+# FR-035 / FR-050 / AC-025 / AC-026 / AC-027 / OT-017 / OT-018).
+#
+# WHAT THIS EXISTS TO CATCH, CONCRETELY
+# -------------------------------------
+# The foundry plugin ships from a git-URL marketplace and installs
+# version-namespaced at ~/.claude/plugins/cache/guild/foundry/<version>/, and
+# `plugin.json.mcpServers.foundry` launches THAT tree's server per project. So
+# a run whose TARGET is the foundry plugin routinely executes on a DIFFERENT
+# build of foundry than the working tree it is editing: the process fixes the
+# run ships are not available to the run that shipped them, and the F6 report
+# has to carry a "dual reality" section explaining which of the two anything
+# was true of. That is not a hypothetical — it is how the run that produced
+# this code was itself launched.
+#
+# The remedy is a launch flag, not a mid-run repair (GI-004): nothing here
+# calls /reload-plugins, rewrites .mcp.json, or installs a plugin. The
+# preflight's whole job is to REFUSE early and print the exact command that
+# starts a server on the working tree.
+# ---------------------------------------------------------------------------
+
+#: FR-035 — the commit of a server whose git could not be read. It is a
+#: SENTINEL, not a value: `_commit_matches` refuses it against anything,
+#: including itself, because "I could not learn either commit" is not
+#: evidence that they agree. Reporting it as unknown rather than treating it
+#: as a match is the whole of the flexible clause.
+UNKNOWN_COMMIT = "unknown"
+
+
+def _executing_server_root() -> Path:
+    """The plugin directory the RUNNING server was imported from.
+
+    Derived from ``foundry_mcp.__file__``, never from ``project_root``: the
+    entire point of the preflight is that those two can differ, so deriving
+    the executing root from the target's path would compare the working tree
+    against itself and pass every time.
+
+    ``foundry_mcp/__init__.py`` sits at
+    ``<plugin>/mcp-server/src/foundry_mcp/__init__.py``, so the plugin
+    directory is its fourth parent.
+    """
+    import foundry_mcp
+
+    return Path(foundry_mcp.__file__).resolve().parents[3]
+
+
+def _executing_server_version() -> str:
+    """The running server's own ``__version__`` (FR-017)."""
+    import foundry_mcp
+
+    return getattr(foundry_mcp, "__version__", "")
+
+
+def _plugin_manifest_version(plugin_dir: Path) -> str:
+    """The ``version`` of ``<plugin_dir>/.claude-plugin/plugin.json``, or "".
+
+    Read through the guarded reader: an unreadable or non-object manifest
+    yields "" rather than a raise, and "" never compares equal to a real
+    version string, so an unreadable manifest refuses a self-targeting run
+    exactly as a mismatched one does.
+    """
+    data, problem = read_document(plugin_dir / ".claude-plugin" / "plugin.json")
+    if problem is not None:
+        return ""
+    version = data.get("version")
+    return version if isinstance(version, str) else ""
+
+
+def _git_head(root: Path) -> str:
+    """``git -C <root> rev-parse HEAD``, or ``UNKNOWN_COMMIT``. Never raises.
+
+    FR-035 leaves HOW the server learns its commit to the implementer, with
+    one proviso: a missing commit is REPORTED as unknown, never treated as a
+    match. Every failure mode collapses to the sentinel — git absent from
+    PATH, the directory not a work tree, a detached or empty repository, a
+    hung invocation. ``capture_output`` is not optional: this server speaks
+    JSON-RPC over stdio, and a subprocess inheriting stdout would write git's
+    output into the protocol channel (D-149's class, one process out).
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return UNKNOWN_COMMIT
+    if proc.returncode != 0:
+        return UNKNOWN_COMMIT
+    return proc.stdout.strip() or UNKNOWN_COMMIT
+
+
+def _commit_matches(server_commit: str, target_commit: str) -> bool:
+    """True only when two REAL commits are the same one (FR-035).
+
+    ``UNKNOWN_COMMIT`` on either side is a mismatch — including when it is on
+    BOTH sides, where bare string equality would otherwise report agreement
+    between two things nobody could read. That case is the dangerous one: it
+    is what a server installed outside a git tree looks like, which is exactly
+    the arrangement the preflight exists to catch.
+    """
+    if UNKNOWN_COMMIT in (server_commit, target_commit):
+        return False
+    return server_commit == target_commit
+
+
+def _find_foundry_plugin_dir(project_root: Path) -> Path | None:
+    """The directory under ``project_root`` holding a foundry ``plugin.json``.
+
+    FR-018 / AC-025: self-target is EXACTLY the presence of a plugin.json
+    named foundry under the project root — ``.claude-plugin/plugin.json`` or
+    ``plugins/*/.claude-plugin/plugin.json``. There is no flag to remember and
+    no run configuration to get wrong; the target's own tree answers the
+    question.
+
+    Returns the directory that CONTAINS the matched ``.claude-plugin``
+    directory (the value the launch command names), or None when the project
+    is not the foundry plugin — in which case nothing is compared and no
+    warning is emitted (FR-050 / CT-010).
+
+    A manifest that cannot be read or is not an object is SKIPPED rather than
+    refused: it has not been shown to be foundry's, and refusing every run
+    whose project happens to contain a corrupt third-party plugin manifest
+    would make an unrelated file able to block an unrelated build.
+    """
+    candidates = [project_root / ".claude-plugin" / "plugin.json"]
+    candidates.extend(sorted((project_root / "plugins").glob("*/.claude-plugin/plugin.json")))
+    for manifest in candidates:
+        data, problem = read_document(manifest)
+        if problem is not None:
+            continue
+        if data.get("name") == "foundry":
+            return manifest.parent.parent
+    return None
+
+
+def _self_target_preflight(project_root: Path) -> tuple[dict, dict | None]:
+    """``(version fields for state.json, refusal or None)`` (CT-010 / ST-009).
+
+    ALWAYS returns the four version fields plus ``self_target``, because
+    FR-050 requires a run with no foundry manifest to RECORD and display what
+    it executed on even though it compares nothing. The refusal is the second
+    element and is non-None only for a self-targeting run whose executing
+    server disagrees with the working tree.
+
+    Called before any run directory, state.json or manifest is written: a
+    refused init that has already created half a run is worse than the
+    mismatch it caught, because the next thing the operator does is relaunch,
+    and they would relaunch into an archive holding a stillborn run.
+    """
+    server_root = _executing_server_root()
+    fields = {
+        "server_version": _executing_server_version(),
+        "plugin_version": _plugin_manifest_version(server_root),
+        "server_root": str(server_root),
+        "server_commit": _git_head(server_root),
+        "self_target": False,
+    }
+
+    target_plugin_dir = _find_foundry_plugin_dir(project_root)
+    if target_plugin_dir is None:
+        return fields, None
+
+    fields["self_target"] = True
+    launch_command = f"claude --plugin-dir {target_plugin_dir}"
+    hint = (
+        "This run's TARGET is the foundry plugin, but the executing server is "
+        "a different build of it — so the fixes this run ships would not be "
+        "the ones it runs on. Quit, relaunch with the command above so the "
+        "server is started from the working tree, and re-run Foundry-Init. "
+        "The switch is NEVER attempted mid-run: no /reload-plugins, no "
+        "rewriting .mcp.json, no installing a plugin while a run is open."
+    )
+
+    target_version = _plugin_manifest_version(target_plugin_dir)
+    if target_version != fields["plugin_version"]:
+        return fields, {
+            "ok": False,
+            "error": (
+                f"Self-targeting run refused — version mismatch: the working "
+                f"tree's plugin.json declares {target_version!r} but the "
+                f"executing server was imported from {fields['server_root']} "
+                f"whose plugin.json declares {fields['plugin_version']!r}."
+            ),
+            "hint": hint,
+            "launch_command": launch_command,
+            "mismatch": "version",
+            **fields,
+            "target_plugin_version": target_version,
+        }
+
+    target_commit = _git_head(project_root)
+    if not _commit_matches(fields["server_commit"], target_commit):
+        return fields, {
+            "ok": False,
+            "error": (
+                f"Self-targeting run refused — commit mismatch: the working "
+                f"tree is at {target_commit} but the executing server at "
+                f"{fields['server_root']} is at {fields['server_commit']}. "
+                f"({UNKNOWN_COMMIT!r} means git could not be read there, and "
+                f"is never treated as a match.)"
+            ),
+            "hint": hint,
+            "launch_command": launch_command,
+            "mismatch": "commit",
+            **fields,
+            "target_commit": target_commit,
+        }
+
+    return fields, None
+
+
 def _generate_run_name(ticket: str = "", description: str = "") -> str:
     """Generate a human-friendly run name.
 
@@ -1205,11 +1420,17 @@ def foundry_init(
     description: str = "",
     url: str = "",
     project_root: str = ".",
+    max_cycles: int = 0,
 ) -> dict:
     """Initialize a foundry run under foundry-archive/.
 
     Args:
         resume: Name of existing run to resume (e.g. 'bold-falcon').
+        max_cycles: CT-016 / FR-024 — the GRIND cycle ceiling from the
+            ``--max-cycles`` flag. Persisted to BOTH state.json and
+            castings/manifest.json. Default 0 means unbounded. The Foundry-Phase
+            call that would exceed it SUCCEEDS, sets phase HALTED and generates
+            the report; HALTED is a named terminal state and is not DONE.
         ticket: Ticket ID (e.g., "AQUA-123") for name generation.
         description: Short description for name generation.
         url: Target URL for the SIGHT audit. Persisted to
@@ -1260,6 +1481,25 @@ def foundry_init(
         }
 
     # --- New run ---
+
+    # ST-009 / CT-010 — the self-target preflight, BEFORE anything is created.
+    #
+    # Ordering is the requirement, not a nicety: `archive.mkdir` is four lines
+    # below, and a refusal that has already made `foundry-archive/<name>/`
+    # leaves the operator relaunching into an archive holding a stillborn run
+    # they must now identify and delete.
+    #
+    # ONLY THE NEW-RUN PATH IS GATED, and that is deliberate. ST-009 is written
+    # about "F0 init requested" — the creation of a run — and resume is the
+    # RECOVERY door: the refusal's own remedy is "relaunch, then resume", so a
+    # resume that refused on drift would strand an operator from the artifacts
+    # of a run already on disk at exactly the moment they are trying to reach
+    # them. Resume also writes none of these fields, so there is nothing it
+    # could record differently.
+    version_fields, preflight_refusal = _self_target_preflight(root)
+    if preflight_refusal is not None:
+        return preflight_refusal
+
     run_name = _generate_run_name(ticket=ticket, description=description)
 
     # Ensure unique name (don't collide with existing runs)
@@ -1320,6 +1560,15 @@ def foundry_init(
         "temper": temper,
         "nyquist": nyquist,
         "no_ui": no_ui,
+        # CT-016 / FR-024 — the GRIND cycle ceiling. state.json is where the
+        # phase handler and Foundry-Next read it; the manifest carries it too,
+        # mirroring how temper/nyquist are written to both.
+        "max_cycles": max_cycles,
+        # FR-017 / FR-050 / AC-027 — what this run actually EXECUTED on:
+        # server_version, plugin_version, server_root, server_commit and
+        # self_target. Recorded on EVERY run, compared only on a self-targeting
+        # one, so a report never has to guess which build produced a result.
+        **version_fields,
         "started_at": _init_now,
         "phase_times": {
             # Stamp F0 start so sub-phase timing (F0 / F0.5 / F0.9) works
@@ -1350,7 +1599,9 @@ def foundry_init(
         "nyquist": nyquist,
         "no_ui": no_ui,
         "target_url": url,
-        "max_cycles": 0,
+        # CT-016 — the parameter, not the hardcoded 0 this literal carried
+        # while no caller could set it.
+        "max_cycles": max_cycles,
         "current_cycle": 0,
         "status": "initialized",
         "castings": [],
@@ -1410,6 +1661,12 @@ def foundry_init(
         "run_name": run_name,
         "files_created": files_created,
         "spec_copied": spec_copied,
+        "max_cycles": max_cycles,
+        # AC-027 — echoed beside the persisted copy so a caller rendering the
+        # init result reads what the run recorded rather than re-deriving it.
+        # `_fmt_foundry_init` returns `r["display"]` when present, so adding
+        # keys here changes no rendered output.
+        **version_fields,
         "display": _format_init_display(run_name, state.get("temper", False), state.get("nyquist", False)),
         "next_step": "Call Foundry-Next to get decomposition instructions. Print the display above FIRST.",
     }
