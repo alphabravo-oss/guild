@@ -1,0 +1,38 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider -s tests/test_spawn_progress.py -k "demo_ledger_seeding or demo_refused_wave"
+# evidence-for: US-007, AC-031, FR-020, CT-011, OT-021
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+== AC-031: the server writes line one, at dispatch ==
+
+-- before any dispatch: progress/ is ABSENT --
+
+-- Foundry-Cast-Wave(wave=1, phase='cast') --
+   ok = True
+
+   ledgers on disk the moment the call returned:
+     casting-1.jsonl: {"timestamp": "<TIMESTAMP>", "phase": "cast", "step": "dispatched", "agent": "casting-1", "seeded_by": "server"}
+     casting-2.jsonl: {"timestamp": "<TIMESTAMP>", "phase": "cast", "step": "dispatched", "agent": "casting-2", "seeded_by": "server"}
+
+   OT-021: one server-written line per dispatched casting = True
+
+-- read back through Foundry-Liveness, with no agent line written --
+     casting-1    status=progressing  step='dispatched' lines=1
+     casting-2    status=progressing  step='dispatched' lines=1
+
+   Before AC-031 every one of those rows was absent for the first 15
+   minutes of the agent's life: no ledger to glob, and a dispatch too
+   young for the spawns.log half of the roster to synthesize a row.
+.== D-144, held for the seed as well as the spawn record ==
+
+   A wave of three whose THIRD prompt is missing. Castings 1 and 2
+   cleared every check of their own; the wave was never handed out.
+
+   refused                 = True
+   spawn records written   = []
+   ledgers seeded          = []
+
+   Either one left behind is a claim that a teammate exists.
+   Foundry-Liveness would report both as agents to chase.
+.
+2 passed, 151 deselected in 0.06s

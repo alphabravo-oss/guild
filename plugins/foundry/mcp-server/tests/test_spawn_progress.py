@@ -274,11 +274,17 @@ def test_the_block_is_appended_last_so_the_established_order_is_undisturbed(
 
 
 def test_the_prompt_itself_is_never_modified_by_the_progress_block(run_env) -> None:
-    """The verbatim-prompt contract is the reason this is a separate field."""
+    """The verbatim-prompt contract is the reason this is a separate field.
+
+    Read through ``full_prompt=True`` since AC-030, which is the only door
+    that returns the text at all — and the contract it defends is unchanged
+    and if anything more pointed: the text a debugging lead is shown must be
+    the file's, byte for byte, or the hash it is shown beside means nothing.
+    """
     project_root, fdir = run_env
     on_disk = (fdir / "castings" / "casting-1-prompt.md").read_text(encoding="utf-8")
 
-    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+    result = fs.foundry_spawn_teammate(1, "cast", project_root, full_prompt=True)
 
     assert result["prompt"] == on_disk
     assert "progress" not in result["prompt"]
@@ -356,20 +362,23 @@ def test_the_agent_id_in_the_block_matches_the_one_liveness_reports(run_env) -> 
     project_root, fdir = run_env
     fs.foundry_cast_wave(1, "cast", project_root)
 
+    # Appended, not written over: since AC-031 the dispatch above already
+    # seeded both ledgers, and an agent obeying its block appends to the file
+    # it finds rather than creating one.
     pdir = fdir / "progress"
-    pdir.mkdir(parents=True)
+    pdir.mkdir(parents=True, exist_ok=True)
     for cid in (1, 2):
-        (pdir / f"casting-{cid}.jsonl").write_text(
-            json.dumps(
-                {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "phase": "cast",
-                    "step": f"casting {cid} working",
-                }
+        with (pdir / f"casting-{cid}.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "phase": "cast",
+                        "step": f"casting {cid} working",
+                    }
+                )
+                + "\n"
             )
-            + "\n",
-            encoding="utf-8",
-        )
 
     single = fs.foundry_liveness(agent="casting-2", project_root=project_root)
 
@@ -789,6 +798,47 @@ def _age_every_spawn_record(fdir: Path, seconds: float) -> None:
     path.write_text("\n".join(aged) + "\n", encoding="utf-8")
 
 
+def _age_every_seeded_line(fdir: Path, seconds: float) -> None:
+    """Backdate every progress ledger the SERVER seeded (AC-031).
+
+    The counterpart to ``_age_every_spawn_record``, and needed for the same
+    reason: since a dispatch writes line one itself, a freshly-dispatched
+    teammate has a ledger dated NOW, and no ledger-derived threshold branch is
+    reachable while it does. Ageing the spawn record alone leaves the agent
+    reporting ``progressing`` off the server's own line, which is correct and
+    is exactly why it cannot be used to reach the stalled arm.
+
+    Only the ``seeded_by: server`` lines move. A line the AGENT wrote is its
+    own evidence and backdating it would let a test manufacture a silence the
+    agent never had.
+    """
+    pdir = fdir / "progress"
+    if not pdir.is_dir():
+        return
+    moment = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    for path in sorted(pdir.glob("*.jsonl")):
+        aged = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get(fs.LEDGER_SEED_AUTHOR_FIELD) == fs.LEDGER_SEED_AUTHOR:
+                record["timestamp"] = moment
+            aged.append(json.dumps(record))
+        path.write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+
+def _age_the_whole_dispatch(fdir: Path, seconds: float) -> None:
+    """Backdate both halves of a dispatch — its spawn record and its seed.
+
+    Since AC-031 the two are written together, so a test that wants a genuinely
+    overdue agent has to move both: the spawn record is what the roster's
+    dispatch half reads, and the seeded line is what its ledger half reads.
+    """
+    _age_every_spawn_record(fdir, seconds)
+    _age_every_seeded_line(fdir, seconds)
+
+
 def _enter_grind(fdir: Path, minutes_ago: float = 200) -> None:
     entered = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
     (fdir / "state.json").write_text(
@@ -804,6 +854,13 @@ def test_a_real_bulk_dispatch_becomes_a_liveness_row(run_env) -> None:
 
     The bulk record carries `wave` and `bulk` fields the single-spawn one does
     not, so it is a genuinely different shape reaching the same parser.
+
+    Since AC-031 the row arrives by the ledger half rather than the spawns.log
+    half — the wave seeded both castings' ledgers on its way out, so there is
+    a real line to date the silence from. The dispatch is still read back, and
+    the assertion on ``dispatched_age_seconds`` is what says so: that field
+    exists only when ``_latest_teammate_dispatches`` parsed this door's own
+    record out of spawns.log.
     """
     project_root, fdir = run_env
 
@@ -811,13 +868,15 @@ def test_a_real_bulk_dispatch_becomes_a_liveness_row(run_env) -> None:
     assert wave["ok"] is True
 
     _enter_grind(fdir)
-    _age_every_spawn_record(fdir, seconds=3600)
+    _age_the_whole_dispatch(fdir, seconds=3600)
 
     result = fs.foundry_liveness(project_root=project_root)
 
     assert [r["agent"] for r in result["agents"]] == ["casting-1", "casting-2"]
     assert result["needs_attention"] == ["casting-1", "casting-2"]
-    assert all(r["status"] == fs.STATUS_NO_LEDGER for r in result["agents"])
+    assert all(r["status"] == fs.STATUS_STALLED for r in result["agents"])
+    assert all(r["step"] == fs.LEDGER_SEED_STEP for r in result["agents"])
+    assert all(r["dispatched_age_seconds"] > 3000 for r in result["agents"])
 
 
 def test_a_real_single_dispatch_becomes_a_liveness_row(run_env) -> None:
@@ -828,12 +887,46 @@ def test_a_real_single_dispatch_becomes_a_liveness_row(run_env) -> None:
     assert spawn["ok"] is True
 
     _enter_grind(fdir)
-    _age_every_spawn_record(fdir, seconds=3600)
+    _age_the_whole_dispatch(fdir, seconds=3600)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [r["agent"] for r in result["agents"]] == ["casting-2"]
+    assert result["agents"][0]["status"] == fs.STATUS_STALLED
+    assert result["agents"][0]["dispatched_age_seconds"] > 3000
+
+
+def test_a_dispatched_teammate_whose_seed_was_lost_is_still_on_the_roster(
+    run_env,
+) -> None:
+    """The ``no_ledger`` arm did not die when AC-031 seeded line one.
+
+    Seeding is an audit write and swallows its own failures — an audit write
+    that can fail a dispatch is worse than one with a gap in it. So a seed CAN
+    be missing: an unwritable progress directory, a disk that filled between
+    the check and the write, a ledger deleted between dispatch and query. The
+    spawns.log half of the roster is the net for exactly that case, and
+    deleting the seeded file is how a test reaches it now that the happy path
+    no longer does.
+
+    Without this the D-058 arm would be live code no test drives, which is how
+    a safety net rots into a comment.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(casting_id=2, phase="grind", project_root=project_root)
+    _enter_grind(fdir)
+    _age_the_whole_dispatch(fdir, seconds=3600)
+
+    seeded = fdir / "progress" / "casting-2.jsonl"
+    assert seeded.exists(), "the dispatch did not seed a ledger to lose"
+    seeded.unlink()
 
     result = fs.foundry_liveness(project_root=project_root)
 
     assert [r["agent"] for r in result["agents"]] == ["casting-2"]
     assert result["agents"][0]["status"] == fs.STATUS_NO_LEDGER
+    assert result["needs_attention"] == ["casting-2"]
 
 
 def test_the_row_points_at_the_path_the_spawn_block_told_the_agent_to_write(
@@ -860,35 +953,37 @@ def test_an_agent_that_obeys_its_block_leaves_the_missing_roster(run_env) -> Non
     """The fix must be self-clearing, not a row that can only ever be added.
 
     Same dispatch, same phase — the only thing that changes is that the
-    teammate writes the line its block asked for.
+    teammate writes the line its block asked for. The agent's line APPENDS to
+    the server's seeded one rather than replacing a file that was not there,
+    which is the shape a real teammate produces now that line one is the run's.
     """
     project_root, fdir = run_env
 
     fs.foundry_spawn_teammate(casting_id=2, phase="grind", project_root=project_root)
     _enter_grind(fdir)
-    _age_every_spawn_record(fdir, seconds=3600)
+    _age_the_whole_dispatch(fdir, seconds=3600)
 
     before = fs.foundry_liveness(project_root=project_root)
     assert before["needs_attention"] == ["casting-2"]
+    assert before["agents"][0]["step"] == fs.LEDGER_SEED_STEP
 
-    pdir = fdir / "progress"
-    pdir.mkdir(parents=True, exist_ok=True)
-    (pdir / "casting-2.jsonl").write_text(
-        json.dumps(
-            {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "phase": "grind",
-                "step": "read floor complete",
-            }
+    with (fdir / "progress" / "casting-2.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "phase": "grind",
+                    "step": "read floor complete",
+                }
+            )
+            + "\n"
         )
-        + "\n",
-        encoding="utf-8",
-    )
 
     after = fs.foundry_liveness(project_root=project_root)
     assert after["needs_attention"] == []
     assert [r["agent"] for r in after["agents"]] == ["casting-2"]
     assert after["agents"][0]["status"] == fs.STATUS_PROGRESSING
+    assert after["agents"][0]["step"] == "read floor complete"
 
 
 # --------------------------------------------------------------------------- #
@@ -3901,10 +3996,15 @@ def test_liveness_reports_no_phantom_teammate_after_a_refused_wave(
     The refused wave must leave Foundry-Liveness with nothing to report — and
     the second half is what makes that mean something. Repairing the prompt and
     dispatching the same wave for real, aged an hour past the 900s threshold,
-    puts all three castings on the roster as ``no_ledger``. So the empty answer
-    above is the refusal being invisible, not the threshold being unreachable
-    or the roster being broken: the identical run reports three phantoms' worth
-    of rows the moment the dispatch actually happens.
+    puts all three castings on the roster. So the empty answer above is the
+    refusal being invisible, not the threshold being unreachable or the roster
+    being broken: the identical run reports three phantoms' worth of rows the
+    moment the dispatch actually happens.
+
+    Since AC-031 the empty answer is a STRONGER claim than it was. A refused
+    wave now has two ways to leave a phantom behind — a spawn record and a
+    seeded ledger — and the roster's two halves would each surface one of them,
+    so this asserts on the union rather than on either mechanism.
     """
     project_root, fdir = wave_of_three
     _break_third_prompt(fdir, how)
@@ -3922,7 +4022,7 @@ def test_liveness_reports_no_phantom_teammate_after_a_refused_wave(
         "# Casting 3\n\nBuild the thing.\n", encoding="utf-8"
     )
     assert fs.foundry_cast_wave(1, "cast", project_root)["ok"] is True
-    _age_every_spawn_record(fdir, 3600)
+    _age_the_whole_dispatch(fdir, 3600)
 
     dispatched = fs.foundry_liveness(project_root=project_root)
     assert [row["agent"] for row in dispatched["agents"]] == [
@@ -3930,7 +4030,34 @@ def test_liveness_reports_no_phantom_teammate_after_a_refused_wave(
         "casting-2",
         "casting-3",
     ]
-    assert all(row["status"] == fs.STATUS_NO_LEDGER for row in dispatched["agents"])
+    assert dispatched["needs_attention"] == ["casting-1", "casting-2", "casting-3"]
+
+
+@pytest.mark.parametrize("how", ["undecodable", "missing", "empty"])
+def test_a_refused_wave_seeds_no_progress_ledger_at_all(wave_of_three, how) -> None:
+    """AC-031's half of D-144 — the seed obeys the rule the spawn record does.
+
+    A seeded ledger is as much a claim that an agent exists as a spawns.log
+    record is: ``foundry_liveness`` globs the progress directory and reports a
+    row for every file in it, so a wave that seeded castings 1 and 2 before
+    refusing on casting 3 would put two teammates that were never spawned on
+    the roster — D-144's exact harm, reached through the artifact this casting
+    added rather than the one it was filed on.
+
+    ZERO files, not "not the refused one": castings 1 and 2 cleared their own
+    checks, but the wave they belong to was never handed out.
+    """
+    project_root, fdir = wave_of_three
+    _break_third_prompt(fdir, how)
+
+    assert fs.foundry_cast_wave(1, "cast", project_root)["ok"] is False
+
+    pdir = fdir / "progress"
+    seeded = sorted(p.name for p in pdir.glob("*.jsonl")) if pdir.is_dir() else []
+    assert seeded == [], (
+        f"a wave refused on its third casting ({how}) still seeded {seeded}, "
+        f"each of which puts a teammate that does not exist on the roster"
+    )
 
 
 def test_the_healthy_wave_still_records_every_casting(wave_of_three) -> None:
@@ -4049,7 +4176,7 @@ def test_a_healthy_prompt_is_untouched_by_the_prompt_guard(run_env) -> None:
     """The control: the guard must cost the working path nothing."""
     project_root, _fdir = run_env
 
-    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    single = fs.foundry_spawn_teammate(1, "cast", project_root, full_prompt=True)
     bulk = fs.foundry_cast_wave(1, "cast", project_root)
 
     assert single["ok"] is True and bulk["ok"] is True
@@ -4591,3 +4718,743 @@ def test_render_manifest_reader_derivation() -> None:
         set(_D134_FILED_READERS) - set(seen)
     )
     assert not offenders, offenders
+
+
+# --------------------------------------------------------------------------- #
+# FR-019 / AC-030 / OT-020 / CT-011 — pointer dispatch
+# --------------------------------------------------------------------------- #
+#
+# "The lead is a router, not an interpreter" was true of the DECISION and false
+# of the BYTES: both doors returned the prompt's whole text, so every casting's
+# prompt landed in the lead's context on its way to the teammate's, and a wave
+# landed all of them at once — for a document the lead is not allowed to alter
+# a word of.
+#
+# The pointer replaces that with a path and a hash. What makes it SAFE rather
+# than merely cheaper is the hash: under the old shape the lead's
+# verbatim-pass discipline was the only thing between the teammate and a
+# paraphrased prompt, and nothing downstream could tell a modified prompt from
+# a faithful one. A hash the teammate could only obtain by reading the file
+# can, and casting 2's `check_reported_prompt_hash` is where it is compared.
+#
+# So the assertions below are about all four things FR-040 requires the block
+# to carry — the path, the hash IN ITS PUBLISHED SPELLING, "read it in full",
+# and "state the hash in your completion report" — plus the one thing it must
+# NOT carry, which is the text.
+
+
+def _prompt_body(fdir: Path, cid: int) -> str:
+    return (fdir / "castings" / f"casting-{cid}-prompt.md").read_text(encoding="utf-8")
+
+
+def _published_hash(fdir: Path, cid: int) -> str:
+    """The prompt hash in the spelling this module publishes (C-8).
+
+    Recomputed from the file rather than copied from the result, so a test that
+    passes proves the door hashed the FILE. The spelling — `sha256:` plus the
+    first 16 hex characters — is the contract `check_reported_prompt_hash`
+    compares against, so it is assembled here exactly as the module assembles
+    it and never typed as a literal.
+    """
+    import hashlib
+
+    body = _prompt_body(fdir, cid).encode("utf-8")
+    return "sha256:" + hashlib.sha256(body).hexdigest()[:16]
+
+
+def test_the_single_door_returns_a_pointer_and_not_the_prompt_text(run_env) -> None:
+    """OT-020 verbatim: 'Foundry-Spawn-Teammate returns a dispatch block naming
+    prompt_path and a sha256 and no prompt text.'"""
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert result["ok"] is True
+    assert result["prompt"] is None
+    assert result["dispatch"].strip()
+    assert result["prompt_path"].endswith("castings/casting-1-prompt.md")
+    assert result["prompt_hash"] == _published_hash(fdir, 1)
+
+
+def test_the_withheld_prompt_key_is_present_and_null(run_env) -> None:
+    """`prompt: null`, not a missing key — the two say different things.
+
+    A present null is the door's positive statement that it withheld the text.
+    An absent key is indistinguishable from a build predating pointer dispatch,
+    so a lead (or a later tool) reading `result.get("prompt")` could not tell
+    "this server withheld it" from "this server never had the feature".
+    """
+    project_root, _fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert "prompt" in result
+    assert result["prompt"] is None
+
+
+def test_full_prompt_puts_the_text_back_on_the_same_call(run_env) -> None:
+    """OT-020's second clause: 'with full_prompt true it returns the text.'"""
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root, full_prompt=True)
+
+    assert result["ok"] is True
+    assert result["prompt"] == _prompt_body(fdir, 1)
+
+
+def test_full_prompt_is_keyword_only_at_both_doors() -> None:
+    """The must_have says keyword-only, and the signature is the proof.
+
+    Not a style preference. `full_prompt` is a debugging opt-in that every
+    existing caller passes three positional arguments past, and casting 3
+    forwards it BY NAME from server.py. Keyword-only is what stops a fourth
+    positional argument ever landing on it by accident — including from a
+    caller that thinks position four is still something else.
+    """
+    for door in (fs.foundry_spawn_teammate, fs.foundry_cast_wave):
+        param = inspect.signature(door).parameters["full_prompt"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY, door.__name__
+        assert param.default is False, door.__name__
+
+
+def test_a_fourth_positional_argument_cannot_reach_full_prompt(run_env) -> None:
+    """The signature pin above, driven — a claim about behaviour, not typing."""
+    project_root, _fdir = run_env
+
+    with pytest.raises(TypeError):
+        fs.foundry_spawn_teammate(1, "cast", project_root, True)  # noqa: FBT003
+    with pytest.raises(TypeError):
+        fs.foundry_cast_wave(1, "cast", project_root, True)  # noqa: FBT003
+
+
+def test_the_dispatch_block_names_the_prompt_path(run_env) -> None:
+    """FR-040: the block must name the path. The path IT returned, verbatim —
+    a block naming some other spelling of the same file sends the teammate to
+    look for a file it cannot open."""
+    project_root, _fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert result["prompt_path"] in result["dispatch"]
+
+
+def test_the_dispatch_block_names_the_hash_in_its_published_spelling(run_env) -> None:
+    """FR-040 / C-8: the hash the block names is the hash the checker compares.
+
+    `check_reported_prompt_hash` compares the teammate's reported string
+    against `"sha256:" + hexdigest()[:16]`. If the block named a bare digest,
+    or the full 64 characters, every honest teammate would report a value that
+    mismatched — the refusal firing on exactly the agents that obeyed.
+
+    Recomputed from the prompt file here, so this pins the SPELLING and not
+    merely that two fields of one result agree with each other.
+    """
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    expected = _published_hash(fdir, 1)
+    assert expected in result["dispatch"]
+    assert result["prompt_hash"] == expected
+    assert expected.startswith("sha256:")
+    assert len(expected) == len("sha256:") + 16
+
+
+def test_the_dispatch_block_says_to_read_the_file_in_full(run_env) -> None:
+    """FR-040 names this clause explicitly.
+
+    "Read it" is not the instruction — a teammate that skims the first section
+    of a 550-line casting prompt has read it. "In full" is the clause that
+    makes the hash reachable honestly and the scope reachable at all.
+    """
+    project_root, _fdir = run_env
+
+    dispatch = fs.foundry_spawn_teammate(1, "cast", project_root)["dispatch"]
+
+    assert "in full" in dispatch
+
+
+def test_the_dispatch_block_asks_for_the_hash_in_the_completion_report(
+    run_env,
+) -> None:
+    """AC-030 / FR-019: without this clause the hash check has no input.
+
+    The refusal casting 2 and casting 3 implement compares a value the teammate
+    REPORTS. A block that names a hash without asking for it back leaves that
+    check comparing against nothing, and the whole pointer becomes an unchecked
+    honour system — which is the state pointer dispatch was built to leave.
+    """
+    project_root, _fdir = run_env
+
+    dispatch = fs.foundry_spawn_teammate(1, "cast", project_root)["dispatch"]
+
+    assert "completion report" in dispatch
+    assert "prompt_hash" in dispatch
+
+
+def test_the_dispatch_block_carries_none_of_the_prompt_body(run_env) -> None:
+    """The saving is the point, so it has to be real.
+
+    A block that quoted the prompt's opening lines "for context" would put the
+    text back in the lead's window one casting at a time and defeat FR-019
+    while passing every other assertion in this section.
+    """
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    body = _prompt_body(fdir, 1)
+    for line in body.splitlines():
+        if line.strip():
+            assert line.strip() not in result["dispatch"], line
+
+
+def test_full_prompt_still_carries_the_dispatch_block(run_env) -> None:
+    """Debugging does not turn the pointer off.
+
+    A lead reaching for `full_prompt` is usually chasing a hash mismatch, which
+    is precisely when it needs to see the hash the teammate was asked for
+    beside the text it was computed from.
+    """
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(1, "cast", project_root, full_prompt=True)
+
+    assert _published_hash(fdir, 1) in result["dispatch"]
+    assert result["prompt_path"] in result["dispatch"]
+
+
+def test_the_single_doors_instructions_route_the_dispatch_block(run_env) -> None:
+    """The lead is the courier; an instruction naming a field it no longer
+    returns by default would have it pasting `None` into an Agent call."""
+    project_root, _fdir = run_env
+
+    instructions = fs.foundry_spawn_teammate(1, "cast", project_root)["instructions"]
+
+    assert "`dispatch`" in instructions
+    assert "VERBATIM" in instructions
+
+
+def test_full_prompt_instructions_say_the_text_is_not_what_to_pass(run_env) -> None:
+    """The one way pointer dispatch can be silently undone.
+
+    A lead handed both fields will pass whichever the instructions name. If
+    that is the text, the teammate never reads the file, never computes a hash,
+    and the check downstream compares a value the lead invented.
+    """
+    project_root, _fdir = run_env
+
+    instructions = fs.foundry_spawn_teammate(
+        1, "cast", project_root, full_prompt=True
+    )["instructions"]
+
+    assert "NOT what you pass" in instructions
+    assert "`dispatch`" in instructions
+
+
+def test_the_bulk_door_returns_one_pointer_per_casting(run_env) -> None:
+    """CT-011 at the wave door. Per casting, because each has its own file and
+    its own hash — one wave-level pointer could only ever name one of them."""
+    project_root, fdir = run_env
+
+    result = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert result["ok"] is True
+    by_id = {c["casting_id"]: c for c in result["castings"]}
+    assert set(by_id) == {1, 2}
+    for cid, entry in by_id.items():
+        assert entry["prompt"] is None
+        assert entry["prompt_hash"] == _published_hash(fdir, cid)
+        assert entry["prompt_path"] in entry["dispatch"]
+        assert entry["prompt_hash"] in entry["dispatch"]
+
+
+def test_each_castings_dispatch_names_only_its_own_prompt_file(run_env) -> None:
+    """A wave's blocks must not cross-contaminate.
+
+    Two castings handed the same pointer is the worst failure available here:
+    both teammates read one prompt, both report a hash that verifies, and the
+    run silently builds one casting twice.
+    """
+    project_root, _fdir = run_env
+
+    blocks = {
+        c["casting_id"]: c["dispatch"]
+        for c in fs.foundry_cast_wave(1, "cast", project_root)["castings"]
+    }
+
+    assert "casting-1-prompt.md" in blocks[1]
+    assert "casting-2-prompt.md" not in blocks[1]
+    assert "casting-2-prompt.md" in blocks[2]
+    assert "casting-1-prompt.md" not in blocks[2]
+
+
+def test_full_prompt_at_the_bulk_door_fills_every_castings_text(run_env) -> None:
+    project_root, fdir = run_env
+
+    result = fs.foundry_cast_wave(1, "cast", project_root, full_prompt=True)
+
+    for entry in result["castings"]:
+        assert entry["prompt"] == _prompt_body(fdir, entry["casting_id"])
+        assert entry["dispatch"].strip()
+
+
+def test_both_doors_publish_the_same_pointer_for_one_casting(run_env) -> None:
+    """One casting, one hash, whichever door dispatched it.
+
+    A teammate dispatched by the bulk door in CAST and re-dispatched by the
+    single door in GRIND reports against the same file both times. Two doors
+    that computed the hash differently would make the second report a
+    mismatch — the refusal firing on the door change rather than on any drift.
+    """
+    project_root, _fdir = run_env
+
+    single = fs.foundry_spawn_teammate(1, "cast", project_root)
+    bulk = next(
+        c
+        for c in fs.foundry_cast_wave(1, "cast", project_root)["castings"]
+        if c["casting_id"] == 1
+    )
+
+    assert single["prompt_hash"] == bulk["prompt_hash"]
+    assert single["prompt_path"] == bulk["prompt_path"]
+    assert single["dispatch"] == bulk["dispatch"]
+
+
+def test_the_bulk_instructions_route_the_dispatch_block(run_env) -> None:
+    project_root, _fdir = run_env
+
+    instructions = fs.foundry_cast_wave(1, "cast", project_root)["instructions"]
+
+    assert "`dispatch`" in instructions
+    assert "VERBATIM" in instructions
+
+
+def test_a_changed_prompt_file_changes_the_published_hash(run_env) -> None:
+    """The hash has to be OF the file, or the check downstream is decorative.
+
+    A constant, or a hash of the casting id, would satisfy every "names a
+    sha256" assertion above and still verify a teammate that read a prompt
+    edited out from under it between dispatch and completion.
+    """
+    project_root, fdir = run_env
+
+    before = fs.foundry_spawn_teammate(1, "cast", project_root)["prompt_hash"]
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        "# Casting 1\n\nBuild a DIFFERENT thing.\n", encoding="utf-8"
+    )
+    after = fs.foundry_spawn_teammate(1, "cast", project_root)
+
+    assert after["prompt_hash"] != before
+    assert after["prompt_hash"] == _published_hash(fdir, 1)
+    assert after["prompt_hash"] in after["dispatch"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-031 / FR-020 / OT-021 — the server writes line one
+# --------------------------------------------------------------------------- #
+#
+# AC-031 verbatim: "After a dispatch, a progress ledger for that agent exists
+# with a server-written first line before the agent writes anything."
+#
+# The read side already had a second-best answer for the gap this closes —
+# `_missing_teammate_records` synthesizes a `no_ledger` row from spawns.log —
+# but that row cannot appear until the dispatch is past the stall threshold,
+# because before then "no ledger yet" and "still reading the spec" are the same
+# observation. A seeded line dates the dispatch from the first second, in the
+# ledger's own vocabulary.
+#
+# Every test here dispatches through a REAL door and then reads the file on
+# disk, because the whole claim is about what exists after the call returns.
+
+
+def _ledger_lines(fdir: Path, agent: str) -> list[dict]:
+    path = fdir / "progress" / f"{agent}.jsonl"
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_a_single_dispatch_seeds_the_agents_ledger_before_it_returns(run_env) -> None:
+    """AC-031 at the single door, asserted on the filesystem the call left."""
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(2, "cast", project_root)
+
+    assert result["ok"] is True
+    assert (fdir / "progress" / "casting-2.jsonl").exists()
+    assert len(_ledger_lines(fdir, "casting-2")) == 1
+
+
+def test_the_seeded_line_carries_every_declared_field(run_env) -> None:
+    """The shape C-9 pins: phase, step, timestamp, agent, seeded_by.
+
+    `agent` and `seeded_by` are additive to the three fields
+    `_progress_protocol_block` asks agents for, and safe to add because every
+    consumer reads by key: `_read_progress_ledger` needs a timestamp,
+    `_step_key` needs phase and step, and an unknown field is carried along.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(2, "cast", project_root)
+
+    (line,) = _ledger_lines(fdir, "casting-2")
+    assert line["phase"] == "cast"
+    assert line["step"] == fs.LEDGER_SEED_STEP
+    assert line["agent"] == "casting-2"
+    assert line[fs.LEDGER_SEED_AUTHOR_FIELD] == fs.LEDGER_SEED_AUTHOR
+    assert line["timestamp"]
+
+
+def test_the_seeded_step_claims_only_what_the_run_knows(run_env) -> None:
+    """`dispatched`, not `started` — the lead ASKED, that is all.
+
+    A seed claiming the agent began work is a lie the server tells on the
+    agent's behalf, and it is exactly the lie `no_progress` exists to catch:
+    an agent that dies immediately would show a ledger asserting it started.
+    """
+    project_root, _fdir = run_env
+
+    fs.foundry_spawn_teammate(2, "cast", project_root)
+
+    assert fs.LEDGER_SEED_STEP == "dispatched"
+
+
+def test_the_seeded_timestamp_is_aware_utc_and_parses_back(run_env) -> None:
+    """The ledger's own parser is the judge, not a regex.
+
+    `_parse_progress_timestamp` reads a NAIVE timestamp as UTC rather than
+    discarding it, so a naive seed would be silently accepted and then, on any
+    machine east of Greenwich, future-date the ledger — which reports the agent
+    `stalled` with a clock-skew detail for the rest of the run. The offset is
+    what the protocol block asks agents for, and the server owes the same.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(2, "grind", project_root)
+
+    (line,) = _ledger_lines(fdir, "casting-2")
+    moment = fs._parse_progress_timestamp(line["timestamp"])
+    assert moment is not None
+    assert moment.tzinfo is not None
+    assert abs((datetime.now(timezone.utc) - moment).total_seconds()) < 60
+    # The raw string carries the offset rather than relying on the parser's
+    # naive-is-UTC fallback to rescue it.
+    assert line["timestamp"] != moment.replace(tzinfo=None).isoformat()
+
+
+def test_the_seed_names_the_phase_the_dispatch_was_for(run_env) -> None:
+    """A GRIND re-dispatch that seeded `cast` would mislabel the whole ledger.
+
+    `_step_key` keys on (phase, step), so the phase is half of what
+    `no_progress` compares — a wrong one makes the agent's first real GRIND
+    line look like a step change when it is not, or vice versa.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(2, "grind", project_root)
+
+    (line,) = _ledger_lines(fdir, "casting-2")
+    assert line["phase"] == "grind"
+
+
+def test_a_wave_seeds_every_casting_exactly_once(run_env) -> None:
+    """OT-021 verbatim: 'Immediately after Foundry-Cast-Wave, a progress ledger
+    exists for each dispatched casting with one server-written line.'"""
+    project_root, fdir = run_env
+
+    result = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert result["ok"] is True
+    assert sorted(p.name for p in (fdir / "progress").glob("*.jsonl")) == [
+        "casting-1.jsonl",
+        "casting-2.jsonl",
+    ]
+    for cid in (1, 2):
+        (line,) = _ledger_lines(fdir, f"casting-{cid}")
+        assert line["agent"] == f"casting-{cid}"
+        assert line["step"] == fs.LEDGER_SEED_STEP
+        assert line[fs.LEDGER_SEED_AUTHOR_FIELD] == fs.LEDGER_SEED_AUTHOR
+
+
+def test_the_seed_lands_where_the_protocol_block_tells_the_agent_to_write(
+    run_env,
+) -> None:
+    """The loop closed at its new end.
+
+    `_progress_protocol_block` names a path, the seed writes one, and
+    `foundry_liveness` reads one. If the seed landed anywhere else the agent
+    would append to a second file, and the lead would read a ledger that stops
+    at line one while the agent wrote happily beside it.
+    """
+    project_root, fdir = run_env
+
+    result = fs.foundry_spawn_teammate(2, "cast", project_root)
+
+    seeded = fdir / "progress" / "casting-2.jsonl"
+    assert seeded.exists()
+    assert f"{fs.PROGRESS_DIR_NAME}/casting-2.jsonl" in result["progress_protocol"]
+    assert str(seeded).endswith(
+        f"{RUN_NAME}/{fs.PROGRESS_DIR_NAME}/casting-2.jsonl"
+    )
+
+
+def test_a_re_dispatch_appends_to_the_ledger_rather_than_rewriting_it(
+    run_env,
+) -> None:
+    """A casting's GRIND re-dispatches are one worker resuming, so one history.
+
+    Truncating would erase the CAST-phase evidence at the moment the lead most
+    wants it — a teammate re-dispatched to fix defects is one whose first pass
+    is under scrutiny.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(2, "cast", project_root)
+    fs.foundry_spawn_teammate(2, "grind", project_root)
+
+    lines = _ledger_lines(fdir, "casting-2")
+    assert [line["phase"] for line in lines] == ["cast", "grind"]
+
+
+def test_a_full_prompt_dispatch_seeds_the_ledger_too(run_env) -> None:
+    """`full_prompt` changes what the lead is shown, not what the run did.
+
+    A debugging call is still a dispatch: it writes a spawns.log record, so it
+    must write the ledger beside it, or the two audit artifacts disagree about
+    whether an agent exists.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_spawn_teammate(2, "cast", project_root, full_prompt=True)
+
+    assert len(_ledger_lines(fdir, "casting-2")) == 1
+
+
+def test_the_seed_and_the_spawn_record_are_written_together(run_env) -> None:
+    """Two artifacts, one dispatch — neither door may write only one.
+
+    The roster reads both, and a run where they disagree reports either a
+    teammate with no dispatch or a dispatch with no teammate.
+    """
+    project_root, fdir = run_env
+
+    fs.foundry_cast_wave(1, "cast", project_root)
+
+    logged = sorted(_logged_casting_ids(fdir))
+    seeded = sorted(
+        int(p.stem.rsplit("-", 1)[1]) for p in (fdir / "progress").glob("*.jsonl")
+    )
+    assert logged == seeded == [1, 2]
+
+
+def test_a_failed_seed_never_fails_the_dispatch(run_env) -> None:
+    """The rule every audit write in this module holds, driven.
+
+    A ledger that can fail a dispatch is worse than one with a gap in it: the
+    gap is covered by the spawns.log half of the roster, whereas a refused
+    dispatch stops the wave. Reached by making `progress/` a FILE, so the
+    directory creation and every append under it fail for real rather than
+    through a patched-out writer.
+    """
+    project_root, fdir = run_env
+    (fdir / "progress").write_text("not a directory\n", encoding="utf-8")
+
+    result = fs.foundry_cast_wave(1, "cast", project_root)
+
+    assert result["ok"] is True, result
+    # The dispatch still happened and is still on the record, which is what
+    # keeps the agents visible through the other half of the roster.
+    assert sorted(_logged_casting_ids(fdir)) == [1, 2]
+
+
+# --------------------------------------------------------------------------- #
+# The drives, RENDERED — evidence a reader can check by eye
+# --------------------------------------------------------------------------- #
+#
+# Mirrors `test_demo_shape_parity_report` above and `test_liveness.py`'s
+# demo_report: the tests in the two sections before this assert the properties,
+# and these print the artifacts those properties are about, so a reader can see
+# WHAT the doors now return and WHAT they leave on disk rather than reading a
+# pass count. Every timestamp is redacted here rather than declared volatile,
+# so the rendered output is byte-stable across runs by construction.
+#
+#     uv run --with pytest pytest tests/test_spawn_progress.py -q -s -k demo
+
+
+def _redact_timestamps(text: str) -> str:
+    """Replace ISO-8601 moments with a marker so the render is reproducible."""
+    return re.sub(r"\d{4}-\d{2}-\d{2}T[\d:.+\-]+", "<TIMESTAMP>", text)
+
+
+def render_pointer_dispatch_report(project_root: str, fdir: Path) -> str:
+    """FR-019 / AC-030 / OT-020 / CT-011 — what the lead now receives."""
+    default = fs.foundry_spawn_teammate(1, "cast", project_root)
+    opted_in = fs.foundry_spawn_teammate(1, "cast", project_root, full_prompt=True)
+    wave = fs.foundry_cast_wave(1, "cast", project_root)
+
+    out = [
+        "== FR-019 / AC-030: the two doors return a POINTER, not the text ==",
+        "",
+        "-- Foundry-Spawn-Teammate(casting_id=1, phase='cast') --",
+        f"   ok           = {default['ok']}",
+        f"   prompt       = {default['prompt']!r}   <- present and null (AC-030)",
+        f"   prompt_path  = {default['prompt_path']}",
+        f"   prompt_hash  = {default['prompt_hash']}",
+        "",
+        "   dispatch:",
+    ]
+    out += [f"     | {line}" for line in default["dispatch"].rstrip().splitlines()]
+    out += [
+        "",
+        "   FR-040's three required elements, checked against this block:",
+        f"     names the path                 = {default['prompt_path'] in default['dispatch']}",
+        f"     names the sha256               = {default['prompt_hash'] in default['dispatch']}",
+        f"     says to read the file in full  = {'in full' in default['dispatch']}",
+        f"     asks for the hash back         = {'completion report' in default['dispatch']}",
+        f"     carries no prompt body         = "
+        f"{'Build the thing.' not in default['dispatch']}",
+        "",
+        "-- the same call with full_prompt=True (OT-020's second clause) --",
+        f"   prompt       = {opted_in['prompt']!r}",
+        f"   dispatch still present = {bool(opted_in['dispatch'].strip())}",
+        f"   same hash either way   = "
+        f"{opted_in['prompt_hash'] == default['prompt_hash']}",
+        "",
+        "-- Foundry-Cast-Wave(wave=1): one pointer per casting --",
+    ]
+    for entry in wave["castings"]:
+        out.append(
+            f"   casting {entry['casting_id']}: prompt={entry['prompt']!r}  "
+            f"hash={entry['prompt_hash']}  path={entry['prompt_path']}"
+        )
+    out += [
+        "",
+        f"   each block names only its own file = "
+        f"{'casting-2-prompt.md' not in wave['castings'][0]['dispatch']}",
+        f"   both doors publish one pointer     = "
+        f"{wave['castings'][0]['dispatch'] == default['dispatch']}",
+    ]
+    return _redact_timestamps("\n".join(out))
+
+
+def test_demo_pointer_dispatch_report(run_env) -> None:
+    """The render, ASSERTED, so the log is a claim and not a picture."""
+    project_root, fdir = run_env
+    report = render_pointer_dispatch_report(project_root, fdir)
+    print(report)
+
+    # Every "= False" in this table is a requirement not met. Asserting their
+    # absence is what stops the demo degrading into decoration that renders a
+    # broken build just as happily as a working one.
+    assert "= False" not in report, report
+    assert "prompt       = None" in report
+    assert report.count("| ") > 3
+
+
+def render_ledger_seeding_report(project_root: str, fdir: Path) -> str:
+    """AC-031 / FR-020 / OT-021 — what a dispatch leaves on disk."""
+    pdir = fdir / "progress"
+    out = [
+        "== AC-031: the server writes line one, at dispatch ==",
+        "",
+        # Phrased as a state and not as a `= {bool}` so the guard below, which
+        # reads every "= False" in this table as a requirement not met, is not
+        # tripped by a control whose whole point is to be false.
+        f"-- before any dispatch: progress/ is "
+        f"{'present' if pdir.exists() else 'ABSENT'} --",
+        "",
+        "-- Foundry-Cast-Wave(wave=1, phase='cast') --",
+    ]
+    wave = fs.foundry_cast_wave(1, "cast", project_root)
+    out.append(f"   ok = {wave['ok']}")
+    out.append("")
+    out.append("   ledgers on disk the moment the call returned:")
+    for path in sorted(pdir.glob("*.jsonl")):
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            out.append(f"     {path.name}: {raw}")
+
+    out += [
+        "",
+        "   OT-021: one server-written line per dispatched casting = "
+        f"{all(len(p.read_text(encoding='utf-8').strip().splitlines()) == 1 for p in sorted(pdir.glob('*.jsonl')))}",
+        "",
+        "-- read back through Foundry-Liveness, with no agent line written --",
+    ]
+    _enter_grind(fdir, minutes_ago=90)
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "F1",
+                "phase_times": {
+                    "F1": {
+                        "started_at": (
+                            datetime.now(timezone.utc) - timedelta(minutes=90)
+                        ).isoformat()
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    for row in fs.foundry_liveness(project_root=project_root)["agents"]:
+        out.append(
+            f"     {row['agent']:12s} status={row['status']:12s} "
+            f"step={row['step']!r} lines={row['lines']}"
+        )
+    out += [
+        "",
+        "   Before AC-031 every one of those rows was absent for the first 15",
+        "   minutes of the agent's life: no ledger to glob, and a dispatch too",
+        "   young for the spawns.log half of the roster to synthesize a row.",
+    ]
+    return _redact_timestamps("\n".join(out))
+
+
+def test_demo_ledger_seeding_report(run_env) -> None:
+    project_root, fdir = run_env
+    report = render_ledger_seeding_report(project_root, fdir)
+    print(report)
+
+    assert "= False" not in report, report
+    assert report.count(f'"{fs.LEDGER_SEED_AUTHOR_FIELD}": "server"') == 2
+    assert f"step='{fs.LEDGER_SEED_STEP}'" in report
+
+
+def test_demo_refused_wave_seeds_nothing(wave_of_three) -> None:
+    """The other half of the seeding drive, which needs a three-casting wave.
+
+    Split from the report above rather than folded into it because the
+    ``wave_of_three`` fixture is what makes a mid-wave refusal expressible at
+    all — two castings cannot show "records the ones before it" apart from
+    "records nothing".
+    """
+    project_root, fdir = wave_of_three
+    _break_third_prompt(fdir, "missing")
+
+    refused = fs.foundry_cast_wave(1, "cast", project_root)
+    pdir = fdir / "progress"
+    seeded = sorted(p.name for p in pdir.glob("*.jsonl")) if pdir.is_dir() else []
+
+    report = "\n".join(
+        [
+            "== D-144, held for the seed as well as the spawn record ==",
+            "",
+            "   A wave of three whose THIRD prompt is missing. Castings 1 and 2",
+            "   cleared every check of their own; the wave was never handed out.",
+            "",
+            f"   refused                 = {refused['ok'] is False}",
+            f"   spawn records written   = {_logged_casting_ids(fdir)}",
+            f"   ledgers seeded          = {seeded}",
+            "",
+            "   Either one left behind is a claim that a teammate exists.",
+            "   Foundry-Liveness would report both as agents to chase.",
+        ]
+    )
+    print(report)
+
+    assert "= False" not in report, report
+    assert seeded == []
+    assert _logged_casting_ids(fdir) == []

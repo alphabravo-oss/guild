@@ -11,6 +11,33 @@ This eliminates the "lead drafts prompt from casting" step where spec
 fidelity used to silently erode via paraphrasing, scope cuts, or hedge
 language. The lead is a router, not an interpreter.
 
+POINTER DISPATCH — THE LEAD ROUTES THE PATH, NOT THE TEXT (FR-019 / AC-030)
+---------------------------------------------------------------------------
+"The lead is a router" was true of the DECISION and false of the BYTES. Both
+doors here returned the prompt's whole text, so every casting's prompt landed
+in the lead's context on the way to the teammate's, and a wave landed all of
+them at once — for a document neither of them is allowed to alter a word of.
+The lead was a router carrying the freight.
+
+So by default the doors return a POINTER: ``dispatch``, a short block naming
+``prompt_path`` and the ``prompt_hash`` the teammate must read the file to
+obtain, and ``prompt: null``. The teammate reads the file itself and states
+the hash back in its completion report, where ``Foundry-Accept-Casting`` and
+``Foundry-Fix`` compare it against the file's. That comparison is what makes
+the pointer safe: under the old shape the lead's verbatim-pass discipline was
+the only thing standing between the teammate and a paraphrased prompt, and it
+was unfalsifiable — nothing downstream could tell a modified prompt from a
+faithful one. A hash the teammate could only have got by reading the file can.
+
+``prompt: null`` is a PRESENT key rather than an absent one, and deliberately:
+it is the door's positive statement that it withheld the text, which an absent
+key cannot make — that reads identically to a build predating this feature.
+The same reasoning the ``model`` key carries a few hundred lines down.
+
+``full_prompt=True`` puts the text back in ``prompt`` for debugging, and leaves
+``dispatch`` in place beside it: the hash the teammate will be judged against
+is exactly what a lead debugging a hash mismatch needs to see.
+
 PROGRESS LEDGER (FR-015)
 ------------------------
 This module also owns both halves of the per-agent progress ledger:
@@ -39,6 +66,33 @@ does not stop being watched when it finishes — it stops writing, crosses the
 stall threshold, and reports ``stalled`` for the remainder of the run, so every
 completed casting silts up ``needs_attention`` until the lead stops reading it.
 A watchlist that is mostly finished work is a watchlist nobody watches.
+
+THE SERVER WRITES LINE ONE (AC-031 / FR-020)
+--------------------------------------------
+An agent's FIRST line is written by the server, at dispatch, before the door
+returns: ``{"step": "dispatched", "seeded_by": "server", ...}``. So a ledger
+EXISTS for every dispatched teammate whether or not that teammate ever runs.
+
+The read side already had a second-best answer for the gap this closes —
+``_missing_teammate_records`` synthesizes a ``no_ledger`` row from
+``spawns.log`` — but that row can only appear once the dispatch is past the
+stall threshold, because before then "no ledger yet" is indistinguishable from
+"still reading the spec". A seeded line dates the dispatch from the first
+second, in the ledger's own vocabulary, so ``foundry_liveness`` answers "when
+was this agent last heard from" without a special case for the interval before
+an agent's first write.
+
+That does not retire the ``no_ledger`` arm, and it must not: seeding is an
+audit write, and an audit write that can fail a dispatch is worse than one
+with a gap in it (``_append_spawn_records``'s rule, held here too). When the
+seed fails, the ``spawns.log``-derived row is what still makes the agent
+visible. It is the safety net for exactly the case where this section's
+promise did not hold.
+
+The seed is written under the SAME whole-dispatch-or-nothing discipline as the
+spawn record, for the same reason: a seeded ledger is as much a claim that an
+agent exists as a spawn record is, and a wave refused on its third prompt must
+not leave two of them behind (D-144).
 
 WHO GETS A LEDGER
 -----------------
@@ -144,10 +198,34 @@ from foundry_mcp.tools.foundry_state import (
 TEAMMATE_SUBAGENT_TYPE = "foundry:teammate"
 
 # Per-agent progress ledgers live one directory below the run root, one
-# ``{agent_id}.jsonl`` per agent. Created lazily by whichever agent writes
-# first — the server never creates it, so an empty roster and an unstarted run
-# are the same observable state.
+# ``{agent_id}.jsonl`` per agent.
+#
+# Created by whichever writer gets there first, which since AC-031 is normally
+# the SERVER: both spawn doors seed a dispatched teammate's ledger before they
+# return, so the directory appears at the run's first dispatch rather than at
+# the first agent that obeyed its protocol block. It is still created lazily —
+# a run that has dispatched nothing has no `progress/`, and `foundry_liveness`
+# still answers an absent directory with an empty roster and `ok: True`.
 PROGRESS_DIR_NAME = "progress"
+
+# The ledger line the SERVER writes at dispatch (AC-031). Named constants
+# rather than literals at the two call sites because both are read back: the
+# step is what `foundry_liveness` reports until the agent writes its own first
+# line, and the author field is what tells a reader of a raw ledger that the
+# opening line is the run's, not the agent's.
+#
+# `step` is "dispatched" and not "started" or "spawned" on purpose. The lead
+# ASKED at this moment; nothing yet says the agent read anything. A seed
+# claiming more than the run knows is the failure mode `no_progress` exists to
+# catch, committed by the server itself on line one.
+LEDGER_SEED_STEP = "dispatched"
+
+# The field distinguishing the seeded line from the agent's own. Additive to
+# the three-field shape `_progress_protocol_block` asks agents for, and safe
+# to add precisely because `_read_progress_ledger` reads by KEY rather than by
+# schema: an unknown field is carried along and ignored by every consumer.
+LEDGER_SEED_AUTHOR_FIELD = "seeded_by"
+LEDGER_SEED_AUTHOR = "server"
 
 # ---------------------------------------------------------------------------
 # Cadence and stall threshold (FR-025).
@@ -376,6 +454,104 @@ def _append_spawn_records(spawn_log: Path, records: list[dict]) -> None:
     except Exception:
         # Logging failures must not block the spawn.
         pass
+
+
+def _seed_progress_ledgers(fdir: Path, seeds: list[tuple[str, str]]) -> None:
+    """Write each dispatched agent's FIRST ledger line, server-side (AC-031).
+
+    ``seeds`` is ``[(agent_id, phase), ...]`` — one entry per agent this
+    dispatch put to work. Both doors write through here, which is what keeps
+    "a dispatched teammate always has a ledger" one property rather than an
+    agreement between two call sites; the single door passes a list of one and
+    the bulk door a list of N, and the difference is the length, not the
+    discipline (``_append_spawn_records``, one function up, is the same rule
+    for the other artifact).
+
+    The payload is built for EVERY seed before any file is opened, so a record
+    that will not serialise cannot leave half a wave of ledgers behind. Callers
+    must in turn call this only after every casting in the dispatch has cleared
+    every check, so no refusal a door can reach leaves a seeded ledger claiming
+    an agent that was never spawned (D-144).
+
+    Never raises and never blocks the spawn, the rule every audit write in this
+    module holds. A ledger that can fail a dispatch is worse than a missing
+    one, and a missing one is not silence: ``_missing_teammate_records`` still
+    reports the agent from ``spawns.log``, which is precisely the arm that
+    exists for the case where this write did not happen.
+
+    NOT flocked, where ``_append_spawn_records`` is, and the asymmetry is the
+    artifact's rather than an oversight. ``spawns.log`` is ONE file whose
+    readers must see a whole wave or none of it, so its writer and reader hold
+    a lock pair. A seed is one line in its OWN file, appended with ``O_APPEND``
+    well under ``PIPE_BUF``, and its only concurrent writer is the agent that
+    file belongs to. There is no multi-record window for a reader to land in,
+    and ``_read_progress_ledger`` already skips a torn line rather than being
+    blinded by one.
+    """
+    if not seeds:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        payloads = [
+            (
+                agent_id,
+                json.dumps(
+                    {
+                        "timestamp": now,
+                        "phase": phase,
+                        "step": LEDGER_SEED_STEP,
+                        "agent": agent_id,
+                        LEDGER_SEED_AUTHOR_FIELD: LEDGER_SEED_AUTHOR,
+                    }
+                )
+                + "\n",
+            )
+            for agent_id, phase in seeds
+        ]
+        pdir = _progress_dir(fdir)
+        pdir.mkdir(parents=True, exist_ok=True)
+        for agent_id, line in payloads:
+            with (pdir / f"{agent_id}.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(line)
+                handle.flush()
+    except Exception:
+        # Seeding failures must not block the spawn.
+        pass
+
+
+def _dispatch_block(prompt_path: str, prompt_hash: str) -> str:
+    """The pointer the lead hands the teammate in place of the prompt text.
+
+    Names three things, and FR-040 requires all three: the path, the hash, and
+    the instruction to read the file IN FULL. The fourth sentence — state the
+    hash in the completion report — is what turns the other three from advice
+    into something checkable: ``check_reported_prompt_hash`` compares the
+    teammate's reported value against the file's at ``Foundry-Accept-Casting``
+    and ``Foundry-Fix``, and only a teammate that actually read the file can
+    produce it.
+
+    ``prompt_hash`` is interpolated whole, INCLUDING its ``sha256:`` prefix and
+    16-hex truncation, because the published spelling is the contract: the
+    teammate states back exactly this string and the checker compares exactly
+    this string. Naming a bare hexdigest here — or the full 64 characters —
+    would make every honest report a mismatch.
+    """
+    return "\n".join(
+        [
+            "## Your task prompt is a FILE — read it before anything else",
+            "",
+            f"Read `{prompt_path}` in full. Every line of it, start to finish, "
+            "before you take any other action. It is the authorized statement of "
+            "your task and nothing in this message replaces it.",
+            "",
+            f"Its sha256 is `{prompt_hash}`. State that value, character for "
+            "character, as the `prompt_hash` in your completion report — the "
+            "server compares it against the file's own hash and refuses the "
+            "acceptance or fix if the two differ. Only reading the file gets you "
+            "the right answer, which is the point.",
+            "",
+        ]
+    )
 
 
 def _read_spawn_log(spawn_log: Path) -> tuple[str, str | None]:
@@ -1476,14 +1652,20 @@ def foundry_spawn_teammate(
     casting_id: int | str,
     phase: str = "cast",
     project_root: str = ".",
+    *,
+    full_prompt: bool = False,
 ) -> dict:
-    """Read and return the pre-authored prompt for a casting.
+    """Dispatch a casting's teammate: return a pointer to its pre-authored prompt.
 
     Args:
         casting_id: The id of the casting whose teammate prompt to read.
         phase: "cast" (F1) or "grind" (F3). Affects which prompt variant to
             return if both exist; otherwise identical.
         project_root: Repo root.
+        full_prompt: Return the prompt TEXT in ``prompt`` as well as the
+            pointer. Keyword-only, because it is a debugging opt-in and not
+            part of the positional call every caller makes — a lead that wants
+            the text asks for it by name (FR-019).
 
     Returns:
         On success:
@@ -1493,11 +1675,18 @@ def foundry_spawn_teammate(
                 "phase": "cast" | "grind",
                 "prompt_path": "foundry-archive/{run}/castings/casting-N-prompt.md",
                 "prompt_hash": "sha256:...",
-                "prompt": "<full text of the pre-authored prompt>",
-                "instructions": "Pass the `prompt` field verbatim to the Agent tool. Do NOT modify it. Do NOT prepend, append, or substitute text. Only the `prompt` content is authorized teammate context."
+                "dispatch": "<block naming the path and the hash to read>",
+                "prompt": None,          # the text, when full_prompt=True
+                "progress_protocol": "<the agent's ledger protocol block>",
+                "instructions": "Pass the `dispatch` field verbatim to the Agent tool ..."
             }
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
+
+    Two records are written before this returns, and only once every check
+    above has passed: the agent's first progress-ledger line (AC-031) and the
+    ``spawns.log`` dispatch record. No refusal this door can reach leaves
+    either behind.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1581,32 +1770,58 @@ def foundry_spawn_teammate(
     # this door can reach leaves a record behind. That ordering is what the bulk
     # door lacked (D-144); routing both through `_append_spawn_records` is what
     # keeps it one property rather than two call sites that agree today.
+    rel_prompt_path = str(
+        prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path
+    )
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "casting_id": casting_id,
         "phase": phase,
         "prompt_hash": prompt_hash,
-        "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+        "prompt_path": rel_prompt_path,
     }
     if model:
         entry["model"] = model
+
+    # The seed goes first, so no reader can observe a dispatch record whose
+    # ledger has not appeared yet. The ordering is not load-bearing for
+    # correctness — a dispatch this young is below every threshold and
+    # synthesizes no row either way — but it makes the invariant "a record in
+    # spawns.log has a ledger beside it" true at every instant rather than
+    # true-shortly-afterwards, and an invariant with no window is the one worth
+    # having. Both writes are here, after every check above, for the reason
+    # D-144 gives at `_append_spawn_records`.
+    _seed_progress_ledgers(fdir, [(_agent_id_for_casting(casting_id), phase)])
     _append_spawn_records(fdir / "spawns.log", [entry])
 
     result: dict = {
         "ok": True,
         "casting_id": casting_id,
         "phase": phase,
-        "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+        "prompt_path": rel_prompt_path,
         "prompt_hash": prompt_hash,
-        "prompt": prompt_text,
+        "dispatch": _dispatch_block(rel_prompt_path, prompt_hash),
+        # Present and null by default: the door's positive statement that it
+        # withheld the text, which an absent key cannot make (FR-019, AC-030).
+        "prompt": prompt_text if full_prompt else None,
         "instructions": (
-            "Pass the `prompt` field VERBATIM to the Agent tool as the teammate's prompt. "
-            "Do NOT modify, summarize, paraphrase, or augment the text. Do NOT add your own context, "
-            "hedges, or scope notes. The prompt was authored at F0.5 DECOMPOSE with the master spec "
-            "as source of truth and was validated at F0.9. Modifying it reintroduces the exact drift "
-            "failure mode this architecture was built to prevent."
+            "Pass the `dispatch` field VERBATIM to the Agent tool as the teammate's prompt. "
+            "It names the prompt FILE and the hash the teammate must read that file to obtain, "
+            "and the teammate states that hash back in its completion report, where the server "
+            "compares it against the file's. Do NOT paste, summarize, paraphrase, or augment "
+            "the prompt text yourself — the file was authored at F0.5 DECOMPOSE with the master "
+            "spec as source of truth, validated at F0.9, and is the teammate's to read. Routing "
+            "the text through you reintroduces the exact drift failure mode this architecture "
+            "was built to prevent, and unlike the hash, nothing downstream can detect it."
         ),
     }
+
+    if full_prompt:
+        result["instructions"] += (
+            " full_prompt=true: the `prompt` field carries the file's text for your own "
+            "inspection. It is NOT what you pass to the Agent tool — pass `dispatch`, so "
+            "the teammate still reads the file and still produces a checkable hash."
+        )
 
     # Model steering. Present ONLY when the option is configured — an absent
     # key means "pass no model parameter", indistinguishable from a build where
@@ -1772,8 +1987,10 @@ def foundry_cast_wave(
     wave: int,
     phase: str = "cast",
     project_root: str = ".",
+    *,
+    full_prompt: bool = False,
 ) -> dict:
-    """Read and return prompts for every casting in the specified wave.
+    """Dispatch every casting in a wave: return one prompt pointer per casting.
 
     Optimization: replaces N sequential `Foundry-Spawn-Teammate` calls
     (each ~1s of lead deliberation + 1 MCP roundtrip) with a single bulk
@@ -1785,6 +2002,9 @@ def foundry_cast_wave(
         wave: 1-indexed wave number from manifest.waves.
         phase: "cast" or "grind".
         project_root: Repo root.
+        full_prompt: Include each casting's prompt TEXT alongside its pointer.
+            Keyword-only, and the field this door benefits from most: a wave is
+            where returning N whole prompts cost the most context (FR-019).
 
     Returns on success:
         {
@@ -1793,11 +2013,17 @@ def foundry_cast_wave(
             "phase": "cast",
             "team_name_suggestion": "cast-{run}-wave-N  (or grind-{run}-cycle-N for phase='grind')",
             "castings": [
-                {"casting_id": 1, "prompt": "...", "prompt_hash": "sha256:..."},
+                {"casting_id": 1, "dispatch": "...", "prompt_path": "...",
+                 "prompt_hash": "sha256:...", "prompt": None,
+                 "progress_protocol": "..."},
                 ...
             ],
             "instructions": "Spawn every casting as a SEPARATE Agent tool call in ONE message..."
         }
+
+    Per casting rather than per wave, for ``dispatch`` as for everything else
+    here: each casting has its own prompt file and its own hash, so one
+    wave-level pointer could only name one of them.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1850,6 +2076,11 @@ def foundry_cast_wave(
     # locked append below is the only write, so a refusal anywhere in the wave
     # leaves the audit trail exactly as it found it.
     dispatched: list[dict] = []
+    # The wave's ledger seeds, buffered under the same rule and for the same
+    # reason (AC-031 / D-144). A seeded ledger asserts that an agent exists
+    # every bit as much as a spawn record does, so a wave that refuses on its
+    # third prompt must not have seeded two.
+    seeds: list[tuple[str, str]] = []
     model = _teammate_model()
 
     for cid in casting_ids:
@@ -1880,11 +2111,17 @@ def foundry_cast_wave(
                 "hint": "Re-run F0.5 DECOMPOSE to regenerate the prompt file.",
             }
         prompt_hash = "sha256:" + hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+        rel_prompt_path = str(
+            prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path
+        )
         entry_out: dict = {
             "casting_id": cid,
-            "prompt": prompt_text,
+            # FR-019 / AC-030, per casting for the same reason the block below
+            # is: one prompt file and one hash each.
+            "dispatch": _dispatch_block(rel_prompt_path, prompt_hash),
+            "prompt": prompt_text if full_prompt else None,
             "prompt_hash": prompt_hash,
-            "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+            "prompt_path": rel_prompt_path,
             # FR-015. Per casting, because the ledger id is per casting.
             "progress_protocol": _progress_protocol_block(
                 fdir.name, _agent_id_for_casting(cid)
@@ -1918,12 +2155,17 @@ def foundry_cast_wave(
         if model:
             entry["model"] = model
         dispatched.append(entry)
+        seeds.append((_agent_id_for_casting(cid), phase))
 
     # Every casting in the wave cleared every check, so this wave really was
     # handed out and the audit trail may say so — all of it, in one locked
     # append (D-144). Above this line no refusal has left a record behind;
     # below it the whole wave is on record or, if the write itself fails, none
     # of it is. There is no state in between for Foundry-Liveness to read.
+    #
+    # Both writes, in the single door's order: every teammate this wave
+    # dispatched has a ledger before any of them has a spawn record.
+    _seed_progress_ledgers(fdir, seeds)
     _append_spawn_records(spawn_log, dispatched)
 
     run_name = fdir.name
@@ -1959,7 +2201,11 @@ def foundry_cast_wave(
         "castings": results,
         "instructions": (
             f"Spawn {len(results)} Agent tool calls in a SINGLE MESSAGE (parallel tool use). "
-            "Each Agent call gets its corresponding casting's prompt VERBATIM \u2014 no modification. "
+            "Each Agent call gets its corresponding casting's `dispatch` block VERBATIM as the "
+            "teammate's prompt \u2014 no modification. The block names that casting's prompt FILE "
+            "and the hash the teammate must read it to obtain, and the teammate states that hash "
+            "back in its completion report where the server checks it. Do NOT paste the prompt "
+            "text yourself. "
             "Required per-Agent params: subagent_type='foundry:teammate', "
             f"mode='bypassPermissions'. {model_clause}"
             "NEVER run_in_background=true (foreground, TeamCreate-managed). "
@@ -1975,4 +2221,11 @@ def foundry_cast_wave(
     }
     if model:
         result["model"] = model
+    if full_prompt:
+        result["instructions"] += (
+            " full_prompt=true: each casting entry's `prompt` field carries its file's text "
+            "for your own inspection. It is NOT what you pass to the Agent tool — pass "
+            "`dispatch`, so each teammate still reads its file and still produces a "
+            "checkable hash."
+        )
     return result
