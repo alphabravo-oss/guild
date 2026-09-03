@@ -1370,7 +1370,18 @@ _DISPATCH = {
 # Applied at the boundary rather than per handler deliberately: the defect is
 # one property short in one tool, but the SHAPE is every enum-valued argument of
 # every tool, and thirty handlers each remembering to re-check their own enums
-# is the arrangement D-127 already cost this server once.
+# is the arrangement this run has already paid for twice. D-098: the
+# comment-prose rung sat at a different point in each filing door's pipeline,
+# so the two doors disagreed about what a defect IS. D-077: FR-051's untiered
+# exit was implemented at ONE of the two doors, so following the server's own
+# hint through the other one made the ledger worse. `validate_defect_filing`
+# is the shape both of those produced — one shared decision, called twice.
+#
+# D-156: this argued from D-127, which is the waiting-notice and liveness
+# defect (`_waiting_on_agents` gating on the team scan rather than on the
+# liveness roster) and supports nothing here. A reader who followed the cite
+# reached a record that did not hold up the claim beside it, which costs the
+# comment exactly the thing the house style writes it for.
 _SCHEMAS: dict[str, dict] = {}
 
 
@@ -1448,6 +1459,119 @@ def _argument_refusal(name: str, schema: dict, arguments: dict) -> dict | None:
     }
 
 
+#: The two filing doors whose refusals the security audit tripwire follows.
+#: Keyed to the argument shape each one takes: `Foundry-Defect` files ONE
+#: finding out of its top-level arguments, `Foundry-Sync` files a batch.
+_FILING_TOOLS = ("Foundry-Defect", "Foundry-Sync")
+
+
+def _refused_filing_findings(name: str, arguments: dict) -> list[tuple[dict, str]]:
+    """The `(finding, source)` pairs a refused filing call was trying to file.
+
+    One mapping per finding, in the key shape both doors' validators already
+    judge — built through `foundry.py`'s own `_finding_mapping` for the single
+    door rather than re-spelled here, because a SECOND spelling of the finding
+    shape is how the audit record and the refusal come to describe different
+    things (D-083). The batch door's findings arrive in that shape already.
+    """
+    from foundry_mcp.tools.foundry import _finding_mapping
+
+    if name == "Foundry-Sync":
+        findings = (arguments or {}).get("findings")
+        if not isinstance(findings, list):
+            return []
+        return [
+            (dict(item), str(item.get("source") or (arguments or {}).get("source") or ""))
+            for item in findings
+            if isinstance(item, dict)
+        ]
+
+    args = arguments or {}
+    finding = _finding_mapping(
+        str(args.get("description") or ""),
+        str(args.get("spec_ref") or ""),
+        str(args.get("target_kind") or ""),
+        symbol=str(args.get("symbol") or ""),
+        file_path=str(args.get("file_path") or ""),
+        tier=str(args.get("tier") or ""),
+        defect_class=str(args.get("defect_class") or ""),
+        reproduction_attempted=str(args.get("reproduction_attempted") or ""),
+    )
+    return [(finding, str(args.get("source") or ""))]
+
+
+def _audit_security_claim_on_refusal(name: str, arguments: dict) -> None:
+    """Write the denylist tripwire for a filing refused BEFORE dispatch (D-146).
+
+    AC-007 and OT-005 are unconditional on the description matching the
+    security predicate, and CT-003's audit record exists to capture the
+    ATTEMPT: a stream trying to file a security-property claim as a gap it
+    merely reasoned about is precisely what an auditor needs to see, and the
+    refusal alone leaves no trace of it.
+
+    D-128 CLOSED THIS ONE FRAME LOWER AND THE SAME HOLE SURVIVED ONE FRAME UP.
+    -------------------------------------------------------------------------
+    `foundry_add_defect` now walks its whole validation ladder before returning,
+    so a bad `source` no longer leaves a security claim unaudited. But this
+    module validates arguments against the advertised schema BEFORE dispatch
+    (see `_argument_refusal`'s block above for why that check moved here), and
+    a pre-dispatch refusal returns without the handler ever running. Driven
+    over the real dispatch path at GRIND cycle 8:
+    `call_tool('Foundry-Defect', {...tier: 'LATENT', description: 'the login
+    endpoint does not verify the authentication token signature', source:
+    'bogus'})` refused naming `source`, the handler never ran, and the
+    `observations.json` tripwire delta was 0. Same result with
+    `type: 'NOTATYPE'`, and the same on `Foundry-Sync`. The identical filings
+    driven IN-PROCESS DO fire the tripwire, so the hole was exactly this rung:
+    over MCP a filer could switch the audit record off by also getting an
+    unrelated field wrong.
+
+    The decision is NOT re-made here. `validate_defect_filing` is asked — the
+    same shared validator both doors ask, whose denylist rung reads
+    `security_scan_text` over every prose value the filing carries (D-147), so
+    a claim hidden in an extra key is caught here exactly as it is below — and
+    the record is written through `record_denylist_tripwire`, the one exported
+    writer every other path uses. A second predicate or a second writer at this
+    rung would be the FR-002 defect returning: an audit control that records
+    only the attempts one of its callers makes.
+
+    Never raises and never changes the refusal. The caller still receives the
+    schema refusal naming the field it got wrong; the audit record is a side
+    effect of the attempt, not a second answer to it.
+    """
+    if name not in _FILING_TOOLS:
+        return
+    try:
+        from foundry_mcp.tools.foundry import (
+            record_denylist_tripwire,
+            tripwire_finding,
+            validate_defect_filing,
+        )
+        from foundry_mcp.tools.foundry_orchestrator import _current_cycle
+        from foundry_mcp.tools.foundry_state import get_run_dir
+
+        fdir = get_run_dir(_project_root)
+        if not fdir or not fdir.exists():
+            return
+        for finding, source in _refused_filing_findings(name, arguments):
+            refusal = validate_defect_filing(finding)
+            if not (isinstance(refusal, dict) and refusal.get("denylist_class")):
+                continue
+            record_denylist_tripwire(
+                fdir,
+                tripwire_finding(finding),
+                cycle=_current_cycle(fdir),
+                source=source,
+            )
+    except Exception:
+        # The audit record is a side effect of a call that is already being
+        # refused. It must never turn that refusal into an unhandled-error
+        # banner, and it must never be the reason a filing cannot be refused
+        # at all — the house rule is that a tool never raises across this
+        # boundary, and this is the one path with nothing to return.
+        pass
+
+
 @server.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
@@ -1458,6 +1582,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if schema is not None:
         refusal = _argument_refusal(name, schema, arguments)
         if refusal is not None:
+            # D-146: the audit record is written BEFORE the refusal returns, so
+            # a schema-invalid argument set cannot switch off the tripwire a
+            # security-property claim owes.
+            _audit_security_claim_on_refusal(name, arguments)
             return [TextContent(type="text", text=format_result(name, refusal))]
 
     # D-098: the outermost net. Every handler returns named refusals as dicts

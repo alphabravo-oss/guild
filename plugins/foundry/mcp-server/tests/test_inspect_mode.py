@@ -2413,3 +2413,134 @@ def test_the_trace_prose_reads_the_scope_the_server_records():
     assert "TRUNCATES" in tracer, (
         "the terminal line is a summary; the roster is the array"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-152 — RULE PRECEDENCE, SO THE RECORDED RULE NAMES THE ARM THAT FIRED.
+#
+# The order is fixed by the lead ruling and by FR-011's "Foundry-Next names
+# which rule fired": first_of_phase, then BOTH final_gate facts, then
+# verifier_touched, then DELTA. The uncomputable-diff arm sat AHEAD of the two
+# final_gate facts, which are readable without a diff — so a GRIND entered from
+# ASSAY feedback on a run with no boundary marker recorded `verifier_touched`
+# with a rule_detail that says the verifier could not be shown to have moved,
+# for the very cycle that opens ASSAY. The mode is FULL either way; the
+# PROVENANCE was false, and the assay gate's own refusal prose ("ASSAY is only
+# opened by an INSPECT whose recorded rule is final_gate") contradicted it.
+#
+# This is D-069's shape one arm over. The covering test asserted only
+# `rule in INSPECT_FULL_RULES` for the no-history case, so the precedence
+# itself was untested — which is why the assertions below name the rule.
+# --------------------------------------------------------------------------- #
+
+
+def _uncomputable_diff(fdir: Path) -> None:
+    """Remove every marker `_grind_diff` could measure from, so it has none.
+
+    The run state D-152 was driven on and the one the spec keeps in scope: a
+    resumed pre-change archive (thunder-viper's lacks exactly these three) has
+    no boundary marker, no clean-TRACE stamp and no CAST baseline.
+    """
+    for marker in (
+        fo.INSPECT_BOUNDARY_SHA_MARKER, ".trace-clean-at", ".cast-baseline-sha"
+    ):
+        (fdir / marker).unlink(missing_ok=True)
+
+
+def test_a_grind_entered_from_feedback_records_final_gate_with_no_diff(run_env):
+    """FR-011 verbatim: "Foundry-Next names which rule fired."
+
+    The GRIND that just closed was entered from ASSAY feedback — a fact the
+    phase history carries and no diff is needed to read. So `final_gate` fired,
+    and `final_gate` is what must be recorded, whether or not the diff can be
+    computed. Driven on the exact state D-152 reports: phase_history F2 -> F4
+    -> F3, and a run dir with none of the three markers a diff measures from.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase="F3", cycle=4,
+        phase_history=[{"phase": "F2"}, {"phase": "F4"}, {"phase": "F3"}],
+    )
+    _uncomputable_diff(fdir)
+
+    entry = _decide_inspect_mode(
+        fdir, project_root, decided_by="inspect_start", phase="F2", cycle=5
+    )
+
+    assert entry["mode"] == "FULL", entry
+    assert entry["rule"] == "final_gate", entry
+    assert "feedback" in entry["rule_detail"], entry
+
+
+def test_the_widening_re_open_records_final_gate_with_no_diff(run_env):
+    """AC-016 / the F2->F2 widening: the same precedence on the other
+    final_gate fact.
+
+    `widening` is a fact about the TRANSITION — the run is already at F2 and
+    the recorded width was DELTA — and it is known without consulting git.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=4)
+    _uncomputable_diff(fdir)
+
+    entry = _decide_inspect_mode(
+        fdir, project_root, decided_by="inspect_start", phase="F2", cycle=5,
+        widening=True,
+    )
+
+    assert entry["mode"] == "FULL", entry
+    assert entry["rule"] == "final_gate", entry
+    assert "widening" in entry["rule_detail"], entry
+
+
+def test_an_uncomputable_diff_still_records_verifier_touched_when_no_arm_fired(
+    run_env,
+):
+    """The arm is not removed, it is REORDERED.
+
+    With neither final_gate fact true, an uncomputable diff is still FULL and
+    is still recorded as `verifier_touched` with the real cause in
+    `rule_detail` — nothing can show the verifier did NOT move, so the honest
+    width is everything. Asserting this beside the two tests above is what
+    makes them a precedence claim rather than a deletion.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase="F3", cycle=4,
+        phase_history=[{"phase": "F2"}, {"phase": "F3"}],
+    )
+    _uncomputable_diff(fdir)
+
+    entry = _decide_inspect_mode(
+        fdir, project_root, decided_by="inspect_start", phase="F2", cycle=5
+    )
+
+    assert entry["mode"] == "FULL", entry
+    assert entry["rule"] == "verifier_touched", entry
+    assert "could not be computed" in entry["rule_detail"], entry
+
+
+def test_the_recorded_rule_survives_the_transition_into_state_and_rollup(run_env):
+    """CT-009 / GI-008: the transition RECORDS the decision, and every later
+    reader reports it. D-152 was visible in three artifacts at once — the
+    entry, `state.json.inspect_modes[-1].rule` and the stream-rollup's
+    per-cycle rule column — so all three are asserted here on one crossing.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase="F3", cycle=4,
+        phase_history=[{"phase": "F2"}, {"phase": "F4"}, {"phase": "F3"}],
+    )
+    _uncomputable_diff(fdir)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+    assert result.get("ok") is True, result
+
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["rule"] == "final_gate", recorded
+    assert recorded["mode"] == "FULL", recorded
+
+    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    cycle_row = rollup["cycles"][str(recorded["cycle"])]
+    assert cycle_row["inspect_rule"] == "final_gate", cycle_row

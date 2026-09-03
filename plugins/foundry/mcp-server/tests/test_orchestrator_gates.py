@@ -10306,7 +10306,13 @@ def _plugin_root() -> Path:
     return Path(__file__).resolve().parents[3] / "foundry"
 
 
-#: The seven surfaces the class was filed against, by defect.
+#: The surfaces the class has been filed against, by defect. NINE now: the
+#: class recurred for a FIFTH cycle (D-148, D-156) in two modules this scan did
+#: not reach — the file that DEFINES the tier vocabulary, and the file that
+#: advertises the MCP schemas — and a scan that stops at the surfaces already
+#: filed only ever catches the class where it has already been caught. Both are
+#: prose a maintainer reads to learn what a thing MEANS, which is the property
+#: that makes a wrong sentence in them expensive.
 _STALE_PROSE_SURFACES = {
     "mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py": "D-122, D-136",
     "commands/start.md": "D-126",
@@ -10314,6 +10320,8 @@ _STALE_PROSE_SURFACES = {
     "mcp-server/tests/test_orchestrator_gates.py": "D-142",
     "mcp-server/tests/test_inspect_mode.py": "D-143",
     "mcp-server/src/foundry_mcp/tools/foundry.py": "D-144",
+    "mcp-server/src/foundry_mcp/schemas/vocab.py": "D-148",
+    "mcp-server/src/foundry_mcp/server.py": "D-156",
 }
 
 #: The mechanisms this run RETIRED, and the spelling each one is named by.
@@ -10358,6 +10366,16 @@ _RETIRED_MECHANISMS = (
         re.compile(r"auto-demotion branch"),
         "D-098 removed the batch door's demotion routing; it refuses comment "
         "prose in the validation loop instead (D-144).",
+    ),
+    (
+        "the per-door gate exception on the tier axis",
+        re.compile(r"ASSAY blocks on either|block(?:s|ed) on either tier"),
+        "FR-006 and CT-008 give ONE gate rule with no per-door exception in "
+        "it: INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass on a "
+        "LATENT-only backlog and all five refuse on LIVE or unknown. No "
+        "shipped gate ever gave ASSAY an exception — BLOCKING_TIERS is LIVE "
+        "plus the unknown sentinel and all five doors ask one helper. The rule "
+        "was invented in the file that DEFINES the tier (D-148).",
     ),
     (
         "the two-ending run",
@@ -10617,6 +10635,10 @@ def test_the_retired_mechanism_pin_actually_fires():
                 "One OPEN LIVE defect, enough to keep final_gate from firing.",
             "the sync auto-demotion branch":
                 "foundry_sync_defects's auto-demotion branch faces the mirror.",
+            "the per-door gate exception on the tier axis":
+                "the axis decides only which GATE a still-open instance "
+                "blocks (ASSAY blocks on either; TEMPER, NYQUIST and DONE "
+                "block on LIVE alone).",
             "the two-ending run":
                 "Zero approval gates. The foundry runs until F6 DONE or an "
                 "error stops it.",
@@ -11089,3 +11111,611 @@ def test_the_clean_f2_arms_name_a_persisted_escalated_class(run_env):
     outcome = fo._done_preconditions(fdir, project_root)
     assert outcome["passed"] is False
     assert "FDC" in outcome["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# D-149 — THE TERMINAL SWEEP IS NOT VOIDED BY THE MANDATED EVIDENCE STRIP.
+#
+# `commands/start.md` mandates, verbatim, `git rm -r evidence/ && git commit
+# -m "chore(foundry): strip consumed run evidence" -- evidence/` as an F6 step,
+# and this repo's own history carries that commit. `select_sweep_scope` globs
+# the evidence directory in the TREE, so after the strip the whole-corpus sweep
+# selects nothing, re-executes nothing, reports zero mismatches and passes —
+# over nothing. Driven at cycle 8: the identical non-reproducing log REFUSED
+# DONE before the strip and PASSED after it. GI-002's terminal sweep, which
+# D-133 was filed to install, was being run past on the guided path.
+#
+# The door is made honest rather than the step forbidden: a whole-corpus PASS
+# is recorded against the commit that still carried the corpus, and DONE after
+# the strip is satisfied by that record. Strip FIRST and there is no record, so
+# the door refuses. Everything below drives a REAL corpus, a REAL sweep in a
+# detached worktree and a REAL strip commit, because a monkeypatched sweep
+# would pin the call and the defect is in what the call SEES.
+# --------------------------------------------------------------------------- #
+
+
+def _evidence_repo(project_root: str) -> None:
+    """A real git repo at `project_root`, seeded and committed."""
+    import subprocess
+
+    for args in (
+        ["init", "-q", project_root],
+        ["-C", project_root, "config", "user.email", "t@t"],
+        ["-C", project_root, "config", "user.name", "t"],
+    ):
+        subprocess.run(["git", *args], check=True)
+    (Path(project_root) / ".gitignore").write_text(
+        "/foundry-archive/\n", encoding="utf-8"
+    )
+    _commit_all(project_root, "seed")
+
+
+def _commit_all(project_root: str, message: str) -> str:
+    import subprocess
+
+    subprocess.run(["git", "-C", project_root, "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", project_root, "commit", "-qm", message], check=True
+    )
+    return subprocess.run(
+        ["git", "-C", project_root, "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _head(project_root: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", project_root, "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _committed_evidence(project_root: str, name: str, command: str,
+                        body: str) -> None:
+    """Commit one evidence log in the shipped v2.1 shape, at the repo root."""
+    evidence = Path(project_root) / "evidence"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / name).write_text(
+        f"# evidence-cmd: {command}\n# evidence-for: FR-001\n\n{body}",
+        encoding="utf-8",
+    )
+    _commit_all(project_root, f"evidence: {name}")
+
+
+def _strip_evidence(project_root: str) -> str:
+    """The F6 step start.md mandates, run verbatim."""
+    import subprocess
+
+    subprocess.run(
+        ["git", "-C", project_root, "rm", "-r", "-q", "evidence/"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", project_root, "commit", "-qm",
+         "chore(foundry): strip consumed run evidence", "--", "evidence/"],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", project_root, "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _done_ready(project_root: str, fdir: Path) -> None:
+    """Everything DONE needs except the evidence rung's answer."""
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F5.5", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+
+def test_a_stripped_corpus_with_no_recorded_pass_refuses_done_by_name(run_env):
+    """GI-002 verbatim: the SERVER sweeps at the boundary 'and refuses on
+    mismatch ... the whole corpus ... before ASSAY/NYQUIST/DONE'.
+
+    The strip is a COMMIT, so it moves HEAD and the memo with it, and the
+    corpus it deleted re-executes NOTHING — which reports the same zero
+    mismatches a clean whole-corpus pass reports. Driven end to end: a log that
+    genuinely no longer reproduces refuses DONE; the mandated strip is then run
+    verbatim; the SAME door is re-asked and must still refuse, now naming the
+    strip rather than the log.
+    """
+    project_root, fdir = run_env
+    _evidence_repo(project_root)
+    _committed_evidence(
+        project_root, "casting-1-handler.log",
+        "echo the-handler-calls-the-store", "the-handler-does-not\n",
+    )
+    _done_ready(project_root, fdir)
+
+    before = fo._done_preconditions(fdir, project_root)
+    assert before["passed"] is False, before
+    assert "casting-1-handler.log" in json.dumps(before), before
+
+    _strip_evidence(project_root)
+
+    after = fo._done_preconditions(fdir, project_root)
+    assert after["passed"] is False, after
+    assert fo.EVIDENCE_STRIPPED_TOKEN in after["reason"], after
+    rung = next(
+        c for c in after["checklist"]
+        if c["check"].startswith("evidence_reproduces_at_head")
+    )
+    assert rung["ok"] is False, rung
+    assert rung["token"] == fo.EVIDENCE_STRIPPED_TOKEN, rung
+    assert rung["logs_reexecuted"] == 0, rung
+
+
+def test_the_mandated_f6_order_earns_the_pass_the_strip_then_spends(run_env):
+    """AC-014 / FR-042: 'at the INSPECT before ASSAY, NYQUIST or DONE the sweep
+    covers the whole corpus.'
+
+    The documented F6 order — Foundry-Gate(phase="done") BEFORE the `git rm` —
+    is what makes that true across the strip. The gate re-executes the whole
+    corpus at the commit that still carries it and records `last_full_pass`
+    naming that commit; `Foundry-Phase("done")` after the strip is then
+    satisfied by the recorded pass rather than by a tree the corpus is gone
+    from. `commands/start.md` states this order and
+    `tests/test_lead_prose.py#test_the_f6_sequence_sweeps_before_it_strips`
+    fails if the two sentences ever swap.
+    """
+    project_root, fdir = run_env
+    _evidence_repo(project_root)
+    _committed_evidence(
+        project_root, "casting-1-handler.log", "echo reproduces", "reproduces\n"
+    )
+    _done_ready(project_root, fdir)
+
+    swept_at = _head(project_root)
+    gate = fo._done_preconditions(fdir, project_root)
+    assert gate["passed"] is True, gate
+    gate_rung = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("evidence_reproduces_at_head")
+    )
+    assert gate_rung["logs_reexecuted"] == 1, gate_rung
+    assert gate_rung["corpus_size"] == 1, gate_rung
+
+    marker = json.loads(
+        (fdir / fo.TERMINAL_SWEEP_FILENAME).read_text(encoding="utf-8")
+    )
+    assert marker["last_full_pass"]["head"] == swept_at, marker
+    assert marker["last_full_pass"]["corpus_size"] == 1, marker
+
+    _strip_evidence(project_root)
+
+    after = fo._done_preconditions(fdir, project_root)
+    assert after["passed"] is True, after
+    rung = next(
+        c for c in after["checklist"]
+        if c["check"].startswith("evidence_reproduces_at_head")
+    )
+    assert rung["ok"] is True, rung
+    assert rung["logs_reexecuted"] == 0, rung
+    # ...and it says WHICH commit the pass it is standing on was taken at, so
+    # "logs=0" is never read as "the corpus reproduced".
+    assert rung["pre_strip_pass"]["head"] == swept_at, rung
+    # The durable half survived the strip, which moved HEAD and rewrote the
+    # per-HEAD memo — the one thing it exists to survive.
+    marker = json.loads(
+        (fdir / fo.TERMINAL_SWEEP_FILENAME).read_text(encoding="utf-8")
+    )
+    assert marker["last_full_pass"]["head"] == swept_at, marker
+
+
+def test_a_run_that_committed_no_evidence_at_all_still_passes(run_env):
+    """The third state, and the reason the discriminator is not "logs == 0".
+
+    A refactor or docs-only run commits no evidence, so its terminal sweep
+    honestly covers nothing and there is no corpus history for a strip to have
+    removed. Refusing it would be this defect's own shape inverted — a door
+    refusing a run for the absence of something it never owed.
+    """
+    project_root, fdir = run_env
+    _evidence_repo(project_root)
+    _done_ready(project_root, fdir)
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is True, outcome
+    rung = next(
+        c for c in outcome["checklist"]
+        if c["check"].startswith("evidence_reproduces_at_head")
+    )
+    assert rung["ok"] is True and rung["token"] == "", rung
+    assert fo._evidence_corpus_existed(fdir, project_root) is False
+
+
+def test_both_terminal_doors_take_the_same_stripped_corpus_refusal(run_env):
+    """ST-010 / the --nyquist route: 'Foundry-Phase("nyquist_done") out of F5.5
+    and Foundry-Phase("done") at F6 sweep the same corpus by the same rule.'
+
+    `_done_preconditions` is ONE evaluation with four callers (both gates and
+    both transitions), which is the D-037 discipline that keeps the gate and
+    the transition from disagreeing about what DONE means. A --nyquist run
+    leaving F5.5 must not be a second route around the strip refusal, so both
+    transitions are driven on the same stripped tree.
+    """
+    project_root, fdir = run_env
+    _evidence_repo(project_root)
+    _committed_evidence(
+        project_root, "casting-2-beta.log", "echo reproduces", "reproduces\n"
+    )
+    _done_ready(project_root, fdir)
+    _strip_evidence(project_root)
+
+    _write_state(fdir, phase="F5.5", cycle=1)
+    _arm_ordering_token(fdir)
+    nyq_done = foundry_mark_phase_complete("nyquist_done", project_root)
+    assert nyq_done.get("ok") is not True, nyq_done
+    assert fo.EVIDENCE_STRIPPED_TOKEN in json.dumps(nyq_done), nyq_done
+
+    _write_state(fdir, phase="F5.5", cycle=1)
+    _arm_ordering_token(fdir)
+    done = foundry_mark_phase_complete("done", project_root)
+    assert done.get("ok") is not True, done
+    assert fo.EVIDENCE_STRIPPED_TOKEN in json.dumps(done), done
+
+    gate = foundry_gate("done", project_root)
+    assert gate["passed"] is False, gate
+    assert fo.EVIDENCE_STRIPPED_TOKEN in gate["reason"], gate
+
+
+# --------------------------------------------------------------------------- #
+# D-146 — THE SECURITY TRIPWIRE IS NOT RUNG-DEPENDENT AT THE TRANSPORT EITHER.
+#
+# D-128 closed exactly this shape one frame lower: `foundry_add_defect` now
+# walks its whole validation ladder before returning, so a bad `source` no
+# longer leaves a security-property claim unaudited. But this server validates
+# arguments against the advertised schema BEFORE dispatch, and a pre-dispatch
+# refusal returns without the handler ever running — so over MCP a filer could
+# still switch the audit record off by ALSO getting an unrelated field wrong.
+# AC-007 and OT-005 are unconditional on the description matching the
+# predicate, and CT-003's record exists to capture the ATTEMPT.
+#
+# Driven through `request_handlers[CallToolRequest]`, the transport a client
+# actually uses: calling `server.call_tool(...)` directly walks past the very
+# rung that answered.
+# --------------------------------------------------------------------------- #
+
+_SECURITY_CLAIM = (
+    "the login endpoint does not verify the authentication token signature"
+)
+
+
+def _tripwire_classes(fdir: Path) -> list[str]:
+    """The denylist classes recorded in `observations.json`'s audit ledger."""
+    path = fdir / "observations.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        row.get("denylist_class", "")
+        for row in (data.get("tripwire") or [])
+        if isinstance(row, dict)
+    ]
+
+
+@pytest.mark.parametrize(
+    "tool, arguments, bad_field",
+    [
+        (
+            "Foundry-Defect",
+            {"cycle": 1, "source": "bogus", "defect_type": "UNWIRED",
+             "tier": "LATENT", "defect_class": "K",
+             "reproduction_attempted": "drove the endpoint and saw no check",
+             "description": _SECURITY_CLAIM},
+            "source",
+        ),
+        (
+            "Foundry-Defect",
+            {"cycle": 1, "source": "prove", "defect_type": "NOTATYPE",
+             "tier": "LATENT", "defect_class": "K",
+             "reproduction_attempted": "drove the endpoint and saw no check",
+             "description": _SECURITY_CLAIM},
+            "defect_type",
+        ),
+        (
+            "Foundry-Sync",
+            {"cycle": 1, "findings": [
+                {"description": _SECURITY_CLAIM, "source": "bogus",
+                 "tier": "LATENT", "class": "K",
+                 "reproduction_attempted": "drove the endpoint and saw no check"},
+            ]},
+            "source",
+        ),
+    ],
+)
+def test_a_schema_refused_filing_still_fires_the_security_tripwire(
+    run_env, tool, arguments, bad_field
+):
+    """AC-007 verbatim: a LATENT filing matching the security-property
+    predicate 'is refused ... naming the denylist class
+    SECURITY_PROPERTY_CLAIM', and CT-003's audit record captures the attempt.
+
+    The filing is malformed in an UNRELATED field, so the schema refuses it
+    before dispatch. The refusal is still the schema's — the caller is told
+    which field it got wrong, which is the answer it needs — and the audit
+    record is written anyway, because the attempt is what the record is for.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [])
+
+    import foundry_mcp.server as srv
+
+    previous = srv._project_root
+    try:
+        srv._project_root = project_root
+        before = len(_tripwire_classes(fdir))
+        out = _drive_mcp(tool, arguments)
+    finally:
+        srv._project_root = previous
+
+    # The caller still gets the schema refusal, naming the field it got wrong.
+    assert bad_field in out, out
+    # ...and the audit record exists, under the class the denylist refuses on.
+    classes = _tripwire_classes(fdir)
+    assert len(classes) == before + 1, (classes, out)
+    assert classes[-1] == "SECURITY_PROPERTY_CLAIM", (classes, out)
+
+
+def test_an_ordinary_schema_refusal_writes_no_tripwire(run_env):
+    """The other side: the audit ledger is not a log of every bad argument.
+
+    A filing that is malformed and carries NO security-property claim writes
+    nothing. An audit control that fires on everything is one nobody reads,
+    and `observations.json.tripwire` is queried by class.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [])
+
+    import foundry_mcp.server as srv
+
+    previous = srv._project_root
+    try:
+        srv._project_root = project_root
+        _drive_mcp("Foundry-Defect", {
+            "cycle": 1, "source": "bogus", "defect_type": "UNWIRED",
+            "tier": "LATENT", "defect_class": "K",
+            "reproduction_attempted": "read the renderer end to end",
+            "description": "the backlog heading says every row carries a file",
+        })
+    finally:
+        srv._project_root = previous
+
+    assert _tripwire_classes(fdir) == []
+
+
+def test_both_filing_doors_audit_under_the_class_their_refusal_names(run_env):
+    """D-083 / D-147, as a property of BOTH doors at once.
+
+    `record_denylist_tripwire` re-derives the class through
+    `vocab.never_demote_class`, whose security entry reads `description` alone,
+    while the refusal keys on every prose value the filing carries. So a claim
+    that lives in some OTHER key is refused SECURITY_PROPERTY_CLAIM and, unless
+    the door hands over `tripwire_finding`'s shape, audited NON_COMMENT — one
+    event, two artifacts that contradict each other. `foundry_add_defect`
+    wrapped its finding; the batch door in this module did not.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_defect
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [])
+
+    # The claim is NOT in `description`; it is in a key the caller invented.
+    smuggled = {
+        "description": "a gap in the request path",
+        "evidence": _SECURITY_CLAIM,
+        "source": "prove", "tier": "LATENT", "class": "K",
+        "reproduction_attempted": "read the handler end to end, drove nothing",
+    }
+
+    batch = foundry_sync_defects(
+        cycle=1, findings=[dict(smuggled)], project_root=project_root
+    )
+    assert batch.get("ok") is not True, batch
+    assert "SECURITY_PROPERTY_CLAIM" in json.dumps(batch), batch
+
+    single = foundry_add_defect(
+        cycle=1, source="prove", defect_type="UNWIRED",
+        description=smuggled["description"], tier="LATENT", defect_class="K",
+        reproduction_attempted=smuggled["reproduction_attempted"],
+        spec_ref=_SECURITY_CLAIM, project_root=project_root,
+    )
+    assert single.get("ok") is not True, single
+
+    classes = _tripwire_classes(fdir)
+    assert classes, "neither door wrote an audit record"
+    assert set(classes) == {"SECURITY_PROPERTY_CLAIM"}, classes
+
+
+def test_the_argument_refusal_block_argues_from_a_record_that_supports_it():
+    """D-156, the fifth filing of `stale-prose-survives-beside-new-prose`.
+
+    The house style's whole return on a failure-history comment is that the
+    next reader can FOLLOW the cite. `server.py`'s argument-refusal header
+    argued its design point — one boundary check rather than thirty handlers
+    each remembering to re-check their own enums — from D-127, which is the
+    waiting-notice and liveness defect (`_waiting_on_agents` gating on the team
+    scan rather than on the liveness roster). A reader who followed it reached
+    a record that does not hold up the claim beside it, which costs the comment
+    exactly the thing it is written for.
+
+    The duplication shape IS on record, twice: D-098 (`two-surfaces-of-one-rule-
+    disagree` — the comment-prose rung sat at a different point in each filing
+    door's pipeline, so the two doors disagreed about what a defect is) and
+    D-077 (FR-051's untiered exit implemented at ONE of the two doors). The
+    block now names those, and says why the cite moved.
+
+    Asserted as a property of the FILE rather than as a comment about it, so a
+    future edit that restores the old attribution fails here.
+    """
+    block = (
+        _plugin_root() / "mcp-server/src/foundry_mcp/server.py"
+    ).read_text(encoding="utf-8")
+    header = block[block.index("# D-042"):block.index("_SCHEMAS: dict[str, dict]")]
+
+    assert "D-098" in header and "D-077" in header, header[-1200:]
+    assert "D-127 already cost this server once" not in header, header[-1200:]
+    # ...and the correction itself is history, not a silent rewrite: the block
+    # says which cite was there and why it did not hold.
+    assert "D-156" in header, header[-1200:]
+
+
+# --------------------------------------------------------------------------- #
+# D-153 / D-154 — EVERY IMPERATIVE NAMES A CALL THE SERVER ACCEPTS, AND EVERY
+# OFFERED EXIT NAMES AN ARM THAT CAN FIRE.
+#
+# D-129 got the notice onto the clean F2 arm. What it then said was a route
+# that does not exist from there: "the cheapest place to make those crossings
+# is HERE, from F2", and the only call it named was
+# "Foundry-Phase(phase='inspect_start') from F3". From a FULL F2 that call is
+# REFUSED — "this cycle's recorded width is FULL (rule final_gate), so there is
+# nothing to widen" — and `live_clean_cycles` does not move. The crossing that
+# works is `grind_start` then `inspect_start`: a GRIND opened with nothing to
+# fix, which reads as a mistake unless the prose says it is the crossing.
+#
+# D-154 is the same defect on the other arm of the same sentence. The budget
+# arm was offered unconditionally, including for a class with every instance
+# closed — `Foundry-Tasks` emits a structural packet only for a class with an
+# open bucket, so for such a class that arm can never advance. Both of this
+# run's escalated classes are in exactly that state.
+# --------------------------------------------------------------------------- #
+
+
+def _escalated_fixture(fdir: Path, *, open_instances: bool) -> None:
+    """One class persisted ESCALATED, with or without an open instance."""
+    ledger = [
+        {
+            "id": f"D-00{n}", "cycle": n, "source": "prove", "type": "WRONG",
+            "description": "d", "file": "src/api/a.py", "symbol": "h",
+            "status": "open" if open_instances else "fixed",
+            "tier": "LATENT", "class": "FDC",
+            "reproduction_attempted": "drove every caller; none reach it",
+            "fixed_in_cycle": None if open_instances else n,
+        }
+        for n in (1, 2, 3)
+    ]
+    _defect_ledger(fdir, ledger)
+    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps({"classes": {
+        "FDC": {
+            "class": "FDC", "status": "ESCALATED", "exit_reason": None,
+            "escalated_at_cycle": 3, "cleared_at_cycle": None,
+            "structural_packets_dispatched": 0, "structural_packet_cycles": [],
+            "live_clean_cycles": 0, "consecutive_cycles": 3,
+            "defect_ids": ["D-001", "D-002", "D-003"],
+            "open_latent_defect_ids": [], "proposal": "",
+            "recorded_at": "2020-01-01T00:00:00+00:00",
+        }
+    }}), encoding="utf-8")
+
+
+def _clean_f2(project_root: str, fdir: Path, cycle: int = 4) -> dict:
+    """A clean F2 with every required stream marked, ready for Foundry-Next."""
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F2", cycle=cycle)
+    recorded = _record_full_inspect_mode(fdir, cycle=cycle)
+    for stream in recorded["required_streams"]:
+        (fdir / f".{stream}-complete").write_text(
+            f"2020-01-01T00:00:00+00:00 cycle={cycle}\nitems_checked=10\n"
+            "items_total=10\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+    return recorded
+
+
+def test_the_clean_f2_arm_names_the_crossing_the_server_accepts_from_f2(run_env):
+    """US-001 / ST-001 / ST-010: the exit is mechanical, so the prose that
+    sends a lead to make it has to name a call the server takes.
+
+    The recorded width here is FULL / final_gate, which is what a clean cycle
+    that reached ASSAY looks like. Driven at cycle 8:
+    `Foundry-Phase('inspect_start')` from that F2 is refused and the counter
+    does not move; the sequence that closes one clean cycle is `grind_start`
+    then `inspect_start`. Both halves are asserted — the arm names the working
+    sequence, and the call it used to name is shown to be the refusal it is.
+    """
+    project_root, fdir = run_env
+    _escalated_fixture(fdir, open_instances=False)
+    _clean_f2(project_root, fdir)
+
+    nxt = foundry_next_action(project_root)
+    instructions = nxt["instructions"]
+
+    assert nxt["action"] == "transition_to_assay", nxt
+    assert "grind_start" in instructions, instructions
+    assert "REFUSED" in instructions, instructions
+
+    # ...and the call the arm used to name really is refused from here.
+    _arm_ordering_token(fdir)
+    refused = foundry_mark_phase_complete("inspect_start", project_root)
+    assert refused.get("ok") is not True, refused
+    assert "nothing to widen" in refused["error"], refused
+
+
+def test_the_delta_arm_still_names_its_own_widening_re_open(run_env):
+    """AC-016: from a DELTA cycle the widening re-open IS `inspect_start`, so
+    the notice must name THAT — the two spellings are selected by the RECORDED
+    width, which this arm reads back and never computes (GI-008)."""
+    project_root, fdir = run_env
+    _escalated_fixture(fdir, open_instances=False)
+    _clean_f2(project_root, fdir)
+    modes = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    modes["inspect_modes"][-1]["mode"] = "DELTA"
+    modes["inspect_modes"][-1]["rule"] = "delta"
+    (fdir / "state.json").write_text(json.dumps(modes), encoding="utf-8")
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "widen_inspect", nxt
+    assert "widening re-open" in nxt["instructions"], nxt["instructions"]
+    assert "grind_start" not in nxt["instructions"], nxt["instructions"]
+
+
+def test_the_budget_arm_is_not_offered_to_a_class_that_cannot_spend_it(run_env):
+    """ST-002 / FR-002: the budget arm clears a class when its structural
+    packets are spent — and `Foundry-Tasks` emits one only for a class with an
+    open bucket.
+
+    Driven at cycle 8 on this run's own state: the sentence offered "2 more
+    structural packet(s)" for a class with every instance closed, while
+    `Foundry-Tasks` on the same run returned `structural_tasks: None`,
+    `escalated_classes: []` and left `structural_packets_dispatched` at 0.
+    Asserted here as the pair it is — what the sentence says, and what the tool
+    it names actually does.
+    """
+    project_root, fdir = run_env
+    _escalated_fixture(fdir, open_instances=False)
+    _write_state(fdir, phase="F2", cycle=4)
+
+    sentence = fo._escalation_exit_distances(fdir, ["FDC"])
+    assert "cannot advance this class" in sentence, sentence
+    assert "more structural packet(s) (budget arm" not in sentence, sentence
+
+    # The tool the retired sentence named, on the same run.
+    tasks = fo.foundry_defects_to_tasks(project_root)
+    assert not tasks.get("structural_tasks"), tasks
+    entry = json.loads(
+        (fdir / fo.ESCALATION_FILENAME).read_text(encoding="utf-8")
+    )["classes"]["FDC"]
+    assert entry["structural_packets_dispatched"] == 0, entry
+
+
+def test_the_budget_arm_is_offered_while_the_class_still_has_work(run_env):
+    """The other side, so the rule is a discrimination and not a deletion: a
+    class with an open instance can still spend its budget, and the sentence
+    offers both arms exactly as ST-002 describes them."""
+    project_root, fdir = run_env
+    _escalated_fixture(fdir, open_instances=True)
+    _write_state(fdir, phase="F2", cycle=4)
+
+    sentence = fo._escalation_exit_distances(fdir, ["FDC"])
+
+    assert "more structural packet(s) (budget arm" in sentence, sentence
+    assert "cannot advance this class" not in sentence, sentence

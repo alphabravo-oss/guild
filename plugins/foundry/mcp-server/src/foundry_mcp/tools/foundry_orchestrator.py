@@ -1039,7 +1039,18 @@ def _open_defects_by_tier(fdir: Path) -> dict[str, list[dict]]:
     return buckets
 
 
-def _escalation_exit_distances(fdir: Path, classes: list[str]) -> str:
+#: D-153 — the clean-cycle crossing, spelled for the phase the reader is IN.
+#: The crossing itself is always an `inspect_start` OUT OF F3; what differs is
+#: what it takes to be standing in F3, and naming only the destination is what
+#: sent a lead at F2 into a refusal (see `_still_escalated_notice`).
+_CLEAN_CYCLE_CROSSING_DEFAULT = (
+    "Foundry-Phase(phase='inspect_start') out of F3 closes one"
+)
+
+
+def _escalation_exit_distances(
+    fdir: Path, classes: list[str], *, crossing: str = ""
+) -> str:
     """One sentence per still-escalated class: which arm clears it, and how far.
 
     D-111 — A REFUSAL THAT NAMES NO REACHABLE CALL IS NOT A REMEDY.
@@ -1053,6 +1064,26 @@ def _escalation_exit_distances(fdir: Path, classes: list[str]) -> str:
     more structural packets the budget arm needs (ST-002). Whichever arm fires
     first wins, so both are quoted and the shorter one is obvious.
 
+    D-154 — AND THE BUDGET ARM IS QUOTED ONLY WHERE IT CAN FIRE.
+    -----------------------------------------------------------
+    "N more structural packet(s)" was printed unconditionally, including for a
+    class with every instance CLOSED — the state both of this run's escalated
+    classes are in. Driven: the sentence offered "2 more structural packet(s)
+    (budget arm, Foundry-Tasks emits one per class per cycle)" while
+    `Foundry-Tasks` on the same run returned `structural_tasks: None`,
+    `escalated_classes: []` and left `structural_packets_dispatched` at 0.
+    `_spend_structural_budget` is fed `_escalated_classes`, which opens with
+    `if not bucket["open"]: continue`, so a class with no open bucket can never
+    consume a packet and the offered arm can never advance. It is not a
+    deadlock — the clean-cycle arm still fires — but a refusal whose own remedy
+    names a route that does not exist is D-111's defect one arm over.
+
+    So the open-instance count is READ, from the same buckets the escalation
+    arms read, and a class with nothing open is told that its budget arm cannot
+    advance and why. ``crossing`` names the call that actually closes a clean
+    cycle from where the READER is standing (D-153); it defaults to the
+    destination alone, which is all a caller at a terminal phase can say.
+
     Reads, never writes. A class with no entry yet reads as the full distance to
     each arm, which is exactly what it is.
     """
@@ -1061,6 +1092,8 @@ def _escalation_exit_distances(fdir: Path, classes: list[str]) -> str:
     recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
     if not isinstance(recorded, dict):
         recorded = {}
+    buckets = _class_buckets(_load_json(fdir / "defects.json").get("defects", []))
+    crossing = crossing or _CLEAN_CYCLE_CROSSING_DEFAULT
     parts: list[str] = []
     for key in classes:
         entry = recorded.get(key)
@@ -1070,13 +1103,29 @@ def _escalation_exit_distances(fdir: Path, classes: list[str]) -> str:
         packets_left = max(
             0, STRUCTURAL_PASS_BUDGET - entry["structural_packets_dispatched"]
         )
-        parts.append(
+        open_count = len((buckets.get(key) or {}).get("open") or [])
+        clean_arm = (
             f"{key}: {clean_left} more INSPECT cycle(s) drawing zero LIVE "
-            f"instances (clean_cycles arm, Foundry-Phase(phase='inspect_start') "
-            f"from F3 closes one and they must be CONSECUTIVE), or "
-            f"{packets_left} more structural packet(s) (budget arm, "
-            f"Foundry-Tasks emits one per class per cycle)"
+            f"instances (clean_cycles arm — {crossing}, and they must be "
+            f"CONSECUTIVE)"
         )
+        if open_count:
+            parts.append(
+                clean_arm
+                + f", or {packets_left} more structural packet(s) (budget arm, "
+                f"Foundry-Tasks emits one per class per cycle)"
+            )
+        else:
+            # D-154: no second route to offer. Said as a fact about THIS class
+            # rather than omitted, so a lead who read the budget arm on an
+            # earlier cycle learns why it stopped being available.
+            parts.append(
+                clean_arm
+                + f". The budget arm cannot advance this class: every instance "
+                f"of it is closed, and Foundry-Tasks emits a structural packet "
+                f"only for a class with open instances, so its "
+                f"{packets_left} unspent packet(s) stay unspent"
+            )
     return " Distance to each exit — " + "; ".join(parts) + "."
 
 
@@ -1564,23 +1613,80 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # defect should be told about that first, because the corpus is going to
     # move again when they fix it. A halted run still wins over this — it has
     # already stopped.
+    # D-149 — AND A SWEEP THAT COVERED NOTHING IS NOT A SWEEP THAT PASSED.
+    #
+    # `commands/start.md` mandates `git rm -r evidence/` as an F6 step, so the
+    # tree this rung asks about may have no corpus in it at all. Driven at
+    # cycle 8: the same non-reproducing log refused DONE before that strip and
+    # passed after it, because `select_sweep_scope` reads the evidence
+    # directory in the TREE and a deleted directory yields no logs — zero
+    # mismatches, ok True, over nothing. The rung reported only the mismatch
+    # count, so a vacuous sweep was indistinguishable from a clean whole-corpus
+    # one in the very checklist the lead reads.
+    #
+    # Three states, and only three (the same three start.md documents):
+    # corpus present, swept now; corpus absent with a recorded pre-strip pass,
+    # which is what the mandated order EARNS by running Gate(done) before the
+    # `git rm`; corpus absent with no such pass, which is refused. A run that
+    # committed no evidence at all still passes — it has no corpus history to
+    # have stripped, which is what `_evidence_corpus_existed` separates.
     evidence = _terminal_evidence_sweep(fdir, project_root)
+    sweep_record = evidence.get("record") or {}
+    logs_reexecuted = len(sweep_record.get("logs_reexecuted") or [])
+    corpus_size = int(sweep_record.get("corpus_size") or 0)
+    prior_pass = evidence.get("last_full_pass")
+    prior_pass = prior_pass if isinstance(prior_pass, dict) else None
+    stripped = (
+        bool(evidence["ok"])
+        and corpus_size == 0
+        and prior_pass is None
+        and _evidence_corpus_existed(fdir, project_root)
+    )
+    evidence_ok = bool(evidence["ok"]) and not stripped
     if not evidence["ok"]:
         passed = False
         refusal = _terminal_sweep_refusal(evidence, "mark the run DONE")
         reason = refusal["error"].replace("Cannot mark the run DONE — ", "")
         hint = refusal["hint"]
+    elif stripped:
+        passed = False
+        reason = (
+            f"{EVIDENCE_STRIPPED_TOKEN}: the committed evidence corpus is not "
+            f"present at HEAD ({(evidence.get('head') or 'unknown')[:8]}) and "
+            "this run recorded no whole-corpus sweep pass at a commit that "
+            "carried it"
+        )
+        hint = (
+            "Sweep first, strip second. Restore evidence/ (git revert the strip "
+            "commit, or git checkout <pre-strip commit> -- evidence/ and commit "
+            "it), call Foundry-Gate(phase='done') so the whole corpus "
+            "re-executes and the pass is recorded in "
+            f"{TERMINAL_SWEEP_FILENAME} under last_full_pass, and only THEN "
+            "strip. A sweep over a corpus that is no longer there proves "
+            "nothing, and passing on it is how a log that stopped reproducing "
+            "during F5 or F5.5 reaches DONE unread."
+        )
     checklist.append({
+        # D-149: the number of logs, beside the mismatch count. A vacuous sweep
+        # is visibly logs=0; the two numbers used to be one number.
         "check": (
-            "evidence_reproduces_at_head "
-            f"(mismatches={len(evidence.get('mismatches') or [])})"
+            f"evidence_reproduces_at_head (logs={logs_reexecuted}, "
+            f"mismatches={len(evidence.get('mismatches') or [])})"
         ),
-        "ok": bool(evidence["ok"]),
+        "ok": evidence_ok,
+        "token": EVIDENCE_STRIPPED_TOKEN if stripped else "",
+        "logs_reexecuted": logs_reexecuted,
+        "corpus_size": corpus_size,
+        "scope": sweep_record.get("scope", ""),
         "mismatches": [
             m.get("log", "?") for m in (evidence.get("mismatches") or [])
         ],
         "swept_head": evidence.get("head", ""),
         "cached": bool(evidence.get("cached")),
+        # Present only when this door passed on the RECORDED pass rather than
+        # on a sweep it just took, so a reader can never mistake one for the
+        # other.
+        "pre_strip_pass": prior_pass if corpus_size == 0 else None,
     })
 
     # The halt is re-asserted after the evidence rung so it keeps the last word
@@ -3155,6 +3261,31 @@ def _decide_inspect_mode(
     the honest width is everything. See the concerns file — the vocabulary has
     no member meaning "the diff could not be computed", and inventing one here
     would be a seventh copy of a vocabulary casting 1 owns.
+
+    D-152 — AND THE UNKNOWN-DIFF ARM IS EVALUATED LAST OF THE FULL ARMS, SO IT
+    SUBSTITUTES FOR NO RULE THAT ACTUALLY FIRED.
+    -------------------------------------------------------------------------
+    That arm sat AHEAD of both `final_gate` arms, and the two facts they read —
+    `widening`, and the phase history — are known whether or not a diff can be
+    computed. So a GRIND entered from ASSAY feedback on a run whose run dir
+    carries no `.inspect-boundary-sha`, `.trace-clean-at` or `.cast-baseline-sha`
+    recorded `verifier_touched` with `rule_detail` "the GRIND diff could not be
+    computed ... so the verifier cannot be shown to be untouched" — for the very
+    cycle that opens ASSAY, whose own gate refuses with "ASSAY is only opened by
+    an INSPECT whose recorded rule is final_gate". Driven at cycle 8 on a
+    phase_history of F2 -> F4 -> F3; the same substitution occurs on the F2->F2
+    widening re-open and wherever git is unavailable. The mode is FULL either
+    way, so no verification is lost; what was wrong is the PROVENANCE, which is
+    the whole of FR-011's "Foundry-Next names which rule fired" and which the F6
+    report carries in its per-cycle rule column.
+
+    This is D-069's failure shape one arm over — the same lesson, that a FULL
+    arm placed ahead of another does not merely decide the width, it decides
+    what the artifact SAYS decided the width. The order is therefore fixed as
+    the lead ruling states it and as the docstring above lists it:
+    first_of_phase, then BOTH final_gate facts, then verifier_touched (the
+    uncomputable diff, then the scan), then DELTA. An uncomputable diff still
+    yields FULL; it just no longer speaks over a rule that fired.
     """
     now = _now()
     diff = _grind_diff(fdir, project_root)
@@ -3167,12 +3298,6 @@ def _decide_inspect_mode(
     if decided_by in ("cast", "temper"):
         rule = "first_of_phase"
         rule_detail = f"phase-entry transition into {phase}"
-    elif diff["problem"]:
-        rule = "verifier_touched"
-        rule_detail = (
-            f"the GRIND diff could not be computed ({diff['problem']}), so the "
-            "verifier cannot be shown to be untouched"
-        )
     elif widening:
         rule = "final_gate"
         rule_detail = (
@@ -3182,6 +3307,15 @@ def _decide_inspect_mode(
     elif _entered_grind_from_feedback(fdir):
         rule = "final_gate"
         rule_detail = "this GRIND was entered from ASSAY, TEMPER or NYQUIST feedback"
+    elif diff["problem"]:
+        # D-152: LAST of the FULL arms. Both final_gate facts above are known
+        # without a diff, so consulting the diff first substituted
+        # `verifier_touched` for a rule that had already fired.
+        rule = "verifier_touched"
+        rule_detail = (
+            f"the GRIND diff could not be computed ({diff['problem']}), so the "
+            "verifier cannot be shown to be untouched"
+        )
     else:
         # D-102: EVERY spelling of the run's spec, not just the one
         # `_resolve_spec_path` prefers. See `_spec_relative_paths`.
@@ -4296,6 +4430,13 @@ def _sweep_evidence_at_boundary(
     )
     record = {
         "scope": "full" if full else "delta",
+        # D-149 — HOW MANY LOGS WERE IN SCOPE AT ALL, recorded beside how many
+        # re-executed. At a FULL boundary these are the same number and that
+        # number IS the corpus, which is the only way a reader can tell "the
+        # whole corpus reproduced" from "there was no corpus": a run whose
+        # `evidence/` has been deleted sweeps zero logs and passes on nothing,
+        # and `ok` alone says the same word for both.
+        "corpus_size": len(logs),
         "logs_reexecuted": [str(p) for p in outcome.get("logs_reexecuted", [])],
         # CT-007 — THE PER-LOG COLUMN, CARRIED THROUGH TO THE ARTIFACT.
         #
@@ -4343,8 +4484,74 @@ def _sweep_evidence_at_boundary(
 
 
 #: D-133 — where the whole-corpus sweep taken at a TERMINAL boundary is
-#: remembered, keyed by the HEAD it was taken at.
+#: remembered, keyed by the HEAD it was taken at. D-149 adds the durable
+#: `last_full_pass` entry, which survives the memo's per-HEAD rewrites.
 TERMINAL_SWEEP_FILENAME = ".evidence-swept-at-head.json"
+
+#: D-149 — the token the DONE / NYQUIST_DONE doors refuse a stripped corpus
+#: with. Named in `commands/start.md`'s F6 step and pinned there by
+#: `tests/test_lead_prose.py`, so the lead reads the same word in the guidance
+#: and in the refusal.
+EVIDENCE_STRIPPED_TOKEN = "EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP"
+
+
+def _evidence_corpus_existed(fdir: Path, project_root: str) -> bool:
+    """Did this run ever have a committed evidence corpus?
+
+    D-149's discriminator between the two ways a terminal whole-corpus sweep
+    can cover zero logs: a run that committed no evidence at all — honest,
+    there is nothing to sweep and nothing to have stripped — and a run whose
+    committed corpus was DELETED before this door was asked. `ok` says the same
+    word for both, and only the second is a defect.
+
+    TWO INDEPENDENT SOURCES, because neither alone answers the driven case.
+
+    GIT IS THE AUTHORITY. `git rev-list -1 HEAD -- evidence/` names the last
+    commit that touched the path, and the strip commit ITSELF touches it — it
+    is a deletion of tracked files. So a non-empty answer means the corpus was
+    tracked at some point on this history, whether or not it is in the tree
+    now, which is exactly the question. This half is what catches a lead who
+    strips BEFORE asking any terminal door, where the run directory has no
+    record that a corpus ever existed.
+
+    THE RUN'S OWN RECORDS answer where git cannot — no repository, a shallow
+    clone, a run whose evidence lives outside this tree. `stream-rollup.json`
+    carries every INSPECT boundary's sweep (recursively: the rollup nests
+    records under per-cycle sub-keys such as `temper_entry` and
+    `nyquist_entry`), and the terminal marker carries `corpus_seen`, the
+    high-water mark a terminal sweep records whether or not it passed.
+    """
+    import subprocess
+
+    try:
+        rev = subprocess.run(
+            ["git", "-C", project_root, "rev-list", "-1", "HEAD", "--", "evidence/"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if rev.returncode == 0 and rev.stdout.strip():
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    def _walk(node: object, depth: int = 0) -> bool:
+        if depth > 6 or not isinstance(node, dict):
+            return False
+        sweep = node.get("evidence_sweep")
+        if isinstance(sweep, dict):
+            if sweep.get("logs_reexecuted") or int(sweep.get("corpus_size") or 0) > 0:
+                return True
+        return any(_walk(child, depth + 1) for child in node.values())
+
+    if _walk(_load_json(fdir / ROLLUP_FILENAME)):
+        return True
+    memo = _load_json(fdir / TERMINAL_SWEEP_FILENAME)
+    if not isinstance(memo, dict):
+        return False
+    # `corpus_seen` as well as `last_full_pass`, because the driven case is a
+    # corpus that MISMATCHED and was then stripped: no pass was ever recorded,
+    # and reading that absence as "there was never a corpus" would let exactly
+    # the failing run through.
+    return bool(memo.get("last_full_pass") or memo.get("corpus_seen"))
 
 
 def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
@@ -4388,6 +4595,40 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
     A HEAD that cannot be read is not a cache key, so nothing is memoised and
     the sweep runs; a sweep that could not RUN is not a sweep that passed, and
     both are reported through the same `ok` the callers refuse on.
+
+    D-149 — AND THE PASS IS RECORDED AGAINST THE COMMIT THAT STILL CARRIED THE
+    CORPUS, BECAUSE THE F6 STEP DELETES IT.
+    -------------------------------------------------------------------------
+    `commands/start.md` mandates, verbatim, `git rm -r evidence/ && git commit
+    -m "chore(foundry): strip consumed run evidence" -- evidence/` as an F6
+    step, and this repo's own history carries that commit. Driven at cycle 8 on
+    a run at F5.5 with one committed log whose command no longer reproduced:
+    BEFORE the strip this returned ok False naming
+    `evidence/casting-1-handler.log` and `Foundry-Phase('done')` was refused;
+    AFTER the identical strip the same door returned ok True, scope full,
+    `logs_reexecuted` [], `mismatches` [] — because `select_sweep_scope` reads
+    the evidence directory in the TREE, and a directory that is gone yields no
+    logs. The identical regression refused DONE before the strip and passed
+    after it, so GI-002's terminal sweep passed over nothing on the guided path.
+
+    `sweep_evidence_at_head` cannot tell "zero logs because the DELTA diff
+    touched nothing" from "zero logs because the corpus was deleted", and at a
+    `full=True` terminal boundary only the second is possible. So this function
+    records `last_full_pass` — head, corpus size and timestamp — every time a
+    whole-corpus sweep PASSES over a non-empty corpus, and carries it forward
+    across the per-HEAD memo rewrites so the strip commit cannot erase it. The
+    door then has three distinguishable states, which `_done_preconditions`
+    refuses on (see its rung):
+
+      * corpus present at HEAD          -> swept now, logs=N;
+      * corpus absent, pass recorded    -> passes ON THE RECORDED PRE-STRIP
+                                           PASS, naming the commit it swept;
+      * corpus absent, no pass recorded -> refused,
+                                           EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP.
+
+    `commands/start.md` documents that order — Foundry-Gate(phase='done') and
+    only THEN the strip — and `tests/test_lead_prose.py#
+    test_the_f6_sequence_sweeps_before_it_strips` fails if the two ever swap.
     """
     import subprocess
 
@@ -4403,9 +4644,24 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
         head = ""
 
     memo_path = fdir / TERMINAL_SWEEP_FILENAME
+    memo = _load_json(memo_path)
+    if not isinstance(memo, dict):
+        memo = {}
+    # D-149: the durable half of the marker, read before the memo can be
+    # replaced and carried onto every result so the callers never re-read it.
+    prior_pass = memo.get("last_full_pass")
+    if not isinstance(prior_pass, dict):
+        prior_pass = None
+    # The high-water mark: the largest corpus a terminal sweep has SELECTED in
+    # this run, whether or not it passed. `last_full_pass` alone cannot answer
+    # "did this run have a corpus", because the driven case is a corpus that
+    # MISMATCHED and was then stripped — no pass was ever recorded, and reading
+    # its absence as "there was never a corpus" is the defect one step over.
+    corpus_seen = memo.get("corpus_seen")
+    if not isinstance(corpus_seen, dict):
+        corpus_seen = None
     if head:
-        memo = _load_json(memo_path)
-        if isinstance(memo, dict) and memo.get("head") == head and memo.get("ok"):
+        if memo.get("head") == head and memo.get("ok"):
             return {
                 "ok": True,
                 "record": memo.get("record") or {},
@@ -4413,12 +4669,32 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
                 "error": "",
                 "head": head,
                 "cached": True,
+                "last_full_pass": prior_pass,
             }
 
     # `entry` carries no mode on purpose: `_sweep_evidence_at_boundary` reads an
     # entry with no `mode` as "sweep everything", which is the scope this
     # boundary owes anyway, and there is no width decision to invent here.
     sweep = _sweep_evidence_at_boundary(fdir, project_root, {}, full=True)
+    corpus_size = int(sweep["record"].get("corpus_size") or 0)
+    if corpus_size > 0:
+        # Seen, whatever the verdict.
+        corpus_seen = {
+            "head": head,
+            "corpus_size": max(
+                corpus_size, int((corpus_seen or {}).get("corpus_size") or 0)
+            ),
+            "seen_at": _now(),
+        }
+        # D-149: a PASS over a NON-EMPTY corpus is what earns the durable
+        # record the strip then spends. A pass over nothing earns nothing —
+        # that is the whole distinction.
+        if head and sweep["ok"]:
+            prior_pass = {
+                "head": head,
+                "corpus_size": corpus_size,
+                "swept_at": _now(),
+            }
     result = {
         "ok": sweep["ok"],
         "record": sweep["record"],
@@ -4426,14 +4702,27 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
         "error": sweep["error"],
         "head": head,
         "cached": False,
+        "last_full_pass": prior_pass,
+        "corpus_seen": corpus_seen,
     }
+    # Written whenever there is anything durable to keep, not only on a pass:
+    # the memo half is keyed on HEAD and the strip commit MOVES HEAD, so a
+    # record that lived only in the replaced document would be deleted by the
+    # very commit it exists to survive (D-149).
+    memo_out: dict = {}
     if head and sweep["ok"]:
-        _save_json(memo_path, {
+        memo_out = {
             "head": head,
             "ok": True,
             "record": sweep["record"],
             "swept_at": _now(),
-        })
+        }
+    if prior_pass is not None:
+        memo_out["last_full_pass"] = prior_pass
+    if corpus_seen is not None:
+        memo_out["corpus_seen"] = corpus_seen
+    if memo_out:
+        _save_json(memo_path, memo_out)
     return result
 
 
@@ -7933,12 +8222,63 @@ def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | 
 _REGRESSION_DEF_TEMPLATES = ("def {name}", "class {name}", "async def {name}")
 
 
-#: D-134 — pytest's parametrised node id, whose bracketed suffix is the PARAM
-#: SET and not part of any `def` name. `tests/test_repro.py::test_param_gap[1]`
-#: is a real node pytest collects and runs; the def in the file is
-#: `test_param_gap`. Stripped before the file is searched, and only from the
-#: END, so a name that legitimately contains a bracket mid-string is untouched.
-_PARAMETRISED_NODE_SUFFIX = re.compile(r"\[.*\]$")
+def _split_pytest_node_id(ref: str) -> tuple[str, list[str], str]:
+    """``(file path, name chain, parameter id)`` for one pytest node id.
+
+    A node id is spelled ``relpath::Name::Name[param id]`` and this splits it
+    the way pytest composes it, rather than by looking for separators:
+
+      * the FILE PATH is everything before the FIRST ``::`` — a path may
+        contain ``/``, ``.`` and spaces, and none of them ends it;
+      * the PARAMETER ID is the whole tail from the FIRST ``[`` to the end,
+        and only when the id ends with ``]``. ``[`` cannot occur in a Python
+        identifier, so "the name runs up to the first bracket" is the grammar
+        and not a heuristic;
+      * the NAME CHAIN is what is left between them, split on ``::`` — one
+        element for a module-level test, two for a method on a ``Test`` class.
+        The TEST's own name is the last element.
+
+    D-105 / D-134 / D-145 — THE ESCALATED CLASS `false-refusal-diagnostic`, AS
+    A PARSER RATHER THAN AS STRING SURGERY.
+    -------------------------------------------------------------------------
+    Three cycles filed the same shape: the LATENT lane refusing a node id
+    ``pytest --collect-only`` actually emits, each time because the locator was
+    cut with a different pair of string operations. D-134 stripped a trailing
+    ``[...]`` — but only AFTER ``name_part.split('::')[-1]`` had already cut
+    the id at a ``::`` INSIDE the brackets, and it never taught the
+    whitespace rung that a bracket payload is not prose. Both survivors were
+    driven at GRIND cycle 8:
+
+        tests/test_fix_gate.py::test_real_test_references_across_languages
+            _are_accepted[tests/test_auth.py::test_sweeper_evicts_stale_sessions]
+            -> "tests/test_fix_gate.py exists but defines no
+               'test_sweeper_evicts_stale_sessions]'"
+
+        tests/test_fix_gate.py::test_a_latent_locator_that_names_no_test_is
+            _refused[a::b-two letters either side of a separator]
+            -> "is prose, not a locator"
+
+    Both name a test this suite runs. THIRTEEN of this repo's collected node
+    ids carry a ``::`` inside their brackets and every one of them guards this
+    very lane, so the door refused the tests written to hold it.
+
+    pytest's ``idmaker`` keeps a string parameter verbatim — ``::``, ``/``,
+    spaces and brackets included — which is exactly why no amount of further
+    cutting terminates. The payload is arbitrary caller text and the only
+    stable facts about it are its two delimiters. So the id is PARSED once,
+    here, and every rung downstream judges the locator's own text and never the
+    parameter set.
+    """
+    param = ""
+    head = ref
+    open_at = ref.find("[")
+    if open_at != -1 and ref.endswith("]"):
+        param = ref[open_at:]
+        head = ref[:open_at]
+    path_part, separator, rest = head.partition("::")
+    chain = [segment.strip() for segment in rest.split("::")] if separator else []
+    return path_part.strip(), chain, param
+
 
 #: Directories a locator's file is never found in and which dominate the walk
 #: cost of looking for it. Pruned by name at every level (D-131).
@@ -8083,31 +8423,44 @@ def _regression_test_problem(ref: str, project_root: str) -> str | None:
 
     Rungs 2 and 3 stay LEXICAL and stay ahead of the filesystem, so a caller
     pointing into production code is told THAT rather than "file not found".
+
+    D-145 — AND EVERY RUNG JUDGES THE LOCATOR, NEVER THE PARAMETER SET.
+    ------------------------------------------------------------------
+    The id is split ONCE by `_split_pytest_node_id` (read its block for the
+    three-cycle history that makes the parser the deliverable), and the two
+    rungs that used to read the whole string — the prose rung and the
+    single-leaf rung — now read `locator`, the id with its parameter id
+    removed. A bracket payload is arbitrary caller text that pytest keeps
+    verbatim, so a `::` or a space inside it says nothing whatever about
+    whether the caller wrote a locator or a note.
     """
     ref = (ref or "").strip()
     if not ref:
         return "absent — a LATENT fix closes on a named regression test"
-    if any(ch.isspace() for ch in ref):
+    path_part, chain, param_id = _split_pytest_node_id(ref)
+    # The caller's locator WITHOUT the parameter set — what the rungs below
+    # judge. The refusals still quote `ref`, so a caller reads back the id they
+    # actually wrote (D-145).
+    locator = ref[: len(ref) - len(param_id)] if param_id else ref
+    if any(ch.isspace() for ch in locator):
         return (
             f"{ref!r} is prose, not a locator. Give a reference such as "
             "tests/test_report.py::test_absent_section_is_named"
         )
-    if "::" not in ref:
+    if "::" not in locator:
         return (
             f"{ref!r} is not a locator of the form path::test — a LATENT fix "
             "closes on a locator such as "
             "tests/test_report.py::test_absent_section_is_named, not on prose"
         )
-    path_part, _, name_part = ref.partition("::")
     path_part = _normalize_path(path_part)
-    node_name = name_part.split("::")[-1].strip()
-    # D-134: the bracketed param set is pytest's, not the def's. Stripped once,
-    # here, so every rung below judges the name the file actually declares
-    # while the refusals still quote the locator the caller wrote.
-    name = _PARAMETRISED_NODE_SUFFIX.sub("", node_name).strip() or node_name
+    # The TEST's own name is the last element of the name chain, so a method on
+    # a `Test` class (`path::TestSweeper::test_evicts`) resolves to the method
+    # pytest runs rather than to the class holding it.
+    name = chain[-1] if chain else ""
     if not path_part or not name:
         return f"{ref!r} has an empty path or test name on one side of '::'"
-    if not _ref_singles_out_a_leaf(ref):
+    if not _ref_singles_out_a_leaf(locator):
         return (
             f"{ref!r} names a FILE, not a test inside one — point at the test "
             "that would fail if this defect came back"
@@ -9137,6 +9490,7 @@ def foundry_sync_defects(
         ledger_transaction,
         record_denylist_tripwire,
         retier_matching_untiered,
+        tripwire_finding,
         validate_defect_filing,
     )
 
@@ -9355,11 +9709,23 @@ def foundry_sync_defects(
         # `foundry_add_defect` and `foundry_add_observation` also call \u2014 a
         # second writer here would be an audit control that only records the
         # attempts one of its callers makes.
+        #
+        # D-147 / D-146 — AND THE RECORD NAMES THE CLASS THE REFUSAL NAMED.
+        #
+        # `record_denylist_tripwire` does not receive the refusal's class; it
+        # RE-DERIVES one through `vocab.never_demote_class`, whose security
+        # entry reads `description` alone, while the refusal above keys on ALL
+        # the prose a filing carries. So a finding whose security claim lives
+        # in some other key was refused SECURITY_PROPERTY_CLAIM and audited
+        # NON_COMMENT — one event, two artifacts that contradict each other,
+        # which is exactly what D-083 pinned may never happen. `foundry_add_defect`
+        # already wraps its finding; this door did not, and two doors trusted
+        # to remember one step each is the arrangement that keeps diverging.
         for refused in refusals:
             if refused.get("denylist_class"):
                 record_denylist_tripwire(
                     fdir,
-                    findings[refused["index"]],
+                    tripwire_finding(findings[refused["index"]]),
                     cycle=_current_cycle(fdir),
                     source=normalized[refused["index"]]["source"],
                 )
@@ -10685,7 +11051,9 @@ def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
     )
 
 
-def _still_escalated_notice(fdir: Path, project_root: str) -> str:
+def _still_escalated_notice(
+    fdir: Path, project_root: str, *, inspect_mode: str = ""
+) -> str:
     """One sentence naming any class ST-010 will still hold DONE open for.
 
     Empty string when nothing is escalated, so a clean cycle reads identically.
@@ -10724,10 +11092,44 @@ def _still_escalated_notice(fdir: Path, project_root: str) -> str:
     a class blocks but how far each arm is: a lead reading "1 more clean cycle"
     at F2 crosses one boundary, where the same lead reading it at F5.5 pays a
     full post-verification loop for the same crossing.
+
+    D-153 — AND IT NAMES THE CALL THE SERVER ACTUALLY ACCEPTS FROM HERE.
+    -------------------------------------------------------------------
+    "The cheapest place to make those crossings is HERE, from F2" was true and
+    unactionable: the only crossing the sentence named was
+    "Foundry-Phase(phase='inspect_start') from F3", which is where the crossing
+    lands but not a call this arm's reader can make. Driven at cycle 8 on a run
+    at F2 whose recorded width was FULL / final_gate: `inspect_start` is
+    REFUSED — "this cycle's recorded width is FULL (rule final_gate), so there
+    is nothing to widen" — and `live_clean_cycles` stayed 0. The crossing that
+    works from a FULL F2 is `grind_start` and then `inspect_start`: a GRIND
+    opened with nothing to fix, which no arm named and which reads as a mistake
+    unless the prose says it is the crossing. The sibling `widen_inspect` arm
+    names ITS re-open; this one named none.
+
+    So ``inspect_mode`` — the width the transition RECORDED, which this arm's
+    caller has already read — selects the spelling, and the two spellings are
+    exactly the two the `inspect_start` refusal's own hint offers from F2.
+    Reported, never decided (GI-008): the width is read back, not computed.
     """
     still = _still_escalated_classes(fdir, project_root)
     if not still:
         return ""
+    if (inspect_mode or "").upper() == "DELTA":
+        crossing = (
+            "from F2 at DELTA width that is the widening re-open, "
+            "Foundry-Phase(phase='inspect_start'), which advances the counter "
+            "and closes one"
+        )
+    else:
+        crossing = (
+            "from F2 at FULL width Foundry-Phase(phase='inspect_start') is "
+            "REFUSED (there is nothing to widen), so the crossing is "
+            "Foundry-Phase(phase='grind_start') — a GRIND with nothing to fix "
+            "is what a clean cycle IS — and then "
+            "Foundry-Phase(phase='inspect_start'), which advances the counter "
+            "and closes one"
+        )
     return (
         f" ST-010: {len(still)} defect class(es) are still ESCALATED "
         f"({', '.join(still)}) and DONE is refused until every one of them is "
@@ -10735,7 +11137,7 @@ def _still_escalated_notice(fdir: Path, project_root: str) -> str:
         "Clearing it is a boundary crossing, and the cheapest place to make "
         "those crossings is HERE, from F2: reaching ASSAY, TEMPER and NYQUIST "
         "first means every remaining crossing is paid for twice."
-        + _escalation_exit_distances(fdir, still)
+        + _escalation_exit_distances(fdir, still, crossing=crossing)
     )
 
 
@@ -11039,7 +11441,12 @@ def _compute_next_action(project_root: str) -> dict:
         # D-129: and the ST-010 block a LATENT-only backlog does NOT clear,
         # said HERE — the last arm before the run leaves F2 — rather than at
         # the F6 door after ASSAY, TEMPER and NYQUIST have been spent.
-        still_escalated_note = _still_escalated_notice(fdir, project_root)
+        # D-153: the RECORDED width selects which crossing the notice names,
+        # because it is the width that decides whether `inspect_start` from
+        # here is the widening re-open or a refusal.
+        still_escalated_note = _still_escalated_notice(
+            fdir, project_root, inspect_mode=f2_mode.get("mode", "")
+        )
         if f2_mode.get("mode") == "DELTA":
             return {
                 "phase": "F2",
