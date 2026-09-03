@@ -104,7 +104,9 @@ from foundry_mcp.schemas.vocab import (
     NEVER_DEMOTE_CLASSES,
     OBSERVATION_CLASSES,
     SECURITY_PROPERTY_CLAIM,
+    TIER_UNKNOWN,
     canonical_defect_type,
+    defect_tier,
     is_security_property_text,
     never_demote_class,
     observation_class,
@@ -974,8 +976,8 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
 
     Returns None when the filing may be persisted, otherwise the house refusal
     dict: ``{"ok": False, "error": ..., "hint": ..., "field": <"tier" | "class"
-    | "reproduction_attempted" | "description">}`` plus, for the security
-    refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
+    | "reproduction_attempted" | "file_path" | "description">}`` plus, for the
+    security refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
 
     Reads the mapping and nothing else — no ledger read, no run-dir resolution,
     no write — so the batch door can call it once per finding BEFORE it opens
@@ -997,7 +999,7 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
 
     THE CHECK ORDER IS LOCKED, so that the two doors name the same field first
     for the same bad filing: the security denylist, then tier, then class,
-    then — for LATENT only — reproduction_attempted.
+    then — for LATENT only — reproduction_attempted, then file_path (D-089).
 
     D-061 — THE AUDIT TRIPWIRE MAY NOT BE RUNG-DEPENDENT (AC-007 / OT-005 /
     CT-003)
@@ -1129,10 +1131,151 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
             "field": "reproduction_attempted",
         }
 
+    # D-089 — A LATENT FILING MUST NAME A LOCATION, ON BOTH DOORS.
+    #
+    # The report's LATENT backlog promises the reader a place to look: the
+    # whole value of a tracked-but-unreproduced gap is that a later cycle can
+    # go and drive it. A LATENT record with no `file` gives the next stream a
+    # description and nothing to open, so the backlog entry is unactionable
+    # and the gap survives every cycle that reads it.
+    #
+    # It is the LATENT rung and not a universal one because a LIVE filing's
+    # reproduction (the door driven and the wrong result observed) already
+    # locates the failure in the description, and requiring a path from every
+    # LIVE filing would refuse findings whose subject is a missing file. Only
+    # LATENT trades a reproduction for a promise, so only LATENT owes the
+    # location.
+    #
+    # Placed after `reproduction_attempted` rather than before it: a LATENT
+    # filing missing both fields has always been refused naming
+    # `reproduction_attempted` (pinned by
+    # test_a_latent_filing_without_a_statement_is_refused_naming_it), and
+    # reordering would change a shipped refusal no requirement asks to change.
+    #
+    # The KEY read is `file` — the spelling `_finding_mapping` writes and the
+    # spelling the batch door's own finding dicts already use — while the
+    # FIELD named back is `file_path`, the parameter a Foundry-Defect caller
+    # actually passes. The error text names both so neither door's caller has
+    # to translate.
+    file_value = finding.get("file")
+    if not isinstance(file_value, str) or not file_value.strip():
+        return {
+            "ok": False,
+            "error": (
+                f"Missing file_path on a LATENT filing: {file_value!r}. A "
+                f"LATENT defect is carried as a backlog entry that promises a "
+                f"location (the batch door spells this key `file`)."
+            ),
+            "hint": (
+                "Name the file the gap is in, as a bare repo-relative path "
+                "with no line number. A LATENT filing is one a later cycle is "
+                "meant to go and drive, and it cannot be driven from a "
+                "description alone. If you genuinely cannot locate it, you "
+                "have not looked hard enough to file it as LATENT — the "
+                "reproduction_attempted statement above says you swept "
+                "something, so say where."
+            ),
+            "field": "file_path",
+        }
+
     # The security denylist is NOT here any more (D-061); it is the first rung
-    # of this function. Nothing follows the reproduction_attempted rung, so a
-    # LATENT filing that reaches this line named its negative result and did
-    # not assert a security property.
+    # of this function. A LATENT filing that reaches this line named its
+    # negative result, named its location, and did not assert a security
+    # property.
+    return None
+
+
+def retier_matching_untiered(
+    records: list,
+    *,
+    source: str,
+    type: str,  # noqa: A002 - the record's own field name; see below
+    file: str,
+    symbol: str,
+    tier: str,
+    reproduction_attempted: str,
+    defect_class: str,
+    cycle: int,
+) -> str | None:
+    """Classify an open untiered record in place. Returns its id, or None.
+
+    Mutates ``records`` (the list a ``ledger_transaction`` is yielding) and
+    returns the id of the record it re-tiered, or ``None`` when no open
+    untiered record matches — in which case the caller files as it always did.
+
+    WHY THIS IS A SHARED FUNCTION (FR-051 / AC-008 / CT-001 / CT-002, D-077)
+    -----------------------------------------------------------------------
+    D-062 implemented FR-051's untiered exit — "blocks like LIVE until a
+    stream re-files it with a tier" — at ONE of the two filing doors. The
+    batch door ``foundry_sync_defects`` re-tiered in place; ``foundry_add_defect``
+    had no such branch, and the server's own hint named neither door. Driven,
+    both doors, on the same seeded ledger (one open pre-change record D-001
+    with no ``tier`` key, blocking 1): through Foundry-Sync the identical
+    finding re-filed with tier LATENT returned ``{'retiered': 1,
+    'retiered_ids': ['D-001'], 'added': 0, 'total_open': 1}``, D-001 carried
+    LATENT and blocking dropped to 0; through Foundry-Defect the same finding
+    returned ``{'defect_id': 'D-002'}`` — D-001 stayed open and untiered, D-002
+    was appended beside it as a duplicate, and blocking was unchanged at 1.
+    That is the exact wrong result D-062 recorded, one door over, and it
+    reproduced through the door every stream's prose instructs
+    (``skills/sight/SKILL.md``: file through "the foundry MCP ``Foundry-Defect``
+    tool (one call per finding)").
+
+    So the rule is DERIVED ONCE, here, and both doors call it — the same shape
+    ``validate_defect_filing`` already uses for the tier/class/denylist rungs,
+    and for the same reason its docstring gives: "Every check those two doors
+    were each trusted to remember has eventually diverged."
+
+    WHAT IDENTITY IS (and what it deliberately is not)
+    --------------------------------------------------
+    ``(source, type, file, symbol)`` — the four fields that say WHICH finding
+    this is. The description is excluded on purpose: a re-filing stream
+    rewrites its prose, and requiring the wording to match would make the exit
+    unreachable for exactly the reason the hint was. ``type`` must be the
+    CANONICAL spelling on both doors (``vocab.canonical_defect_type``), since
+    that is what both doors persist — matching a raw alias would miss a record
+    filed under the other spelling of the same type.
+
+    The record KEEPS ITS ID, so every citation and every task already naming it
+    stays valid, and ``retiered_in_cycle`` records when the classification
+    arrived. ``class`` is filled only when ABSENT: a class the earlier filing
+    declared is what escalation has been keying on, and overwriting it here
+    would move a class mid-run.
+
+    Only an UNTIERED record takes this path. A record some stream already
+    classified is answerable for its evidence, and a re-filing must not
+    silently rewrite that.
+
+    ``type`` shadows the builtin inside this frame. The name is the record's
+    own field name and is fixed by the cross-module contract casting 3 calls
+    against; nothing in this body needs ``type()``.
+    """
+    for d in _dict_records(records):
+        if d.get("status") != "open" or defect_tier(d) != TIER_UNKNOWN:
+            continue
+        if not (
+            d.get("source") == source
+            and d.get("type") == type
+            and (d.get("file") or "") == (file or "")
+            and (d.get("symbol") or "") == (symbol or "")
+        ):
+            continue
+        record_id = d.get("id")
+        if not isinstance(record_id, str) or not record_id:
+            # A record with no usable id can be mutated but not NAMED, and a
+            # caller told None files the duplicate anyway — the very outcome
+            # D-077 reports. The match must be one this can both classify and
+            # report, so an id-less historical record is left for the migration
+            # path rather than half-handled here.
+            continue
+        d["tier"] = tier
+        d["reproduction_attempted"] = (
+            reproduction_attempted if tier == "LATENT" else None
+        )
+        if not str(d.get("class") or "").strip():
+            d["class"] = defect_class
+        d["retiered_in_cycle"] = cycle
+        return record_id
     return None
 
 
@@ -1768,10 +1911,23 @@ def foundry_add_defect(
             ``None`` on a LIVE record, whose reproduction lives in the
             description.
 
+        file_path: the file the finding is in, bare and repo-relative, never
+            carrying a line number. REQUIRED on a LATENT filing (D-089): the
+            report carries LATENT records as a backlog that promises a
+            location, and one with no path cannot be driven by the later cycle
+            it is filed for.
+
     Returns:
-        ``{defect_id, total_defects, open_defects}``, or a named refusal
-        ``{error, hint, ...}`` when the vocabulary check, the comment-prose
-        check, or ``validate_defect_filing`` rejects the filing.
+        ``{defect_id, cycle, declared_cycle, type, total_defects, open_defects,
+        retiered, retiered_ids}``, or a named refusal ``{error, hint, ...}``
+        when the vocabulary check, the comment-prose check, or
+        ``validate_defect_filing`` rejects the filing.
+
+        FR-051 / D-077: when the filing matches an OPEN UNTIERED record on
+        ``(source, type, file, symbol)``, that record is classified in place
+        and no new one is appended — ``defect_id`` is the existing record's id,
+        ``retiered`` is 1 and ``retiered_ids`` carries it. The two keys and
+        their types are the batch door's, deliberately.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1946,9 +2102,41 @@ def foundry_add_defect(
 
     defects_path = fdir / "defects.json"
     with ledger_transaction(defects_path, "defects") as defects:
-        defect_id = allocate_record_id(defects, "D")
-        defect["id"] = defect_id
-        defects.append(defect)
+        # FR-051 / AC-008 / D-077 — THE UNTIERED EXIT, AT THIS DOOR TOO.
+        #
+        # D-062 gave the batch door this branch and left this one appending a
+        # duplicate beside the untiered record it was meant to classify, so a
+        # stream following the server's own hint ("re-file each untiered defect
+        # with tier=LIVE or tier=LATENT") through the tool every stream's prose
+        # names made the ledger strictly worse and moved no gate. Both doors now
+        # call ONE derivation of the rule — see `retier_matching_untiered` for
+        # the driven before/after and for why identity excludes the description.
+        #
+        # Inside the transaction because it reads and mutates the same records
+        # the append would touch: deciding outside would re-open the
+        # read-then-write window this lock exists to close, and two concurrent
+        # filers could each conclude "no match" and append two duplicates.
+        retiered_id = retier_matching_untiered(
+            defects,
+            source=source,
+            # The CANONICAL spelling, matching what both doors persist. Passing
+            # the caller's raw alias would miss a record filed as MISPLACED
+            # when the re-filing says ARCHITECTURAL_PLACEMENT, which is the same
+            # type under two live spellings (D-018).
+            type=canonical_type,
+            file=file_path,
+            symbol=symbol,
+            tier=tier,
+            reproduction_attempted=reproduction_attempted,
+            defect_class=defect_class,
+            cycle=defect["cycle"],
+        )
+        if retiered_id is not None:
+            defect_id = retiered_id
+        else:
+            defect_id = allocate_record_id(defects, "D")
+            defect["id"] = defect_id
+            defects.append(defect)
         total = len(defects)
         # D-097: skip a non-dict historical record here exactly as
         # `allocate_record_id` does four lines above. The raw `d.get(...)` used
@@ -1959,22 +2147,36 @@ def foundry_add_defect(
             1 for d in _dict_records(defects) if d.get("status") == "open"
         )
 
+    # D-077 \u2014 a re-tier is a FILING and still belongs in the human log. Losing
+    # the entry entirely would be a regression against today, where at least
+    # the duplicate this defect reports appeared there. The heading says which
+    # of the two happened; the `Class` row is omitted on the re-tier branch
+    # because the record KEEPS the class it was filed with when it already had
+    # one (see `retier_matching_untiered`), so quoting the re-filing's class
+    # here could contradict defects.json one line later.
+    mirror_rows = [
+        ("Type", canonical_type),
+        # CT-001 \u2014 the human mirror carries the evidence axis too. A lead
+        # reading forge-log.md to decide what still blocks the run needs
+        # LIVE vs LATENT there, not only in defects.json.
+        ("Tier", tier),
+        ("Reproduction attempted", reproduction_attempted if tier == "LATENT" else ""),
+    ]
+    if retiered_id is None:
+        mirror_rows.append(("Class", defect_class))
+    mirror_rows.extend([
+        ("Description", description),
+        ("Spec ref", spec_ref),
+        ("Symbol", symbol),
+        ("File", file_path),
+    ])
     _ledger_mirror(
         fdir,
-        f"Cycle {defect['cycle']} \u2014 {source}: {defect_id}",
-        [
-            ("Type", canonical_type),
-            # CT-001 \u2014 the human mirror carries the evidence axis too. A lead
-            # reading forge-log.md to decide what still blocks the run needs
-            # LIVE vs LATENT there, not only in defects.json.
-            ("Tier", tier),
-            ("Reproduction attempted", reproduction_attempted if tier == "LATENT" else ""),
-            ("Class", defect_class),
-            ("Description", description),
-            ("Spec ref", spec_ref),
-            ("Symbol", symbol),
-            ("File", file_path),
-        ],
+        (
+            f"Cycle {defect['cycle']} \u2014 {source}: {defect_id}"
+            + (f" re-tiered {tier}" if retiered_id is not None else "")
+        ),
+        mirror_rows,
     )
 
     return {
@@ -1987,6 +2189,14 @@ def foundry_add_defect(
         "type": canonical_type,
         "total_defects": total,
         "open_defects": open_count,
+        # FR-051 / D-077 \u2014 reported under the SAME two key names and the same
+        # two types the batch door already returns (`retiered` a count,
+        # `retiered_ids` a list), so a lead or a report reading either door's
+        # result handles one shape. On this door the count can only be 0 or 1;
+        # a bool would have been the natural spelling here and is exactly the
+        # per-door divergence that keeps costing this package defects.
+        "retiered": 1 if retiered_id is not None else 0,
+        "retiered_ids": [retiered_id] if retiered_id is not None else [],
     }
 
 

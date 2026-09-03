@@ -222,6 +222,7 @@ def test_a_latent_filing_with_a_real_statement_stores_both_fields(run_env):
         source="prove",
         defect_type="MISSING",
         description="the sweep covers one root, so a second-root site is unseen",
+        file_path="src/foundry_mcp/tools/foundry.py",
         defect_class="SCAN_COVERAGE_GAP",
         tier="LATENT",
         reproduction_attempted=statement,
@@ -307,6 +308,7 @@ def test_a_spec_ref_alone_never_refuses_a_latent_filing(run_env):
         defect_type="MISSING",
         description="the sweep reads one root, so a second-root site is unseen",
         spec_ref="NFR-002",
+        file_path="src/foundry_mcp/tools/foundry.py",
         defect_class="SCAN_COVERAGE_GAP",
         tier="LATENT",
         reproduction_attempted="AST sweep of both roots finds 0 sites",
@@ -643,3 +645,445 @@ def test_the_validator_never_raises_on_a_hostile_mapping():
     ):
         refusal = validate_defect_filing(hostile)
         assert refusal is not None and refusal["ok"] is False, hostile
+
+
+# --- D-089: a LATENT filing must name a location, on both doors --------------
+def test_a_latent_filing_without_a_file_path_is_refused_naming_it(run_env):
+    """D-089 — the report carries LATENT records as a backlog that PROMISES a
+    location, so the door must require one.
+
+    A LATENT filing is the one a later cycle is meant to go and drive. Filed
+    with a description and no path, the backlog entry names nothing to open,
+    and the gap survives every cycle that reads it."""
+    project_root, fdir = run_env
+
+    result = foundry_add_defect(
+        cycle=0,
+        source="prove",
+        defect_type="MISSING",
+        description="the sweep covers one root, so a second-root site is unseen",
+        defect_class="SCAN_COVERAGE_GAP",
+        tier="LATENT",
+        reproduction_attempted="AST sweep of both roots finds 0 sites",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is False, result
+    assert result["field"] == "file_path"
+    assert "file_path" in result["error"]
+    assert result["hint"]
+    assert _defects(fdir) == [], "a refused filing must persist nothing"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_file_path_is_refused_like_an_absent_one(run_env, blank):
+    """Whitespace is not a location. The rung strips before it judges, for the
+    same reason the `class` rung does."""
+    project_root, _ = run_env
+
+    result = foundry_add_defect(
+        cycle=0,
+        source="prove",
+        defect_type="MISSING",
+        description="the sweep covers one root, so a second-root site is unseen",
+        file_path=blank,
+        defect_class="SCAN_COVERAGE_GAP",
+        tier="LATENT",
+        reproduction_attempted="AST sweep of both roots finds 0 sites",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is False, blank
+    assert result["field"] == "file_path"
+
+
+def test_a_live_filing_without_a_file_path_is_still_accepted(run_env):
+    """D-089 is scoped to LATENT and must stay there. A LIVE filing's
+    reproduction — the door driven and the wrong result observed — already
+    locates the failure in the description, and a universal rung would refuse
+    findings whose whole subject is a file that does not exist."""
+    project_root, fdir = run_env
+
+    result = foundry_add_defect(
+        cycle=0,
+        source="trace",
+        defect_type="UNWIRED",
+        description="the handler is registered but never called",
+        defect_class="UNWIRED_HANDLER",
+        tier="LIVE",
+        project_root=project_root,
+    )
+
+    assert result["defect_id"] == "D-001", result
+    assert _defects(fdir)[0]["file"] == ""
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"file": ""}, {"file": "   "}, {"file": None}, {"file": 3}],
+    ids=["empty", "whitespace", "null", "non-string"],
+)
+def test_the_validator_names_file_path_for_the_batch_door_shape(overrides):
+    """D-089 says BOTH doors, and both doors are this one function. Driven on
+    the finding-dict shape ``foundry_sync_defects`` passes straight through,
+    whose key is spelled ``file`` — the refusal names ``file_path``, the
+    parameter a Foundry-Defect caller actually passes, and the error text names
+    both so neither door's caller has to translate."""
+    refusal = validate_defect_filing(
+        _finding(
+            tier="LATENT",
+            reproduction_attempted="AST sweep of both roots finds 0 sites",
+            **overrides,
+        )
+    )
+
+    assert refusal is not None, overrides
+    assert refusal["ok"] is False
+    assert refusal["field"] == "file_path"
+    assert "file_path" in refusal["error"] and "file" in refusal["error"]
+
+
+def test_the_file_path_rung_is_last_and_does_not_displace_the_others():
+    """The rung is placed AFTER ``reproduction_attempted`` deliberately: a
+    LATENT filing missing both fields has always been refused naming the
+    statement, and reordering would change a shipped refusal no requirement
+    asks to change."""
+    missing_both = _finding(tier="LATENT", reproduction_attempted="", file="")
+    assert validate_defect_filing(missing_both)["field"] == "reproduction_attempted"
+
+    missing_both["reproduction_attempted"] = "AST sweep of both roots finds 0 sites"
+    assert validate_defect_filing(missing_both)["field"] == "file_path"
+
+    missing_both["file"] = "src/api/handler.py"
+    assert validate_defect_filing(missing_both) is None
+
+
+# --- FR-051 / D-077: the untiered exit, at the single door too ---------------
+def _seed_untiered(fdir: Path, cycle: int = 3, **overrides) -> dict:
+    """One open PRE-CHANGE record: no ``tier`` key at all, which is the point.
+
+    The shape ``tests/test_orchestrator_gates.py`` seeds for the batch door's
+    half of this exit, so the two doors are driven against the same record.
+    """
+    record = {
+        "id": "D-001", "cycle": 0, "source": "trace", "type": "UNWIRED",
+        "description": "filed before the tier axis existed",
+        "spec_ref": "CT-013", "symbol": "foundry_next",
+        "file": "src/api/a.py", "status": "open", "fixed_in_cycle": None,
+        "class": "UNWIRED_SURFACE",
+    }
+    record.update(overrides)
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [record]}), encoding="utf-8"
+    )
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["cycle"] = cycle
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return record
+
+
+def _refile(project_root: str, **overrides) -> dict:
+    """The same finding the seeded record names, re-filed WITH a tier."""
+    args = {
+        "cycle": 3,
+        "source": "trace",
+        "defect_type": "UNWIRED",
+        "description": "re-filed with the tier the record never carried",
+        "symbol": "foundry_next",
+        "file_path": "src/api/a.py",
+        "defect_class": "UNWIRED_SURFACE",
+        "tier": "LATENT",
+        "reproduction_attempted": (
+            "drove every caller of the display path; none reaches the branch, "
+            "so nothing reproduced"
+        ),
+        "project_root": project_root,
+    }
+    args.update(overrides)
+    return foundry_add_defect(**args)
+
+
+def test_re_filing_an_untiered_record_at_the_single_door_classifies_it(run_env):
+    """FR-051 verbatim: 'blocks like LIVE UNTIL A STREAM RE-FILES IT WITH A
+    TIER.' AC-008. D-077.
+
+    D-062 implemented that exit at ONE of the two doors. Driven before this
+    fix, on this ledger: Foundry-Sync returned {'retiered': 1, 'retiered_ids':
+    ['D-001'], 'added': 0, 'total_open': 1} and D-001 carried LATENT, while
+    Foundry-Defect — the door every stream's prose instructs — returned
+    {'defect_id': 'D-002'}, left D-001 open and untiered, and appended a
+    duplicate beside it."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(project_root)
+
+    assert result["defect_id"] == "D-001", result
+    assert result["retiered"] == 1, "a re-filing classifies; it does not duplicate"
+    assert result["retiered_ids"] == ["D-001"]
+    assert result["total_defects"] == 1, "no duplicate was appended"
+    assert result["open_defects"] == 1
+
+    records = _defects(fdir)
+    assert len(records) == 1, records
+    assert records[0]["id"] == "D-001", "the record KEEPS its id, so cites stay valid"
+    assert records[0]["tier"] == "LATENT"
+    assert records[0]["reproduction_attempted"].startswith("drove every caller")
+    assert records[0]["retiered_in_cycle"] == 3, "the server's cycle, not the caller's"
+
+
+def test_the_single_door_retier_clears_the_blocking_bucket(run_env):
+    """THE ADJACENT PATH: the gate reader, one module over.
+
+    FR-051's exit is only worth having if it MOVES something. ``_blocking_defects``
+    in ``foundry_orchestrator.py`` buckets by ``vocab.defect_tier`` and treats
+    TIER_UNKNOWN exactly like LIVE, and D-077's whole complaint is that through
+    this door the blocking count stayed at 1. This drives that reader before
+    and after."""
+    from foundry_mcp.tools import foundry_orchestrator as fo
+
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+    assert fo._blocking_defects(fdir)["unknown"] == ["D-001"]
+    assert fo._blocking_defects(fdir)["blocking"] == 1
+
+    _refile(project_root)
+
+    after = fo._blocking_defects(fdir)
+    assert after["unknown"] == [], after
+    assert after["blocking"] == 0, "the LATENT classification must unblock the gate"
+
+
+def test_the_batch_door_still_classifies_the_same_untiered_record(run_env):
+    """THE OTHER ADJACENT PATH: ``foundry_sync_defects``, the second caller of
+    the rule this fix moved into a shared helper.
+
+    Lifting a rule out of one door and into a helper both call is only safe if
+    the door it came FROM still behaves identically. Same seeded record, same
+    finding, driven through the batch door."""
+    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = foundry_sync_defects(
+        cycle=3,
+        findings=[{
+            "source": "trace", "type": "UNWIRED", "symbol": "foundry_next",
+            "file": "src/api/a.py", "class": "UNWIRED_SURFACE",
+            "tier": "LATENT",
+            "reproduction_attempted": (
+                "drove every caller of the display path; none reaches the "
+                "branch, so nothing reproduced"
+            ),
+            "description": "re-filed with the tier the record never carried",
+        }],
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    assert result["added"] == 0
+    assert result["retiered"] == 1
+    assert result["retiered_ids"] == ["D-001"]
+    assert _defects(fdir)[0]["tier"] == "LATENT"
+
+
+def test_both_doors_report_the_retier_under_the_same_keys(run_env):
+    """The two doors return ``retiered`` as a count and ``retiered_ids`` as a
+    list, so a lead or a report reading either result handles ONE shape. A bool
+    on the single door would have been the natural spelling and is exactly the
+    per-door divergence that produced D-119 and then D-077."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(project_root)
+    assert isinstance(result["retiered"], int)
+    assert not isinstance(result["retiered"], bool)
+    assert isinstance(result["retiered_ids"], list)
+
+    # ...and the same two keys are present, zeroed, on an ordinary filing.
+    plain = _refile(project_root, symbol="somewhere_else")
+    assert plain["retiered"] == 0
+    assert plain["retiered_ids"] == []
+    assert plain["defect_id"] == "D-002"
+
+
+def test_a_record_a_stream_already_tiered_is_never_rewritten(run_env):
+    """Only an UNTIERED record takes this path. A record some stream already
+    classified is answerable for its evidence, and a re-filing must not
+    silently move a classification mid-run."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir, tier="LIVE")
+
+    result = _refile(project_root)
+
+    assert result["retiered"] == 0
+    assert result["defect_id"] == "D-002", "it files as a new record instead"
+    records = _defects(fdir)
+    assert records[0]["tier"] == "LIVE", "the earlier classification stands"
+
+
+def test_a_fixed_untiered_record_is_not_retiered(run_env):
+    """The match is scoped to OPEN records. A closed one is the regression
+    path's business (``_is_regression_of`` reopens it), and re-tiering it here
+    would resurrect a fixed defect without reopening it."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir, status="fixed", fixed_in_cycle=1)
+
+    result = _refile(project_root)
+
+    assert result["retiered"] == 0
+    assert result["defect_id"] == "D-002"
+    assert "tier" not in _defects(fdir)[0]
+
+
+@pytest.mark.parametrize(
+    "differs",
+    [
+        {"source": "prove"},
+        {"defect_type": "MISSING"},
+        {"file_path": "src/api/b.py"},
+        {"symbol": "foundry_gate"},
+    ],
+    ids=["source", "type", "file", "symbol"],
+)
+def test_identity_is_source_type_file_and_symbol(run_env, differs):
+    """The four fields that say WHICH finding this is. A re-filing that differs
+    on any of them is a DIFFERENT finding and files a new record — otherwise
+    one untiered record would swallow every later filing that happened to
+    arrive while it was open."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(project_root, **differs)
+
+    assert result["retiered"] == 0, differs
+    assert result["defect_id"] == "D-002"
+    assert len(_defects(fdir)) == 2
+    assert "tier" not in _defects(fdir)[0]
+
+
+def test_the_description_is_excluded_from_identity(run_env):
+    """Excluded on purpose: a re-filing stream rewrites its prose, and
+    requiring the wording to match would make the exit unreachable for exactly
+    the reason the server's hint was."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(
+        project_root,
+        description="entirely different words for the same unwired surface",
+    )
+
+    assert result["retiered"] == 1, result
+    assert _defects(fdir)[0]["tier"] == "LATENT"
+
+
+def test_the_retier_matches_on_the_canonical_type_spelling(run_env):
+    """MISPLACED and ARCHITECTURAL_PLACEMENT are ONE type under two live
+    spellings (D-018) and both doors PERSIST the canonical one. Matching the
+    caller's raw alias would miss the record it is meant to classify — the
+    duplicate D-077 reports, arriving by a different route."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir, type="ARCHITECTURAL_PLACEMENT")
+
+    result = _refile(project_root, defect_type="MISPLACED")
+
+    assert result["retiered"] == 1, result
+    assert _defects(fdir)[0]["tier"] == "LATENT"
+
+
+def test_a_live_refiling_stores_a_null_reproduction_statement(run_env):
+    """C-2 — ``reproduction_attempted`` is the LATENT lane's evidence and is
+    explicitly ``None`` on a LIVE record, whose reproduction lives in the
+    description. The re-tier writes the record the same way the append does."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(project_root, tier="LIVE", reproduction_attempted="")
+
+    assert result["retiered"] == 1, result
+    record = _defects(fdir)[0]
+    assert record["tier"] == "LIVE"
+    assert record["reproduction_attempted"] is None
+
+
+def test_the_retier_never_moves_a_class_the_record_already_declared(run_env):
+    """A class the earlier filing declared is what escalation has been keying
+    on, so overwriting it here would move a class mid-run — every ST-002 count
+    against the old name would silently stop accruing."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(project_root, defect_class="SOMETHING_ELSE")
+
+    assert result["retiered"] == 1, "the re-tier must actually have run"
+    assert _defects(fdir)[0]["class"] == "UNWIRED_SURFACE", "declared class stands"
+    assert _defects(fdir)[0]["tier"] == "LATENT", "the TIER is what a re-filing moves"
+
+
+def test_the_retier_fills_a_class_the_record_never_had(run_env):
+    """The other half: an ABSENT class is filled, so a re-tiered pre-change
+    record is not left invisible to ST-002. `class` became required only with
+    the tier axis, so a genuinely pre-change record can carry none."""
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    del ledger["defects"][0]["class"]
+    (fdir / "defects.json").write_text(json.dumps(ledger), encoding="utf-8")
+
+    _refile(project_root, defect_class="SOMETHING_ELSE")
+
+    assert _defects(fdir)[0]["class"] == "SOMETHING_ELSE", "an absent class is filled"
+
+
+def test_the_helper_skips_a_record_it_could_not_name(run_env):
+    """Driven directly, on the list shape ``ledger_transaction`` yields.
+
+    A record with no usable id can be MUTATED but not REPORTED, and a caller
+    told ``None`` files the duplicate anyway — the very outcome D-077 reports.
+    So the match must be one the helper can both classify and name."""
+    from foundry_mcp.tools.foundry import retier_matching_untiered
+
+    records = [
+        {"id": "", "status": "open", "source": "trace", "type": "UNWIRED",
+         "file": "src/api/a.py", "symbol": "foundry_next"},
+        {"id": "D-002", "status": "open", "source": "trace", "type": "UNWIRED",
+         "file": "src/api/a.py", "symbol": "foundry_next"},
+    ]
+
+    got = retier_matching_untiered(
+        records,
+        source="trace",
+        type="UNWIRED",
+        file="src/api/a.py",
+        symbol="foundry_next",
+        tier="LIVE",
+        reproduction_attempted="",
+        defect_class="UNWIRED_SURFACE",
+        cycle=4,
+    )
+
+    assert got == "D-002", "the id-less record is skipped, not half-handled"
+    assert "tier" not in records[0], "and it is left untouched for the migration"
+    assert records[1]["tier"] == "LIVE"
+
+
+def test_the_helper_tolerates_a_non_dict_historical_record():
+    """NFR-005 — it iterates through ``_dict_records`` like every other scan of
+    this ledger. A raw loop raises ``AttributeError`` on a malformed historical
+    record, and the raise would land INSIDE the transaction, aborting it and
+    silently discarding the filing the stream just made."""
+    from foundry_mcp.tools.foundry import retier_matching_untiered
+
+    assert retier_matching_untiered(
+        ["not-a-dict", None, 7],
+        source="trace",
+        type="UNWIRED",
+        file="src/api/a.py",
+        symbol="foundry_next",
+        tier="LIVE",
+        reproduction_attempted="",
+        defect_class="UNWIRED_SURFACE",
+        cycle=4,
+    ) is None
