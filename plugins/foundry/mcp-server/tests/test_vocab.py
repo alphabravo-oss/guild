@@ -1179,6 +1179,20 @@ def test_the_full_roster_is_ordered_and_every_member_is_a_real_stream() -> None:
         "plugins/foundry/skills/prove/SKILL.md",
         "plugins/foundry/skills/trace/SKILL.md",
         "plugins/foundry/commands/start.md",
+        # D-118 — the prose the streams LOAD, which the directory-by-directory
+        # roster missed for the same reason D-033's basename roster missed the
+        # gate modules. `verification-patterns.md` is pulled in as a binding
+        # contract by `agents/tracer.md` and `agents/assayer.md`;
+        # `lead-discipline.md` by `commands/start.md`. A GRIND whose only
+        # touched file was the tracer's own verification contract was
+        # recording DELTA.
+        "plugins/foundry/references/verification-patterns.md",
+        "plugins/foundry/references/lead-discipline.md",
+        # D-118 — the validators a stream shells out to. The TEST-01
+        # adjudicator runs the first as its Layer 1 and halts on a non-zero
+        # exit; `Foundry-Intent-Coverage` runs the second's in-package twin.
+        "plugins/foundry/scripts/validate-test-observations.py",
+        "plugins/foundry/scripts/validate-intent-coverage.py",
     ],
 )
 def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
@@ -1205,6 +1219,14 @@ def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
         # consults either, so a diff touching one moves no judgement.
         "plugins/foundry/scripts/measure-run.py",
         "plugins/foundry/scripts/migrate-archive.py",
+        # D-118's other side. The `scripts/validate[-_]…` rule that swept in
+        # the two validators must NOT have swept in the rest of `scripts/`:
+        # these install and update the plugin, and the commit guard constrains
+        # what may be COMMITTED rather than judging whether the build is right.
+        # None of them moving can make an earlier cycle's verdict wrong.
+        "plugins/foundry/scripts/setup-foundry.sh",
+        "plugins/foundry/scripts/update-mcp.sh",
+        "plugins/foundry/hooks/pre-commit-guard.sh",
         # The server's OWN tests. D-033 widened the rule to the whole
         # `foundry_mcp/` package and stopped there on purpose: these are the
         # pins, not the judgement, and the TEST stream re-runs them at every
@@ -1263,6 +1285,132 @@ def test_the_whole_server_package_is_verifier_machinery() -> None:
         f"diff moving one would be judged by a DELTA roster (ST-006). That is "
         f"D-033: widen VERIFIER_PATH_PATTERNS, do not add rows here."
     )
+
+
+#: The shipped prose corpus: every document a stream agent or the lead is
+#: handed. Walked rather than listed, so a new agent or skill joins the harvest
+#: below without an edit here.
+_SHIPPED_PROSE_GLOBS = ("agents/*.md", "commands/*.md", "skills/*/SKILL.md", "references/*.md")
+
+#: A load instruction as the prose actually spells one. `commands/start.md`
+#: explains why this is the only portable spelling: the `plugins/foundry/`
+#: prefix exists in the Guild source repo alone, and an installed plugin has
+#: its `agents/`, `commands/` and `references/` at the top level, so a document
+#: meant to be READ is always addressed through the plugin root. Anything else
+#: in the prose is a citation, not a load.
+_PLUGIN_ROOT_MD_LOAD = re.compile(r"CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_./-]+\.md)")
+
+
+def test_every_prose_file_the_shipped_agents_load_is_a_verifier_path() -> None:
+    """D-118, derived from the load instructions rather than from a roster.
+
+    The reported defect was the PROSE half of D-033's enumeration problem.
+    `VERIFIER_PATH_PATTERNS` named `agents/`, `skills/` and `commands/` one
+    directory at a time, so `references/verification-patterns.md` — which
+    `agents/tracer.md` and `agents/assayer.md` load as a binding contract —
+    and `references/lead-discipline.md` — which `commands/start.md` loads —
+    both answered False. Driven: a GRIND whose only touched file was the
+    tracer's own verification contract recorded mode DELTA, rule delta, and a
+    roster of trace/prove/test. The machinery that judges the build had moved
+    and a narrow INSPECT judged the move.
+
+    Adding two rows to the parametrized list above would fix those two files
+    and keep the class, so this pin does not name files at all: it reads what
+    the shipped prose TELLS an agent to load and asserts every target answers
+    True. A contract file added to `references/` — or to a directory nobody has
+    invented yet — fails here the moment an agent names it, which is the
+    property the constant itself cannot have while the PURITY RULE forbids it
+    the filesystem.
+    """
+    plugin_root = REPO_ROOT / "plugins" / "foundry"
+    assert plugin_root.is_dir(), f"{plugin_root} is gone; point this pin at the plugin"
+
+    corpus = sorted(
+        p for glob in _SHIPPED_PROSE_GLOBS for p in plugin_root.glob(glob)
+    )
+    assert len(corpus) >= 20, (
+        f"only {len(corpus)} prose files found under {plugin_root}; the walk is "
+        f"not reaching the corpus, so this pin would prove nothing"
+    )
+
+    # {loaded repo-relative path: the documents that load it}
+    loaded: dict[str, set[str]] = {}
+    for doc in corpus:
+        for rel in _PLUGIN_ROOT_MD_LOAD.findall(doc.read_text(encoding="utf-8")):
+            target = plugin_root / rel
+            if not target.is_file():
+                continue  # a renamed or illustrative path proves nothing
+            loaded.setdefault(
+                str(target.resolve().relative_to(REPO_ROOT)), set()
+            ).add(str(doc.relative_to(plugin_root)))
+
+    assert len(loaded) >= 4, (
+        f"only {sorted(loaded)} harvested; the shipped prose loads more than "
+        f"that, so the regex has stopped matching the spelling the prose uses "
+        f"and this pin would pass while proving nothing"
+    )
+    assert any(p.startswith("plugins/foundry/references/") for p in loaded), (
+        f"no references/ target harvested from {sorted(loaded)}; those two "
+        f"files are the D-118 instance, so a harvest without them cannot "
+        f"witness the regression"
+    )
+
+    missed = {p: sorted(by) for p, by in sorted(loaded.items()) if not vocab.is_verifier_path(p)}
+    assert not missed, (
+        f"{missed} are loaded as binding contracts by the documents listed "
+        f"beside them, yet answer False — so a GRIND diff moving one would be "
+        f"judged by a DELTA roster (ST-006). Widen VERIFIER_PATH_PATTERNS. If "
+        f"a target here is genuinely NOT a contract (a README an agent merely "
+        f"cites), say so in the D-118 note in vocab.py and narrow this harvest "
+        f"deliberately — do not silence it by dropping the row."
+    )
+
+
+def test_every_validator_a_stream_shells_out_to_is_a_verifier_path() -> None:
+    """D-118 — the executable half, walked rather than named.
+
+    `plugins/foundry/scripts/validate-test-observations.py` is what the
+    TEST-01 adjudicator runs as its Layer 1, halting the stream on a non-zero
+    exit; `validate-intent-coverage.py` is the standalone twin of the module
+    `Foundry-Intent-Coverage` calls. Both answered False, so an edit to the
+    thing that decides whether a stream's output is admissible was judged by a
+    DELTA roster.
+
+    The walk is what makes the fix survive a third validator being added: the
+    rule is `scripts/validate…`, and this asserts the rule over the directory
+    as it actually stands rather than over the two names the defect happened
+    to catch.
+    """
+    scripts = REPO_ROOT / "plugins" / "foundry" / "scripts"
+    assert scripts.is_dir(), f"{scripts} is gone; point this pin at the scripts"
+
+    validators = sorted(scripts.glob("validate*.py"))
+    assert len(validators) >= 2, (
+        f"only {[p.name for p in validators]} found under {scripts}; the walk "
+        f"is not reaching the validators, so this pin would prove nothing"
+    )
+
+    missed = [
+        str(p.relative_to(REPO_ROOT))
+        for p in validators
+        if not vocab.is_verifier_path(str(p.relative_to(REPO_ROOT)))
+    ]
+    assert not missed, (
+        f"{missed} are validators a verification stream executes, so a GRIND "
+        f"diff moving one must force FULL (ST-006, rule verifier_touched)"
+    )
+
+    # The same directory's other half, asserted here rather than only in the
+    # parametrized list, so the boundary is visible at the point the rule is
+    # widened: these read a finished archive or install the plugin, and no
+    # gate consults either.
+    for offline in ("measure-run.py", "migrate-archive.py", "setup-foundry.sh"):
+        rel = f"plugins/foundry/scripts/{offline}"
+        assert (REPO_ROOT / rel).is_file(), f"{rel} is gone; re-point this row"
+        assert not vocab.is_verifier_path(rel), (
+            f"{rel} moves no judgement, so sweeping it in deletes a real DELTA "
+            f"case and every GRIND cycle pays for a five-stream INSPECT"
+        )
 
 
 def test_the_spec_is_matched_by_the_argument_not_by_a_pattern() -> None:

@@ -462,6 +462,40 @@ PROVE_DELTA_SAMPLE_SIZE = 10
 # pins, not the judgement, the TEST stream re-runs them at every width, and
 # leaving them out keeps a real DELTA case in the run that edits this file
 # most.
+#
+# WHY THE PROSE RULE IS "LOADED CONTRACT", NOT A ROSTER OF DIRECTORIES (D-118)
+# ----------------------------------------------------------------------------
+# D-033 above replaced a basename roster with a package rule on the CODE side
+# and stopped there; the PROSE side went on naming its members one directory
+# at a time (`agents/`, `skills/`, `commands/`) and went stale exactly the same
+# way. Driven: `is_verifier_path` returned False for
+# `plugins/foundry/references/verification-patterns.md` and for
+# `references/lead-discipline.md` — both loaded as binding contracts, the first
+# by `agents/tracer.md` and `agents/assayer.md` via
+# `@${CLAUDE_PLUGIN_ROOT}/references/…`, the second by `commands/start.md` —
+# and False for `plugins/foundry/scripts/validate-test-observations.py`, which
+# the TEST-01 adjudicator EXECUTES as its Layer 1 and halts on. A GRIND whose
+# only touched file was the tracer's own verification contract therefore
+# recorded DELTA, and a change to the verifier was judged by a narrow INSPECT.
+#
+# So the prose rule is now ONE rule over the directories that hold loaded
+# contracts, and the discriminator is not the directory name but what the
+# document IS: something an agent or the lead is instructed to read as binding,
+# or a validator a stream shells out to. That boundary is what keeps the
+# no-answers honest — a README documents the plugin to a human, the setup and
+# update shells install it, `measure-run.py` and `migrate-archive.py` read a
+# finished archive and print, and `hooks/pre-commit-guard.sh` constrains what
+# may be COMMITTED rather than judging whether the build is right. None of
+# those moving can make a previous cycle's verdict wrong, which is the only
+# thing `verifier_touched` is for.
+#
+# An enumeration is still an enumeration, though, so the anti-staleness
+# mechanism does not live here at all: `tests/test_vocab.py` harvests every
+# `${CLAUDE_PLUGIN_ROOT}/….md` load target out of the shipped prose and
+# asserts each one answers True. A new contract file — in `references/` or in
+# a directory nobody has invented yet — fails that pin the moment an agent
+# names it. Deriving the set here instead would need filesystem and AST work,
+# which the PURITY RULE at the top of this module forbids.
 # Extend only via phase-level RFC.
 VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
     # The canonical vocabulary itself, wherever it sits.
@@ -472,11 +506,22 @@ VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
     # every module those import. See the D-033 note above for why this is one
     # segment rule and not a roster of basenames.
     r"(?:^|/)foundry_mcp/(?:[^/]+/)*[^/]+\.py$",
-    # Agent and skill prose — the contracts the streams actually execute.
-    r"(?:^|/)agents/[^/]+\.md$",
+    # LOADED CONTRACT PROSE — the documents a stream or the lead is instructed
+    # to read as binding: stream contracts (`agents/`), run protocol
+    # (`commands/`), and the shared references both of those pull in
+    # (`references/`). One rule over the three flat directories, per the D-118
+    # note above; a README is not in it because a README is not loaded.
+    r"(?:^|/)(?:agents|commands|references)/[^/]+\.md$",
+    # Skills sit one segment deeper and the non-SKILL files beside them (a
+    # skill's own README) are not contracts, so this one keeps its own shape
+    # rather than folding into the alternation above.
     r"(?:^|/)skills/[^/]+/SKILL\.md$",
-    # Run-protocol prose.
-    r"(?:^|/)commands/[^/]+\.md$",
+    # The validators a stream SHELLS OUT TO. `foundry_mcp/` already covers the
+    # in-package twin (`foundry_mcp/scripts/validate_intent_coverage.py`); this
+    # is the standalone plugin CLI the adjudicator agents actually invoke
+    # through `${CLAUDE_PLUGIN_ROOT}/scripts/`. Both spellings, because the two
+    # halves of that pair disagree about hyphen versus underscore already.
+    r"(?:^|/)scripts/validate[-_][^/]+\.py$",
 )  # 6 patterns
 
 _VERIFIER_PATH_RES: tuple[re.Pattern[str], ...] = tuple(
