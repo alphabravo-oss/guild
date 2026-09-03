@@ -75,6 +75,10 @@ import pytest
 
 import foundry_mcp
 from foundry_mcp.schemas import vocab
+from foundry_mcp.schemas.vocab import (
+    REPORT_REQUIRED_SECTIONS,
+    RUN_PHASE_HALTED,
+)
 from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.foundry import foundry_add_defect
@@ -85,6 +89,7 @@ from foundry_mcp.tools.foundry_orchestrator import (
     _spec_requirement_ids,
     _synthesize_clean_prove_verdicts,
     foundry_gate,
+    foundry_mark_phase_complete,
     foundry_mark_stream,
     foundry_next_action,
 )
@@ -185,6 +190,23 @@ def _write_verdicts(fdir: Path, rows: list[dict]) -> None:
     )
 
 
+def _generate_report(project_root: str, fdir: Path) -> dict:
+    """GI-006 / CT-014 / ST-010: DONE now requires the GENERATED report.
+
+    Every DONE-passes fixture below calls this, and it calls the real
+    `generate_report` rather than writing a `report.json` the test made up. The
+    precondition exists because the report is produced FROM the run's ledgers; a
+    fabricated one would let a fixture clear a gate that a real run in the same
+    state could not, which is the failure mode a hand-written artifact always
+    has here.
+    """
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    result = generate_report(Path(project_root), fdir)
+    assert result.get("ok") is True, result
+    return result
+
+
 def _arm_ordering_token(fdir: Path) -> None:
     """Simulate a preceding Foundry-Next so a gate's ordering check passes."""
     (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
@@ -245,6 +267,7 @@ def test_done_gate_verdict_coverage_passes_after_synthesis(run_env):
     # Router auto-pass path synthesizes verdicts.
     _compute_next_action(project_root)
 
+    _generate_report(project_root, fdir)
     _arm_ordering_token(fdir)
     gate = foundry_gate("done", project_root)
 
@@ -347,6 +370,8 @@ def test_passing_gate_advances_guidance_state(run_env):
             for rid in ids
         ],
     )
+
+    _generate_report(project_root, fdir)
 
     # Before the gate passes: no gate_advanced signal.
     first = foundry_next_action(project_root)
@@ -783,9 +808,42 @@ def _sync_env(fdir: Path) -> None:
     _write_state(fdir, phase="F2", cycle=0)
 
 
+#: CT-001 / CT-002 — the two fields BOTH filing doors now require. Supplied in
+#: the fixture rather than at each of the twenty-five call sites below, every
+#: one of which is about something else: source attribution, type
+#: canonicalisation, the comment-prose split, the regression matcher. `update`
+#: (not `setdefault`) is already this helper's contract, so a test that IS about
+#: the tier or the class passes its own and wins.
+#:
+#: LIVE is the right default here for the same reason it is in the escalation
+#: fixtures: these are reproduced findings that land open in the ledger.
+FIXTURE_TIER = "LIVE"
+FIXTURE_CLASS = "SYNC_FIXTURE_CLASS"
+
+
+def _sync(cycle: int, findings: list[dict], project_root: str) -> dict:
+    """`foundry_sync_defects` with the tier and class every finding now needs.
+
+    The regression-matcher tests below build their findings as inline dicts
+    rather than through `_finding`, because the fields under test ARE the
+    identity fields and a fixture that supplied them would defeat the point.
+    They still need a tier and a class to get past the door at all, so they are
+    supplied here — `setdefault`, so a test that names either one wins.
+    """
+    return fo.foundry_sync_defects(
+        cycle,
+        [
+            {**{"tier": FIXTURE_TIER, "class": FIXTURE_CLASS}, **f}
+            for f in findings
+        ],
+        project_root,
+    )
+
+
 def _finding(**over) -> dict:
     f = {"description": "handler never calls the store", "source": "trace",
-         "type": "UNWIRED", "symbol": "handle", "file": "src/api/a.py"}
+         "type": "UNWIRED", "symbol": "handle", "file": "src/api/a.py",
+         "tier": FIXTURE_TIER, "class": FIXTURE_CLASS}
     f.update(over)
     return f
 
@@ -820,7 +878,7 @@ def test_sync_accepts_the_partial_defect_type(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(0, [_finding(type="PARTIAL")], project_root)
+    result = _sync(0, [_finding(type="PARTIAL")], project_root)
 
     assert result.get("ok") is True, result
     assert result["added"] == 1
@@ -835,7 +893,7 @@ def test_sync_preserves_source_verbatim(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    fo.foundry_sync_defects(
+    _sync(
         0,
         [_finding(source=s, description=f"finding from {s}", symbol=s)
          for s in ("research_audit", "coverage_diff", "flow_trace", "test01", "temper")],
@@ -854,7 +912,7 @@ def test_sync_refuses_an_unknown_source_instead_of_coercing_it(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(0, [_finding(source="linter")], project_root)
+    result = _sync(0, [_finding(source="linter")], project_root)
 
     assert "error" in result
     assert result["refusals"][0]["field"] == "source"
@@ -868,7 +926,7 @@ def test_sync_refuses_a_finding_with_no_source_at_all(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(0, [_finding(source="")], project_root)
+    result = _sync(0, [_finding(source="")], project_root)
 
     assert "error" in result
     assert result["refusals"][0]["field"] == "source"
@@ -880,7 +938,7 @@ def test_sync_refuses_an_unknown_defect_type(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(0, [_finding(type="SORT_OF_BROKEN")], project_root)
+    result = _sync(0, [_finding(type="SORT_OF_BROKEN")], project_root)
 
     assert "error" in result
     assert result["refusals"][0]["field"] == "type"
@@ -893,7 +951,7 @@ def test_sync_refusal_is_all_or_nothing(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0,
         [_finding(symbol="good"), _finding(symbol="bad", source="nope")],
         project_root,
@@ -916,7 +974,7 @@ def test_sync_canonicalizes_the_misplaced_alias(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    fo.foundry_sync_defects(
+    _sync(
         0,
         [
             _finding(type="MISPLACED", symbol="a"),
@@ -939,7 +997,7 @@ def test_sync_defaults_an_absent_type_to_missing(run_env):
 
     f = _finding()
     del f["type"]
-    fo.foundry_sync_defects(0, [f], project_root)
+    _sync(0, [f], project_root)
 
     record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
     assert record["type"] == "MISSING"
@@ -953,7 +1011,7 @@ def test_sync_stamps_the_server_cycle_not_the_caller_value(run_env):
     _sync_env(fdir)
     _write_state(fdir, phase="F2", cycle=5)
 
-    result = fo.foundry_sync_defects(99, [_finding()], project_root)
+    result = _sync(99, [_finding()], project_root)
 
     assert result["cycle"] == 5
     assert result["declared_cycle"] == 99
@@ -976,7 +1034,7 @@ def test_sync_mints_ids_from_the_shared_allocator(run_env):
     )
     _write_state(fdir, phase="F2", cycle=0)
 
-    fo.foundry_sync_defects(0, [_finding(symbol="fresh", description="fresh")], project_root)
+    _sync(0, [_finding(symbol="fresh", description="fresh")], project_root)
 
     ids = [d["id"] for d in json.loads(
         (fdir / "defects.json").read_text(encoding="utf-8"))["defects"]]
@@ -990,7 +1048,7 @@ def test_sync_carries_a_stream_declared_class_onto_the_record(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    fo.foundry_sync_defects(
+    _sync(
         0, [_finding(**{"class": "FALSE_DOCUMENTED_CONTRACT"})], project_root
     )
 
@@ -1006,7 +1064,7 @@ def test_sync_routes_a_declared_comment_prose_finding_to_observations(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0,
         [_finding(
             description="the comment says line 42 but the symbol moved — stale line hint",
@@ -1029,7 +1087,7 @@ def test_sync_keeps_a_denylisted_finding_as_a_defect(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0,
         [_finding(
             description=(
@@ -1052,7 +1110,7 @@ def test_sync_will_not_demote_a_finding_that_declares_no_target_kind(run_env):
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0,
         [_finding(description="the comment's line hint is stale and no longer matches")],
         project_root,
@@ -1106,7 +1164,7 @@ def test_a_different_defect_on_the_same_symbol_is_filed_not_absorbed(run_env):
     project_root, fdir = run_env
     _seed_fixed(fdir, _fixed_record())
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [_finding(
             source="prove",
@@ -1143,7 +1201,7 @@ def test_a_shared_description_alone_does_not_reopen_across_file_and_symbol(run_e
     project_root, fdir = run_env
     _seed_fixed(fdir, _fixed_record(symbol="alpha", file="a.py", description="same text"))
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [_finding(symbol="omega", file="z.py", description="same text")],
         project_root,
@@ -1164,7 +1222,7 @@ def test_the_same_defect_recurring_is_still_a_regression(run_env):
     project_root, fdir = run_env
     _seed_fixed(fdir, _fixed_record())
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [_finding(
             source="trace",
@@ -1197,7 +1255,7 @@ def test_a_lone_agreement_is_never_enough_to_reopen(run_env):
         symbol="submit_form", file="", spec_ref="", description="only the symbol",
     ))
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [{"source": "prove", "type": "UNWIRED", "symbol": "submit_form",
           "description": "a wholly unrelated observation about the same symbol"}],
@@ -1214,7 +1272,7 @@ def test_a_conflicting_field_blocks_a_reopen_however_much_else_agrees(run_env):
     project_root, fdir = run_env
     _seed_fixed(fdir, _fixed_record())
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [_finding(
             source="trace",
@@ -1239,7 +1297,7 @@ def test_the_type_comparison_reads_through_the_canonicaliser(run_env):
     project_root, fdir = run_env
     _seed_fixed(fdir, _fixed_record(type="ARCHITECTURAL_PLACEMENT"))
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [_finding(
             source="trace",
@@ -1265,7 +1323,7 @@ def test_an_absent_field_on_both_sides_is_not_an_agreement(run_env):
         symbol="", file="", spec_ref="", description="first finding",
     ))
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         2,
         [{"source": "trace", "type": "UNWIRED", "description": "second finding"}],
         project_root,
@@ -1338,13 +1396,33 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
         if isinstance(node, ast.FunctionDef) and node.name == "foundry_accept_casting"
     )
 
-    def _is_hard_reject(stmt: ast.stmt) -> bool:
-        """A `return {... "ok": False ...}` — the gate refusing, not warning."""
-        if not isinstance(stmt, ast.Return) or not isinstance(stmt.value, ast.Dict):
+    def _is_hard_reject(stmt: ast.stmt, test: ast.expr) -> bool:
+        """The gate refusing, not warning — in either of its two spellings.
+
+        (1) `return {... "ok": False ...}` — a refusal built inline.
+
+        (2) `if <name> is not None: return <name>` — a refusal a SHARED helper
+            built and this handler forwards. Added with CT-011 / AC-030, which
+            move the prompt-hash rung out of this handler and into
+            `check_reported_prompt_hash` so Foundry-Fix consumes the same one.
+            The dict-literal-only scanner went blind to that rung the moment it
+            was shared, and a blocking condition invisible to this test is a
+            blocking condition nobody has to roster or describe — which is the
+            control failing quietly, in the exact direction the test exists to
+            prevent. The detector is WIDENED rather than the roster trimmed.
+        """
+        if not isinstance(stmt, ast.Return):
             return False
-        for key, value in zip(stmt.value.keys, stmt.value.values):
-            if isinstance(key, ast.Constant) and key.value == "ok":
-                return isinstance(value, ast.Constant) and value.value is False
+        if isinstance(stmt.value, ast.Dict):
+            for key, value in zip(stmt.value.keys, stmt.value.values):
+                if isinstance(key, ast.Constant) and key.value == "ok":
+                    return isinstance(value, ast.Constant) and value.value is False
+            return False
+        # The forwarded-refusal shape: the guard names the very thing returned.
+        if isinstance(stmt.value, ast.Name):
+            return stmt.value.id in {
+                node.id for node in ast.walk(test) if isinstance(node, ast.Name)
+            }
         return False
 
     # The guard expression is the identity: it IS the blocking condition, and
@@ -1354,7 +1432,7 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
         for node in ast.walk(function)
         if isinstance(node, ast.If)
         for stmt in node.body
-        if _is_hard_reject(stmt)
+        if _is_hard_reject(stmt, node.test)
     }
 
     # guard expression -> lowercase substrings the tool description owes it.
@@ -1365,7 +1443,17 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
         'not spec_result.get("ok")': (),
         "spec_hash != current_spec_hash": ("spec_hash",),
         "not prompt_path.exists()": (),
-        "prompt_hash != current_prompt_hash": ("prompt_hash",),
+        # CT-011 / AC-030 — the hash rung moved OUT of this handler and into the
+        # shared `check_reported_prompt_hash`, which Foundry-Fix consumes too. A
+        # hash check that exists at one door and not the other lets an unread
+        # prompt through whichever door the lead happens to walk, so the guard
+        # here is now "the shared helper refused" rather than an inline
+        # comparison. The description still owes the word, because the refusal a
+        # lead sees is still about prompt_hash.
+        "hash_refusal is not None": ("prompt_hash",),
+        # CT-015 / AC-015 — the new blocking condition. Unrostered, this test
+        # fails by name, which is exactly the case it exists to catch.
+        "not casting_commit": ("casting_commit",),
         "not match": ("<spec_requirements>",),
         "_read_spec_format_version(evidence_spec_path) is None": (
             "spec_format_version",
@@ -1406,11 +1494,21 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
 
 
 def test_the_accept_casting_description_says_what_omitting_the_sha_costs():
-    """D-078: evidence re-execution was documented ONLY in the nested
-    ``casting_commit`` property description — which a lead composing the call
-    from the headline has no reason to open. The silence is the danger: omitting
-    the SHA skips BOTH EVID-01 and EVID-02 and still returns ok:true, so the
-    failure mode is a green acceptance that verified nothing, not an error.
+    """D-078, and CT-015's answer to it.
+
+    Evidence re-execution was documented ONLY in the nested ``casting_commit``
+    property description — which a lead composing the call from the headline has
+    no reason to open — and omitting the SHA skipped BOTH EVID-01 and EVID-02
+    while still returning ok:true. The failure mode was a green acceptance that
+    verified nothing.
+
+    The previous version of this test ended by noting that the handler's
+    optional default "is what makes the silence possible; if that ever becomes
+    required, this warning is the thing that must change with it." CT-015 made
+    it required, so this is that change: the description must now say the
+    omission is REFUSED, and the silent-skip warning must be gone — a
+    description still warning about a silence that can no longer happen sends a
+    lead hunting for a failure mode the gate has closed.
     """
     from foundry_mcp import server as foundry_server
 
@@ -1424,20 +1522,27 @@ def test_the_accept_casting_description_says_what_omitting_the_sha_costs():
     assert "re-execut" in described.lower()
 
     # ...and the cost of leaving it out, in the description itself rather than
-    # only in the property below it.
+    # only in the property below it. That cost is now a REFUSAL, and the
+    # description says so.
     lowered = described.lower()
-    assert "silently" in lowered
-    assert "ok:true" in lowered.replace(" ", "")
+    assert "required" in lowered
+    assert "refus" in lowered
+    # The silent-skip warning is retired with the silence it described.
+    assert "silently" not in lowered
+    assert "ok:true" not in lowered.replace(" ", "")
 
-    # The handler's default is what makes the silence possible; if that ever
-    # becomes required, this warning is the thing that must change with it.
+    # The handler keeps an Optional default deliberately: it is what lets the
+    # handler's OWN named refusal fire on an absent value instead of a
+    # TypeError escaping across the MCP boundary. The obligation is enforced by
+    # `required` above it and by that refusal, never by a signature that cannot
+    # produce the house {error, hint} shape.
     import inspect
 
     from foundry_mcp.tools import foundry_handoff as handoff_module
 
     params = inspect.signature(handoff_module.foundry_accept_casting).parameters
     assert params["casting_commit"].default is None
-    assert "casting_commit" not in accept.inputSchema["required"]
+    assert "casting_commit" in accept.inputSchema["required"]
 
 
 def test_the_accept_casting_description_agrees_with_the_handlers_own_payload():
@@ -1555,8 +1660,11 @@ def test_accept_casting_schema_carries_casting_commit():
     props = accept.inputSchema["properties"]
     assert "casting_commit" in props
     assert props["casting_commit"]["type"] == "string"
-    # Optional, so existing four-argument calls keep working.
-    assert "casting_commit" not in accept.inputSchema["required"]
+    # CT-015 / AC-015 / FR-010: REQUIRED, not optional. Optional, it was ALWAYS
+    # omitted — which is the whole of the defect this test was written for, one
+    # step further on. A gate whose evidence re-execution is opt-in verified
+    # nothing while returning ok:true, so the omission is now a refusal.
+    assert "casting_commit" in accept.inputSchema["required"]
 
 
 def test_accept_casting_dispatch_delivers_casting_commit_to_the_handler(monkeypatch):
@@ -1923,6 +2031,8 @@ def test_defect_dispatch_carries_target_kind_and_defect_class(run_env):
                 "number is stale"
             ),
             "target_kind": "comment",
+            "tier": FIXTURE_TIER,
+            "defect_class": FIXTURE_CLASS,
         })
         assert "error" in refused, refused
         assert refused["refused_class"] in vocab.OBSERVATION_CLASSES
@@ -1934,6 +2044,7 @@ def test_defect_dispatch_carries_target_kind_and_defect_class(run_env):
             "description": "handler never calls the store",
             "file_path": "src/api/a.py",
             "defect_class": "FALSE_DOCUMENTED_CONTRACT",
+            "tier": FIXTURE_TIER,
         })
         assert "error" not in tagged, tagged
     finally:
@@ -1984,6 +2095,10 @@ def test_sync_denylist_hit_fires_the_tripwire_end_to_end(run_env):
         "target_kind": "comment",
         "symbol": "submit_form",
         "file": "src/api/forms.py",
+        # CT-001 / CT-002: the door refuses without these, so a finding that
+        # omitted them would never reach the denylist rung under test.
+        "tier": FIXTURE_TIER,
+        "class": FIXTURE_CLASS,
     }
 
     previous_root = foundry_server._project_root
@@ -2038,6 +2153,8 @@ def test_sync_still_demotes_a_clean_comment_finding_without_a_tripwire(run_env):
         result = foundry_server._DISPATCH["Foundry-Sync"]({
             "cycle": 2,
             "findings": [{
+                "tier": FIXTURE_TIER,
+                "class": FIXTURE_CLASS,
                 "source": "trace",
                 "type": "WRONG",
                 # The same LINE_DRIFT_CITE prose as the test above, minus the
@@ -2079,6 +2196,8 @@ def test_an_ordinary_defect_through_sync_fires_no_tripwire(run_env):
         result = foundry_server._DISPATCH["Foundry-Sync"]({
             "cycle": 1,
             "findings": [{
+                "tier": FIXTURE_TIER,
+                "class": FIXTURE_CLASS,
                 "source": "trace",
                 "type": "UNWIRED",
                 "description": "the submit handler never calls the token store",
@@ -2129,6 +2248,7 @@ def test_done_gate_still_passes_on_a_real_spec(run_env):
     _write_spec(fdir, ids)
     _write_state(fdir, phase="F4")
     _write_verdicts(fdir, [{"id": r, "verdict": "VERIFIED"} for r in ids])
+    _generate_report(project_root, fdir)
     _arm_ordering_token(fdir)
 
     gate = foundry_gate("done", project_root)
@@ -2154,7 +2274,12 @@ def test_a_more_specific_done_failure_still_names_itself(run_env):
     gate = foundry_gate("done", project_root)
 
     assert gate["passed"] is False
-    assert "1 open defect(s) remain" in gate["reason"]
+    # CT-008 / FR-051: the refusal NAMES the blocking defects and says which
+    # axis blocks them. D-001 carries no tier, so it blocks like LIVE and is
+    # reported as untiered until a stream re-files it — the reason a lead reads
+    # is still the concrete one, not the report or the zero-requirement notice.
+    assert "D-001" in gate["reason"], gate
+    assert "no tier" in gate["reason"], gate
 
 
 def test_liveness_tool_is_registered_and_dispatched():
@@ -2689,7 +2814,15 @@ def test_malformed_state_cycle_leaves_next_and_context_answering(run_env, bad_cy
         foundry_server._project_root = previous_root
 
     # Answers rather than raising...
-    assert nxt["context_budget"]["cycles_completed"] == 0
+    #
+    # Read through the rendered display rather than the old `context_budget`
+    # block, which is gone: it mapped the cycle counter onto the words
+    # low/moderate/high/critical and called the result "estimated_usage",
+    # reading no tokens and no durations. AC-033 replaced it with the spend the
+    # lead actually reported. The claim this test makes was never about that
+    # block — it is that a malformed counter still NORMALISES to 0 everywhere
+    # it surfaces, and the display is where Foundry-Next surfaces it.
+    assert "Cycle: 0" in nxt["display"]
     assert ctx["state"]["cycle"] == 0
     # ...and normalises rather than passing the malformed value through.
     assert isinstance(ctx["state"]["cycle"], int)
@@ -2715,8 +2848,7 @@ def test_valid_state_cycle_still_reaches_next_and_context_unchanged(run_env):
     finally:
         foundry_server._project_root = previous_root
 
-    assert nxt["context_budget"]["cycles_completed"] == 4
-    assert nxt["context_budget"]["estimated_usage"] == "critical"
+    assert "Cycle: 4" in nxt["display"]
     assert ctx["state"]["cycle"] == 4
     assert "Cycle: 4" in fo._format_status_display(project_root)
 
@@ -2813,7 +2945,7 @@ def _reaches_defect_ledger_via_sync(root: Path, description: str) -> bool:
     """Did a declared-comment finding with this prose land in defects.json,
     filed through ``foundry_sync_defects``?"""
     fdir = _second_run(root)
-    fo.foundry_sync_defects(
+    _sync(
         0, [_finding(description=description, target_kind="comment")], str(root)
     )
     return bool(json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"])
@@ -2834,6 +2966,11 @@ def _reaches_defect_ledger_via_add(root: Path, description: str) -> bool:
         target_kind="comment",
         symbol="handle",
         file_path="src/api/a.py",
+        # The same two fields `_finding` supplies on the other side, so the
+        # ONLY difference between the two calls is still which handler receives
+        # them — which is the whole claim this pair makes.
+        tier=FIXTURE_TIER,
+        defect_class=FIXTURE_CLASS,
         project_root=str(root),
     )
     return bool(json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"])
@@ -2851,7 +2988,7 @@ def test_sync_keeps_every_security_battery_case_as_a_defect(run_env, description
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0, [_finding(description=description, target_kind="comment")], project_root
     )
 
@@ -2884,7 +3021,7 @@ def test_sync_keeps_a_behaviour_finding_with_no_security_vocabulary(run_env):
         "exercises the promote-direction guard at all"
     )
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0,
         [_finding(description=NO_SECURITY_VOCABULARY, target_kind="comment")],
         project_root,
@@ -2969,7 +3106,7 @@ def test_sync_still_demotes_the_canonical_comment_prose_classes(run_env, descrip
     project_root, fdir = run_env
     _sync_env(fdir)
 
-    result = fo.foundry_sync_defects(
+    result = _sync(
         0, [_finding(description=description, target_kind="comment")], project_root
     )
 
@@ -4616,14 +4753,25 @@ _BAD_CONTAINERS = ({"D-001": {"id": "D-001"}}, "a string", 42)
 
 #: Doors in THIS casting's module that write a ledger, and a minimal valid call
 #: for each. Both reach `ledger_transaction` on defects.json.
+#:
+#: "Minimal VALID" is load-bearing and got bigger with CT-001 / CT-005: the
+#: claim is that a corrupt LEDGER produces the house refusal naming the file,
+#: and a call refused earlier for a missing `tier` or a missing `authored_by`
+#: never opens the ledger at all, so it would prove nothing. Every field below
+#: exists to get the call as far as `ledger_transaction`.
 _ORCHESTRATOR_LEDGER_DOORS = {
     "Foundry-Sync": {
         "cycle": 1,
-        "findings": [{"source": "trace", "type": "MISSING", "description": "x"}],
+        "findings": [{
+            "source": "trace", "type": "MISSING", "description": "x",
+            "tier": FIXTURE_TIER, "class": FIXTURE_CLASS,
+        }],
     },
     "Foundry-Fix": {
         "defect_id": "D-001",
         "cycle": 1,
+        "authored_by": "lead",
+        "fix_commit": "0" * 40,
         "adjacent_path_statement": "foundry_sync_defects writes the same ledger",
         "adjacent_path_test": "tests/test_orchestrator_gates.py::"
                               "test_both_orchestrator_ledger_doors_refuse_in_band",
@@ -7329,3 +7477,807 @@ def test_the_spec_parser_keeps_its_own_anchoring(tmp_path):
     }
     assert {k: v.line for k, v in reqs.items()} == {"US-1": 2, "OT-011": 3, "AC-3.2": 4}
     assert extract_requirement_ids(text) == ["AC-3.2", "OT-011", "US-1"]
+
+
+# --------------------------------------------------------------------------- #
+# US-002 / CT-008 / FR-006 / FR-051 / AC-008 / OT-006 / OT-011 — TIER-AWARE GATES
+#
+# Every finding used to carry the same weight, so a scan-derivation gap with no
+# reachable instance blocked exactly the gates a forged evidence log blocked.
+# thunder-viper is what that costs: the run could not close while a prover kept
+# filing findings nobody had driven.
+#
+# The tier is an EVIDENCE grade, never a severity (GI-001). A LIVE defect blocks
+# every gate exactly as it always did; a LATENT one stays open, tracked, and
+# named in the F6 backlog; an UNTIERED one — a record written before the axis
+# existed — blocks like LIVE until a stream re-files it, because nobody
+# classified it and reading it as LATENT would silently clear gates on records
+# no one ever looked at.
+# --------------------------------------------------------------------------- #
+
+_GATE_PHASES_THAT_READ_DEFECTS = ("assay", "temper", "nyquist", "done")
+
+
+def _tiered(did: str, tier: str | None, status: str = "open", **extra) -> dict:
+    record = {
+        "id": did, "cycle": 1, "source": "trace", "type": "UNWIRED",
+        "description": f"{did} description", "spec_ref": "FR-1",
+        "symbol": "handle", "file": "src/api/a.py", "status": status,
+        "class": "UNWIRED_SURFACE", "fixed_in_cycle": None,
+    }
+    if tier is not None:
+        record["tier"] = tier
+    record.update(extra)
+    return record
+
+
+def _defect_ledger(fdir: Path, records: list[dict]) -> None:
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": records}, indent=2), encoding="utf-8"
+    )
+
+
+def _ready_for_the_end_gates(project_root: str, fdir: Path) -> None:
+    """Everything the four end gates need EXCEPT a defect ledger.
+
+    Written once so each tier test differs from the others in one variable — the
+    tier — rather than in a page of fixture.
+    """
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1, nyquist=True)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=1\nitems_checked=1\nitems_total=1\n"
+            "coverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+    (fdir / ".inspect-clean").write_text("2020-01-01T00:00:00+00:00\n", encoding="utf-8")
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+
+def test_a_latent_only_backlog_passes_every_end_gate(run_env):
+    """AC-008 verbatim (first clause): 'With only LATENT defects open,
+    Foundry-Gate assay, temper, nyquist and done pass and Foundry-Phase
+    inspect_clean succeeds.'
+
+    FR-006 says the same thing and adds what happens to them: 'LATENT stays
+    open, tracked, and listed in the report.' Nothing is closed or waived — the
+    gates simply stop treating "I looked for this and could not make it happen"
+    as equivalent to "I made it happen".
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LATENT", reproduction_attempted="AST sweep finds 0 sites"),
+        _tiered("D-002", "LATENT", reproduction_attempted="drove every caller; none reach it"),
+    ])
+    _generate_report(project_root, fdir)
+
+    for phase in _GATE_PHASES_THAT_READ_DEFECTS:
+        _arm_ordering_token(fdir)
+        gate = foundry_gate(phase, project_root)
+        assert gate["passed"] is True, (phase, gate)
+        blocking = next(
+            c for c in gate["checklist"]
+            if c["check"].startswith("zero_blocking_defects")
+        )
+        assert blocking["ok"] is True, (phase, gate)
+        assert sorted(blocking["latent_backlog"]) == ["D-001", "D-002"], (phase, gate)
+
+    _arm_ordering_token(fdir)
+    transition = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert transition["ok"] is True, transition
+    assert transition["phase"] == "F4"
+
+
+@pytest.mark.parametrize("phase", _GATE_PHASES_THAT_READ_DEFECTS)
+def test_one_open_live_defect_refuses_every_end_gate_by_name(run_env, phase):
+    """AC-008's second clause: 'with one LIVE defect open, Foundry-Gate nyquist
+    refuses naming it.'
+
+    Parametrized over all four, because FR-006 is about the SET — "INSPECT-clean,
+    ASSAY, TEMPER, NYQUIST and DONE all pass when the only open defects are
+    LATENT" — and a tier read wired into three of four gates would leave the
+    fourth deciding on a different definition of "open".
+
+    NYQUIST is the one that changes most: it read no defects at all before, so a
+    run could enter F5.5 and generate regression tests locking in behaviour a
+    stream had already ruled wrong (FR-006: "NYQUIST gains the missing defect
+    read so one open LIVE now blocks it").
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LATENT", reproduction_attempted="AST sweep finds 0 sites"),
+        _tiered("D-002", "LIVE"),
+    ])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate(phase, project_root)
+
+    assert gate["passed"] is False, gate
+    assert "D-002" in gate["reason"], gate
+    assert "LIVE" in gate["reason"], gate
+    assert "D-001" not in gate["reason"], (
+        "a LATENT defect is not the reason anything is blocked"
+    )
+
+
+@pytest.mark.parametrize("phase", _GATE_PHASES_THAT_READ_DEFECTS)
+def test_an_untiered_defect_blocks_like_live_and_is_named_separately(run_env, phase):
+    """AC-008's last clause: 'on a resumed pre-change run an open defect with no
+    tier blocks like LIVE until a stream re-files it with a tier, and the report
+    lists it separately.'
+
+    FR-051 is the rule: "Blocks like LIVE until a stream re-files it with a
+    tier." Reading it as LATENT would silently clear every gate on records nobody
+    ever classified — the one direction of this change that could lose a real
+    defect. It is named SEPARATELY because the operator's next move differs: a
+    LIVE defect needs fixing, an untiered one needs a stream to look at it, after
+    which it may well stop blocking.
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [_tiered("D-007", None)])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate(phase, project_root)
+
+    assert gate["passed"] is False, gate
+    assert "D-007" in gate["reason"], gate
+    assert "no tier" in gate["reason"], gate
+    blocking = next(
+        c for c in gate["checklist"] if c["check"].startswith("zero_blocking_defects")
+    )
+    assert blocking["unknown_tier"] == ["D-007"]
+    assert blocking["live"] == []
+
+
+@pytest.mark.parametrize(
+    "tier", ["minor", "major", "MEDIUM", "", None], ids=lambda t: repr(t)
+)
+def test_a_tier_outside_the_vocabulary_reads_as_unknown_and_blocks(run_env, tier):
+    """GI-001's no-severity guarantee, at the read side.
+
+    The abolished axis would come back as a value rather than as a key: a record
+    carrying `tier: "minor"` must not be coerced onto LATENT, because that is
+    exactly the silent downgrade the evidence axis replaced. Every value outside
+    DEFECT_TIERS resolves to unknown and therefore blocks.
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [_tiered("D-009", tier)])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("nyquist", project_root)
+
+    assert gate["passed"] is False, (tier, gate)
+    assert "D-009" in gate["reason"], (tier, gate)
+
+
+def test_inspect_clean_refuses_a_live_defect_and_names_it(run_env):
+    """The transition half of AC-008, which the gate does not cover.
+
+    `Foundry-Phase('inspect_clean')` is what actually writes `.inspect-clean` and
+    moves the run to F4. A tier read wired into the gate but not the transition
+    would let a lead mark a cycle clean over a reachable failure by simply not
+    calling the gate — the D-037 shape, one requirement along.
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [_tiered("D-002", "LIVE")])
+    (fdir / ".inspect-clean").unlink()
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("inspect_clean", project_root)
+
+    assert result.get("ok") is not True
+    assert "D-002" in result["error"]
+    assert not (fdir / ".inspect-clean").exists()
+
+
+def test_a_temper_cycle_filing_only_latent_leaves_temper_and_nyquist_passing(run_env):
+    """OT-011 verbatim: 'A TEMPER cycle that files only LATENT defects leaves
+    Foundry-Gate temper and nyquist passing.'
+
+    This is the convergence case the whole tier exists for. TEMPER's job is to
+    zoom into micro-domains and ask very specific questions, and its answers are
+    frequently "I reasoned about this and could not make it fail" — findings
+    worth recording and not worth blocking a finished run on.
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _write_state(fdir, phase="F5", cycle=6, nyquist=True, temper=True)
+    _defect_ledger(fdir, [
+        _tiered(f"D-{n:03d}", "LATENT", cycle=6,
+                reproduction_attempted="drove the boundary; no instance reproduced")
+        for n in range(1, 5)
+    ])
+    _generate_report(project_root, fdir)
+
+    for phase in ("temper", "nyquist"):
+        _arm_ordering_token(fdir)
+        gate = foundry_gate(phase, project_root)
+        assert gate["passed"] is True, (phase, gate)
+
+
+def test_the_grind_gate_still_counts_every_open_defect(run_env):
+    """The boundary of the change, stated so it is not read as a general rule.
+
+    GRIND asks "is there work to do", and a LATENT defect is work: it is a defect
+    and it gets fixed. Making the GRIND gate tier-aware would refuse to open a
+    cycle whose whole job is closing the LATENT backlog.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LATENT", reproduction_attempted="AST sweep finds 0 sites"),
+    ])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("grind", project_root)
+
+    assert gate["passed"] is True, gate
+
+
+# --------------------------------------------------------------------------- #
+# ST-011 / FR-044 / AC-035 / OT-028 — the two ride-along ordering fixes
+# --------------------------------------------------------------------------- #
+
+
+def test_gate_followed_directly_by_phase_is_accepted(run_env):
+    """OT-028 verbatim (first half): 'Foundry-Gate followed immediately by
+    Foundry-Phase is accepted.'
+
+    `foundry_gate` used to unlink `.next-action-called` before any branch ran, so
+    the documented sequence Gate -> Phase could not be executed: the gate
+    destroyed the marker the transition demands, and the lead's next call was
+    refused for having done exactly what start.md told it to. The workaround it
+    forced — a Foundry-Next between every gate and its transition — is what made
+    Foundry-Next look mandatory there, and FR-044 says it is optional.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("grind", project_root)
+    assert gate["passed"] is True, gate
+    assert (fdir / ".next-action-called").exists(), (
+        "the gate must not consume the ordering token"
+    )
+
+    # No Foundry-Next in between. This is the sequence the documentation states.
+    transition = foundry_mark_phase_complete("grind_start", project_root)
+    assert transition["ok"] is True, transition
+    assert transition["phase"] == "F3"
+
+
+def test_the_phase_transition_is_still_the_one_consumer_of_the_token(run_env):
+    """The other half: the handshake is not abolished, it is scoped.
+
+    The token means "a Foundry-Next preceded this transition", and a gate check
+    is not a transition — it writes no phase, advances no counter, and on the
+    passing path only stamps `.gate-passed`. So the transition still consumes it,
+    and a second transition without a fresh Foundry-Next is still refused.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    foundry_gate("grind", project_root)
+    foundry_mark_phase_complete("grind_start", project_root)
+
+    assert not (fdir / ".next-action-called").exists()
+    second = foundry_mark_phase_complete("grind_start", project_root)
+    assert second.get("ok") is not True
+    assert "Foundry-Next" in second["error"]
+
+
+def test_foundry_context_does_not_reset_the_stall_clock(run_env):
+    """OT-028's second half: 'Foundry-Context does not change .last-next-at.'
+
+    `foundry_get_context` calls `foundry_next_action` for its `next_action`
+    field, so every Foundry-Context call used to reset the stall clock to now.
+    The effect is the opposite of the watchdog's purpose: a lead that deliberates
+    for twenty minutes, calls Foundry-Context to reorient, and deliberates for
+    twenty more is measured from the Context call and never warned. The clock
+    measures Foundry-Next to Foundry-Next, and a read-only reorientation call is
+    not one of those.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    foundry_next_action(project_root)
+    before = (fdir / ".last-next-at").read_text(encoding="utf-8")
+
+    fo.foundry_get_context(project_root)
+
+    assert (fdir / ".last-next-at").read_text(encoding="utf-8") == before
+
+    # ...and a real Foundry-Next still arms it.
+    (fdir / ".last-next-at").write_text("2020-01-01T00:00:00+00:00\n", encoding="utf-8")
+    foundry_next_action(project_root)
+    assert (fdir / ".last-next-at").read_text(encoding="utf-8") != (
+        "2020-01-01T00:00:00+00:00\n"
+    )
+
+
+def test_the_done_preconditions_hint_matches_the_check_that_claimed_the_reason(run_env):
+    """FR-026's fourth ride-along: the stale hint in `_done_preconditions`.
+
+    The open-defect branch set `reason` and left `hint` alone, so whatever the
+    PREVIOUS check happened to write stayed attached to it. A run with open
+    defects AND a non-VERIFIED requirement was refused with reason "N open
+    defect(s) remain" beside hint "Fix all non-VERIFIED requirements. Every THIN
+    item must be fully implemented." — an instruction for a different check
+    entirely, and the lead's only stated next move.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "THIN"}])
+    _defect_ledger(fdir, [_tiered("D-002", "LIVE")])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("done", project_root)
+
+    assert gate["passed"] is False
+    # The open defect is the last check to claim `reason`, so the hint beside it
+    # must be about defects — not about THIN requirements.
+    assert "D-002" in gate["reason"]
+    assert "non-VERIFIED" not in gate["hint"], gate
+    assert "THIN" not in gate["hint"], gate
+    assert "GRIND" in gate["hint"] or "re-file" in gate["hint"], gate
+
+
+# --------------------------------------------------------------------------- #
+# GI-006 / CT-014 / AC-036 / ST-010 / OT-025 — DONE requires the report
+# --------------------------------------------------------------------------- #
+
+
+def test_done_without_a_generated_report_is_refused_naming_it(run_env):
+    """OT-025 verbatim (first half): 'Foundry-Phase done without a generated
+    report is refused naming the report.'"""
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result.get("ok") is not True
+    assert "REPORT.md" in result["error"] and "report.json" in result["error"]
+    assert "Foundry-Report" in result["hint"]
+    assert json.loads((fdir / "state.json").read_text())["phase"] == "F4"
+
+
+def test_after_foundry_report_the_done_transition_succeeds(run_env):
+    """OT-025's second half: 'after Foundry-Report it succeeds and report.json
+    contains every named section.'"""
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    report = json.loads((fdir / "report.json").read_text(encoding="utf-8"))
+    for section in REPORT_REQUIRED_SECTIONS:
+        assert section in report, section
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+
+
+def test_a_report_missing_one_section_is_refused_naming_that_section(run_env):
+    """GI-006 verbatim: 'The lead may append prose but cannot omit a section.'
+
+    The omission half. A lead editing the generated report is expected — that is
+    what "may append prose" means — so the check reads `report.json`'s keys
+    rather than the markdown, and names what was removed so the lead knows the
+    fix is to regenerate rather than to hunt.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    document = json.loads((fdir / "report.json").read_text(encoding="utf-8"))
+    del document["latent_backlog"]
+    (fdir / "report.json").write_text(json.dumps(document), encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result.get("ok") is not True
+    assert "latent_backlog" in result["error"]
+
+
+def test_appending_prose_to_the_markdown_never_blocks_done(run_env):
+    """GI-006's first half, which the check must not break: 'The lead MAY append
+    prose.'
+
+    `report_status` reads the JSON precisely so that appending prose, rewording a
+    heading or reflowing a table — all things the lead is allowed to do — cannot
+    make a present section look absent.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+    md = fdir / "REPORT.md"
+    md.write_text(
+        md.read_text(encoding="utf-8") + "\n## Lead's postscript\n\nAll mine.\n",
+        encoding="utf-8",
+    )
+
+    _arm_ordering_token(fdir)
+    assert foundry_mark_phase_complete("done", project_root)["ok"] is True
+
+
+def test_the_report_tool_is_registered_and_dispatched(run_env):
+    """CT-014's registration half: a generator nothing can call is not a tool."""
+    from foundry_mcp import server as foundry_server
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    assert "Foundry-Report" in tools
+    assert tools["Foundry-Report"].inputSchema["properties"] == {}
+
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+
+    previous = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Report"]({})
+    finally:
+        foundry_server._project_root = previous
+
+    assert result["ok"] is True, result
+    assert (fdir / "report.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# ST-008 / CT-016 / FR-024 / FR-045 / FR-052 / AC-037 / OT-026 — HALTED
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("token", ["grind_start", "assay_fail"])
+def test_the_call_that_would_exceed_max_cycles_halts_rather_than_refusing(
+    run_env, token
+):
+    """AC-037 verbatim: 'With max_cycles persisted as 2, the Foundry-Phase call
+    that would start GRIND cycle 3 succeeds and sets state.json to HALTED, the
+    report is generated naming every open LIVE and LATENT defect, and the next
+    Foundry-Next reports the run halted and issues no dispatch.'
+
+    IT IS A TRANSITION, NOT A REFUSAL, and that is the whole of FR-045. A refusal
+    would leave the run sitting where it was with the lead free to call the same
+    token again, having produced nothing — a cap that only annoys. Instead the
+    run reaches a named terminal state with its open work written down.
+
+    Parametrized over BOTH doors that open a GRIND. They clear the same markers
+    and call the same `_update_phase(fdir, "F3")`; a cap wired to one would let a
+    run looping back through ASSAY failure run forever while a run looping
+    through GRIND halts — and the ASSAY loop is exactly the one --max-cycles
+    exists to bound.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LIVE"),
+        _tiered("D-002", "LATENT", reproduction_attempted="AST sweep finds 0 sites"),
+        _tiered("D-003", None),
+    ])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete(token, project_root)
+
+    assert result["ok"] is True, result
+    assert result["halted"] is True
+    assert result["phase"] == RUN_PHASE_HALTED
+    assert json.loads((fdir / "state.json").read_text())["phase"] == RUN_PHASE_HALTED
+
+    # FR-045: 'the report is written naming every open LIVE and LATENT defect.'
+    assert (fdir / "report.json").exists()
+    named = (fdir / "report.json").read_text(encoding="utf-8")
+    for did in ("D-001", "D-002", "D-003"):
+        assert did in named, did
+    assert result["open_live_defects"] == ["D-001"]
+    assert result["open_latent_defects"] == ["D-002"]
+    assert result["open_unknown_tier_defects"] == ["D-003"]
+
+
+def test_a_halted_run_issues_no_dispatch(run_env):
+    """AC-037's last clause: 'the next Foundry-Next reports the run halted and
+    issues no dispatch.'
+
+    Checked before every other branch in the guidance engine, including the
+    active-teams one: a run that hit its cap is over, and emitting the ordinary
+    phase guidance would send the lead round the loop the cap just stopped.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=2, max_cycles=2,
+        halted_at_cycle=2, halted_reason="--max-cycles 2 reached",
+    )
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "halted"
+    assert "HALTED" in nxt["instructions"]
+    assert "NOT DONE" in nxt["instructions"]
+    assert "YOUR NEXT CALL: NONE" in nxt["instructions"]
+    assert nxt["details"]["open_live_defects"] == ["D-001"]
+    # No agent config anywhere: nothing here tells the lead to spawn anything.
+    assert "agent_config" not in nxt["details"]
+    assert "agent_configs" not in nxt["details"]
+
+
+def test_the_cycle_below_the_cap_is_untouched(run_env):
+    """The cap bounds the run; it does not shorten it.
+
+    With max_cycles 2 the second GRIND-opening call must still open a GRIND —
+    the halt is on the call that would open number THREE. An off-by-one here
+    would silently cost every capped run its last cycle.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1, max_cycles=2)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result.get("halted") is not True
+    assert result["phase"] == "F3"
+
+
+def test_max_cycles_zero_is_unbounded(run_env):
+    """CT-016 / FR-024: 'Default 0 = unbounded.'
+
+    A run that never passed the flag behaves exactly as every run did before,
+    which is what makes the cap safe to ship on by default.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=99, max_cycles=0)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result.get("halted") is not True
+    assert result["phase"] == "F3"
+
+
+def test_halted_is_a_named_state_and_not_done(run_env):
+    """ST-008: 'HALTED is not DONE.'
+
+    They are both terminal and they mean opposite things — DONE is "every
+    requirement verified and every LIVE defect closed", HALTED is "we ran out of
+    cycles with work still open". Collapsing them would let a capped run be
+    reported as a successful one.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+
+    assert result["phase"] == RUN_PHASE_HALTED
+    assert result["phase"] != "F6"
+    state = json.loads((fdir / "state.json").read_text())
+    assert state["phase"] == RUN_PHASE_HALTED
+    assert state["halted_at_cycle"] == 2
+    assert "max-cycles" in state["halted_reason"]
+
+
+def test_the_init_schema_advertises_max_cycles(run_env):
+    """CT-016's registration half: the flag has to be reachable over MCP.
+
+    A `max_cycles` the handler persists but the schema never advertises is a cap
+    no run can set — the shape that made `casting_commit` always-None and
+    `inspect_start` unreachable.
+    """
+    from foundry_mcp import server as foundry_server
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    prop = tools["Foundry-Init"].inputSchema["properties"]["max_cycles"]
+    assert prop["type"] == "integer"
+    assert prop["default"] == 0
+
+    import inspect
+
+    from foundry_mcp.tools import foundry as foundry_module
+
+    params = inspect.signature(foundry_module.foundry_init).parameters
+    assert params["max_cycles"].default == 0
+
+
+# --------------------------------------------------------------------------- #
+# CT-012 / FR-020 / FR-036 / AC-032 / OT-022 — the stall detector asks who is
+# running before it accuses
+# --------------------------------------------------------------------------- #
+
+
+def _stale_stall_clock(fdir: Path, seconds: int) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    (fdir / ".last-next-at").write_text(stamp.isoformat() + "\n", encoding="utf-8")
+
+
+def _progressing_ledger(fdir: Path, agent: str = "casting-3") -> None:
+    """A progress ledger whose last line is recent — an agent that is working."""
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / f"{agent}.jsonl").write_text(
+        json.dumps({
+            "timestamp": fo._now(), "phase": "cast", "step": "writing the handler",
+            "agent": agent,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_long_gap_with_agents_progressing_reports_waiting_not_a_stall(run_env):
+    """AC-032 verbatim (first half): 'With an active team and a progressing
+    ledger, a Foundry-Next call more than 180 seconds after the previous one
+    reports waiting on N agents with the oldest progress age and sets no stall
+    warning.'
+
+    OT-022 drives the same claim at ten minutes. The warning used to fire on the
+    clock ALONE, so the most common multi-minute gap in a foundry run — the lead
+    waiting, correctly, for eight CAST teammates — was reported as "You were
+    silently deliberating. Stop deliberating." The lead is trained to obey that
+    literally, so the accusation actively pushed it to stop waiting and improvise
+    over half-built work. A watchdog whose false positive is the NORMAL case is
+    not a watchdog.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _progressing_ledger(fdir)
+    _stale_stall_clock(fdir, 600)
+
+    nxt = foundry_next_action(project_root)
+
+    assert "stall_detected_seconds" not in nxt, nxt.get("instructions", "")[:400]
+    assert nxt["waiting_on_agents"]["waiting"] is True
+    assert nxt["waiting_on_agents"]["count"] == 1
+    assert "oldest progress" in nxt["waiting_on_agents"]["detail"]
+    assert "WAITING ON 1 AGENT" in nxt["instructions"]
+    # FR-036's proviso: the notice never asserts deliberation while an agent is
+    # progressing.
+    assert "silently deliberating" not in nxt["instructions"]
+
+
+def test_a_long_gap_with_nothing_running_still_reports_the_stall(run_env):
+    """AC-032's second half: 'with no active teams it reports the stall.'
+
+    The watchdog is scoped, not removed. When nothing is running the silence IS
+    the lead's own, and the blunt instruction is the right one — that failure
+    mode (a lead deliberating instead of executing) is real and is what the
+    warning was written for.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stale_stall_clock(fdir, 600)
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["stall_detected_seconds"] >= 600
+    assert "STALL DETECTED" in nxt["instructions"]
+    assert "NO agent is running" in nxt["instructions"]
+    assert "waiting_on_agents" not in nxt
+
+
+def test_a_finished_agent_does_not_hold_the_lead_waiting(run_env):
+    """The notice must not become the false positive it replaced.
+
+    An agent whose ledger ends with a terminal line has declared itself finished,
+    and reporting the lead as "waiting" on it would teach the lead to ignore the
+    notice — the same way a roster where every finished agent looks stalled
+    teaches it to ignore `needs_attention`.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / "casting-3.jsonl").write_text(
+        json.dumps({
+            "timestamp": fo._now(), "phase": "cast", "step": "committed 9f21ac3",
+            "done": True, "agent": "casting-3",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    _stale_stall_clock(fdir, 600)
+
+    nxt = foundry_next_action(project_root)
+
+    assert "waiting_on_agents" not in nxt
+    assert "STALL DETECTED" in nxt["instructions"]
+
+
+def test_the_waiting_notice_never_blocks(run_env):
+    """CT-012: 'none; never blocks.'
+
+    Driven by breaking the liveness read outright. A watchdog that could raise —
+    or that could refuse a Foundry-Next because it failed to work out who was
+    running — would be strictly worse than the accusation it replaced, and the
+    degrade direction is toward WARNING rather than toward silence, so a broken
+    reader can never suppress a real stall.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stale_stall_clock(fdir, 600)
+
+    from foundry_mcp.tools import foundry_spawn
+
+    def _explode(*_a, **_k):
+        raise RuntimeError("liveness is unavailable")
+
+    original = foundry_spawn.foundry_liveness
+    foundry_spawn.foundry_liveness = _explode
+    try:
+        nxt = foundry_next_action(project_root)
+    finally:
+        foundry_spawn.foundry_liveness = original
+
+    assert nxt["action"], "the call answered rather than raising"
+    assert "STALL DETECTED" in nxt["instructions"], (
+        "a liveness reader that cannot answer must not suppress a real stall"
+    )
+
+
+def test_a_short_gap_says_nothing_either_way(run_env):
+    """The threshold is unchanged (FR-036 leaves it to the implementer, and 180
+    seconds was never the defect — the accusation was). A normal cadence must
+    produce no notice at all, or the signal is noise."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _progressing_ledger(fdir)
+    _stale_stall_clock(fdir, 10)
+
+    nxt = foundry_next_action(project_root)
+
+    assert "stall_detected_seconds" not in nxt
+    assert "waiting_on_agents" not in nxt
+    assert "STALL DETECTED" not in nxt["instructions"]
+    assert "WAITING ON" not in nxt["instructions"]

@@ -31,15 +31,65 @@ properties of the WRITE, not of the gate:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
 from pathlib import Path
 
 import pytest
 
+from foundry_mcp.schemas.vocab import (
+    FIX_AUTHORS,
+    HANDOFF_EVENT_LEAD_FIX,
+    LEAD_LANE_MAX_LINES,
+)
 from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
-from foundry_mcp.tools.foundry_orchestrator import foundry_mark_defect_fixed
+from foundry_mcp.tools.foundry_orchestrator import (
+    foundry_mark_defect_fixed as _mark_defect_fixed,
+)
+
+
+# --------------------------------------------------------------------------- #
+# CT-005 / AC-020 — every Foundry-Fix now declares WHO WROTE THE FIX, and a
+# teammate-authored one states back the hash of the prompt it was dispatched
+# with (CT-011 / AC-030).
+#
+# Those are two more fields on ~100 call sites whose subject is the ADJACENT-PATH
+# ladder and nothing else. Threading them through by hand would have edited a
+# hundred assertions to test one requirement, so they are supplied once here and
+# every existing call reads exactly as it did. `setdefault`, never assignment:
+# each test that IS about authorship overrides them and its override wins, which
+# is the property that makes this a fixture rather than a mask.
+#
+# The default is `teammate` because that is what the ladder below was written
+# about — a GRIND teammate closing a defect it was dispatched to fix. The lead
+# lane gets its own tests, which pass `authored_by="lead"` explicitly.
+# --------------------------------------------------------------------------- #
+
+#: The casting whose prompt `run_env` seeds and whose hash the wrapper reports.
+FIXTURE_CASTING_ID = 1
+FIXTURE_PROMPT_TEXT = "# Casting 1\n\nThe pre-authored prompt this run dispatched.\n"
+
+
+def _published_prompt_hash(text: str = FIXTURE_PROMPT_TEXT) -> str:
+    """The hash spelling `foundry_spawn` publishes and the gate compares.
+
+    Derived here rather than imported so the test states the FORM independently:
+    "sha256:" plus the first sixteen hex characters. A test that imported
+    `_hash_str` would agree with the implementation by construction and could
+    never catch it changing spelling.
+    """
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def foundry_mark_defect_fixed(**kwargs):
+    """`foundry_mark_defect_fixed` with the tool-wide declarations supplied."""
+    kwargs.setdefault("authored_by", "teammate")
+    if kwargs["authored_by"] == "teammate":
+        kwargs.setdefault("casting_id", FIXTURE_CASTING_ID)
+        kwargs.setdefault("prompt_hash", _published_prompt_hash())
+    return _mark_defect_fixed(**kwargs)
 
 
 # --------------------------------------------------------------------------- #
@@ -54,6 +104,13 @@ def run_env(tmp_path, monkeypatch):
     run_name = "fix-gate-run"
     fdir = project_root / "foundry-archive" / run_name
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    # CT-011: the prompt file the reported hash is checked against. Pointer
+    # dispatch hands a teammate a path and a hash instead of the text, and the
+    # fix gate is one of the two doors that makes that checkable — so the file
+    # has to exist for the honest path to be exercised at all.
+    (fdir / "castings" / f"casting-{FIXTURE_CASTING_ID}-prompt.md").write_text(
+        FIXTURE_PROMPT_TEXT, encoding="utf-8"
+    )
 
     monkeypatch.setattr(
         fo,
@@ -1099,7 +1156,10 @@ def test_the_forge_log_mirror_records_the_server_cycle(run_env):
     )
 
     log = (fdir / "forge-log.md").read_text(encoding="utf-8")
-    assert "D-001 FIXED** in cycle 6" in log
+    # The mirror now also carries the tier and the author (GI-003 / CT-001): a
+    # lead reading forge-log.md to see what closed needs to know whether a fix
+    # was lead-authored, and on what evidence tier, without opening the ledger.
+    assert "D-001 FIXED** (unknown, by teammate) in cycle 6" in log
     assert "cycle 99" not in log
 
 
@@ -1266,8 +1326,16 @@ def test_tool_schema_declares_both_but_leaves_the_ladder_reachable():
     tools = asyncio.run(foundry_server.list_tools())
     fix = next(t for t in tools if t.name == "Foundry-Fix")
 
-    assert set(fix.inputSchema["required"]) == {"defect_id", "cycle"}
+    # CT-005 / AC-020 added `authored_by`, and adding it is CORRECT on exactly
+    # the reasoning above: D-039's problem was that TWO fields in `required`
+    # made a two-field refusal unreachable, since the SDK returns on the first
+    # error. One more single field costs no message — a caller omitting only
+    # `authored_by` gets a refusal naming `authored_by`, which is the whole
+    # answer. What must stay out is the adjacent-path PAIR, and it does.
+    assert set(fix.inputSchema["required"]) == {"defect_id", "cycle", "authored_by"}
     props = fix.inputSchema["properties"]
+    assert "adjacent_path_statement" not in fix.inputSchema["required"]
+    assert "adjacent_path_test" not in fix.inputSchema["required"]
     assert "adjacent_path_statement" in props
     assert "adjacent_path_test" in props
     # The descriptions carry the semantics A-017 / A-018 specify, and say the
@@ -1300,7 +1368,12 @@ def test_an_mcp_caller_omitting_both_declarations_sees_the_multi_field_refusal(r
 
     tools = asyncio.run(foundry_server.list_tools())
     fix = next(t for t in tools if t.name == "Foundry-Fix")
-    args = {"defect_id": "D-001", "cycle": 2}
+    # `authored_by` is supplied because CT-005 puts it in `required`; the two
+    # adjacent-path declarations are the omission under test, and they are the
+    # pair D-039 keeps out of `required` precisely so this call reaches the
+    # handler.
+    args = {"defect_id": "D-001", "cycle": 2, "authored_by": "lead",
+            "fix_commit": "0" * 40}
 
     # Step 1 — the SDK's validation must let this through, or the handler's
     # refusal is unreachable no matter how good it is.
@@ -1330,7 +1403,12 @@ def test_an_mcp_caller_omitting_both_declarations_sees_the_multi_field_refusal(r
 
 def test_a_complete_call_still_validates_against_the_schema(run_env):
     """NFR-002's no-narrowing half: loosening ``required`` must not have made a
-    well-formed call invalid, and the optional properties still type-check."""
+    well-formed call invalid, and the optional properties still type-check.
+
+    ``authored_by`` joined ``required`` with CT-005 and is supplied here for
+    that reason — the two adjacent-path declarations are still deliberately OUT
+    of ``required`` (D-039), which is what this test is about and what the
+    second half still pins."""
     import jsonschema
 
     from foundry_mcp import server as foundry_server
@@ -1342,6 +1420,7 @@ def test_a_complete_call_still_validates_against_the_schema(run_env):
         instance={
             "defect_id": "D-001",
             "cycle": 2,
+            "authored_by": "teammate",
             "adjacent_path_statement": ADJACENT_STATEMENT,
             "adjacent_path_test": ADJACENT_TEST,
         },
@@ -1351,15 +1430,25 @@ def test_a_complete_call_still_validates_against_the_schema(run_env):
     # the fields from `required` did not drop their schema.
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(
-            instance={"defect_id": "D-001", "cycle": 2, "adjacent_path_test": 7},
+            instance={
+                "defect_id": "D-001", "cycle": 2,
+                "authored_by": "teammate", "adjacent_path_test": 7,
+            },
             schema=fix.inputSchema,
         )
 
 
 def test_dispatch_threads_both_declarations_through(run_env):
     """The registration half: server.py's Foundry-Fix lambda must actually pass
-    the two new arguments, or the schema would advertise fields the handler
-    never sees."""
+    every argument through, or the schema would advertise fields the handler
+    never sees.
+
+    Extended to the four CT-005 / CT-011 fields for the same reason it existed
+    for the two adjacent-path ones: a widened schema whose dispatch lambda was
+    not widened with it advertises an obligation the handler can never observe,
+    which is how `target_kind` and `defect_class` shipped dead on the filing
+    door. `authored_by="lead"` with a `fix_commit` is the shape that threads the
+    most fields at once."""
     project_root, fdir = run_env
     _seed_defect(fdir)
 
@@ -1371,6 +1460,10 @@ def test_dispatch_threads_both_declarations_through(run_env):
         result = foundry_server._DISPATCH["Foundry-Fix"]({
             "defect_id": "D-001",
             "cycle": 3,
+            "authored_by": "teammate",
+            "casting_id": FIXTURE_CASTING_ID,
+            "prompt_hash": _published_prompt_hash(),
+            "regression_test": "tests/test_auth.py::test_sweeper_does_not_evict_a_live_session",
             "adjacent_path_statement": ADJACENT_STATEMENT,
             "adjacent_path_test": ADJACENT_TEST,
         })
@@ -1380,6 +1473,8 @@ def test_dispatch_threads_both_declarations_through(run_env):
     assert result["ok"] is True, result
     assert result["adjacent_path_statement"] == ADJACENT_STATEMENT
     assert result["adjacent_path_test"] == ADJACENT_TEST
+    assert result["authored_by"] == "teammate"
+    assert result["regression_test"].endswith("::test_sweeper_does_not_evict_a_live_session")
 
 
 # --------------------------------------------------------------------------- #
@@ -1412,6 +1507,15 @@ def _drive_mcp(project_root: str, **args) -> dict:
     that defeated it is what a real record carries, not what a fixture does.
     """
     from foundry_mcp import server as foundry_server
+
+    # The same two tool-wide declarations the in-process wrapper supplies, for
+    # the same reason and with the same `setdefault` discipline: every test
+    # below is about the adjacent-path ladder, and a test that overrides either
+    # field still wins. See the block above the wrapper.
+    args.setdefault("authored_by", "teammate")
+    if args["authored_by"] == "teammate":
+        args.setdefault("casting_id", FIXTURE_CASTING_ID)
+        args.setdefault("prompt_hash", _published_prompt_hash())
 
     previous = foundry_server._project_root
     try:
@@ -1829,3 +1933,885 @@ def test_every_spelling_of_the_defects_location_reaches_the_same_verdict(run_env
         adjacent_path_test=ADJACENT_TEST,
     )
     assert accepted["ok"] is True, (location, accepted)
+
+
+# --------------------------------------------------------------------------- #
+# US-003 / US-005 — FIX CEREMONY IS PROPORTIONAL TO THE EVIDENCE TIER
+#
+# Every fix used to pay the full LIVE declaration, so closing a scan-derivation
+# gap nobody had reproduced cost the same apparatus as fixing a driven,
+# reachable failure — an adjacent-path statement, an adjacent-path test that
+# drives one of the paths it names, and the reading to find both. On a one-line
+# change that is thirty minutes of apparatus buying nothing, because there is no
+# reachable failure whose blast radius it is protecting.
+#
+# The tier is an EVIDENCE grade and never a severity (GI-001). Both tiers are
+# defects, both get fixed, and a LIVE fix keeps every declaration it ever had —
+# unweakened, which several tests below assert directly.
+# --------------------------------------------------------------------------- #
+
+LATENT_REPRODUCTION = "AST sweep of every call site finds 0 reachable paths"
+
+
+def _seed_tiered(fdir: Path, tier: str, defect_id: str = "D-001", **extra) -> None:
+    """Seed one defect at a named tier, otherwise identical to `_seed_defect`."""
+    extra.setdefault("tier", tier)
+    if tier == "LATENT":
+        extra.setdefault("reproduction_attempted", LATENT_REPRODUCTION)
+    extra.setdefault("class", "FALSE_DOCUMENTED_CONTRACT")
+    _seed_defect(fdir, defect_id, **extra)
+
+
+def _regression_test_file(project_root: str) -> str:
+    """Write a real test file and return the locator that names a test in it.
+
+    Written rather than asserted about, because the LATENT lane's strongest rung
+    only fires when the path RESOLVES: `path::test` where the file exists is
+    checked properly by reading it. A fixture that named a path off in space
+    would exercise only the lexical half.
+    """
+    tests_dir = Path(project_root) / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_backlog.py").write_text(
+        "def test_absent_section_is_named():\n"
+        "    assert True\n"
+        "\n"
+        "\nclass TestBacklog:\n"
+        "    def test_method_form(self):\n"
+        "        assert True\n",
+        encoding="utf-8",
+    )
+    return "tests/test_backlog.py::test_absent_section_is_named"
+
+
+# --------------------------------------------------------------------------- #
+# ST-003 / CT-004 / FR-008 / AC-011 / AC-012 / OT-007 — the LATENT lane
+# --------------------------------------------------------------------------- #
+
+
+def test_a_latent_fix_closes_on_a_regression_test_locator_alone(run_env):
+    """OT-007 verbatim: 'Foundry-Fix on a LATENT defect succeeds with a
+    regression_test locator alone and stores it.'
+
+    AC-011's first clause: 'Foundry-Fix on a LATENT defect with authored_by, a
+    regression_test locator and no adjacent-path fields succeeds.' No statement,
+    no adjacent-path test, no failing-then-passing prose.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 5)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=5, regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    assert result["tier"] == "LATENT"
+    assert result["regression_test"] == locator
+
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["status"] == "fixed"
+    assert record["regression_test"] == locator
+    assert record["authored_by"] == "teammate"
+    assert record["fixed_in_cycle"] == 5
+
+
+def test_a_latent_fix_demands_no_adjacent_path_declaration(run_env):
+    """ST-003 verbatim: 'adjacent-path statement and test are not demanded for
+    LATENT.'
+
+    Stated as the ABSENCE of a refusal on the exact fields the LIVE lane
+    requires, because "not demanded" is a claim about what does NOT happen, and
+    a lane that quietly accepted the fields while still requiring them would
+    pass a success-only test.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    assert "adjacent_path_statement" not in result.get("missing_fields", [])
+    assert result["adjacent_path_statement"] == ""
+    assert result["adjacent_path_test"] == ""
+
+
+def test_a_latent_fix_with_no_regression_test_is_refused_naming_the_field(run_env):
+    """AC-012 verbatim (first half): 'Foundry-Fix on a LATENT defect with no
+    regression_test... is refused.'
+
+    Proportional is not free. The lane trades the adjacent-path pair for ONE
+    named test, and a fix that names none has paid nothing.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, project_root=project_root
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == ["regression_test"]
+    assert "regression_test" in result["error"]
+    assert result["tier"] == "LATENT"
+    # A refusal mutates nothing.
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["status"] == "open"
+
+
+@pytest.mark.parametrize(
+    "locator, why",
+    [
+        ("n/a", "prose, not a locator"),
+        ("tests/test_backlog.py", "a file, not a test inside one"),
+        ("::test_thing", "an empty path"),
+        ("tests/test_backlog.py::", "an empty test name"),
+        ("tests/test_backlog.py::todo", "a placeholder name"),
+        ("tests/test_backlog.py::test_that_is_not_in_the_file", "names no such test"),
+    ],
+)
+def test_a_locator_that_does_not_name_a_test_is_refused(run_env, locator, why):
+    """AC-012's second half: 'or one that does not name a test, is refused.'
+
+    CT-004 bounds the gate precisely — "refusal only when the locator is absent
+    or does not name a test" — so each row here is one way of not naming one. The
+    last row is the strongest and only fires because the path RESOLVES: the file
+    is read and the name is not in it.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (locator, why, result)
+    assert result["missing_fields"] == ["regression_test"], (locator, why)
+
+
+def test_an_unresolvable_path_is_accepted_on_the_shape_alone(run_env):
+    """The deliberate asymmetry, and the reason for it.
+
+    `_test_ref_problem` already carries this ruling in its own comment: this
+    server runs against a TARGET repo whose tests it frequently cannot resolve,
+    and "I could not find your file" is a refusal the caller cannot falsify from
+    where they stand — it blocks a real fix behind an unsatisfiable check. So the
+    filesystem rung is a STRENGTHENING that fires only when it can be proven,
+    never a precondition.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        regression_test="packages/api/tests/test_sweeper.py::test_evicts_stale",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_a_test_method_on_a_test_class_resolves(run_env):
+    """pytest collects both shapes, so both must resolve. A locator naming a
+    method on a `Test` class is a real test locator and refusing it would send a
+    teammate to rewrite a perfectly good test."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        regression_test="tests/test_backlog.py::TestBacklog::test_method_form",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+
+
+def test_no_failing_then_passing_statement_is_demanded(run_env):
+    """FR-041 / AC-012: 'it demands no failing-then-passing statement, which the
+    teammate protocol requires in the completion report instead.'
+
+    Asserted against the SIGNATURE, because the claim is that no such input
+    EXISTS. A server that accepted the statement as a string would be accepting a
+    claim it cannot check; PROVE drives the test to confirm it instead, which is
+    a check.
+    """
+    import inspect
+
+    params = inspect.signature(_mark_defect_fixed).parameters
+    assert not [p for p in params if "failing" in p or "passing" in p]
+    assert not [p for p in params if "before" in p or "after" in p]
+
+
+def test_an_untiered_defect_takes_the_stricter_live_lane(run_env):
+    """FR-051's fail-safe direction, at the fix door.
+
+    A record with no tier is one nobody classified, and unknown blocks like LIVE
+    at every gate. The same reasoning applies here: it gets the STRICTER
+    ceremony, never the looser one. Reading it as LATENT would let a fix close on
+    one locator because an older archive never carried the field.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_defect(fdir)  # no tier at all — a pre-change record
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == [
+        "adjacent_path_statement", "adjacent_path_test",
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# FR-015 / AC-023 — the LIVE lane is UNWEAKENED
+# --------------------------------------------------------------------------- #
+
+
+def test_a_live_defect_still_demands_both_adjacent_path_declarations(run_env):
+    """AC-011's middle clause: 'the same call on a LIVE defect is refused naming
+    adjacent_path_statement and adjacent_path_test.'
+
+    The same call — a regression_test locator and nothing else — that closes a
+    LATENT defect. Nothing about the LIVE lane moved.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == [
+        "adjacent_path_statement", "adjacent_path_test",
+    ]
+    assert result["tier"] == "LIVE"
+
+
+def test_a_lane_live_fix_by_the_lead_still_needs_the_full_declaration(run_env):
+    """AC-023 verbatim: 'A lane LIVE fix still requires adjacent_path_statement
+    and adjacent_path_test.'
+
+    FR-015 says it too. The lead lane bounds how MUCH a lead may change without
+    dispatching a teammate; it does not buy a discount on declaring the blast
+    radius of a reachable failure.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead",
+        fix_commit="0" * 40, project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == [
+        "adjacent_path_statement", "adjacent_path_test",
+    ]
+
+
+def test_a_live_fix_that_also_names_a_regression_test_keeps_it(run_env):
+    """Never demanded on the LIVE lane, always kept when offered: a fix that has
+    said something true should have the record carry it."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+    locator = _regression_test_file(project_root)
+
+    result = foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["regression_test"] == locator
+    assert record["adjacent_path_statement"] == ADJACENT_STATEMENT
+
+
+# --------------------------------------------------------------------------- #
+# GI-003 / ST-004 / CT-005 / CT-006 / FR-014 / FR-016 / FR-046 / FR-053 —
+# THE BOUNDED LEAD LANE
+#
+# A cycle whose open defects are all small should close without a teammate
+# spawn. What makes that safe rather than a licence is that the bound is
+# MEASURED from the commit rather than claimed in prose, and that the server
+# itself writes the audit record — "a lead fix recorded only as free prose in a
+# hand-written handoff" is GI-003's named violation, and a record the author
+# writes about their own exemption is not an audit trail.
+# --------------------------------------------------------------------------- #
+
+
+def _git(root: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _repo(project_root: str) -> Path:
+    root = Path(project_root)
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "foundry@example.invalid")
+    _git(root, "config", "user.name", "foundry")
+    # The real repo's own rule (`.gitignore:16` is `/foundry-archive/`), and it
+    # is load-bearing here: without it the run's own state.json and defects.json
+    # land in the fix commit and the lane counts THEM as the non-test files it
+    # is measuring. A lane that counted a run's bookkeeping would refuse every
+    # honest lead fix.
+    (root / ".gitignore").write_text("/foundry-archive/\n", encoding="utf-8")
+    (root / "src").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "sweeper.py").write_text(
+        "".join(f"line_{n} = {n}\n" for n in range(1, 60)), encoding="utf-8"
+    )
+    (root / "tests").mkdir(parents=True, exist_ok=True)
+    (root / "tests" / "test_sweeper.py").write_text(
+        "def test_evicts_stale():\n    assert True\n", encoding="utf-8"
+    )
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "baseline")
+    return root
+
+
+def _commit_changing(project_root: str, changes: dict[str, int]) -> str:
+    """Commit `changes` (path -> ADDED-PLUS-DELETED lines) and return its SHA.
+
+    A REAL commit, because the lane is measured with `git show --numstat` and a
+    monkeypatched subprocess would pin the call rather than the measurement.
+
+    Lines are APPENDED rather than rewritten, and the distinction is the whole
+    reason this docstring exists: numstat counts additions and deletions
+    separately, so rewriting N lines is 2N against a bound the requirement
+    states as "added+deleted". Appending N is exactly N, which makes every
+    number below read as the number FR-016 is talking about.
+    """
+    root = Path(project_root)
+    for rel, added in changes.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existing = target.read_text(encoding="utf-8") if target.exists() else ""
+        target.write_text(
+            existing + "".join(f"added_{n} = {n}\n" for n in range(added)),
+            encoding="utf-8",
+        )
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "lead fix")
+    return _git(root, "rev-parse", "HEAD")
+
+
+# --------------------------------------------------------------------------- #
+# CT-005 / AC-020 — authored_by, and what each author owes
+# --------------------------------------------------------------------------- #
+
+
+def test_a_fix_without_authored_by_is_refused_naming_the_field(run_env):
+    """AC-020 verbatim (first clause): 'Foundry-Fix without authored_by is
+    refused naming the field.'
+
+    GI-003 makes it required on EVERY fix, not only lead ones: a lead fix
+    recorded as free prose in a hand-written handoff is a fix nothing can
+    measure or count, and this field is what makes the difference visible at all.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == ["authored_by"]
+    assert "authored_by" in result["error"]
+
+
+def test_an_unknown_author_is_refused_against_the_closed_vocabulary(run_env):
+    """Who wrote a fix is a closed vocabulary. 'ai', 'me' and 'foundry' are not
+    members, and coercing any of them onto one would make the report's lead_fix
+    section a fiction."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="the-lead",
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == ["authored_by"]
+    assert set(FIX_AUTHORS).issubset(set(result["error"]) | {"lead", "teammate"})
+    assert "lead" in result["error"] and "teammate" in result["error"]
+
+
+def test_a_lead_fix_with_no_test_is_refused(run_env):
+    """AC-020's middle clause: 'with authored_by=lead and no test it is
+    refused.'
+
+    Whichever lane it is in. A LATENT lead fix owes its regression_test and a
+    LIVE one owes its adjacent-path test; neither is waived by the author being
+    the lead.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    commit = _commit_changing(project_root, {"src/sweeper.py": 3})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead", fix_commit=commit,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == ["regression_test"]
+
+
+@pytest.mark.parametrize("tier", ["LIVE", "LATENT"])
+def test_a_lead_fix_without_a_commit_is_refused_whatever_the_tier(run_env, tier):
+    """AC-020's last clause: 'with authored_by=lead and no fix_commit it is
+    refused naming fix_commit, WHATEVER THE TIER.'
+
+    FR-053 spells out why the LATENT case is not an oversight: 'authored_by=lead
+    always needs fix_commit so the lead_fix handoff carries the commit; the
+    numstat measurement runs only when the defect is LIVE.' The commit is the
+    audit record's content, not only the measurement's input — so it is required
+    even where nothing measures it.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, tier)
+    locator = _regression_test_file(project_root)
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead",
+        regression_test=locator,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, (tier, result)
+    assert result["missing_fields"] == ["fix_commit"], tier
+    assert "fix_commit" in result["error"], tier
+
+
+# --------------------------------------------------------------------------- #
+# CT-006 / FR-016 / FR-046 / AC-021 / OT-009 — the measurement
+# --------------------------------------------------------------------------- #
+
+
+def test_one_non_test_file_at_the_line_limit_succeeds(run_env):
+    """OT-009 verbatim (first half): 'Foundry-Fix with authored_by lead on a LIVE
+    defect and a fix_commit of one non-test file with 20 lines succeeds.'
+
+    AC-021 adds the detail that makes the lane usable: 'one non-test file with 20
+    lines PLUS A TEST FILE succeeds.' FR-016 excludes test files from the count,
+    because a bounded fix that could not carry its own regression test would be a
+    lane nobody could use honestly.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LIVE")
+    # Twenty added-plus-deleted lines in the one non-test file, and forty more
+    # in a test file that FR-016 excludes from the count entirely.
+    commit = _commit_changing(
+        project_root, {"src/sweeper.py": LEAD_LANE_MAX_LINES,
+                       "tests/test_sweeper.py": 40}
+    )
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    assert result["authored_by"] == "lead"
+    assert result["fix_commit"] == commit
+
+
+def test_twenty_one_lines_is_refused_naming_the_count(run_env):
+    """OT-009's second half: 'with 21 lines it is refused naming the count.'
+
+    AC-021 requires the refusal to NAME the count, because "too big" tells a lead
+    nothing about which half to shrink — and the honest next move (dispatch it to
+    a teammate) depends on knowing by how much.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(
+        project_root, {"src/sweeper.py": LEAD_LANE_MAX_LINES + 1}
+    )
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert "21" in result["error"], result
+    assert str(LEAD_LANE_MAX_LINES) in result["error"], result
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["status"] == "open"
+
+
+def test_two_non_test_files_are_refused_naming_the_file_count(run_env):
+    """AC-021's other half: 'a fix_commit that touches two non-test files... is
+    refused naming the count.'
+
+    The file bound is the one that matters most: a change spanning two modules is
+    a change whose blast radius nobody has traced, however few lines it is.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(
+        project_root, {"src/sweeper.py": 2, "src/other.py": 2}
+    )
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert "2 non-test file" in result["error"], result
+    assert "src/sweeper.py" in result["error"], result
+
+
+def test_a_latent_lead_fix_of_any_size_succeeds_and_is_recorded_unmeasured(run_env):
+    """AC-021's last clause: 'on a LATENT defect a lead fix of any size succeeds
+    with its regression_test and its required fix_commit is recorded unmeasured.'
+
+    FR-046 / CT-006: the numstat measurement runs ONLY on LIVE. A LATENT gap can
+    be a large, mechanical, entirely safe change, and there is no reachable
+    failure whose blast radius the bound is protecting — so the bound would be
+    ceremony rather than a control.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    # Far outside the lane: four files, hundreds of lines.
+    commit = _commit_changing(project_root, {
+        "src/sweeper.py": 50, "src/a.py": 50, "src/b.py": 50, "src/c.py": 50,
+    })
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit=commit,
+        regression_test=locator, project_root=project_root,
+    )
+
+    assert result["ok"] is True, result
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["fix_commit"] == commit, "recorded..."
+    assert record["authored_by"] == "lead"
+
+
+def test_a_commit_git_cannot_read_is_refused_rather_than_waved_through(run_env):
+    """A measurement that could not be taken is not a measurement that passed.
+
+    The alternative shape — treating an unreadable commit as "nothing to
+    measure" — would let an unbounded lead fix through by naming a SHA that does
+    not exist, which is the easiest possible way past the lane.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 2)
+    _seed_tiered(fdir, "LIVE")
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=2, authored_by="lead", fix_commit="f" * 40,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert "measured" in result["error"], result
+
+
+# --------------------------------------------------------------------------- #
+# GI-003 / AC-022 — the SERVER writes the handoff record
+# --------------------------------------------------------------------------- #
+
+
+def test_a_successful_lead_fix_appends_a_lead_fix_handoff_record(run_env):
+    """AC-022 verbatim: 'A successful lead fix causes the server to append a
+    lead_fix record to handoffs.jsonl carrying the defect id, tier, file, line
+    count and test.'
+
+    THE SERVER, not the lead. GI-003's named violation is "a lead fix recorded
+    only as free prose in a hand-written handoff" — a record the author writes
+    about their own exemption. Making it a side effect of the accepted call is
+    what makes it impossible to forget.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(project_root, {"src/sweeper.py": 4})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    records = [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    lead_fixes = [r for r in records if r.get("event") == HANDOFF_EVENT_LEAD_FIX]
+    assert len(lead_fixes) == 1, records
+    record = lead_fixes[0]
+    assert record["defect_id"] == "D-001"
+    assert record["tier"] == "LIVE"
+    assert record["file"] == "src/sweeper.py"
+    assert record["line_count"] == 4
+    assert record["test"] == ADJACENT_TEST
+    assert record["fix_commit"] == commit
+
+
+def test_a_latent_lead_fix_is_recorded_as_unmeasured(run_env):
+    """The handoff has to say WHICH KIND of lead fix it was.
+
+    `file` and `line_count` are None on a LATENT fix, which is the record stating
+    truthfully that it was accepted unmeasured — rather than reporting a
+    measurement nobody took, or omitting the keys and making a reader guess.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    commit = _commit_changing(project_root, {"src/sweeper.py": 40})
+
+    _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        regression_test=locator, project_root=project_root,
+    )
+
+    record = [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
+    ][0]
+    assert record["tier"] == "LATENT"
+    assert record["file"] is None
+    assert record["line_count"] is None
+    assert record["test"] == locator
+    assert record["fix_commit"] == commit
+
+
+def test_a_teammate_fix_writes_no_lead_fix_record(run_env):
+    """The record is the audit trail for the EXEMPTION, so it must not fire on
+    the ordinary path. A lead_fix record per teammate fix would bury the handful
+    that matter under the hundreds that do not."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LIVE")
+
+    foundry_mark_defect_fixed(
+        defect_id="D-001", cycle=3,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    handoffs = fdir / "handoffs.jsonl"
+    records = (
+        [json.loads(line) for line in handoffs.read_text(encoding="utf-8").splitlines()
+         if line.strip()]
+        if handoffs.exists() else []
+    )
+    assert [r for r in records if r.get("event") == HANDOFF_EVENT_LEAD_FIX] == []
+
+
+def test_a_refused_lead_fix_writes_no_handoff_record(run_env):
+    """The record follows the LEDGER, not the attempt.
+
+    Written after the transaction commits, because a handoff naming a fix the
+    transaction then rolled back is the same audit gap pointing the other way —
+    a report listing a lead fix that never happened.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(project_root, {"src/sweeper.py": 40})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert not (fdir / "handoffs.jsonl").exists() or not [
+        line for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# CT-011 / AC-030 / CT-004 — the reported prompt hash
+# --------------------------------------------------------------------------- #
+
+
+def test_a_teammate_fix_reporting_a_wrong_hash_is_refused(run_env):
+    """AC-030's second half: 'Foundry-Accept-Casting and Foundry-Fix refuse when
+    the hash the teammate reports differs from the file's.'
+
+    Pointer dispatch hands a teammate a PATH and a HASH instead of the text, and
+    only an agent that actually read the file can state the value back. That is
+    advice until a gate consumes it, and BOTH consuming gates call the same
+    `check_reported_prompt_hash` — a rung that existed at one door and not the
+    other would let an unread prompt through whichever door the lead walked.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="teammate",
+        casting_id=FIXTURE_CASTING_ID, prompt_hash="sha256:0000000000000000",
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["error"] == "stale_prompt_hash"
+    assert result["expected_hash"] == _published_prompt_hash()
+
+
+def test_a_latent_fix_is_still_refused_on_a_hash_mismatch(run_env):
+    """AC-011's last clause: 'a LATENT fix is still refused when authored_by is
+    missing or the reported prompt hash mismatches.'
+
+    CT-004 is explicit that the lane narrows only the TIER-SPECIFIC ceremony:
+    "the tool-wide refusals (authored_by missing, reported prompt hash mismatch)
+    still apply". Proportional ceremony is not a second, quieter door.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="teammate",
+        casting_id=FIXTURE_CASTING_ID, prompt_hash="sha256:deadbeefdeadbeef",
+        regression_test=locator, project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["error"] == "stale_prompt_hash"
+
+
+def test_a_latent_fix_is_still_refused_when_authored_by_is_missing(run_env):
+    """The other half of the same clause, driven at the real handler."""
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, regression_test=locator,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == ["authored_by"]
+
+
+def test_a_teammate_fix_naming_no_casting_is_refused_naming_both_fields(run_env):
+    """Both fields in ONE refusal, as this door does everywhere else.
+
+    The hash cannot be checked without knowing which prompt it is claimed to be
+    the hash OF, so the two are a pair — and a caller who supplied neither should
+    be told about both rather than sent back twice.
+    """
+    project_root, fdir = run_env
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="teammate",
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True
+    assert result["missing_fields"] == ["prompt_hash", "casting_id"]
+
+
+def test_a_lead_fix_needs_no_prompt_hash(run_env):
+    """The rung is about a TEAMMATE reading a dispatched prompt.
+
+    A lead was never handed one, so demanding a hash from it would be ceremony
+    with nothing behind it — and would make the lead lane unreachable, which is
+    the requirement negating itself.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+    commit = _commit_changing(project_root, {"src/sweeper.py": 3})
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True, result

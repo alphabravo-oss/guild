@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_escalation.py && uv run --quiet python -c "from foundry_mcp.schemas.vocab import ESCALATION_STATUSES, ESCALATION_EXIT_REASONS, STRUCTURAL_PASS_BUDGET, LIVE_CLEAN_CYCLES_TO_CLEAR;print(chr(10) + '=== how an escalated class stops escalating ===');print('statuses:', ' '.join(sorted(ESCALATION_STATUSES)));print('exit reasons:', ' '.join(sorted(ESCALATION_EXIT_REASONS)));print('structural passes before the budget arm fires:', STRUCTURAL_PASS_BUDGET);print('consecutive LIVE-clean cycles before the other arm fires:', LIVE_CLEAN_CYCLES_TO_CLEAR)"
+# evidence-for: US-001, ST-001, ST-002, AC-001, AC-002, AC-003, AC-004, FR-001, FR-002, FR-003, FR-028, OT-001, OT-002, OT-003
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+........................................................................ [ 41%]
+........................................................................ [ 82%]
+..............................                                           [100%]
+174 passed in 0.85s
+
+=== how an escalated class stops escalating ===
+statuses: CLEARED ESCALATED
+exit reasons: budget clean_cycles
+structural passes before the budget arm fires: 2
+consecutive LIVE-clean cycles before the other arm fires: 2

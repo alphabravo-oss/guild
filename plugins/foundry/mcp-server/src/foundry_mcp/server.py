@@ -30,7 +30,9 @@ from foundry_mcp import __version__
 # here is unreachable no matter what the handler accepts.
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
+    DEFECT_TIERS,
     DEFECT_TYPES,
+    FIX_AUTHORS,
     OBSERVATION_CLASSES,
     STREAM_WIRE_IDS,
 )
@@ -55,6 +57,7 @@ from foundry_mcp.tools.foundry_orchestrator import (
     foundry_mark_phase_complete,
     foundry_mark_stream,
     foundry_next_action,
+    foundry_record_spend,
     foundry_register_team,
     foundry_sync_defects,
     foundry_unregister_team,
@@ -78,7 +81,16 @@ from foundry_mcp.tools.validation import validate_report
 # Global project root, set via CLI arg
 _project_root: str = "."
 
-server = Server("Foundry")
+# AC-028 / OT-019 / FR-017 - the MCP initialize handshake reports foundry's
+# `__version__` as serverInfo.version.
+#
+# It reported nothing at all, so a client could not tell which build it was
+# talking to, and neither could a run: a plugin-targeting run whose executing
+# server is a stale cached copy is the exact failure the F0 self-target
+# preflight exists to catch, and the preflight compares a version the handshake
+# never published. `__version__` was already imported into this module for no
+# other purpose.
+server = Server("Foundry", version=__version__)
 
 
 @server.list_tools()
@@ -129,6 +141,24 @@ async def list_tools() -> list[Tool]:
                     "ticket": {"type": "string", "default": ""},
                     "description": {"type": "string", "default": ""},
                     "url": {"type": "string", "default": "", "description": "Target URL for SIGHT audit; persisted to castings/manifest.json target_url."},
+                    # CT-016 / FR-024 / ST-008 - the cycle cap. 0 is unbounded
+                    # and is the default, so a run that does not pass it behaves
+                    # exactly as every run did before. When set, the
+                    # Foundry-Phase call that would open GRIND cycle
+                    # max_cycles+1 SUCCEEDS into a named HALTED state and
+                    # generates the report; it is not a refusal.
+                    "max_cycles": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": (
+                            "Halt the run after this many GRIND cycles. 0 (the "
+                            "default) is unbounded. Reaching the cap is a "
+                            "SUCCESSFUL transition into HALTED, not a refusal: "
+                            "state.json becomes HALTED and the report is "
+                            "generated naming every open LIVE and LATENT defect. "
+                            "HALTED is not DONE."
+                        ),
+                    },
                 },
             },
         ),
@@ -200,11 +230,43 @@ async def list_tools() -> list[Tool]:
             description="Log a defect from any verification stream. Appends to ledger and forge-log.",
             inputSchema={
                 "type": "object",
-                "required": ["cycle", "source", "defect_type", "description"],
+                # CT-001 / CT-002 - `tier` and `defect_class` are REQUIRED, and
+                # they are in `required` rather than left to the handler because
+                # neither has a defensible default. `authored_by`'s sibling case
+                # in Foundry-Fix is different (D-039: two mandatory fields, and
+                # only the handler can name both in one refusal); here a single
+                # missing field is named by the schema and by the handler alike,
+                # and advertising the obligation is what makes a stream emit it.
+                "required": [
+                    "cycle", "source", "defect_type", "description", "tier",
+                    "defect_class",
+                ],
                 "properties": {
                     "cycle": {"type": "integer"},
                     "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
                     "defect_type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
+                    "tier": {
+                        "type": "string",
+                        "enum": sorted(DEFECT_TIERS),
+                        "description": (
+                            "REQUIRED. The evidence you are answerable for. LIVE: "
+                            "you drove the door and observed the wrong result - "
+                            "put the reproduction in the description. LATENT: you "
+                            "looked for the failure and did not find one - name "
+                            "what you drove in reproduction_attempted. NOT a "
+                            "severity: both are defects and both get fixed."
+                        ),
+                    },
+                    "reproduction_attempted": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED when tier is LATENT. What you actually "
+                            "drove and what it found - the negative result IS the "
+                            "evidence (e.g. 'AST sweep of every call site finds "
+                            "0 reachable paths'). 'n/a', 'none' and 'tbd' are "
+                            "refused."
+                        ),
+                    },
                     "description": {"type": "string"},
                     "spec_ref": {"type": "string"},
                     "symbol": {"type": "string"},
@@ -228,10 +290,13 @@ async def list_tools() -> list[Tool]:
                     "defect_class": {
                         "type": "string",
                         "description": (
-                            "Optional root-cause class shared by several "
-                            "instances, persisted as the record's 'class'. A "
-                            "class filed in 3 consecutive cycles escalates to "
-                            "one structural-fix packet."
+                            "REQUIRED root-cause class shared by several "
+                            "instances, persisted as the record's 'class'. "
+                            "Escalation keys on it, so a filing without one "
+                            "cannot recur as anything. A class filed in 3 "
+                            "consecutive cycles escalates to one structural-fix "
+                            "packet, and clears mechanically after two clean "
+                            "cycles or two structural passes."
                         ),
                     },
                 },
@@ -345,22 +410,84 @@ async def list_tools() -> list[Tool]:
                 #
                 # The descriptions below carry the obligation to the caller, and
                 # the tool description states the refusal outright.
-                "required": ["defect_id", "cycle"],
+                # GI-003 / CT-005 / AC-020 - `authored_by` IS in `required`,
+                # unlike the two adjacent-path declarations above it. The D-039
+                # reasoning does not apply: those two are a PAIR, and listing
+                # both made the handler's "name every missing field" refusal
+                # unreachable because the SDK returns on the first error. There
+                # is only one author field, so the schema naming it costs no
+                # message, and advertising the obligation is what makes a lead
+                # supply it.
+                "required": ["defect_id", "cycle", "authored_by"],
                 "properties": {
                     "defect_id": {"type": "string"},
                     "cycle": {"type": "integer"},
+                    "authored_by": {
+                        "type": "string",
+                        "enum": sorted(FIX_AUTHORS),
+                        "description": (
+                            "REQUIRED. Who wrote the fix. 'lead' additionally "
+                            "requires fix_commit whatever the tier, and on a LIVE "
+                            "defect the commit is measured against the lead lane "
+                            "(one non-test file, <= 20 added-plus-deleted lines). "
+                            "'teammate' additionally requires prompt_hash and "
+                            "casting_id."
+                        ),
+                    },
+                    "regression_test": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED on a LATENT defect, and the ONLY declaration "
+                            "it needs: a locator of the form path::test naming the "
+                            "test that would fail if this gap came back (e.g. "
+                            "tests/test_report.py::test_absent_section_is_named). "
+                            "The failing-then-passing statement belongs in your "
+                            "completion report, not on this call."
+                        ),
+                    },
+                    "fix_commit": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED when authored_by is 'lead', whatever the "
+                            "tier - it is what the server's lead_fix handoff "
+                            "record carries. On a LIVE defect it is also measured "
+                            "with `git show --numstat`; on a LATENT defect it is "
+                            "recorded unmeasured."
+                        ),
+                    },
+                    "prompt_hash": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED when authored_by is 'teammate': the sha256 "
+                            "the teammate reported for the casting prompt it read, "
+                            "in the published 'sha256:xxxxxxxxxxxxxxxx' spelling. "
+                            "Refused when it differs from the file's - only an "
+                            "agent that actually read the prompt can state it back."
+                        ),
+                    },
+                    "casting_id": {
+                        "type": ["integer", "string"],
+                        "description": (
+                            "REQUIRED when authored_by is 'teammate': which "
+                            "casting's prompt prompt_hash is claimed to be. It is "
+                            "what resolves the prompt file the hash is checked "
+                            "against."
+                        ),
+                    },
                     "adjacent_path_statement": {
                         "type": "string",
                         "description": (
-                            "REQUIRED. Who ELSE calls this, what else transitions here, "
-                            "what runs concurrently. Must name a path other than the one "
-                            "the defect was found on."
+                            "REQUIRED on a LIVE (or untiered) defect. Who ELSE calls this, "
+                            "what else transitions here, what runs concurrently. Must name "
+                            "a path other than the one the defect was found on. Not "
+                            "demanded on a LATENT defect, which closes on regression_test."
                         ),
                     },
                     "adjacent_path_test": {
                         "type": "string",
                         "description": (
-                            "REQUIRED. Reference to a test exercising at least one NAMED "
+                            "REQUIRED on a LIVE (or untiered) defect. Reference to a test "
+                            "exercising at least one NAMED "
                             "adjacent path (e.g. tests/test_auth.py::test_refresh_reuses_session). "
                             "A locator, not a sentence: 'n/a', 'TODO' and 'tested it "
                             "manually' are refused, as is a test named for the defect's "
@@ -388,7 +515,13 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["description", "source"],
+                            # CT-001 / CT-002 - the SAME obligations the single
+                            # door advertises. Two filing doors that disagree
+                            # about what a defect is would be a worse bug than
+                            # any they could each have, and this is the door a
+                            # whole INSPECT stream files through, so a gap here
+                            # would be the common path rather than the rare one.
+                            "required": ["description", "source", "tier", "class"],
                             "properties": {
                                 "description": {"type": "string"},
                                 "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
@@ -396,12 +529,33 @@ async def list_tools() -> list[Tool]:
                                 "file": {"type": "string"},
                                 "spec_ref": {"type": "string"},
                                 "type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
+                                "tier": {
+                                    "type": "string",
+                                    "enum": sorted(DEFECT_TIERS),
+                                    "description": (
+                                        "REQUIRED. LIVE: you drove the door and "
+                                        "observed the wrong result. LATENT: you "
+                                        "looked and did not find one - name what "
+                                        "you drove in reproduction_attempted. NOT "
+                                        "a severity. The whole batch is refused if "
+                                        "any finding omits it."
+                                    ),
+                                },
+                                "reproduction_attempted": {
+                                    "type": "string",
+                                    "description": (
+                                        "REQUIRED when tier is LATENT: what you "
+                                        "drove and what it found. 'n/a', 'none' "
+                                        "and 'tbd' are refused."
+                                    ),
+                                },
                                 "class": {
                                     "type": "string",
                                     "description": (
-                                        "Optional root-cause class shared by several "
-                                        "instances. A class filed in 3 consecutive "
-                                        "cycles escalates to one structural-fix packet."
+                                        "REQUIRED root-cause class shared by "
+                                        "several instances. Escalation keys on it. "
+                                        "A class filed in 3 consecutive cycles "
+                                        "escalates to one structural-fix packet."
                                     ),
                                 },
                                 "target_kind": {
@@ -509,6 +663,18 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "casting_id": {"type": ["integer", "string"], "description": "Casting id from manifest.json."},
                     "phase": {"type": "string", "enum": ["cast", "grind"], "default": "cast"},
+                    "full_prompt": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Return the prompt TEXT instead of a pointer. The "
+                            "default hands back prompt_path plus its sha256 and "
+                            "tells the teammate to read the file and state the "
+                            "hash back, which Foundry-Accept-Casting and "
+                            "Foundry-Fix then check. Pass true only when you "
+                            "genuinely need the text in your own context."
+                        ),
+                    },
                 },
             },
         ),
@@ -528,6 +694,16 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "wave": {"type": "integer", "description": "1-indexed wave number from manifest.waves."},
                     "phase": {"type": "string", "enum": ["cast", "grind"], "default": "cast"},
+                    "full_prompt": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Return each prompt's TEXT instead of a pointer. The "
+                            "default hands back prompt_path plus sha256 per "
+                            "casting; a wave of eight full prompts is the single "
+                            "largest thing a lead's context ever absorbs."
+                        ),
+                    },
                 },
             },
         ),
@@ -602,20 +778,30 @@ async def list_tools() -> list[Tool]:
                 "EVID-01 re-executes every committed `# evidence-cmd:` at that commit in an "
                 "isolated worktree and rejects the casting on byte-mismatch, and EVID-02 rejects "
                 "it when any requirement ID in the slice is bound to no evidence file. OMIT "
-                "casting_commit and BOTH are skipped SILENTLY while the call still returns "
-                "ok:true — an acceptance that verified no evidence at all. "
+                "casting_commit and the call is REFUSED, naming the field: casting_commit is "
+                "REQUIRED, because a gate whose evidence re-execution is opt-in verified "
+                "nothing. "
                 "Returns the AC list, requirement IDs, any missing citations, any unresolved "
                 "symbol cites, and the evidence verdict and provenance. "
                 "Blocks acceptance if evidence re-execution rejected the casting, if any "
                 "requirement is bound to no evidence, if the teammate reported scope cuts, if any "
                 "requirement has no citation, or if any path#Symbol cite resolves nowhere. "
-                "Refuses before running anything on a stale spec_hash or prompt_hash, a casting "
+                "Refuses before running anything on an absent casting_commit, a stale "
+                "spec_hash, a prompt_hash that differs from the prompt file's, a casting "
                 "prompt with no <spec_requirements> block, or a spec whose declared "
                 "spec_format_version is malformed."
             ),
             inputSchema={
                 "type": "object",
-                "required": ["casting_id", "spec_hash", "prompt_hash", "completion_report"],
+                # CT-015 / AC-015 / FR-010 — casting_commit is REQUIRED.
+                # Optional, it was ALWAYS omitted, so EVID-01 and EVID-02 never
+                # ran from a real run and every casting was accepted with its
+                # evidence unverified while the call returned ok:true. A gate
+                # whose verification is opt-in is not a gate.
+                "required": [
+                    "casting_id", "spec_hash", "prompt_hash", "completion_report",
+                    "casting_commit",
+                ],
                 "properties": {
                     "casting_id": {"type": ["integer", "string"]},
                     "spec_hash": {"type": "string", "description": "Fresh hash from Foundry-Spec-Hash."},
@@ -632,9 +818,11 @@ async def list_tools() -> list[Tool]:
                     "casting_commit": {
                         "type": "string",
                         "description": (
-                            "The casting's commit SHA. Supplying it runs evidence "
-                            "re-execution for that commit in an isolated worktree "
-                            "and binds each requirement ID to committed evidence."
+                            "REQUIRED. The casting's commit SHA. Evidence "
+                            "re-execution runs at that commit in an isolated "
+                            "worktree and each requirement ID is bound to "
+                            "committed evidence; omitting it is refused, naming "
+                            "the field."
                         ),
                     },
                 },
@@ -726,6 +914,62 @@ async def list_tools() -> list[Tool]:
         ),
         # ── Forge-Spec ─────────────────────────────────────────────
         Tool(
+            name="Foundry-Spend",
+            description=(
+                "Record one agent's token and time cost after it completes. The "
+                "LEAD reads its own harness usage block and types the two numbers "
+                "here — this server parses no transcript and no usage block, ever, "
+                "because a parser for a format nobody owns does not fail loudly, it "
+                "silently starts reporting a wrong number. Rolls up per phase, per "
+                "server cycle and for the run, and Foundry-Next shows the totals. "
+                "NEVER refuses and never blocks a gate: a dispatch with no spend "
+                "record is LISTED as unreported so the gap is visible. No dollar "
+                "figure is produced anywhere — this server does not know your rate "
+                "card."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["agent", "phase", "tokens", "duration_ms"],
+                "properties": {
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "The agent id, spelled as the progress ledger spells it "
+                            "(e.g. 'casting-3', 'trace')."
+                        ),
+                    },
+                    "phase": {"type": "string", "description": "e.g. F1, F2, F3."},
+                    "tokens": {"type": "integer", "description": "Total tokens from the usage block."},
+                    "duration_ms": {"type": "integer", "description": "Wall-clock duration in milliseconds."},
+                    "cycle": {
+                        "type": "integer",
+                        "description": (
+                            "Optional asserted cycle, recorded beside the server "
+                            "counter for audit. The bucket key is always the "
+                            "server's own counter."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Report",
+            description=(
+                "Generate the run's REPORT.md and report.json from its own ledgers: "
+                "verdict matrix, defects by tier and status, the LATENT backlog, "
+                "unknown-tier defects, escalated classes with their exit reason, "
+                "lead_fix records, the FULL/DELTA decision per cycle, tokens and "
+                "minutes per phase and per cycle, unreported dispatches, the "
+                "executing server and plugin version and commit, and the baseline "
+                "comparison. The report is GENERATED, not hand-written: you may "
+                "append prose below its sections but you cannot omit one, and "
+                "Foundry-Phase(phase='done') refuses while it is absent or a section "
+                "is missing. Refuses — never raises — naming any ledger it could not "
+                "read."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
             name="Forge-Spec-Start",
             description=(
                 "Initialize a forge-spec project directory and state machine. "
@@ -803,6 +1047,35 @@ def _dispatch_liveness(args: dict) -> dict:
     )
 
 
+def _dispatch_report() -> dict:
+    """Dispatch Foundry-Report to `tools/foundry_report.generate_report`.
+
+    Lazy and unguarded for the same reason `_dispatch_liveness` is: a
+    module-top import would take the ENTIRE server down while the casting that
+    owns `foundry_report.py` is still landing, and swallowing the ImportError
+    would hide a real wiring break behind a silent no-op. Failing here fails one
+    tool, loudly, naming the symbol.
+
+    The run directory is resolved here rather than passed, because the generator
+    takes the run dir and the tool takes no arguments — the run a report is
+    generated for is always the ACTIVE one, and letting a caller name a
+    different one would let a lead generate a report over another run's ledgers.
+    """
+    from pathlib import Path
+
+    from foundry_mcp.tools.foundry_report import generate_report
+    from foundry_mcp.tools.foundry_state import get_run_dir
+
+    fdir = get_run_dir(_project_root)
+    if not fdir or not fdir.exists():
+        return {
+            "ok": False,
+            "error": "No active foundry run — there is nothing to report on.",
+            "hint": "Call Foundry-Init first, or foundry_init(resume='run-name').",
+        }
+    return generate_report(Path(_project_root), fdir)
+
+
 _DISPATCH = {
     "Validate-Report": lambda args: validate_report(
         report_path=args["report_path"], schema_name=args.get("schema_name", "trace"),
@@ -814,7 +1087,8 @@ _DISPATCH = {
         spec_path=args.get("spec_path"), temper=args.get("temper", False),
         nyquist=args.get("nyquist", False), no_ui=args.get("no_ui", False),
         resume=args.get("resume"), ticket=args.get("ticket", ""), description=args.get("description", ""),
-        url=args.get("url", ""), project_root=_project_root),
+        url=args.get("url", ""), max_cycles=args.get("max_cycles", 0),
+        project_root=_project_root),
     "Foundry-Next": lambda args: foundry_next_action(project_root=_project_root),
     "Foundry-Context": lambda args: foundry_get_context(project_root=_project_root),
     "Foundry-Gate": lambda args: foundry_gate(phase=args["phase"], project_root=_project_root),
@@ -824,6 +1098,13 @@ _DISPATCH = {
         description=args["description"], spec_ref=args.get("spec_ref", ""),
         symbol=args.get("symbol", ""), file_path=args.get("file_path", ""),
         target_kind=args.get("target_kind", ""), defect_class=args.get("defect_class", ""),
+        # CT-001 — passed through as absence, never defaulted here. The D-074
+        # ruling above applies verbatim: a transport-layer default re-decides,
+        # one frame above the writer, a question the writer owns. `tier=""` is
+        # what `validate_defect_filing` reads as "no tier was declared", and
+        # that is the answer it must get.
+        tier=args.get("tier", ""),
+        reproduction_attempted=args.get("reproduction_attempted", ""),
         project_root=_project_root),
     "Foundry-Defects": lambda args: foundry_query_defects(
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),
@@ -851,7 +1132,15 @@ _DISPATCH = {
         defect_id=args["defect_id"], cycle=args["cycle"],
         adjacent_path_statement=args.get("adjacent_path_statement", ""),
         adjacent_path_test=args.get("adjacent_path_test", ""),
-        project_root=_project_root),
+        project_root=_project_root,
+        # Absence passed through as absence, as everywhere else on this surface:
+        # the handler owns which lane each field belongs to and what a missing
+        # one costs, and it is the only frame that can name several at once.
+        authored_by=args.get("authored_by", ""),
+        regression_test=args.get("regression_test", ""),
+        fix_commit=args.get("fix_commit", ""),
+        prompt_hash=args.get("prompt_hash"),
+        casting_id=args.get("casting_id")),
     "Foundry-Sync": lambda args: foundry_sync_defects(
         cycle=args["cycle"], findings=args["findings"], project_root=_project_root),
     "Foundry-Tasks": lambda args: foundry_defects_to_tasks(project_root=_project_root),
@@ -868,9 +1157,11 @@ _DISPATCH = {
     "Foundry-Validate-Castings": lambda args: foundry_validate_castings(project_root=_project_root),
     "Foundry-Intent-Coverage": lambda args: foundry_intent_coverage(project_root=_project_root),
     "Foundry-Spawn-Teammate": lambda args: foundry_spawn_teammate(
-        casting_id=args["casting_id"], phase=args.get("phase", "cast"), project_root=_project_root),
+        casting_id=args["casting_id"], phase=args.get("phase", "cast"),
+        project_root=_project_root, full_prompt=args.get("full_prompt", False)),
     "Foundry-Cast-Wave": lambda args: foundry_cast_wave(
-        wave=args["wave"], phase=args.get("phase", "cast"), project_root=_project_root),
+        wave=args["wave"], phase=args.get("phase", "cast"),
+        project_root=_project_root, full_prompt=args.get("full_prompt", False)),
     "Foundry-Spec-Hash": lambda args: foundry_spec_hash(project_root=_project_root),
     "Foundry-Handoff": lambda args: foundry_handoff(
         event=args["event"], source=args.get("source", ""), destination=args.get("destination", ""),
@@ -879,6 +1170,9 @@ _DISPATCH = {
     "Foundry-Accept-Casting": lambda args: foundry_accept_casting(
         casting_id=args["casting_id"], spec_hash=args["spec_hash"],
         prompt_hash=args["prompt_hash"], completion_report=args["completion_report"],
+        # CT-015: required in the schema, and still read with .get so the
+        # handler's own named refusal is what a caller sees if it ever arrives
+        # absent — a KeyError across the MCP boundary is not the house shape.
         casting_commit=args.get("casting_commit"),
         project_root=_project_root),
     "Foundry-Liveness": lambda args: _dispatch_liveness(args),
@@ -887,6 +1181,11 @@ _DISPATCH = {
     "Foundry-Directive": lambda args: foundry_inject_directive(
         directive=args["directive"], priority=args.get("priority", "normal"), project_root=_project_root),
     "Foundry-Clear": lambda args: foundry_clear_directives(project_root=_project_root),
+    "Foundry-Spend": lambda args: foundry_record_spend(
+        agent=args["agent"], phase=args["phase"], tokens=args["tokens"],
+        duration_ms=args["duration_ms"], cycle=args.get("cycle"),
+        project_root=_project_root),
+    "Foundry-Report": lambda args: _dispatch_report(),
     "Forge-Spec-Start": lambda args: forge_spec_start(
         project_name=args["project_name"], project_root=_project_root),
     "Forge-Spec-Check": lambda args: forge_spec_check(

@@ -1,0 +1,17 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_orchestrator_gates.py && uv run --quiet python -c "from foundry_mcp.tools.foundry_orchestrator import BLOCKING_TIERS, STALL_NOTICE_SECONDS;from foundry_mcp.schemas.vocab import RUN_PHASE_HALTED, REPORT_REQUIRED_SECTIONS;print(chr(10) + '=== the gate reads this axis ===');print('tiers that block a gate:', ' '.join(BLOCKING_TIERS));print('halted phase token:', RUN_PHASE_HALTED);print('stall notice threshold seconds:', STALL_NOTICE_SECONDS);print('report sections DONE requires:', len(REPORT_REQUIRED_SECTIONS))"
+# evidence-for: US-002, US-008, GI-006, CT-008, CT-012, CT-014, CT-016, ST-008, ST-010, ST-011, AC-008, AC-032, AC-035, AC-036, AC-037, FR-006, FR-020, FR-024, FR-026, FR-036, FR-044, FR-045, FR-051, FR-052, NFR-005, OT-006, OT-011, OT-022, OT-025, OT-026, OT-028
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+........................................................................ [ 22%]
+........................................................................ [ 44%]
+........................................................................ [ 66%]
+........................................................................ [ 88%]
+....................................                                     [100%]
+324 passed in 3.89s
+
+=== the gate reads this axis ===
+tiers that block a gate: LIVE unknown
+halted phase token: HALTED
+stall notice threshold seconds: 180
+report sections DONE requires: 11

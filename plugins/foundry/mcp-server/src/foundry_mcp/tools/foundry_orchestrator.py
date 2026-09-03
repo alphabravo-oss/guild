@@ -22,9 +22,27 @@ from pathlib import Path
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
+    DELTA_CONDITIONAL_STREAMS,
+    FIX_AUTHORS,
+    FULL_ROSTER_STREAMS,
+    INSPECT_DELTA_RULE,
+    LEAD_LANE_MAX_FILES,
+    LEAD_LANE_MAX_LINES,
+    LIVE_CLEAN_CYCLES_TO_CLEAR,
+    PROVE_DELTA_SAMPLE_SIZE,
+    REPORT_JSON_FILENAME,
+    REPORT_MD_FILENAME,
+    REPORT_REQUIRED_SECTIONS,
     REQUIREMENT_ID_RE,
+    RUN_PHASE_HALTED,
+    SPEND_LEDGER_FILENAME,
     STREAM_WIRE_IDS,
+    STRUCTURAL_PASS_BUDGET,
+    TIER_UNKNOWN,
     canonical_defect_type,
+    defect_tier,
+    is_test_file,
+    is_verifier_path,
     observation_class,
 )
 from foundry_mcp.tools.citation import iter_symbol_cites
@@ -922,6 +940,135 @@ def _nyquist_transition(from_phase: str) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Tier-aware defect reads (CT-008 / FR-006 / FR-051 / GI-001)
+#
+# ONE helper, consulted by every gate, because the alternative was measured on
+# this exact module: `sum(1 for d in ... if d.get("status") == "open")` was
+# hand-written at SIX sites (assay, grind, done, inspect_clean, next-action,
+# the status display), and D-119 is the shipped instance of two of those copies
+# disagreeing. Adding "and what tier is it" to six copies is that defect with a
+# second field.
+#
+# THE TIER READ ITSELF IS NOT DECIDED HERE. `vocab.defect_tier` is total over
+# DEFECT_TIER_OR_UNKNOWN and is the one place a missing key, a null, a non-string
+# and an unknown string all resolve to TIER_UNKNOWN. FR-051 turns on that
+# resolution: an untiered pre-change record blocks exactly like LIVE, and reading
+# it as LATENT would silently clear every gate on records nobody ever classified.
+# --------------------------------------------------------------------------- #
+
+#: CT-008 — the tiers that BLOCK. LIVE is a reachable failure and blocks as it
+#: always did; unknown is a record no stream has classified and is treated
+#: identically until one re-files it with a tier (FR-051). LATENT blocks nothing:
+#: it stays open, tracked, and named in the F6 backlog (FR-006).
+BLOCKING_TIERS = ("LIVE", TIER_UNKNOWN)
+
+
+def _open_defects_by_tier(fdir: Path) -> dict[str, list[dict]]:
+    """Every OPEN defect in the ledger, bucketed by the tier it READS as.
+
+    Keys are exactly LIVE, LATENT and TIER_UNKNOWN, always present and possibly
+    empty — a caller that has to check whether a bucket exists before counting
+    it will eventually forget to, and an absent bucket reads as zero blocking
+    defects, which is the direction that fails open.
+
+    Non-dict historical records are skipped, not guessed at: the same tolerance
+    `_dict_records` holds for the ledger's writers (D-128).
+    """
+    buckets: dict[str, list[dict]] = {"LIVE": [], "LATENT": [], TIER_UNKNOWN: []}
+    for d in _load_json(fdir / "defects.json").get("defects", []):
+        if not isinstance(d, dict) or d.get("status") != "open":
+            continue
+        buckets[defect_tier(d)].append(d)
+    return buckets
+
+
+def _blocking_defects(fdir: Path) -> dict:
+    """The tier-aware "may this gate pass?" answer, with the refusal prose.
+
+    Returns ``{"blocking": int, "live": [ids], "unknown": [ids],
+    "latent": [ids], "reason": str, "hint": str}``. ``reason`` and ``hint`` are
+    empty strings when nothing blocks.
+
+    CT-008 requires the refusal to NAME the open LIVE and unknown-tier defects,
+    and to tell them apart: they block for different reasons and the operator's
+    next move differs. A LIVE defect needs fixing; an unknown-tier defect needs a
+    stream to re-file it with a tier, after which it may well stop blocking. One
+    undifferentiated count would send a lead hunting for a reproduction that no
+    stream ever claimed to have.
+    """
+    buckets = _open_defects_by_tier(fdir)
+    live = [d.get("id", "?") for d in buckets["LIVE"]]
+    unknown = [d.get("id", "?") for d in buckets[TIER_UNKNOWN]]
+    latent = [d.get("id", "?") for d in buckets["LATENT"]]
+
+    parts = []
+    if live:
+        parts.append(f"{len(live)} open LIVE defect(s): {', '.join(live)}")
+    if unknown:
+        parts.append(
+            f"{len(unknown)} open defect(s) with no tier, which block like LIVE "
+            f"until a stream re-files them: {', '.join(unknown)}"
+        )
+
+    hint = ""
+    if parts:
+        hint = (
+            "Fix the LIVE defects in GRIND. "
+            if live
+            else ""
+        ) + (
+            "Have the filing stream re-file each untiered defect with tier=LIVE "
+            "or tier=LATENT; an untiered record is not a judgement, it is a "
+            "record made before the tier existed."
+            if unknown
+            else ""
+        )
+        if latent:
+            hint += (
+                f" The {len(latent)} open LATENT defect(s) do not block: they "
+                "stay open, tracked, and named in the F6 backlog."
+            )
+
+    return {
+        "blocking": len(live) + len(unknown),
+        "live": live,
+        "unknown": unknown,
+        "latent": latent,
+        "reason": "; ".join(parts),
+        "hint": hint.strip(),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Cross-casting seam: tools/foundry_report.py (C-10) and tools/evidence.py (C-7).
+#
+# LAZY, for the reason the seam at the bottom of this file spells out at length:
+# `foundry_report` and `evidence` both import from this package, and a
+# module-top import here closes an import cycle that takes EVERY tool in this
+# server down at once. Unguarded, so a wiring break fails loudly at the one call
+# site that needs the symbol instead of hiding behind a silent fallback.
+#
+# These are thin: they exist so the lazy import is written ONCE per symbol
+# rather than at each of the four call sites, not to re-decide anything the
+# owning module already decided.
+# --------------------------------------------------------------------------- #
+
+
+def _report_status(fdir: Path) -> dict:
+    """C-10's ``report_status`` — {"present", "missing_sections", ...}."""
+    from foundry_mcp.tools.foundry_report import report_status
+
+    return report_status(fdir)
+
+
+def _generate_report(project_root: str, fdir: Path) -> dict:
+    """C-10's ``generate_report`` — writes REPORT.md and report.json."""
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    return generate_report(Path(project_root), fdir)
+
+
 # --- Phase gate ---
 
 
@@ -967,10 +1114,57 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     verdicts = _load_json(fdir / "verdicts.json")
     verdict_list = verdicts.get("requirements", [])
     non_verified = sum(1 for r in verdict_list if r.get("verdict") != "VERIFIED")
-    defects = _load_json(fdir / "defects.json")
-    open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
+    blocking = _blocking_defects(fdir)
+    open_count = blocking["blocking"]
     teams_result = _check_active_teams(project_root)
     spec_count = _count_spec_requirements(project_root)
+
+    # GI-006 / CT-014 / AC-036 / ST-010 — DONE REQUIRES THE GENERATED REPORT.
+    #
+    # Its own named precondition, because it is the one refusal a lead clears
+    # with a tool call rather than with work: `Foundry-Report`. Read through
+    # casting 5's `report_status`, which answers "present, and which sections
+    # are missing" from `report.json` and never from REPORT.md — so the prose
+    # GI-006 explicitly permits the lead to append below the sections cannot
+    # make a present section look absent.
+    #
+    # STATED FIRST, deliberately, in the ordering discipline this function
+    # already holds: the branch that claims `reason` is the LAST one to fail, so
+    # the least specific check goes at the top. A run short a report is usually
+    # also short something more specific, and a lead should be told about the
+    # open defect or the unparsed spec rather than about the paperwork. Every
+    # later failing branch overwrites this `reason`; on an otherwise-clean run
+    # nothing does, and the refusal names the report (OT-025).
+    report = _report_status(fdir)
+    report_json_path = fdir / REPORT_JSON_FILENAME
+    if not report["present"]:
+        passed = False
+        missing_sections = report.get("missing_sections") or []
+        if not report_json_path.exists():
+            reason = (
+                f"no generated report — {REPORT_MD_FILENAME} and "
+                f"{REPORT_JSON_FILENAME} have not been written"
+            )
+        elif report.get("problem"):
+            reason = f"the generated report is unusable — {report['problem']}"
+        else:
+            reason = (
+                f"the generated report is missing {len(missing_sections)} "
+                f"section(s): " + ", ".join(missing_sections)
+            )
+        hint = (
+            "Call Foundry-Report. The report is generated, not written by hand: "
+            "you may append prose below its sections, you may not omit one, and "
+            "DONE is refused until every section is present."
+        )
+    checklist.append({
+        "check": (
+            "report_generated "
+            f"(missing_sections={len(report.get('missing_sections') or [])})"
+        ),
+        "ok": report["present"],
+        "missing_sections": report.get("missing_sections") or [],
+    })
 
     # FR-020 / AC-025 — the auto-VERIFY hole, closed at the gate.
     #
@@ -998,7 +1192,19 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
         hint = "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented."
     if open_count > 0:
         passed = False
-        reason = f"{open_count} open defect(s) remain"
+        reason = blocking["reason"]
+        # FR-026 — THE STALE HINT.
+        #
+        # This branch set `reason` and left `hint` alone, so whatever the
+        # PREVIOUS check happened to write stayed attached to it. A run with
+        # open defects and at least one non-VERIFIED requirement was refused
+        # with reason "N open defect(s) remain" beside hint "Fix all
+        # non-VERIFIED requirements. Every THIN item must be fully
+        # implemented." — an instruction for a different check entirely, and
+        # the lead's only stated next move. Every branch below that claims
+        # `reason` now writes the `hint` that actually clears IT; the ones that
+        # already did are unchanged.
+        hint = blocking["hint"]
 
     # AC-011 / ST-003: escalation NEVER waives closure. Swapping N
     # per-instance packets for one structural packet changes the shape of
@@ -1025,6 +1231,12 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     if teams_result["active"]:
         passed = False
         reason = f"Active teams: {', '.join(teams_result['teams'])}"
+        # FR-026, same stale-hint repair as the open-defect branch above.
+        hint = teams_result.get(
+            "hint",
+            "Shut down every teammate, call TeamDelete, then Foundry-Team-Down "
+            "for each team name.",
+        )
 
     verdict_count = len(verdict_list)
     verdicts_complete = True
@@ -1040,7 +1252,18 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
         "ok": spec_count > 0,
     })
     checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
-    checklist.append({"check": f"zero_defects (open={open_count})", "ok": open_count == 0})
+    checklist.append({
+        # CT-008: the count is the BLOCKING count, and the LATENT backlog rides
+        # alongside it so a passing checklist still says what is being carried.
+        "check": (
+            f"zero_blocking_defects (live={len(blocking['live'])} "
+            f"unknown_tier={len(blocking['unknown'])} latent_backlog={len(blocking['latent'])})"
+        ),
+        "ok": open_count == 0,
+        "live": blocking["live"],
+        "unknown_tier": blocking["unknown"],
+        "latent_backlog": blocking["latent"],
+    })
     checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
     checklist.append({"check": f"verdict_coverage ({verdict_count}/{spec_count})", "ok": verdicts_complete})
 
@@ -1085,8 +1308,21 @@ def foundry_gate(
             "hint": "Call Foundry-Next first — it shows the status display and tells you what to do next.",
             "checklist": [{"check": "next_action_called", "ok": False}],
         }
-    nac.unlink(missing_ok=True)
-
+    # ST-011 / FR-044 / AC-035 / OT-028 — THE GATE NO LONGER CONSUMES THE TOKEN.
+    #
+    # This read `nac.unlink(missing_ok=True)`, so the documented sequence
+    # Gate -> Phase could not be executed: `foundry_gate` destroyed the very
+    # marker `foundry_mark_phase_complete` demands, and the lead's next call was
+    # refused with "Must call Foundry-Next before phase transitions" for having
+    # done exactly what start.md told it to. The workaround it forced — a
+    # Foundry-Next between every gate and its transition — is what made
+    # Foundry-Next look mandatory there, and FR-044 says it is optional.
+    #
+    # `foundry_mark_phase_complete` remains the ONE consumer. The token means
+    # "a Foundry-Next preceded this transition", and a gate check is not a
+    # transition: it writes no phase, advances no counter and, on the passing
+    # path, only stamps `.gate-passed`. Reading a marker it does not act on and
+    # then deleting it was never the handshake, it was a side effect of one.
     if phase == "validate":
         # Gate for F0.9 VALIDATE — castings must exist
         manifest = fdir / "castings" / "manifest.json"
@@ -1206,13 +1442,29 @@ def foundry_gate(
         checklist.append({"check": "tasks_generated", "ok": (fdir / ".tasks-generated").exists()})
 
     elif phase == "assay":
+        # CT-008 / FR-006: LIVE and unknown-tier defects block ASSAY exactly as
+        # every open defect used to; a LATENT-only backlog does not. The tier is
+        # an evidence grade, never a severity — both tiers are defects and both
+        # get fixed — but a scan-derivation gap with no reachable instance no
+        # longer holds the whole run at the gate a forged evidence log holds it.
+        blocking = _blocking_defects(fdir)
         defects = _load_json(fdir / "defects.json")
-        open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
+        open_count = blocking["blocking"]
         if open_count > 0:
             passed = False
-            reason = f"{open_count} open defect(s) remain"
-            hint = "Fix all defects in GRIND first"
-        checklist.append({"check": f"zero_open_defects (have {open_count})", "ok": open_count == 0})
+            reason = blocking["reason"]
+            hint = blocking["hint"]
+        checklist.append({
+            "check": (
+                f"zero_blocking_defects (live={len(blocking['live'])} "
+                f"unknown_tier={len(blocking['unknown'])} "
+                f"latent_backlog={len(blocking['latent'])})"
+            ),
+            "ok": open_count == 0,
+            "live": blocking["live"],
+            "unknown_tier": blocking["unknown"],
+            "latent_backlog": blocking["latent"],
+        })
 
         streams = _check_streams_complete(project_root)
         if not streams["complete"]:
@@ -1244,7 +1496,33 @@ def foundry_gate(
         if non_verified > 0:
             passed = False
             reason = f"{non_verified} requirement(s) not verified"
+            hint = (
+                "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
+                "Fix them and re-run ASSAY before entering TEMPER."
+            )
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
+
+        # CT-008 / FR-006 — TEMPER gains the defect read it never had.
+        # AC-008 names temper alongside assay, nyquist and done: all four pass
+        # on a LATENT-only backlog, and all four refuse on a LIVE or
+        # unknown-tier defect. A gate that reads no defects at all cannot honour
+        # either half of that.
+        blocking = _blocking_defects(fdir)
+        if blocking["blocking"] > 0:
+            passed = False
+            reason = blocking["reason"]
+            hint = blocking["hint"]
+        checklist.append({
+            "check": (
+                f"zero_blocking_defects (live={len(blocking['live'])} "
+                f"unknown_tier={len(blocking['unknown'])} "
+                f"latent_backlog={len(blocking['latent'])})"
+            ),
+            "ok": blocking["blocking"] == 0,
+            "live": blocking["live"],
+            "unknown_tier": blocking["unknown"],
+            "latent_backlog": blocking["latent"],
+        })
 
     elif phase == "nyquist":
         # F5.5 generates regression tests for VERIFIED requirements, so the
@@ -1257,7 +1535,36 @@ def foundry_gate(
         if non_verified > 0:
             passed = False
             reason = f"{non_verified} requirement(s) not verified"
+            hint = (
+                "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
+                "Fix them and re-run ASSAY before entering NYQUIST."
+            )
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
+
+        # FR-006 / CT-008 / OT-006 — NYQUIST GAINS THE MISSING DEFECT READ.
+        #
+        # This branch read verdicts and the --nyquist flag and NOTHING ELSE, so
+        # a run could enter F5.5 and generate regression tests with open defects
+        # in the ledger — locking in behaviour a stream had already ruled wrong.
+        # FR-006 names it outright: "NYQUIST gains the missing defect read so
+        # one open LIVE now blocks it." A LATENT-only backlog still passes,
+        # which is the whole point of grading the evidence.
+        blocking = _blocking_defects(fdir)
+        if blocking["blocking"] > 0:
+            passed = False
+            reason = blocking["reason"]
+            hint = blocking["hint"]
+        checklist.append({
+            "check": (
+                f"zero_blocking_defects (live={len(blocking['live'])} "
+                f"unknown_tier={len(blocking['unknown'])} "
+                f"latent_backlog={len(blocking['latent'])})"
+            ),
+            "ok": blocking["blocking"] == 0,
+            "live": blocking["live"],
+            "unknown_tier": blocking["unknown"],
+            "latent_backlog": blocking["latent"],
+        })
 
         state = _load_json(fdir / "state.json")
         nyquist_on = state.get("nyquist", False)
@@ -1745,6 +2052,1035 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
     return decision
 
 
+# --------------------------------------------------------------------------- #
+# INSPECT WIDTH (C-12 / ST-006 / ST-007 / GI-008 / GI-009 / FR-011 / FR-012)
+#
+# WHERE THE DECISION LIVES, AND WHY IT IS NOT NEGOTIABLE
+# -----------------------------------------------------
+# GI-009: "whichever Foundry-Phase transition opens an INSPECT records the
+# mode; Foundry-Next only reports. No decision ever lives in Foundry-Next."
+# GI-008 says the same thing from the other side: "A FULL versus DELTA decision
+# computed inside Foundry-Next" is the named violation.
+#
+# So every function below COMPUTES and nothing below WRITES except through the
+# transition that called it. `_check_streams_complete` and
+# `_compute_next_action` read `state.json.inspect_modes[-1]` and re-derive
+# nothing — a roster recomputed at display time is a roster that can disagree
+# with the one the cycle actually ran, and a streams-complete check reading a
+# roster nothing recorded is the failure ST-007 describes.
+#
+# The whole point is cost. thunder-viper ran 22 GRIND cycles at full INSPECT
+# width, so a three-file GRIND was followed by a re-verification of everything.
+# DELTA makes the second and later INSPECTs of a phase proportional to what
+# changed, while every FULL rule keeps the gates that matter at full width.
+# --------------------------------------------------------------------------- #
+
+#: The HEAD recorded at each INSPECT boundary, so the next crossing knows what
+#: "since the last boundary" means. A marker rather than a state key because
+#: `_trace_skip_check`'s `.trace-clean-at` is the established shape for exactly
+#: this fact, and the two are read by the same fallback ladder below.
+INSPECT_BOUNDARY_SHA_MARKER = ".inspect-boundary-sha"
+
+
+def _head_sha(project_root: str) -> str:
+    """HEAD of the shared tree, or "" when git cannot answer. Never raises."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _boundary_base_sha(fdir: Path) -> tuple[str, str]:
+    """The commit a GRIND diff is measured from, and where it came from.
+
+    Three sources in descending precedence, all of them commits this run itself
+    recorded:
+
+      1. the previous INSPECT boundary — the exact answer to "since the last
+         sweep" (CT-007);
+      2. the last clean TRACE, which `_trace_skip_check` already keeps;
+      3. the CAST baseline, written when the run left F1.
+
+    Returns ``("", "")`` when none exists, which is a run whose first INSPECT
+    has not happened — and that INSPECT is FULL by `first_of_phase` anyway.
+    """
+    marker = fdir / INSPECT_BOUNDARY_SHA_MARKER
+    if marker.exists():
+        sha = _read_text(marker).strip()
+        if sha:
+            return sha, INSPECT_BOUNDARY_SHA_MARKER
+    trace_marker = fdir / ".trace-clean-at"
+    if trace_marker.exists():
+        data, problem = read_document(trace_marker)
+        if problem is None and data.get("head_sha"):
+            return str(data["head_sha"]), ".trace-clean-at"
+    cast_marker = fdir / ".cast-baseline-sha"
+    if cast_marker.exists():
+        sha = _read_text(cast_marker).strip()
+        if sha:
+            return sha, ".cast-baseline-sha"
+    return "", ""
+
+
+def _grind_diff(fdir: Path, project_root: str) -> dict:
+    """Repo-relative paths the GRIND touched since the last boundary.
+
+    Returns ``{"files": [...], "base": sha, "source": marker, "problem": str}``.
+    A non-empty ``problem`` means the diff is UNKNOWN — not empty. The two are
+    opposite answers and the callers must not confuse them: an unknown diff
+    cannot support a delta roster, so it forces FULL and a whole-corpus sweep.
+    """
+    import subprocess
+
+    base, source = _boundary_base_sha(fdir)
+    if not base:
+        return {"files": [], "base": "", "source": "",
+                "problem": "no recorded boundary, clean TRACE or CAST baseline to diff from"}
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_root, "diff", "--name-only", base, "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        return {"files": [], "base": base, "source": source,
+                "problem": f"git unavailable: {type(exc).__name__}"}
+    if result.returncode != 0:
+        return {"files": [], "base": base, "source": source,
+                "problem": f"git diff failed: {result.stderr.strip()[:120]}"}
+    files = sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+    return {"files": files, "base": base, "source": source, "problem": ""}
+
+
+def _spec_relative_path(project_root: str) -> str | None:
+    """The run's spec as a repo-relative path, for `is_verifier_path`.
+
+    The spec is NOT a member of VERIFIER_PATH_PATTERNS on purpose — a run's spec
+    lives wherever `state.json.spec_path` says, and a static pattern would
+    either miss it or sweep in every unrelated spec.md in the tree. So it is
+    passed at call time, which means resolving it here.
+    """
+    resolved = _resolve_spec_path(project_root)
+    if resolved is None:
+        return None
+    try:
+        return str(resolved.resolve().relative_to(Path(project_root).resolve()))
+    except (ValueError, OSError):
+        return str(resolved)
+
+
+def _research_skipped(fdir: Path) -> bool:
+    """Does this run carry a record that RESEARCH was skipped (AC-017)?
+
+    Read from three places because no single one owns it: `castings/manifest.json`
+    and `state.json` are where `foundry_init` writes run-level flags, and a
+    `.research-skipped` marker is the shape every other per-run fact in this
+    directory takes. Any of them saying so is enough — a run that recorded the
+    skip anywhere recorded it.
+    """
+    if (fdir / ".research-skipped").exists():
+        return True
+    for document in ("state.json", "castings/manifest.json"):
+        if bool(_load_json(fdir / document).get("research_skipped")):
+            return True
+    return False
+
+
+def _skipped_streams(fdir: Path) -> set[str]:
+    """`manifest.stream_skips` as wire ids — casting 4's reader, lazily."""
+    from foundry_mcp.tools.foundry_spawn import _skipped_stream_ids
+
+    return _skipped_stream_ids(fdir)
+
+
+def _research_scope_touched(fdir: Path, touched: list[str]) -> bool:
+    """Did the GRIND diff touch a file RESEARCH_AUDIT covers (ST-007)?
+
+    A casting declaring a `research_context` is a casting whose code was written
+    against research recommendations, so its key_files are the files an audit of
+    those recommendations reads. A diff touching none of them cannot have
+    deviated from research that no longer applies to anything that moved.
+    """
+    if not touched:
+        return False
+    touched_set = set(touched)
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    for casting in manifest.get("castings", []) or []:
+        if not isinstance(casting, dict) or not casting.get("research_context"):
+            continue
+        for f in casting.get("key_files") or []:
+            if isinstance(f, str) and f.strip() in touched_set:
+                return True
+    return False
+
+
+def _test01_scope_touched(project_root: str, touched: list[str]) -> bool:
+    """Did the GRIND diff touch a file TEST-01 covers (ST-007)?
+
+    TEST-01 derives property tests from the spec's Contracts table, so its scope
+    is the surfaces that table names plus the schemas those surfaces validate
+    against. `schemas/` is matched structurally; the Contracts table is matched
+    by asking whether the spec's own Contracts section mentions the touched
+    file's basename or its stem — the table names surfaces in prose
+    ("Foundry-Fix (LATENT lane)", "tools/evidence.py"), so a textual read of the
+    section is what "named in the Contracts table" can mean mechanically.
+    """
+    if not touched:
+        return False
+    candidates = [t for t in touched if t]
+    if any("schemas/" in f"/{t}" for t in candidates):
+        return True
+
+    spec_path = _resolve_spec_path(project_root)
+    if spec_path is None or not spec_path.exists():
+        return False
+    text, problem = read_text_file(spec_path)
+    if problem is not None:
+        return False
+    lowered = text.lower()
+    start = lowered.find("## contracts")
+    if start < 0:
+        return False
+    end = lowered.find("\n## ", start + 1)
+    section = lowered[start : end if end > 0 else len(lowered)]
+    for path in candidates:
+        name = path.replace("\\", "/").rsplit("/", 1)[-1]
+        if not name:
+            continue
+        if name.lower() in section or Path(name).stem.lower() in section:
+            return True
+    return False
+
+
+def _prove_delta_sample(
+    fdir: Path, project_root: str, cycle: int, fixed_in_cycle: int | None = None
+) -> list[str]:
+    """The requirement rows PROVE checks on a DELTA cycle (FR-013 / AC-018).
+
+    The rows tied to the defects the preceding GRIND fixed — those are the rows
+    whose verdicts the fixes could have changed — plus
+    `PROVE_DELTA_SAMPLE_SIZE` more, drawn from the sorted remainder with
+    `random.Random(cycle)`.
+
+    TWO CYCLE NUMBERS, DELIBERATELY. ``cycle`` is the cycle this roster is FOR
+    and is the seed; ``fixed_in_cycle`` is the cycle whose GRIND just ended and
+    is where the tied rows come from. At the `inspect_start` boundary those
+    differ by one — the counter has already been advanced for the INSPECT about
+    to run, while "the defects fixed in the preceding GRIND" are stamped with
+    the cycle that just closed. Seeding from one and selecting from the other is
+    the whole of AC-018's sentence; collapsing them to a single number selects
+    rows tied to a GRIND that has not happened, which is silently empty rather
+    than wrong-looking. Defaults to ``cycle`` when the caller has only one.
+
+    REPRODUCIBLE FROM THE CYCLE NUMBER ALONE (FR-033). The seed is ``cycle`` and
+    nothing else, and the population is SORTED before the draw, so nothing
+    depends on dict ordering, ledger order or filesystem order. Two calls in the
+    same cycle return the same ten rows because the same seed draws from the
+    same sequence — and the recorded roster means no caller ever draws twice
+    anyway (AC-018 / OT-015).
+
+    The sample is a floor on coverage, not a ceiling on it: a DELTA cycle checks
+    what the fixes could have broken plus a random slice of everything else, so
+    a regression outside the fixed rows is still found, just not in one cycle.
+    """
+    import random
+
+    all_rows = sorted(set(_spec_requirement_ids(project_root)))
+    if not all_rows:
+        return []
+
+    fixed_rows: set[str] = set()
+    for d in _load_json(fdir / "defects.json").get("defects", []):
+        if not isinstance(d, dict) or d.get("status") != "fixed":
+            continue
+        if d.get("fixed_in_cycle") != (
+            cycle if fixed_in_cycle is None else fixed_in_cycle
+        ):
+            continue
+        ref = d.get("spec_ref")
+        if isinstance(ref, str):
+            fixed_rows.update(_REQ_ID_RE.findall(ref))
+
+    tied = sorted(fixed_rows & set(all_rows))
+    remaining = [r for r in all_rows if r not in set(tied)]
+    draw = min(PROVE_DELTA_SAMPLE_SIZE, len(remaining))
+    sampled = sorted(random.Random(cycle).sample(remaining, draw)) if draw else []
+    return tied + sampled
+
+
+def _base_required_streams(project_root: str) -> list[str]:
+    """`sight` and `probe`, which are per-run facts rather than width facts.
+
+    Both conditions are unchanged from what `_check_streams_complete` has always
+    applied, and both hold at FULL and DELTA alike: a run with frontend files in
+    scope needs SIGHT however narrow the diff, and a run with a target_url needs
+    PROBE. Width decides how much of the spec PROVE reads, never whether the run
+    has a UI.
+    """
+    fdir = get_run_dir(project_root)
+    extra: list[str] = []
+    if fdir and _check_sight_required(project_root).get("required"):
+        extra.append("sight")
+    if fdir and _load_json(fdir / "castings" / "manifest.json").get("target_url"):
+        extra.append("probe")
+    return extra
+
+
+def _decide_inspect_mode(
+    fdir: Path,
+    project_root: str,
+    *,
+    decided_by: str,
+    phase: str,
+    cycle: int,
+) -> dict:
+    """Compute one `state.json.inspect_modes` entry. Writes nothing.
+
+    ``decided_by`` is the phase token that performed the transition — `cast`,
+    `temper` or `inspect_start` — and it is recorded, so "which crossing decided
+    this width" is answerable from the artifact.
+
+    THE RULES, EVALUATED IN ORDER (FR-011):
+
+      first_of_phase    the phase-entry transition into F2 or F5. The first
+                        INSPECT of a phase has no previous INSPECT to be a delta
+                        FROM, so it is FULL by construction rather than by
+                        policy.
+      final_gate        this INSPECT precedes ASSAY, NYQUIST or DONE. The gates
+                        that end a run are never handed a narrow answer.
+      verifier_touched  the GRIND diff moved the machinery that JUDGES the
+                        build — vocab, schemas, gate/orchestrator code, agent or
+                        skill prose, or the spec. A delta roster is only as
+                        trustworthy as the verifier it runs, so when the
+                        verifier itself moved, nothing narrower than everything
+                        is honest.
+      delta             none of the above.
+
+    An UNKNOWN diff (git unavailable, no baseline to measure from) is FULL, and
+    is recorded as `verifier_touched` with the real cause in ``rule_detail``.
+    That is the closest member of the closed `INSPECT_FULL_RULES` vocabulary and
+    the reason is the same one: nothing can show the verifier did NOT move, so
+    the honest width is everything. See the concerns file — the vocabulary has
+    no member meaning "the diff could not be computed", and inventing one here
+    would be a seventh copy of a vocabulary casting 1 owns.
+    """
+    now = _now()
+    diff = _grind_diff(fdir, project_root)
+    touched = diff["files"]
+    skips = _skipped_streams(fdir)
+    research_skipped = _research_skipped(fdir)
+
+    rule = ""
+    rule_detail = ""
+    if decided_by in ("cast", "temper"):
+        rule = "first_of_phase"
+        rule_detail = f"phase-entry transition into {phase}"
+    elif diff["problem"]:
+        rule = "verifier_touched"
+        rule_detail = (
+            f"the GRIND diff could not be computed ({diff['problem']}), so the "
+            "verifier cannot be shown to be untouched"
+        )
+    elif _blocking_defects(fdir)["blocking"] == 0:
+        rule = "final_gate"
+        rule_detail = "no blocking defects remain, so the next gate is ASSAY"
+    elif _entered_grind_from_feedback(fdir):
+        rule = "final_gate"
+        rule_detail = "this GRIND was entered from ASSAY, TEMPER or NYQUIST feedback"
+    else:
+        spec_rel = _spec_relative_path(project_root)
+        hits = [f for f in touched if is_verifier_path(f, spec_rel)]
+        if hits:
+            rule = "verifier_touched"
+            rule_detail = (
+                f"{len(hits)} verifier file(s) changed: {', '.join(hits[:5])}"
+            )
+
+    full = bool(rule)
+    if not rule:
+        rule = INSPECT_DELTA_RULE
+
+    scope: dict[str, dict] = {}
+    required: list[str] = []
+    if full:
+        for wire in FULL_ROSTER_STREAMS:
+            if wire in skips:
+                scope[wire] = {"scope": "skipped", "detail": "manifest.stream_skips"}
+                continue
+            if wire == "research_audit" and research_skipped:
+                scope[wire] = {"scope": "skipped", "detail": "research_skipped record"}
+                continue
+            required.append(wire)
+            scope[wire] = {"scope": "full", "detail": "every item in scope"}
+        prove_sample: list[str] = []
+    else:
+        research_needed = _research_scope_touched(fdir, touched)
+        test01_needed = _test01_scope_touched(project_root, touched)
+        # The GRIND that just ended is `cycle - 1` on the `inspect_start`
+        # boundary, where the counter has already been advanced for the INSPECT
+        # this roster is for.
+        prove_sample = _prove_delta_sample(
+            fdir, project_root, cycle, fixed_in_cycle=max(0, cycle - 1)
+        )
+        for wire in FULL_ROSTER_STREAMS:
+            if wire in skips:
+                scope[wire] = {"scope": "skipped", "detail": "manifest.stream_skips"}
+                continue
+            if wire in DELTA_CONDITIONAL_STREAMS:
+                # ST-007: required ONLY when the diff touches a file they cover.
+                needed = research_needed if wire == "research_audit" else test01_needed
+                if wire == "research_audit" and research_skipped:
+                    needed = False
+                if not needed:
+                    scope[wire] = {
+                        "scope": "skipped",
+                        "detail": f"no file {wire} covers was touched",
+                    }
+                    continue
+                required.append(wire)
+                scope[wire] = {"scope": "full", "detail": "a covered file was touched"}
+                continue
+            required.append(wire)
+            if wire == "test":
+                # AC-019: TEST runs FULL and COLD on a DELTA cycle. A narrowed
+                # suite cannot see a regression the GRIND opened in a module it
+                # did not edit, and that is the exact failure a delta INSPECT is
+                # most exposed to.
+                scope[wire] = {
+                    "scope": "full",
+                    "detail": "whole suite, cold, from a clean worktree",
+                }
+            elif wire == "trace":
+                scope[wire] = {
+                    "scope": "delta",
+                    "detail": f"symbols in the {len(touched)} file(s) the GRIND touched",
+                }
+            else:
+                scope[wire] = {
+                    "scope": "delta",
+                    "detail": (
+                        f"{len(prove_sample)} row(s): rows tied to the fixed "
+                        f"defects plus {PROVE_DELTA_SAMPLE_SIZE} sampled"
+                    ),
+                }
+
+    for wire in _base_required_streams(project_root):
+        if wire in skips or wire in required:
+            continue
+        required.append(wire)
+        scope[wire] = {"scope": "full", "detail": "required by this run's manifest"}
+
+    return {
+        "cycle": cycle,
+        "phase": phase,
+        "mode": "FULL" if full else "DELTA",
+        "rule": rule,
+        "rule_detail": rule_detail,
+        "decided_by": decided_by,
+        "decided_at": now,
+        "required_streams": required,
+        "stream_scope": scope,
+        "touched_files": touched,
+        "prove_sample": prove_sample,
+        "diff_base": diff["base"],
+    }
+
+
+def _entered_grind_from_feedback(fdir: Path) -> bool:
+    """Was the GRIND that just ended entered from ASSAY / TEMPER / NYQUIST?
+
+    Read from `state.json.phase_history`, which `_update_phase` appends to on
+    every transition, rather than from a marker this would otherwise have to
+    invent: the history already records exactly the fact being asked about, and
+    a second record of it is a second thing that can drift.
+
+    The walk is backwards from the end, skipping the F3 entries themselves, and
+    the first non-F3 phase found is the one the GRIND was entered from. F4, F5
+    and F5.5 all mean the same thing here — a gate rejected the run and sent it
+    back — and the INSPECT that follows that GRIND is the one those gates will
+    read next, so it runs at full width.
+    """
+    history = _load_json(fdir / "state.json").get("phase_history", [])
+    if not isinstance(history, list):
+        return False
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+        phase = entry.get("phase")
+        if phase == "F3":
+            continue
+        return phase in ("F4", "F5", "F5.5")
+    return False
+
+
+def _record_cycle_rollup(fdir: Path, cycle: int, **fields) -> None:
+    """Write CYCLE-level facts into `stream-rollup.json` (C-6).
+
+    Sibling of `_record_stream_rollup`, not an extension of it. That function
+    accumulates one STREAM's tranches inside `cycles[<cycle>][<stream>]`; these
+    keys — `inspect_mode`, `inspect_rule`, `stream_scope`, `evidence_sweep` —
+    describe the cycle itself and sit beside the stream buckets rather than
+    inside one. Widening the stream writer with cycle-level kwargs would give
+    one function two jobs and make `cycles[<cycle>]["inspect_mode"]` look, to
+    every existing reader, like a stream called `inspect_mode`.
+
+    Shares the same `_document_transaction`, which is the part that matters:
+    D-103's concurrency site is this file, and a second unlocked writer of it
+    would lose records exactly as the unlocked stream writer did.
+    """
+    with _document_transaction(fdir / ROLLUP_FILENAME) as data:
+        cycles = data.setdefault("cycles", {})
+        if not isinstance(cycles, dict):
+            cycles = data["cycles"] = {}
+        bucket = cycles.setdefault(str(cycle), {})
+        if not isinstance(bucket, dict):
+            bucket = cycles[str(cycle)] = {}
+        bucket.update(fields)
+        data["updated_at"] = _now()
+
+
+#: FR-036 (Flexible) — how long a gap between Foundry-Next calls has to be
+#: before the watchdog says anything at all. Unchanged from the 180 seconds this
+#: has always used: the threshold was never the defect, the accusation was.
+#: A gap this long is worth REMARKING on either way; what changed is that the
+#: remark now depends on whether an agent is actually running.
+STALL_NOTICE_SECONDS = 180
+
+
+def _waiting_on_agents(project_root: str) -> dict:
+    """Is the lead waiting on live agents, or is it deliberating (FR-020)?
+
+    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
+
+    THREE EVIDENCE SOURCES, ASKED IN COST ORDER. `_check_active_teams` is a
+    cheap tmux/team-dir scan and answers "is a team registered and alive at
+    all"; `foundry_liveness` reads the per-agent progress ledgers and answers
+    the sharper question, "and is any of them still MOVING". A registered team
+    whose agents all died is not something to wait for, and a team dir that was
+    never cleaned up is the false positive a team-scan alone would produce.
+
+    NEVER RAISES AND NEVER BLOCKS (CT-012). Every failure path answers "not
+    waiting", which degrades to the pre-change behaviour — the watchdog warns —
+    rather than to silence. A liveness reader that cannot answer must not be
+    able to suppress a real stall warning.
+    """
+    result = {"waiting": False, "count": 0, "detail": "", "agents": []}
+    try:
+        teams = _check_active_teams(project_root)
+    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+        teams = {"active": False, "teams": []}
+
+    try:
+        from foundry_mcp.tools.foundry_spawn import (
+            STATUS_NO_PROGRESS,
+            STATUS_PROGRESSING,
+            foundry_liveness,
+        )
+
+        liveness = foundry_liveness(None, None, project_root=project_root)
+    except Exception:  # noqa: BLE001 - same reason
+        liveness = {"ok": False}
+
+    live_agents = []
+    if liveness.get("ok"):
+        for row in liveness.get("agents", []) or []:
+            if not isinstance(row, dict):
+                continue
+            if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
+                live_agents.append(row)
+
+    if not live_agents and not teams.get("active"):
+        return result
+
+    if live_agents:
+        # FR-036: the oldest progress age is what the lead actually needs — the
+        # agent least recently heard from is the one that decides whether this
+        # wait is healthy.
+        ages = [
+            row.get("last_progress_age_seconds", 0)
+            for row in live_agents
+            if isinstance(row.get("last_progress_age_seconds"), int)
+        ]
+        oldest = max(ages) if ages else 0
+        result.update({
+            "waiting": True,
+            "count": len(live_agents),
+            "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",
+            "agents": [
+                {"agent": r.get("agent"), "status": r.get("status"),
+                 "step": r.get("step")}
+                for r in live_agents
+            ],
+            "oldest_progress_seconds": oldest,
+        })
+        return result
+
+    # A registered, live team with no moving ledger. Still a wait, and still not
+    # deliberation — but the detail says the ledgers are the reason it cannot be
+    # more precise, so the lead knows to call Foundry-Liveness rather than
+    # assume the agents are fine.
+    names = ", ".join(teams.get("teams", []) or []) or "unnamed"
+    result.update({
+        "waiting": True,
+        "count": len(teams.get("teams", []) or []) or 1,
+        "detail": f"team(s) {names} are live but no progress ledger is moving",
+        "agents": [],
+    })
+    return result
+
+
+def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
+    """ST-008 / CT-016 — halt the run instead of opening GRIND number N+1.
+
+    Returns None when the run may proceed, otherwise the SUCCESS result of the
+    HALTED transition. Called from both transitions that open a GRIND.
+
+    THIS IS A TRANSITION, NOT A REFUSAL, and the distinction is the whole
+    requirement (FR-045 / A-048). A refusal would leave the run sitting in F2
+    with the lead free to call the same token again, having produced nothing —
+    a cap that only annoys. Instead `state.json` becomes HALTED, the report is
+    generated naming every open LIVE and LATENT defect, and the call returns
+    ``ok: True``. HALTED is a named terminal state and is emphatically NOT DONE:
+    it is where a run that ran out of cycles stops, with its open work written
+    down.
+
+    THE ARITHMETIC. The server counter advances only at `inspect_start`, so the
+    GRIND a call is about to open is always `cycle + 1`. With `max_cycles` 2:
+    GRIND 1 opens at counter 0, GRIND 2 at counter 1, and the call at counter 2
+    would open GRIND 3 — which is the one that halts (AC-037 / OT-026).
+    ``max_cycles`` 0 is unbounded and is the default, so a run that never passed
+    the flag is unaffected.
+    """
+    state = _load_json(fdir / "state.json")
+    max_cycles = state.get("max_cycles", 0)
+    if not isinstance(max_cycles, int) or isinstance(max_cycles, bool) or max_cycles <= 0:
+        return None
+    cycle = _current_cycle(fdir)
+    opening = cycle + 1
+    if opening <= max_cycles:
+        return None
+
+    reason = (
+        f"--max-cycles {max_cycles} reached: opening GRIND cycle {opening} would "
+        f"exceed it"
+    )
+    with _document_transaction(fdir / "state.json") as doc:
+        doc["phase"] = RUN_PHASE_HALTED
+        doc["halted_at_cycle"] = cycle
+        doc["halted_reason"] = reason
+        doc["updated_at"] = _now()
+
+    # FR-045: "the report is written naming every open LIVE and LATENT defect".
+    # Generated as PART of this transition rather than left to the lead, because
+    # a halted run whose open work was never written down is the outcome the cap
+    # is supposed to prevent, not a variant of it.
+    report = _generate_report(project_root, fdir)
+    blocking = _blocking_defects(fdir)
+
+    return {
+        "ok": True,
+        "halted": True,
+        "phase": RUN_PHASE_HALTED,
+        "cycle": cycle,
+        "max_cycles": max_cycles,
+        "halted_reason": reason,
+        "requested_token": token,
+        "report": report,
+        "open_live_defects": blocking["live"],
+        "open_unknown_tier_defects": blocking["unknown"],
+        "open_latent_defects": blocking["latent"],
+        "message": (
+            f"Run HALTED — {reason}. The report has been generated naming "
+            f"{len(blocking['live'])} open LIVE, "
+            f"{len(blocking['unknown'])} untiered and "
+            f"{len(blocking['latent'])} open LATENT defect(s). HALTED is not "
+            "DONE: this run stopped with open work, and the report says what."
+        ),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Spend (CT-013 / GI-005 / FR-021 / FR-022 / FR-037)
+#
+# GI-005 IS A CONSTRAINT ON THIS SERVER'S INPUTS, NOT ON THE FEATURE.
+# "Parser stays out of the server; the fragile block is only ever read by the
+# lead." Nothing below tails a transcript JSONL, regex-parses an Agent usage
+# block, or reads any harness-owned format. The LEAD reads its own usage block
+# and types the two numbers into `Foundry-Spend`; that is the ONLY channel by
+# which a token count enters this run's artifacts. A parser for a format nobody
+# owns does not fail loudly — it silently starts reporting a wrong number, which
+# is worse than reporting none.
+#
+# NOTHING HERE REFUSES (CT-013 / FR-022 / AC-034). A forgotten Foundry-Spend is
+# a gap in a cost report, not a defect in the build, and a gate that blocked on
+# one would make an accounting omission stop a run. Unreported dispatches are
+# DERIVED and LISTED instead, so the gap is visible rather than invisible.
+# --------------------------------------------------------------------------- #
+
+
+def _empty_spend_bucket() -> dict:
+    return {"tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 0}
+
+
+def _spend_ledger_rows(fdir: Path) -> list[dict]:
+    """Every line of `spend.jsonl`, skipping any that will not decode.
+
+    A malformed line is skipped rather than raised on, for the reason every
+    reader in this package skips a malformed record: this is advisory data, and
+    losing a cost report to one bad line would be a strictly worse outcome than
+    a cost report missing one row.
+    """
+    text, problem = read_text_file(fdir / SPEND_LEDGER_FILENAME)
+    if problem is not None:
+        return []
+    rows: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _dispatched_agents(fdir: Path) -> list[dict]:
+    """Agents this run DISPATCHED, from `spawns.log` and the INSPECT roster.
+
+    Two sources because neither sees every agent (C-5). `spawns.log` is the
+    record of what the run handed out and covers every CAST and GRIND teammate;
+    the F2 stream agents are spawned from the roster the INSPECT-opening
+    transition recorded, and never appear in `spawns.log` at all.
+    """
+    agents: list[dict] = []
+    text, problem = read_text_file(fdir / "spawns.log")
+    if problem is None:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            agent = row.get("agent") or row.get("agent_id") or row.get("casting_id")
+            if agent is None:
+                continue
+            agents.append({"agent": str(agent), "phase": str(row.get("phase", ""))})
+
+    rollup = _load_json(fdir / ROLLUP_FILENAME).get("cycles", {})
+    if isinstance(rollup, dict):
+        for cycle_key, bucket in rollup.items():
+            if not isinstance(bucket, dict):
+                continue
+            for wire in bucket.get("stream_scope", {}) or {}:
+                scope = (bucket.get("stream_scope") or {}).get(wire) or {}
+                if isinstance(scope, dict) and scope.get("scope") == "skipped":
+                    continue
+                agents.append({"agent": str(wire), "phase": f"cycle-{cycle_key}"})
+    return agents
+
+
+def _unreported_dispatches(fdir: Path) -> list[dict]:
+    """Dispatched agents with no `spend.jsonl` line for that phase (AC-034).
+
+    DERIVED, never refused on. FR-022 is explicit: "A forgotten Foundry-Spend
+    never blocks a gate; the report shows N agents unreported per phase so the
+    gap is visible." An accounting omission is a thing to SEE, not a thing to
+    stop a run over.
+    """
+    reported = {
+        (str(r.get("agent", "")), str(r.get("phase", "")))
+        for r in _spend_ledger_rows(fdir)
+    }
+    reported_agents = {agent for agent, _phase in reported}
+    seen: set[tuple[str, str]] = set()
+    unreported: list[dict] = []
+    for row in _dispatched_agents(fdir):
+        key = (row["agent"], row["phase"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in reported or row["agent"] in reported_agents:
+            continue
+        unreported.append(row)
+    return sorted(unreported, key=lambda r: (r["agent"], r["phase"]))
+
+
+def _spend_summary(fdir: Path) -> dict:
+    """The C-4 roll-ups plus the unreported list, for display and the report."""
+    state = _load_json(fdir / "state.json")
+    spend = state.get("spend")
+    if not isinstance(spend, dict):
+        spend = {"by_phase": {}, "by_cycle": {}, "total": _empty_spend_bucket()}
+    unreported = _unreported_dispatches(fdir)
+    return {
+        "by_phase": spend.get("by_phase", {}),
+        "by_cycle": spend.get("by_cycle", {}),
+        "total": spend.get("total", _empty_spend_bucket()),
+        "unreported_dispatches": unreported,
+        "unreported_count": len(unreported),
+    }
+
+
+def foundry_record_spend(
+    agent: str,
+    phase: str,
+    tokens: int,
+    duration_ms: int,
+    cycle: int | None = None,
+    project_root: str = ".",
+) -> dict:
+    """Record one agent's token and time cost (CT-013 / FR-021 / FR-037).
+
+    Appends a line to `foundry-archive/{run}/spend.jsonl` and updates the
+    per-phase, per-cycle and run-total roll-ups in `state.json`.
+
+    THE CYCLE BUCKET IS KEYED BY THE SERVER COUNTER (FR-037). A caller may pass
+    ``cycle`` and it is recorded as the claim, but the bucket key is
+    `_current_cycle` — the same authority every other record in this run is
+    stamped from. Rolling cost up under a lead-asserted cycle is how D-119's
+    class of divergence starts, and a cost report that disagrees with the cycle
+    ledger about which cycle a run was in is worse than no cost report.
+
+    TOKENS AND SECONDS SIT SIDE BY SIDE in every bucket, because the two
+    questions a lead actually asks — "what did this phase cost" and "how long
+    did it take" — are asked together, and a roll-up that answers only one sends
+    them back to a second artifact.
+
+    NEVER REFUSES. A malformed count is coerced to 0 and recorded; a missing run
+    is the only thing that returns an error, and that is a "there is nothing to
+    record against", not a judgement about the numbers.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir or not fdir.exists():
+        return {"error": "No active foundry run.",
+                "hint": "Call Foundry-Init first, or foundry_init(resume='run-name')."}
+    # The house guard every entry point in this module runs, and CT-013's "never
+    # refuses" does not exempt it. That clause is about the NUMBERS — a
+    # forgotten spend record, a zero, an unreported dispatch — none of which may
+    # block anything. A run artifact that will not decode is a different
+    # statement: this call is about to read and rewrite `state.json`, and
+    # rolling spend into a document nobody can parse would either lose the
+    # ledger or silently overwrite it. `test_every_orchestrator_entry_point_runs_
+    # the_artifact_guard` derives this obligation from the module rather than
+    # from a list, which is how the omission was caught.
+    if (corrupt := _artifact_guard(fdir)):
+        return corrupt
+
+    def _count(value) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return 0
+        return max(0, int(value))
+
+    server_cycle = _current_cycle(fdir)
+    row = {
+        "agent": str(agent or "").strip() or "unknown",
+        "phase": str(phase or "").strip() or "unknown",
+        "cycle": server_cycle,
+        "declared_cycle": cycle,
+        "tokens": _count(tokens),
+        "duration_ms": _count(duration_ms),
+        "recorded_at": _now(),
+    }
+
+    try:
+        with open(fdir / SPEND_LEDGER_FILENAME, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError as exc:
+        # Still roll it up: a run whose ledger file cannot be appended to should
+        # not also lose the totals. The problem is named in the result.
+        row["ledger_problem"] = f"{type(exc).__name__}: {exc}"
+
+    with _document_transaction(fdir / "state.json") as state:
+        spend = state.get("spend")
+        if not isinstance(spend, dict):
+            spend = {}
+        for section in ("by_phase", "by_cycle"):
+            if not isinstance(spend.get(section), dict):
+                spend[section] = {}
+        if not isinstance(spend.get("total"), dict):
+            spend["total"] = _empty_spend_bucket()
+
+        for bucket in (
+            spend["by_phase"].setdefault(row["phase"], _empty_spend_bucket()),
+            spend["by_cycle"].setdefault(str(server_cycle), _empty_spend_bucket()),
+            spend["total"],
+        ):
+            for field in ("tokens", "duration_ms", "agents", "unreported"):
+                if not isinstance(bucket.get(field), int) or isinstance(
+                    bucket.get(field), bool
+                ):
+                    bucket[field] = 0
+            bucket["tokens"] += row["tokens"]
+            bucket["duration_ms"] += row["duration_ms"]
+            bucket["agents"] += 1
+
+        state["spend"] = spend
+        state["updated_at"] = _now()
+
+    summary = _spend_summary(fdir)
+    return {
+        "ok": True,
+        "recorded": row,
+        "by_phase": summary["by_phase"],
+        "by_cycle": summary["by_cycle"],
+        "total": summary["total"],
+        "unreported_dispatches": summary["unreported_dispatches"],
+    }
+
+
+def _record_inspect_mode(fdir: Path, entry: dict) -> None:
+    """Append one decision to `state.json.inspect_modes` and mirror it (C-4/C-6).
+
+    Used by the two PHASE-ENTRY transitions. `inspect_start` does the same work
+    inline instead, because it already holds the state transaction open for the
+    counter advance and opening a second one would reintroduce exactly the
+    read-modify-write window D-103 closed.
+    """
+    with _document_transaction(fdir / "state.json") as state:
+        modes = state.get("inspect_modes")
+        if not isinstance(modes, list):
+            modes = []
+        modes.append(entry)
+        state["inspect_modes"] = modes
+        state["updated_at"] = _now()
+    _record_cycle_rollup(
+        fdir,
+        entry["cycle"],
+        inspect_mode=entry["mode"],
+        inspect_rule=entry["rule"],
+        stream_scope=entry["stream_scope"],
+    )
+
+
+def _sweep_evidence_at_boundary(
+    fdir: Path, project_root: str, entry: dict, *, full: bool
+) -> dict:
+    """Re-execute the in-scope evidence corpus at HEAD (GI-002 / ST-005).
+
+    Returns ``{"ok": bool, "record": {...}, "mismatches": [...], "error": str}``
+    where ``record`` is the C-6 `evidence_sweep` object the cycle roll-up
+    carries.
+
+    GI-002 IS A STATEMENT ABOUT WHO SWEEPS. "The SERVER sweeps at the boundary
+    and refuses on mismatch" — not a teammate reporting that it swept, not a
+    lead running a shell loop over `evidence/`. Both of those are claims; this
+    is a measurement, taken at the one crossing where HEAD is the tree every
+    later gate will judge.
+
+    SCOPE IS DELTA BY DEFAULT. `select_sweep_scope` returns the logs whose
+    casting's key_files intersect the diff plus any log whose own
+    `# evidence-cmd:` references a touched file, and an empty list is a
+    COMPLETE answer — a GRIND that touched nothing in scope re-executes zero
+    logs, spawns no worktree and no subprocess (AC-014). The whole corpus is
+    swept whenever a FULL rule fired, which by ST-006 includes every INSPECT
+    before ASSAY, NYQUIST or DONE.
+    """
+    from foundry_mcp.tools.evidence import select_sweep_scope, sweep_evidence_at_head
+
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    evidence_dir = Path(project_root) / "evidence"
+    logs = select_sweep_scope(
+        manifest=manifest,
+        evidence_dir=evidence_dir,
+        touched_files=list(entry.get("touched_files") or []),
+        full=full,
+    )
+    outcome = sweep_evidence_at_head(
+        project_root=Path(project_root), run_dir=fdir, logs=logs
+    )
+    record = {
+        "scope": "full" if full else "delta",
+        "logs_reexecuted": [str(p) for p in outcome.get("logs_reexecuted", [])],
+        "mismatches": [
+            {"log": m.get("log", ""), "reason": m.get("reason", "")}
+            for m in outcome.get("mismatches", [])
+        ],
+        "elapsed_seconds": outcome.get("elapsed_seconds", 0.0),
+        "pool_size": outcome.get("pool_size", 0),
+        "swept_at": _now(),
+    }
+    return {
+        "ok": bool(outcome.get("ok")),
+        "record": record,
+        "mismatches": outcome.get("mismatches", []),
+        "error": outcome.get("error") or "",
+    }
+
+
+def _sweep_refusal(sweep: dict, cycle: int) -> dict:
+    """The named refusal a mismatched evidence sweep produces (CT-007).
+
+    NAMES EACH LOG. A sweep that says "something no longer reproduces" sends
+    the lead to re-run the whole corpus by hand to find out which; the sweep
+    already knows, and CT-007 says to say so.
+
+    Also names the counter it did NOT advance, because the operator's next
+    question after a refused transition is always whether the run moved.
+    """
+    if sweep["error"]:
+        return {
+            "error": (
+                f"Cannot cross into INSPECT — the evidence sweep could not run: "
+                f"{sweep['error']}"
+            ),
+            "hint": (
+                "A sweep that could not run is not a sweep that passed. Fix the "
+                "condition named above and re-call Foundry-Phase"
+                "(phase='inspect_start')."
+            ),
+            "cycle": cycle,
+            "evidence_sweep": sweep["record"],
+        }
+    named = [m.get("log", "?") for m in sweep["mismatches"]]
+    return {
+        "error": (
+            f"Cannot cross into INSPECT — {len(named)} committed evidence log(s) "
+            f"no longer reproduce at HEAD: {', '.join(named)}"
+        ),
+        "hint": (
+            "Each log's `# evidence-cmd:` was re-executed in a detached "
+            "worktree at HEAD and its output no longer matches what was "
+            "committed. Either the behaviour it demonstrates regressed — fix "
+            "that — or the log is stale and its owning casting must re-capture "
+            "it. The cycle counter has NOT advanced."
+        ),
+        "cycle": cycle,
+        "mismatches": sweep["mismatches"],
+        "evidence_sweep": sweep["record"],
+    }
+
+
+def _current_inspect_mode(fdir: Path) -> dict | None:
+    """The decision the last INSPECT-opening transition recorded, or None.
+
+    THE ONLY READ. GI-008 and GI-009 both name a lazily-computed mode as the
+    violation, so every consumer — the streams-complete check, the guidance
+    engine, the status display — comes through here and none of them re-derives
+    anything. None means a run whose INSPECT has not been opened since this
+    landed, and each caller degrades to its pre-change behaviour rather than
+    guessing a width.
+    """
+    modes = _load_json(fdir / "state.json").get("inspect_modes")
+    if not isinstance(modes, list):
+        return None
+    for entry in reversed(modes):
+        if isinstance(entry, dict) and entry.get("mode"):
+            return entry
+    return None
+
+
 def _check_streams_complete(project_root: str) -> dict:
     """Check if all required verification streams have completed for this cycle.
 
@@ -1773,17 +3109,40 @@ def _check_streams_complete(project_root: str) -> dict:
         return {"complete": False, "missing": "all", "required": [], "shortfalls": []}
     manifest = fdir / "castings" / "manifest.json"
 
-    required = ["trace", "prove", "test"]
+    # AC-017 / ST-006 / ST-007 / GI-008 — THE ROSTER IS READ, NOT RECOMPUTED.
+    #
+    # The transition that opened this INSPECT already decided which streams it
+    # requires and at what scope, and recorded both. Re-deriving them here would
+    # let the check disagree with the cycle that actually ran: the mode is a
+    # function of a GRIND diff measured at the boundary, and by the time this is
+    # called the tree has moved on. GI-008 names the shape outright — "a
+    # streams-complete check that reads a roster nothing recorded".
+    #
+    # A run with no recorded decision falls back to exactly what this function
+    # required before the width existed. That is not a guess at a width, it is
+    # the pre-change behaviour, which is what a resumed archive should get.
+    recorded = _current_inspect_mode(fdir)
+    inspect_mode = ""
+    inspect_rule = ""
+    stream_scope: dict = {}
+    if recorded and isinstance(recorded.get("required_streams"), list):
+        required = [s for s in recorded["required_streams"] if isinstance(s, str)]
+        inspect_mode = recorded.get("mode", "")
+        inspect_rule = recorded.get("rule", "")
+        raw_scope = recorded.get("stream_scope")
+        stream_scope = raw_scope if isinstance(raw_scope, dict) else {}
+    else:
+        required = ["trace", "prove", "test"]
 
-    url = ""
-    if manifest.exists():
-        url = _load_json(manifest).get("target_url", "")
+        url = ""
+        if manifest.exists():
+            url = _load_json(manifest).get("target_url", "")
 
-    if _check_sight_required(project_root).get("required"):
-        required.append("sight")
+        if _check_sight_required(project_root).get("required"):
+            required.append("sight")
 
-    if url:
-        required.append("probe")
+        if url:
+            required.append("probe")
 
     missing = [s for s in required if not (fdir / f".{s}-complete").exists()]
 
@@ -1802,6 +3161,12 @@ def _check_streams_complete(project_root: str) -> dict:
         "missing": " ".join(missing),
         "required": required,
         "shortfalls": shortfalls,
+        # Reported, never decided here (GI-008). Empty strings on a run with no
+        # recorded decision, which is how a caller tells "this run predates the
+        # width" from "this run is at FULL".
+        "inspect_mode": inspect_mode,
+        "inspect_rule": inspect_rule,
+        "stream_scope": stream_scope,
     }
 
 
@@ -1949,19 +3314,45 @@ def foundry_mark_phase_complete(
                 (fdir / ".cast-baseline-sha").write_text(_rev.stdout.strip(), encoding="utf-8")
         except (FileNotFoundError, _sp.TimeoutExpired, OSError):
             pass
+        # GI-009 / ST-006 / AC-016 / OT-012 \u2014 THE F2 ENTRY RECORDS FULL.
+        #
+        # This branch, not `start_cast`: `start_cast` calls
+        # `_update_phase(fdir, "F1")` and enters CAST, opening no INSPECT at
+        # all. `cast` is the token that enters F2, so it is the transition that
+        # opens the run's first INSPECT and therefore the one that decides its
+        # width \u2014 recorded here, before any Foundry-Next is called (OT-012).
+        entry = _decide_inspect_mode(
+            fdir, project_root, decided_by="cast", phase="F2",
+            cycle=_current_cycle(fdir),
+        )
         _update_phase(fdir, "F2")
-        return {"ok": True, "phase": "F2", "message": "CAST complete \u2192 phase is now F2 (INSPECT)"}
+        _record_inspect_mode(fdir, entry)
+        return {
+            "ok": True,
+            "phase": "F2",
+            "inspect_mode": entry["mode"],
+            "inspect_rule": entry["rule"],
+            "required_streams": entry["required_streams"],
+            "message": (
+                f"CAST complete \u2192 phase is now F2 (INSPECT), mode {entry['mode']} "
+                f"(rule {entry['rule']}). Required streams: "
+                f"{', '.join(entry['required_streams'])}."
+            ),
+        }
 
     elif phase == "inspect_clean":
         streams = _check_streams_complete(project_root)
         if not streams["complete"]:
             return {"error": f"Cannot mark INSPECT clean \u2014 streams incomplete: {streams['missing']}",
                     "hint": "Run all required verification streams first"}
-        defects = _load_json(fdir / "defects.json")
-        open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
-        if open_count > 0:
-            return {"error": f"Cannot mark INSPECT clean \u2014 {open_count} open defect(s) remain",
-                    "hint": "All defects must be fixed before marking clean"}
+        # CT-008 / AC-008: "clean" is the tier-aware question. A LATENT-only
+        # backlog passes here for the same reason it passes ASSAY \u2014 nobody drove
+        # a failing instance \u2014 and it is carried, named, to the F6 backlog
+        # rather than silently closed. LIVE and unknown-tier still refuse.
+        blocking = _blocking_defects(fdir)
+        if blocking["blocking"] > 0:
+            return {"error": f"Cannot mark INSPECT clean \u2014 {blocking['reason']}",
+                    "hint": blocking["hint"]}
         (fdir / ".inspect-clean").write_text(f"{_now()}\n", encoding="utf-8")
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
@@ -1980,6 +3371,34 @@ def foundry_mark_phase_complete(
         # consults none. Only F3 -> F2 advances it — the F1 -> F2 entry from
         # CAST is the run's first INSPECT, not a new cycle.
         state_path = fdir / "state.json"
+        completed_cycle = _current_cycle(fdir)
+
+        # ST-006 / GI-002 / ST-005 / CT-007 — DECIDE, THEN SWEEP, THEN
+        # TRANSACT. IN THAT ORDER, AND OUTSIDE THE LOCK.
+        #
+        # The counter advance below lives inside `_document_transaction`, an
+        # fcntl-locked critical section over state.json that every other tool
+        # call on this run contends on. `sweep_evidence_at_head` creates a
+        # detached worktree and runs a bounded thread pool of subprocesses
+        # inside it — seconds to minutes. Holding the flock across that would
+        # serialise the entire run for the duration, for no benefit: neither
+        # the mode decision nor the sweep reads or writes state.json.
+        #
+        # It also gets the refusal semantics right for free. A mismatched log
+        # returns BEFORE the transaction opens, so the cycle counter is
+        # untouched (AC-013 / OT-008) and no mode is recorded for a transition
+        # that did not happen. A transition the server refused must leave no
+        # trace that it was attempted.
+        entry = _decide_inspect_mode(
+            fdir, project_root, decided_by="inspect_start", phase="F2",
+            cycle=completed_cycle + 1,
+        )
+        sweep = _sweep_evidence_at_boundary(
+            fdir, project_root, entry, full=entry["mode"] == "FULL"
+        )
+        if not sweep["ok"]:
+            return _sweep_refusal(sweep, completed_cycle)
+
         # D-103: read-phase, advance-phase and increment are ONE critical
         # section. They used to be three separate read-modify-writes over the
         # same file (the increment re-read state.json AFTER _update_phase had
@@ -1998,18 +3417,58 @@ def foundry_mark_phase_complete(
                 # reader is what D-059's derived-membership test requires.
                 state["cycle"] = _current_cycle(fdir) + 1
                 state["updated_at"] = _now()
+            modes = state.get("inspect_modes")
+            if not isinstance(modes, list):
+                modes = []
+            entry["cycle"] = state.get("cycle", completed_cycle + 1)
+            modes.append(entry)
+            state["inspect_modes"] = modes
+
         cycle = _current_cycle(fdir)
-        return {
+        _record_cycle_rollup(
+            fdir,
+            cycle,
+            inspect_mode=entry["mode"],
+            inspect_rule=entry["rule"],
+            stream_scope=entry["stream_scope"],
+            evidence_sweep=sweep["record"],
+        )
+        # The commit this boundary crossed at, so the NEXT crossing's diff is
+        # measured from here rather than from whatever older marker happened to
+        # survive. Written after the transition commits: a marker naming a
+        # boundary the server refused would silently narrow the next sweep.
+        head = _head_sha(project_root)
+        if head:
+            (fdir / INSPECT_BOUNDARY_SHA_MARKER).write_text(
+                f"{head}\n", encoding="utf-8"
+            )
+
+        cleared = _advance_escalation_clean_cycles(fdir, project_root, completed_cycle)
+
+        result = {
             "ok": True,
             "phase": "F2",
             "cycle": cycle,
+            "inspect_mode": entry["mode"],
+            "inspect_rule": entry["rule"],
+            "required_streams": entry["required_streams"],
+            "evidence_sweep": sweep["record"],
             "message": (
-                f"GRIND complete → phase is now F2 (INSPECT), cycle {cycle}. "
-                "Run the FULL stream set again — no spot checking."
+                f"GRIND complete → phase is now F2 (INSPECT), cycle {cycle}, "
+                f"mode {entry['mode']} (rule {entry['rule']}). Required "
+                f"streams: {', '.join(entry['required_streams'])}. Evidence "
+                f"sweep re-executed {len(sweep['record']['logs_reexecuted'])} "
+                f"log(s) at {sweep['record']['scope']} scope."
             ),
         }
+        if cleared:
+            result["escalation_cleared"] = cleared
+        return result
 
     elif phase == "grind_start":
+        # ST-008 / CT-016 - THE CYCLE CAP, ON EVERY DOOR THAT OPENS A GRIND.
+        if (halt := _halt_if_capped(fdir, project_root, "grind_start")) is not None:
+            return halt
         # Every recordable stream marker is cleared (derived from the canonical
         # stream vocabulary so new streams cannot go stale across GRIND cycles),
         # not just the required subset — completion state must stay honest.
@@ -2021,6 +3480,16 @@ def foundry_mark_phase_complete(
                 "message": "All markers cleared \u2192 phase is now F3 (GRIND). Full INSPECT must re-run after."}
 
     elif phase == "assay_fail":
+        # ST-008 / CT-016 - AND ON THIS DOOR TOO.
+        #
+        # `assay_fail` clears the same markers and calls the same
+        # `_update_phase(fdir, "F3")` as `grind_start`; it is a second door into
+        # the same phase, not a different kind of transition. A cap wired to one
+        # of them would let a run looping back through ASSAY failure run forever
+        # while a run looping through GRIND halts - and the ASSAY loop is
+        # exactly the one --max-cycles exists to bound.
+        if (halt := _halt_if_capped(fdir, project_root, "assay_fail")) is not None:
+            return halt
         stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
         for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
             (fdir / marker).unlink(missing_ok=True)
@@ -2029,8 +3498,28 @@ def foundry_mark_phase_complete(
                 "message": "ASSAY failed \u2192 phase is now F3 (GRIND). Fix defects, then full INSPECT, then ASSAY again."}
 
     elif phase == "temper":
+        # GI-009 / AC-016: the F5 entry opens TEMPER's first INSPECT, so it
+        # records FULL / first_of_phase on exactly the same terms as the F2
+        # entry above. One rule, two doors — which is what GI-009 means by
+        # "whichever Foundry-Phase transition opens an INSPECT records the
+        # mode".
+        entry = _decide_inspect_mode(
+            fdir, project_root, decided_by="temper", phase="F5",
+            cycle=_current_cycle(fdir),
+        )
         _update_phase(fdir, "F5")
-        return {"ok": True, "phase": "F5", "message": "Phase is now F5 (TEMPER)"}
+        _record_inspect_mode(fdir, entry)
+        return {
+            "ok": True,
+            "phase": "F5",
+            "inspect_mode": entry["mode"],
+            "inspect_rule": entry["rule"],
+            "required_streams": entry["required_streams"],
+            "message": (
+                f"Phase is now F5 (TEMPER), mode {entry['mode']} "
+                f"(rule {entry['rule']})."
+            ),
+        }
 
     elif phase == "nyquist":
         # Enter F5.5. Mirrors the "temper" token: the phase mark is what makes
@@ -2840,6 +4329,27 @@ def _escalated_classes(
             continue
         if "*" in overrides or key in overrides:
             continue
+        # ST-001 / ST-002 — THE MECHANICAL EXIT, READ FROM THE LEDGER THAT
+        # RECORDS IT.
+        #
+        # This function had exactly one exit: a class stopped escalating when
+        # every instance of it closed. thunder-viper is what that costs. An
+        # adversarial prover with no convergence criterion re-filed the same
+        # class at a finer boundary in cycles 19, 20 and 21 — never driving a
+        # live instance — so the class never emptied, never stopped drawing a
+        # structural packet, and the run ended only when a human told the lead
+        # to fix the last defects directly.
+        #
+        # Two exits now sit beside closure, and CLEARED is the persisted answer
+        # to both. Whichever fired is recorded with its reason, so "why did this
+        # class stop escalating" is answerable from an artifact rather than from
+        # a status flag alone. CLEARED is terminal and outranks the cycle count:
+        # a class that has left escalation does not re-enter it because three
+        # more instances arrive — its open LIVE instances are ordinary blocking
+        # defects fixed one at a time (AC-003), which is exactly what escalation
+        # was an alternative to.
+        if (recorded.get(key) or {}).get("status") == "CLEARED":
+            continue
         run_len, run_end = _consecutive_run(bucket["cycles"])
         if run_len < ESCALATION_CYCLES:
             continue
@@ -2850,6 +4360,18 @@ def _escalated_classes(
             "consecutive_cycles": run_len,
             "escalated_at_cycle": run_end,
             "defect_ids": [d["id"] for d in bucket["open"]],
+            # FR-001 / C-3: the two halves of "what is still open", split by the
+            # axis that decides what happens to each. Open LIVE (and untiered)
+            # instances stay blocking defects fixed per-instance; open LATENT
+            # instances go to the F6 named backlog and block nothing. Computed
+            # here, where the bucket is already in hand, rather than re-derived
+            # by every reader of the escalation record.
+            "open_live_defect_ids": [
+                d["id"] for d in bucket["open"] if defect_tier(d) != "LATENT"
+            ],
+            "open_latent_defect_ids": [
+                d["id"] for d in bucket["open"] if defect_tier(d) == "LATENT"
+            ],
             "open_count": len(bucket["open"]),
             "total_count": bucket["total"],
             "files": sorted(bucket["files"]),
@@ -3004,12 +4526,54 @@ def _structural_proposal(info: dict) -> str:
     )
 
 
+def _escalation_entry_defaults(entry: dict) -> dict:
+    """Fill an escalation.json class entry's C-3 keys, preserving what is there.
+
+    A PRE-CHANGE ARCHIVE HAS NONE OF THEM, and every default here is chosen so
+    such an entry reads as "escalated, nothing has happened yet" rather than as
+    anything the run must act on: status ESCALATED, no exit reason, zero packets
+    dispatched, zero clean cycles. Reading a missing `live_clean_cycles` as
+    anything but zero would clear classes in an old archive that nothing ever
+    measured.
+    """
+    entry.setdefault("status", "ESCALATED")
+    entry.setdefault("exit_reason", None)
+    entry.setdefault("cleared_at_cycle", None)
+    entry.setdefault("structural_packets_dispatched", 0)
+    if not isinstance(entry.get("structural_packet_cycles"), list):
+        entry["structural_packet_cycles"] = []
+    if not isinstance(entry.get("live_clean_cycles"), int) or isinstance(
+        entry.get("live_clean_cycles"), bool
+    ):
+        entry["live_clean_cycles"] = 0
+    if not isinstance(entry.get("open_latent_defect_ids"), list):
+        entry["open_latent_defect_ids"] = []
+    return entry
+
+
 def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None:
     """Persist each escalated class's proposal so it survives the tool call.
 
     ST-003 requires the proposal to be RECORDED on the class's single packet;
     keeping it only in the returned task list would lose it the moment the lead
     moved on.
+
+    FR-028 / C-3 — THE RECORD IS NOW STATEFUL, NOT MERELY DESCRIPTIVE.
+    ------------------------------------------------------------------
+    It used to hold only what `_escalated_classes` re-derives from the ledger on
+    every call, so nothing was lost by losing it. ST-001 changed that: "two
+    consecutive INSPECT cycles with zero LIVE instances" is not a question
+    `defects.json` can answer. The ledger carries each record's filing cycle and
+    its reopen cycle, and neither can distinguish "cycle N ran and this class
+    drew nothing" from "cycle N never ran" — and `_escalated_classes` holds no
+    memory between calls. So `live_clean_cycles` and
+    `structural_packets_dispatched` are COUNTERS kept here and advanced at the
+    boundaries that own them, which is what "counted on the server cycle stamp"
+    requires.
+
+    Every write preserves an existing value: this function records proposals and
+    refreshes the derived views, and must never reset a counter another boundary
+    advanced.
     """
     path = fdir / ESCALATION_FILENAME
     with _document_transaction(path) as data:
@@ -3018,12 +4582,188 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
             classes = data["classes"] = {}
         for key, info in escalated.items():
             entry = classes.setdefault(key, {})
+            if not isinstance(entry, dict):
+                entry = classes[key] = {}
+            _escalation_entry_defaults(entry)
             entry["proposal"] = info["proposal"]
             entry["escalated_at_cycle"] = info["escalated_at_cycle"]
             entry["consecutive_cycles"] = info["consecutive_cycles"]
             entry["defect_ids"] = info["defect_ids"]
+            # FR-001: refreshed on every recording, because the backlog the F6
+            # report names has to be the CURRENT set of never-reproduced
+            # instances, not the set as of whenever the class first escalated.
+            entry["open_latent_defect_ids"] = info.get("open_latent_defect_ids", [])
             entry["recorded_at"] = _now()
         data["updated_at"] = _now()
+
+
+def _spend_structural_budget(
+    fdir: Path, escalated: dict[str, dict], packet_cycle: int
+) -> list[dict]:
+    """Count this dispatch against each class's structural-pass budget (ST-002).
+
+    Called from `foundry_defects_to_tasks` immediately before it emits the
+    packets, so `structural_packets_dispatched` counts what the run actually
+    handed out rather than what some reader later inferred.
+
+    AT MOST ONE PACKET PER CLASS PER SERVER CYCLE. `foundry_defects_to_tasks` is
+    an ordinary tool a lead may call twice in one cycle — re-reading the task
+    list is not a second structural pass, and a budget that a double-click could
+    exhaust would end escalation after one real attempt. The recorded cycle list
+    is the guard, which also makes the record legible: `structural_packet_cycles`
+    reads as "the cycles this class was worked structurally in".
+
+    Returns the classes that CLEARED on this dispatch, each with its exit
+    reason, for the caller to report.
+    """
+    cleared: list[dict] = []
+    if not escalated:
+        return cleared
+    with _document_transaction(fdir / ESCALATION_FILENAME) as data:
+        classes = data.setdefault("classes", {})
+        if not isinstance(classes, dict):
+            classes = data["classes"] = {}
+        for key in sorted(escalated):
+            info = escalated[key]
+            entry = classes.setdefault(key, {})
+            if not isinstance(entry, dict):
+                entry = classes[key] = {}
+            _escalation_entry_defaults(entry)
+            entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
+
+            if packet_cycle not in entry["structural_packet_cycles"]:
+                entry["structural_packet_cycles"].append(packet_cycle)
+                entry["structural_packets_dispatched"] = (
+                    entry["structural_packets_dispatched"] + 1
+                )
+
+            if (
+                entry["status"] == "ESCALATED"
+                and entry["structural_packets_dispatched"] >= STRUCTURAL_PASS_BUDGET
+            ):
+                entry["status"] = "CLEARED"
+                entry["exit_reason"] = "budget"
+                entry["cleared_at_cycle"] = packet_cycle
+                entry["open_latent_defect_ids"] = info.get(
+                    "open_latent_defect_ids", []
+                )
+                cleared.append({
+                    "class": key,
+                    "exit_reason": "budget",
+                    "cleared_at_cycle": packet_cycle,
+                    "structural_packets_dispatched": entry[
+                        "structural_packets_dispatched"
+                    ],
+                    "open_live_defect_ids": info.get("open_live_defect_ids", []),
+                    "open_latent_defect_ids": info.get("open_latent_defect_ids", []),
+                })
+        data["updated_at"] = _now()
+    return cleared
+
+
+def _class_drew_live_in_cycle(defects: list, class_key: str, cycle: int) -> bool:
+    """Did `class_key` draw a LIVE-or-untiered instance stamped `cycle`?
+
+    ST-001 counts cycles in which the class drew ZERO LIVE instances, and
+    LATENT instances explicitly do not reset the count — that exemption is the
+    whole mechanism. A prover re-filing the same class at a finer boundary every
+    cycle, never driving a live instance, is precisely the thunder-viper
+    behaviour the exit exists to terminate, and if a LATENT filing reset the
+    counter the class could be held open forever by findings nobody reproduced.
+    An untiered record counts as LIVE here for the same reason it blocks every
+    gate (FR-051): nobody classified it, so it is not evidence of a clean cycle.
+
+    Both the filing cycle and the reopen cycle count. A class REOPENING is the
+    class recurring, which is what escalation exists to catch, and a regression
+    landing in cycle N is emphatically not a cycle in which N drew nothing.
+
+    Reads the SERVER stamp (`cycle` / `reopened_in_cycle`) and never
+    `declared_cycle`: the caller's asserted cycle is audit data kept beside the
+    authority, and accumulating against it is how escalation counted wrong while
+    the server counter sat at 0 (D-119).
+    """
+    resolved = _resolve_defect_classes(defects)
+    for d in defects:
+        if not isinstance(d, dict) or resolved.get(id(d)) != class_key:
+            continue
+        if defect_tier(d) == "LATENT":
+            continue
+        for field in ("cycle", "reopened_in_cycle"):
+            value = d.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value == cycle:
+                return True
+    return False
+
+
+def _advance_escalation_clean_cycles(
+    fdir: Path, project_root: str, completed_cycle: int
+) -> list[dict]:
+    """Advance ST-001's clean-cycle counter at the INSPECT boundary.
+
+    Called from `foundry_mark_phase_complete("inspect_start")` and nowhere else.
+    THAT is the point: the counter measures server-counted INSPECT cycles, and
+    the boundary crossing is the only event that knows one has ended. Advancing
+    it from `_escalated_classes` — which every gate, display and guidance call
+    invokes — would count tool calls rather than cycles.
+
+    `completed_cycle` is the counter BEFORE the increment: the cycle whose
+    INSPECT and GRIND have just finished, so every filing that cycle will ever
+    receive is already in the ledger. Evaluating the cycle being entered would
+    ask about work that has not happened.
+
+    Returns the list of classes that CLEARED on this crossing, so the transition
+    can report them.
+    """
+    escalated = _escalated_classes(fdir, project_root)
+    if not escalated:
+        return []
+    defects = _load_json(fdir / "defects.json").get("defects", [])
+
+    cleared: list[dict] = []
+    with _document_transaction(fdir / ESCALATION_FILENAME) as data:
+        classes = data.setdefault("classes", {})
+        if not isinstance(classes, dict):
+            classes = data["classes"] = {}
+        for key, info in sorted(escalated.items()):
+            entry = classes.setdefault(key, {})
+            if not isinstance(entry, dict):
+                entry = classes[key] = {}
+            _escalation_entry_defaults(entry)
+            entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
+
+            # ST-001's guard: "the class must have been escalated before the two
+            # cycles began". The cycle a class escalated ON is the cycle whose
+            # third consecutive filing escalated it, so it is by construction not
+            # a clean one, and counting cycles at or before it would let a class
+            # clear on history that predates the escalation entirely.
+            escalated_at = entry.get("escalated_at_cycle")
+            if not isinstance(escalated_at, int) or completed_cycle <= escalated_at:
+                continue
+
+            if _class_drew_live_in_cycle(defects, key, completed_cycle):
+                entry["live_clean_cycles"] = 0
+            else:
+                entry["live_clean_cycles"] = entry["live_clean_cycles"] + 1
+
+            if (
+                entry["status"] == "ESCALATED"
+                and entry["live_clean_cycles"] >= LIVE_CLEAN_CYCLES_TO_CLEAR
+            ):
+                entry["status"] = "CLEARED"
+                entry["exit_reason"] = "clean_cycles"
+                entry["cleared_at_cycle"] = completed_cycle
+                entry["open_latent_defect_ids"] = info.get(
+                    "open_latent_defect_ids", []
+                )
+                cleared.append({
+                    "class": key,
+                    "exit_reason": "clean_cycles",
+                    "cleared_at_cycle": completed_cycle,
+                    "open_live_defect_ids": info.get("open_live_defect_ids", []),
+                    "open_latent_defect_ids": info.get("open_latent_defect_ids", []),
+                })
+        data["updated_at"] = _now()
+    return cleared
 
 
 # --- Defect lifecycle ---
@@ -3703,6 +5443,186 @@ def _statement_problem(statement: str, own_symbol: str, own_file: str) -> str | 
     return None
 
 
+# --------------------------------------------------------------------------- #
+# The LATENT fix lane (CT-004 / ST-003 / FR-008 / AC-011 / AC-012 / OT-007)
+# --------------------------------------------------------------------------- #
+
+#: The two shapes a `def`-line can take for a name the locator points at.
+#: A test may be a function (`def test_evicts`) or a method on a `Test` class
+#: (`class TestSweeper:` / `def test_evicts`), and both are what pytest collects.
+_REGRESSION_DEF_TEMPLATES = ("def {name}", "class {name}", "async def {name}")
+
+
+def _regression_test_problem(ref: str, project_root: str) -> str | None:
+    """The named reason a `regression_test` locator is unusable, else None.
+
+    CT-004 is precise about the size of this gate: "within the lane, refusal
+    only when the locator is absent or does not name a test". It is NOT the
+    adjacent-path ladder — no linkage to a statement, no distinctness from the
+    defect's own path — because a LATENT fix has no adjacent-path statement to
+    link against and ST-003 says none is demanded. A one-line change to close a
+    scan-derivation gap should not cost thirty minutes of apparatus.
+
+    THE FILESYSTEM CHECK IS AN ADDITION, NEVER A PRECONDITION. `path::test`
+    where `path` resolves under `project_root` is checked properly: the file is
+    read and the leaf must appear as a `def`/`class` in it, which is the
+    strongest form of "the locator names a real test". Where the path does NOT
+    resolve, the shape check stands alone and the locator is accepted.
+
+    That asymmetry is deliberate and is the same ruling `_test_ref_problem`
+    already carries in its own comment: this server runs against a TARGET repo
+    whose tests it frequently cannot resolve, and a refusal on "I could not find
+    your file" is unfalsifiable from where the caller stands — it blocks a real
+    fix behind a check the caller cannot satisfy. Refusing only what can be
+    shown to be wrong is the rule; a stronger check that can only fire when it
+    is provable is free.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return "absent — a LATENT fix closes on a named regression test"
+    if "::" not in ref:
+        return (
+            f"{ref!r} is not a locator of the form path::test — a LATENT fix "
+            "closes on a locator such as "
+            "tests/test_report.py::test_absent_section_is_named, not on prose"
+        )
+    path_part, _, name_part = ref.partition("::")
+    path_part = _normalize_path(path_part)
+    name = name_part.split("::")[-1].strip()
+    if not path_part or not name:
+        return f"{ref!r} has an empty path or test name on one side of '::'"
+    if not _ref_names_a_test_function(ref):
+        return (
+            f"{ref!r} names a FILE, not a test inside one — point at the test "
+            "that would fail if this defect came back"
+        )
+    if name.casefold() in _PLACEHOLDER_NAMES:
+        return f"{name!r} is a placeholder, not the name of a test"
+
+    # The provable half. Never a refusal when the file cannot be resolved.
+    candidate = Path(project_root) / path_part
+    if not candidate.is_file():
+        return None
+    text, problem = read_text_file(candidate)
+    if problem is not None:
+        return None
+    if any(
+        template.format(name=name) in text for template in _REGRESSION_DEF_TEMPLATES
+    ):
+        return None
+    return (
+        f"{path_part} exists but defines no {name!r} — the locator names a test "
+        "that is not in the file it points at"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The lead lane's measurement (CT-006 / ST-004 / FR-016 / FR-046 / AC-021)
+# --------------------------------------------------------------------------- #
+
+
+def _numstat_measurement(fix_commit: str, project_root: str) -> dict:
+    """`git show --numstat` on one commit, reduced to the lane's two numbers.
+
+    Returns ``{"ok": bool, "files": [non-test paths], "lines": int,
+    "error": str}``. ``lines`` is added-plus-deleted over the NON-TEST files
+    only (FR-016: "test files excluded from the count"), classified by vocab's
+    `is_test_file` so the lane and the report agree about what a test is.
+
+    Binary files report ``-`` for both counts in numstat; they contribute a file
+    to the count and zero lines, which is the honest reading — a binary blob is
+    not twenty lines of anything.
+
+    Runs OUTSIDE the ledger transaction, deliberately. It needs only the commit,
+    never the record, so holding an flock that every concurrent GRIND fix
+    contends on across a subprocess would buy nothing.
+    """
+    import subprocess
+
+    result = {"ok": False, "files": [], "lines": 0, "error": ""}
+    try:
+        proc = subprocess.run(
+            ["git", "-C", project_root, "show", "--numstat", "--format=", fix_commit],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        result["error"] = f"could not run git show on {fix_commit}: {exc}"
+        return result
+    if proc.returncode != 0:
+        result["error"] = (
+            f"git show could not read {fix_commit}: "
+            f"{proc.stderr.strip()[:160] or 'unknown commit'}"
+        )
+        return result
+
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        added, deleted, path = parts[0], parts[1], parts[2]
+        if is_test_file(path):
+            continue
+        result["files"].append(path)
+        for count in (added, deleted):
+            if count.isdigit():
+                result["lines"] += int(count)
+    result["ok"] = True
+    return result
+
+
+def _lead_lane_problem(fix_commit: str, project_root: str) -> str | None:
+    """The named reason a LIVE lead-authored fix exceeds its lane, else None.
+
+    ST-004 / CT-006: exactly `LEAD_LANE_MAX_FILES` non-test file, at most
+    `LEAD_LANE_MAX_LINES` added-plus-deleted lines over it. The refusal names
+    the COUNT that exceeded the lane (AC-021), because "too big" tells a lead
+    nothing about which half to shrink.
+
+    A commit git cannot read is a refusal too. The lane is a MEASUREMENT, and a
+    measurement that could not be taken is not a measurement that passed — the
+    shape that would let an unbounded lead fix through by naming a SHA that does
+    not exist.
+    """
+    measured = _numstat_measurement(fix_commit, project_root)
+    if not measured["ok"]:
+        return (
+            f"{measured['error']}. The lane is measured from the commit, so a "
+            "commit that cannot be read cannot be measured."
+        )
+    files = measured["files"]
+    if len(files) != LEAD_LANE_MAX_FILES:
+        return (
+            f"{fix_commit[:12]} changes {len(files)} non-test file(s) "
+            f"({', '.join(files[:5]) or 'none'}) — the lead lane is exactly "
+            f"{LEAD_LANE_MAX_FILES}. Dispatch this to a GRIND teammate instead."
+        )
+    if measured["lines"] > LEAD_LANE_MAX_LINES:
+        return (
+            f"{fix_commit[:12]} changes {measured['lines']} added-plus-deleted "
+            f"line(s) in {files[0]} — the lead lane is at most "
+            f"{LEAD_LANE_MAX_LINES}. Dispatch this to a GRIND teammate instead."
+        )
+    return None
+
+
+def _check_reported_prompt_hash(fdir: Path, casting_id, reported_hash) -> dict | None:
+    """C-8's ``check_reported_prompt_hash`` — None, or the refusal dict."""
+    from foundry_mcp.tools.foundry_handoff import check_reported_prompt_hash
+
+    return check_reported_prompt_hash(fdir, casting_id, reported_hash)
+
+
+def _record_lead_fix_handoff(fdir: Path, **fields) -> dict:
+    """C-8's ``record_lead_fix_handoff`` — the server's own audit record."""
+    from foundry_mcp.tools.foundry_handoff import record_lead_fix_handoff
+
+    return record_lead_fix_handoff(fdir, **fields)
+
+
 @ledger_refusals
 def foundry_mark_defect_fixed(
     defect_id: str,
@@ -3710,6 +5630,11 @@ def foundry_mark_defect_fixed(
     adjacent_path_statement: str = "",
     adjacent_path_test: str = "",
     project_root: str = ".",
+    authored_by: str = "",
+    regression_test: str = "",
+    fix_commit: str = "",
+    prompt_hash: str | None = None,
+    casting_id: int | str | None = None,
 ) -> dict:
     """Mark a defect as fixed, declaring the fix's blast radius.
 
@@ -3748,6 +5673,30 @@ def foundry_mark_defect_fixed(
     the caller's ``cycle`` is retained as ``declared_fixed_cycle`` for audit
     only. Escalation reads these numbers back, and it accumulated against
     lead-asserted cycles while the server counter sat at 0.
+
+    CEREMONY IS PROPORTIONAL TO THE EVIDENCE TIER (US-003 / ST-003 / ST-004)
+    -----------------------------------------------------------------------
+    Every fix used to pay the full LIVE declaration, so a one-line change
+    closing a scan-derivation gap nobody had reproduced cost the same apparatus
+    as a fix for a driven, reachable failure. The check order is C-13's and it
+    is LOCKED, so that two callers making the same mistake are told about the
+    same field first:
+
+      1. tool-wide — the defect exists; ``authored_by`` is present and in
+         FIX_AUTHORS; a teammate names a matching ``prompt_hash``; a lead names
+         a ``fix_commit``, whatever the tier (FR-053).
+      2. the tier lane — LATENT closes on a ``regression_test`` locator alone
+         (ST-003); LIVE keeps the full adjacent-path declaration, unweakened
+         (FR-015 / AC-023). An UNKNOWN-tier record takes the LIVE lane: it is a
+         record nobody classified, and the fail-safe direction is the stricter
+         ceremony, never the looser one.
+      3. the lead lane's measurement — LIVE lead fixes only (FR-046 / CT-006).
+      4. persist, then the server's own ``lead_fix`` handoff record (GI-003).
+
+    The failing-then-passing statement is NOT an input here (FR-041 / AC-012).
+    It belongs in the teammate's completion report, where PROVE can drive the
+    test to confirm it; demanding it as a string on this call would be a claim
+    the server cannot check, which is the ceremony this requirement removes.
     """
     from foundry_mcp.tools.foundry import _dict_records, ledger_transaction
 
@@ -3760,7 +5709,94 @@ def foundry_mark_defect_fixed(
 
     statement = (adjacent_path_statement or "").strip()
     test_ref = (adjacent_path_test or "").strip()
+    author = (authored_by or "").strip()
+    regression_ref = (regression_test or "").strip()
+    commit = (fix_commit or "").strip()
     server_cycle = _current_cycle(fdir)
+
+    # --- Tool-wide rungs that need no ledger read, evaluated before the lock --
+    #
+    # GI-003 / CT-005 / AC-020: `authored_by` is REQUIRED on every fix. A lead
+    # fix recorded as free prose in a hand-written handoff is a fix nothing can
+    # measure or count, and this field is what makes the difference visible.
+    if not author:
+        return {
+            "error": (
+                f"Cannot mark {defect_id} fixed — missing required field(s): "
+                "authored_by. Every fix declares who wrote it."
+            ),
+            "missing_fields": ["authored_by"],
+            "hint": (
+                "Pass authored_by='teammate' for a fix a GRIND teammate wrote, "
+                "or authored_by='lead' for one you wrote yourself in the bounded "
+                "lead lane. A lead fix additionally requires fix_commit."
+            ),
+        }
+    if author not in FIX_AUTHORS:
+        return {
+            "error": (
+                f"Cannot mark {defect_id} fixed — unknown authored_by: "
+                f"{author!r}. Must be one of: {', '.join(sorted(FIX_AUTHORS))}."
+            ),
+            "missing_fields": ["authored_by"],
+            "invalid_fields": [{
+                "field": "authored_by",
+                "reason": f"{author!r} is not a member of FIX_AUTHORS",
+            }],
+            "hint": "Who wrote the fix is a closed vocabulary: lead or teammate.",
+        }
+
+    # AC-030 / CT-011 — POINTER DISPATCH'S OTHER HALF.
+    #
+    # Foundry-Spawn-Teammate hands a teammate a PATH and a HASH instead of the
+    # prompt text; only an agent that actually read the file can state the hash
+    # back. That is advice until a gate consumes it, and this is one of the two
+    # gates that does (Foundry-Accept-Casting is the other). Both call the SAME
+    # `check_reported_prompt_hash`, because a hash rung that exists at one door
+    # and not the other lets an unread prompt through whichever door the lead
+    # happens to walk.
+    if author == "teammate":
+        hash_missing = []
+        if not (prompt_hash or "").strip():
+            hash_missing.append("prompt_hash")
+        if casting_id is None or str(casting_id).strip() == "":
+            hash_missing.append("casting_id")
+        if hash_missing:
+            return {
+                "error": (
+                    f"Cannot mark {defect_id} fixed — missing required field(s): "
+                    f"{', '.join(hash_missing)}. A teammate-authored fix states "
+                    "back the hash of the prompt it was dispatched with."
+                ),
+                "missing_fields": hash_missing,
+                "hint": (
+                    "The teammate's completion report carries the sha256 it read; "
+                    "pass it as prompt_hash together with the casting_id it was "
+                    "dispatched for. Only reading the prompt file produces the "
+                    "right answer, which is the point."
+                ),
+            }
+        hash_refusal = _check_reported_prompt_hash(fdir, casting_id, prompt_hash)
+        if hash_refusal is not None:
+            return hash_refusal
+
+    # FR-053 / CT-005 / AC-020: a lead fix always names its commit, whatever the
+    # tier. The commit is what the `lead_fix` handoff record carries, so the
+    # audit trail exists even on a LATENT fix that is never measured (FR-046).
+    if author == "lead" and not commit:
+        return {
+            "error": (
+                f"Cannot mark {defect_id} fixed — missing required field(s): "
+                "fix_commit. Every lead-authored fix names the commit it landed "
+                "in, whatever the defect's tier."
+            ),
+            "missing_fields": ["fix_commit"],
+            "hint": (
+                "Commit the fix first, then pass its SHA as fix_commit. The "
+                "server writes a lead_fix handoff record carrying it, and on a "
+                "LIVE defect it measures the commit against the lead lane."
+            ),
+        }
 
     # Every branch runs INSIDE the transaction: the not-found and adjacency
     # checks both read the target record, so evaluating them outside would
@@ -3781,11 +5817,26 @@ def foundry_mark_defect_fixed(
                 target = d
                 break
 
+        # ST-003 / ST-004 — WHICH LANE THIS FIX IS IN.
+        #
+        # Read through vocab's `defect_tier`, the one total resolution of the
+        # tier a record READS as. A missing key, a null and a string outside
+        # DEFECT_TIERS all land on TIER_UNKNOWN, and unknown takes the LIVE
+        # lane: a record nobody classified gets the stricter ceremony, never
+        # the looser one. Reading it as LATENT would let a fix close on one
+        # locator because an older archive never carried the field.
+        tier = defect_tier(target) if target else TIER_UNKNOWN
+        latent_lane = tier == "LATENT"
+
         missing = []
-        if not statement:
-            missing.append("adjacent_path_statement")
-        if not test_ref:
-            missing.append("adjacent_path_test")
+        if latent_lane:
+            if not regression_ref:
+                missing.append("regression_test")
+        else:
+            if not statement:
+                missing.append("adjacent_path_statement")
+            if not test_ref:
+                missing.append("adjacent_path_test")
         own_symbol = (target.get("symbol") or "").strip() if target else ""
         own_file = (target.get("file") or "").strip() if target else ""
 
@@ -3796,7 +5847,17 @@ def foundry_mark_defect_fixed(
         # twice).
         invalid: list[dict] = []
         statement_is_usable = False
-        if statement:
+        if latent_lane:
+            # CT-004: within the lane, refusal ONLY when the locator is absent
+            # or does not name a test. No adjacent-path statement, no
+            # adjacent-path test, no failing-then-passing prose — ST-003 says
+            # none of it is demanded, and demanding it anyway is the ceremony
+            # this requirement exists to remove.
+            if regression_ref:
+                problem = _regression_test_problem(regression_ref, project_root)
+                if problem is not None:
+                    invalid.append({"field": "regression_test", "reason": problem})
+        elif statement:
             # ST-004 / AC-013: the declared path must be ADJACENT — distinct
             # from the path the defect itself was found on — and it must
             # actually be a declaration. The check here was exact equality
@@ -3811,7 +5872,7 @@ def foundry_mark_defect_fixed(
                 })
             else:
                 statement_is_usable = True
-        if test_ref:
+        if test_ref and not latent_lane:
             # D-092: the two declarations are a matched PAIR — the statement
             # names the adjacent paths, the reference drives one of them — so
             # the statement is an INPUT to judging the reference, not a
@@ -3828,22 +5889,47 @@ def foundry_mark_defect_fixed(
             if problem is not None:
                 invalid.append({"field": "adjacent_path_test", "reason": problem})
 
+        # CT-006 / FR-046 — MEASURED ONLY WHEN LIVE AND ONLY WHEN LEAD.
+        #
+        # The lane is a bound on how much a lead may change without dispatching
+        # a teammate, and it is measured from the commit rather than claimed in
+        # prose. On a LATENT defect the required fix_commit is RECORDED and not
+        # measured (CT-006's second clause): a LATENT gap can be a large,
+        # mechanical, entirely safe change, and there is no reachable failure
+        # whose blast radius the bound is protecting.
+        lane_problem = None
+        if author == "lead" and not latent_lane and target is not None:
+            lane_problem = _lead_lane_problem(commit, project_root)
+
         if target is None:
             refusal = {"error": f"Defect {defect_id} not found"}
         elif missing:
             refusal = {
                 "error": (
                     f"Cannot mark {defect_id} fixed — missing required field(s): "
-                    f"{', '.join(missing)}. adjacent_path_statement must name who else "
-                    "calls this, what else transitions here, or what runs concurrently. "
-                    "adjacent_path_test must reference a test that drives at least one "
-                    "of those adjacent paths."
+                    f"{', '.join(missing)}. "
+                    + (
+                        "A LATENT defect closes on a regression_test locator of "
+                        "the form path::test — the test that would fail if this "
+                        "gap came back."
+                        if latent_lane
+                        else "adjacent_path_statement must name who else calls "
+                        "this, what else transitions here, or what runs "
+                        "concurrently. adjacent_path_test must reference a test "
+                        "that drives at least one of those adjacent paths."
+                    )
                 ),
                 "missing_fields": missing,
+                "tier": tier,
                 "hint": (
-                    "Write the adjacent-path test first, then re-call Foundry-Fix with "
-                    "both declarations. A fix whose blast radius is undeclared is how a "
-                    "defect closes and a regression opens in the same cycle."
+                    "Write the regression test first, then re-call Foundry-Fix "
+                    "with its locator. The failing-then-passing statement goes "
+                    "in your completion report, not on this call."
+                    if latent_lane
+                    else "Write the adjacent-path test first, then re-call "
+                    "Foundry-Fix with both declarations. A fix whose blast "
+                    "radius is undeclared is how a defect closes and a "
+                    "regression opens in the same cycle."
                 ),
             }
         elif invalid:
@@ -3858,19 +5944,50 @@ def foundry_mark_defect_fixed(
                 # place to read "which fields must I supply or repair".
                 "missing_fields": fields,
                 "invalid_fields": invalid,
+                "tier": tier,
                 "hint": (
-                    "Name a second path that touches this code, then reference the "
-                    "test that drives THAT path — a locator such as "
-                    "tests/test_auth.py::test_sweeper_evicts_stale_sessions, not a "
-                    "note to yourself."
+                    "Point at the test that would fail if this gap came back — a "
+                    "locator such as tests/test_report.py::test_absent_section_"
+                    "is_named, not a note to yourself."
+                    if latent_lane
+                    else "Name a second path that touches this code, then "
+                    "reference the test that drives THAT path — a locator such "
+                    "as tests/test_auth.py::test_sweeper_evicts_stale_sessions, "
+                    "not a note to yourself."
+                ),
+            }
+        elif lane_problem is not None:
+            refusal = {
+                "error": (
+                    f"Cannot mark {defect_id} fixed by the lead — {lane_problem}"
+                ),
+                "missing_fields": ["fix_commit"],
+                "invalid_fields": [{"field": "fix_commit", "reason": lane_problem}],
+                "tier": tier,
+                "hint": (
+                    "The lead lane exists so a cycle whose open defects are all "
+                    f"small closes without a teammate spawn: {LEAD_LANE_MAX_FILES} "
+                    f"non-test file, at most {LEAD_LANE_MAX_LINES} added-plus-"
+                    "deleted lines. Anything larger is a GRIND task."
                 ),
             }
         else:
             target["status"] = "fixed"
             target["fixed_in_cycle"] = server_cycle
             target["declared_fixed_cycle"] = cycle
-            target["adjacent_path_statement"] = statement
-            target["adjacent_path_test"] = test_ref
+            target["authored_by"] = author
+            if latent_lane:
+                target["regression_test"] = regression_ref
+            else:
+                target["adjacent_path_statement"] = statement
+                target["adjacent_path_test"] = test_ref
+                if regression_ref:
+                    # Never demanded on the LIVE lane, always kept when offered:
+                    # a LIVE fix that also names a regression test has said
+                    # something true and the record should carry it.
+                    target["regression_test"] = regression_ref
+            if commit:
+                target["fix_commit"] = commit
 
         open_count = sum(
             1 for d in _dict_records(records) if d.get("status") == "open"
@@ -3879,22 +5996,61 @@ def foundry_mark_defect_fixed(
     if refusal is not None:
         return refusal
 
+    # GI-003 / AC-022 — THE SERVER WRITES THE HANDOFF, NOT THE LEAD.
+    #
+    # "A lead fix recorded only as free prose in a hand-written handoff" is the
+    # named violation, so the record is a side effect of the accepted call and
+    # cannot be forgotten. It is written AFTER the ledger commits, because a
+    # handoff naming a fix the transaction then rolled back would be the same
+    # gap pointing the other way. `file` and `line_count` are None on a LATENT
+    # fix — the record says, truthfully, that it was accepted unmeasured.
+    lead_fix_record = None
+    if author == "lead":
+        measured = (
+            None if latent_lane else _numstat_measurement(commit, project_root)
+        )
+        lead_fix_record = _record_lead_fix_handoff(
+            fdir,
+            defect_id=defect_id,
+            tier=tier,
+            file=(measured["files"][0] if measured and measured["files"] else None),
+            line_count=(measured["lines"] if measured else None),
+            test=regression_ref or test_ref,
+            fix_commit=commit,
+        )
+
     forge_log = fdir / "forge-log.md"
     if forge_log.exists():
         with open(forge_log, "a", encoding="utf-8") as f:
-            f.write(f"\n**{defect_id} FIXED** in cycle {server_cycle} ({_now()})\n")
-            f.write(f"- **Adjacent paths:** {statement}\n")
-            f.write(f"- **Adjacent-path test:** {test_ref}\n\n")
+            f.write(
+                f"\n**{defect_id} FIXED** ({tier}, by {author}) in cycle "
+                f"{server_cycle} ({_now()})\n"
+            )
+            if latent_lane:
+                f.write(f"- **Regression test:** {regression_ref}\n")
+            else:
+                f.write(f"- **Adjacent paths:** {statement}\n")
+                f.write(f"- **Adjacent-path test:** {test_ref}\n")
+            if commit:
+                f.write(f"- **Fix commit:** {commit}\n")
+            f.write("\n")
 
-    return {
+    result = {
         "ok": True,
         "defect_id": defect_id,
+        "tier": tier,
+        "authored_by": author,
         "fixed_in_cycle": server_cycle,
         "declared_cycle": cycle,
         "adjacent_path_statement": statement,
         "adjacent_path_test": test_ref,
+        "regression_test": regression_ref,
+        "fix_commit": commit,
         "remaining_open": open_count,
     }
+    if lead_fix_record is not None:
+        result["lead_fix"] = lead_fix_record
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -4065,6 +6221,7 @@ def foundry_sync_defects(
         asserts_code_behaviour,
         ledger_transaction,
         record_denylist_tripwire,
+        validate_defect_filing,
     )
 
     fdir = get_run_dir(project_root)
@@ -4115,10 +6272,77 @@ def foundry_sync_defects(
                 ),
             })
 
-        normalized.append({"source": source.strip() if isinstance(source, str) else source,
-                           "type": canonical})
+        # CT-001 / CT-002 / CT-003 — THE TIER, CLASS AND LATENT CHECKS, DECIDED
+        # BY THE SHARED VALIDATOR AND NOT BY THIS DOOR.
+        #
+        # There are two filing doors in two modules — `foundry_add_defect` in
+        # tools/foundry.py and this one — and every check they were each trusted
+        # to remember has eventually diverged. D-119 is the shipped instance:
+        # the two disagreed about which cycle a record belonged to, so identical
+        # findings filed through different doors produced different cycle runs
+        # and a systemic class escaped ST-002 escalation entirely. A filing whose
+        # tier the single door demands and the batch door does not is that defect
+        # one field along, and WORSE — this is the door a whole INSPECT stream
+        # files through, so the gap would be the common path rather than the rare
+        # one.
+        #
+        # `validate_defect_filing` is therefore called, never re-implemented. It
+        # owns the locked check order (tier, class, reproduction_attempted,
+        # security denylist) so both doors name the same field first for the same
+        # bad filing, and it reads the mapping and nothing else — no ledger, no
+        # run dir — which is what lets this door run it once per finding BEFORE
+        # opening its transaction. A refusal here costs nothing and writes
+        # nothing.
+        #
+        # Stated AFTER the source/type rungs so a finding that is wrong in both
+        # ways still names `source` first, exactly as it did before this landed.
+        filing_problem = validate_defect_filing(finding)
+        if filing_problem is not None:
+            refusals.append({
+                "index": i,
+                "field": filing_problem.get("field", "tier"),
+                "value": finding.get(filing_problem.get("field", "tier")),
+                "reason": filing_problem.get("error", ""),
+                **(
+                    {"denylist_class": filing_problem["denylist_class"]}
+                    if "denylist_class" in filing_problem
+                    else {}
+                ),
+            })
+
+        declared_class = finding.get(DEFECT_CLASS_FIELD)
+        reproduction = finding.get("reproduction_attempted")
+        normalized.append({
+            "source": source.strip() if isinstance(source, str) else source,
+            "type": canonical,
+            "tier": finding.get("tier"),
+            "class": (
+                declared_class.strip() if isinstance(declared_class, str) else declared_class
+            ),
+            "reproduction_attempted": (
+                reproduction.strip() if isinstance(reproduction, str) else reproduction
+            ),
+        })
 
     if refusals:
+        # CT-003 \u2014 THE SECURITY REFUSAL ALSO WRITES THE TRIPWIRE.
+        #
+        # A LATENT filing matching the security-property predicate is refused,
+        # and the ATTEMPT is what the audit record exists to capture: a stream
+        # trying to file a security claim as a gap it merely reasoned about is
+        # the thing an auditor needs to see, and the refusal alone leaves no
+        # trace of it. Fired through the ONE exported writer that
+        # `foundry_add_defect` and `foundry_add_observation` also call \u2014 a
+        # second writer here would be an audit control that only records the
+        # attempts one of its callers makes.
+        for refused in refusals:
+            if refused.get("denylist_class"):
+                record_denylist_tripwire(
+                    fdir,
+                    findings[refused["index"]],
+                    cycle=_current_cycle(fdir),
+                    source=normalized[refused["index"]]["source"],
+                )
         return {
             "error": (
                 f"Refused {len(refusals)} finding(s) \u2014 no findings were recorded. "
@@ -4324,19 +6548,35 @@ def foundry_sync_defects(
                 "declared_cycle": cycle,
                 "source": norm["source"],
                 "type": norm["type"],
+                # C-2 / CT-001 — the batch door writes the SAME record shape as
+                # the single door, field for field. `validate_defect_filing` has
+                # already refused an absent or unknown tier, an absent class and
+                # a LATENT filing with no negative result, so every key below is
+                # written from a validated value. `tier` is always a member of
+                # DEFECT_TIERS: vocab.TIER_UNKNOWN is a READ-side sentinel for
+                # pre-change archives and is never written by a door.
+                "tier": norm["tier"],
+                "class": norm["class"],
+                # FR-004 / FR-029: `None` on a LIVE record rather than "" —
+                # absent evidence and empty evidence are different claims, and a
+                # LIVE record's reproduction is in the description.
+                "reproduction_attempted": (
+                    norm["reproduction_attempted"] if norm["tier"] == "LATENT" else None
+                ),
                 "description": desc,
                 "spec_ref": finding.get("spec_ref", ""),
                 "symbol": symbol,
                 "file": finding.get("file", ""),
                 "status": "open",
                 "fixed_in_cycle": None,
+                # The three fields Foundry-Fix sets on closure, seeded null so
+                # every record has one shape from the moment it exists and the
+                # report never has to branch on whether the fix door has run.
+                "regression_test": None,
+                "authored_by": None,
+                "fix_commit": None,
                 "created_at": _now(),
             }
-            # FR-007: the optional stream-declared class travels with the
-            # record; escalation keys on it when present.
-            declared_class = finding.get(DEFECT_CLASS_FIELD)
-            if isinstance(declared_class, str) and declared_class.strip():
-                defect[DEFECT_CLASS_FIELD] = declared_class.strip()
             records.append(defect)
             added += 1
 
@@ -4397,6 +6637,26 @@ def foundry_defects_to_tasks(
     if escalated:
         _record_escalation_proposals(fdir, escalated)
 
+    # ST-002 / FR-002 — THE STRUCTURAL-PASS BUDGET, SPENT HERE.
+    #
+    # One structural pass plus one retry, and then no more. The budget is
+    # consumed by DISPATCH, so it is counted at the one place a structural
+    # packet is ever emitted, and the class CLEARS on the crossing that spends
+    # the last of it. Two passes is not a judgement that the class is fixed: it
+    # is the statement that structural work has had its turn. Open LIVE
+    # instances stay blocking defects and fall into the per-instance grouping
+    # below on the very next call (AC-003); open LATENT instances go to the F6
+    # named backlog (FR-001). Nothing is waived — only the SHAPE of the work
+    # stops changing.
+    #
+    # Ordered before the packets are built so a class whose budget the previous
+    # call exhausted emits nothing on this one.
+    # The class being cleared here STILL GETS THIS PACKET: the budget is spent
+    # BY the second pass, not instead of it. It is the NEXT call that emits
+    # nothing, because `_escalated_classes` skips a CLEARED class.
+    packet_cycle = _current_cycle(fdir)
+    budget_cleared = _spend_structural_budget(fdir, escalated, packet_cycle)
+
     escalated_ids = {did for info in escalated.values() for did in info["defect_ids"]}
 
     tasks = []
@@ -4451,13 +6711,20 @@ def foundry_defects_to_tasks(
 
     (fdir / ".tasks-generated").write_text(f"{_now()} count={len(tasks)}\n", encoding="utf-8")
 
-    return {
+    result = {
         "ok": True,
         "tasks": tasks,
         "count": len(tasks),
         "escalated_classes": sorted(escalated),
         "structural_tasks": sum(1 for t in tasks if t["structural"]),
     }
+    if budget_cleared:
+        # AC-004: the exit is reported where it happened, not only persisted.
+        # A lead that dispatched a structural packet needs to know it was the
+        # LAST one this class will get, because the open instances it does not
+        # close come back as ordinary per-instance work on the next cycle.
+        result["escalation_cleared"] = budget_cleared
+    return result
 
 
 # --- The big one: next action ---
@@ -4541,8 +6808,17 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
 
 def foundry_next_action(
     project_root: str = ".",
+    *,
+    _arm_stall_clock: bool = True,
 ) -> dict:
-    """Determine what the lead should do next based on current foundry state."""
+    """Determine what the lead should do next based on current foundry state.
+
+    ``_arm_stall_clock`` is FALSE for exactly one caller, ``foundry_get_context``
+    (AC-035 / OT-028). Underscore-prefixed and keyword-only because it is not
+    part of the MCP surface: ``Foundry-Next`` has no such argument and never
+    will. See the marker block at the end of this function for why the
+    distinction exists at all.
+    """
     fdir_stamp = get_run_dir(project_root)
     if fdir_stamp and (corrupt := _artifact_guard(fdir_stamp)):
         return corrupt
@@ -4600,17 +6876,50 @@ def foundry_next_action(
                 prev_iso = marker.read_text(encoding="utf-8").strip()
                 prev = datetime.fromisoformat(prev_iso)
                 delta = (datetime.now(timezone.utc) - prev).total_seconds()
-                if delta >= 180:  # 3 minutes
+                if delta >= STALL_NOTICE_SECONDS:
+                    # CT-012 / FR-020 / AC-032 — ASK WHO IS RUNNING BEFORE
+                    # ACCUSING.
+                    #
+                    # This warning fired on the clock alone, so the most common
+                    # multi-minute gap in a foundry run — the lead waiting,
+                    # correctly, for eight CAST teammates to finish — was
+                    # reported as "You were silently deliberating. Stop
+                    # deliberating." The lead is trained to obey that literally,
+                    # so the accusation actively pushed it to stop waiting and
+                    # improvise over half-built work. A watchdog whose false
+                    # positive is the NORMAL case is not a watchdog.
+                    #
+                    # The fix is evidence, not a longer timeout: are there live
+                    # teams, and are their progress ledgers moving? When agents
+                    # are progressing this reports what it is waiting on and
+                    # sets NO stall warning — FR-036's proviso is that the
+                    # notice never asserts deliberation while an agent is
+                    # progressing. Only when nothing is running is the silence
+                    # the lead's own. It never blocks either way (CT-012).
+                    liveness = _waiting_on_agents(project_root)
                     minutes = int(delta // 60)
                     seconds = int(delta % 60)
-                    stall_warning = (
-                        f"\u26a0\ufe0f STALL DETECTED: {minutes}m {seconds}s since your last Foundry-Next call. "
-                        f"You were silently deliberating. Stop deliberating. Execute the imperative below "
-                        f"literally. Do NOT re-read start.md, do NOT run a compliance checklist, do NOT "
-                        f"think through edge cases — just run the next tool call. If the imperative is "
-                        f"ambiguous, pick any reasonable interpretation and proceed."
-                    )
-                    result["stall_detected_seconds"] = int(delta)
+                    if liveness["waiting"]:
+                        result["waiting_on_agents"] = liveness
+                        stall_warning = (
+                            f"\u23f3 WAITING ON {liveness['count']} AGENT(S) "
+                            f"({liveness['detail']}). {minutes}m {seconds}s since "
+                            f"your last Foundry-Next call — that gap is the "
+                            f"agents working, not you deliberating. Do NOT "
+                            f"improvise over their half-finished work. Call "
+                            f"Foundry-Liveness for per-agent detail, otherwise "
+                            f"wait and call Foundry-Next again."
+                        )
+                    else:
+                        stall_warning = (
+                            f"\u26a0\ufe0f STALL DETECTED: {minutes}m {seconds}s since your "
+                            f"last Foundry-Next call, and NO agent is running. "
+                            f"You were silently deliberating. Stop deliberating. Execute the imperative below "
+                            f"literally. Do NOT re-read start.md, do NOT run a compliance checklist, do NOT "
+                            f"think through edge cases — just run the next tool call. If the imperative is "
+                            f"ambiguous, pick any reasonable interpretation and proceed."
+                        )
+                        result["stall_detected_seconds"] = int(delta)
             except (ValueError, OSError):
                 pass
 
@@ -4707,24 +7016,51 @@ def foundry_next_action(
         parts.append(directive_block)
     result["instructions"] = "\n".join(parts)
 
-    # Context budget tracking
-    fdir_cb = get_run_dir(project_root)
-    if fdir_cb and fdir_cb.exists():
-        cycle = _current_cycle(fdir_cb)
-        # Estimate context usage based on cycle count
-        if cycle >= 3:
-            usage = "critical"
-        elif cycle >= 2:
-            usage = "high"
-        elif cycle >= 1:
-            usage = "moderate"
-        else:
-            usage = "low"
-        result["context_budget"] = {
-            "cycles_completed": cycle,
-            "estimated_usage": usage,
-            "recommendation": "Consider /clear and /foundry:resume if quality is degrading" if usage in ("high", "critical") else "Context budget healthy",
+    # AC-033 / CT-013 / FR-021 — MEASURED SPEND, NOT AN ESTIMATE FROM THE CYCLE
+    # COUNT.
+    #
+    # This block used to map the cycle counter onto the words low / moderate /
+    # high / critical and call the result "estimated_usage". It read no tokens,
+    # no durations and no agent records: a run on cycle 3 was "critical" whether
+    # it had spent four hundred thousand tokens or four million. A number that
+    # is not measured is worse than no number, because it gets acted on.
+    #
+    # The roll-ups below are what the lead itself reported through
+    # `Foundry-Spend`, per phase, per cycle and for the run. NO DOLLAR FIGURE
+    # APPEARS ANYWHERE (AC-033 / OT-023) — this server does not know anyone's
+    # rate card, and a cost in money would be a second invented number beside
+    # the one just removed.
+    fdir_spend = get_run_dir(project_root)
+    if fdir_spend and fdir_spend.exists():
+        summary = _spend_summary(fdir_spend)
+        result["spend"] = summary
+        state_spend = _load_json(fdir_spend / "state.json")
+        # AC-027 / OT-018 — the executing build, displayed where the lead reads.
+        # Written by foundry_init at F0; reported here and nowhere decided.
+        result["executing_server"] = {
+            "server_version": state_spend.get("server_version", ""),
+            "plugin_version": state_spend.get("plugin_version", ""),
+            "server_root": state_spend.get("server_root", ""),
+            "server_commit": state_spend.get("server_commit", ""),
+            "self_target": state_spend.get("self_target", False),
         }
+        # GI-008 / GI-009 / CT-009 / FR-049 — REPORTED, NEVER COMPUTED. The
+        # transition that opened this INSPECT already decided the width and
+        # recorded it; this reads that record back and would return None rather
+        # than derive one.
+        recorded_mode = _current_inspect_mode(fdir_spend)
+        if recorded_mode:
+            result["inspect_mode"] = {
+                "mode": recorded_mode.get("mode", ""),
+                "rule": recorded_mode.get("rule", ""),
+                "rule_detail": recorded_mode.get("rule_detail", ""),
+                "decided_by": recorded_mode.get("decided_by", ""),
+                "decided_at": recorded_mode.get("decided_at", ""),
+                "cycle": recorded_mode.get("cycle"),
+                "required_streams": recorded_mode.get("required_streams", []),
+                "stream_scope": recorded_mode.get("stream_scope", {}),
+                "prove_sample": recorded_mode.get("prove_sample", []),
+            }
 
     result["display"] = _format_status_display(project_root)
 
@@ -4735,11 +7071,27 @@ def foundry_next_action(
         # foundry_mark_phase_complete to prove Foundry-Next preceded a gate
         # or phase transition.
         (fdir / ".next-action-called").write_text(now_stamp, encoding="utf-8")
-        # Stall timestamp: written on EVERY Foundry-Next, read on the NEXT
-        # Foundry-Next to measure the gap. Never unlinked by gate/phase, so
-        # the watchdog is decoupled from ordering-token consumption (FR-005 /
-        # FR-008). Read-only intervening calls do not touch it.
-        (fdir / ".last-next-at").write_text(now_stamp, encoding="utf-8")
+        # Stall timestamp: written on every REAL Foundry-Next, read on the next
+        # one to measure the gap. Never unlinked by gate/phase, so the watchdog
+        # is decoupled from ordering-token consumption (FR-005 / FR-008).
+        #
+        # AC-035 / OT-028 — AND NOT WRITTEN BY Foundry-Context.
+        #
+        # `foundry_get_context` calls this function for its `next_action` field,
+        # so every Foundry-Context call reached this line and reset the stall
+        # clock to now. FR-026 lists it as a ride-along fix because the effect
+        # is the opposite of the watchdog's purpose: a lead that deliberates for
+        # twenty minutes, calls Foundry-Context to reorient, and then
+        # deliberates for twenty more is measured from the Context call and
+        # never warned. The clock must measure Foundry-Next to Foundry-Next, and
+        # a read-only reorientation call is not one of those.
+        #
+        # The ordering token above is deliberately still armed on both paths:
+        # it answers "did the lead consult guidance before transitioning", and
+        # Foundry-Context does return the full guidance payload. Only the
+        # STALL measurement is Foundry-Next's alone.
+        if _arm_stall_clock:
+            (fdir / ".last-next-at").write_text(now_stamp, encoding="utf-8")
 
     return result
 
@@ -4752,6 +7104,17 @@ def foundry_next_action(
 # literally and improvise the rest by guessing.
 _ACTION_IMPERATIVES = {
     "init": "YOUR NEXT CALL: Foundry-Init (start a new run)",
+    # ST-008 / AC-037: the one action whose imperative is to STOP. The generic
+    # fallback header says "Execute the first tool call mentioned. Do not
+    # deliberate.", which on a halted run would push the lead straight back into
+    # the loop the cap ended — so this action gets an explicit entry.
+    "halted": (
+        "YOUR NEXT CALL: NONE. This run is HALTED — it reached its --max-cycles "
+        "limit and stopped with open work. The report is generated. Do NOT "
+        "dispatch a wave, do NOT call Foundry-Phase, do NOT call Foundry-Next in "
+        "a loop. Read REPORT.md, tell the user what remains open by tier, and "
+        "stop."
+    ),
     "cleanup_teams": (
         "YOUR NEXT CALLS (in order \u2014 do NOT wait for shutdown acks):\n"
         "  (1) Send shutdown to each teammate: SendMessage(to=<teammate>, message='All work complete, stop working.') "
@@ -4999,6 +7362,48 @@ def _format_status_display(project_root: str) -> str:
         if stream_icons:
             lines.append(f"  {_BWHITE}Streams:{_RESET}  {' '.join(stream_icons)}")
 
+    # CT-009 / AC-016 — the recorded width, named with the rule that fired.
+    # Read from state.json, never derived here (GI-008).
+    recorded_mode = _current_inspect_mode(fdir)
+    if recorded_mode:
+        colour = _BYELLOW if recorded_mode.get("mode") == "FULL" else _BGREEN
+        lines.append(
+            f"  {_BWHITE}Inspect:{_RESET}  {colour}{recorded_mode.get('mode', '?')}{_RESET}"
+            f" {_DIM}(rule {recorded_mode.get('rule', '?')},"
+            f" decided at {recorded_mode.get('decided_by', '?')}){_RESET}"
+        )
+
+    # AC-033 / OT-023 — tokens and minutes, per phase and for the run. Reported
+    # from what the lead recorded through Foundry-Spend; no dollar figure
+    # appears here or anywhere else in this server's output.
+    spend = _spend_summary(fdir)
+    total = spend["total"]
+    if total.get("agents") or spend["unreported_count"]:
+        minutes = int(total.get("duration_ms", 0) // 60000)
+        lines.append(
+            f"  {_BWHITE}Spend:{_RESET}    {total.get('tokens', 0):,} tokens  "
+            f"{minutes}m  {total.get('agents', 0)} agent(s) reported"
+            + (
+                f"  {_BYELLOW}{spend['unreported_count']} unreported{_RESET}"
+                if spend["unreported_count"]
+                else ""
+            )
+        )
+
+    # AC-027 / OT-018 — which build is executing this run.
+    if state.get("server_version") or state.get("server_commit"):
+        commit = str(state.get("server_commit", "") or "")
+        lines.append(
+            f"  {_BWHITE}Server:{_RESET}   {state.get('server_version', '?')}"
+            f" {_DIM}(plugin {state.get('plugin_version', '?')} @"
+            f" {commit[:12] or 'unknown'}){_RESET}"
+        )
+
+    if phase == RUN_PHASE_HALTED:
+        lines.append(
+            f"  {_BRED}HALTED{_RESET}    {state.get('halted_reason', 'cycle cap reached')}"
+        )
+
     # Teams
     teams = _check_active_teams(project_root)
     if teams["active"]:
@@ -5055,6 +7460,37 @@ def _compute_next_action(project_root: str) -> dict:
 
     state = _load_json(fdir / "state.json")
     phase = state.get("phase", "F0")
+
+    # ST-008 / CT-016 / AC-037 — A HALTED RUN ISSUES NO DISPATCH.
+    #
+    # Checked before anything else, including the active-teams branch: a run
+    # that hit its cycle cap is over, and the next thing to do is read the
+    # report, not start another wave. Emitting the ordinary phase guidance here
+    # would send the lead round the loop the cap just stopped.
+    if phase == RUN_PHASE_HALTED:
+        blocking = _blocking_defects(fdir)
+        return {
+            "phase": RUN_PHASE_HALTED,
+            "action": "halted",
+            "instructions": (
+                f"Run HALTED at cycle {state.get('halted_at_cycle', '?')} — "
+                f"{state.get('halted_reason', 'the configured cycle cap was reached')}. "
+                "HALTED is NOT DONE: this run stopped with open work. The report "
+                f"has been generated at {REPORT_MD_FILENAME} and names every open "
+                "defect by tier. Do NOT dispatch another wave, do NOT call "
+                "Foundry-Phase again — read the report and hand the remaining "
+                "work to a new run, or re-run with a higher --max-cycles."
+            ),
+            "details": {
+                "halted_at_cycle": state.get("halted_at_cycle"),
+                "halted_reason": state.get("halted_reason", ""),
+                "max_cycles": state.get("max_cycles", 0),
+                "open_live_defects": blocking["live"],
+                "open_unknown_tier_defects": blocking["unknown"],
+                "open_latent_defects": blocking["latent"],
+                "report": str(fdir / REPORT_MD_FILENAME),
+            },
+        }
 
     teams = _check_active_teams(project_root)
     if teams["active"]:
@@ -5186,7 +7622,10 @@ def _compute_next_action(project_root: str) -> dict:
                 "phase": "F2",
                 "action": "run_streams",
                 "instructions": (
-                    f"INSPECT phase: verification streams incomplete. Missing: {streams['missing']}. "
+                    f"INSPECT phase ({streams.get('inspect_mode') or 'FULL'} width"
+                    f"{', rule ' + streams['inspect_rule'] if streams.get('inspect_rule') else ''}): "
+                    f"verification streams incomplete. Missing: {streams['missing']}. "
+                    f"Required this cycle: {', '.join(streams['required'])}. "
                     "Spawn agents using the agent_configs below (model and type are ENFORCED). "
                     "SIGHT runs in MAIN THREAD (Playwright MCP only works here) \u2014 "
                     "navigate to URL, snapshot every page, exercise all elements, check console. "
@@ -5195,6 +7634,10 @@ def _compute_next_action(project_root: str) -> dict:
                 "details": {
                     "missing_streams": streams["missing"].split(),
                     "required": streams["required"],
+                    # GI-008 / CT-009: reported from the recorded decision.
+                    "inspect_mode": streams.get("inspect_mode", ""),
+                    "inspect_rule": streams.get("inspect_rule", ""),
+                    "stream_scope": streams.get("stream_scope", {}),
                     "agent_configs": {
                         "trace": INSPECT_TRACE_CONFIG,
                         "prove": INSPECT_PROVE_CONFIG,
@@ -5260,8 +7703,12 @@ def _compute_next_action(project_root: str) -> dict:
                 "Foundry-Team-Down, then Foundry-Phase(phase='inspect_start') to "
                 "cross back into F2 — that call is what advances the run's cycle "
                 "counter, so skipping it leaves every subsequent record stamped "
-                "with the previous cycle. Run FULL INSPECT again (all streams). "
-                "No spot checking."
+                "with the previous cycle. That call also sweeps the evidence "
+                "corpus and DECIDES the next INSPECT's width \u2014 run exactly the "
+                "roster it names. On a FULL cycle that is every stream; on a "
+                "DELTA cycle it is a reduced roster, and running more is wasted "
+                "rather than safer. No spot checking either way: the width is "
+                "the server's call, not yours."
             ),
             "details": {
                 "agent_configs": {
@@ -5767,7 +8214,9 @@ def foundry_get_context(
 
     teams = _check_active_teams(project_root)
     streams = _check_streams_complete(project_root)
-    next_act = foundry_next_action(project_root)
+    # AC-035 / OT-028: Foundry-Context reorients; it does not reset the stall
+    # clock. See the marker block at the end of `foundry_next_action`.
+    next_act = foundry_next_action(project_root, _arm_stall_clock=False)
 
     return {
         "initialized": True,

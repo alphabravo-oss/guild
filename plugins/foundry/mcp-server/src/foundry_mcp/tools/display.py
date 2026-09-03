@@ -206,12 +206,36 @@ def _fmt_verify_citations(r: dict) -> str:
 def _fmt_foundry_init(r: dict) -> str:
     if "display" in r:
         return r["display"]
-    return _foundry_display("F O U N D R Y  Initialized", [
+    lines = [
         f"  {_BWHITE}Dir:{_RESET}    {_short_path(r.get('foundry_dir', '?'))}",
         f"  {_BWHITE}Name:{_RESET}   {r.get('run_name', '?')}",
         f"  {_BWHITE}Files:{_RESET}  {', '.join(r.get('files_created', []))}",
         f"  {_BWHITE}Spec:{_RESET}   {'copied' if r.get('spec_copied') else 'none'}",
-    ])
+    ]
+    # AC-027 / OT-018 / FR-017 — WHICH BUILD IS EXECUTING THIS RUN.
+    #
+    # A plugin-targeting run whose executing server is a stale cached copy
+    # cannot use the process fixes it is itself shipping, and nothing on screen
+    # said so. These four facts are written by `foundry_init` at F0 and merely
+    # rendered here; a missing key omits its line rather than raising, which is
+    # this module's rule for every optional fact (see the named-refusal block).
+    for label, key in (
+        ("Server", "server_version"),
+        ("Plugin", "plugin_version"),
+        ("Root", "server_root"),
+        ("Commit", "server_commit"),
+    ):
+        value = r.get(key)
+        if not value:
+            continue
+        shown = _short_path(str(value)) if key == "server_root" else str(value)
+        lines.append(f"  {_BWHITE}{label}:{_RESET}{' ' * max(1, 8 - len(label))}{shown}")
+    if r.get("self_target"):
+        lines.append(
+            f"  {_BWHITE}Target:{_RESET} {_BYELLOW}self{_RESET} "
+            f"{_DIM}(this run builds the plugin it is executing on){_RESET}"
+        )
+    return _foundry_display("F O U N D R Y  Initialized", lines)
 
 
 def _fmt_foundry_add_defect(r: dict) -> str:
@@ -376,6 +400,101 @@ def _fmt_foundry_mark_phase_complete(r: dict) -> str:
     ])
 
 
+def _fmt_foundry_next_lines(r: dict) -> list[str]:
+    """The per-fact lines Foundry-Next gained: width, spend, unreported, halt.
+
+    One labelled line per fact and never a raise — a key that is not there
+    contributes no line. That is this module's rule and not a stylistic one: a
+    formatter that indexes an optional key is how D-157 put a literal '?' on
+    screen while the handler had returned a fully-worded refusal.
+
+    Everything here is REPORTED (GI-008 / GI-009). The width and its rule were
+    decided by the transition that opened the INSPECT and recorded in
+    state.json; the spend totals are what the lead typed into Foundry-Spend. No
+    line below computes a value, and none of them contains a money figure — this
+    server does not know anyone's rate card (AC-033).
+    """
+    lines: list[str] = []
+
+    mode = r.get("inspect_mode")
+    if isinstance(mode, dict) and mode.get("mode"):
+        colour = _BYELLOW if mode["mode"] == "FULL" else _BGREEN
+        lines.append(
+            f"  {_BWHITE}Inspect:{_RESET}  {colour}{mode['mode']}{_RESET} "
+            f"{_DIM}(rule {mode.get('rule', '?')}, decided at "
+            f"{mode.get('decided_by', '?')}){_RESET}"
+        )
+        required = mode.get("required_streams") or []
+        if required:
+            lines.append(f"  {_BWHITE}Roster:{_RESET}   {', '.join(required)}")
+        scope = mode.get("stream_scope") or {}
+        skipped = sorted(
+            wire for wire, v in scope.items()
+            if isinstance(v, dict) and v.get("scope") == "skipped"
+        )
+        if skipped:
+            lines.append(f"  {_BWHITE}Skipped:{_RESET}  {_DIM}{', '.join(skipped)}{_RESET}")
+        sample = mode.get("prove_sample") or []
+        if sample:
+            shown = ", ".join(sample[:8]) + ("..." if len(sample) > 8 else "")
+            lines.append(f"  {_BWHITE}PROVE:{_RESET}    {len(sample)} row(s) — {shown}")
+
+    spend = r.get("spend")
+    if isinstance(spend, dict):
+        total = spend.get("total") or {}
+        if total.get("agents") or spend.get("unreported_count"):
+            minutes = int(total.get("duration_ms", 0) // 60000)
+            lines.append(
+                f"  {_BWHITE}Spend:{_RESET}    {total.get('tokens', 0):,} tokens  "
+                f"{minutes}m  over {total.get('agents', 0)} reported agent(s)"
+            )
+        for label, section in (("by phase", "by_phase"), ("by cycle", "by_cycle")):
+            buckets = spend.get(section) or {}
+            if not isinstance(buckets, dict) or not buckets:
+                continue
+            parts = [
+                f"{key}: {b.get('tokens', 0):,}tok/{int(b.get('duration_ms', 0) // 60000)}m"
+                for key, b in sorted(buckets.items())
+                if isinstance(b, dict)
+            ]
+            if parts:
+                lines.append(f"  {_BWHITE}{label.title()}:{_RESET} {_DIM}{'  '.join(parts)}{_RESET}")
+        unreported = spend.get("unreported_dispatches") or []
+        if unreported:
+            names = ", ".join(
+                f"{u.get('agent', '?')}@{u.get('phase', '?')}" for u in unreported[:6]
+            )
+            more = f" (+{len(unreported) - 6} more)" if len(unreported) > 6 else ""
+            lines.append(
+                f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{len(unreported)}{_RESET} "
+                f"{_DIM}{names}{more} — no gate blocks on these{_RESET}"
+            )
+
+    build = r.get("executing_server")
+    if isinstance(build, dict) and (build.get("server_version") or build.get("server_commit")):
+        commit = str(build.get("server_commit", "") or "")
+        lines.append(
+            f"  {_BWHITE}Server:{_RESET}   {build.get('server_version', '?')} "
+            f"{_DIM}(plugin {build.get('plugin_version', '?')} @ "
+            f"{commit[:12] or 'unknown'}, {_short_path(str(build.get('server_root', '?')))})"
+            f"{_RESET}"
+        )
+
+    waiting = r.get("waiting_on_agents")
+    if isinstance(waiting, dict) and waiting.get("waiting"):
+        lines.append(
+            f"  {_BWHITE}Waiting:{_RESET}  {waiting.get('count', 0)} agent(s) "
+            f"{_DIM}({waiting.get('detail', '')}){_RESET}"
+        )
+
+    if r.get("phase") == "HALTED":
+        lines.append(
+            f"  {_BRED}HALTED:{_RESET}   "
+            f"{(r.get('details') or {}).get('halted_reason', 'cycle cap reached')}"
+        )
+    return lines
+
+
 def _fmt_foundry_next_action(r: dict) -> str:
     # Always show BOTH the pixel-art status header (from the `display` field)
     # AND the imperative instructions (which lead with a "YOUR NEXT CALL:"
@@ -389,6 +508,50 @@ def _fmt_foundry_next_action(r: dict) -> str:
     return _foundry_display(f"F O U N D R Y  {r.get('phase', '?')}", [
         f"  {_BWHITE}Action:{_RESET}  {r.get('action', '?')}",
         f"  {instructions}",
+    ] + _fmt_foundry_next_lines(r))
+
+
+def _fmt_foundry_record_spend(r: dict) -> str:
+    if r.get("error"):
+        return _foundry_display(f"F O U N D R Y  {_BRED}Spend{_RESET}", [
+            f"  {_RED}{r['error']}{_RESET}",
+            f"  {_DIM}{r.get('hint', '')}{_RESET}",
+        ])
+    row = r.get("recorded") or {}
+    total = r.get("total") or {}
+    minutes = int(total.get("duration_ms", 0) // 60000)
+    lines = [
+        f"  {_BWHITE}Agent:{_RESET}   {row.get('agent', '?')} @ {row.get('phase', '?')}"
+        f" {_DIM}(cycle {row.get('cycle', '?')}){_RESET}",
+        f"  {_BWHITE}Recorded:{_RESET} {row.get('tokens', 0):,} tokens  "
+        f"{int(row.get('duration_ms', 0) // 1000)}s",
+        f"  {_BWHITE}Run total:{_RESET} {total.get('tokens', 0):,} tokens  {minutes}m  "
+        f"over {total.get('agents', 0)} agent(s)",
+    ]
+    unreported = r.get("unreported_dispatches") or []
+    if unreported:
+        lines.append(
+            f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{len(unreported)}{_RESET} "
+            f"{_DIM}dispatch(es) still have no spend record — nothing blocks on them{_RESET}"
+        )
+    if row.get("ledger_problem"):
+        lines.append(f"  {_BYELLOW}Ledger:{_RESET} {row['ledger_problem']}")
+    return _foundry_display("F O U N D R Y  Spend recorded", lines)
+
+
+def _fmt_foundry_report(r: dict) -> str:
+    if r.get("ok") is False or r.get("error"):
+        return _foundry_display(f"F O U N D R Y  {_BRED}Report{_RESET}", [
+            f"  {_RED}{r.get('error', 'the report could not be generated')}{_RESET}",
+            f"  {_DIM}{r.get('hint', '')}{_RESET}",
+        ])
+    sections = r.get("sections") or []
+    return _foundry_display("F O U N D R Y  Report generated", [
+        f"  {_BWHITE}Markdown:{_RESET} {_short_path(str(r.get('report_md', '?')))}",
+        f"  {_BWHITE}JSON:{_RESET}     {_short_path(str(r.get('report_json', '?')))}",
+        f"  {_BWHITE}Sections:{_RESET} {len(sections)} — {', '.join(sections)}",
+        f"  {_DIM}Append prose below any section if you like; you may not omit one."
+        f" Foundry-Phase(phase='done') refuses while any is missing.{_RESET}",
     ])
 
 
@@ -772,6 +935,8 @@ _FORMATTERS: dict[str, callable] = {
     "Foundry-Context": _fmt_foundry_get_context,
     "Foundry-Directive": _fmt_foundry_inject_directive,
     "Foundry-Clear": _fmt_foundry_clear_directives,
+    "Foundry-Spend": _fmt_foundry_record_spend,
+    "Foundry-Report": _fmt_foundry_report,
     "Forge-Spec-Start": _fmt_forge_spec_start,
     "Forge-Spec-Check": _fmt_forge_spec_check,
     "Forge-Spec-Status": _fmt_forge_spec_status,

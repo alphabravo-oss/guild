@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_fix_gate.py && uv run --quiet python -c "from foundry_mcp.schemas.vocab import FIX_AUTHORS, LEAD_LANE_MAX_FILES, LEAD_LANE_MAX_LINES, HANDOFF_EVENT_LEAD_FIX, DEFECT_TIERS;print(chr(10) + '=== ceremony is proportional to the evidence tier ===');print('tiers:', ' '.join(sorted(DEFECT_TIERS)));print('fix authors:', ' '.join(sorted(FIX_AUTHORS)));print('lead lane, LIVE only: max non-test files', LEAD_LANE_MAX_FILES, 'max added+deleted lines', LEAD_LANE_MAX_LINES);print('handoff event the server appends on a lead fix:', HANDOFF_EVENT_LEAD_FIX)"
+# evidence-for: US-003, US-005, GI-003, ST-003, ST-004, CT-004, CT-005, CT-006, AC-011, AC-012, AC-020, AC-021, AC-022, AC-023, AC-030, FR-008, FR-014, FR-015, FR-016, FR-041, FR-046, FR-048, FR-053, OT-007, OT-009
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+........................................................................ [ 47%]
+........................................................................ [ 94%]
+.........                                                                [100%]
+153 passed in 1.87s
+
+=== ceremony is proportional to the evidence tier ===
+tiers: LATENT LIVE
+fix authors: lead teammate
+lead lane, LIVE only: max non-test files 1 max added+deleted lines 20
+handoff event the server appends on a lead fix: lead_fix
