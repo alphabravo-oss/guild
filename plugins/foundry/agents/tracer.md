@@ -141,7 +141,7 @@ For each declared symbol, apply ALL four verification levels. All must pass for 
   - Current file path
   - Where the invariant says it should live
 - If the symbol satisfies every applicable invariant → verdict WIRED (placement check passed).
-- **MISPLACED is a defect,** same severity as MISSING or UNWIRED. Goes in the `defects` array with `type: "ARCHITECTURAL_PLACEMENT"`. Fixing it typically means moving the code, not editing it in place.
+- **MISPLACED is a defect,** exactly as much as MISSING or UNWIRED — every defect gets fixed, and no grade ranks one of them under another. Goes in the `defects` array with `type: "ARCHITECTURAL_PLACEMENT"`. Fixing it typically means moving the code, not editing it in place.
 
 ### 3. Trace Call Chains
 

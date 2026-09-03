@@ -88,7 +88,19 @@ from foundry_mcp.schemas import vocab
 _FINDING_ITEM: dict = {
     "type": "object",
     # Verbatim from the `required` list both skills' blocks carry.
-    "required": ["id", "classification", "type", "file", "symbol", "description"],
+    #
+    # `class` JOINED that list in D-003 (FR-007/AC-010). Driven: a finding
+    # carrying every other required field and no `class` validated cleanly
+    # here, and then `validate_defect_filing` REFUSED it -- "Missing class:
+    # None is not a non-empty root-cause class name". A validator laxer than
+    # the door it feeds tells a stream its report is conforming and lets the
+    # filing fail one surface later, which is the drift this module exists to
+    # close. Requiring it here covers temper too, whose T-N findings sync
+    # through the same door and whose SKILL.md ships no block of its own -- an
+    # exemption shaped to fit temper would be the same defect one stream over.
+    "required": [
+        "id", "classification", "type", "class", "file", "symbol", "description",
+    ],
     "properties": {
         "id": {
             "type": "string",
@@ -119,9 +131,12 @@ _FINDING_ITEM: dict = {
         "class": {
             "type": "string",
             "description": (
-                "Optional root-cause group, spelled identically on every "
-                "instance that shares it. Not a tier — it is what lets three "
-                "cycles of one root cause escalate to a single structural fix."
+                "Required root-cause group, non-empty on every filing and "
+                "spelled identically on every instance that shares it. Not a "
+                "tier — it is what lets three cycles of one root cause "
+                "escalate to a single structural fix. Foundry-Defect and "
+                "Foundry-Sync refuse a filing without it, and one classless "
+                "finding refuses the whole Foundry-Sync batch."
             ),
         },
         "tier": {

@@ -644,7 +644,7 @@ Prove the locator names a real test before you pass it, the same way you prove a
 grep -n "def test_cascade_reaches_sessions" plugins/foundry/mcp-server/tests/test_user_purge.py
 ```
 
-**The failing-then-passing account is not a tool argument.** It belongs in your COMPLETION REPORT, as prose: "the test failed at `<commit before the fix>` and passes at `<fix commit>`". Never put it in the `Foundry-Fix` call — the schema declares no field for it, and a call carrying an argument the schema does not declare is rejected at the MCP boundary before it reaches a handler. Write the account every time: the locator proves a test exists, and only the account proves the test was ever red.
+**The failing-then-passing account is not a tool argument.** It belongs in your COMPLETION REPORT, as prose: "the test failed at `<commit before the fix>` and passes at `<fix commit>`". Never put it in the `Foundry-Fix` call — the schema declares no field for it, and an undeclared argument there is not refused, it is DROPPED. The schema sets no `additionalProperties: false`, so the extra key passes validation untouched, and the dispatch behind it reads only the arguments the schema names. Your account goes nowhere and the call still reports success, which is worse than a refusal: a refusal you would have seen. Write the account every time: the locator proves a test exists, and only the account proves the test was ever red.
 
 The tool-wide refusals reach into this lane unchanged. A missing `authored_by` is a refusal. A reported prompt hash that differs from your prompt file's is a refusal. Neither is waived because the defect was `LATENT`.
 

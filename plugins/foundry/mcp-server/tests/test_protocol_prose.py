@@ -1503,13 +1503,29 @@ def test_skill_key_constraints_carry_the_evidence_axis(path: Path) -> None:
 
 @pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
 def test_skill_schemas_require_the_new_axes(path: Path) -> None:
-    """D-041: an optional classification is a classification streams omit."""
+    """D-041: an optional classification is a classification streams omit.
+
+    D-003 added `class` to the same list. FR-007 requires a non-empty class on
+    every filing and states that "agent prose and report formats require it";
+    AC-010 makes one classless finding refuse a whole Foundry-Sync batch. Both
+    blocks described the axis as "Optional root-cause" and left it out of this
+    list, so a stream emitting exactly the shape its own skill documents was
+    refused at the filing door one surface later.
+    """
     text = _read(path)
-    assert '"required": ["id", "classification", "type", "file", "symbol", "description"]' in text, (
-        f"{_rel(path)}'s required list does not demand classification, type "
-        f"and symbol. `severity` was REQUIRED before this fix -- replacing a "
-        f"required field with optional ones weakens the contract instead of "
-        f"correcting it."
+    assert '"required": ["id", "classification", "type", "class", "file", "symbol", "description"]' in text, (
+        f"{_rel(path)}'s required list does not demand classification, type, "
+        f"class and symbol. `severity` was REQUIRED before this fix -- "
+        f"replacing a required field with optional ones weakens the contract "
+        f"instead of correcting it. If `class` is what went missing: the "
+        f"filing door refuses a classless finding (FR-007/AC-010), so a block "
+        f"that leaves it optional documents a shape the door rejects."
+    )
+    assert "Optional root-cause" not in text, (
+        f"{_rel(path)}'s `class` description calls the axis optional again. "
+        f"The door refuses a filing without it, and schemas/findings.py "
+        f"mirrors this block's required list by its own stated derivation "
+        f"rule -- so the adjective and the list have to move together."
     )
 
 
@@ -1548,7 +1564,16 @@ def test_skill_verdict_rules_key_on_classification(path: Path) -> None:
 
 
 def test_prove_skill_closed_the_critical_path_exemption() -> None:
-    """D-041: 'not on the critical path' was severity under another name."""
+    """D-041: 'not on the critical path' was severity under another name.
+
+    D-008 added the second half. GI-001 requires the rewritten no-severity
+    prose to be RE-PINNED, and the FAIL bullet was rewritten to close the new
+    exemption `tier` makes available -- a stream reading "LATENT" as "found by
+    reasoning, so not really broken" reinvents the off-the-critical-path
+    exemption on the axis that replaced severity. The rewrite shipped
+    unpinned, which is how the first exemption survived long enough to need
+    removing.
+    """
     text = _flat(PROVE_SKILL)
     assert "there is no off-the-critical-path exemption" in text, (
         "prove/SKILL.md's verdict rules downgraded a non-VERIFIED item to WARN "
@@ -1556,10 +1581,27 @@ def test_prove_skill_closed_the_critical_path_exemption() -> None:
         "verdict is a defect, no exceptions' admits no such exemption, and an "
         "importance test by any other name is the axis D-041 removes."
     )
+    assert (
+        "and no `LATENT` exemption either, because `tier` records the evidence "
+        "behind a defect and never whether it is worth fixing" in text
+    ), (
+        "prove/SKILL.md's FAIL rule no longer closes the LATENT exemption. "
+        "FAIL keys on `classification`, not on `tier`: both tiers are defects "
+        "and both get fixed. A verdict rule silent about the evidence axis "
+        "invites a stream to WARN on the findings it only derived, which is "
+        "the off-the-critical-path exemption again on a newer axis."
+    )
 
 
 def test_trace_skill_states_plumber_findings_are_defects_not_a_tier() -> None:
-    """D-041: the prose twin of the schema's severity enum."""
+    """D-041: the prose twin of the schema's severity enum.
+
+    D-009 added the evidence-axis half. This paragraph is one of the surfaces
+    GI-001 names for the no-severity rewrite, and the rewritten sentence
+    shipped with no exact-substring pin at all -- so the words that distinguish
+    the CHANNEL claim from the EVIDENCE claim could be dropped in a later edit
+    without a single test noticing.
+    """
     text = _flat(TRACE_SKILL)
     assert "high severity" not in text, (
         "trace/SKILL.md still calls PL-N findings 'high severity'. Fixing the "
@@ -1570,6 +1612,97 @@ def test_trace_skill_states_plumber_findings_are_defects_not_a_tier() -> None:
         "trace/SKILL.md no longer states the CHANNEL a broken-workflow finding "
         "goes down. Deleting the severity claim without replacing it loses the "
         "point the sentence was making."
+    )
+    assert "This is a channel statement, not a severity one" in text, (
+        "trace/SKILL.md no longer says which AXIS the PL-N rule is about. "
+        "Without it the paragraph reads as a claim that broken workflows "
+        "matter more than other defects -- the severity tier restated in "
+        "prose, which is what D-041 removed from this file."
+    )
+    assert (
+        "The evidence axis is separate again — a PL-N flow you actually drove "
+        "and watched fail is `LIVE`, one you derived from the wiring with no "
+        "reachable path is `LATENT` and carries a `reproduction_attempted` "
+        "statement — and neither tier is a grade on how much the fix is worth."
+        in text
+    ), (
+        "trace/SKILL.md's PL-N paragraph no longer distinguishes the evidence "
+        "axis from the channel. GI-001 requires the no-severity prose to state "
+        "the LIVE/LATENT distinction wherever it is rewritten, and a PL-N "
+        "flow is exactly where a stream is tempted to file what it read off "
+        "the wiring as though it had driven it."
+    )
+
+
+#: Phrasings that USE the work-effort axis rather than banning it. The four
+#: stream agents and the two schema-bearing skills all carry a rule spelling
+#: the axis out to forbid it -- "no `minor`, no `major`, no `critical`, no
+#: `severity`, no `priority`, no `impact`" -- so a bare search for the word
+#: matches the prohibition itself and can never be an assertion. These are the
+#: comparative shapes the word only takes when a document is RANKING two
+#: defects against each other, which is the move the rule forbids.
+_APPROVING_SEVERITY_USES = (
+    "same severity as",
+    "high severity",
+    "higher severity",
+    "low severity",
+    "lower severity",
+    "more severe",
+    "less severe",
+)
+
+
+@pytest.mark.parametrize(
+    "path",
+    STREAM_AGENTS + SCHEMA_BEARING_SKILLS,
+    ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.stem,
+)
+def test_no_stream_document_uses_the_severity_axis_approvingly(path: Path) -> None:
+    """D-006 / GI-001 / FR-030: banning the word and then using it is worse
+    than never banning it.
+
+    agents/tracer.md shipped "MISPLACED is a defect, same severity as MISSING
+    or UNWIRED" one screen above its own rule banning the grade BY NAME. The
+    four stream agents are pinned to carry that rule word-identically, and
+    this sentence sat outside the shared span, so every exact-substring pin
+    on the rewrite passed while the file contradicted it.
+
+    A reader resolves a document that contradicts itself in its own favour --
+    the same reasoning `test_trace_skill_states_plumber_findings_are_defects_
+    not_a_tier` records for the "high severity" claim -- so the guard is over
+    the whole file, not over the rewritten span.
+    """
+    text = _flat(path)
+    found = [phrase for phrase in _APPROVING_SEVERITY_USES if phrase in text]
+    assert not found, (
+        f"{_rel(path)} ranks defects against each other using {found}. "
+        f"GI-001 requires this file's no-severity prose to state the "
+        f"LIVE/LATENT distinction and FR-030 requires the work-effort grade "
+        f"to stay banned BY NAME. Say the two defects are equal without "
+        f"reaching for the abolished axis to say it -- tracer.md's Level 4 "
+        f"rule is the worked example: 'exactly as much as MISSING or "
+        f"UNWIRED -- every defect gets fixed, and no grade ranks one of them "
+        f"under another.'"
+    )
+
+
+def test_tracer_places_misplaced_beside_the_other_defects_without_grading() -> None:
+    """D-006's replacement, pinned so the point survives the rewrite.
+
+    Deleting the offending clause is not enough: the sentence existed to say
+    that a placement defect is not a lesser one, and a rewrite that drops the
+    claim along with the word loses what Level 4 was asserting.
+    """
+    text = _flat(TRACER)
+    assert (
+        "**MISPLACED is a defect,** exactly as much as MISSING or UNWIRED — "
+        "every defect gets fixed, and no grade ranks one of them under another."
+        in text
+    ), (
+        "tracer.md's Level 4 no longer states that a placement defect ranks "
+        "with the others. The clause it replaced said so using the abolished "
+        "axis; saying nothing at all invites a reader to treat "
+        "ARCHITECTURAL_PLACEMENT as the tidy-up class."
     )
 
 
@@ -3884,10 +4017,26 @@ def test_teammate_keeps_the_failing_then_passing_account_out_of_the_call() -> No
     """FR-041: the statement is REPORT prose, never a tool argument.
 
     CT-004 is explicit that the failing-then-passing statement is completion-
-    report prose and not an input. A teammate that puts it in the call sends
-    an argument the schema does not declare and is rejected at the MCP
-    boundary before a handler sees it -- and reads that rejection as the fix
-    being refused.
+    report prose and not an input, and the account is worth writing down
+    because only it proves the test was ever red.
+
+    WHY THE REASON IS PINNED TOO (D-005 / D-010)
+    --------------------------------------------
+    The instruction shipped with a justification that was not true: it told
+    the teammate the call would be "rejected at the MCP boundary before it
+    reaches a handler" because "the schema declares no field for it". Driven:
+    `additionalProperties` occurs ZERO times in server.py, so Foundry-Fix's
+    published inputSchema does not close its property set; JSON Schema permits
+    extra properties by default; and the MCP SDK's boundary check is exactly
+    jsonschema.validate against that schema, which ACCEPTS the undeclared key.
+    The dispatch lambda then reads only its named arguments, so the account is
+    silently discarded and the call reports success.
+
+    That is the same defect shape FR-025 removes from the temper skill -- a
+    document citing a guard that does not exist. The instruction was right and
+    the reason was wrong, which is the worse combination: an agent that tests
+    the stated reason and finds it false has been given cause to doubt the
+    rule. So both halves are pinned here.
     """
     flat = _flat(TEAMMATE)
     assert "**The failing-then-passing account is not a tool argument.**" in flat, (
@@ -3898,6 +4047,20 @@ def test_teammate_keeps_the_failing_then_passing_account_out_of_the_call() -> No
         "teammate.md gives no shape for the failing-then-passing account, so "
         "the requirement is satisfiable by any sentence mentioning a test. "
         "FR-041 requires the STATEMENT in the report."
+    )
+    assert "rejected at the MCP boundary" not in flat, (
+        "teammate.md claims an undeclared Foundry-Fix argument is rejected at "
+        "the MCP boundary. It is not: the tool's inputSchema sets no "
+        "`additionalProperties: false` (grep server.py -- zero occurrences), "
+        "so the boundary's jsonschema.validate accepts the key. Justify the "
+        "rule by what actually happens, or the first teammate to check the "
+        "reason stops trusting the rule."
+    )
+    assert "it is DROPPED" in flat, (
+        "teammate.md no longer says what actually happens to an undeclared "
+        "Foundry-Fix argument. It is dropped, not refused -- the dispatch "
+        "reads only the arguments the schema names -- and silent loss is "
+        "exactly why the account has to go in the report instead."
     )
 
 

@@ -358,6 +358,7 @@ def test_a_finding_carrying_severity_is_rejected(name: str) -> None:
         "id": "L-1",
         "classification": "DEFECT",
         "type": "WRONG",
+        "class": "EXAMPLE_ROOT_CAUSE",
         "file": "src/example.py",
         "symbol": "example#Thing",
         "description": "a description well past the ten-character floor",
@@ -474,6 +475,7 @@ def test_temper_findings_are_the_reconciled_record() -> None:
                 "id": "T-1",
                 "classification": "DEFECT",
                 "type": "HOLLOW",
+                "class": "STUB_BEHIND_THE_DOMAIN",
                 "file": "src/example.py",
                 "symbol": "example#probe",
                 "description": "the probe found a stub behind the domain",
@@ -534,11 +536,18 @@ def test_schemas_registry_matches_the_published_schema_name_enum() -> None:
 
 
 def _minimal_finding(**extra: object) -> dict:
-    """The six required fields, plus whatever the caller is testing."""
+    """The seven required fields, plus whatever the caller is testing.
+
+    `class` became the seventh in D-003: the filing door refuses a classless
+    finding, so a "minimal conforming finding" that omitted it was minimal
+    only against the validator and not against the surface the finding is
+    actually bound for.
+    """
     return {
         "id": "L-1",
         "classification": "DEFECT",
         "type": "WRONG",
+        "class": "EXAMPLE_ROOT_CAUSE",
         "file": "src/example.py",
         "symbol": "example#Thing",
         "description": "a description well past the ten-character floor",
@@ -695,3 +704,101 @@ def test_the_tier_enum_is_read_from_vocab_and_not_re_typed() -> None:
             f"schemas/findings.py spells {literal} as a literal; the tier "
             f"vocabulary is declared once, in schemas/vocab.py"
         )
+
+
+# ---------------------------------------------------------------------------
+# D-003 / FR-007 / AC-010 — the validator and the door agree about `class`.
+#
+# The finding item mirrors the skills' required list by its own stated
+# derivation rule, and all three sites carried "Optional root-cause" while the
+# filing door refused a classless filing outright. So a stream emitting
+# EXACTLY the shape its own SKILL.md documents validated here and was then
+# refused one surface later, with nothing in either document to warn it.
+#
+# The pin is therefore CROSS-SURFACE and instance-level: one finding, driven
+# through both the validator and the door, asserting they answer the same way.
+# Asserting only that "class" is in `required` would pass just as happily if
+# the door were the thing that drifted.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_a_classless_finding_is_refused_by_the_validator_and_the_door(
+    name: str,
+) -> None:
+    """D-003, driven on both surfaces at once."""
+    from foundry_mcp.tools.foundry import validate_defect_filing
+
+    classless = _minimal_finding(tier="LIVE")
+    classless.pop("class")
+
+    errors = _finding_errors(SCHEMAS[name], classless)
+    assert any("class" in error for error in errors), {
+        "schema": name,
+        "errors": errors,
+        "why": (
+            "SCHEMAS[%r] accepts a finding with no `class`, but "
+            "validate_defect_filing refuses it. A validator laxer than the "
+            "door it feeds tells a stream its report conforms and lets the "
+            "filing fail later, where nothing connects the refusal back to "
+            "the block the stream was reading." % name
+        ),
+    }
+
+    refusal = validate_defect_filing(classless)
+    assert refusal is not None and refusal.get("field") == "class", {
+        "schema": name,
+        "refusal": refusal,
+        "why": (
+            "the filing door stopped refusing a classless finding. If the "
+            "door relaxed deliberately, this schema's `required` list and "
+            "both skills' blocks relax with it -- never one side alone."
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_the_classed_finding_both_surfaces_accept_is_the_same_instance(
+    name: str,
+) -> None:
+    """The other direction: agreement, not merely matched strictness.
+
+    Two surfaces can both refuse an instance for unrelated reasons. This says
+    the shape a stream is told to emit is accepted by BOTH.
+    """
+    from foundry_mcp.tools.foundry import validate_defect_filing
+
+    finding = _minimal_finding(tier="LIVE")
+    assert not _finding_errors(SCHEMAS[name], finding), {
+        "schema": name,
+        "errors": _finding_errors(SCHEMAS[name], finding),
+    }
+    assert validate_defect_filing(finding) is None, validate_defect_filing(finding)
+
+
+@pytest.mark.parametrize("path", BLOCK_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_no_skill_block_still_calls_the_class_axis_optional(path: Path) -> None:
+    """The prose half of D-003, at the two documents streams actually read.
+
+    ``test_skill_schemas_require_the_new_axes`` in tests/test_protocol_prose.py
+    pins the `required` list as a substring; this pins the DESCRIPTION beside
+    it, parsed out of the block, so a required-but-still-described-as-optional
+    field fails here naming the contradiction rather than passing both checks.
+    """
+    block = _documented_block(path)
+    item = block["properties"]["findings"]["items"]
+    description = item["properties"]["class"].get("description", "")
+    assert "class" in item.get("required", []), {
+        "skill": _rel(path),
+        "required": item.get("required"),
+        "why": "the block leaves `class` optional; the filing door requires it.",
+    }
+    assert "optional" not in description.lower(), {
+        "skill": _rel(path),
+        "description": description,
+        "why": (
+            "the block requires `class` and then describes it as optional. A "
+            "stream resolves that contradiction in its own favour, which is "
+            "how the axis went missing from filings in the first place."
+        ),
+    }

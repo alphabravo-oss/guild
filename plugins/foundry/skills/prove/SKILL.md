@@ -273,7 +273,7 @@ the `foundry_add_verdict` MCP tool for defect tracking.
                      "COVERAGE_INCOMPLETE", "THIN_MIGRATION"],
             "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
           "class": {"type": "string",
-            "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+            "description": "Required root-cause group, non-empty on every filing and spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix. Foundry-Defect and Foundry-Sync refuse a filing without it, and one classless finding refuses the whole Foundry-Sync batch."},
           "tier": {"type": "string", "enum": ["LIVE", "LATENT"],
             "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. Closed vocabulary, source of truth schemas/vocab.py#DEFECT_TIERS."},
           "reproduction_attempted": {"type": "string",
@@ -284,7 +284,7 @@ the `foundry_add_verdict` MCP tool for defect tracking.
           "spec_reference": {"type": "string", "description": "VC-N item or spec section cited"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "classification", "type", "file", "symbol", "description"]
+        "required": ["id", "classification", "type", "class", "file", "symbol", "description"]
       }
     },
     "summary": {
