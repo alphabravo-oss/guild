@@ -1109,6 +1109,87 @@ def test_the_sweep_result_is_recorded_in_the_cycle_rollup(run_env):
     assert rollup["swept_at"]
 
 
+def test_the_persisted_sweep_record_carries_the_per_log_column(run_env):
+    """CT-007 verbatim: 'sweep result recorded per log with scope (delta or
+    full) and elapsed seconds.'
+
+    D-044 — COMPUTED, THEN DROPPED BY THE WRAPPER. `sweep_evidence_at_head`
+    returned `per_log` with a row for EVERY log in scope, matched or not, each
+    carrying its own elapsed seconds. `_sweep_evidence_at_boundary` copied six
+    sibling fields and omitted it, so the persisted record's keys were exactly
+    ['elapsed_seconds', 'logs_reexecuted', 'mismatches', 'pool_size', 'scope',
+    'swept_at'] — `elapsed_seconds` a single run total and no per-log column
+    anywhere. It reached neither stream-rollup.json, nor the transition result,
+    nor the report; grep for `per_log` across src/ found the producer and no
+    consumer at all.
+
+    ASSERTED AGAINST THE PERSISTED RECORD, which is the half `test_evidence.py`
+    could not cover: it asserts on `sweep_evidence_at_head` directly, so 2740
+    tests passed over the gap between the producer and the artifact.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+    _evidence_log(project_root, "casting-1-handler.log", "echo one", "one\n")
+    _git(Path(project_root), "add", "-A")
+    _git(Path(project_root), "commit", "-qm", "evidence")
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    persisted = json.loads(
+        (fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8")
+    )["cycles"]["2"]["evidence_sweep"]
+    assert persisted["per_log"] == result["evidence_sweep"]["per_log"], (
+        "the artifact and the transition result must carry the same column"
+    )
+    assert [Path(row["log"]).name for row in persisted["per_log"]] == [
+        "casting-1-handler.log"
+    ]
+    row = persisted["per_log"][0]
+    assert row["matched"] is True
+    assert isinstance(row["elapsed_seconds"], float)
+    # The scope rides on the record, per log rather than per run — CT-007 names
+    # both halves in one clause and the record has to answer both.
+    assert persisted["scope"] == "delta"
+
+
+def test_every_log_in_scope_gets_a_per_log_row_not_only_the_mismatches(run_env):
+    """The adjacent path: a sweep whose logs all PASS still has to say how long
+    each took.
+
+    The timing column used to exist only on mismatch records, so the logs that
+    reproduced — every log, on a healthy run — had none, and "which log is
+    making DELTA expensive" was unanswerable exactly when it was worth asking.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": [
+            {"id": 1, "key_files": ["src/handler.py"]},
+            {"id": 2, "key_files": ["src/other.py"]},
+        ]}),
+        encoding="utf-8",
+    )
+    _evidence_log(project_root, "casting-1-handler.log", "echo one", "one\n")
+    _evidence_log(project_root, "casting-2-other.log", "echo two", "two\n")
+    _git(Path(project_root), "add", "-A")
+    _git(Path(project_root), "commit", "-qm", "evidence")
+    _grind_touching(project_root, fdir, "src/handler.py", "src/other.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    sweep = result["evidence_sweep"]
+    assert sweep["mismatches"] == []
+    assert len(sweep["per_log"]) == len(sweep["logs_reexecuted"]) == 2
+    assert all(row["matched"] for row in sweep["per_log"]), sweep["per_log"]
+    assert all("elapsed_seconds" in row for row in sweep["per_log"])
+
+
 def test_the_sweep_runs_before_the_state_transaction_opens(run_env):
     """The ordering that keeps the run from serialising on itself.
 

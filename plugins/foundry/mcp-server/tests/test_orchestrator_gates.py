@@ -68,6 +68,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -3467,6 +3468,186 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
         "run's DECLARED EXTERNAL INPUTS -- the spec at state.json's spec_path "
         "among them -- are outside every door's guard again (D-145, D-157)."
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-042 / CT-001 / AC-006 — a refusal over MCP names the offending property
+# --------------------------------------------------------------------------- #
+
+
+def _drive_mcp(name: str, arguments: dict):
+    """Call a tool THROUGH THE MCP REQUEST HANDLER, not through `call_tool`.
+
+    The distinction is the whole defect. `mcp.server.lowlevel.Server.call_tool`
+    wraps the module-level handler and validates `arguments` against the
+    advertised `inputSchema` BEFORE dispatching, so a test that calls
+    `server.call_tool(...)` directly walks past the very layer that answered.
+    Driving `request_handlers[CallToolRequest]` is the transport a client uses.
+    """
+    import asyncio
+
+    from mcp import types
+
+    import foundry_mcp.server as srv
+
+    handler = srv.server.request_handlers[types.CallToolRequest]
+    request = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(name=name, arguments=arguments),
+    )
+    return asyncio.run(handler(request)).root.content[0].text
+
+
+@pytest.mark.parametrize(
+    "tool, arguments, field, bad",
+    [
+        (
+            "Foundry-Defect",
+            {"cycle": 1, "source": "trace", "defect_type": "UNWIRED",
+             "description": "x", "defect_class": "K", "tier": "MAJOR"},
+            "tier", "MAJOR",
+        ),
+        (
+            "Foundry-Defect",
+            {"cycle": 1, "source": "nobody", "defect_type": "UNWIRED",
+             "description": "x", "defect_class": "K", "tier": "LIVE"},
+            "source", "nobody",
+        ),
+        (
+            "Foundry-Fix",
+            {"defect_id": "D-1", "cycle": 1, "authored_by": "robot"},
+            "authored_by", "robot",
+        ),
+        (
+            "Foundry-Observation",
+            {"cycle": 1, "source": "trace", "classification": "NOT_A_CLASS",
+             "description": "x"},
+            "classification", "NOT_A_CLASS",
+        ),
+        (
+            "Foundry-Phase",
+            {"phase": "teleport"},
+            "phase", "teleport",
+        ),
+    ],
+)
+def test_an_out_of_vocabulary_enum_is_refused_over_mcp_naming_the_field(
+    tool, arguments, field, bad
+):
+    """CT-001's errors column: 'refusal naming the missing tier.' AC-006: a tier
+    outside {LIVE, LATENT} is 'refused naming the field'.
+
+    D-042 — THE SDK ANSWERED FIRST, AND ITS ANSWER NAMES NOTHING. Driven over
+    the real MCP transport at the time of filing, `Foundry-Defect(tier='MAJOR')`
+    returned the entire response text
+
+        Input validation error: 'MAJOR' is not one of ['LATENT', 'LIVE']
+
+    — byte-identical in shape to the same validator's output for `source`,
+    `defect_type`, `target_kind` or `authored_by`, because the offending
+    PROPERTY appears nowhere in it. The handler's own field-naming refusal never
+    ran: validation happens before dispatch.
+
+    PARAMETRISED OVER FOUR TOOLS AND FOUR ENUMS, not over `tier` alone. The
+    filing is one property short in one tool; the CLASS is every enum-valued
+    argument of every tool, and a fix that named only `tier` would leave the
+    other three answering exactly as before.
+    """
+    rendered = _drive_mcp(tool, arguments)
+
+    assert field in rendered, rendered
+    assert bad in rendered, rendered
+    assert "Input validation error" not in rendered, rendered
+
+
+def test_an_absent_required_argument_is_refused_over_mcp_naming_every_one():
+    """The house rule the boundary now obeys: 'where several fields failed at
+    once, name every one of them in a single refusal'.
+
+    A caller that omits five required properties should learn all five, not
+    discover them one round trip at a time — which is what the SDK's
+    single-message refusal produced.
+    """
+    rendered = _drive_mcp("Foundry-Defect", {"cycle": 1})
+
+    for field in ("source", "defect_type", "description", "tier", "defect_class"):
+        assert field in rendered, rendered
+
+
+def test_the_advertised_enum_is_still_readable_by_list_tools():
+    """The other half of the fix, and the constraint it had to respect.
+
+    Taking validation back from the SDK must not take the VOCABULARY off the
+    wire: `list_tools` is where a client learns which values are legal, and the
+    C-11 contract says every enum this server advertises is `sorted()` over an
+    imported vocab frozenset. A schema that stopped advertising the enum would
+    trade a nameless refusal for an undocumented one.
+    """
+    import asyncio
+
+    from foundry_mcp import server as srv
+    from foundry_mcp.schemas.vocab import DEFECT_TIERS, FIX_AUTHORS
+
+    tools = {t.name: t for t in asyncio.run(srv.list_tools())}
+    defect = tools["Foundry-Defect"].inputSchema["properties"]
+    assert defect["tier"]["enum"] == sorted(DEFECT_TIERS)
+    fix = tools["Foundry-Fix"].inputSchema["properties"]
+    assert fix["authored_by"]["enum"] == sorted(FIX_AUTHORS)
+
+
+def test_a_valid_call_still_reaches_its_handler_over_mcp():
+    """The check must not become a second gate. Every constraint the SDK
+    enforced is still enforced — `required`, `type` and every `enum`, against
+    the same advertised schema with the same draft semantics — so a call that
+    was legal before is legal now and reaches the handler that owns it."""
+    rendered = _drive_mcp("Foundry-Defect", {
+        "cycle": 1, "source": "trace", "defect_type": "UNWIRED",
+        "description": "x", "defect_class": "K", "tier": "LIVE",
+    })
+
+    # No active run in this process, so the HANDLER's own refusal is what comes
+    # back — which is the proof that dispatch happened.
+    assert "unusable argument(s)" not in rendered, rendered
+    assert "No active foundry run" in rendered or "foundry" in rendered.lower()
+
+
+def test_the_done_precondition_prose_describes_what_report_status_reads():
+    """GI-006 / D-050 — stale prose survives beside new prose.
+
+    `_done_preconditions`' report block asserted that `report_status` answers
+    'from `report.json` and never from REPORT.md', and argued from that claim
+    that appended prose could not make a section look absent. D-015 had already
+    made the claim false — `rm REPORT.md` left the DONE gate passing, so the
+    read moved onto both documents — and the block kept the case for the
+    behaviour that drive removed. A maintainer reading it would conclude
+    REPORT.md is unchecked and could revert D-015 as redundant.
+
+    Asserted against the CODE as well as the comment, so the pin cannot be
+    satisfied by editing prose to match a behaviour that later moves again.
+    """
+    import inspect
+
+    from foundry_mcp.tools.foundry_report import report_status
+
+    source = inspect.getsource(fo._done_preconditions)
+    assert "never from REPORT.md" not in source, (
+        "the block still claims report_status ignores REPORT.md"
+    )
+    assert "BOTH documents" in source or "both documents" in source, source
+
+    # And the behaviour the corrected prose describes, driven.
+    with tempfile.TemporaryDirectory() as tmp:
+        run_dir = Path(tmp)
+        (run_dir / "report.json").write_text(
+            json.dumps({s: {} for s in REPORT_REQUIRED_SECTIONS}
+                       | {"generated_at": "now", "run": "r"}),
+            encoding="utf-8",
+        )
+        status = report_status(run_dir)
+        assert status["present"] is False, (
+            "REPORT.md is absent, so no section can be shown to a reader"
+        )
+        assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
 
 
 def test_call_tool_converts_an_unhandled_error_into_a_named_result():
