@@ -175,11 +175,11 @@
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-suite/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-c5/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-c5/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wt-c5/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5207: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5204: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3174 passed, 10 skipped, 3 deselected in 149.74s
+3174 passed, 10 skipped, 3 deselected in 148.25s
