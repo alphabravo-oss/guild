@@ -197,7 +197,7 @@
         },
         "prove": {
           "scope": "delta",
-          "detail": "12 row(s): rows tied to the fixed defects plus 10 sampled"
+          "detail": "12 row(s): 2 tied to the fixed defects plus 10 sampled"
         },
         "test": {
           "scope": "full",
@@ -251,7 +251,7 @@
         },
         "prove": {
           "scope": "delta",
-          "detail": "12 row(s): rows tied to the fixed defects plus 10 sampled"
+          "detail": "12 row(s): 2 tied to the fixed defects plus 10 sampled"
         },
         "test": {
           "scope": "full",
