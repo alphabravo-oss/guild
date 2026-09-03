@@ -31,6 +31,7 @@ REFERENCES = FOUNDRY_ROOT / "references"
 SKILLS = FOUNDRY_ROOT / "skills"
 SCRIPTS = FOUNDRY_ROOT / "scripts"
 MCP_SRC = FOUNDRY_ROOT / "mcp-server" / "src" / "foundry_mcp"
+AGENTS = FOUNDRY_ROOT / "agents"
 
 START_MD = COMMANDS / "start.md"
 HELP_MD = COMMANDS / "help.md"
@@ -490,6 +491,144 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
     # flag is accepted at the command line and silently reaches nothing.
     ("setup-echoes-cap", "CT-016", SETUP_SH, "FOUNDRY_MAX_CYCLES=$MAX_CYCLES"),
     ("setup-threads-cap", "CT-016", SETUP_SH, "max_cycles=$MAX_CYCLES"),
+    # --- GRIND cycle 2 -----------------------------------------------------
+    # Each pin below answers a defect where prose that was TRUE when written
+    # stood beside newer prose that contradicted it, or described a check the
+    # shipped code does not perform. The class is stale-prose-survives-beside-
+    # new-prose, and a substring pin is what stops the stale half surviving a
+    # second time.
+    #
+    # D-024 / GI-002: GI-002's applies-to line names `commands/start.md F3`
+    # and the word "sweep" appeared in start.md zero times. A refused
+    # `inspect_start` therefore reached a lead with no instruction covering
+    # it, and the only reading left was that the tool was broken.
+    (
+        "sweep-server-owns-the-boundary",
+        "GI-002",
+        START_MD,
+        "**The SERVER sweeps the committed evidence at that same boundary, and a "
+        "mismatch REFUSES the crossing.**",
+    ),
+    (
+        "sweep-scope-is-delta-by-default",
+        "GI-002",
+        START_MD,
+        "The scope is DELTA by default",
+    ),
+    (
+        "sweep-lead-never-runs-it",
+        "GI-002",
+        START_MD,
+        "You never run this sweep yourself and never report having run it",
+    ),
+    # The operator's first question after a refused transition is whether the
+    # run moved; the second is whose job the re-capture is.
+    (
+        "sweep-refusal-does-not-advance",
+        "GI-002",
+        START_MD,
+        "the cycle counter has NOT advanced, no INSPECT mode was recorded",
+    ),
+    (
+        "sweep-owning-casting-recaptures",
+        "GI-002",
+        START_MD,
+        "the casting that OWNS it re-captures it",
+    ),
+    # D-025 / FR-007: the tier paragraph copied the observation paragraph's
+    # COUNT of the roster without its BINDING CLAUSE, so one file carried two
+    # derivations of the same roster that disagreed about the members neither
+    # ruling is written into.
+    (
+        "tier-roster-is-not-the-splits",
+        "FR-007",
+        START_MD,
+        "Its roster is not the split's",
+    ),
+    (
+        "tier-roster-binds-the-exempt-member",
+        "FR-007",
+        START_MD,
+        "`agents/spec-test-deriver.md`, which has no `## Rules` block at all",
+    ),
+    (
+        "tier-roster-never-derived-from-a-count",
+        "FR-007",
+        START_MD,
+        "Never derive this roster from a COUNT",
+    ),
+    # D-026 / AC-036: start.md stated `final_gate` as the SPEC's condition
+    # while `_decide_inspect_mode` fires on two proxies for it, so the lead's
+    # own file promised a gate stricter than the server enforces.
+    (
+        "final-gate-is-two-proxies",
+        "AC-036",
+        START_MD,
+        "on either of TWO PROXIES",
+    ),
+    (
+        "final-gate-proxies-are-what-fires",
+        "AC-036",
+        START_MD,
+        "**The proxies are what fires, not the intent.**",
+    ),
+    (
+        "uncomputable-diff-is-full",
+        "AC-036",
+        START_MD,
+        "an UNCOMPUTABLE GRIND diff",
+    ),
+    # D-027 / FR-018: three documentation surfaces said the preflight compares
+    # the executing server's `__version__`. It compares the two plugin.json
+    # versions; `__version__` is recorded as `server_version` and compared
+    # against nothing.
+    (
+        "preflight-manifest-vs-manifest-start",
+        "FR-018",
+        START_MD,
+        "It is plugin manifest against plugin manifest",
+    ),
+    (
+        "preflight-server-version-uncompared-start",
+        "FR-018",
+        START_MD,
+        "recorded as `server_version` and displayed, but never compared",
+    ),
+    (
+        "preflight-manifest-vs-manifest-help",
+        "FR-018",
+        HELP_MD,
+        "It is plugin manifest against plugin manifest",
+    ),
+    (
+        "preflight-manifest-vs-manifest-plugin-readme",
+        "FR-018",
+        PLUGIN_README,
+        "The comparison is plugin manifest against plugin manifest",
+    ),
+    # D-019 / AC-038: the file's OPENING line asserted a stricter ASSAY exit
+    # than FR-006 defines, contradicting the termination rule the same file
+    # states 195 lines later.
+    (
+        "temper-assay-exit-is-tier-aware",
+        "AC-038",
+        TEMPER_SKILL,
+        "ASSAY passes when no `LIVE` defect and no unknown-tier defect is open",
+    ),
+    # D-019 / FR-030: the work-effort grade, by name, in the file that now
+    # carries the tier rule.
+    (
+        "temper-suggestions-route-not-graded",
+        "FR-030",
+        TEMPER_SKILL,
+        "**Never grade a suggestion by effort**",
+    ),
+    (
+        "temper-tier-is-evidence-not-effort",
+        "FR-030",
+        TEMPER_SKILL,
+        "which is evidence rather than effort",
+    ),
 )
 
 
@@ -617,4 +756,105 @@ def test_start_md_tools_table_rows_are_two_column() -> None:
     assert as_rows == registered, (
         f"{_rel(START_MD)}'s tools table reaches these tools as prose rather "
         f"than as a `| `Tool` | When |` row: {sorted(registered - as_rows)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The tier-rule roster start.md claims (D-025 / FR-007)
+# ---------------------------------------------------------------------------
+#
+# start.md derives the INSPECT stream roster TWICE -- once for the observation
+# split and once for the tier rule -- and the two derivations disagreed. The
+# split paragraph named its four files AND bound the two roster members it is
+# not written into; the tier paragraph copied the COUNT and dropped the
+# binding, so the same file said two different things about who the ruling
+# reaches on a fresh checkout.
+#
+# The pins above hold the binding clause in place. This test holds the other
+# half: that every agent file start.md CLAIMS carries the tier rule really
+# does. The list is parsed out of start.md rather than typed here, so the
+# assertion tracks the prose instead of becoming a third copy free to drift
+# from both.
+
+#: The sentence in start.md's F2 roster whose backticked `agents/*.md` paths
+#: are the tier rule's fresh-checkout roster. Anchored on both ends so a
+#: nearby paragraph's agent references cannot leak into the derivation.
+_TIER_ROSTER_RE = re.compile(
+    r"the tier rule is written into the `## Rules` block of (.+?)\. "
+    r"The one roster member it is not written into is `([^`]+)`"
+)
+
+
+def _claimed_tier_roster() -> tuple[list[str], str]:
+    """``(files start.md says carry the tier rule, the file it says does not)``."""
+    match = _TIER_ROSTER_RE.search(_flat(START_MD))
+    assert match is not None, (
+        f"{_rel(START_MD)}'s F2 roster no longer names which agent files carry "
+        f"the tier rule, or no longer names the roster member it is not "
+        f"written into. D-025 was exactly that omission: a roster stated as a "
+        f"count, with nothing saying who the count leaves out. Restore both "
+        f"halves of the sentence rather than relaxing this pattern."
+    )
+    return re.findall(r"`(agents/[^`]+\.md)`", match.group(1)), match.group(2)
+
+
+def test_the_tier_roster_derivation_is_not_vacuous() -> None:
+    """A roster parse that silently matched nothing would pass every check below.
+
+    The same guard the tools-table derivation carries, for the same reason: an
+    empty derived set makes an `all()` over it trivially true, so the parser
+    has to prove it found something before its findings mean anything.
+    """
+    named, exempt = _claimed_tier_roster()
+    assert len(named) >= 4, (
+        f"{_rel(START_MD)}'s tier-rule roster parsed to {named!r}. The four "
+        f"defect-filing stream agents are the floor; a parse this small means "
+        f"the sentence changed shape and this test is now checking nothing."
+    )
+    assert exempt.startswith("agents/"), (
+        f"{_rel(START_MD)} names {exempt!r} as the exempt roster member, which "
+        f"is not an agent file path."
+    )
+
+
+def test_every_agent_start_md_names_really_carries_the_tier_rule() -> None:
+    """FR-007 / D-025: start.md's claim about the agent files must be true.
+
+    "It is in force on a fresh checkout" is a claim about files start.md does
+    not own. If the ruling is missing from one of them, the lead is told no
+    per-run directive is needed and the stream files without a tier anyway --
+    which the door then refuses mid-INSPECT, with the protocol's own prose as
+    the reason the lead trusted it would not.
+    """
+    named, exempt = _claimed_tier_roster()
+    for rel in named:
+        agent = AGENTS / Path(rel).name
+        assert agent.is_file(), (
+            f"{_rel(START_MD)} names {rel} as carrying the tier rule, but that "
+            f"file does not exist."
+        )
+        body = agent.read_text(encoding="utf-8")
+        rules = body.split("## Rules", 1)
+        assert len(rules) == 2, (
+            f"{_rel(agent)} has no `## Rules` block, so {_rel(START_MD)} is "
+            f"wrong to list it among the files that carry the tier rule there. "
+            f"Move it to the exemption clause instead."
+        )
+        assert "LATENT" in rules[1], (
+            f"{_rel(agent)}'s `## Rules` block does not state the tier rule, "
+            f"but {_rel(START_MD)} says it does. Either the rule was dropped "
+            f"from the agent file -- restore it -- or start.md must stop "
+            f"claiming it and bind the file in the exemption clause. Never fix "
+            f"this by deleting the claim's file list; a roster stated as a bare "
+            f"count is the defect this test exists for."
+        )
+
+    exempt_file = AGENTS / Path(exempt).name
+    assert exempt_file.is_file(), (
+        f"{_rel(START_MD)} names {exempt} as the exempt roster member, but that "
+        f"file does not exist."
+    )
+    assert exempt not in named, (
+        f"{_rel(START_MD)} lists {exempt} as both carrying the tier rule and "
+        f"exempt from it."
     )

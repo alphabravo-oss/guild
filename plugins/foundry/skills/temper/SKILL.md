@@ -10,8 +10,11 @@ effort: max
 
 # Temper — Micro-Domain Deep Audit
 
-Temper activates after F4 ASSAY terminates with zero OPEN findings. Broad audits miss
-things because they look at too much at once. Temper zooms into the smallest units of
+Temper activates after F4 ASSAY terminates. What terminates ASSAY is the tier-aware
+gates, not a count of every finding ever filed: ASSAY passes when no `LIVE` defect and no
+unknown-tier defect is open, and an open `LATENT` backlog does not hold it shut — the same
+rule that ends temper itself, stated once more under **When the sweep ends** below. Broad
+audits miss things because they look at too much at once. Temper zooms into the smallest units of
 functionality and proves they work — or proves they don't.
 
 ## Mindset: Bug Hunter, Not Reviewer
@@ -111,8 +114,14 @@ missing retry/timeout handling, UX improvements.
 
 For each suggestion:
 1. Check feasibility (does the backend support it?)
-2. Classify: **Minor** (frontend-only, <50 lines, auto-implement) or **Major** (needs
-   backend work or significant refactoring → `foundry-archive/{run}/temper/suggestion-backlog.md`)
+2. Route it by WHERE the work lands, never by how much of it there is: a frontend-only
+   change under 50 lines is implemented in the run, and one that needs backend work or a
+   refactor goes to `foundry-archive/{run}/temper/suggestion-backlog.md`. **Never grade a
+   suggestion by effort** — no `minor`, no `major`, no `critical`, and no fresh spelling
+   for the same axis next cycle. The work-effort grade is abolished across this release
+   and a suggestion is not where it comes back. `tier` grades a FINDING by whether you
+   drove it or derived it, which is evidence rather than effort; a suggestion carries no
+   grade at all, only a destination.
 
 ### Phase C4: REPORT
 
@@ -121,7 +130,7 @@ Create `foundry-archive/{run}/temper/temper-{timestamp}.md`. Required sections:
 - **Summary** — counts: domains probed, SOLID/CRACKED/HOLLOW/MISSING/STUCK, findings, suggestions
 - **Domain results** — per-domain probe table with columns: #, Probe, Result, Evidence
 - **Findings** — each with `T-N` ID, description, `path#Symbol`, fix direction
-- **Suggestions** — minor (implemented) and major (backlog)
+- **Suggestions** — the ones implemented in the run, and the ones routed to the backlog
 - **STUCK domains** — what couldn't be fixed and why
 
 Sync findings to the foundry defect tracker via the `Foundry-Defect` MCP tool with

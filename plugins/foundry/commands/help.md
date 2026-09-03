@@ -104,9 +104,13 @@ claude --plugin-dir <project_root>/plugins/foundry
 ```
 
 That makes the executing MCP server the working tree, so process fixes the run ships are
-available to that same run. A self-targeting run whose executing server does not match the
-working tree is refused at F0 with a named reason and the exact launch command; a run that does
-not target foundry compares nothing and is never warned. **A mid-run server switch is never
+available to that same run. A self-targeting run is refused at F0 with a named reason and the
+exact launch command when either of two comparisons disagrees: the version in the working
+tree's `plugin.json` against the version in the executing server's OWN `plugin.json`, and the
+HEAD commit of the project root against the HEAD commit of the directory the server was
+imported from. It is plugin manifest against plugin manifest — the MCP server's `__version__`
+is recorded and displayed but never compared — and an unreadable commit is never a match. A
+run that does not target foundry compares nothing and is never warned. **A mid-run server switch is never
 attempted** — no step calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin
 mid-run. Prose and code a run ships take effect for the next run, never the one that wrote them.
 

@@ -1,0 +1,14 @@
+# evidence-cmd: cd plugins/foundry && echo "D-019 stale ASSAY claim (want 0): $(grep -c 'terminates with zero OPEN findings' skills/temper/SKILL.md)" && echo "D-019 effort grade by name (want 0): $(grep -cE '\*\*Minor\*\*|\*\*Major\*\*|minor \(implemented\)' skills/temper/SKILL.md)" && echo "D-019 tier-aware ASSAY exit (want 1): $(grep -c 'ASSAY passes when no ' skills/temper/SKILL.md)" && echo "D-024 sweep named in start.md (want >0): $(grep -ci sweep commands/start.md)" && echo "D-025 roster binding clause (want 1): $(grep -c 'Never derive this roster from a COUNT' commands/start.md)" && echo "D-026 final_gate proxies (want 1): $(grep -c 'on either of TWO PROXIES' commands/start.md)" && echo "D-027 stale __version__ comparison (want 0): $(grep -c 'against the executing server' commands/start.md)" && echo "D-027 manifest-vs-manifest in start/help/README (want 1 1 1): $(grep -c 'plugin manifest against plugin manifest' commands/start.md) $(grep -c 'plugin manifest against plugin manifest' commands/help.md) $(grep -c 'plugin manifest against plugin manifest' README.md)" && echo "D-028 banned spelling in start.md (want 0): $(grep -ci severity commands/start.md)"
+# evidence-for: FR-025, FR-030, AC-038, GI-002, FR-007, AC-036, FR-018, FR-026, AC-005
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+D-019 stale ASSAY claim (want 0): 0
+D-019 effort grade by name (want 0): 0
+D-019 tier-aware ASSAY exit (want 1): 1
+D-024 sweep named in start.md (want >0): 2
+D-025 roster binding clause (want 1): 1
+D-026 final_gate proxies (want 1): 1
+D-027 stale __version__ comparison (want 0): 0
+D-027 manifest-vs-manifest in start/help/README (want 1 1 1): 1 1 1
+D-028 banned spelling in start.md (want 0): 0
