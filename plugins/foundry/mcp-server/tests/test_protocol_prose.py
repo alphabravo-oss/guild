@@ -3854,14 +3854,14 @@ _FILING_SUBSTANCE = (
 #: set so the debt cannot rot in either direction: closing a gap fails this
 #: until the entry is deleted, and opening a new one fails immediately.
 #:
-#: skills/temper/SKILL.md states the security rule as "A security-property
-#: claim can NEVER be `LATENT`" without naming the denylist class the refusal
-#: reports, so a temper filing that trips it meets a refusal naming a token its
-#: own prose never taught. The file belongs to another casting; recorded in
-#: foundry-archive/daring-orca/concerns.md rather than edited here.
-_KNOWN_SUBSTANCE_GAPS: dict[str, frozenset[str]] = {
-    "plugins/foundry/skills/temper/SKILL.md": frozenset({"SECURITY_PROPERTY_CLAIM"}),
-}
+#: Empty, and the emptiness is the assertion. skills/temper/SKILL.md was the
+#: one entry: it stated the security rule as "A security-property claim can
+#: NEVER be `LATENT`" without naming the denylist class the refusal reports, so
+#: a temper filing that tripped it met a refusal naming a token its own prose
+#: never taught. That gap closed when the file gained the full filing rules,
+#: and the entry went with it -- the ledger is compared as an exact set below
+#: precisely so a closed gap cannot keep its exemption.
+_KNOWN_SUBSTANCE_GAPS: dict[str, frozenset[str]] = {}
 
 
 def test_the_known_substance_gap_ledger_names_real_surfaces() -> None:
