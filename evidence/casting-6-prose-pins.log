@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider --no-header tests/test_protocol_prose.py tests/test_findings_schemas.py tests/test_symbol_cites.py tests/test_agent_frontmatter_parse.py tests/test_model_config.py 2>&1 | tail -4
+# evidence-for: GI-001, AC-009, FR-004, FR-007, FR-008, FR-019, FR-030, FR-040, FR-041, FR-043, NFR-005
+# evidence-volatile: \d+\.\d+s
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
+SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
+534 passed, 3 skipped in 0.94s

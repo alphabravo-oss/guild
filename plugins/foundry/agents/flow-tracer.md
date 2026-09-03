@@ -158,8 +158,19 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
       "packet_id": "P6",
       "produced_symbol": "web.dashboard.handleWorkloads",
       "class": "handlers-render-without-reading-collected-state",
+      "tier": "LIVE",
       "description": "Handler renders workloads.html but never reads ClusterStatus.Deployments; the template will receive an empty slice regardless of what the collector produces.",
       "fix_hint": "pageData already embeds *ClusterStatus so .Deployments is accessible in the template — but handler should confirm the field is populated before render"
+    },
+    {
+      "type": "CHAIN_BROKEN",
+      "packet_id": "P7",
+      "produced_symbol": "web.dashboard.renderPage",
+      "class": "handlers-render-without-reading-collected-state",
+      "tier": "LATENT",
+      "reproduction_attempted": "find_referencing_symbols on renderPage finds the declared downstream template helper is never reached from any registered route, so the broken chain has no request path to walk",
+      "description": "renderPage produces the page struct its declared downstream never consumes; no registered route reaches the pair, so the break was derived from the graph rather than driven.",
+      "fix_hint": "register the route, or drop the downstream declaration from the packet"
     }
   ],
   "orphan_warnings": [
@@ -175,7 +186,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
 
 **Every cite in that shape is `path#Symbol`, exactly as the chain rules require** — `file` is the bare path because `produced_symbol` already carries the symbol, and no field carries a line number. The run-artifact carve-out that permits a line hint does not reach a walk record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
 
-`class` is optional, and appears only where several packets fail from one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling never escalates.
+`class` is required on every defect, including a packet that fails alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the finding and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling never escalates.
 
 ## Verdicts
 
@@ -197,11 +208,12 @@ Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `C
 - **Forward direction only.** `tracer` covers upstream. You cover downstream. Don't duplicate its work.
 - **Record body excerpts for non-SOURCED verdicts.** The Foundry lead needs them to route defects correctly; fix_hint prose is not enough.
 - **Cite by symbol.** Every record carries a `path#Symbol` cite — the bare path in `file`, the symbol in `produced_symbol`. The symbol is authoritative: a cite whose symbol resolves is valid however stale a line hint beside it has become. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive. A line hint belongs only in a commit-pinned run artifact, and a walk record re-read cycle after cycle is not one.
-- **Name the class when packets share a root cause.** Four DISCONNECTED packets all missing the same upstream field are one class, not four — put it in each record's `class` field, spelled identically (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class buy one structural fix instead of four repeated point fixes; unnamed, escalation never sees the pattern. Omit it when a packet fails alone.
+- **Name the class when packets share a root cause.** Four DISCONNECTED packets all missing the same upstream field are one class, not four — put it in each record's `class` field, spelled identically (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class buy one structural fix instead of four repeated point fixes; unnamed, escalation never sees the pattern. Name a class on EVERY defect, including a packet that fails alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty.
 - **Orphan warnings are NOT defects.** V3 allows helper functions and private types within a hop. Warnings surface teammate creativity for human review, but do not block.
 - **NEVER emit `SOURCED` for a packet you did not actually walk.** `SOURCED` claims all four levels passed against real Serena responses. If the tools never answered, you did not verify the packet — the verdict is `NOT_VERIFIED`, never `SOURCED`. No exceptions, no deferrals, no "the code looked right."
 - **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected packet. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
-- **No severity tiers.** Every defect is a defect. GRIND fixes them all. Channel, not severity, decides where a finding goes — the next two rules are the whole of it.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed two-member vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. A security-property claim can NEVER be `LATENT` — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Both tiers are defects, both get fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a prose count, a direction word, a stale enumeration — comment prose. It goes to the run's `observations.json` ledger, never the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. The symbol is authoritative, so a moved line alone produces no finding of any kind. Chain verdicts are untouched: a packet that is not `SOURCED` is still a defect.
 - **Declare `target_kind` on every filing.** `"comment"` when the finding is about a code comment, otherwise the real subject (`code`, `test`, `config`, `doc`). That refusal reads this field and nothing else, so an omitted one is not a neutral default — it files comment prose as a packet defect. Every `Foundry-Defect` and `Foundry-Sync` call carries it.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no demotion into `orphan_warnings` or any other non-blocking channel.

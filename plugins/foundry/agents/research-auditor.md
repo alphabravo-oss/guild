@@ -118,8 +118,20 @@ Output a single JSON result:
       "recommendation": "Use k8s.io/client-go/kubernetes/fake for tests",
       "file": "internal/status/collector_test.go#TestCollectDeployments",
       "class": "hand-rolled-mocks-instead-of-the-fake-package",
+      "tier": "LIVE",
       "description": "Test uses hand-rolled mock client struct; research explicitly says use fake package. The fake client supports the same interface and handles watch/list edge cases the mock doesn't.",
       "spec_ref": "research/kubernetes-deployments.md#testing"
+    },
+    {
+      "type": "RESEARCH_DEVIATION",
+      "recommendation_id": "RA-9",
+      "recommendation": "Never construct a rest.Config by hand; use clientcmd",
+      "file": "internal/kube/client.go#NewClient",
+      "class": "hand-rolled-mocks-instead-of-the-fake-package",
+      "tier": "LATENT",
+      "reproduction_attempted": "Grepped both roots for a hand-built rest.Config literal and swept every NewClient caller; 0 sites construct one today, so the deviation is derived from the helper's shape rather than observed",
+      "description": "NewClient accepts a caller-supplied *rest.Config and never falls back to clientcmd, so a future caller can hand-build one; no current caller does.",
+      "spec_ref": "research/kubernetes-deployments.md#client-construction"
     }
   ]
 }
@@ -127,7 +139,7 @@ Output a single JSON result:
 
 **Every cite in that shape is `path#Symbol`, exactly as the evidence rule below requires** — no `evidence` or `file` value carries a line number. The run-artifact carve-out that permits a line hint does not reach an audit record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false deviation while a symbol cite keeps resolving.
 
-`class` is optional and appears only where several deviations share one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+`class` is required on every deviation, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every deviation too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the deviation and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 `spec_ref` appears on `defects` because those are defect-channel records, and the `research/...#anchor` form above is still a non-empty `spec_ref`. It is never populated on a comment-prose finding: those go to `Foundry-Observation`, which refuses ANY non-empty `spec_ref` under the never-demote denylist. See the observation rules below.
 
@@ -139,8 +151,10 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 - **Every verdict needs evidence, cited by symbol.** HONORED requires a `path#Symbol` citation; IGNORED/CONFLICT requires one AND a clear statement of what was expected vs what was found. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is, no verdict ever turns on the line component, and cite-refresh sweeps happen only under an explicit directive.
 - **Grep before asserting.** Never claim "code uses X" without running a grep to verify.
 - **Check concerns.md for overrides.** A documented override flips IGNORED → HONORED_WITH_OVERRIDE.
-- **Name the class when deviations share a root cause.** Five files hand-rolling the same helper the research said to import are one class, not five unrelated deviations — carry it in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix rather than five repeated point fixes, and that only fires if you named it. Omit the field when a deviation stands alone.
-- **No severity classification.** All deviations are defects. The GRIND phase fixes them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
+- **Name the class when deviations share a root cause.** Five files hand-rolling the same helper the research said to import are one class, not five unrelated deviations — carry it in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix rather than five repeated point fixes, and that only fires if you named it. Name a class on EVERY deviation, including one that stands alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed two-member vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. A security-property claim can NEVER be `LATENT` — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Both tiers are defects, both get fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **All deviations are defects.** The GRIND phase fixes them.
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not a research deviation. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Every real deviation from a recommendation stays a defect, and this rule gives you no discretion to call one "cosmetic."
 - **Declare `target_kind` on every filing.** Pass `target_kind: "comment"` when the deviation you are recording is about a code comment, otherwise the kind of artifact that departed from the recommendation (`code`, `test`, `config`, `doc`). That refusal engages on the declaration alone — leave it out and a drifted line number is filed as a research deviation, the exact outcome the split exists to prevent. It rides on every `Foundry-Defect` and `Foundry-Sync` call, never on some of them.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the research was only advisory."

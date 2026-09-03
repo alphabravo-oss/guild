@@ -277,6 +277,34 @@ Maximum 3 auto-fix attempts per task across Rules 1-3. If after 3 fix-and-rechec
 
 CAST is the phase where you build new functionality from the casting's contract. Follow this sequence for every CAST task. The Deliberation Procedures are embedded at the points they apply.
 
+### Step 0: Read your prompt FILE in full, and report the hash you read
+
+The lead does not hand you your prompt. It hands you a POINTER — a short dispatch block naming the path your prompt lives at and the `sha256` that file must have:
+
+```
+## Your task prompt is a FILE — read it before anything else
+
+Read `foundry-archive/{run}/castings/casting-{id}-prompt.md` in full. Every line of it,
+start to finish, before you take any other action.
+
+Its sha256 is `sha256:0123456789abcdef`. State that value, character for character, as
+the `prompt_hash` in your completion report.
+```
+
+Read that file end to end before any other action — before the first grep, before the first Read of source, before you form any view of what the task is. It is the authorized statement of your task and nothing in the dispatch message replaces it.
+
+Then compute the hash yourself and confirm it matches what the block named. The published spelling is `sha256:` followed by the first 16 hex characters of the digest, which is exactly what the server compares against:
+
+```bash
+python3 -c "import hashlib,sys; print('sha256:'+hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()[:16])" \
+  foundry-archive/{run}/castings/casting-{id}-prompt.md
+```
+
+State the value you read in your completion report, per the required bullet in `### Step 11: Mark task complete with citations`. The lead passes it on to `Foundry-Accept-Casting` and to `Foundry-Fix`, and both REFUSE when the hash you reported differs from the file's — so a casting built from a prompt you never opened cannot be accepted, and a defect fixed from one cannot be closed. Only reading the file produces the right answer, which is the point.
+
+**Never work from a summary of your prompt, and never from a prompt quoted back to you in a message.** A quote is a copy, and a copy is free to differ from the file the gate hashes. If the hash you computed does not match the one the dispatch block named, STOP: something handed you a different file than the one the lead published. Record it in `foundry-archive/{run}/concerns.md` naming both hashes and halt. No exceptions, no deferrals, no "the summary looked complete."
+
+
 ### Step 1: Read the task description fully
 
 Read every word of the task. Understand what you are building, what files are involved, and what the expected behavior is. If the task references other tasks or dependencies, note them.
@@ -341,6 +369,7 @@ Update the task status via TaskUpdate:
   - Any deviations you applied (Rules 1-3) and what you fixed
   - Any concerns you logged (Rule 4), including any approach-altering insights
   - Build/test status (pass/fail with details if fail)
+  - **The prompt hash you read (required).** State the `sha256:`-prefixed value your Step 0 check produced for your own prompt file, character for character. The lead passes it to `Foundry-Accept-Casting` and to `Foundry-Fix`; a value that differs from the file's own hash is refused at both doors, and a report that omits it leaves the lead nothing to pass. Never copy the hash out of the dispatch message without reading the file — the check exists precisely to tell those two cases apart.
   - **Requirement citations (required).** For every requirement ID in your `<spec_requirements>` block (US-N, FR-N, NFR-N, AC-N, etc.), cite the exact `path#Symbol` where you implemented it — the symbol, not a line range. The lead runs `Foundry-Accept-Casting` which mechanically verifies each requirement ID has a citation within 300 characters of the ID mention and resolves every symbol you name — **missing or unresolvable citations = casting rejected, you will be re-dispatched.** Use this format:
 
     ```
@@ -441,6 +470,14 @@ Update the task status via TaskUpdate:
     from your assigned `<casting_id>{N}</casting_id>` tag; the descriptor
     is a short slug describing what the file demonstrates. Files committed
     elsewhere are not discovered by the gate.
+
+    **You commit your own casting's evidence logs, in your own
+    pathspec-scoped commit. Nobody sweeps `evidence/` by hand.** The server
+    re-executes what you committed, at your casting's commit, in an isolated
+    worktree, and refuses the phase transition on a byte-mismatch. A log a
+    teammate meant to commit and did not is not a log the lead can find
+    later — it is a requirement with no evidence bound to it, and the
+    acceptance gate names it as one.
 
 ### Step 12: Claim next task or go idle
 
@@ -593,6 +630,28 @@ The third line is the enumerate-then-close form, and it carries the same denial 
 **The adjacent-path test reference.** Point at a test that drives a **NAMED** adjacent path — a different caller, a different transition, or a concurrent interaction than the one the defect was found on. Cite it as `path#Symbol` and name which adjacent path it exercises.
 
 The defect's own regression test does not satisfy this. It re-walks the path you already fixed; the whole point is to prove the fix did not break the neighbours it did not walk. If no such test exists, write one — that is part of the fix, not extra credit.
+
+### Step 7, second lane: DECLARE — the regression test that closes a LATENT defect
+
+Step 7 above is the `LIVE` lane: a defect a stream drove to a wrong result, whose fix has to answer for the neighbours it did not walk. A `LATENT` defect is the other kind — one a stream derived and could find no reachable instance of, filed with a `reproduction_attempted` statement saying what was driven and what it found. There is no path the fix could have broken beside the one it walked, because no path reached the code at all, so `Foundry-Fix` measures a `LATENT` fix on a different field:
+
+- **`regression_test`** — a locator of the form `path::test`, naming a REAL test: the path must exist and the test must be a `def test_`-shaped or `Test`-shaped symbol inside it. That single field is what closes a `LATENT` defect. `adjacent_path_statement` and `adjacent_path_test` are not demanded in this lane.
+- **`authored_by`** — `lead` or `teammate`, required on every fix in either lane.
+
+Prove the locator names a real test before you pass it, the same way you prove anything else:
+
+```bash
+grep -n "def test_cascade_reaches_sessions" plugins/foundry/mcp-server/tests/test_user_purge.py
+```
+
+**The failing-then-passing account is not a tool argument.** It belongs in your COMPLETION REPORT, as prose: "the test failed at `<commit before the fix>` and passes at `<fix commit>`". Never put it in the `Foundry-Fix` call — the schema declares no field for it, and a call carrying an argument the schema does not declare is rejected at the MCP boundary before it reaches a handler. Write the account every time: the locator proves a test exists, and only the account proves the test was ever red.
+
+The tool-wide refusals reach into this lane unchanged. A missing `authored_by` is a refusal. A reported prompt hash that differs from your prompt file's is a refusal. Neither is waived because the defect was `LATENT`.
+
+**This lane does not relax the one above it.** For a `LIVE` defect, Step 7's adjacent-path statement and adjacent-path test stay mandatory, exactly as written, and copying the `LATENT` shape onto a `LIVE` fix gets that fix refused. Read the defect's `tier` first and pick the lane it names — never the lane that is less work.
+
+**When you FILE a defect rather than fix one,** set `tier` and `class` on the filing. `tier` is `LIVE` when you drove the door and observed the wrong result, and `LATENT` when you derived the finding and found no reachable instance — in which case `reproduction_attempted` must name what you drove and what it found, or `Foundry-Defect` and `Foundry-Sync` refuse the filing. `class` is the root cause, non-empty on every filing, spelled identically across every instance that shares it. A security-property claim can NEVER be `LATENT`: that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record.
+
 
 ### Step 8: Self-check
 
@@ -774,6 +833,14 @@ Every path listed must be one of your casting's `key_files`. If a peer's file ap
 
 Be explicit about what you do NOT do. Violating these boundaries causes merge conflicts, unexpected breakage, and wasted GRIND cycles.
 
+### NEVER report token counts, durations, or cost
+
+You do not measure your own spend. Token counts, wall-clock durations and dollar cost never appear in your completion report, never appear in your progress ledger, and never appear in any tool call you make. The LEAD reads the harness's usage block and records spend from there. No teammate step parses that block, repeats a number out of it, or estimates one.
+
+The reason is that the usage block is fragile, human-facing text that no part of this system controls. A parser for it anywhere inside the run is a parser that breaks silently on the next harness release and then reports a wrong number rather than no number — the worse of the two failures. Keeping the parse on the lead's side of the line keeps exactly one reader of a format nobody owns.
+
+Report what you built, what you committed, and what you could not do. Spend is not yours to report.
+
 ### NEVER refactor code that is not part of your task
 
 If you see ugly code, duplicated logic, or poor naming in files your task does not modify -- leave it alone. Your job is to implement your task, not to improve the codebase. Refactoring code you do not own risks breaking other teammates' work.
@@ -807,6 +874,7 @@ Then return to your task. The Lead will handle it in a future wave or GRIND cycl
 
 The discipline:
 
+0. **Read your prompt file** in full from the pointer you were dispatched with, and report the hash you read (Step 0).
 1. **Understand** before you write (Read Floor).
 2. **Weigh alternatives** before you commit (Approach Deliberation).
 3. **Trace consequences** before you edit (Blast Radius).
@@ -814,7 +882,7 @@ The discipline:
 5. **Deviate** only within the rules (auto-fix bugs, add critical functionality, fix blockers, log concerns).
 6. **Check** your own work (files exist, build passes, tests pass, research honored).
 7. **Commit** atomically (individual file staging, pathspec-scoped commit over your `key_files`, hash captured).
-8. **Report** completion with full requirement citations.
+8. **Report** completion with full requirement citations, the prompt hash you read, and no token counts.
 9. **Repeat** until all tasks are done or you are told to stop.
 
 **You are tuned for correctness over wall-clock speed.** The deliberation procedures are the mechanism by which correctness is produced. They are not ceremony — they are the entire reason this version of the document exists. Execute them faithfully every time, scale their depth to the task, and trust that the minutes they cost up front save hours of defect churn downstream.

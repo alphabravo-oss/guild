@@ -209,7 +209,10 @@ will hit on their first interaction. A feature with working functions but broken
 workflows is worse than a missing feature (users expect it to work and get confused
 when it doesn't). This is a channel statement, not a severity one: a broken workflow
 is not a comment, so the never-demote denylist puts it in the defect ledger whatever
-else is true about it.
+else is true about it. The evidence axis is separate again — a PL-N flow you actually
+drove and watched fail is `LIVE`, one you derived from the wiring with no reachable
+path is `LATENT` and carries a `reproduction_attempted` statement — and neither
+tier is a grade on how much the fix is worth.
 
 In foundry TRACE mode, PL-N findings become defects alongside L-N and THIN-N findings.
 
@@ -294,6 +297,10 @@ JSON block at the end for tooling consumption.
             "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
           "class": {"type": "string",
             "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+          "tier": {"type": "string", "enum": ["LIVE", "LATENT"],
+            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. Closed vocabulary, source of truth schemas/vocab.py#DEFECT_TIERS."},
+          "reproduction_attempted": {"type": "string",
+            "description": "Required on a LATENT finding: what was driven and what it found. The server refuses a LATENT filing without one."},
           "file": {"type": "string", "description": "Bare path. Never carries a line number."},
           "symbol": {"type": "string", "description": "The symbol the finding is about. With `file` this is the `path#Symbol` cite."},
           "description": {"type": "string", "description": "What's wrong and why"},
@@ -325,7 +332,7 @@ JSON block at the end for tooling consumption.
 }
 ```
 
-**There is no `severity` field, and adding one is a vocabulary violation.** Every defect is a defect and GRIND fixes them all, so a tier has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. `type` and `classification` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` and `#FINDING_CLASSES` — a value outside them is rejected server-side rather than coerced onto something known.
+**There is no `severity` field, and adding one is a vocabulary violation.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact` — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. What records how much evidence stands behind it is `tier`: grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix. `LIVE` means you drove the door and observed the wrong result; `LATENT` means you derived the finding and found no reachable instance, and a `LATENT` finding MUST carry a `reproduction_attempted` statement naming what you drove and what it found — the server refuses a `LATENT` filing without one, and a security-property claim can NEVER be `LATENT`, because that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record. Both tiers are defects, both get fixed, and `tier` buys the stream no discretion over anything else. `type`, `classification` and `tier` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, `#FINDING_CLASSES` and `#DEFECT_TIERS` — a value outside them is rejected server-side rather than coerced onto something known.
 
 **There is no `line` field either.** A finding cites `path#Symbol` — `file` bare, `symbol` beside it. The symbol is authoritative, and the commit-pinned-run-artifact carve-out that permits a line hint does not reach a findings record: this JSON goes straight to the foundry defect sync tools and is then re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
 
@@ -339,6 +346,12 @@ This JSON format can be passed directly to the foundry defect sync tools.
 ## Key Constraints
 
 - **Read-only** — never modify code, only read and report
+- **Grade the evidence, never the effort** — every finding carries `tier`, and the stream
+  that files it is the one that sets it. `LIVE` when you drove the door and observed the
+  wrong result; `LATENT` when you derived the finding and found no reachable instance, in
+  which case `reproduction_attempted` names what you drove and what it found or the server
+  refuses the filing. A security-property claim can never be `LATENT`. Both tiers are
+  defects and both get fixed — `tier` records evidence, never how much work a fix is worth.
 - **Spec-anchored** — every finding references a spec requirement
 - **The symbol is authoritative** — cite `path#Symbol`, never `path:line`. A cite whose
   symbol resolves is valid however stale any line hint beside it has become. No finding

@@ -1,0 +1,20 @@
+# evidence-cmd: python3 -c "import pathlib; t=' '.join(pathlib.Path('plugins/foundry/agents/teammate.md').read_text().split()); raw=pathlib.Path('plugins/foundry/agents/teammate.md').read_text(); C=[('FR-019 pointer-dispatch step','### Step 0: Read your prompt FILE in full, and report the hash you read'),('FR-019 read the whole file first','Read that file end to end before any other action'),('FR-040 hash command shipped','hashlib.sha256'),('FR-019 hash is a required report bullet','**The prompt hash you read (required).**'),('FR-019 both consuming doors named','\`Foundry-Accept-Casting\`'),('FR-019 fix door named','\`Foundry-Fix\`'),('FR-019 no working from a summary','Never work from a summary of your prompt'),('D-118 citation window clause preserved','within 300 characters of the ID mention'),('FR-008 LATENT lane','### Step 7, second lane: DECLARE'),('FR-008 locator form','\`path::test\`'),('FR-008 authored_by named','\`authored_by\`'),('FR-041 account is report prose','**The failing-then-passing account is not a tool argument.**'),('FR-008 LIVE lane not relaxed','**This lane does not relax the one above it.**'),('FR-009 LIVE lane intact','**The adjacent-path statement.**'),('FR-004/FR-007 teammate filings','**When you FILE a defect rather than fix one,**'),('FR-043 teammate commits its own logs','Nobody sweeps \`evidence/\` by hand.'),('GI-005 no spend reporting','### NEVER report token counts, durations, or cost')]; [print('%-42s %s' % (n, s in t)) for n,s in C]"
+# evidence-for: FR-008, FR-019, FR-040, FR-041, FR-043
+
+FR-019 pointer-dispatch step               True
+FR-019 read the whole file first           True
+FR-040 hash command shipped                True
+FR-019 hash is a required report bullet    True
+FR-019 both consuming doors named          True
+FR-019 fix door named                      True
+FR-019 no working from a summary           True
+D-118 citation window clause preserved     True
+FR-008 LATENT lane                         True
+FR-008 locator form                        True
+FR-008 authored_by named                   True
+FR-041 account is report prose             True
+FR-008 LIVE lane not relaxed               True
+FR-009 LIVE lane intact                    True
+FR-004/FR-007 teammate filings             True
+FR-043 teammate commits its own logs       True
+GI-005 no spend reporting                  True

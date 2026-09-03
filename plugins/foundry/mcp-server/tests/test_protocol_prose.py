@@ -42,6 +42,16 @@ voice, tracer's wiring voice, flow-tracer's terse chain voice,
 research-auditor's deviation voice), which is required — pasting one identical
 paragraph into four files was explicitly rejected. So the pins are on the
 clauses that carry the *ruling*, never on a whole sentence.
+
+That is a ruling about the SPLIT, and GI-001's tier rule is the deliberate
+exception to it rather than a drift from it: FR-030 requires the replacement
+wording to be pinned, and patterns/PATTERNS.md rules a rule shared across the
+four stream agents word-identical in all four. There is one sentence to pin for
+that rule, not four voices to respect, and
+``test_stream_agents_share_one_tier_rule_verbatim`` is what holds the
+word-identity the clause pins beside it then read. Both dispositions live in
+this module on purpose; the section comment above that test says which ruling
+gets which treatment and why.
 """
 from __future__ import annotations
 
@@ -1188,7 +1198,34 @@ def test_skill_schemas_carry_no_severity_axis(path: Path) -> None:
 #: written for `"severity"` while reinstating exactly the tier D-041 removed.
 #: `verdict` is a roll-up of the findings, not a grade on any one of them, so
 #: it is enumerated here rather than derived from vocab.
-_ALLOWED_ENUM_KEYS = frozenset({"classification", "type", "verdict"})
+#:
+#: WHY `tier` IS ADMITTED (GI-001 / AC-009)
+#: ----------------------------------------
+#: `tier` was added by widening this set on purpose, through exactly the ritual
+#: the failure message below describes: the vocabulary landed in
+#: `schemas/vocab.py` as `DEFECT_TIERS` first, and this set was widened after.
+#: It is admitted because it grades EVIDENCE, not effort. `LIVE` records that
+#: the filing stream drove the door and observed the wrong result; `LATENT`
+#: records that it derived the finding and found no reachable instance, and
+#: said what it drove in `reproduction_attempted`. Neither value decides how
+#: much a fix is worth, neither licenses deferring one, and both are defects
+#: that get fixed -- the tier decides only which GATE a still-open instance
+#: blocks. The failure it answers is the one thunder-viper measured: a run
+#: cannot tell a defect somebody watched fail from one derived off a scan, so
+#: every finding costs a full GRIND cycle to disprove and the cycle count never
+#: converges. The alternative -- leaving the axis out of the schemas and
+#: carrying it in prose -- was rejected because a normative ```json block
+#: outranks the prose beside it, which is D-041's whole finding.
+#: `test_skill_schema_tier_enum_equals_the_vocab_tiers` below is what keeps the
+#: admission honest: `tier` is allowed to be an enum, but only the enum
+#: `vocab.DEFECT_TIERS` declares.
+_ALLOWED_ENUM_KEYS = frozenset({"classification", "type", "verdict", "tier"})
+
+#: What a skill's `tier` enum must equal. Derived from the module in the same
+#: discipline as `_EXPECTED_TYPE_ENUM` above: re-typing `{"LIVE", "LATENT"}`
+#: here would be a second copy of a closed vocabulary, free to drift from the
+#: one the filing doors actually validate against.
+_EXPECTED_TIER_ENUM = frozenset(vocab.DEFECT_TIERS)
 
 #: The alias members of DEFECT_TYPES -- spellings that fold onto another
 #: member. Derived from the module rather than re-typed, so adding a second
@@ -1315,11 +1352,152 @@ def test_skill_schemas_carry_no_enum_outside_the_allowed_axes(path: Path) -> Non
     assert not unexpected, (
         f"{_rel(path)}'s findings schema declares enum-bearing propert(ies) "
         f"{unexpected} outside the allowed axes {sorted(_ALLOWED_ENUM_KEYS)}. "
-        f"Every defect gets fixed, so a graded axis has nothing left to "
-        f"decide -- and a tier reintroduced under a new key ('priority', "
-        f"'impact', 'tier') is the same abolished axis wearing a different "
-        f"name. If a genuinely new closed vocabulary is needed, add it to "
-        f"schemas/vocab.py first and widen _ALLOWED_ENUM_KEYS deliberately."
+        f"Every defect gets fixed, so a WORK-EFFORT axis has nothing left to "
+        f"decide -- and one reintroduced under a new key ('priority', "
+        f"'impact', 'weight') is the same abolished axis wearing a different "
+        f"name. `tier` is not that axis and is not an example of it: it is the "
+        f"EVIDENCE axis GI-001 added, admitted here on purpose and held to "
+        f"vocab.DEFECT_TIERS by "
+        f"test_skill_schema_tier_enum_equals_the_vocab_tiers. If a genuinely "
+        f"new closed vocabulary is needed, add it to schemas/vocab.py first "
+        f"and widen _ALLOWED_ENUM_KEYS deliberately, the way `tier` was."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schema_tier_enum_equals_the_vocab_tiers(path: Path) -> None:
+    """GI-001 / AC-009: `tier` is admitted as an enum, but only the right enum.
+
+    Widening ``_ALLOWED_ENUM_KEYS`` for `tier` buys the key a licence to carry
+    a closed enum and nothing more. Without this, a skill could advertise
+    ``["LIVE", "LATENT", "COSMETIC"]`` and pass every guard in this module --
+    a third member is exactly how the abolished axis comes back, one value at
+    a time, under a name that has already been blessed. Compared as a SET
+    against the module, in the discipline of ``_EXPECTED_TYPE_ENUM``: a
+    substring check cannot tell a missing member from a present one and cannot
+    see an extra one at all.
+    """
+    schema = _findings_schema(path)
+    actual = dict(_iter_enums(schema)).get("tier")
+    assert actual is not None, (
+        f"{_rel(path)}'s findings schema has no `tier` enum. FR-004 makes the "
+        f"filing stream responsible for the evidence axis; a block with no "
+        f"slot for it tells the stream the field is optional, and the filing "
+        f"doors then refuse every finding it emits."
+    )
+    assert actual == _EXPECTED_TIER_ENUM, {
+        "file": _rel(path),
+        "advertised_but_not_a_tier": sorted(actual - _EXPECTED_TIER_ENUM),
+        "tier_the_skill_never_learned": sorted(_EXPECTED_TIER_ENUM - actual),
+        "why": (
+            "The skill's tier enum must equal vocab.DEFECT_TIERS exactly. A "
+            "value the skill advertises but vocab rejects is dropped at the "
+            "MCP boundary before it reaches the ledger; a vocab member the "
+            "skill omits is an evidence grade the stream has no legal way to "
+            "file. A THIRD member is the work-effort axis returning under a "
+            "key that has already been blessed."
+        ),
+    }
+
+
+#: The clauses the rewritten no-severity paragraph must carry in BOTH schema-
+#: bearing skills. One assertion per claim: a single pin on the whole paragraph
+#: would fail on a reflow that changed no words, and would say nothing about
+#: WHICH claim went missing.
+_SKILL_TIER_CLAUSES = (
+    (
+        "The work-effort grade is banned by name",
+        "the paragraph no longer bans the abolished axis BY NAME. FR-030 makes "
+        "the replacement wording the implementer's choice ONLY on condition "
+        "that the work-effort grade stays banned by name -- a paragraph that "
+        "introduces `tier` without naming what stays forbidden reads as the "
+        "grade coming back under a new label.",
+    ),
+    (
+        "no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`",
+        "the paragraph no longer enumerates the banned spellings. Naming one "
+        "of them bans one of them; the enumeration is what makes the ban a "
+        "ban rather than a grep for the word severity.",
+    ),
+    (
+        "grade a finding by whether you actually drove it or only derived it from a "
+        "scan, and never by how much work it would take to fix",
+        "the paragraph no longer states BOTH halves of the distinction in one "
+        "sentence. Split across two sentences a reader takes the first and "
+        "leaves the second, which is how the abolished axis returns beside the "
+        "new one instead of in place of it.",
+    ),
+    (
+        "`LIVE` means you drove the door and observed the wrong result",
+        "the paragraph no longer says what LIVE means. A closed vocabulary "
+        "whose members are unexplained is a vocabulary streams guess at.",
+    ),
+    (
+        "`LATENT` means you derived the finding and found no reachable instance",
+        "the paragraph no longer says what LATENT means.",
+    ),
+    (
+        "MUST carry a `reproduction_attempted` statement naming what you drove and "
+        "what it found",
+        "the paragraph no longer requires the reproduction_attempted statement "
+        "on a LATENT finding (FR-004 / CT-001). The server refuses that filing, "
+        "so a skill that does not say so sends its stream into a refusal it "
+        "cannot read its way out of.",
+    ),
+    (
+        "a security-property claim can NEVER be `LATENT`",
+        "the paragraph no longer rules out a LATENT security-property claim "
+        "(CT-003). That is a denylist entry, not a judgement call: the filing "
+        "is refused and fires a tripwire.",
+    ),
+    (
+        "`SECURITY_PROPERTY_CLAIM`",
+        "the paragraph no longer names the denylist class the refusal reports, "
+        "so a stream that hits it cannot tell which rule it broke.",
+    ),
+    (
+        "`#DEFECT_TIERS`",
+        "the paragraph no longer cites schemas/vocab.py as the source of truth "
+        "for the tier vocabulary, so the enum in the block beside it becomes a "
+        "second copy free to drift.",
+    ),
+    (
+        "`tier` buys the stream no discretion over anything else",
+        "the paragraph lost its no-exceptions clause. Every rule in this "
+        "register closes on one; without it `tier` reads as a licence.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("clause,why", _SKILL_TIER_CLAUSES, ids=lambda v: v[:40])
+def test_skill_no_severity_paragraph_states_the_evidence_axis(
+    path: Path, clause: str, why: str
+) -> None:
+    """GI-001 / AC-009 / FR-030: the rewritten paragraph, clause by clause."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_key_constraints_carry_the_evidence_axis(path: Path) -> None:
+    """FR-004: the constraint list is where a stream looks for its obligations.
+
+    The paragraph above lives beside the JSON block, at the bottom of a
+    350-line file. The constraints list is the summary a stream re-reads while
+    working, and a rule absent from it is a rule that applies only to readers
+    who got that far.
+    """
+    flat = _flat(path)
+    assert "- **Grade the evidence, never the effort**" in flat, (
+        f"{_rel(path)}'s constraints list no longer carries the evidence-axis "
+        f"rule. FR-004 makes the filing stream responsible for `tier`; a "
+        f"constraint list that omits it leaves that obligation stated once, in "
+        f"a paragraph about a JSON block."
+    )
+    assert "every finding carries `tier`" in flat, (
+        f"{_rel(path)}'s constraint does not make `tier` required on every "
+        f"finding. An optional evidence axis is an axis streams omit, and the "
+        f"filing doors then refuse the finding."
     )
 
 
@@ -3214,4 +3392,595 @@ def test_shapes_carrying_a_spec_ref_qualify_it_at_the_example(path: Path) -> Non
         f"{_rel(path)} does not rule out `{_SPEC_REF}` on an observation at "
         f"the point the shape is shown, so the shape still reads as a field to "
         f"populate on every finding."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GI-001 / AC-009 / FR-004 / FR-007 -- the evidence tier, baked into the four
+# stream agents and their report shapes
+# ---------------------------------------------------------------------------
+#
+# thunder-viper measured the failure this answers: 162 defects over 22 GRIND
+# cycles with no way to tell a defect somebody watched fail from one derived
+# off a scan. Both cost a full cycle to disprove, so the cycle count never
+# converged. GI-001 adds `tier` as the EVIDENCE axis -- LIVE for a finding the
+# stream drove to a wrong result, LATENT for one it derived and could find no
+# reachable instance of -- and abolishes nothing: the work-effort grade stays
+# banned by name in the same rule, because a new axis introduced without
+# naming what it is NOT is how the old one returns.
+#
+# WHY THESE PINS ARE WHOLE-SENTENCE, WHERE THE SPLIT'S ARE CLAUSE-LEVEL
+# --------------------------------------------------------------------
+# This module's docstring records that the observation/defect split is
+# deliberately NOT pinned at the sentence level: each of the four files states
+# it in its own voice, and pasting one paragraph into four was explicitly
+# rejected for that ruling. The tier rule is the opposite case by
+# construction. FR-030 requires the replacement wording to be PINNED, and
+# patterns/PATTERNS.md rules that a rule shared across the four stream agents
+# is word-identical in all four -- so there is one sentence to pin, not four
+# voices to respect. `test_stream_agents_share_one_tier_rule_verbatim` below is
+# what holds that property, and every clause pin after it is parametrised over
+# STREAM_AGENTS so a partial edit that fixes three files fails.
+
+#: The two rules GI-001 puts in every stream agent, located by their bolded
+#: openings. The first opens with BOTH historical spellings of the abolished
+#: axis -- "No severity classification." (assayer, tracer, research-auditor)
+#: and "No severity tiers." (flow-tracer) -- because UNWEAKENED_ABSOLUTES pins
+#: each file's own spelling and one shared sentence has to satisfy all four
+#: without any file losing an absolute it holds today. Carrying both also keeps
+#: the ban findable by grep under either name.
+_TIER_RULE_OPEN = "- **No severity classification.** **No severity tiers.**"
+_TIER_RULE_CLOSE = 'no "I could not reproduce it, so it is probably fine."'
+
+
+def _tier_rule(path: Path) -> str:
+    """The two shared tier rules as one flattened span, or "" if absent."""
+    flat = _flat(path)
+    start = flat.find(_TIER_RULE_OPEN)
+    if start == -1:
+        return ""
+    stop = flat.find(_TIER_RULE_CLOSE, start)
+    return "" if stop == -1 else flat[start : stop + len(_TIER_RULE_CLOSE)]
+
+
+def test_stream_agents_share_one_tier_rule_verbatim() -> None:
+    """FR-030 + PATTERNS.md: one sentence, four files, byte-identical.
+
+    A near-copy is the failure mode here, not an absent copy. Four
+    hand-maintained paraphrases of one ruling drift a clause at a time, and
+    the clause that goes first is whichever one the local voice found
+    awkward -- which for this rule is the half that says the work-effort grade
+    is still banned. Comparing the spans against each other (rather than each
+    against a constant re-typed here) is what makes a divergence fail no
+    matter which of the four was edited.
+    """
+    spans = {_rel(p): _tier_rule(p) for p in STREAM_AGENTS}
+    missing = sorted(rel for rel, span in spans.items() if not span)
+    assert not missing, (
+        f"{missing} carry no GI-001 tier rule at all. The rule opens "
+        f"{_TIER_RULE_OPEN!r} and closes {_TIER_RULE_CLOSE!r} in all four "
+        f"stream agent files; a file without it files findings the doors "
+        f"refuse."
+    )
+    distinct = set(spans.values())
+    assert len(distinct) == 1, {
+        "why": (
+            "the four stream agents no longer share ONE tier rule. "
+            "patterns/PATTERNS.md rules a shared rule word-identical across "
+            "the four, and FR-030 pins the replacement wording. Fix the "
+            "outlier rather than relaxing this assertion -- a per-file "
+            "paraphrase is how one file quietly loses the clause banning the "
+            "work-effort grade."
+        ),
+        "lengths_by_file": {rel: len(span) for rel, span in spans.items()},
+    }
+
+
+#: One claim per entry, each with the failure that claim's absence causes.
+#: Parametrised over STREAM_AGENTS so a three-of-four edit fails.
+_TIER_RULE_CLAUSES = (
+    (
+        _TIER_RULE_OPEN,
+        "the rule lost one of the two bolded openings. Both spellings of the "
+        "abolished axis are pinned by UNWEAKENED_ABSOLUTES across these four "
+        "files, and both are what keep the ban findable however a future "
+        "reader greps for it.",
+    ),
+    (
+        "no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`",
+        "the rule no longer bans the work-effort grade BY NAME. FR-030 makes "
+        "the wording free ONLY on that condition: a rule that introduces "
+        "`tier` without naming what stays forbidden reads as the grade "
+        "returning under a new label, which is exactly what D-041 removed.",
+    ),
+    (
+        "Grade a finding by whether you actually drove it or only derived it from a "
+        "scan, and never by how much work it would take to fix",
+        "the rule no longer states BOTH halves of the distinction in ONE "
+        "sentence. Split across two, a stream takes the new axis and leaves "
+        "the prohibition, and the two axes end up coexisting instead of one "
+        "replacing the other.",
+    ),
+    (
+        "`tier` is evidence, not effort",
+        "the rule no longer says what `tier` grades. Unstated, the closest "
+        "available reading of a two-value ordered-looking field is severity.",
+    ),
+    (
+        "`classification` still decides the channel a finding goes down and "
+        "`target_kind` still rides on every filing",
+        "the tier rule no longer reconciles itself with the channel rules "
+        "below it. Read as a replacement rather than an addition, it retires "
+        "`target_kind` -- and the comment-prose refusal reads that field and "
+        "nothing else, so the split dies silently for every finding.",
+    ),
+    (
+        "- **Set `tier` on every filing; the stream that files the defect is the one "
+        "that sets it.**",
+        "the rule making `tier` required on every filing is gone. FR-004 puts "
+        "that duty on the FILING stream; unassigned, it lands on nobody and "
+        "the doors refuse the finding.",
+    ),
+    (
+        "schemas/vocab.py#DEFECT_TIERS",
+        "the rule no longer cites the vocabulary module as the source of "
+        "truth for the tier members, so the prose becomes a second copy free "
+        "to drift from the set the doors validate against.",
+    ),
+    (
+        "`LIVE` means you drove the door and observed the wrong result",
+        "the rule no longer says what LIVE means, so a stream guesses -- and "
+        "the guess a two-value field invites is 'the important one'.",
+    ),
+    (
+        "`LATENT` means you derived the finding and found no reachable instance",
+        "the rule no longer says what LATENT means.",
+    ),
+    (
+        "MUST carry a `reproduction_attempted` statement naming what you drove and "
+        "what it found",
+        "the rule no longer demands the reproduction_attempted statement "
+        "(FR-004 / CT-001). The server refuses a LATENT filing without one, so "
+        "an agent file that omits it sends its stream into a refusal it has no "
+        "instruction for.",
+    ),
+    (
+        "`Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one.",
+        "the rule no longer states that the refusal is SERVER-SIDE. A "
+        "requirement phrased as advice is one a stream talks itself out of at "
+        "the moment it is inconvenient, which is the moment it matters.",
+    ),
+    (
+        "A security-property claim can NEVER be `LATENT`",
+        "the rule no longer rules out a LATENT security-property claim "
+        "(CT-003). That is a denylist entry, not a judgement: 'I could not "
+        "reproduce the auth bypass' is the single most dangerous sentence this "
+        "vocabulary could let a stream write.",
+    ),
+    (
+        "`SECURITY_PROPERTY_CLAIM`",
+        "the rule no longer names the denylist class the refusal reports, so a "
+        "stream that trips it cannot tell which rule it broke.",
+    ),
+    (
+        "Both tiers are defects, both get fixed",
+        "the rule no longer says both tiers are defects. A tier that excuses "
+        "one of its values from being fixed IS the abolished axis.",
+    ),
+    (
+        "buys you no discretion over anything else",
+        "the rule lost its no-exceptions clause. Every rule in this register "
+        "closes on one; without it `tier` reads as a licence rather than a "
+        "field.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _TIER_RULE_CLAUSES, ids=lambda v: v[:44])
+def test_each_stream_agent_states_the_tier_rule(path: Path, clause: str, why: str) -> None:
+    """GI-001 / AC-009 / FR-004 / CT-003, one claim at a time."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+#: FR-007 replaced an OPTIONAL class with a required one. The clauses that
+#: permitted omission are gone from all four files; these are the sentences
+#: that replaced them.
+_CLASS_REQUIRED_CLAUSES = (
+    (
+        "a single-instance class is still a class",
+        "the file no longer tells a stream to name a class for a defect that "
+        "stands alone. FR-007 makes `class` required on every filing; without "
+        "this sentence a stream reads 'required' and 'only when shared' "
+        "together and resolves the contradiction by omitting the field.",
+    ),
+    (
+        "refuse a filing whose `class` is empty",
+        "the file no longer states that an empty class is refused server-side. "
+        "The path fallback survives only for READING pre-change archives, so a "
+        "stream that omits the field is refused rather than defaulted.",
+    ),
+    (
+        "spelled identically",
+        "the file no longer requires the class string spelled identically "
+        "across instances. Escalation counts a class by exact string, so an "
+        "unpinned spelling reads as two unrelated classes and never escalates.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _CLASS_REQUIRED_CLAUSES, ids=lambda v: v[:44])
+def test_each_stream_agent_makes_the_class_required(path: Path, clause: str, why: str) -> None:
+    """FR-007: agent prose and report formats REQUIRE the class."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+#: The class rule's bolded opening differs by stream voice -- "instances",
+#: "packets", "deviations" -- so the bullet is located by the tail all four
+#: share. ``test_each_stream_agent_instructs_the_class_declaration`` above pins
+#: that tail, which is what makes it safe to key on here.
+_CLASS_RULE_MARKER = "share a root cause.**"
+
+
+def _class_rule(path: Path) -> str:
+    """The one Rules bullet declaring the class, flattened and bounded.
+
+    Bounded at the NEXT bullet, exactly as ``_rules_bullet`` is and for the
+    same reason: "Omit the field" also appears in the neighbouring
+    ``target_kind`` rule, where it is CORRECT prose about a different field. A
+    file-wide absence assertion would fail on that sentence and invite the
+    wrong fix.
+    """
+    flat = _flat(path)
+    start = flat.find(_CLASS_RULE_MARKER)
+    if start == -1:
+        return ""
+    head = flat.rfind("- **", 0, start)
+    tail = flat[start:]
+    stop = tail.find("- **")
+    return flat[head if head != -1 else start : start + (len(tail) if stop == -1 else stop)]
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_no_stream_agent_still_permits_omitting_the_class(path: Path) -> None:
+    """FR-007's absence half: a removal is invisible to every positive pin.
+
+    All four files carried a clause permitting omission -- assayer's "Omit the
+    field when a defect genuinely stands alone", tracer's "Omit the field when
+    a symbol's defect stands alone", flow-tracer's "Omit it when a packet
+    fails alone", research-auditor's "Omit the field when a deviation stands
+    alone". A rule that says both "required" and "omit it when" is a rule read
+    in the reader's favour, so the permission has to be gone, not merely
+    outvoted. Scoped to the class BULLET: the identical words live in the
+    target_kind rule two bullets down, where they are correct.
+    """
+    bullet = _class_rule(path)
+    assert bullet, (
+        f"{_rel(path)} has no class-declaration bullet to scope to -- the "
+        f"marker {_CLASS_RULE_MARKER!r} is gone. Restore the rule rather than "
+        f"deleting this assertion; FR-007 requires a producer in every stream."
+    )
+    for permission in ("Omit the field", "Omit it when", "is optional"):
+        assert permission not in bullet, (
+            f"{_rel(path)}'s class rule still permits omitting the field "
+            f"({permission!r}). FR-007 makes `class` required on every filing; "
+            f"a rule carrying both the requirement and the permission hands "
+            f"the stream the choice back."
+        )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_no_stream_agent_shape_still_calls_the_class_optional(path: Path) -> None:
+    """FR-007 at the SHAPE, where the rule's reader actually copies from.
+
+    Every one of the four qualified its example JSON with "`class` is optional
+    and appears only ...". D-016's finding is that a shape and a mandate which
+    disagree are resolved in the shape's favour, because the shape is the
+    thing that gets pasted -- so the prose beside the example has to change
+    with the rule, not after it.
+    """
+    flat = _flat(path)
+    assert "`class` is optional" not in flat, (
+        f"{_rel(path)} still describes `class` as optional beside its example "
+        f"JSON. FR-007 made it required on every filing; a shape annotated "
+        f"'optional' outranks a Rules bullet that says otherwise (D-016)."
+    )
+    assert "`class` is required on every" in flat, (
+        f"{_rel(path)} does not state at the SHAPE that `class` is required on "
+        f"every record. The Rules block alone is not enough -- the reader who "
+        f"copies the shape may never reach it."
+    )
+    assert "`tier` is required on every" in flat, (
+        f"{_rel(path)} does not state at the SHAPE that `tier` is required on "
+        f"every record either (FR-004), so the new axis is documented only in "
+        f"a rule the shape-copier may never read."
+    )
+
+
+def _example_defect_records(path: Path) -> list[dict]:
+    """Every entry of every `defects` array in a file's normative examples.
+
+    Scoped to `defects` rather than to every nested object (which is what
+    ``_example_records`` returns) because the tier and class obligations are
+    obligations on a DEFECT record. A `results` or `recommendations` entry
+    carrying no tier is correct, and sweeping those in would force the pin to
+    be weakened to "at least one record has a tier" -- which passes on a shape
+    that carries it once and omits it everywhere else.
+    """
+    found: list[dict] = []
+    for record in _example_records(path):
+        entries = record.get("defects")
+        if isinstance(entries, list):
+            found.extend(e for e in entries if isinstance(e, dict))
+    return found
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_report_shape_carries_tier_on_every_defect(path: Path) -> None:
+    """FR-004 / FR-007: the instruction is inert if the shape has no slot.
+
+    D-011's shape exactly, at the new axis. The Rules block can require `tier`
+    on every filing and a stream will still copy the example beside it -- the
+    example is the thing that gets pasted. Read out of the files' own JSON so
+    a shape that gains a defect entry later is covered without anyone
+    remembering to come back here.
+    """
+    records = _example_defect_records(path)
+    assert records, (
+        f"{_rel(path)}'s normative example has no `defects` array entries, so "
+        f"every assertion below it is vacuous. The array is what the lead "
+        f"converts into GRIND tasks; a shape without one documents nothing."
+    )
+    for entry in records:
+        assert entry.get("tier") in vocab.DEFECT_TIERS, (
+            f"{_rel(path)} documents a defect entry whose `tier` is "
+            f"{entry.get('tier')!r}, not a member of "
+            f"{sorted(vocab.DEFECT_TIERS)}. A stream copying this shape files "
+            f"a finding the door refuses, and CT-001's refusal names the tier "
+            f"field the example never taught it to set."
+        )
+        assert str(entry.get("class", "")).strip(), (
+            f"{_rel(path)} documents a defect entry with no non-empty `class` "
+            f"(FR-007). `class` is required on every filing now, so an example "
+            f"entry without one teaches the omission the doors refuse."
+        )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_shape_works_a_latent_entry(path: Path) -> None:
+    """CT-001: the LATENT half needs a worked example, not just a rule.
+
+    LIVE is the shape every existing example already had. LATENT is the new
+    one, and it is the one that carries an extra required field -- so it is
+    the one a stream gets wrong. An example set that shows only LIVE entries
+    documents the easy half of the vocabulary and leaves the refusal to be
+    discovered at the door.
+    """
+    latent = [e for e in _example_defect_records(path) if e.get("tier") == "LATENT"]
+    assert latent, (
+        f"{_rel(path)}'s example `defects` array works no LATENT entry. The "
+        f"shape then teaches only the tier that needs no extra field, and a "
+        f"stream filing its first LATENT finding meets CT-001's refusal with "
+        f"no worked example to copy."
+    )
+    for entry in latent:
+        statement = entry.get("reproduction_attempted")
+        assert vocab.reproduction_attempted_problem(statement) is None, (
+            f"{_rel(path)} documents a LATENT defect entry whose "
+            f"`reproduction_attempted` is {statement!r}, which the SHIPPED "
+            f"check rejects: {vocab.reproduction_attempted_problem(statement)}. "
+            f"The example is driven through vocab rather than eyeballed, so a "
+            f"placeholder ('n/a', 'TBD') in the shape fails here instead of at "
+            f"the door."
+        )
+
+
+# ---------------------------------------------------------------------------
+# FR-019 / FR-040 -- pointer dispatch, teammate side
+# ---------------------------------------------------------------------------
+
+
+def test_teammate_has_the_pointer_dispatch_step() -> None:
+    """FR-019: the teammate reads the FILE and states the hash it read.
+
+    The spawn doors stopped returning the prompt text and started returning a
+    pointer. That is only half a contract: a teammate handed a path and a hash
+    can still work from the dispatch message's own summary and never open the
+    file. The hash in the completion report is what closes it -- only an agent
+    that read the file can produce the value -- and this pins the instruction
+    that produces it.
+    """
+    flat = _flat(TEAMMATE)
+    assert "### Step 0: Read your prompt FILE in full, and report the hash you read" in flat, (
+        "teammate.md has no pointer-dispatch step. Dispatch hands the teammate "
+        "a path and a hash instead of the prompt text (FR-019); with no step "
+        "telling it to open the file, the pointer is a message it can skim."
+    )
+    assert "Read that file end to end before any other action" in flat, (
+        "teammate.md no longer requires the prompt file be read IN FULL before "
+        "anything else. FR-019 names all three: the path, the hash, and the "
+        "instruction to read the whole file."
+    )
+    assert "hashlib.sha256" in _read(TEAMMATE), (
+        "teammate.md gives no command for computing the hash itself. A "
+        "teammate told to state a hash and given no way to derive one copies "
+        "it out of the dispatch message, which is precisely the case the "
+        "check exists to detect."
+    )
+
+
+def test_teammate_completion_report_requires_the_prompt_hash() -> None:
+    """FR-019: the report is where the lead picks the value up.
+
+    ``check_reported_prompt_hash`` is called at Foundry-Accept-Casting and at
+    Foundry-Fix with the hash the LEAD passes through, and the lead has
+    nothing to pass unless the completion report carries it. An instruction to
+    compute a hash with nowhere to put it is an instruction with no consumer.
+    """
+    flat = _flat(TEAMMATE)
+    assert "**The prompt hash you read (required).**" in flat, (
+        "teammate.md's completion-message list no longer requires the prompt "
+        "hash (FR-019). Without that bullet the lead reaches "
+        "Foundry-Accept-Casting with no value to pass and the rung never fires."
+    )
+    for tool in ("`Foundry-Accept-Casting`", "`Foundry-Fix`"):
+        assert tool in flat, (
+            f"teammate.md does not bind the reported hash to {tool}, so the "
+            f"teammate is not told what refuses when the value is wrong."
+        )
+    assert "Never work from a summary of your prompt" in flat, (
+        "teammate.md lost the prohibition on working from a summary or from a "
+        "prompt quoted back in a message. The pointer only binds if the file "
+        "is the sole authority; a quote is a copy free to differ from what the "
+        "gate hashes."
+    )
+    # The pre-existing citation bullet must survive beside the new one:
+    # test_symbol_cites.py binds the acceptance window to this exact clause.
+    assert "within 300 characters of the ID mention" in flat, (
+        "teammate.md's requirement-citation bullet lost the 300-character "
+        "clause while the prompt-hash bullet was added beside it. "
+        "test_symbol_cites.py binds the acceptance gate's window to that "
+        "sentence -- D-118 exists because the prose and the window disagreed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# FR-008 / FR-041 -- the LATENT fix lane, beside the LIVE one
+# ---------------------------------------------------------------------------
+
+
+def test_teammate_grind_protocol_has_the_latent_lane() -> None:
+    """FR-008: a LATENT fix closes on a regression_test locator.
+
+    A LATENT defect has no adjacent path the fix could have broken, because no
+    path reached the code at all. Demanding the LIVE lane's adjacent-path
+    statement of it produces a teammate inventing neighbours to satisfy a
+    gate, in the phase where every defect must close -- which is worse than no
+    declaration.
+    """
+    flat = _flat(TEAMMATE)
+    assert (
+        "### Step 7, second lane: DECLARE — the regression test that closes a "
+        "LATENT defect" in flat
+    ), (
+        "teammate.md's GRIND protocol has no LATENT lane (FR-008). Without it "
+        "a teammate fixing a derived defect is held to an adjacent-path "
+        "statement about code nothing reaches."
+    )
+    assert "`path::test`" in flat, (
+        "teammate.md does not give the regression_test locator's FORM. "
+        "`Foundry-Fix` validates `path::test` -- that the path exists and the "
+        "test names a real test in it -- so a locator in any other shape is "
+        "refused."
+    )
+    assert "`authored_by`" in flat, (
+        "teammate.md does not name `authored_by`, which Foundry-Fix requires "
+        "on every fix in either lane (CT-005)."
+    )
+
+
+def test_teammate_keeps_the_failing_then_passing_account_out_of_the_call() -> None:
+    """FR-041: the statement is REPORT prose, never a tool argument.
+
+    CT-004 is explicit that the failing-then-passing statement is completion-
+    report prose and not an input. A teammate that puts it in the call sends
+    an argument the schema does not declare and is rejected at the MCP
+    boundary before a handler sees it -- and reads that rejection as the fix
+    being refused.
+    """
+    flat = _flat(TEAMMATE)
+    assert "**The failing-then-passing account is not a tool argument.**" in flat, (
+        "teammate.md no longer rules the failing-then-passing account out of "
+        "the Foundry-Fix call (FR-041 / CT-004)."
+    )
+    assert "the test failed at" in flat and "and passes at" in flat, (
+        "teammate.md gives no shape for the failing-then-passing account, so "
+        "the requirement is satisfiable by any sentence mentioning a test. "
+        "FR-041 requires the STATEMENT in the report."
+    )
+
+
+def test_teammate_latent_lane_does_not_relax_the_live_lane() -> None:
+    """FR-008: the second lane is beside the first, never in place of it.
+
+    The LIVE lane's adjacent-path statement and test stay mandatory. A LATENT
+    lane written as a relaxation is a lane every fixer takes, and the
+    adjacent-path discipline the D-070 work installed evaporates one defect at
+    a time.
+    """
+    flat = _flat(TEAMMATE)
+    assert "**This lane does not relax the one above it.**" in flat, (
+        "teammate.md does not state that the LATENT lane leaves the LIVE lane "
+        "untouched. Two lanes with no boundary between them is one lane, and "
+        "it is the cheaper one."
+    )
+    assert "Read the defect's `tier` first and pick the lane it names" in flat, (
+        "teammate.md does not tell the fixer WHICH lane a defect takes. The "
+        "tier decides it; unstated, the fixer picks, and picks the shorter one."
+    )
+    # The LIVE lane's own pins must survive the addition.
+    assert "**The adjacent-path statement.**" in flat, (
+        "teammate.md lost the LIVE lane's adjacent-path statement while the "
+        "LATENT lane was added beside it (FR-009)."
+    )
+
+
+def test_teammate_filing_a_defect_sets_tier_and_class() -> None:
+    """FR-004 / FR-007: a teammate files defects too, under the same rules."""
+    flat = _flat(TEAMMATE)
+    assert "**When you FILE a defect rather than fix one,**" in flat, (
+        "teammate.md never tells a teammate what to put on a defect it FILES. "
+        "The filing doors require `tier` and `class` from every caller, not "
+        "only from the four INSPECT streams."
+    )
+    for token in ("`tier`", "`class`", "`reproduction_attempted`", "`SECURITY_PROPERTY_CLAIM`"):
+        assert token in flat, (
+            f"teammate.md's filing rule does not name {token}, so a teammate "
+            f"meets that refusal with no instruction covering it."
+        )
+
+
+# ---------------------------------------------------------------------------
+# GI-005 / FR-043 -- what a teammate does NOT report, and what it commits
+# ---------------------------------------------------------------------------
+
+
+def test_teammate_never_reports_spend() -> None:
+    """GI-005: the parser stays out of the run; the lead reads the block.
+
+    The usage block is fragile, human-facing text nothing in this system
+    owns. A parser for it inside the run breaks silently on the next harness
+    release and then reports a WRONG number rather than no number, which is
+    the worse of the two failures. One reader, on the lead's side, is the
+    whole ruling.
+    """
+    flat = _flat(TEAMMATE)
+    assert "### NEVER report token counts, durations, or cost" in flat, (
+        "teammate.md does not forbid a teammate reporting its own spend "
+        "(GI-005). Unstated, a diligent teammate estimates one -- and an "
+        "estimate in the ledger is indistinguishable from a measurement."
+    )
+    assert "Spend is not yours to report." in flat, (
+        "teammate.md's spend rule lost its closing absolute."
+    )
+
+
+def test_teammate_commits_its_own_evidence_logs() -> None:
+    """FR-043: teammates commit per-casting logs; nobody sweeps by hand.
+
+    A hand sweep at the end of the run is the shape GI-002 removes on the
+    server side; this is its teammate-side twin. A log a teammate meant to
+    commit and did not is not a log the lead finds later -- it is a
+    requirement with no evidence bound to it, and the acceptance gate names it
+    as one.
+    """
+    flat = _flat(TEAMMATE)
+    assert (
+        "**You commit your own casting's evidence logs, in your own "
+        "pathspec-scoped commit. Nobody sweeps `evidence/` by hand.**" in flat
+    ), (
+        "teammate.md does not state that the teammate commits its own evidence "
+        "logs and that nothing sweeps them by hand (FR-043). The server "
+        "re-executes what was COMMITTED; an uncommitted log is invisible to it."
     )
