@@ -67,11 +67,11 @@
 ........................................................................ [ 33%]
 ........................................................................ [ 35%]
 ........................................................................ [ 38%]
-.....................................s.................................. [ 40%]
-.....s.................................................................. [ 43%]
+.......................................s................................ [ 40%]
+.......s................................................................ [ 43%]
 ........................................................................ [ 45%]
 ........................................................................ [ 48%]
-........................................................................ [ 51%]
+........................................................................ [ 50%]
 ........................................................................ [ 53%]
 ........................................................................ [ 56%]
 ........................................................................ [ 58%]
@@ -82,7 +82,7 @@
 ........................................................................ [ 71%]
 ........................................................................ [ 73%]
 ........................................................................ [ 76%]
-..................................................................
+....................................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -144,7 +144,7 @@
   this run: grind=6 post_verification=1
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-...... [ 79%]
+.... [ 79%]
 ........................................................................ [ 81%]
 ........................................................................ [ 84%]
 ........................................................................ [ 86%]
@@ -153,10 +153,10 @@
 ........................................................................ [ 94%]
 ........................................................................ [ 96%]
 ........................................................................ [ 99%]
-..............                                                           [100%]
+................                                                         [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/cap-wt/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1833: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/cap-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-2817 passed, 5 skipped, 3 deselected in 120.48s
+SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wB/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1833: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/wB/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+2819 passed, 5 skipped, 3 deselected in 119.61s
