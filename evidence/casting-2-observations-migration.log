@@ -1,5 +1,5 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_observations.py
-# evidence-for: CT-001, CT-002, AC-006, AC-010, FR-004, FR-007, NFR-002
+# evidence-for: CT-001, CT-002, AC-006, AC-010, FR-004, FR-007
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \(\d+:\d\d:\d\d\)
 # evidence-volatile: in <VOLATILE>(?: <VOLATILE>)?
