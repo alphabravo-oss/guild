@@ -3,8 +3,8 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
 
-.........................                                                [100%]
-25 passed in 0.32s
+.............................                                            [100%]
+29 passed in 0.28s
 
 === cost is reported by the lead, never parsed by the server ===
 MCP serverInfo.version: 1.9.0 == package __version__: True
