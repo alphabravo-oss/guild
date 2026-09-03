@@ -603,12 +603,46 @@ def test_the_fixture_encodes_the_finer_boundary_scenario():
     assert state["cycle"] == 5
 
 
-#: The one field `drive_finer_boundary_run` cannot reproduce: `diff_base` is
-#: the boundary SHA of a throwaway git repository, and a committed artifact
-#: cannot carry a SHA that will exist on the next machine. Everything else is
-#: byte-reproducible, which is why the frozen clock exists — excluding the
-#: timestamps instead would have taken five more fields out of the assertion.
-_UNREPRODUCIBLE_ENTRY_FIELDS = frozenset({"diff_base"})  # 1 field
+_ISO_STAMP_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T[\d:]+(?:\.\d+)?\+00:00\Z")
+_DURATION_RE = re.compile(r"\A\d+m \d+s\Z")
+
+
+def _without_volatile(value):
+    """Blank the values a committed artifact cannot pin, at any depth.
+
+    THREE KINDS, AND WHY EACH IS OUT OF THE EQUALITY:
+
+      git SHAs (`diff_base`) — the boundary commit of a throwaway repository.
+        No committed value can equal the next machine's.
+
+      ISO timestamps — deterministic per checkout, because `_frozen_clock`
+        makes them so, but their exact offsets are a function of HOW MANY
+        `_now()` calls the transition path makes. That count is a private
+        implementation detail of code other castings own: driven here, the
+        working tree and a detached worktree at HEAD produced timelines two
+        ticks apart purely because a terminal-sweep memo behaved differently
+        between them. Pinning the offsets would make this fixture demand
+        regeneration on changes that say nothing about its shape.
+
+      `phase_times` durations — rendered FROM two timestamps, so pinning them
+        pins the timestamps by another name.
+
+    What the timestamps are still held to is their SHAPE, asserted separately:
+    every one carries microseconds, which is the tell D-130 was filed on.
+    """
+    if isinstance(value, dict):
+        return {
+            k: "<SHA>" if k == "diff_base" else _without_volatile(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_without_volatile(v) for v in value]
+    if isinstance(value, str):
+        if _ISO_STAMP_RE.match(value):
+            return "<TIMESTAMP>"
+        if _DURATION_RE.match(value):
+            return "<DURATION>"
+    return value
 
 
 def test_the_fixture_state_is_what_production_writes(tmp_path):
@@ -642,19 +676,15 @@ def test_the_fixture_state_is_what_production_writes(tmp_path):
     """
     produced = drive_finer_boundary_run(tmp_path)
 
-    def _without_sha(entries: list[dict]) -> list[dict]:
-        return [
-            {k: v for k, v in e.items() if k not in _UNREPRODUCIBLE_ENTRY_FIELDS}
-            for e in entries
-        ]
-
     committed = _read_json(FIXTURE_DIR, "state.json")
-    assert _without_sha(committed["inspect_modes"]) == _without_sha(
+    assert _without_volatile(committed["inspect_modes"]) == _without_volatile(
         produced["state.json"]["inspect_modes"]
     ), "the committed inspect_modes are not what these transitions write"
-    assert {k: v for k, v in committed.items() if k != "inspect_modes"} == {
-        k: v for k, v in produced["state.json"].items() if k != "inspect_modes"
-    }, "the committed state.json is not what this run writes"
+    assert _without_volatile(
+        {k: v for k, v in committed.items() if k != "inspect_modes"}
+    ) == _without_volatile(
+        {k: v for k, v in produced["state.json"].items() if k != "inspect_modes"}
+    ), "the committed state.json is not what this run writes"
     # ...with ONE field carried rather than driven, named here so the equality
     # above is not misread as covering it: `spend` is written by Foundry-Spend,
     # which no transition calls, and the committed value is a deliberate D-090
@@ -662,9 +692,11 @@ def test_the_fixture_state_is_what_production_writes(tmp_path):
     # disagreement to name). `drive_finer_boundary_run` copies it in.
     assert produced["state.json"]["spend"] == committed["spend"]
 
-    assert _read_json(FIXTURE_DIR, "defects.json")["defects"] == produced[
-        "defects.json"
-    ]["defects"], "the committed defect rows are not what the doors write"
+    assert _without_volatile(
+        _read_json(FIXTURE_DIR, "defects.json")["defects"]
+    ) == _without_volatile(
+        produced["defects.json"]["defects"]
+    ), "the committed defect rows are not what the doors write"
 
     # And the specific claims the filing made, stated so a regression names
     # itself rather than showing up as one large dict inequality.
@@ -688,11 +720,14 @@ def test_the_fixture_state_is_what_production_writes(tmp_path):
         "in both slots"
     )
 
-    # Not one round second anywhere in the artifact — the tell that a person
-    # typed the value rather than a door stamping it.
+    # Not one round second anywhere in the artifact. This is the half of the
+    # timestamp claim the equality above deliberately drops: the OFFSETS are
+    # volatile, the SHAPE is not, and a round second is the tell D-130 was
+    # filed on ("_now() emits microseconds").
     stamps = re.findall(r"\d{4}-\d{2}-\d{2}T[\d:]+(?:\.\d+)?\+00:00",
-                        json.dumps(committed))
-    assert stamps, "no timestamps found; the search is wrong, not the fixture"
+                        json.dumps(committed) + json.dumps(
+                            _read_json(FIXTURE_DIR, "defects.json")))
+    assert len(stamps) > 20, f"only {len(stamps)} timestamps; the search is wrong"
     assert all("." in s for s in stamps), [s for s in stamps if "." not in s]
 
 
