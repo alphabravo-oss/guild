@@ -3,8 +3,8 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-........................................................................ [ 92%]
-.....
+........................................................................ [ 90%]
+.......
 === report.json top-level keys ===
   generated_at
   run
@@ -79,5 +79,5 @@
   baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-.                                                                   [100%]
-78 passed in 1.61s
+.                                                                 [100%]
+80 passed in 2.14s

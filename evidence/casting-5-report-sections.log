@@ -78,4 +78,4 @@
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
-1 passed, 77 deselected in 0.27s
+1 passed, 79 deselected in 0.10s
