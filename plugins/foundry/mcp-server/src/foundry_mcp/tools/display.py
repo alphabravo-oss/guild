@@ -203,22 +203,34 @@ def _fmt_verify_citations(r: dict) -> str:
 # ── Foundry formatters ────────────────────────────────────────────────────────
 
 
-def _fmt_foundry_init(r: dict) -> str:
-    if "display" in r:
-        return r["display"]
-    lines = [
-        f"  {_BWHITE}Dir:{_RESET}    {_short_path(r.get('foundry_dir', '?'))}",
-        f"  {_BWHITE}Name:{_RESET}   {r.get('run_name', '?')}",
-        f"  {_BWHITE}Files:{_RESET}  {', '.join(r.get('files_created', []))}",
-        f"  {_BWHITE}Spec:{_RESET}   {'copied' if r.get('spec_copied') else 'none'}",
-    ]
-    # AC-027 / OT-018 / FR-017 — WHICH BUILD IS EXECUTING THIS RUN.
-    #
-    # A plugin-targeting run whose executing server is a stale cached copy
-    # cannot use the process fixes it is itself shipping, and nothing on screen
-    # said so. These four facts are written by `foundry_init` at F0 and merely
-    # rendered here; a missing key omits its line rather than raising, which is
-    # this module's rule for every optional fact (see the named-refusal block).
+def _executing_build_lines(r: dict) -> list[str]:
+    """AC-027 / OT-018 / FR-017 — WHICH BUILD IS EXECUTING THIS RUN.
+
+    A plugin-targeting run whose executing server is a stale cached copy cannot
+    use the process fixes it is itself shipping, and nothing on screen said so.
+    These four facts are written by `foundry_init` at F0 and merely rendered
+    here; a missing key omits its line rather than raising, which is this
+    module's rule for every optional fact (see the named-refusal block).
+
+    D-041 — WHY THIS IS A FUNCTION AND WHY BOTH CALLERS APPEND IT.
+    -------------------------------------------------------------
+    These lines lived inline in `_fmt_foundry_init`, below an
+    ``if "display" in r: return r["display"]`` early return — and `foundry_init`
+    sets `display` on EVERY success, so on the success path they were
+    unreachable. On the refusal path they were unreachable for a second,
+    independent reason: `foundry_init`'s self-target refusal carries no
+    `display`, so the block did render, but it rendered no `error` text, and
+    `format_result` therefore threw the whole rendering away for
+    `_house_refusal_display`. Code with no reachable caller, carrying the one
+    fact the run exists to make visible.
+
+    So the block is a helper both paths APPEND, rather than a tail both paths
+    have to fall through to. Same shape `_fmt_foundry_next_lines` uses against
+    the Foundry-Next result: the pre-rendered box is built by a different
+    module (`foundry.py#_format_init_display`, which renders none of these) and
+    is concatenated with, never returned instead of.
+    """
+    lines: list[str] = []
     for label, key in (
         ("Server", "server_version"),
         ("Plugin", "plugin_version"),
@@ -235,6 +247,48 @@ def _fmt_foundry_init(r: dict) -> str:
             f"  {_BWHITE}Target:{_RESET} {_BYELLOW}self{_RESET} "
             f"{_DIM}(this run builds the plugin it is executing on){_RESET}"
         )
+    return lines
+
+
+def _fmt_foundry_init(r: dict) -> str:
+    build = _executing_build_lines(r)
+
+    # D-011 / D-041 / ST-009 / CT-010 — THE REFUSAL PATH RENDERS ITS OWN
+    # REFUSAL, OR THE HOUSE NET TAKES THE WHOLE RENDERING AWAY.
+    #
+    # `format_result` discards a formatter's output when the result named a
+    # refusal the rendering does not contain. This formatter had no error
+    # branch at all, so a self-target refusal — the one refusal whose entire
+    # value is four version facts and a command to relaunch with — fell through
+    # to `_house_refusal_display`, which knows only error / corrupt_artifacts /
+    # hint. Driven: `foundry_init` against a 9.9.9 tree rendered no
+    # `claude --plugin-dir` substring anywhere, while its own hint said
+    # "relaunch with the command above".
+    refusal = _named_refusal(r)
+    if refusal is not None:
+        lines = [f"  {_RED}{refusal}{_RESET}"]
+        if build:
+            lines.append("")
+            lines.extend(build)
+        lines.extend(_launch_command_lines(r))
+        hint = r.get("hint")
+        if isinstance(hint, str) and hint.strip():
+            lines.append("")
+            lines.append(f"  {_DIM}{hint}{_RESET}")
+        return _foundry_display(f"F O U N D R Y  {_BRED}Init refused{_RESET}", lines)
+
+    if "display" in r:
+        pre_rendered = r["display"]
+        if build:
+            return pre_rendered + "\n" + "\n".join(build)
+        return pre_rendered
+    lines = [
+        f"  {_BWHITE}Dir:{_RESET}    {_short_path(r.get('foundry_dir', '?'))}",
+        f"  {_BWHITE}Name:{_RESET}   {r.get('run_name', '?')}",
+        f"  {_BWHITE}Files:{_RESET}  {', '.join(r.get('files_created', []))}",
+        f"  {_BWHITE}Spec:{_RESET}   {'copied' if r.get('spec_copied') else 'none'}",
+    ]
+    lines.extend(build)
     return _foundry_display("F O U N D R Y  Initialized", lines)
 
 
@@ -496,19 +550,40 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
 
 
 def _fmt_foundry_next_action(r: dict) -> str:
-    # Always show BOTH the pixel-art status header (from the `display` field)
-    # AND the imperative instructions (which lead with a "YOUR NEXT CALL:"
-    # line from Phase 6).
+    # Always show the pixel-art status header (from the `display` field), THEN
+    # the per-fact lines, THEN the imperative instructions (which lead with a
+    # "YOUR NEXT CALL:" line from Phase 6).
+    #
+    # D-018 — THE PRE-RENDERED BLOCK WAS RETURNED *INSTEAD OF* THESE LINES.
+    #
+    # `foundry_next_action` sets `display` on every call, so both early returns
+    # below fired every time and `_fmt_foundry_next_lines` was never reached in
+    # production: the lead saw the run's spend TOTAL and nothing else, while
+    # per-phase and per-cycle roll-ups — the two numbers FR-021 exists to
+    # deliver — were computed, put in the result dict, and thrown away at the
+    # renderer. The second symptom was worse than the omission: the unreachable
+    # renderer held a second copy of the Inspect / Spend / Server lines that
+    # `_format_status_display` also drew, and the two had already drifted (the
+    # dead copy named `server_root`, the live one did not).
+    #
+    # Concatenated, never substituted. That is the same repair `_fmt_foundry_
+    # init` makes against the same cause, and it is what lets
+    # `_format_status_display` drop its copy of these four groups: there is now
+    # exactly ONE renderer for each of them, and it is this one.
     instructions = r.get("instructions", "")
     pre_rendered = r.get("display")
-    if pre_rendered and instructions:
-        return f"{pre_rendered}\n\n{instructions}"
+    facts = _fmt_foundry_next_lines(r)
     if pre_rendered:
-        return pre_rendered
+        block = pre_rendered
+        if facts:
+            block = block + "\n" + "\n".join(facts)
+        if instructions:
+            return f"{block}\n\n{instructions}"
+        return block
     return _foundry_display(f"F O U N D R Y  {r.get('phase', '?')}", [
         f"  {_BWHITE}Action:{_RESET}  {r.get('action', '?')}",
         f"  {instructions}",
-    ] + _fmt_foundry_next_lines(r))
+    ] + facts)
 
 
 def _fmt_foundry_record_spend(r: dict) -> str:
@@ -1004,18 +1079,54 @@ def _named_refusal(result: object) -> str | None:
     return None
 
 
+def _launch_command_lines(result: dict) -> list[str]:
+    """The shell command a refusal named, rendered so it can be copied.
+
+    D-011 — A HINT THAT SAYS "THE COMMAND ABOVE" NEEDS A COMMAND ABOVE.
+    ------------------------------------------------------------------
+    `foundry_init`'s self-target refusal sets `launch_command` into the result
+    dict at two sites and its `hint` reads "Quit, relaunch with the command
+    above". Nothing rendered it: `server.py#call_tool` returns only
+    `format_result(...)`, so the key never crossed the MCP boundary and the
+    only readers in the whole tree were test assertions. Driven against a
+    9.9.9 tree, the operator's screen carried no `claude --plugin-dir`
+    substring at all — a refusal that names the remedy in a key nobody prints
+    is a refusal with no remedy.
+
+    Rendered as its own indented line rather than folded into the hint prose,
+    because the entire point is that it is copied verbatim into a shell.
+    """
+    command = result.get("launch_command")
+    if not isinstance(command, str) or not command.strip():
+        return []
+    return [
+        "",
+        f"  {_BWHITE}Relaunch with:{_RESET}",
+        f"    {_BCYAN}{command.strip()}{_RESET}",
+    ]
+
+
 def _house_refusal_display(tool_name: str, result: dict, refusal: str) -> str:
     """The house refusal, rendered for a tool whose formatter dropped it.
 
-    Same three rungs the refusal dict carries: what is wrong, WHICH files, and
-    what to do about it -- so the operator learns the file to repair instead of
-    reading a banner about a phase the tool never got far enough to know.
+    Same rungs the refusal dict carries: what is wrong, WHICH files, the
+    command that fixes it, and what to do -- so the operator learns the file to
+    repair instead of reading a banner about a phase the tool never got far
+    enough to know.
+
+    `launch_command` is rendered HERE, and not only in the one formatter whose
+    tool emits it today, because this is the net every formatter falls into:
+    any tool that names a remedy command in its refusal is rendered by this
+    function the moment its own formatter does not repeat the refusal text.
+    Fixing it one formatter up would have left the net dropping the same field
+    for the next tool that names one.
     """
     lines = [f"  {_RED}{refusal}{_RESET}"]
     corrupt = result.get("corrupt_artifacts")
     if isinstance(corrupt, list):
         for artifact in corrupt:
             lines.append(f"    {_BYELLOW}{artifact}{_RESET}")
+    lines.extend(_launch_command_lines(result))
     hint = result.get("hint")
     if isinstance(hint, str) and hint.strip():
         lines.append(f"  {_DIM}{hint}{_RESET}")

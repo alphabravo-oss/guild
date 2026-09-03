@@ -2860,7 +2860,27 @@ def _dispatched_agents(fdir: Path) -> list[dict]:
     record of what the run handed out and covers every CAST and GRIND teammate;
     the F2 stream agents are spawned from the roster the INSPECT-opening
     transition recorded, and never appear in `spawns.log` at all.
+
+    D-013 — THE CASTING FALLBACK IS `foundry_spawn`'s SPELLING, NOT A LOCAL ONE.
+    ---------------------------------------------------------------------------
+    A real `spawns.log` row carries `casting_id` and NO `agent` key, so the
+    fallback below is the branch that fires in production, not an edge case.
+    It used to be `str(row["casting_id"])`, which keys that row as `1` — while
+    `foundry_report._read_unreported_dispatches` keyed the SAME row as
+    `casting-1`, and `foundry_spawn` seeds the progress ledger under
+    `casting-1` too. Two derivations of one fact disagreed where the operator
+    could not see it: Foundry-Next and the report named DIFFERENT agents as
+    unreported, no single `Foundry-Spend` call could clear both surfaces, and
+    the spelling the `Foundry-Spend` schema documents cleared neither.
+
+    So the id comes from `_agent_id_for_casting`, which is the door that MINTS
+    it. Imported lazily, like every other cross-casting seam in this module:
+    `foundry_spawn` imports this module, so a module-level import would close
+    the cycle, while a call-time one runs when every module in the chain is
+    already built.
     """
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+
     agents: list[dict] = []
     text, problem = read_text_file(fdir / "spawns.log")
     if problem is None:
@@ -2874,21 +2894,42 @@ def _dispatched_agents(fdir: Path) -> list[dict]:
                 continue
             if not isinstance(row, dict):
                 continue
-            agent = row.get("agent") or row.get("agent_id") or row.get("casting_id")
-            if agent is None:
+            agent = row.get("agent") or row.get("agent_id")
+            if not agent and row.get("casting_id") is not None:
+                agent = _agent_id_for_casting(row["casting_id"])
+            if not agent:
                 continue
             agents.append({"agent": str(agent), "phase": str(row.get("phase", ""))})
 
+    # D-013, second axis — THE STREAM ROSTER IS READ THE WAY THE REPORT READS
+    # IT, AND ITS PHASE IS THE ONE THE SPEND SCHEMA DOCUMENTS.
+    #
+    # This arm used to walk `stream_scope` (the roster the INSPECT-opening
+    # transition RECORDED) and spell each agent's phase `cycle-{N}`, while
+    # `foundry_report._read_unreported_dispatches` walks the stream RECORDS in
+    # the same bucket and spells the phase `F2`. Same two facts, two
+    # derivations, disagreeing on both — so the report and Foundry-Next named
+    # different agents as unreported even after the id spelling was unified,
+    # and `by_phase` bucketed a stream agent under a key that is not a phase at
+    # all. `Foundry-Spend`'s own schema documents the phase as "e.g. F1, F2,
+    # F3"; `cycle-1` is a cycle, and no lead could ever have typed it.
+    #
+    # The report's rule is adopted verbatim rather than re-decided: a stream is
+    # a bucket key whose VALUE is a record carrying `records`, which is what
+    # keeps the C-6 additions (`inspect_mode`, `stream_scope`,
+    # `evidence_sweep`) out of the roster without a denylist that needs an edit
+    # every time the roll-up gains a field. The cycle survives as its own key,
+    # so the per-cycle bucket still gets its count without overloading `phase`.
     rollup = _load_json(fdir / ROLLUP_FILENAME).get("cycles", {})
     if isinstance(rollup, dict):
         for cycle_key, bucket in rollup.items():
             if not isinstance(bucket, dict):
                 continue
-            for wire in bucket.get("stream_scope", {}) or {}:
-                scope = (bucket.get("stream_scope") or {}).get(wire) or {}
-                if isinstance(scope, dict) and scope.get("scope") == "skipped":
-                    continue
-                agents.append({"agent": str(wire), "phase": f"cycle-{cycle_key}"})
+            for stream, entry in bucket.items():
+                if isinstance(entry, dict) and "records" in entry:
+                    agents.append(
+                        {"agent": str(stream), "phase": "F2", "cycle": str(cycle_key)}
+                    )
     return agents
 
 
@@ -2905,17 +2946,83 @@ def _unreported_dispatches(fdir: Path) -> list[dict]:
         for r in _spend_ledger_rows(fdir)
     }
     reported_agents = {agent for agent, _phase in reported}
-    seen: set[tuple[str, str]] = set()
+    # Deduped on the full triple, not on `(agent, phase)`: every INSPECT stream
+    # shares the phase `F2`, so collapsing on the pair would keep one cycle's
+    # dispatch and silently drop the rest, and the per-cycle bucket would then
+    # count only whichever cycle happened to be read first. The extra key
+    # changes nothing for a reader that projects back to `(agent, phase)`,
+    # which is exactly what the report's cross-check does.
+    seen: set[tuple[str, str, str]] = set()
     unreported: list[dict] = []
     for row in _dispatched_agents(fdir):
-        key = (row["agent"], row["phase"])
+        key = (row["agent"], row["phase"], str(row.get("cycle", "")))
         if key in seen:
             continue
         seen.add(key)
-        if key in reported or row["agent"] in reported_agents:
+        if (row["agent"], row["phase"]) in reported or row["agent"] in reported_agents:
             continue
         unreported.append(row)
-    return sorted(unreported, key=lambda r: (r["agent"], r["phase"]))
+    return sorted(
+        unreported, key=lambda r: (r["agent"], r["phase"], str(r.get("cycle", "")))
+    )
+
+
+def _overlay_unreported(spend: dict, unreported: list[dict]) -> dict:
+    """Write the DERIVED unreported counts onto the C-4 buckets (D-031).
+
+    ``unreported`` is `_unreported_dispatches`' output: one row per dispatched
+    agent with no `spend.jsonl` line, each carrying the phase it was dispatched
+    in. This distributes those rows across `by_phase`, `by_cycle` and `total`,
+    and returns the same document it was handed.
+
+    D-031 — A FIELD THAT IS INITIALISED AND NORMALISED BUT NEVER WRITTEN.
+    --------------------------------------------------------------------
+    `_empty_spend_bucket` has carried an `unreported` key since C-4 named it,
+    `foundry_record_spend` re-coerced it to an int on every call, and NOTHING
+    in the tree ever incremented it. It was permanently 0, so a consumer
+    reading a per-bucket unreported count read a number that could not be
+    distinguished from "every dispatch in this phase reported" — the exact
+    reading FR-022 exists to make available, returning the exact opposite of
+    the truth on a run where nobody called `Foundry-Spend` at all.
+
+    DERIVED HERE, NOT ACCUMULATED AT THE DOOR. An unreported dispatch is the
+    ABSENCE of a record, so it cannot be counted when a record arrives: the
+    number changes when an agent is DISPATCHED, which is a different tool's
+    call, and a counter incremented at the spend door would be wrong from the
+    next spawn onward. One derivation, applied both to the summary a reader
+    gets and to the persisted document, so state.json holds the count C-4 names
+    instead of a zero that means nothing.
+
+    A phase with unreported dispatches and NO recorded spend gets a bucket
+    created for it. That is the whole point: the run where the lead forgot
+    every `Foundry-Spend` call is the one where the gap most needs a line, and
+    a bucket that only exists once someone reports would hide exactly that run.
+    """
+    for section in ("by_phase", "by_cycle"):
+        if not isinstance(spend.get(section), dict):
+            spend[section] = {}
+    if not isinstance(spend.get("total"), dict):
+        spend["total"] = _empty_spend_bucket()
+
+    for bucket in (
+        *spend["by_phase"].values(), *spend["by_cycle"].values(), spend["total"],
+    ):
+        if isinstance(bucket, dict):
+            bucket["unreported"] = 0
+
+    for row in unreported:
+        by_phase = spend["by_phase"].setdefault(
+            str(row.get("phase", "")), _empty_spend_bucket()
+        )
+        by_phase["unreported"] = by_phase.get("unreported", 0) + 1
+        cycle = row.get("cycle")
+        if cycle is not None:
+            by_cycle = spend["by_cycle"].setdefault(
+                str(cycle), _empty_spend_bucket()
+            )
+            by_cycle["unreported"] = by_cycle.get("unreported", 0) + 1
+    spend["total"]["unreported"] = len(unreported)
+    return spend
 
 
 def _spend_summary(fdir: Path) -> dict:
@@ -2923,12 +3030,15 @@ def _spend_summary(fdir: Path) -> dict:
     state = _load_json(fdir / "state.json")
     spend = state.get("spend")
     if not isinstance(spend, dict):
-        spend = {"by_phase": {}, "by_cycle": {}, "total": _empty_spend_bucket()}
+        spend = {}
     unreported = _unreported_dispatches(fdir)
+    # Overlaid on a COPY of what state.json holds: this is a read, and a reader
+    # that mutated the document it read would make every display call a write.
+    spend = _overlay_unreported(json.loads(json.dumps(spend)), unreported)
     return {
-        "by_phase": spend.get("by_phase", {}),
-        "by_cycle": spend.get("by_cycle", {}),
-        "total": spend.get("total", _empty_spend_bucket()),
+        "by_phase": spend["by_phase"],
+        "by_cycle": spend["by_cycle"],
+        "total": spend["total"],
         "unreported_dispatches": unreported,
         "unreported_count": len(unreported),
     }
@@ -3043,6 +3153,31 @@ def foundry_record_spend(
         # not also lose the totals. The problem is named in the result.
         row["ledger_problem"] = f"{type(exc).__name__}: {exc}"
 
+    # D-038 — `agents` COUNTS AGENTS, AND AN AGENT THAT REPORTS TWICE IS ONE.
+    #
+    # This was `bucket["agents"] += 1`, once per CALL, while
+    # `foundry_report` counts DISTINCT agent ids over the same ledger. Two
+    # derivations of one number that disagree the moment a teammate reports its
+    # spend twice — a re-dispatched GRIND teammate, or a lead correcting a
+    # fat-fingered token count — with the orchestrator inflated and the report
+    # not. The count is therefore taken over a SET, from the ledger the report
+    # reads, so the two surfaces cannot drift apart again.
+    #
+    # Unioned with this call's own agent rather than read from the ledger
+    # alone: the append above may have failed (`ledger_problem`), and the
+    # documented property that a run whose ledger cannot be written still keeps
+    # its totals has to hold for the agent count as well as for the tokens.
+    ledger_rows = _spend_ledger_rows(fdir)
+
+    def _distinct_agents(predicate) -> int:
+        names = {
+            str(r.get("agent", ""))
+            for r in ledger_rows
+            if r.get("agent") and predicate(r)
+        }
+        names.add(row["agent"])
+        return len(names)
+
     with _document_transaction(fdir / "state.json") as state:
         spend = state.get("spend")
         if not isinstance(spend, dict):
@@ -3053,10 +3188,20 @@ def foundry_record_spend(
         if not isinstance(spend.get("total"), dict):
             spend["total"] = _empty_spend_bucket()
 
-        for bucket in (
-            spend["by_phase"].setdefault(row["phase"], _empty_spend_bucket()),
-            spend["by_cycle"].setdefault(str(server_cycle), _empty_spend_bucket()),
-            spend["total"],
+        for bucket, agent_count in (
+            (
+                spend["by_phase"].setdefault(row["phase"], _empty_spend_bucket()),
+                _distinct_agents(
+                    lambda r: str(r.get("phase", "")) == row["phase"]
+                ),
+            ),
+            (
+                spend["by_cycle"].setdefault(
+                    str(server_cycle), _empty_spend_bucket()
+                ),
+                _distinct_agents(lambda r: r.get("cycle") == server_cycle),
+            ),
+            (spend["total"], _distinct_agents(lambda _r: True)),
         ):
             for field in ("tokens", "duration_ms", "agents", "unreported"):
                 if not isinstance(bucket.get(field), int) or isinstance(
@@ -3065,7 +3210,12 @@ def foundry_record_spend(
                     bucket[field] = 0
             bucket["tokens"] += row["tokens"]
             bucket["duration_ms"] += row["duration_ms"]
-            bucket["agents"] += 1
+            bucket["agents"] = agent_count
+
+        # D-031: the persisted document carries the unreported counts C-4 names,
+        # refreshed from the dispatch record on every spend call, instead of the
+        # permanent zero `_empty_spend_bucket` used to leave there.
+        _overlay_unreported(spend, _unreported_dispatches(fdir))
 
         state["spend"] = spend
         state["updated_at"] = _now()
@@ -7532,47 +7682,25 @@ def _format_status_display(project_root: str) -> str:
         if stream_icons:
             lines.append(f"  {_BWHITE}Streams:{_RESET}  {' '.join(stream_icons)}")
 
-    # CT-009 / AC-016 — the recorded width, named with the rule that fired.
-    # Read from state.json, never derived here (GI-008).
-    recorded_mode = _current_inspect_mode(fdir)
-    if recorded_mode:
-        colour = _BYELLOW if recorded_mode.get("mode") == "FULL" else _BGREEN
-        lines.append(
-            f"  {_BWHITE}Inspect:{_RESET}  {colour}{recorded_mode.get('mode', '?')}{_RESET}"
-            f" {_DIM}(rule {recorded_mode.get('rule', '?')},"
-            f" decided at {recorded_mode.get('decided_by', '?')}){_RESET}"
-        )
-
-    # AC-033 / OT-023 — tokens and minutes, per phase and for the run. Reported
-    # from what the lead recorded through Foundry-Spend; no dollar figure
-    # appears here or anywhere else in this server's output.
-    spend = _spend_summary(fdir)
-    total = spend["total"]
-    if total.get("agents") or spend["unreported_count"]:
-        minutes = int(total.get("duration_ms", 0) // 60000)
-        lines.append(
-            f"  {_BWHITE}Spend:{_RESET}    {total.get('tokens', 0):,} tokens  "
-            f"{minutes}m  {total.get('agents', 0)} agent(s) reported"
-            + (
-                f"  {_BYELLOW}{spend['unreported_count']} unreported{_RESET}"
-                if spend["unreported_count"]
-                else ""
-            )
-        )
-
-    # AC-027 / OT-018 — which build is executing this run.
-    if state.get("server_version") or state.get("server_commit"):
-        commit = str(state.get("server_commit", "") or "")
-        lines.append(
-            f"  {_BWHITE}Server:{_RESET}   {state.get('server_version', '?')}"
-            f" {_DIM}(plugin {state.get('plugin_version', '?')} @"
-            f" {commit[:12] or 'unknown'}){_RESET}"
-        )
-
-    if phase == RUN_PHASE_HALTED:
-        lines.append(
-            f"  {_BRED}HALTED{_RESET}    {state.get('halted_reason', 'cycle cap reached')}"
-        )
+    # D-018 — THE INSPECT / SPEND / SERVER / HALTED LINES ARE NOT DRAWN HERE.
+    #
+    # They used to be, AND `display._fmt_foundry_next_lines` drew them too, and
+    # the two derivations had already drifted: the display.py copy named
+    # `server_root` and this one did not. Only one of them was ever reachable —
+    # this one, because `foundry_next_action` sets `display` unconditionally and
+    # `_fmt_foundry_next_action` returned it INSTEAD of calling the other. So
+    # the run shipped one live renderer, one dead renderer, and no way for the
+    # per-phase and per-cycle spend roll-ups the dead one alone drew (FR-021 /
+    # AC-033) to reach the lead at all.
+    #
+    # The renderer that survives is display.py's, for two reasons that both had
+    # to hold: it is the one the casting's key_link names, and it is the only
+    # one that can also repair `_fmt_foundry_init` — whose pre-rendered box is
+    # built in `foundry.py`, a file this casting may not edit. `foundry_
+    # next_action` puts `inspect_mode`, `spend`, `executing_server`,
+    # `waiting_on_agents` and `phase` in the result dict; display.py reads them
+    # from there and concatenates its lines BELOW this block. Do not re-add a
+    # copy here: two renderers of one fact is the defect, not the layout.
 
     # Teams
     teams = _check_active_teams(project_root)

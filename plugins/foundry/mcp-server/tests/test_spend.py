@@ -516,7 +516,6 @@ def test_no_dollar_figure_appears_in_any_rendered_output(run_env):
     rendered = "\n".join([
         format_result("Foundry-Spend", recorded),
         format_result("Foundry-Next", nxt),
-        fo._format_status_display(project_root),
     ])
 
     assert "$" not in rendered
@@ -564,7 +563,17 @@ def test_next_reports_the_executing_build_alongside_the_spend(run_env):
     them and decides nothing — a run whose executing server is a stale cached
     copy cannot use the fixes it is itself shipping, and nothing on screen said
     so.
+
+    D-018 — ASSERTED THROUGH `format_result`, WHICH IS WHAT THE LEAD READS.
+    `server.py#call_tool` returns `format_result(name, result)` and nothing
+    else, so a fact present in the result dict and absent from that string
+    never reaches anybody. This used to assert against
+    `_format_status_display`, one renderer deep, and so could not have caught
+    the case it now pins: the pre-rendered block being returned INSTEAD of the
+    lines that carry `server_root`.
     """
+    from foundry_mcp.tools.display import format_result
+
     project_root, fdir = run_env
     _write_state(
         fdir, phase="F2", cycle=1,
@@ -579,7 +588,13 @@ def test_next_reports_the_executing_build_alongside_the_spend(run_env):
     assert nxt["executing_server"]["plugin_version"] == "4.10.0"
     assert nxt["executing_server"]["server_root"] == "/repo/plugins/foundry"
     assert nxt["executing_server"]["server_commit"] == "3f9c1a284d6b"
-    assert "3f9c1a284d6b" in fo._format_status_display(project_root)
+
+    rendered = format_result("Foundry-Next", nxt)
+    assert "3f9c1a284d6b" in rendered
+    assert "4.10.0" in rendered
+    # The field the two drifted derivations disagreed about: the dead renderer
+    # carried `server_root` and the live one did not.
+    assert "plugins/foundry" in rendered
 
 
 # --------------------------------------------------------------------------- #
@@ -722,3 +737,316 @@ def test_the_fallback_renders_a_result_carrying_none_of_the_new_fields(run_env):
     assert "cast" in rendered
     assert "Inspect:" not in rendered
     assert "Spend:" not in rendered
+
+
+# --------------------------------------------------------------------------- #
+# D-018 / AC-033 / OT-023 / FR-021 — the per-fact lines reach the LEAD
+#
+# `server.py#call_tool` returns `format_result(name, result)` and nothing else,
+# so every claim below is asserted against that string. A fact that is in the
+# result dict and not in that string was computed for nobody.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_pre_rendered_display_does_not_swallow_the_per_fact_lines(run_env):
+    """D-018: 'Per-phase and per-cycle spend never reach the lead.'
+
+    `foundry_next_action` sets `display` on EVERY call, and
+    `_fmt_foundry_next_action` returned it instead of calling
+    `_fmt_foundry_next_lines`. So the renderer that draws the per-phase and
+    per-cycle roll-ups was unreachable in production and the lead saw the run
+    total only. This drives the production shape — a result that HAS `display`
+    — because the shape without one is the shape that already worked.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    rendered = format_result("Foundry-Next", {
+        "phase": "F3",
+        "action": "fix_defects",
+        "display": "PRE-RENDERED STATUS BOX",
+        "instructions": "fix them",
+        "spend": {
+            "total": {"tokens": 99_000, "duration_ms": 600_000, "agents": 3},
+            "by_phase": {
+                "F1": {"tokens": 60_000, "duration_ms": 360_000},
+                "F3": {"tokens": 39_000, "duration_ms": 240_000},
+            },
+            "by_cycle": {"2": {"tokens": 39_000, "duration_ms": 240_000}},
+            "unreported_dispatches": [],
+            "unreported_count": 0,
+        },
+    })
+
+    assert "PRE-RENDERED STATUS BOX" in rendered, "the box must survive too"
+    assert "fix them" in rendered
+    # The three numbers the dead renderer alone drew.
+    assert "99,000" in rendered
+    assert "60,000" in rendered, "per-phase roll-up missing"
+    assert "39,000" in rendered, "per-cycle roll-up missing"
+    assert "F1:" in rendered and "F3:" in rendered
+
+
+def test_per_phase_and_per_cycle_spend_reach_the_lead_end_to_end(run_env):
+    """AC-033 / OT-023: 'Foundry-Next shows tokens and minutes per phase and
+    per cycle and the run total; no dollar figure appears anywhere.'
+
+    Driven through the real doors rather than a hand-built result dict, so the
+    roll-up arithmetic and the rendering are pinned by one test.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    foundry_record_spend("casting-1", "F1", 500_000, 900_000,
+                         project_root=project_root)
+    _set_position(fdir, "F3", 2)
+    foundry_record_spend("casting-2", "F3", 250_000, 300_000,
+                         project_root=project_root)
+
+    rendered = format_result("Foundry-Next", foundry_next_action(project_root))
+
+    assert "750,000" in rendered, "run total"
+    assert "500,000" in rendered and "250,000" in rendered, "per-phase"
+    assert "F1:" in rendered and "F3:" in rendered
+    # Per cycle: cycle 0 took the first row, cycle 2 the second.
+    assert "0:" in rendered and "2:" in rendered
+    assert "$" not in rendered
+
+
+def test_exactly_one_renderer_draws_each_of_the_four_fact_groups(run_env):
+    """D-018's second half: 'The dead renderer also holds a second copy of the
+    Inspect/Spend/Server lines _format_status_display already renders, and the
+    two have ALREADY DRIFTED.'
+
+    Two derivations of one rendered fact is the defect; a label appearing twice
+    in one screen is what the operator would see if the repair had merely made
+    the dead copy reachable.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase="F2", cycle=1,
+        server_version="4.10.0", plugin_version="4.10.0",
+        server_root="/repo/plugins/foundry", server_commit="3f9c1a284d6b",
+        inspect_modes=[{
+            "cycle": 1, "phase": "F2", "mode": "FULL", "rule": "first_of_phase",
+            "decided_by": "cast", "required_streams": ["trace", "prove", "test"],
+            "stream_scope": {}, "prove_sample": [],
+        }],
+    )
+    foundry_record_spend("casting-1", "F2", 1_000, 1_000,
+                         project_root=project_root)
+
+    rendered = format_result("Foundry-Next", foundry_next_action(project_root))
+
+    for label in ("Inspect:", "Spend:", "Server:"):
+        assert rendered.count(label) == 1, f"{label} drawn {rendered.count(label)}x"
+
+    # And the orchestrator's renderer is not one of the two. Source-asserted,
+    # because "which module drew it" is not observable in the joined string.
+    import inspect
+
+    status_src = inspect.getsource(fo._format_status_display)
+    code = "\n".join(
+        line for line in status_src.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    for label in ("Inspect:", "Spend:", "Server:", "HALTED"):
+        assert label not in code, f"_format_status_display still draws {label}"
+
+
+# --------------------------------------------------------------------------- #
+# D-031 / D-038 — the two spend numbers that meant nothing
+# --------------------------------------------------------------------------- #
+
+
+def test_the_unreported_bucket_count_is_written_not_left_at_zero(run_env):
+    """D-031: the `unreported` key 'is initialised and normalised but never
+    incremented ... permanently 0, so any consumer reading the per-bucket
+    unreported count reads a zero that means nothing.'
+
+    FR-022: 'the report shows N agents unreported per phase so the gap is
+    visible.' Per PHASE is the claim, so a per-phase zero on a run with three
+    unreported dispatches is the exact opposite of the truth.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2)
+    _write_spawns(fdir, [
+        {"casting_id": 1, "phase": "cast"},
+        {"casting_id": 2, "phase": "cast"},
+        {"casting_id": 3, "phase": "grind"},
+    ])
+    foundry_record_spend("casting-1", "cast", 10, 10, project_root=project_root)
+
+    summary = fo._spend_summary(fdir)
+
+    assert summary["total"]["unreported"] == 2
+    assert summary["by_phase"]["cast"]["unreported"] == 1
+    assert summary["by_phase"]["grind"]["unreported"] == 1
+    # ...and the persisted document carries it too, rather than the zero C-4's
+    # shape would otherwise leave sitting in state.json forever.
+    assert _read_state(fdir)["spend"]["total"]["unreported"] == 2
+
+
+def test_a_phase_with_no_recorded_spend_still_gets_its_unreported_count(run_env):
+    """The run the count matters most on: the lead called Foundry-Spend for
+    nothing at all. A bucket that only exists once someone reports would hide
+    exactly that run."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_spawns(fdir, [{"casting_id": 7, "phase": "cast"}])
+
+    summary = fo._spend_summary(fdir)
+
+    assert summary["by_phase"]["cast"]["unreported"] == 1
+    assert summary["total"]["unreported"] == 1
+    assert summary["total"]["tokens"] == 0
+
+
+def test_an_agent_that_reports_spend_twice_counts_as_one_agent(run_env):
+    """D-038: 'foundry_record_spend does bucket["agents"] += 1 per CALL, while
+    the report counts DISTINCT agents. An agent that reports spend twice
+    inflates the orchestrator's count and not the report's.'
+
+    A re-dispatched GRIND teammate and a lead correcting a fat-fingered token
+    count both produce a second row for one agent, so this is the normal case,
+    not an edge one.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+
+    foundry_record_spend("casting-4", "F3", 100, 1_000, project_root=project_root)
+    result = foundry_record_spend("casting-4", "F3", 250, 2_000,
+                                  project_root=project_root)
+
+    assert result["total"]["agents"] == 1, "one agent, two reports"
+    assert result["by_phase"]["F3"]["agents"] == 1
+    # Both rows still count toward the money-free numbers that ARE additive.
+    assert result["total"]["tokens"] == 350
+    assert result["total"]["duration_ms"] == 3_000
+    assert len(_ledger(fdir)) == 2
+
+
+def test_two_agents_in_one_phase_still_count_as_two(run_env):
+    """The other direction of D-038: deduplicating by agent must not collapse
+    genuinely distinct agents into one."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+
+    foundry_record_spend("trace", "F2", 10, 10, project_root=project_root)
+    result = foundry_record_spend("prove", "F2", 10, 10, project_root=project_root)
+
+    assert result["total"]["agents"] == 2
+    assert result["by_phase"]["F2"]["agents"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# D-011 / D-041 / ST-009 / CT-010 / AC-026 — Foundry-Init's refusal renders
+# --------------------------------------------------------------------------- #
+
+
+def _self_target_refusal() -> dict:
+    """The shape `foundry.py`'s self-target preflight returns (two sites)."""
+    return {
+        "ok": False,
+        "error": (
+            "Self-targeting run refused — version mismatch: the working tree's "
+            "plugin.json declares '9.9.9' but the executing server was imported "
+            "from /cache/foundry whose plugin.json declares '4.10.0'."
+        ),
+        "hint": (
+            "This run's TARGET is the foundry plugin, but the executing server "
+            "is a different build of it. Quit, relaunch with the command above "
+            "so the server is started from the working tree, and re-run "
+            "Foundry-Init."
+        ),
+        "launch_command": "claude --plugin-dir /repo/plugins/foundry",
+        "mismatch": "version",
+        "server_version": "4.10.0",
+        "plugin_version": "4.10.0",
+        "server_root": "/cache/foundry",
+        "server_commit": "aaaa1111bbbb",
+        "self_target": True,
+    }
+
+
+def test_the_self_target_refusal_prints_the_launch_command(run_env):
+    """D-011: 'The self-target refusal never prints the launch command ... the
+    hint says "relaunch with the command above" and there is no command above.'
+
+    `foundry.py` sets `launch_command` into the result dict at two sites and
+    `server.py#call_tool` returns only `format_result(...)`, so the key never
+    crossed the MCP boundary; grep found its only readers were test assertions.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    rendered = format_result("Foundry-Init", _self_target_refusal())
+
+    assert "claude --plugin-dir /repo/plugins/foundry" in rendered
+    assert "relaunch with the command above" in rendered
+
+
+def test_the_house_refusal_net_also_prints_a_named_launch_command():
+    """D-011 was filed against `_house_refusal_display`, and that is where the
+    general repair belongs: it is the net EVERY formatter falls into when its
+    own rendering does not repeat the refusal text. Driven directly, because
+    the tool whose refusal carries the field today now renders its own."""
+    from foundry_mcp.tools.display import _house_refusal_display
+
+    rendered = _house_refusal_display(
+        "Some-Tool",
+        {"error": "refused", "hint": "use the command above",
+         "launch_command": "claude --plugin-dir /repo/plugins/foundry"},
+        "refused",
+    )
+
+    assert "claude --plugin-dir /repo/plugins/foundry" in rendered
+
+
+def test_the_init_refusal_names_which_build_is_executing(run_env):
+    """D-041: '_fmt_foundry_init's Server/Plugin/Root/Commit block is dead on
+    both paths — dead on success because "display" is always set, and dead on
+    refusal because the house renderer wins.'
+
+    The refusal path. `_fmt_foundry_init` had no error branch, so it rendered
+    no `error` text and `format_result` threw the whole rendering away for
+    `_house_refusal_display` — which knows nothing about these four facts.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    rendered = format_result("Foundry-Init", _self_target_refusal())
+
+    assert "4.10.0" in rendered, "executing server version"
+    assert "aaaa1111bbbb" in rendered, "executing server commit"
+    assert "/cache/foundry" in rendered or "cache/foundry" in rendered
+    # The refusal itself must still survive — that is what `format_result`
+    # checks for before it reaches for the house net.
+    assert "version mismatch" in rendered
+
+
+def test_the_init_success_names_which_build_is_executing(run_env):
+    """D-041's other half: dead on SUCCESS, because `foundry_init` always sets
+    `display` and the formatter returned it before reaching these lines.
+
+    The pre-rendered box is built by `foundry.py#_format_init_display`, which
+    draws none of the four, so appending is the only repair available from this
+    side of the ownership boundary — and there is nothing to duplicate.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    rendered = format_result("Foundry-Init", {
+        "foundry_dir": "/repo/foundry-archive/run",
+        "run_name": "run",
+        "display": "PRE-RENDERED INIT BOX",
+        "server_version": "4.10.0",
+        "plugin_version": "4.10.0",
+        "server_root": "/repo/plugins/foundry",
+        "server_commit": "3f9c1a284d6b",
+        "self_target": True,
+    })
+
+    assert "PRE-RENDERED INIT BOX" in rendered
+    assert "4.10.0" in rendered
+    assert "3f9c1a284d6b" in rendered
+    assert "self" in rendered
