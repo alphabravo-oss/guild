@@ -40,4 +40,4 @@ SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependenc
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/cap2/.planning/phases/09-milestone-real-run-consolidation/runs
 SKIPPED [1] tests/test_measure_run.py:1774: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/cap2/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-2107 passed, 5 skipped, 2 deselected in 88.23s (0:01:28)
+2107 passed, 5 skipped, 2 deselected in 88.07s (0:01:28)
