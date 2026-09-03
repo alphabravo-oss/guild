@@ -6,11 +6,11 @@
 ........................................................................ [ 15%]
 ........................................................................ [ 30%]
 ........................................................................ [ 45%]
-........................................................................ [ 61%]
-........................................................................ [ 76%]
-........................................................................ [ 91%]
-........................................                                 [100%]
-472 passed in 22.81s
+........................................................................ [ 60%]
+........................................................................ [ 75%]
+........................................................................ [ 90%]
+................................................                         [100%]
+480 passed in 24.97s
 
 === D-098: one rung order, hosted where both doors call it ===
 the comment-prose rung answers: PROSE_COUNT
@@ -46,4 +46,4 @@ hint names every recording transition: True
 consecutive LIVE-clean cycles the clean arm needs: 2
 structural packets the budget arm needs: 2
 the clean arm tests adjacency: True
-Distance to each exit — FDC: 2 more INSPECT cycle(s) drawing zero LIVE instances (clean_cycles arm, Foundry-Phase(phase='inspect_start') from F3 closes one and they must be CONSECUTIVE), or 2 more structural packet(s) (budget arm, Foundry-Tasks emits one per class per cycle).
+Distance to each exit — FDC: 2 more INSPECT cycle(s) drawing zero LIVE instances (clean_cycles arm — Foundry-Phase(phase='inspect_start') out of F3 closes one, and they must be CONSECUTIVE). The budget arm cannot advance this class: every instance of it is closed, and Foundry-Tasks emits a structural packet only for a class with open instances, so its 2 unspent packet(s) stay unspent.
