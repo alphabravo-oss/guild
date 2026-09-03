@@ -229,10 +229,7 @@ async def list_tools() -> list[Tool]:
             name="Foundry-Defect",
             description=(
                 "Log a defect from any verification stream. Appends to ledger "
-                "and forge-log. A LATENT filing must carry file_path: the F6 "
-                "report's LATENT backlog is the list a lead reads with no "
-                "defects.json to join against, and a row that names no location "
-                "names a fault nobody can find."
+                "and forge-log."
             ),
             inputSchema={
                 "type": "object",
@@ -282,33 +279,36 @@ async def list_tools() -> list[Tool]:
                             "file_path as a `path#Symbol` cite. The symbol is "
                             "the authoritative half: a cite whose symbol "
                             "resolves stays valid however far the code has "
-                            "moved inside the file."
+                            "moved inside the file. Expected on every filing, "
+                            "at either tier."
                         ),
                     },
-                    # NFR-003 / AC-036 / D-089 — REQUIRED ON A LATENT FILING.
+                    # D-101 — THE D-089 OBLIGATION IS WITHDRAWN, ON THE
+                    # SURFACE AS WELL AS IN THE GATE.
                     #
-                    # The report holds up its half of D-029 and the filing door
-                    # did not. REPORT.md's LATENT backlog renders each row's
-                    # File and Symbol columns under its own claim that "Each row
-                    # names where the work is, because this list is read by a
-                    # lead who has no defects.json to join against (D-029)" —
-                    # and a LATENT defect filed through this door with neither
-                    # field was ACCEPTED and rendered as
-                    # "| D-002 | no-location | 1 |  |  | prove | ... |". The
-                    # exact failure D-029 closed was reachable again through the
-                    # front door. Declared here so the obligation is advertised
-                    # to every stream that reads the tool surface; the refusal
-                    # is server-side.
+                    # D-089 made `file_path` REQUIRED on a LATENT filing and
+                    # this prose advertised the requirement to every stream that
+                    # reads the tool list. The LEAD RULING that established it
+                    # is REVERSED (run state.json, spec_ambiguities entry 6), so
+                    # the schema must stop asserting a rule the door no longer
+                    # enforces: a tool description that demands a field the
+                    # handler accepts without is the same drift as an enum the
+                    # handler rejects, and it is worse here because a stream
+                    # reading it will withhold a filing it should make.
+                    #
+                    # The field stays EXPECTED and is still what the F6 backlog
+                    # renders — a located row is better than an unlocated one —
+                    # but "expected" is guidance and "REQUIRED" was a contract.
                     "file_path": {
                         "type": "string",
                         "description": (
-                            "REQUIRED on a LATENT filing, and expected on every "
-                            "filing. Repo-relative path. A LATENT defect is "
-                            "carried to the F6 report's backlog and read there "
-                            "by a lead with no defects.json to join against "
-                            "(D-029), so a backlog row with no location names a "
-                            "fault whose site costs more to re-find than to fix. "
-                            "Pair it with `symbol`."
+                            "Expected on every filing, at either tier. "
+                            "Repo-relative path. A LATENT defect is carried to "
+                            "the F6 report's backlog and read there by a lead "
+                            "with no defects.json to join against (D-029), so a "
+                            "backlog row with no location names a fault whose "
+                            "site costs more to re-find than to fix. Pair it "
+                            "with `symbol`."
                         ),
                     },
                     # FR-001 / FR-007 — the handler has accepted both since the
@@ -573,10 +573,9 @@ async def list_tools() -> list[Tool]:
                 "automatically. source and type are validated against the canonical "
                 "vocabulary and never coerced: an unknown or absent source is refused "
                 "rather than silently recorded as 'trace'. The whole batch is refused "
-                "if any finding is invalid, so nothing lands half-applied. A LATENT "
-                "finding must carry `file`: the F6 report's LATENT backlog is the list "
-                "a lead reads with no defects.json to join against, and a row that "
-                "names no location names a fault nobody can find."
+                "if any finding is invalid, so nothing lands half-applied. Comment-prose "
+                "findings are refused here exactly as they are at Foundry-Defect, and "
+                "belong in Foundry-Observation (D-098: one pipeline order, both doors)."
             ),
             inputSchema={
                 "type": "object",
@@ -603,30 +602,32 @@ async def list_tools() -> list[Tool]:
                                         "The symbol the finding is about, "
                                         "paired with `file` as a `path#Symbol` "
                                         "cite. The symbol is the authoritative "
-                                        "half and survives line drift."
+                                        "half and survives line drift. Expected "
+                                        "on every finding, at either tier."
                                     ),
                                 },
-                                # NFR-003 / AC-036 / D-089 — the SAME obligation
-                                # the single door advertises, on the door a whole
-                                # INSPECT stream actually files through. The
-                                # report promises "Each row names where the work
-                                # is ... (D-029)"; a batch that files LATENT rows
-                                # with no location makes the report say
-                                # otherwise.
+                                # D-101 — WITHDRAWN HERE TOO, ON THE SAME TERMS.
+                                #
+                                # The D-089 ruling that made `file` REQUIRED on
+                                # a LATENT finding is REVERSED (run state.json,
+                                # spec_ambiguities entry 6). Both doors advertise
+                                # the same obligations, so the withdrawal lands
+                                # on both: this is the door a whole INSPECT
+                                # stream files through, and a batch refused for a
+                                # rule the handler no longer applies is the
+                                # costliest place for the surface to be wrong.
                                 "file": {
                                     "type": "string",
                                     "description": (
-                                        "REQUIRED on a LATENT finding, and "
-                                        "expected on every finding. "
-                                        "Repo-relative path. A LATENT defect is "
-                                        "carried to the F6 report's backlog and "
-                                        "read there by a lead with no "
-                                        "defects.json to join against (D-029), "
-                                        "so a backlog row with no location names "
-                                        "a fault whose site costs more to "
-                                        "re-find than to fix. Pair it with "
-                                        "`symbol`. The whole batch is refused if "
-                                        "a LATENT finding omits it."
+                                        "Expected on every finding, at either "
+                                        "tier. Repo-relative path. A LATENT "
+                                        "defect is carried to the F6 report's "
+                                        "backlog and read there by a lead with "
+                                        "no defects.json to join against "
+                                        "(D-029), so a backlog row with no "
+                                        "location names a fault whose site costs "
+                                        "more to re-find than to fix. Pair it "
+                                        "with `symbol`."
                                     ),
                                 },
                                 "spec_ref": {"type": "string"},

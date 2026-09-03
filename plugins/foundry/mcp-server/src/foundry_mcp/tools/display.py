@@ -292,6 +292,49 @@ def _fmt_foundry_init(r: dict) -> str:
     return _foundry_display("F O U N D R Y  Initialized", lines)
 
 
+def _retier_line(r: dict) -> str:
+    """The `re-tiered <id> <TIER>` line both filing doors' formatters render.
+
+    D-100 — THE RE-TIER OUTCOME NEVER CROSSED THE MCP BOUNDARY.
+    ----------------------------------------------------------
+    Both doors return `retiered` and `retiered_ids`, under the same two key
+    names and with a comment saying so "so a lead or a report reading either
+    door's result handles one shape" — and `format_result` dropped both, on both
+    doors. Driven with ANSI stripped: `foundry_add_defect` against a ledger
+    holding an open untiered D-001 returned retiered=1, retiered_ids=['D-001']
+    and rendered "F O U N D R Y  Defect: D-001 / Total: 1  Open: 1"; the
+    identical call against an EMPTY ledger returned retiered=0, retiered_ids=[]
+    and rendered the BYTE-IDENTICAL two lines. `foundry_sync_defects` returning
+    retiered=1 rendered "Added: +0 / Reopened: 0 / Total open: 1", which reads
+    as "the batch recorded nothing" for a batch that reclassified an open
+    blocking record in place.
+
+    That matters because `_blocking_defects`' hint instructs the lead to re-file
+    each untiered defect through either door PRECISELY so the blocking count
+    moves. The screen never said it did, so the return trip on the documented
+    recovery path failed and the lead's rational next move was to re-file again
+    or conclude the exit does not work.
+
+    ONE renderer for both doors, for the same reason the two doors report under
+    one pair of key names: a second spelling of one event is how the two
+    surfaces come to disagree about it. The heading is the one the forge-log.md
+    mirror already computes — "<id> re-tiered <TIER>" — so the terminal and the
+    human log say the same thing about the same event. The tier is rendered when
+    the result carries one and omitted when it does not, rather than re-read
+    from the ledger: this module renders result dicts and reads no run artifact.
+    """
+    ids = r.get("retiered_ids")
+    if not isinstance(ids, list) or not ids:
+        return ""
+    tier = r.get("tier")
+    suffix = f" {tier}" if isinstance(tier, str) and tier.strip() else ""
+    named = ", ".join(str(i) for i in ids)
+    return (
+        f"  {_BGREEN}re-tiered{_RESET} {_BYELLOW}{named}{_RESET}{suffix} "
+        f"{_DIM}(classified in place — the record keeps its id){_RESET}"
+    )
+
+
 def _fmt_foundry_add_defect(r: dict) -> str:
     if r.get("error"):
         return _foundry_display(f"F O U N D R Y  {_BRED}Error{_RESET}", [
@@ -300,9 +343,14 @@ def _fmt_foundry_add_defect(r: dict) -> str:
     defect_id = r.get("defect_id", "?")
     total = r.get("total_defects", 0)
     open_count = r.get("open_defects", 0)
-    return _foundry_display(f"F O U N D R Y  Defect: {_BYELLOW}{defect_id}{_RESET}", [
-        f"  Total: {total}  Open: {_BYELLOW}{open_count}{_RESET}",
-    ])
+    lines = [f"  Total: {total}  Open: {_BYELLOW}{open_count}{_RESET}"]
+    # D-100: a re-tier and a fresh append rendered identically, so the lead
+    # could not tell which of the two had just happened.
+    if (retier := _retier_line(r)):
+        lines.append(retier)
+    return _foundry_display(
+        f"F O U N D R Y  Defect: {_BYELLOW}{defect_id}{_RESET}", lines
+    )
 
 
 def _fmt_foundry_query_defects(r: dict) -> str:
@@ -717,11 +765,20 @@ def _fmt_foundry_sync_defects(r: dict) -> str:
     total_open = r.get("total_open", 0)
     regressions = r.get("regressions", [])
 
+    retiered = r.get("retiered", 0)
+
     lines = [
         f"  Added:      {_BYELLOW}+{added}{_RESET}",
         f"  Reopened:   {_RED}{reopened}{_RESET}" if reopened > 0 else f"  Reopened:   0",
+        # D-100: beside Added and Reopened, because it is the third thing a
+        # batch can do to the ledger and the only one the screen did not say.
+        # A batch that re-tiered one record and appended none rendered
+        # "Added: +0  Reopened: 0", which reads as "nothing happened".
+        f"  Re-tiered:  {_BGREEN}{retiered}{_RESET}" if retiered else "  Re-tiered:  0",
         f"  Total open: {_BWHITE}{total_open}{_RESET}",
     ]
+    if (retier := _retier_line(r)):
+        lines.append(retier)
     if regressions:
         lines.append(f"  {_BRED}Regressions: {', '.join(regressions)}{_RESET}")
 

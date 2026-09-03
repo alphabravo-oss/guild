@@ -3221,3 +3221,159 @@ def test_a_caller_following_the_description_closes_a_latent_defect(run_env):
     )
     assert new_shape["ok"] is True, new_shape
     assert new_shape["tier"] == "LATENT"
+
+
+# --------------------------------------------------------------------------- #
+# D-105 / D-107 — the lane measures the commit the lead NAMED, and the refusal
+# says something true about it.
+#
+# `_numstat_measurement` interpolated the caller's `fix_commit` straight into
+# `git show --numstat --format= <value>` with no `--end-of-options` terminator
+# and no rev validation. A leading-dash value is consumed by git as an OPTION,
+# leaving git with no revision and defaulting to HEAD — so the lane measured a
+# commit the lead never named, and the server-written handoff, handoffs.md and
+# the F6 lead-fix row all asserted that measurement. That is GI-003's named
+# violation verbatim: "a Foundry-Fix that accepts a LIVE lead fix without
+# measuring eligibility".
+#
+# No test in this file pinned commit-argument validity; every lane test passed a
+# real 40-character SHA, which is exactly why the hole survived.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "bogus", ["-1", "--all", "--quiet", "--stat", "HEAD~1..HEAD", "HEAD", "main"]
+)
+def test_a_fix_commit_that_is_not_an_object_name_is_refused_by_name(run_env, bogus):
+    """D-105 / FR-016 / GI-003: the revision is validated BEFORE git sees it.
+
+    Confirmed at the git layer (2.50.1): `git show --numstat --format= -1`
+    prints HEAD's numstat with rc=0, and `--all`, `--quiet`, `--stat` and
+    `HEAD~1..HEAD` all behave the same. Every one of those made the lane measure
+    something other than what it was handed.
+
+    Refused naming `fix_commit`, because the lane is a MEASUREMENT OF ONE COMMIT
+    and a range, a ref or an option is not one.
+    """
+    project_root, _fdir = run_env
+    _repo(project_root)
+
+    measured = fo._numstat_measurement(bogus, project_root)
+
+    assert measured["ok"] is False, (bogus, measured)
+    assert measured["field"] == "fix_commit", measured
+    assert "fix_commit" in measured["error"], measured
+    assert measured["files"] == [] and measured["lines"] == 0, measured
+
+
+def test_a_dash_led_fix_commit_no_longer_measures_head(run_env):
+    """D-105 driven end to end, exactly as filed.
+
+    One run, defect D-001, tier LIVE, authored_by=lead. The real commit — ten
+    non-test files, 500 lines — is correctly refused. `fix_commit='-1'` used to
+    return ok=True and write a `lead_fix` record naming D-001, file src/tiny.py,
+    line_count 3 and fix_commit '-1': a measurement of HEAD, a commit the lead
+    never named, asserted in three artifacts at once.
+    """
+    project_root, fdir = run_env
+    root = _repo(project_root)
+    _set_cycle(fdir, 1)
+    _seed_tiered(fdir, "LIVE")
+    locator = _regression_test_file(project_root)
+
+    # HEAD is a commit that WOULD pass the lane, which is what made the
+    # substitution silent: the lead saw a success and a plausible record.
+    tiny = _commit_changing(project_root, {"src/tiny.py": 3})
+    assert fo._lead_lane_problem(tiny, project_root) is None
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=1, authored_by="lead", fix_commit="-1",
+        regression_test=locator,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is not True, result
+    assert "fix_commit" in str(result), result
+    # No audit record was written for a measurement that never happened.
+    handoffs = fdir / "handoffs.jsonl"
+    rows = handoffs.read_text(encoding="utf-8").splitlines() if handoffs.exists() else []
+    assert not any(HANDOFF_EVENT_LEAD_FIX in row for row in rows), rows
+    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
+    assert record["status"] == "open", record
+    assert not record.get("fix_commit"), record
+    assert _git(root, "rev-parse", "HEAD") == tiny
+
+
+def test_a_real_object_name_still_measures_and_still_passes(run_env):
+    """The other direction, so D-105's guard cannot be satisfied by refusing
+    everything. A real abbreviated SHA and a real full SHA both measure."""
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    commit = _commit_changing(project_root, {"src/sweeper.py": 4})
+    short = _git(root, "rev-parse", "--short", commit)
+
+    for spelling in (commit, short):
+        measured = fo._numstat_measurement(spelling, project_root)
+        assert measured["ok"] is True, (spelling, measured)
+        assert measured["files"] == ["src/sweeper.py"], (spelling, measured)
+        assert measured["lines"] == 4, (spelling, measured)
+        assert fo._lead_lane_problem(spelling, project_root) is None, spelling
+
+
+def test_an_empty_commit_is_not_told_it_touched_only_test_files(run_env):
+    """D-107 / AC-021: the diagnostic is conditional on the thing it diagnoses.
+
+    The clause was asserted UNCONDITIONALLY on every zero-non-test-file refusal.
+    Driven with `git commit --allow-empty` on a LIVE lead fix: "…changes 0
+    non-test file(s) — the lane requires exactly 1, and this commit touches only
+    test files. A LIVE defect whose fix is a test-only change is outside the
+    lane" — on a commit that touches NO files at all.
+
+    The refusal DIRECTION was right and the D-020 ruling's two mandates held
+    (the real count and the rule are stated, and the too-big message is never
+    reused). Only the explanation lied, on the one refusal whose wording that
+    ruling explicitly regulated — so the remedy splits with the diagnosis,
+    because "name the commit that carries the source change" and "this commit is
+    empty" send a lead to different places.
+    """
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    _git(root, "commit", "-q", "--allow-empty", "-m", "empty")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    measured = fo._numstat_measurement(commit, project_root)
+    assert measured["ok"] is True and measured["files"] == [] , measured
+    assert measured["test_files"] == [], measured
+
+    problem = fo._lead_lane_problem(commit, project_root)
+
+    assert problem is not None
+    assert "changes no files at all" in problem, problem
+    assert "touches only test files" not in problem, problem
+    # D-020's mandates still hold: the rule is stated and the too-big message is
+    # not reused.
+    assert str(LEAD_LANE_MAX_FILES) in problem, problem
+    assert "Dispatch this to a GRIND teammate instead" not in problem, problem
+
+
+def test_a_test_only_commit_still_gets_the_test_only_diagnosis(run_env):
+    """The other half of D-107: the clause is TRUE when there are test files, so
+    it must still fire there. A fix that simply deleted the sentence would close
+    the defect by removing the one refusal that tells a lead what is actually
+    wrong with a test-only commit."""
+    project_root, _fdir = run_env
+    _repo(project_root)
+    commit = _commit_changing(project_root, {"tests/test_sweeper.py": 5})
+
+    measured = fo._numstat_measurement(commit, project_root)
+    assert measured["files"] == [], measured
+    assert measured["test_files"] == ["tests/test_sweeper.py"], measured
+
+    problem = fo._lead_lane_problem(commit, project_root)
+
+    assert problem is not None
+    assert "touches only test files" in problem, problem
+    assert "tests/test_sweeper.py" in problem, problem
+    assert "changes no files at all" not in problem, problem

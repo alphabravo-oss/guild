@@ -99,6 +99,39 @@ def _arm(fdir: Path) -> None:
     (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
 
 
+def _record_inspect_mode(fdir: Path, *, cycle: int, mode: str = "FULL",
+                         rule: str = "final_gate",
+                         required: tuple[str, ...] = ("trace", "prove", "test")) -> None:
+    """Append the `state.json.inspect_modes` entry a real crossing records.
+
+    D-117: an INSPECT with no recorded width is refused at every door rather
+    than admitted as full width, so a fixture that puts a run at F2 has to say
+    what width that INSPECT was opened at — which every real F2 has, because
+    only a recording transition can reach one.
+    """
+    state_path = fdir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    modes = state.get("inspect_modes")
+    state["inspect_modes"] = (modes if isinstance(modes, list) else []) + [{
+        "cycle": cycle,
+        "phase": "F2",
+        "mode": mode,
+        "rule": rule,
+        "rule_detail": "fixture",
+        "decided_by": "inspect_start",
+        "decided_at": fo._now(),
+        "required_streams": list(required),
+        "stream_scope": {
+            wire: {"scope": "full", "detail": "every item in scope"}
+            for wire in required
+        },
+        "touched_files": [],
+        "prove_sample": [],
+        "diff_base": "",
+    }]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+
 def _defect(did: str, cycle: int, **extra) -> dict:
     d = {
         "id": did,
@@ -222,19 +255,111 @@ def test_repeated_grind_inspect_loops_advance_one_cycle_each(run_env):
         assert result["cycle"] == expected, result
 
 
-def test_entering_inspect_from_cast_does_not_advance_the_cycle(run_env):
-    """Only F3 -> F2 advances. The run's FIRST INSPECT arrives from F1 CAST and
-    is cycle 0, not cycle 1 — counting it would put every run one ahead and
-    make the first GRIND loop look like the second."""
+def test_inspect_start_from_cast_is_refused_and_names_the_transition_that_works(run_env):
+    """D-116: `inspect_start` from F1 used to return ok, move the run to F2 and
+    leave the counter alone — skipping CAST entirely, with `.cast-complete`
+    absent and no baseline SHA stamped.
+
+    The run's FIRST INSPECT is opened by the `cast` transition, which is what
+    records FULL / first_of_phase and sweeps the corpus (GI-009 / AC-016 /
+    OT-012). `inspect_start` is the GRIND->INSPECT crossing and nothing else, so
+    from F1 it is refused naming the phase and the call that applies.
+    """
     project_root, fdir = run_env
     _write_state(fdir, phase="F1", cycle=0)
     _arm(fdir)
 
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
-    assert result["phase"] == "F2"
-    assert result["cycle"] == 0
+    assert result.get("ok") is not True, result
+    assert "F1" in result["error"], result
+    assert "inspect_start" in result["error"], result
+    assert "Foundry-Phase(phase='cast')" in result["hint"], result
+    assert result["accepted_from"] == ["F3", "F2"]
+    # Neither the phase nor the counter moved, and CAST was not skipped.
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F1"
     assert _current_cycle(fdir) == 0
+    assert not (fdir / ".cast-complete").exists()
+
+
+@pytest.mark.parametrize("phase", ["F0", "F1", "F4", "F5", "F5.5", "F6"])
+def test_inspect_start_is_refused_from_every_phase_but_f3_and_f2(run_env, phase):
+    """D-113 / D-114 / D-116 — the LEAD RULING as one property over every phase.
+
+    The source phases are DERIVED from `_compute_next_action`'s own
+    `phase == "<literal>"` comparisons rather than listed beside this test, so a
+    phase added to the guidance engine cannot quietly acquire an unguarded
+    `inspect_start` — the same discipline `_handler_phase_tokens` applies to the
+    token set one axis over.
+
+    Refused from all of them; accepted from F3 (the crossing ST-005 names) and
+    from F2 (the widening re-open), both of which ADVANCE the counter. That is
+    what makes "the escalation exit arms evaluate only on a transition that
+    advanced the counter" true by construction rather than by convention.
+    """
+    assert phase in _guidance_phases(), (
+        f"{phase} is no longer a phase the guidance engine branches on; "
+        "the derived set moved and this roster did not"
+    )
+    project_root, fdir = run_env
+    _write_state(fdir, phase=phase, cycle=3)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result.get("ok") is not True, (phase, result)
+    assert phase in result["error"], (phase, result)
+    assert result["hint"], (phase, result)
+    assert json.loads(
+        (fdir / "state.json").read_text(encoding="utf-8")
+    )["phase"] == phase, phase
+    assert _current_cycle(fdir) == 3, phase
+
+
+def _guidance_phases() -> set[str]:
+    """Every run phase `_compute_next_action` branches on, from its own AST.
+
+    Read out of the function rather than maintained beside it, for the reason
+    `_handler_phase_tokens` in `test_orchestrator_gates.py` is: a guard that can
+    be satisfied by updating a copy is a guard against nothing.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._compute_next_action)))
+    phases: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not (isinstance(node.left, ast.Name) and node.left.id == "phase"):
+            continue
+        for op, comparator in zip(node.ops, node.comparators):
+            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    phases.add(comparator.value)
+    return phases
+
+
+def test_every_guidance_phase_but_the_two_crossings_refuses_inspect_start(run_env):
+    """The other direction of the roster above, so neither can drift alone.
+
+    Every phase the guidance engine knows about is either one of the two
+    accepted sources or is covered by the parametrised refusal test. A new phase
+    reaches this assertion before it reaches production.
+    """
+    project_root, fdir = run_env
+    covered = {"F0", "F1", "F4", "F5", "F5.5", "F6"} | {"F2", "F3"}
+    assert _guidance_phases() <= covered, sorted(_guidance_phases() - covered)
+
+    # And F3 really is accepted, so the roster is not vacuously satisfied by a
+    # guard that refuses everything.
+    _write_state(fdir, phase="F3", cycle=3)
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+    assert result.get("ok") is True, result
+    assert result["cycle"] == 4
 
 
 def test_a_malformed_counter_reads_as_zero_rather_than_raising(run_env):
@@ -864,7 +989,15 @@ def test_a_latent_only_escalated_class_still_blocks_done_until_an_arm_fires(run_
     assert checks[escalation_check]["latent_only_classes"] == [
         "FALSE_DOCUMENTED_CONTRACT"
     ]
-    assert "No LIVE instances remain" in outcome["hint"]
+    # D-111: the hint names the ARM and the DISTANCE, per class. The sentence it
+    # replaced ("cross the GRIND->INSPECT boundary so the clean-cycle arm
+    # counts, or spend the structural budget") named two routes that were both
+    # no-ops for a class with no persisted record — a lead followed it six times
+    # and moved nothing.
+    assert "Distance to each exit" in outcome["hint"], outcome["hint"]
+    assert "FALSE_DOCUMENTED_CONTRACT: 2 more INSPECT cycle(s)" in outcome["hint"]
+    assert "2 more structural packet(s)" in outcome["hint"]
+    assert "CONSECUTIVE" in outcome["hint"]
 
 
 def test_the_cleared_class_that_carries_a_latent_backlog_passes_done(run_env):
@@ -1060,7 +1193,13 @@ def test_the_clean_arm_records_every_closed_cycle_it_evaluated(run_env):
 
     entry = _escalation_entry(fdir)
     assert entry["live_clean_cycles"] == 0
-    assert entry["live_clean_cycles_counted"] == [4, 5], (
+    # D-057's guarantee, restated under D-112: the resetting cycle IS recorded as
+    # evaluated, so a second call cannot re-evaluate it. What changed is that the
+    # list is now the CURRENT STREAK rather than an audit log — a LIVE draw ends
+    # the streak, so the cycles before the break leave it. That keeps
+    # `live_clean_cycles == len(live_clean_cycles_counted)` true, which is what
+    # makes the count checkable against its own evidence.
+    assert entry["live_clean_cycles_counted"] == [5], (
         "the resetting cycle is recorded as evaluated too, or a second call "
         "could re-evaluate it"
     )
@@ -1280,6 +1419,7 @@ def test_next_action_surfaces_the_escalation_at_f2(run_env):
     because the packet shape it is about to hand out changed."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
+    _record_inspect_mode(fdir, cycle=2)
     _write_defects(fdir, _recurring([0, 1, 2]))
     for s in ("trace", "prove", "test"):
         (fdir / f".{s}-complete").write_text("items_checked=1\nfindings=0\n", encoding="utf-8")
@@ -1297,6 +1437,7 @@ def test_next_action_reads_normally_when_nothing_is_escalated(run_env):
     common path."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=1)
+    _record_inspect_mode(fdir, cycle=1)
     _write_defects(fdir, [_defect("D-001", 1)])
     for s in ("trace", "prove", "test"):
         (fdir / f".{s}-complete").write_text("items_checked=1\nfindings=0\n", encoding="utf-8")
@@ -3053,46 +3194,106 @@ def test_calling_tasks_twice_in_one_cycle_spends_one_pass(run_env):
     assert entry["status"] == "ESCALATED"
 
 
-def test_the_finer_boundary_fixture_clears_on_budget_and_reaches_nyquist(run_env):
+def test_the_finer_boundary_scenario_is_driven_and_clears_on_budget(run_env):
     """AC-002 verbatim: 'On a synthetic fixture where each cycle's PROVE files
     one LATENT instance of the escalated class at a finer boundary, the class is
     CLEARED after the second structural packet closes, the run reaches NYQUIST,
     and the report names the LATENT instances left.'
 
-    Driven over casting 5's `tests/fixtures/escalation/finer_boundary_run/`,
-    which is the realised end state of exactly that run: three LIVE instances in
-    cycles 1-3 that escalated the class, two structural packets in cycles 3 and
-    4, and two LATENT instances at ever-finer boundaries that never reproduced.
+    D-115 — THE FIXTURE IS A STARTING STATE, NEVER THE EXPECTED OUTPUT.
+    ------------------------------------------------------------------
+    This test used to copy eight fixture files into the run directory and then
+    assert `entry["status"] == "CLEARED"`, `entry["exit_reason"] == "budget"` and
+    `entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET`, with NO
+    production call between the copy and the reads. Every one of those
+    assertions was a read-back of the test's own input: the commit that
+    introduced it said its test "drives those transitions instead of asserting
+    typed JSON", and for this half that was not so. The budget arm is genuinely
+    driven elsewhere, so no coverage was missing — what was missing was the
+    driving this test claimed.
+
+    So the fixture supplies the SCENARIO — casting 5's realised finer-boundary
+    run, whose defect rows carry the real files, symbols and ever-finer
+    descriptions — and the run is walked through the REAL doors: file the three
+    LIVE instances that escalate the class, dispatch a structural packet, cross
+    the boundary, file the LATENT instance at a finer boundary, dispatch the
+    second packet, cross again. `escalation.json` is then whatever PRODUCTION
+    wrote, and nothing in this test put it there.
     """
     project_root, fdir = run_env
     fixture = Path(__file__).parent / "fixtures" / "escalation" / "finer_boundary_run"
-    for name in ("state.json", "defects.json", "escalation.json", "verdicts.json",
-                 "stream-rollup.json", "handoffs.jsonl", "spawns.log", "spend.jsonl"):
-        (fdir / name).write_text(
-            (fixture / name).read_text(encoding="utf-8"), encoding="utf-8"
-        )
+    scenario = json.loads(
+        (fixture / "defects.json").read_text(encoding="utf-8")
+    )["defects"]
+    klass = "FALSE_DOCUMENTED_CONTRACT"
+    by_id = {d["id"]: d for d in scenario}
+
+    def _row(did: str, **over) -> dict:
+        row = dict(by_id[did])
+        row.update(over)
+        return row
+
+    # --- cycles 1-3: three LIVE instances of one class, which is what escalates
+    #     it. Filed OPEN, because a class with nothing open is not escalating.
+    ledger = [_row(d, status="open", fixed_in_cycle=None) for d in
+              ("D-001", "D-002", "D-003")]
+    ledger.append(_row("D-006", status="open", fixed_in_cycle=None))
+    _write_defects(fdir, ledger)
+    _write_state(fdir, phase="F2", cycle=3, nyquist=True)
+
+    assert klass in _escalated_classes(fdir, project_root), (
+        "the scenario must actually escalate the class through the ledger rule"
+    )
+
+    # --- packet 1, dispatched in cycle 3 by the door that dispatches packets.
+    tasks = foundry_defects_to_tasks(project_root)
+    assert tasks["structural_tasks"] == 1, tasks
+    assert _escalation_entry(fdir)["structural_packets_dispatched"] == 1
+
+    _cross_boundary(fdir, project_root)          # closes 3, opens 4
+    assert _current_cycle(fdir) == 4
+
+    # --- cycle 4: the structural pass closed the LIVE instances, and PROVE files
+    #     the same class one boundary finer — LATENT, because nothing reproduced.
+    ledger = [_row(d, status="fixed", fixed_in_cycle=4) for d in
+              ("D-001", "D-002", "D-003", "D-006")]
+    ledger.append(_row("D-004", status="open", fixed_in_cycle=None))
+    _write_defects(fdir, ledger)
+
+    tasks = foundry_defects_to_tasks(project_root)
+    assert tasks["structural_tasks"] == 1, tasks
+    entry = _escalation_entry(fdir)
+    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
+    assert entry["structural_packet_cycles"] == [3, 4], entry
+    assert entry["status"] == "ESCALATED", (
+        "packet 2 has been dispatched but cycle 4 has not closed (D-058/D-114)"
+    )
+
+    # --- the boundary that CLOSES cycle 4 is what spends the budget (ST-002).
+    _cross_boundary(fdir, project_root)          # closes 4, opens 5
+
+    # --- cycle 5: one more LATENT instance, finer again. It changes nothing:
+    #     CLEARED is terminal and a LATENT backlog blocks no gate.
+    ledger.append(_row("D-005", status="open", fixed_in_cycle=None))
+    _write_defects(fdir, ledger)
 
     entry = _escalation_entry(fdir)
-    assert entry["status"] == "CLEARED"
-    assert entry["exit_reason"] == "budget"
-    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
-    assert entry["open_latent_defect_ids"] == ["D-004", "D-005"]
+    assert entry["status"] == "CLEARED", entry
+    assert entry["exit_reason"] == "budget", entry
+    assert entry["cleared_at_cycle"] == 5, entry
+    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET, entry
+    assert entry["exit_reason"] in ESCALATION_EXIT_REASONS
+    assert entry["status"] in ESCALATION_STATUSES
 
     # A CLEARED class draws no structural packet, whatever its cycle history.
     assert _escalated_classes(fdir, project_root) == {}
+    assert foundry_defects_to_tasks(project_root)["structural_tasks"] == 0
 
-    # The run reaches NYQUIST: the only open instances are LATENT, and a
-    # never-reproduced backlog blocks nothing (FR-006).
-    #
-    # The fixture carries one THIN verdict, which is a different precondition
-    # and casting 5's to shape. It is made VERIFIED here so the gate answers
-    # about the DEFECT read — the half AC-002 is about — rather than about a
-    # verdict row this test is not making a claim on.
-    verdicts = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
-    for row in verdicts["requirements"]:
-        row["verdict"] = "VERIFIED"
-    (fdir / "verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
-
+    # --- the run reaches NYQUIST: the only open instances are LATENT, and a
+    #     never-reproduced backlog blocks nothing (FR-006).
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
     _arm(fdir)
     gate = foundry_gate("nyquist", project_root)
     assert gate["passed"] is True, gate
@@ -3102,13 +3303,33 @@ def test_the_finer_boundary_fixture_clears_on_budget_and_reaches_nyquist(run_env
     assert blocking["ok"] is True
     assert sorted(blocking["latent_backlog"]) == ["D-004", "D-005"], blocking
 
-    # ...and the report names what is being carried.
+    # --- ...and the report names what is being carried.
     from foundry_mcp.tools.foundry_report import generate_report
 
     assert generate_report(Path(project_root), fdir)["ok"] is True
     report = json.loads((fdir / "report.json").read_text(encoding="utf-8"))
     named = json.dumps(report["latent_backlog"]) + json.dumps(report["escalated_classes"])
     assert "D-004" in named and "D-005" in named
+    assert "budget" in json.dumps(report["escalated_classes"])
+
+
+def test_the_finer_boundary_fixture_is_the_scenario_and_not_the_answer(run_env):
+    """D-115 stated as a guard, so the read-back cannot come back.
+
+    The fixture's own `escalation.json` is never copied into the run directory by
+    the test above — production writes that file, from the transitions the test
+    drives. This asserts the two AGREE about the exit, which is the claim the
+    fixture is entitled to make, without either standing in for the other.
+    """
+    fixture = Path(__file__).parent / "fixtures" / "escalation" / "finer_boundary_run"
+    recorded = json.loads(
+        (fixture / "escalation.json").read_text(encoding="utf-8")
+    )["classes"]["FALSE_DOCUMENTED_CONTRACT"]
+
+    assert recorded["exit_reason"] == "budget"
+    assert recorded["structural_packet_cycles"] == [3, 4]
+    assert recorded["cleared_at_cycle"] == 5
+    assert recorded["open_latent_defect_ids"] == ["D-004", "D-005"]
 
 
 def test_an_open_live_instance_of_a_cleared_class_still_blocks_and_is_packeted(run_env):
@@ -3231,3 +3452,295 @@ def test_the_open_latent_backlog_is_refreshed_not_frozen(run_env):
     foundry_defects_to_tasks(project_root)
 
     assert _escalation_entry(fdir)["open_latent_defect_ids"] == ["D-101"]
+
+
+# --------------------------------------------------------------------------- #
+# D-111 — an escalated class whose backlog is entirely LATENT must be able to
+# LEAVE escalation. Both exit arms return immediately unless `escalation.json`
+# holds a record for the class, and the only writer of that file was
+# `_record_escalation_proposals`, reached only from `foundry_defects_to_tasks`.
+# Nothing routes a LATENT-only class there: the DONE guard blocks on
+# `_escalated_classes` (ledger recurrence, not tier-aware) while Foundry-Next's
+# `transition_to_grind` branch — the only caller of `_escalation_notice` and the
+# only branch naming Foundry-Tasks — is guarded by `open_count > 0`, which counts
+# LIVE and untiered only. So the class escalated, blocked DONE, and had no
+# reachable exit at all.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_latent_only_class_acquires_its_record_at_the_inspect_boundary(run_env):
+    """D-111: escalation.json is written at the boundary, not only by Foundry-Tasks.
+
+    Driven exactly as filed: three LATENT instances of one class at server cycles
+    1, 2 and 3 — `_escalated_classes` returns it, and `escalation.json` was
+    ABSENT. The DONE gate refused "1 defect class(es) are still ESCALATED", and
+    following that refusal's own hint six times walked the counter from 4 to 9
+    with the file still absent and the class still escalated.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _latent_recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    assert "FALSE_DOCUMENTED_CONTRACT" in _escalated_classes(fdir, project_root)
+    assert not (fdir / fo.ESCALATION_FILENAME).exists(), (
+        "the fixture must start from the state D-111 reports: escalated, unrecorded"
+    )
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["ok"] is True, result
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "ESCALATED"
+    assert entry["escalated_at_cycle"] == 3
+    assert entry["live_clean_cycles"] == 0
+    assert entry["open_latent_defect_ids"] == ["D-001", "D-002", "D-003"]
+
+
+def test_a_latent_only_class_clears_on_the_clean_arm_within_the_promised_bound(run_env):
+    """D-111's real complaint: the block was UNBOUNDED.
+
+    The D-034 lead ruling promises the escalation block is bounded at "at most
+    two more INSPECT cycles or one structural packet". With no persisted record
+    neither arm could fire, so it was bounded by nothing. With the record written
+    at the boundary the promise holds: two further crossings and the class is
+    CLEARED with a machine-readable exit reason (AC-004 / FR-028), and DONE stops
+    naming it.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _latent_recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+
+    _cross_boundary(fdir, project_root)   # closes 3, the escalation cycle
+    _cross_boundary(fdir, project_root)   # closes 4 — clean
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 1
+    _cross_boundary(fdir, project_root)   # closes 5 — two consecutive, out
+
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "CLEARED", entry
+    assert entry["exit_reason"] == "clean_cycles", entry
+    assert entry["cleared_at_cycle"] == 6, entry
+    assert _escalated_classes(fdir, project_root) == {}
+
+    # ...and the F6 door stops naming it, which is the outcome the six wasted
+    # crossings in the filing were trying and failing to reach.
+    outcome = fo._done_preconditions(fdir, project_root)
+    assert "FALSE_DOCUMENTED_CONTRACT" not in outcome["reason"], outcome["reason"]
+
+
+def test_the_done_refusal_names_the_arm_and_the_cycles_remaining(run_env):
+    """D-111's hint half: the refusal named a call that was a no-op in that state.
+
+    The hint offered two routes — "cross the GRIND->INSPECT boundary so the
+    clean-cycle arm counts, or spend the structural budget" — and for a class
+    with no record BOTH were no-ops, while `escalation-override` (which does
+    clear it, and leaves no record) was never mentioned. It now states the
+    distance to each arm, per class, from the record the boundary writes.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _latent_recurring([1, 2, 3]))
+    _write_state(fdir, phase="F3", cycle=3)
+    _cross_boundary(fdir, project_root)   # closes 3, records the class
+    _cross_boundary(fdir, project_root)   # closes 4 — one clean cycle banked
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False
+    hint = outcome["hint"]
+    assert "FALSE_DOCUMENTED_CONTRACT: 1 more INSPECT cycle(s)" in hint, hint
+    assert "2 more structural packet(s)" in hint, hint
+    assert "inspect_start" in hint, hint
+
+
+# --------------------------------------------------------------------------- #
+# D-112 — "two CONSECUTIVE INSPECT cycles" (FR-003, Locked) is a test the clean
+# arm did not make.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_live_draw_between_two_clean_cycles_does_not_clear_the_class(run_env):
+    """FR-003 verbatim: 'Two consecutive INSPECT cycles with zero LIVE instances
+    of the class'. ST-001 repeats 'the second consecutive INSPECT cycle'.
+
+    The no-regression half of D-112, stated on the path that already held: a
+    LIVE draw the arm ACTUALLY EVALUATES has always reset the accumulator. What
+    D-112 reports is the path where the arm is never reached at all, which
+    `test_cycles_skipped_under_an_override_break_the_streak_too` drives — so
+    this test exists to keep the working half working while that one closes the
+    hole, and it must not start passing for the adjacency test's reason instead
+    of its own.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)          # LIVE at 1, 2, 3 -> escalated at 3
+    _cross_boundary(fdir, project_root)    # closes 3
+    _cross_boundary(fdir, project_root)    # closes 4 — clean, count 1
+
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    defects.append(_defect("D-050", 5, **{
+        "class": "FALSE_DOCUMENTED_CONTRACT", "tier": "LIVE",
+    }))
+    _write_defects(fdir, defects)
+    _cross_boundary(fdir, project_root)    # closes 5 — LIVE draw, streak ends
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 0
+
+    _cross_boundary(fdir, project_root)    # closes 6 — clean, count 1 again
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "ESCALATED", (
+        "one clean cycle either side of a LIVE draw is not two consecutive ones"
+    )
+    assert entry["live_clean_cycles"] == 1, entry
+
+
+def test_cycles_skipped_under_an_override_break_the_streak_too(run_env):
+    """D-112 as driven: the LIVE draws were never even EVALUATED.
+
+    `_persisted_escalations` filters out an operator-overridden class, so every
+    boundary crossed while an `escalation-override` directive is active is
+    skipped entirely — the arm is never reached, so no LIVE-draw reset could
+    fire and the accumulator survived untouched. Driven: escalated at 3, clean at
+    4, then the override (the marker the server's OWN structural proposal prints)
+    held across 5, 6 and 7, each drawing a LIVE instance. After
+    Foundry-Clear-Directives the next crossing recorded CLEARED / clean_cycles /
+    cleared_at 9 with live_clean_cycles_counted [4, 8] — a streak claimed across
+    three cycles nothing judged, while six LIVE instances stood open.
+
+    Adjacency is tested against `live_clean_cycles_counted`, which already
+    records which cycles were evaluated.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    _cross_boundary(fdir, project_root)    # closes 3
+    _cross_boundary(fdir, project_root)    # closes 4 — clean, count 1
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 1
+
+    foundry_inject_directive(
+        fo._override_instruction("FALSE_DOCUMENTED_CONTRACT"),
+        project_root=project_root,
+    )
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    for i, cycle in enumerate((5, 6, 7), start=4):
+        defects.append(_defect(f"D-{i:03d}", cycle, **{
+            "class": "FALSE_DOCUMENTED_CONTRACT", "tier": "LIVE",
+        }))
+        _write_defects(fdir, defects)
+        _cross_boundary(fdir, project_root)   # closes 5, 6, 7 — all skipped
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 1, (
+        "an overridden class must not advance the count either"
+    )
+
+    fo.foundry_clear_directives(project_root=project_root)
+    _cross_boundary(fdir, project_root)    # closes 8 — clean, but NOT adjacent
+
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "ESCALATED", (
+        "cycles 5-7 drew LIVE instances and were never evaluated; a streak "
+        "cannot be claimed across them"
+    )
+    assert entry["live_clean_cycles"] == 1, entry
+    assert entry["live_clean_cycles_counted"] == [8], entry
+
+
+def test_the_counted_cycles_are_the_current_streak_and_match_its_length(run_env):
+    """D-112's record invariant, which is what makes the count checkable.
+
+    `live_clean_cycles_counted` is the streak's own evidence, so it holds the
+    cycles of the CURRENT streak and nothing else — `live_clean_cycles ==
+    len(live_clean_cycles_counted)` at every boundary. Under the old bare
+    accumulator the list was a mixed audit log and the number did not match it,
+    which is exactly why a non-consecutive pair could read as a streak of two.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    for _ in range(2):
+        _cross_boundary(fdir, project_root)
+        entry = _escalation_entry(fdir)
+        assert entry["live_clean_cycles"] == len(entry["live_clean_cycles_counted"]), entry
+
+
+# --------------------------------------------------------------------------- #
+# D-113 / D-114 — both exit arms evaluate ONLY on a transition that advanced the
+# cycle counter, because both are stated in terms of a cycle having ENDED.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_clean_arm_never_evaluates_a_cycle_still_in_flight(run_env):
+    """D-113: `inspect_start` from F5.5 evaluated the OPEN cycle.
+
+    The branch had no source-phase precondition, so entered from F4, F5 or F5.5
+    it set phase F2, did NOT advance the counter, and called the exit arms with
+    `completed_cycle` equal to the cycle still in flight. Driven: escalated at 3
+    with live_clean_cycles 1 at F5.5 and cycle 6 open, `inspect_start` returned
+    ok with the counter still 6 and stamped CLEARED / clean_cycles /
+    cleared_at 6, counted [4, 5, 6]. TEMPER then filed a LIVE instance of the
+    class INSIDE cycle 6, and because CLEARED is terminal the boundary that
+    really closed cycle 6 could not undo it.
+
+    This is precisely the call the DONE and nyquist_done refusal hints instruct
+    the lead to make, so it was on the guided path.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    _cross_boundary(fdir, project_root)   # closes 3
+    _cross_boundary(fdir, project_root)   # closes 4 — one clean cycle banked
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 1
+
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["phase"] = "F5.5"
+    state["cycle"] = 6
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "F5.5" in result["error"], result
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "ESCALATED", entry
+    assert entry["cleared_at_cycle"] is None, entry
+    assert 6 not in entry["live_clean_cycles_counted"], entry
+    assert _current_cycle(fdir) == 6
+
+
+def test_the_budget_arm_never_retracts_a_packet_inside_its_own_cycle(run_env):
+    """D-114, a REGRESSION of D-058 through the same unguarded door.
+
+    The ST-002 lead ruling requires CLEARED-via-budget to be applied when the
+    boundary CLOSES the cycle the budget-th packet was dispatched in. The guard
+    is `completed_cycle >= packet_cycles[BUDGET - 1]`, satisfied by EQUALITY —
+    and equality is exactly what every `inspect_start` that closes no cycle
+    produces. Driven through the real doors: packet 1 at cycle 3, run walked to
+    F5.5 at cycle 4, Foundry-Tasks at F5.5 emitted packet 2 in cycle 4, then
+    `inspect_start` from F5.5 returned ok with the counter still 4 and stamped
+    CLEARED / budget / cleared_at 4 — the packet retracted inside the cycle that
+    emitted it, with no GRIND ever working it.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    foundry_defects_to_tasks(project_root)          # packet 1, cycle 3
+    _cross_boundary(fdir, project_root)             # closes 3, opens 4
+
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["phase"] = "F5.5"
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    foundry_defects_to_tasks(project_root)          # packet 2, cycle 4
+    entry = _escalation_entry(fdir)
+    assert entry["structural_packets_dispatched"] == STRUCTURAL_PASS_BUDGET
+    assert entry["structural_packet_cycles"] == [3, 4]
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result.get("ok") is not True, result
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "ESCALATED", (
+        "packet 2 was dispatched in cycle 4 and cycle 4 has not closed"
+    )
+    assert entry["cleared_at_cycle"] is None, entry
+    assert _current_cycle(fdir) == 4
+
+    # The HONEST crossing — which closes cycle 4 — is what spends the budget.
+    _cross_boundary(fdir, project_root)
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "CLEARED", entry
+    assert entry["exit_reason"] == "budget", entry
+    assert entry["cleared_at_cycle"] == 5, entry

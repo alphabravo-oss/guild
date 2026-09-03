@@ -789,13 +789,18 @@ def test_streams_complete_reads_the_recorded_roster_and_never_recomputes_it(run_
     assert _check_streams_complete(project_root)["required"] == recorded
 
 
-def test_a_run_with_no_recorded_decision_falls_back_to_the_prior_roster(run_env):
-    """Archive compatibility, and the shape of the fallback.
+def test_a_run_with_no_recorded_decision_is_refused_not_read_as_full(run_env):
+    """D-117 / GI-008 / GI-009 — the pre-width fallback IS the violation.
 
-    A run resumed from before this landed has no `inspect_modes`. The check must
-    then require exactly what it required before the width existed — that is not
-    a guess at a width, it is the pre-change behaviour, and it is what a resumed
-    archive should get.
+    This function used to fall back to the roster it required before the width
+    existed — trace/prove/test — and the fallback was argued for as archive
+    compatibility. GI-008 names it outright: "a streams-complete check that
+    reads a roster nothing recorded". The fallback silently dropped
+    `research_audit` and `test01` from every mode-less INSPECT and reported
+    complete, which is how ASSAY came to open on a three-stream roster.
+
+    The refusal names the missing record AND the transition that writes it,
+    because "there is no recorded width" is not an action.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2)
@@ -803,9 +808,212 @@ def test_a_run_with_no_recorded_decision_falls_back_to_the_prior_roster(run_env)
 
     streams = _check_streams_complete(project_root)
 
-    assert streams["required"] == ["trace", "prove", "test"]
-    assert streams["inspect_mode"] == ""
+    assert streams["complete"] is False, streams
+    assert streams["unrecorded_width"] is True, streams
+    assert streams["required"] == []
+    assert "inspect_mode" in streams["missing"]
+    assert "no recorded width" in streams["reason"]
+    assert "inspect_start" in streams["hint"]
     assert _current_inspect_mode(fdir) is None
+
+
+def test_an_unrecorded_inspect_width_is_refused_at_every_door(run_env):
+    """D-117 driven at all five consumers on ONE run state.
+
+    Each door degraded permissively on its own terms and each was individually
+    defensible; together they admitted a mode-less INSPECT as full width
+    everywhere at once. Driven end to end on a legacy-shaped archive with stale
+    committed evidence: streams-complete reported complete, `inspect_clean`
+    returned ok and moved the run to F4, and `Foundry-Gate('assay')` PASSED
+    carrying `inspect_ran_at_full_width (mode=unrecorded rule=unrecorded)
+    ok=True` — the check naming, in its own string, the fact that made its
+    verdict false.
+
+    Asserted as one test over the whole set, because a fix wired into four of
+    five doors leaves the fifth deciding on a different definition of "full
+    width", which is the shape D-117 reports.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2)
+    _write_manifest(fdir)
+    _write_spec(fdir, ["FR-001"])
+    _write_defects(fdir, [])
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=2\nitems_checked=1\nitems_total=1\n"
+            "coverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+    assert _current_inspect_mode(fdir) is None
+
+    # 1. the streams-complete check
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+
+    # 2. Foundry-Phase('inspect_clean')
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean.get("ok") is not True, clean
+    assert clean["unrecorded_width"] is True, clean
+    assert "no recorded width" in clean["error"], clean
+    assert "inspect_start" in clean["hint"], clean
+    assert _read_state(fdir)["phase"] == "F2", "the run must not reach F4"
+
+    # 3. Foundry-Gate('assay')
+    _arm(fdir)
+    gate = fo.foundry_gate("assay", project_root)
+    assert gate["passed"] is False, gate
+    width = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("inspect_ran_at_full_width")
+    )
+    assert width["ok"] is False, width
+    assert "unrecorded" in width["check"], width
+
+    # 4. `_maybe_skip_trace` — no auto-stamp, whatever the legacy markers say
+    (fdir / ".trace-complete").unlink(missing_ok=True)
+    (fdir / ".trace-clean-at").write_text(
+        _git(Path(project_root), "rev-parse", "HEAD") + "\n", encoding="utf-8"
+    )
+    decision = fo._maybe_skip_trace(fdir, project_root)
+    assert decision is not None and decision["skip"] is False, decision
+    assert "no recorded width" in decision["reason"], decision
+    assert not (fdir / ".trace-complete").exists(), (
+        "TRACE was auto-stamped complete on a width nothing recorded"
+    )
+
+    # 5. Foundry-Next names the transition that records one, and dispatches no
+    #    stream roster it cannot know.
+    action = fo._compute_next_action(project_root)
+    assert action["action"] == "record_inspect_width", action
+    assert "inspect_start" in action["instructions"], action
+    assert action["details"]["unrecorded_width"] is True
+
+
+def test_an_unrecorded_width_sweeps_the_whole_corpus_not_a_delta_slice(run_env):
+    """D-117's fifth consumer: the sweep scope is a CLAIM about the width.
+
+    "Only these logs can have been invalidated by this GRIND" rests on the width
+    decision, so an entry carrying no mode must not also narrow the sweep. The
+    honest reading of an unknown width is the whole corpus — the same reading
+    `_decide_inspect_mode` already gives an uncomputable diff.
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+    seen: dict = {}
+
+    def _fake_select(*, manifest, evidence_dir, touched_files, full):
+        seen["full"] = full
+        return []
+
+    import foundry_mcp.tools.evidence as evidence_mod
+
+    original = evidence_mod.select_sweep_scope
+    evidence_mod.select_sweep_scope = _fake_select
+    try:
+        fo._sweep_evidence_at_boundary(
+            fdir, project_root, {"touched_files": ["src/handler.py"]}, full=False
+        )
+    finally:
+        evidence_mod.select_sweep_scope = original
+
+    assert seen["full"] is True, (
+        "an entry with no recorded mode narrowed the sweep to a delta slice"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-102 / FR-011 / AC-016 / ST-006 — the spec has TWO spellings and both fire
+# --------------------------------------------------------------------------- #
+
+
+def test_a_grind_touching_the_declared_spec_path_records_verifier_touched(run_env):
+    """FR-011 verbatim (Locked): 'FULL when: ... or the GRIND diff touches
+    vocab.py, schemas/, gate/orchestrator code, agent/skill prose, or the spec.'
+
+    The rule never fired on the spec. `_resolve_spec_path` PREFERS
+    `<run_dir>/spec.md` and only falls back to `state.json.spec_path`, so on the
+    ordinary run — which has both, because init copies the spec into the archive
+    — the singular resolver returned the archive copy and the authored spec was
+    invisible. Driven at three spec locations: a GRIND diff whose ONLY touched
+    file was the path `state.json` records as `spec_path` opened the next
+    INSPECT at DELTA, rule `delta`, while every other FULL trigger fired
+    correctly.
+    """
+    project_root, fdir = run_env
+    _write_manifest(fdir)
+    _write_defects(fdir, [_open_live()])
+
+    spec_rel = "forge-specs/subject/spec.md"
+    target = Path(project_root) / spec_rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# Spec\n- **FR-001**: the thing works\n", encoding="utf-8")
+    _write_state(fdir, phase="F3", cycle=1, spec_path=spec_rel)
+    # The archive copy exists too, which is the whole point: the run has BOTH
+    # spellings and the old resolver could only ever return one of them.
+    _write_spec(fdir, ["FR-001"])
+
+    _grind_touching(project_root, fdir, spec_rel)
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result["inspect_mode"] == "FULL", result
+    assert result["inspect_rule"] == "verifier_touched", result
+    entry = _read_state(fdir)["inspect_modes"][-1]
+    assert entry["touched_files"] == [spec_rel], entry
+    assert spec_rel in entry["rule_detail"], entry
+
+
+def test_the_archived_spec_spelling_answers_the_predicate_too(run_env):
+    """The other spelling, so the fix cannot be a swap of which one is checked.
+
+    Asserted through the predicate rather than through a GRIND diff, because
+    this repo's own `.gitignore` carries `/foundry-archive/` (the fixture
+    mirrors it, for the reason `run_env` states) — the archive copy cannot
+    appear in a diff HERE. It can in a target repo that does not ignore the
+    archive, and C-1 names both paths, so both are supplied and both must
+    answer. A fix that preferred the declared path over the archived one would
+    close D-102 by reopening it on the other side.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1, spec_path="forge-specs/subject/spec.md")
+    declared = Path(project_root) / "forge-specs" / "subject" / "spec.md"
+    declared.parent.mkdir(parents=True, exist_ok=True)
+    declared.write_text("# Spec\n", encoding="utf-8")
+    _write_spec(fdir, ["FR-001"])
+
+    from foundry_mcp.schemas.vocab import is_verifier_path
+
+    spellings = fo._spec_relative_paths(project_root)
+    archived = next(s for s in spellings if s.endswith(f"{RUN_NAME}/spec.md"))
+    assert any(is_verifier_path("forge-specs/subject/spec.md", s) for s in spellings)
+    assert any(is_verifier_path(archived, s) for s in spellings)
+    # Neither is a static VERIFIER_PATH_PATTERNS member — they match only
+    # because the caller supplied them, which is the seam D-102 is about.
+    assert not is_verifier_path("forge-specs/subject/spec.md")
+    assert not is_verifier_path(archived)
+
+
+def test_both_spec_spellings_are_offered_to_the_verifier_predicate(run_env):
+    """The seam itself, so a caller cannot silently go back to one spelling.
+
+    `is_verifier_path` takes ONE `spec_path` and lives in casting 1's vocab.py,
+    whose signature is LOCKED by C-1 — so the two spellings have to be supplied
+    BY THE CALLER, and this asserts the caller has both to supply.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1, spec_path="forge-specs/subject/spec.md")
+    declared = Path(project_root) / "forge-specs" / "subject" / "spec.md"
+    declared.parent.mkdir(parents=True, exist_ok=True)
+    declared.write_text("# Spec\n", encoding="utf-8")
+    _write_spec(fdir, ["FR-001"])
+
+    spellings = fo._spec_relative_paths(project_root)
+
+    assert "forge-specs/subject/spec.md" in spellings, spellings
+    assert any(s.endswith(f"{RUN_NAME}/spec.md") for s in spellings), spellings
+    assert len(spellings) == len(set(spellings)), spellings
 
 
 # --------------------------------------------------------------------------- #

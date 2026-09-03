@@ -1079,10 +1079,20 @@ def test_sync_carries_a_stream_declared_class_onto_the_record(run_env):
     assert fo._defect_class(record) == "FALSE_DOCUMENTED_CONTRACT"
 
 
-def test_sync_routes_a_declared_comment_prose_finding_to_observations(run_env):
-    """FR-001 routing half: a comment-prose finding is refused from the defect
-    ledger and recorded in observations.json instead — through the one ledger
-    writer, never a second one here."""
+def test_sync_refuses_a_declared_comment_prose_finding_as_the_other_door_does(run_env):
+    """D-098 / FR-051 / AC-008: ONE pipeline order, so both doors refuse it.
+
+    LEAD RULING, GRIND cycle 6: the rung order is comment-prose refusal, then
+    security denylist, tier, class, reproduction_attempted, re-tier match,
+    persist — hosted in one place both doors call, and asserted by driving the
+    SAME finding through both and requiring identical outcomes.
+
+    This door used to ROUTE such a finding into observations.json and return ok,
+    while `foundry_add_defect` REFUSED it and named Foundry-Observation. Two
+    doors, one rule, opposite answers. The refusal is now the answer at both,
+    and the finding lands in neither ledger until the filer re-sends it through
+    the channel the refusal names.
+    """
     project_root, fdir = run_env
     _sync_env(fdir)
 
@@ -1096,11 +1106,120 @@ def test_sync_routes_a_declared_comment_prose_finding_to_observations(run_env):
         project_root,
     )
 
-    assert result.get("ok") is True, result
-    assert result["added"] == 0
-    assert result["observations"] == 1
+    assert result.get("ok") is not True, result
+    assert "comment-prose observation class" in result["error"], result
+    assert "LINE_DRIFT_CITE" in result["error"], result
+    refusal = result["refusals"][0]
+    assert refusal["field"] == "description", refusal
+    assert refusal["refused_class"], refusal
+    # Nothing landed anywhere: the batch is all-or-nothing and a refused finding
+    # is not quietly written to the other ledger either.
     assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
-    assert (fdir / "observations.json").exists()
+    observations = (
+        json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+        if (fdir / "observations.json").exists() else {"observations": []}
+    )
+    assert observations.get("observations", []) == []
+
+
+def test_both_filing_doors_refuse_one_comment_prose_finding_identically(run_env):
+    """D-098 stated as the property, driven through BOTH doors on one ledger.
+
+    The filing that exposed the divergence: a `target_kind='comment'` LATENT
+    finding whose description is ENUMERATION-classed and whose
+    (source, type, file, symbol) MATCHES an open untiered D-001. Through
+    Foundry-Defect it was refused and D-001 was left alone; through Foundry-Sync
+    it re-tiered D-001 in place and reported success — the same finding turning
+    a blocking untiered record into a tracked defect, or not, depending only on
+    which door the stream happened to use.
+
+    Both doors now refuse it on the first rung, and D-001 is untouched by both.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    untiered = {
+        "id": "D-001",
+        "cycle": 0,
+        "source": "trace",
+        "type": "UNWIRED",
+        "description": "the original wording, which a re-filing rewrites",
+        "spec_ref": "",
+        "symbol": "helper",
+        "file": "src/api/a.py",
+        "status": "open",
+        "fixed_in_cycle": None,
+    }
+    prose = "the docstring says 8 items but there are 9 now"
+
+    for door in ("defect", "sync"):
+        (fdir / "defects.json").write_text(
+            json.dumps({"defects": [dict(untiered)]}), encoding="utf-8"
+        )
+        if door == "defect":
+            result = foundry_add_defect(
+                cycle=0, source="trace", defect_type="UNWIRED", description=prose,
+                symbol="helper", file_path="src/api/a.py", target_kind="comment",
+                defect_class="COMMENT_DRIFT", tier="LATENT",
+                reproduction_attempted="read every caller; the count is prose only",
+                project_root=project_root,
+            )
+            refused = result.get("error", "")
+        else:
+            result = _sync(
+                0,
+                [_finding(
+                    description=prose, symbol="helper", file="src/api/a.py",
+                    target_kind="comment", tier="LATENT",
+                    reproduction_attempted="read every caller; the count is prose only",
+                )],
+                project_root,
+            )
+            refused = result.get("error", "")
+
+        assert "comment-prose observation class" in refused, (door, result)
+        assert result.get("retiered", 0) == 0, (door, result)
+        record = json.loads(
+            (fdir / "defects.json").read_text(encoding="utf-8")
+        )["defects"][0]
+        assert record["id"] == "D-001", (door, record)
+        assert "tier" not in record or record["tier"] is None, (door, record)
+
+
+def test_both_filing_doors_name_the_same_rung_first_for_one_bad_filing(run_env):
+    """D-098's other half: the doors named DIFFERENT fields first.
+
+    With `tier='MEDIUM'` on a declared-comment ENUMERATION finding,
+    Foundry-Defect named the observation class and Foundry-Sync named `tier` —
+    contradicting `validate_defect_filing`'s own pinned contract, "THE CHECK
+    ORDER IS LOCKED, so that the two doors name the same field first for the
+    same bad filing". Two rungs are wrong at once here, and the door that
+    refuses first decides WHICH LEDGER the finding belongs in, so it has to be
+    the same rung on both.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    prose = "the docstring says 8 items but there are 9 now"
+
+    single = foundry_add_defect(
+        cycle=0, source="trace", defect_type="UNWIRED", description=prose,
+        symbol="helper", file_path="src/api/a.py", target_kind="comment",
+        defect_class="COMMENT_DRIFT", tier="MEDIUM", project_root=project_root,
+    )
+    batch = _sync(
+        0,
+        [_finding(description=prose, symbol="helper", file="src/api/a.py",
+                  target_kind="comment", tier="MEDIUM")],
+        project_root,
+    )
+
+    assert "comment-prose observation class" in single.get("error", ""), single
+    assert "comment-prose observation class" in batch.get("error", ""), batch
+    assert "Invalid tier" not in batch.get("error", ""), batch
+    assert single["refused_class"] == batch["refusals"][0]["refused_class"]
 
 
 def test_sync_keeps_a_denylisted_finding_as_a_defect(run_env):
@@ -1122,7 +1241,10 @@ def test_sync_keeps_a_denylisted_finding_as_a_defect(run_env):
     )
 
     assert result["added"] == 1
-    assert result["observations"] == 0
+    # D-098: this door reports no `observations` count any more — the demotion
+    # it counted is gone. That the finding is a DEFECT is the whole claim, and
+    # `added == 1` is it.
+    assert "observations" not in result, result
 
 
 def test_sync_will_not_demote_a_finding_that_declares_no_target_kind(run_env):
@@ -1139,7 +1261,7 @@ def test_sync_will_not_demote_a_finding_that_declares_no_target_kind(run_env):
     )
 
     assert result["added"] == 1
-    assert result["observations"] == 0
+    assert "observations" not in result, result
 
 
 # --------------------------------------------------------------------------- #
@@ -2161,12 +2283,18 @@ def test_sync_denylist_hit_fires_the_tripwire_end_to_end(run_env):
     )
 
 
-def test_sync_still_demotes_a_clean_comment_finding_without_a_tripwire(run_env):
+def test_sync_refuses_a_clean_comment_finding_without_firing_a_tripwire(run_env):
     """The other side of D-036: routing the decision through
     ``record_denylist_tripwire`` must not turn ordinary comment-drift prose into
     a tripwire. Its NON_COMMENT fallback cannot fire under the declared-comment
-    guard, so a legitimate demotion still lands in the observations ledger with
-    the audit channel silent."""
+    guard, so a legitimate comment-prose finding is refused with the audit
+    channel silent.
+
+    D-098 changed the OUTCOME and not the audit property under test: the finding
+    is now refused at this door exactly as at Foundry-Defect, rather than routed
+    into observations.json. What this test still pins is that no tripwire fires
+    for it — the denylist had nothing to do with the decision.
+    """
     from foundry_mcp import server as foundry_server
 
     project_root, fdir = run_env
@@ -2196,12 +2324,16 @@ def test_sync_still_demotes_a_clean_comment_finding_without_a_tripwire(run_env):
     finally:
         foundry_server._project_root = previous_root
 
-    assert result["observations"] == 1, result
-    assert result["added"] == 0, result
+    assert "comment-prose observation class" in result.get("error", ""), result
+    assert result.get("added", 0) == 0, result
     assert "denylist_tripwires" not in result
 
-    observations = json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
-    assert len(observations["observations"]) == 1
+    observations = (
+        json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+        if (fdir / "observations.json").exists() else {}
+    )
+    # The audit channel is SILENT — that is the D-036 property, and it survives
+    # the finding being refused rather than demoted.
     assert observations.get("tripwire", []) == []
 
 
@@ -3019,7 +3151,10 @@ def test_sync_keeps_every_security_battery_case_as_a_defect(run_env, description
 
     assert result.get("ok") is True, result
     assert result["added"] == 1, result
-    assert result["observations"] == 0, result
+    # D-098: the demotion counter is gone from this door's result along with the
+    # demotion. That every battery case is a DEFECT is the claim, and it is the
+    # ledger below that carries it.
+    assert "observations" not in result, result
     defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
     assert [d["description"] for d in defects] == [description]
 
@@ -3053,7 +3188,7 @@ def test_sync_keeps_a_behaviour_finding_with_no_security_vocabulary(run_env):
     )
 
     assert result["added"] == 1, result
-    assert result["observations"] == 0, result
+    assert "observations" not in result, result
     assert "denylist_tripwires" not in result, result
     defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
     assert [d["description"] for d in defects] == [NO_SECURITY_VOCABULARY]
@@ -3119,14 +3254,15 @@ def test_the_two_filing_paths_agree_on_what_a_defect_is(
 
 
 @pytest.mark.parametrize("description", [DRIFT, COUNT, DIRECTION, ENUMERATION])
-def test_sync_still_demotes_the_canonical_comment_prose_classes(run_env, description):
+def test_sync_still_refuses_the_canonical_comment_prose_classes(run_env, description):
     """The no-regression half, at this branch rather than across doors.
 
     The promote-direction guard is biased to over-match on purpose, and
     over-matching is the safe direction — but a guard that matched EVERYTHING
     would refuse nothing and quietly delete the observation channel AC-001
     exists to fill. These four are the canonical comment-prose findings; each
-    must still reach observations.json through Sync.
+    must still be kept OUT of the defect ledger through Sync, and after D-098
+    each is refused there by name rather than silently rerouted.
     """
     project_root, fdir = run_env
     _sync_env(fdir)
@@ -3135,8 +3271,8 @@ def test_sync_still_demotes_the_canonical_comment_prose_classes(run_env, descrip
         0, [_finding(description=description, target_kind="comment")], project_root
     )
 
-    assert result["added"] == 0, result
-    assert result["observations"] == 1, result
+    assert result.get("added", 0) == 0, result
+    assert "comment-prose observation class" in result.get("error", ""), result
     assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
 
 
@@ -7865,6 +8001,42 @@ def _defect_ledger(fdir: Path, records: list[dict]) -> None:
     )
 
 
+def _record_full_inspect_mode(
+    fdir: Path, *, cycle: int, phase: str = "F2", decided_by: str = "inspect_start"
+) -> dict:
+    """Append the `state.json.inspect_modes` entry a real crossing records.
+
+    D-117: an INSPECT with no recorded width is no longer read as full width by
+    any door, so a fixture that means "this run completed a FULL INSPECT" has to
+    say so the way the transition says it. Written through
+    `_decide_inspect_mode`'s own shape rather than a hand-typed dict, so a
+    fixture cannot claim a roster the decider would not produce.
+    """
+    state_path = fdir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    entry = {
+        "cycle": cycle,
+        "phase": phase,
+        "mode": "FULL",
+        "rule": "final_gate",
+        "rule_detail": "fixture: the INSPECT before the end gates",
+        "decided_by": decided_by,
+        "decided_at": fo._now(),
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {
+            wire: {"scope": "full", "detail": "every item in scope"}
+            for wire in ("trace", "prove", "test")
+        },
+        "touched_files": [],
+        "prove_sample": [],
+        "diff_base": "",
+    }
+    modes = state.get("inspect_modes")
+    state["inspect_modes"] = (modes if isinstance(modes, list) else []) + [entry]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    return entry
+
+
 def _ready_for_the_end_gates(project_root: str, fdir: Path) -> None:
     """Everything the four end gates need EXCEPT a defect ledger.
 
@@ -7873,6 +8045,12 @@ def _ready_for_the_end_gates(project_root: str, fdir: Path) -> None:
     """
     _write_spec(fdir, ["FR-1"])
     _write_state(fdir, phase="F4", cycle=1, nyquist=True)
+    # D-117: the INSPECT that opened these gates recorded its width, because
+    # every INSPECT a real run reaches ASSAY through did. A fixture without one
+    # is a run whose roster nothing recorded, which is now refused by name at
+    # ASSAY and at inspect_clean — see
+    # `test_an_unrecorded_inspect_width_is_refused_at_every_door`.
+    _record_full_inspect_mode(fdir, cycle=1)
     _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
     for stream in ("trace", "prove", "test"):
         (fdir / f".{stream}-complete").write_text(
@@ -9695,7 +9873,15 @@ def test_the_phase_token_guard_did_not_change_the_derived_branch_set(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# D-089 — the filing doors advertise the location the report promises
+# D-101 — the filing doors advertise no obligation the handler does not enforce
+#
+# The D-089 LEAD RULING that made `file_path` / `file` REQUIRED on a LATENT
+# filing is REVERSED (run state.json, spec_ambiguities entry 6). A tool
+# description that demands a field the door accepts without is the same drift as
+# an enum the handler rejects, and worse on a filing door: a stream reading it
+# withholds a filing it should make, or hand-fabricates a location to satisfy a
+# rule nothing checks. So both doors advertise the field as EXPECTED — which is
+# true, and is what the F6 backlog renders — and neither calls it required.
 # --------------------------------------------------------------------------- #
 
 
@@ -9706,38 +9892,78 @@ def _tool_schema(name: str) -> tuple[str, dict]:
     return tool.description or "", tool.inputSchema
 
 
-def test_the_single_filing_door_advertises_that_a_latent_row_needs_a_location():
-    """NFR-003 / AC-036 / D-089: REPORT.md's LATENT backlog claims 'Each row
-    names where the work is, because this list is read by a lead who has no
-    defects.json to join against (D-029)' — and `Foundry-Defect` accepted a
-    LATENT filing with no file_path and no symbol, which rendered as
-    '| D-002 | no-location | 1 |  |  | prove | ... |' directly beneath that
-    claim. The report held up its half; the filing door did not, so the exact
-    failure D-029 closed was reachable again through the front door.
+def test_the_single_filing_door_no_longer_advertises_a_required_location():
+    """D-101: `Foundry-Defect` stops asserting the withdrawn D-089 obligation.
+
+    The location is still EXPECTED and the reason is still stated — the F6
+    LATENT backlog is read by a lead with no defects.json to join against
+    (D-029) — because guidance the door does not enforce is still worth giving.
+    What may not survive is the word REQUIRED, which was a contract.
     """
     description, schema = _tool_schema("Foundry-Defect")
 
-    assert "LATENT" in description and "file_path" in description
+    assert "must carry file_path" not in description
     file_path = schema["properties"]["file_path"]
-    assert "REQUIRED on a LATENT filing" in file_path["description"]
+    assert "REQUIRED" not in file_path["description"], file_path
+    assert "Expected on every filing" in file_path["description"]
     assert "D-029" in file_path["description"]
-    # The location is a PAIR, and the symbol half is what survives line drift.
+    # The location is still a PAIR, and the symbol half is what survives line
+    # drift — unchanged by the withdrawal.
     assert "symbol" in file_path["description"]
     assert "symbol" in schema["properties"]["symbol"]["description"]
 
 
-def test_the_batch_filing_door_advertises_the_same_obligation():
-    """The SAME obligation on the door a whole INSPECT stream files through.
+def test_the_batch_filing_door_withdraws_it_on_the_same_terms():
+    """The SAME withdrawal on the door a whole INSPECT stream files through.
     Two filing doors that disagree about what a defect must carry would be a
-    worse bug than any either could have alone.
+    worse bug than any either could have alone, and this is the door where a
+    wrongly-advertised requirement costs a whole batch.
     """
     description, schema = _tool_schema("Foundry-Sync")
 
-    assert "LATENT" in description and "`file`" in description
+    assert "must carry `file`" not in description
     item = schema["properties"]["findings"]["items"]["properties"]
-    assert "REQUIRED on a LATENT finding" in item["file"]["description"]
+    assert "REQUIRED" not in item["file"]["description"], item["file"]
+    assert "Expected on every finding" in item["file"]["description"]
     assert "D-029" in item["file"]["description"]
-    assert "batch is refused" in item["file"]["description"]
+
+
+def test_neither_filing_door_refuses_a_latent_filing_for_a_missing_location(run_env):
+    """D-101 driven, not merely read off the schema.
+
+    The prose and the handler are two surfaces of one rule, and this run has
+    already paid for the pair disagreeing (D-098). A LATENT filing with no
+    location is ACCEPTED at both doors, so the withdrawn advertisement matches
+    what the doors do.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    single = foundry_add_defect(
+        cycle=0, source="trace", defect_type="UNWIRED",
+        description="the retry path is never reached from the pool reaper",
+        defect_class="SCAN_GAP", tier="LATENT",
+        reproduction_attempted="drove every caller; none reach the branch",
+        project_root=project_root,
+    )
+    assert single.get("defect_id"), single
+    assert "file_path" not in str(single.get("error", ""))
+
+    batch = _sync(
+        0,
+        [{
+            "source": "prove", "type": "MISSING",
+            "description": "the second reaper never observes the evicted entry",
+            "tier": "LATENT",
+            "reproduction_attempted": "swept both roots; 0 sites",
+            "class": "SCAN_GAP",
+        }],
+        project_root,
+    )
+    assert batch.get("ok") is True, batch
+    assert batch["added"] == 1, batch
 
 
 # --------------------------------------------------------------------------- #
@@ -9868,3 +10094,115 @@ def test_the_sync_door_still_re_tiers_in_place(run_env):
     assert [d["id"] for d in records] == ["D-001"]
     assert records[0]["tier"] == "LATENT"
     assert fo._blocking_defects(fdir)["blocking"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# D-100 — the re-tier outcome crosses the MCP boundary.
+#
+# Both filing doors return `retiered` and `retiered_ids`, under the same two key
+# names and with a comment saying so "so a lead or a report reading either door's
+# result handles one shape" — and `display.format_result` dropped both, on both
+# doors. `_blocking_defects`' hint instructs the lead to re-file each untiered
+# defect through either door PRECISELY so the blocking count moves; the screen
+# never said it did, so the return trip on the documented recovery path failed
+# and the lead's rational next move was to re-file again or conclude the exit
+# does not work.
+# --------------------------------------------------------------------------- #
+
+
+def _plain(text: str) -> str:
+    """`text` with ANSI colour removed — what a lead actually reads."""
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def test_the_defect_door_renders_a_retier_differently_from_a_fresh_append():
+    """D-100: the two outcomes rendered BYTE-IDENTICALLY.
+
+    Driven with ANSI stripped: `foundry_add_defect` against a ledger holding an
+    open untiered D-001 returned retiered=1, retiered_ids=['D-001'] and rendered
+    "F O U N D R Y  Defect: D-001 / Total: 1  Open: 1"; the identical call
+    against an EMPTY ledger returned retiered=0, retiered_ids=[] and rendered
+    the same two lines. The lead could not tell which had happened.
+    """
+    retiered = _plain(format_result("Foundry-Defect", {
+        "defect_id": "D-001", "cycle": 2, "type": "UNWIRED",
+        "total_defects": 1, "open_defects": 1,
+        "retiered": 1, "retiered_ids": ["D-001"], "tier": "LATENT",
+    }))
+    appended = _plain(format_result("Foundry-Defect", {
+        "defect_id": "D-001", "cycle": 2, "type": "UNWIRED",
+        "total_defects": 1, "open_defects": 1,
+        "retiered": 0, "retiered_ids": [],
+    }))
+
+    assert retiered != appended, "a re-tier and a fresh append still read alike"
+    assert "re-tiered" in retiered
+    assert "D-001" in retiered
+    assert "LATENT" in retiered
+    assert "re-tiered" not in appended
+
+
+def test_the_batch_door_renders_a_retier_beside_added_and_reopened():
+    """D-100's other half: a batch that reclassified an open blocking record in
+    place rendered "Added: +0 / Reopened: 0 / Total open: 1", which reads as
+    "the batch recorded nothing"."""
+    rendered = _plain(format_result("Foundry-Sync", {
+        "ok": True, "cycle": 2, "added": 0, "reopened": 0, "total_open": 1,
+        "regressions": [], "retiered": 1, "retiered_ids": ["D-001"],
+    }))
+    quiet = _plain(format_result("Foundry-Sync", {
+        "ok": True, "cycle": 2, "added": 0, "reopened": 0, "total_open": 1,
+        "regressions": [], "retiered": 0, "retiered_ids": [],
+    }))
+
+    assert "Re-tiered:  1" in rendered, rendered
+    assert "re-tiered" in rendered and "D-001" in rendered
+    assert rendered != quiet
+    assert "Re-tiered:  0" in quiet, quiet
+
+
+def test_both_doors_render_the_retier_through_one_formatter(run_env):
+    """The doors report under ONE pair of key names for a reason, and the screen
+    has to honour that or the shape they share stops meaning anything. Driven
+    through the real doors on one seeded ledger, so this is what a lead
+    following `_blocking_defects`' hint actually sees."""
+    from foundry_mcp.tools.foundry import foundry_add_defect
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    untiered = {
+        "id": "D-001", "cycle": 0, "source": "trace", "type": "UNWIRED",
+        "description": "filed before the tier axis existed", "spec_ref": "",
+        "symbol": "handle", "file": "src/api/a.py", "status": "open",
+        "fixed_in_cycle": None,
+    }
+
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [dict(untiered)]}), encoding="utf-8"
+    )
+    single = foundry_add_defect(
+        cycle=0, source="trace", defect_type="UNWIRED",
+        description="the same finding, re-filed with a tier",
+        symbol="handle", file_path="src/api/a.py", defect_class="UNWIRED_SURFACE",
+        tier="LATENT", reproduction_attempted="drove every caller; none reach it",
+        project_root=project_root,
+    )
+    assert single["retiered_ids"] == ["D-001"], single
+    assert "re-tiered" in _plain(format_result("Foundry-Defect", single))
+
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [dict(untiered)]}), encoding="utf-8"
+    )
+    batch = _sync(
+        0,
+        [_finding(
+            description="the same finding again, through the batch door",
+            symbol="handle", file="src/api/a.py", tier="LATENT",
+            reproduction_attempted="drove every caller; none reach it",
+        )],
+        project_root,
+    )
+    assert batch["retiered_ids"] == ["D-001"], batch
+    assert "re-tiered" in _plain(format_result("Foundry-Sync", batch))
