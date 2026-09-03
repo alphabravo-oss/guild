@@ -1,42 +1,146 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --frozen --quiet --with pytest pytest -q -p no:cacheprovider --deselect tests/test_measure_run.py::test_grand_vulture_reports_nfr_001s_two_baseline_numbers --deselect tests/test_measure_run.py::test_thunder_viper_prints_the_baseline_beside_the_current_run --deselect tests/test_migrate_archive.py::test_grand_vulture_migration
+# evidence-cmd: set -o pipefail; cd plugins/foundry/mcp-server && uv run --frozen --quiet --with pytest pytest -q -p no:cacheprovider --deselect tests/test_measure_run.py::test_grand_vulture_reports_nfr_001s_two_baseline_numbers --deselect tests/test_measure_run.py::test_thunder_viper_prints_the_baseline_beside_the_current_run --deselect tests/test_migrate_archive.py::test_grand_vulture_migration 2>&1 | sed -E 's/ \([0-9]+:[0-9]{2}:[0-9]{2}\)//'
 # evidence-for: AC-040, US-008
 # evidence-volatile: /[^ ]*/\.planning/[^ ]*
 # evidence-volatile: \d+\.\d+s
-# evidence-volatile: \(\d+:\d\d:\d\d\)
 # evidence-timeout: 300
 
-........sss............................................................. [  3%]
-........................................................................ [  6%]
-........................................................................ [ 10%]
-........................................................................ [ 13%]
+........sss............................................................. [  2%]
+........................................................................ [  5%]
+........................................................................ [  8%]
+........................................................................ [ 11%]
+........................................................................ [ 14%]
 ........................................................................ [ 17%]
-........................................................................ [ 20%]
-........................................................................ [ 23%]
-........................................................................ [ 27%]
-........................................................................ [ 30%]
+...................................................................
+=== select_sweep_scope: which logs the boundary re-executes ===
+  FULL rule fired / before ASSAY, NYQUIST or DONE
+    touched=['src/alpha.py']
+    scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
+  DELTA, diff touches casting 1's key_files
+    touched=['src/alpha.py']
+    scope=['casting-1-alpha.log']
+  DELTA, diff touches casting 2's key_files
+    touched=['src/beta.py']
+    scope=['casting-2-beta.log']
+  DELTA, diff touches a file under casting 3's key_files DIRECTORY
+    touched=['tests/fixtures/gamma/rows.json']
+    scope=['wave-report-sections.log']
+  DELTA, diff touches nothing any casting or command names
+    touched=['docs/README.md']
+    scope=[]
+=== the empty DELTA scope costs no worktree and no subprocess ===
+    ok=True  scope_count=0  logs_reexecuted=[]
+    head_commit=None  pool_size=0
+=== a FULL sweep re-executes the whole committed corpus at HEAD ===
+    ok=True  scope_count=3
+    reexecuted evidence/casting-1-alpha.log
+    reexecuted evidence/casting-2-beta.log
+    reexecuted evidence/wave-report-sections.log
+    mismatches=[]
+=== FR-031: the pool size is derived from the corpus ===
+    ceiling (measured from the committed corpus) = 8
+    pool([])            == 0            : True
+    pool(1 log)         == 1            : True
+    pool(3 logs)        <= 3            : True
+    pool(200 logs)      <= ceiling      : True
+    pool(200, override=1) == 1          : True
+=== FR-031: the per-log timeout is the log's own measurement ===
+    declared 300s                       : 300
+    undeclared falls back to the default: True
+    a caller ceiling wins for every log : 30
+..... [ 19%]
+........................................................................ [ 22%]
+........................................................................ [ 25%]
+........................................................................ [ 28%]
+........................................................................ [ 31%]
 ........................................................................ [ 34%]
-........................................................................ [ 37%]
-.s...................................................................... [ 40%]
-........................................................................ [ 44%]
-........................................................................ [ 47%]
+........................................................................ [ 36%]
+.............................s.......................................... [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
 ........................................................................ [ 51%]
 ........................................................................ [ 54%]
-........................................................................ [ 57%]
-........................................................................ [ 61%]
-........................................................................ [ 64%]
+........................................................................ [ 56%]
+........................................................................ [ 59%]
+........................................................................ [ 62%]
+........................................................................ [ 65%]
 ........................................................................ [ 68%]
 ........................................................................ [ 71%]
-........................................................................ [ 75%]
-........................................................................ [ 78%]
-........................................................................ [ 81%]
+........................................................................ [ 73%]
+........................................................................ [ 76%]
+.........................
+=== report.json top-level keys ===
+  generated_at
+  run
+  verdict_matrix
+  defects_by_tier_and_status
+  latent_backlog
+  unknown_tier_defects
+  escalated_classes
+  lead_fix_records
+  inspect_modes_per_cycle
+  spend_per_phase_and_cycle
+  unreported_dispatches
+  executing_versions
+  baseline_comparison
+=== REPORT.md headings, in REPORT_REQUIRED_SECTIONS order ===
+  ## Verdict matrix
+  ## Defects by tier and status
+  ## LATENT backlog
+  ## Unknown-tier defects
+  ## Escalated classes
+  ## Lead fix records
+  ## INSPECT mode per cycle
+  ## Spend per phase and cycle
+  ## Unreported dispatches
+  ## Executing server and plugin versions
+  ## Baseline comparison
+=== defects by tier and status (FR-051: unknown is its own row) ===
+  LATENT  open       2  ['D-004', 'D-005']
+  LIVE    fixed      4  ['D-001', 'D-002', 'D-003', 'D-006']
+  unknown fixed      1  ['D-007']
+=== LATENT backlog (NFR-003 / AC-002) ===
+  D-004  cycle 4  FALSE_DOCUMENTED_CONTRACT
+  D-005  cycle 5  FALSE_DOCUMENTED_CONTRACT
+=== unknown-tier defects, listed separately (FR-051) ===
+  D-007  status fixed  UNWIRED_SURFACE
+=== escalated classes (AC-004) ===
+  FALSE_DOCUMENTED_CONTRACT  status=CLEARED  exit_reason=budget  cleared_at_cycle=4  packets=2  open_latent=['D-004', 'D-005']
+=== lead_fix records (AC-022) ===
+  D-002  tier=LIVE  file=src/foundry_mcp/tools/evidence.py  lines=11  test=tests/test_evidence.py::test_the_sweep_reports_elapsed_per_log
+  D-003  tier=LATENT  file=None  lines=None  test=tests/test_report.py::test_the_refusal_names_the_unreadable_ledger
+=== INSPECT mode per cycle (AC-036) ===
+  cycle 1  F2    FULL  first_of_phase
+  cycle 2  F2    DELTA delta
+  cycle 3  F2    DELTA delta
+  cycle 4  F2    FULL  verifier_touched
+  cycle 5  F5    FULL  final_gate
+=== spend: tokens and minutes only, no money (NFR-002) ===
+  phase F2    tokens=980000    minutes=50.0
+  phase cast  tokens=930000    minutes=42.0
+  phase grind tokens=610000    minutes=30.0
+  run   total tokens=2520000   minutes=122.0
+=== unreported dispatches, advisory only (AC-034) ===
+  F2     ['research_audit', 'test', 'test01']
+  cast   ['casting-8']
+  grind  ['casting-5']
+=== baseline comparison (AC-036) ===
+  baseline thunder-viper: grind=22 post_verification=8
+  target: grind=12 post_verification=3
+  this run: grind=5 post_verification=1
+=== report_status, the DONE gate's read (GI-006 / OT-025) ===
+  present=True  missing_sections=[]
+............................................... [ 79%]
+........................................................................ [ 82%]
 ........................................................................ [ 85%]
 ........................................................................ [ 88%]
-........................................................................ [ 92%]
-........................................................................ [ 95%]
-........................................................................ [ 98%]
-.......................                                                  [100%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+...........                                                              [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/cap3/.planning/phases/09-milestone-real-run-consolidation/runs
-2107 passed, 4 skipped, 3 deselected in 88.48s (0:01:28)
+SKIPPED [1] tests/test_measure_run.py:593: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/run/.planning/phases/09-milestone-real-run-consolidation/runs
+2527 passed, 4 skipped, 3 deselected in 103.96s
