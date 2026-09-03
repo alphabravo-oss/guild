@@ -1,0 +1,10 @@
+# evidence-cmd: cd plugins/foundry && echo "plugin.json version: $(python3 -c "import json;print(json.load(open(\".claude-plugin/plugin.json\"))[\"version\"])")" && echo "pyproject version: $(python3 -c "import tomllib;print(tomllib.load(open(\"mcp-server/pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")" && echo "--- badges ---" && grep -oh "badge/foundry-[0-9.]*-\|badge/foundry--mcp-[0-9.]*-" README.md ../../README.md | sort | uniq -c
+# evidence-for: AC-040, FR-027
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+plugin.json version: 4.10.0
+pyproject version: 1.9.0
+--- badges ---
+      2 badge/foundry--mcp-1.9.0-
+      2 badge/foundry-4.10.0-

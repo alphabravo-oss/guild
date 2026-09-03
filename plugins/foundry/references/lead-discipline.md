@@ -24,6 +24,20 @@ Any lead-authored text in the teammate prompt is a vector for spec drift. By mec
 
 If you find yourself wanting to "just add a note" or "clarify scope" in a teammate prompt — STOP. That instinct is the exact failure mode this architecture prevents. The correct response is to re-run F0.5 DECOMPOSE with the clarification as an update to the spec or the casting's `<spec_requirements>` block.
 
+## Why dispatch is a pointer
+
+**The failure mode.** Handing the teammate its prompt as TEXT makes every dispatch a copy, and a copy is a thing that can be edited. The verbatim rule above is the only thing standing between the returned prompt and a lead who trims it, and that rule is enforced by nothing but the lead's own discipline — there is no artifact afterwards that shows what was actually delivered. A prompt paraphrased in the dispatch is indistinguishable, at acceptance time, from one delivered whole. Worse, the same text is then carried twice through the run's context for no gain: once out of the tool, once into the agent.
+
+**The fix.** Dispatch a pointer instead. `Foundry-Spawn-Teammate` and `Foundry-Cast-Wave` return the prompt's path and its sha256; the agent reads the file itself and states the hash it read in its completion report; `Foundry-Accept-Casting` and `Foundry-Fix` refuse when that hash differs from the file's. Only an agent that actually read the file can produce the right answer, so "the prompt arrived intact" stops being a discipline and becomes a checked fact. `full_prompt=true` still returns the text for debugging, which is the only thing it is for.
+
+## Why the lead-fix lane is bounded
+
+**The failure mode.** A run whose remaining defects are all one-line changes still pays a full teammate spawn per defect — team creation, a dispatch, a read of the whole casting prompt, a build, a commit, a shutdown — to change one line. That cost is what makes a lead start fixing things directly near the end of a long run, and the previous run ended exactly that way: the user told the lead to fix the last defects itself. Nothing recorded which defects those were, who authored them, how large the changes were, or whether any test covered them. An unbounded, unaudited lane is not a shortcut around the delegation rule; it is the delegation rule quietly ceasing to exist at the moment the run is most tired.
+
+**The fix.** Give the lane an explicit boundary and let the SERVER hold it. `Foundry-Fix` requires `authored_by` on every fix and `fix_commit` on every lead fix, runs `git show --numstat` on that commit to measure a `LIVE` lead fix against the limits, and refuses naming the count that overran. The server — not the lead — then writes the `lead_fix` handoff record, and the F6 report lists every one. The lane exists so the cheap fixes stay cheap; the measurement exists so the lead's own fixes are exactly as auditable as a teammate's, which is the property that was actually missing.
+
+This file is rationale. The mechanical rule — which tier, how many files, how many lines, which arguments every lead fix carries — is lead rule 2 in `commands/start.md`, and the numbers there are the numbers the server measures against.
+
 ## Why no worktrees
 
 Teammates work in the main directory, no `isolation: "worktree"` when spawning agents. Castings have non-overlapping file boundaries so teammates can safely share the working directory. Worktree lifecycle + merge-back adds complexity with no benefit when file ownership is already disjoint.

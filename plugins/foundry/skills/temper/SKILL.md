@@ -198,12 +198,21 @@ After each sweep pass, sync findings via `Foundry-Defect` with `source: "temper"
 and `TS-` IDs. F3 GRIND fixes them. Then start the next sweep pass focusing on
 changed files.
 
-### Sweep never stops
+### When the sweep ends
 
-There is no iteration cap on sweep mode. Temper continues until the run completes or
-the lead halts it. After a pass with zero new issues: read more carefully, try
-different scenarios, check for regressions from previous fixes, read files not yet
-covered. Temper never declares itself done.
+There is no iteration cap on sweep mode, and a pass that found nothing is not a reason
+to stop. After a pass with zero new issues: read more carefully, try different
+scenarios, check for regressions from previous fixes, read files not yet covered. A
+quiet pass is evidence about the pass, not about the code.
+
+**But temper does have an end, and it is mechanical.** Temper is over when NO `LIVE`
+defect is open and EVERY escalated class is `CLEARED`. Both halves are read from the
+run's own ledgers, so neither is a judgement call: `LIVE` defects are counted by the
+same tier-aware gates that count them everywhere else, and a class clears by drawing
+zero `LIVE` instances for two consecutive INSPECT cycles or by exhausting its
+structural-pass budget. An open `LATENT` backlog does NOT hold temper open — those
+defects stay tracked and land in the F6 report's named backlog. Until both conditions
+hold, keep sweeping; once they do, temper is finished and says so.
 
 ---
 
@@ -217,6 +226,14 @@ covered. Temper never declares itself done.
   explicit directive. Durable cites are symbol-only, optionally with a quoted snippet; a
   line hint belongs only in a commit-pinned run artifact, where it is frozen against the one
   commit it was written at.
+- **Every temper finding carries a `tier`, like any other stream's.** `LIVE` when you drove
+  the domain and observed the wrong result — and probing IS driving it, so most temper
+  findings are `LIVE`. `LATENT` when you derived the finding and found no reachable
+  instance, in which case the filing MUST carry a `reproduction_attempted` statement
+  naming what you drove and what it found; the filing door refuses a `LATENT` finding
+  without one. A security-property claim can NEVER be `LATENT`. Temper gets no separate
+  tier vocabulary and no discretion the other streams lack: escalation exits by the same
+  rule everywhere, and both tiers are defects that get fixed.
 - **Exhaustive** — probe every domain, sweep every file; don't skip what "looks fine"
 - **No assumptions** — "the function exists" is not evidence; "`path#Symbol` does X" is
 - **Fix direction must be specific** — "fix saveCredentials" is useless; include what the function MUST do
@@ -243,9 +260,12 @@ with that in mind.
    F3 GRIND decides what can be fixed — not the auditor. "Known tradeoff" is a fix
    queue item with context, not a reason to skip.
 7. **Marking temper complete with CRACKED domains that never got fix attempts.**
-   Every non-SOLID domain must get 3 fix attempts before being marked STUCK. The
-   orchestrator rejects completion if CRACKED domains exist without fix attempts
-   or STUCK status.
+   Every non-SOLID domain must get 3 fix attempts before being marked STUCK. What
+   actually holds the run is the tier-aware gates: they refuse while any `LIVE` or
+   unknown-tier defect is open, and the done gate refuses while an escalated class is
+   not `CLEARED`. Nothing anywhere inspects domain status, so a CRACKED domain whose
+   findings were never filed is invisible to every gate — which is why anti-pattern 6
+   above is the one that matters. File the findings and the gates do the rest.
 
 ---
 

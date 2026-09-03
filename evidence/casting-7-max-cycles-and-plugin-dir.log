@@ -1,0 +1,22 @@
+# evidence-cmd: bash plugins/foundry/scripts/setup-foundry.sh "evidence probe" --max-cycles 3 | grep -E "FOUNDRY_MAX_CYCLES|max_cycles=|HALTED|Max Cycles"; bash plugins/foundry/scripts/setup-foundry.sh --help | sed -n "/BUILDING FOUNDRY ITSELF/,/^EXAMPLES/p"
+# evidence-for: CT-016, FR-024, GI-004, AC-029
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+Max Cycles: 3
+FOUNDRY_MAX_CYCLES=3
+Thread the invocation flags into that call: url=, nyquist=false, max_cycles=3
+  — the FOUNDRY_URL, FOUNDRY_NYQUIST and FOUNDRY_MAX_CYCLES values above.
+  max_cycles 0 is unbounded; reaching the cap ends the run in HALTED, which is NOT DONE.
+BUILDING FOUNDRY ITSELF:
+  A run whose TARGET is the foundry plugin must be started with:
+
+    claude --plugin-dir <project_root>/plugins/foundry
+
+  so the executing MCP server IS the working tree, and process fixes the run
+  ships are available to that same run. Foundry-Init detects a self-targeting
+  run and refuses on a version or commit mismatch, naming the launch command.
+  This is guidance only: this script never launches Claude, and no step of any
+  run switches servers mid-run.
+
+EXAMPLES:

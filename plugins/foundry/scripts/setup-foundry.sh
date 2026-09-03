@@ -54,7 +54,10 @@ OPTIONS:
   --output-dir <dir>       Output directory (default: auto-generated)
   --temper                 Enable micro-domain stress testing (F5)
   --nyquist                Enable regression test generation (F5.5)
-  --max-cycles <n>         Cap verify-fix cycles (default: unlimited)
+  --max-cycles <n>         Cap verify-fix cycles (default: 0 = unlimited). Reaching
+                           the cap ends the run in HALTED — a named terminal state
+                           that is NOT DONE; the report is generated naming every
+                           open LIVE and LATENT defect
   --no-ui                  Skip browser audit (SIGHT)
   --ticket <id>            Ticket ID for commit messages
   --desc <text>            Run description
@@ -68,6 +71,17 @@ PHASES:
   F4: ASSAY      — Final spec-before-code verification (4 parallel agents)
   F5: TEMPER     — Micro-domain stress testing (optional)
   F6: DONE       — Report and archive
+
+BUILDING FOUNDRY ITSELF:
+  A run whose TARGET is the foundry plugin must be started with:
+
+    claude --plugin-dir <project_root>/plugins/foundry
+
+  so the executing MCP server IS the working tree, and process fixes the run
+  ships are available to that same run. Foundry-Init detects a self-targeting
+  run and refuses on a version or commit mismatch, naming the launch command.
+  This is guidance only: this script never launches Claude, and no step of any
+  run switches servers mid-run.
 
 EXAMPLES:
   /foundry:start "user authentication" --spec docs/specs/auth.md
@@ -365,6 +379,9 @@ echo "FOUNDRY_SKIP_BACKEND=$SKIP_START_BACKEND"
 echo "FOUNDRY_SERENA_HEALTH=$SERENA_HEALTH"
 echo ""
 echo "Use MCP tool Foundry-Init to create the run, then follow the phase guide."
+echo "Thread the invocation flags into that call: url=$URL, nyquist=$NYQUIST, max_cycles=$MAX_CYCLES"
+echo "  — the FOUNDRY_URL, FOUNDRY_NYQUIST and FOUNDRY_MAX_CYCLES values above."
+echo "  max_cycles 0 is unbounded; reaching the cap ends the run in HALTED, which is NOT DONE."
 echo "Call Foundry-Next at every step to get specific instructions."
 echo ""
 echo "Forge plans. Foundry builds."

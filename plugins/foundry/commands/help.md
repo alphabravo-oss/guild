@@ -84,9 +84,31 @@ Start a new build run.
 - `--url <url>` — base URL for SIGHT (Playwright UI audit)
 - `--temper` — enable F5 micro-domain stress testing
 - `--nyquist` — enable F5.5 regression test generation
-- `--max-cycles <n>` — cap on F2/F3 verify-fix loops
+- `--max-cycles <n>` — cap on F2/F3 verify-fix loops (default `0`, unbounded)
 - `--no-ui` — skip SIGHT
 - `--output-dir <dir>` — custom run directory (default: `foundry-archive/{run}/`)
+
+**`--max-cycles N` and the HALTED state.** `N` caps the verify-fix cycles; the default `0` is
+unbounded. The phase transition that would open a GRIND cycle beyond the cap **succeeds** — it
+is a successful transition, not a refusal. The run's phase becomes `HALTED`, the report is
+generated as part of that transition naming every open `LIVE` and `LATENT` defect, and the next
+guidance call reports the run halted and issues no further dispatch. **`HALTED` is a named
+terminal state distinct from `DONE`:** a halted run stopped with open work, and calling it
+"finished" is the one reading the state exists to prevent.
+
+**Building foundry itself — start the session with `--plugin-dir`.** A run whose TARGET is the
+foundry plugin must be launched as:
+
+```bash
+claude --plugin-dir <project_root>/plugins/foundry
+```
+
+That makes the executing MCP server the working tree, so process fixes the run ships are
+available to that same run. A self-targeting run whose executing server does not match the
+working tree is refused at F0 with a named reason and the exact launch command; a run that does
+not target foundry compares nothing and is never warned. **A mid-run server switch is never
+attempted** — no step calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin
+mid-run. Prose and code a run ships take effect for the next run, never the one that wrote them.
 
 ### `/foundry:resume`
 

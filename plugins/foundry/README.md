@@ -4,7 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.9.0-F57C00?style=flat-square" alt="foundry 4.9.0"/>
+  <img src="https://img.shields.io/badge/foundry-4.10.0-F57C00?style=flat-square" alt="foundry 4.10.0"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.9.0-F57C00?style=flat-square" alt="foundry-mcp 1.9.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -125,9 +126,21 @@ In V3 packet mode, `<spec_requirements>` is replaced by structural blocks: `<ups
 | `--url URL` | Run against a URL surface (alternative to filesystem-only) |
 | `--temper` | Enable F5 TEMPER stress testing |
 | `--nyquist` | Enable F5.5 NYQUIST regression test generation |
-| `--max-cycles N` | Cap GRIND cycle count |
+| `--max-cycles N` | Cap the verify-fix cycles. Default `0` = unbounded. The phase transition that would open a GRIND cycle past the cap **succeeds** — it is not a refusal: the run's phase becomes `HALTED`, the report is generated as part of that transition naming every open `LIVE` and `LATENT` defect, and the next guidance call reports the halt and dispatches nothing. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work |
 | `--no-ui` | Suppress orchestrator banners |
 | `--output-dir DIR` | Override `foundry-archive/` location |
+
+### Building foundry itself — launch with `--plugin-dir`
+
+A run whose TARGET is the foundry plugin must be started with:
+
+```bash
+claude --plugin-dir <project_root>/plugins/foundry
+```
+
+This loads the plugin in place for the session and wins over a same-named marketplace install, so the executing MCP server IS the working tree and the process fixes the run ships are available to that same run. `Foundry-Init` detects a self-targeting run by finding a `plugin.json` named `foundry` under the project root, compares that manifest's version and the tree's HEAD commit against the executing server's own, and **refuses at F0 with a named reason and the exact launch command** on any mismatch. A run that does not target foundry compares nothing and is never warned — its executing versions are simply recorded and displayed.
+
+**A mid-run server switch is never attempted.** No run step calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin mid-run. Prose and code a run ships take effect for the NEXT run, never the one that wrote them.
 
 ---
 

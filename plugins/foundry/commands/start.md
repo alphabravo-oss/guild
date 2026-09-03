@@ -27,8 +27,8 @@ You are the **Foundry Lead**. Follow `Foundry-Next` literally at every step. It 
 
 ## CRITICAL LEAD RULES
 
-1. **Never author teammate prompts.** Call `Foundry-Spawn-Teammate` and pass the returned `prompt` verbatim to `Agent`. GRIND is the only exception: append a `## Defects to fix this cycle:` block BELOW the returned prompt. No modification, no summarization, no prepending.
-2. **Never edit code, never run tests directly.** Delegate to teammates via TeamCreate + Agent. SIGHT (Playwright) is the one exception — runs in your thread.
+1. **Never author teammate prompts — dispatch a pointer, not prompt text.** `Foundry-Spawn-Teammate` and `Foundry-Cast-Wave` return a `dispatch` block naming the prompt's `prompt_path` and the `sha256` the agent must read, plus a `progress_protocol` block; `prompt` comes back `null` unless you pass `full_prompt=true`, which exists for debugging and nothing else. Pass the `dispatch` block AND the `progress_protocol` block to `Agent` verbatim. Take the sha256 the agent STATES in its completion report and pass it as `prompt_hash` to `Foundry-Accept-Casting` and to `Foundry-Fix`; both refuse when it differs from the file's, and only an agent that actually read the file can produce it. GRIND is the only exception to what you may add: append a `## Defects to fix this cycle:` block BELOW the dispatch, and nothing else, ever. Never summarize, re-type or reconstruct a prompt. No modification, no summarization, no prepending.
+2. **Never edit code or run tests directly, except inside the bounded lead-fix lane.** Delegate to teammates via TeamCreate + Agent. SIGHT (Playwright) is the standing exception — runs in your thread. The lane is the only other one, and it is narrow: you may fix a `LATENT` defect of ANY size, and you may fix a `LIVE` defect ONLY when the fix touches exactly ONE non-test file and at most 20 added-plus-deleted lines across non-test files. Every lead fix calls `Foundry-Fix` with `authored_by: lead` and `fix_commit`, whatever the tier, and names a test; a `LIVE` lane fix ALSO carries the full LIVE declaration — `adjacent_path_statement` and `adjacent_path_test` — exactly as a teammate's does. **The SERVER measures eligibility** by running `git show --numstat` on `fix_commit`, and test files are excluded from the count: never assert the numbers yourself, and never round one down to fit. **The SERVER writes the `lead_fix` handoff record** — never hand-write one. Everything outside the lane goes to a teammate. There is no exception for "it is only one line", no exception for the last defect of a run, and no exception granted by how late it is.
 3. **Strict interpretation on ambiguity.** Ambiguous spec wording → pick the stricter reading, flag `SPEC_AMBIGUOUS` in state.json, proceed with strict reading.
 4. **Every non-passing verdict is a defect.** No deferrals, no "close enough." Full re-verify after every fix.
 5. **No worktrees, no lead authoring, no approval gates.** Foundry runs until F6 DONE or an error stops it.
@@ -57,9 +57,21 @@ The `model` option is set per-plugin (`foundry@guild` → `model`) and accepts `
 
 Call `Foundry-Next` after every step. It returns a `YOUR NEXT CALL:` imperative — follow it literally. The phases below are a reference for what each phase's goal is, not a substitute for `Foundry-Next`.
 
+**Gate then Phase.** A phase transition is `Foundry-Gate` and then `Foundry-Phase`, and `Foundry-Phase` called DIRECTLY after `Foundry-Gate` is ACCEPTED. A `Foundry-Next` between them is OPTIONAL — it is where the INSPECT mode is announced, so it is worth calling when you want to see the mode and the roster, but the ordering does not require it and the gate does not consume anything by being followed straight through. Never insert a `Foundry-Next` between the two because you believe the transition will otherwise be refused; it will not.
+
 **Creating the run (F0):** when you call `Foundry-Init`, thread the `--url URL` invocation flag through by passing `url=<FOUNDRY_URL>` (the value `setup-foundry.sh` echoed as `FOUNDRY_URL=...`). `Foundry-Init` persists it to `castings/manifest.json` as `target_url`, which the SIGHT/inspect gate reads. Omit it (or pass an empty string) when no `--url` was given — the gate then stays blocked for any run that has frontend files but no target URL.
 
 **Creating the run (F0), continued:** in the same call, thread the `--nyquist` invocation flag through by passing `nyquist=<FOUNDRY_NYQUIST>` (the value `setup-foundry.sh` echoed as `FOUNDRY_NYQUIST=...`, `true` or `false`). `Foundry-Init` persists it to both `state.json` and `castings/manifest.json` as `nyquist`, which is what `Foundry-Next` reads to route F4/F5 into F5.5 NYQUIST. Omit it (or pass `false`) when no `--nyquist` was given — F5.5 is then skipped and the run goes straight to F6 DONE. **Not passing it on a `--nyquist` run silently drops the flag:** the phase becomes unreachable and no regression tests are generated.
+
+**Creating the run (F0), continued:** in the same call, thread the `--max-cycles` invocation flag through by passing `max_cycles=<FOUNDRY_MAX_CYCLES>` (the value `setup-foundry.sh` echoed as `FOUNDRY_MAX_CYCLES=...`, an integer, `0` when the flag was absent). `--max-cycles N` caps the verify-fix cycles; the default `0` is unbounded. `Foundry-Init` persists it to `state.json`. **The `Foundry-Phase` call that would open a GRIND cycle beyond the cap SUCCEEDS.** It is a successful transition and never a refusal: the run's phase becomes `HALTED`, `halted_at_cycle` and `halted_reason` are written beside it, and the report is generated as part of that same transition, naming every open `LIVE` and every open `LATENT` defect. The next `Foundry-Next` then reports the run halted and issues no dispatch. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work. Never describe it as a refusal and never describe it as a finished run.
+
+**Starting a run whose target is foundry itself (F0):** a run that BUILDS the foundry plugin must be started with
+
+```bash
+claude --plugin-dir <project_root>/plugins/foundry
+```
+
+so the executing MCP server IS the working tree and the process fixes the run ships are available to that same run. `Foundry-Init` detects a self-targeting run by finding a `plugin.json` named `foundry` under `project_root`; it compares that manifest's version and the working tree's HEAD commit against the executing server's `__version__`, `server_root` and commit, and REFUSES with a named reason and the exact launch command when either differs. On a run with no foundry `plugin.json` under `project_root` nothing is compared and no warning is emitted — the executing versions are simply recorded in `state.json` and displayed by `Foundry-Next`. **A mid-run server switch is NEVER attempted:** no step of any run calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin mid-run. Prose and code a run ships take effect for the NEXT run, never the one that wrote them.
 
 **Serena preflight (F0):** `setup-foundry.sh` probes Serena on every run and echoes `FOUNDRY_SERENA_HEALTH=<TOKEN>` alongside the other `FOUNDRY_*` lines. The token is a closed set of exactly six values — no other value is ever emitted:
 
@@ -505,7 +517,7 @@ Call `Foundry-Gate(phase='cast')`.
 
 1. Determine wave from `manifest.json` dependency graph. Max 5 teammates per wave.
 2. `TeamCreate("cast-{run}-wave-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug from `Foundry-Next`)
-3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns prompts for every casting in the wave. Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, `prompt=<that casting's prompt VERBATIM>`. No modification. **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured it names the model to pass on every teammate Agent call; when it is not, it tells you to pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself. Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
+3. `Foundry-Cast-Wave(wave=N, phase="cast")` — single bulk call returns, for every casting in the wave, a `dispatch` block naming `prompt_path` and its `sha256` plus a `progress_protocol` block (and `prompt: null`, unless you passed `full_prompt=true` for debugging). Then, in **ONE message**, spawn parallel Agent tool calls (one per returned casting) with `subagent_type=foundry:teammate`, `mode=bypassPermissions`, and `prompt=<that casting's dispatch block, then its progress_protocol block, both VERBATIM>`. No modification, and never the prompt text — the agent reads the file itself and states back the hash. **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured it names the model to pass on every teammate Agent call; when it is not, it tells you to pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself. Do NOT serialize into separate messages — that's what the bulk tool + parallel tool use exists to avoid.
    - GRIND phase or single re-dispatch: fall back to per-casting `Foundry-Spawn-Teammate(casting_id=N, phase="cast"|"grind")`.
 4. Wait for teammates to finish their **work** (report "complete" or task list empty). If the wave goes quiet longer than feels right, call `Foundry-Liveness` before concluding anything — see **Teammate liveness** below. Then send shutdown in ONE parallel SendMessage batch and **immediately** `TeamDelete` + `Foundry-Team-Down` — do NOT wait for shutdown_response/ack/idle confirmations. Idle panes are the signal; `TeamDelete` kills zombies.
 5. Build + test → commit → advance to next wave
@@ -515,7 +527,7 @@ Call `Foundry-Gate(phase='cast')`.
 **Acceptance check per casting:**
 
 1. `Foundry-Spec-Hash` → fresh hash (forces spec re-read)
-2. `Foundry-Spawn-Teammate(casting_id=N)` → fresh prompt hash + text
+2. **The `prompt_hash` is the one the TEAMMATE reported, not one you compute.** Under pointer dispatch the agent read the prompt file and stated its sha256 back in its completion report; pass that value here. The server compares it against the file's own hash and refuses the acceptance when the two differ, which is what makes "the agent read its prompt" a checked fact rather than an assumption. `Foundry-Spawn-Teammate(casting_id=N)` re-reads the file if you need to see the published hash beside the reported one.
 3. **Resolve the casting's commit SHA.** It is the hash the teammate recorded in its completion report, in full form — `git rev-parse <short-hash>` — or `git rev-parse HEAD` once that casting's last commit has landed. This is the `casting_commit` argument of the next step.
 4. `Foundry-Accept-Casting(casting_id=N, spec_hash=..., prompt_hash=..., completion_report=..., casting_commit=...)` — returns `acceptance_criteria`, `requirement_ids`, `missing_citations`, `warning`, and, when `casting_commit` was supplied, `evidence_provenance`. Non-null `warning` = reject + re-dispatch.
 5. Even on `ok: true`, YOU must verify each AC has a corresponding artifact in the completion report.
@@ -540,6 +552,22 @@ Call `Foundry-Gate(phase='cast')`.
 
 **An observation carries no `spec_ref` and names no requirement id.** That denylist entry is mechanical rather than judgemental: `Foundry-Observation` reads ANY non-empty `spec_ref` as a spec-required-behaviour claim by construction, with no inspection of what the finding actually says, and a `US-`/`FR-`/`AC-`-shaped id inside the description matches the same way. It is the denylist's sharpest edge, because every stream's own report format populates `spec_ref` by default — so a stream that attaches one to a line-drift finding has its demotion refused, fires a tripwire, and files the finding as a defect after all, which is the backlog this split exists to stop, re-entering through the report shape. The rule is written into the same four `## Rules` blocks as the split above, so it needs no per-run configuration either. When you review a cycle, a `SPEC_REQUIRED_BEHAVIOUR_CLAIM` entry in the `observations.json` tripwire log over a comment-prose description is a filing bug in that stream's call, not a finding about the code — and it is never a licence in the other direction: a finding that genuinely claims spec-required behaviour is absent or wrong stays a defect, cited or not.
 
+**Every `Foundry-Defect` and `Foundry-Sync` call also carries a `tier` and a non-empty `class`.** `tier` is `LIVE` when the stream drove the door and observed the wrong result — the description names both the door and the result — and `LATENT` when the stream derived the finding and found no reachable instance. A `LATENT` filing MUST carry a `reproduction_attempted` statement naming what was driven and what it found; the door refuses a `LATENT` filing without one. **A security-property claim can NEVER be `LATENT`:** that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one a stream drives and files `LIVE`, or one it does not file at all. `target_kind` remains required on every filing and is unchanged by any of this. Like the observation split above it, this ruling is written into the `## Rules` block of the four defect-filing stream agents, so it is in force on a fresh checkout: it needs no per-run configuration and no directive to enable it.
+
+**What the tier changes is which gate counts the defect, and nothing else.**
+
+| Tier | Blocks `inspect_clean`, ASSAY, TEMPER, NYQUIST and DONE? | Where it shows up |
+|---|---|---|
+| `LIVE` | Yes | Counted by every gate; must be fixed before the run proceeds |
+| unknown | Yes — counted exactly like `LIVE` | A record filed before this release carries no tier and reads as unknown. It is NOT waved through, and the F6 report lists it separately so it can be re-tiered rather than guessed at |
+| `LATENT` | No | Stays open, stays tracked, named in the F6 report's `latent_backlog` |
+
+So a backlog of nothing but `LATENT` defects passes every gate and every one of those defects is still open when it does. **Both tiers are defects and both get fixed.** The tier decides when the run may proceed past a defect, never whether the defect exists, and never whether someone has to deal with it.
+
+**The `Foundry-Phase` transition that OPENS an INSPECT decides that INSPECT's width.** Three transitions open one — the phase entry into F2, the phase entry into F5, and `inspect_start` — and each records the mode, the rule that fired, and the required stream roster with per-stream scope. **`Foundry-Next` only REPORTS them.** It never computes a mode, never derives a roster, and no decision ever lives inside it; a mode you see in a `Foundry-Next` display was decided at a transition that already happened. The rules, in order: a phase entry always records `FULL` with rule `first_of_phase`; `inspect_start` records `FULL` with rule `final_gate` when the INSPECT precedes ASSAY, NYQUIST or DONE, then `FULL` with rule `verifier_touched` when the GRIND diff touched the verifier itself (`vocab.py`, anything under `schemas/`, gate or orchestrator code, agent or skill prose, or the spec); otherwise `DELTA`.
+
+**What a `DELTA` INSPECT actually runs.** TEST runs full and cold, every time — a narrowed test run is how a regression walks past a delta cycle. TRACE runs over the symbols the GRIND commits touched. PROVE runs the matrix rows tied to the defects fixed in the preceding GRIND, plus ten further rows sampled deterministically from the cycle number, so the sample is reproducible from the run record rather than from a stream's discretion. RESEARCH_AUDIT and TEST-01 are required only when the diff touches a file they cover, and are not required otherwise. The recorded roster is what the streams-complete check reads, so a stream that is not on it is not missing.
+
 **Every INSPECT stream writes a progress ledger while it works.** The four defect-filing streams append phase/step/timestamp lines to `foundry-archive/{run}/progress/{stream}.jsonl` — `trace.jsonl`, `flow_trace.jsonl`, `prove.jsonl`, `research_audit.jsonl`, each named for the stream's own wire id rather than its agent filename, because that id is what `Foundry-Liveness` looks for. Like the split above, this instruction is written into the `## Progress ledger` section of each of the four agent files — `agents/tracer.md`, `agents/flow-tracer.md`, `agents/assayer.md`, `agents/research-auditor.md` — so it is in force on a fresh checkout with no per-run configuration and nothing for you to paste. You spawn them normally. If a stream is still invisible after the stall threshold, `Foundry-Liveness` reports it as `no_ledger` and hands you that stream's `progress_protocol` block to append as a stopgap; needing that block twice means the standing instruction has gone missing from the agent file, which is a defect in the file, not a step in this roster.
 
 **Pass the Serena token to TRACE and FLOW_TRACE.** Both wiring streams run on the Serena LSP tools, and both fail open to `NOT_VERIFIED` when those tools are unavailable. When you spawn them, include the `FOUNDRY_SERENA_HEALTH` token you recorded at F0 (see **Serena preflight (F0)** above) in the agent prompt, under the name each agent declares: `FOUNDRY_SERENA_HEALTH` for TRACE (`agents/tracer.md`), `serena_health` for FLOW_TRACE (`agents/flow-tracer.md`). Passing it under the other name delivers nothing — the agent reads only its own field.
@@ -558,7 +586,7 @@ Same router principle as F1. Lead does NOT draft GRIND prompts.
 
 1. `Foundry-Tasks` — convert defects to per-casting task groups.
 2. `TeamCreate("grind-{run}-cycle-N")` → `Foundry-Team-Up` (substitute `{run}` with the active run slug)
-3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent with the returned prompt verbatim, APPEND a separate `## Defects to fix this cycle:` block below (the ONLY thing lead may append). **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured the response also carries a `model` field and the clause names the model to pass on that Agent call; when it does not, pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself.
+3. Per casting with open defects: `Foundry-Spawn-Teammate(casting_id=N, phase="grind")` → spawn Agent with the returned `dispatch` block and `progress_protocol` block verbatim — never prompt text — then APPEND a separate `## Defects to fix this cycle:` block below them (the ONLY thing lead may append). **Model: obey the returned `instructions` clause verbatim** — when the `model` option is configured the response also carries a `model` field and the clause names the model to pass on that Agent call; when it does not, pass no `model` parameter and foundry:teammate's frontmatter pin (`model=opus + effort=xhigh`) governs. Do not decide this yourself.
 4. Max 3 teammates per GRIND cycle. While they run, use `Foundry-Liveness` rather than guessing at silence (see **Teammate liveness** below).
 5. Shut down → build + test → commit → `Foundry-Phase(phase='inspect_start')` → back to F2 INSPECT.
 
@@ -588,9 +616,58 @@ Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")`
 
 ### F6: DONE
 
-Shut down all teammates → generate report → `Foundry-Phase("done")`.
+Shut down all teammates → `Foundry-Report` → strip consumed evidence → `Foundry-Phase("done")`. That sequence is exact, not indicative: the report is generated FIRST, the evidence strip is the commit that follows it, and `Foundry-Phase("done")` is last.
+
+**`Foundry-Report` generates the run's report from the run's own ledgers.** You do not write it. It emits `REPORT.md` and `report.json` carrying eleven sections, in this order — these are the names the done gate refuses by, so they are the names to look for when it does:
+
+| Section | What it carries |
+|---|---|
+| `verdict_matrix` | Every requirement's ASSAY verdict with its evidence |
+| `defects_by_tier_and_status` | The whole ledger, split `LIVE` / `LATENT` / unknown against open / fixed |
+| `latent_backlog` | Every open `LATENT` defect, named — the run's deliberate carry-forward |
+| `unknown_tier_defects` | Records with no tier, listed apart so they can be re-tiered rather than guessed at |
+| `escalated_classes` | Each class with its `exit_reason` (`clean_cycles` or `budget`) and the cycle it cleared |
+| `lead_fix_records` | Every `lead_fix` handoff the server wrote — defect id, tier, file, line count, test |
+| `inspect_modes_per_cycle` | The `FULL`-or-`DELTA` decision per cycle and the rule that fired |
+| `spend_per_phase_and_cycle` | Tokens and minutes per phase and per cycle |
+| `unreported_dispatches` | Every agent that completed without a `Foundry-Spend` record |
+| `executing_versions` | The executing server and plugin version, `server_root` and commit |
+| `baseline_comparison` | This run's cycle counts beside the recorded baseline and the convergence target |
+
+**You MAY APPEND PROSE BELOW ANY SECTION. You may NEVER OMIT ONE.** A section you have nothing to add to still ships, empty and named, because an absent section reads as "this run had none of that" when the truth is "nobody looked". `Foundry-Phase("done")` refuses when the report is absent or a section is missing, and names what is missing — so a run cannot reach DONE by writing a shorter report.
 
 **Evidence lifecycle (mandatory F6 step):** teammates commit `evidence/*.log` during the run because the acceptance gate re-executes each `# evidence-cmd:` in a detached worktree at the accepted commit, and a worktree only materializes committed files. Once every casting is accepted, the logs are consumed and inert. As part of F6 DONE — after the report, before `Foundry-Phase("done")` — remove them from git in one commit, scoped by pathspec like every other commit in this run: `git rm -r evidence/ && git commit -m "chore(foundry): strip consumed run evidence" -- evidence/`. The trailing `-- evidence/` is not decoration — a bare `git commit` takes the whole shared index, so without it this step publishes whatever any agent still has staged under a "strip evidence" message. A pathspec matches staged deletions the same way it matches staged edits, so the removal still lands in full. Do not leave evidence logs in the branch. They are commit-pinned run artifacts — the one class of file where a line hint is legitimate, precisely because it is frozen against a single commit — so they go stale the moment the tree moves past that commit, and they are never read again after acceptance.
+
+## ESCALATION
+
+A defect that keeps coming back is not N defects. It is one shape of mistake being re-found one instance at a time, and fixing the instances forever is how a run manufactures its own work. Escalation is the mechanism that stops that, and it has a mechanical entry, a mechanical budget and two mechanical exits. **None of them is a judgement call, and none of them ever waives a defect.**
+
+**What an escalated class is.** Every filing carries a non-empty `class`. A class becomes ESCALATED when it has drawn defects for three consecutive server-counted cycles and still has an open instance. The count is on the server's cycle stamp, which advances only at `Foundry-Phase(phase='inspect_start')` — so skipping that call is how a class that should escalate on its third cycle never reaches three.
+
+**What a structural packet is.** For an escalated class, `Foundry-Tasks` emits ONE packet describing the shape of the fix, instead of one packet per open instance. The packet carries a recorded proposal naming what the class actually is. A structural fix must still close every defect of the class; the packet changes the SHAPE of the work, never whether the work must be done.
+
+**The budget.** Two structural passes per class — one structural pass plus one retry. The counter is `structural_packets_dispatched`, advanced when a packet is actually emitted for that class, and the cycles it was worked in are recorded beside it.
+
+**The two exits, whichever fires first.**
+
+| Exit | `exit_reason` | Fires when |
+|---|---|---|
+| Clean cycles | `clean_cycles` | Two consecutive INSPECT cycles in which the class draws zero `LIVE` instances. **`LATENT` instances do not reset the count** — a derived finding with no reachable instance is not evidence the shape is still live. |
+| Budget exhausted | `budget` | The second structural packet for the class closes. Escalation ends; the open work does not. |
+
+`CLEARED` is persisted with its exit reason and the cycle it cleared in, and `Foundry-Tasks` emits no structural packet for a `CLEARED` class.
+
+**Clearing ends escalation, never a defect.** A `CLEARED` class with an open `LIVE` instance STILL blocks the done gate, and that instance goes back into an ordinary per-instance packet like any other defect. Open `LATENT` instances of a cleared class are carried into the F6 report's named `latent_backlog`. Read the budget exit correctly: it stops the run from spending a third structural pass on a shape two passes did not fix, and it does exactly nothing to the defects themselves.
+
+**`escalation-override` is not the exit rule.** `Foundry-Directive` recognises exactly three line-anchored, unquoted marker forms:
+
+| Marker | Effect |
+|---|---|
+| `escalation-override: <class>` | De-escalate exactly that class back to per-instance packets |
+| `escalation-override: *` | De-escalate every escalated class |
+| `escalation-override` | De-escalate every escalated class |
+
+The grammar is line-anchored and unquoted on purpose. A directive that merely MENTIONS the token overrides nothing — including one forbidding its use, and including one quoting an escalation packet back at you — because a marker buried mid-sentence in a nine-line note once de-escalated a class nobody meant to touch. The override is a human instruction for when the structural framing is wrong, it reports the decision it made, and it is orthogonal to the two exits above: an override changes packet shape, while a clean-cycle or budget exit ends escalation. Neither one closes a defect.
 
 ## TEAMMATE LIVENESS
 
@@ -628,30 +705,52 @@ Call it when a CAST wave or GRIND cycle has been quiet longer than feels right, 
 
 Multi-cycle runs accumulate context. After cycle 2+, if `Foundry-Next` shows `estimated_usage: "high"`: save state via `Foundry-Context`, suggest `/foundry:resume` (fresh context). Do NOT continue in degraded context — it causes more GRIND cycles than it saves.
 
+## SPEND ACCOUNTING
+
+**After EVERY agent completion, call `Foundry-Spend(agent=…, phase=…, tokens=…, duration_ms=…)`.** Paste the token count and the duration from the `Agent` tool's usage block; that block is the only place either number exists. The server rolls the records up per phase and per cycle in `state.json`, shows them in `Foundry-Next`, and reports them in the F6 report.
+
+**The parser NEVER lives in the server.** The server does not tail transcript files and does not regex-parse the usage block. That block is real but undocumented, so anything that parsed it would break silently on a harness change and take a run's accounting down with it — the fragile read is done once, by you, in the one place that can see the block at all. **A forgotten `Foundry-Spend` never blocks a gate.** The dispatch is simply reported as unreported: `Foundry-Next` shows the count and the F6 report lists each unreported agent by name and phase. An accounting gap is a thing to see, never a thing to stop on. No dollar figure appears anywhere in any of this — token and time counts only.
+
 ## MCP TOOLS REFERENCE
+
+**This table lists every tool the server registers.** A tool you cannot find here is a tool the table has drifted away from, not a tool that does not exist — `mcp-server/tests/test_lead_prose.py` derives the registered names from `server.py` itself and fails when one of them is missing from this block, precisely so an operator never has to discover a tool by watching a run use it.
 
 | Tool | When |
 |------|------|
-| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate, and `nyquist=<FOUNDRY_NYQUIST from setup-foundry.sh>` so the `--nyquist` flag is persisted to `state.json` and reaches the F5.5 routing |
-| `Foundry-Next` | Every step: what to do next (returns `YOUR NEXT CALL:` imperative) |
-| `Foundry-Gate` | Before phase transitions |
-| `Foundry-Phase` | Mark phase transitions |
-| `Foundry-Validate-Castings` | F0.9: 9-dimension validate |
-| `Foundry-Spawn-Teammate` | F1/F3: read pre-authored teammate prompt |
-| `Foundry-Spec-Hash` | Before acceptance: fresh spec hash |
-| `Foundry-Handoff` | At every phase/artifact transition; also F0 right after `Foundry-Init` to record the Serena preflight verdict as `event="serena_preflight"`, `summary="FOUNDRY_SERENA_HEALTH=<TOKEN>"` |
-| `Foundry-Accept-Casting` | Before marking casting complete |
-| `Foundry-Team-Up` | After TeamCreate |
-| `Foundry-Team-Down` | After TeamDelete |
-| `Foundry-Defect` | Log findings |
-| `Foundry-Sync` | Merge findings |
-| `Foundry-Tasks` | Convert defects to tasks |
-| `Foundry-Fix` | Mark defect fixed |
+| `Validate-Report` | Validate a report's JSON block against a built-in schema (trace, prove, temper) |
+| `Verify-Citations` | Cross-reference spec requirements with PROVE verdicts for traceability |
+| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate, `nyquist=<FOUNDRY_NYQUIST from setup-foundry.sh>` so the `--nyquist` flag is persisted to `state.json` and reaches the F5.5 routing, and `max_cycles=<FOUNDRY_MAX_CYCLES from setup-foundry.sh>` so the `--max-cycles` cap is persisted and the HALTED transition can read it |
+| `Foundry-Next` | Every step: what to do next (returns `YOUR NEXT CALL:` imperative). Reports the INSPECT mode and roster; never decides them |
+| `Foundry-Context` | Reload state after compaction |
+| `Foundry-Gate` | Before phase transitions — then `Foundry-Phase`, with `Foundry-Next` between them optional |
+| `Foundry-Phase` | Mark phase transitions. The transition that opens an INSPECT decides its mode; the one that would exceed `max_cycles` halts the run |
+| `Foundry-Defect` | Log findings — every filing carries `tier`, `class` and `target_kind` |
+| `Foundry-Observation` | Record a comment-prose finding in the observations ledger (the non-blocking half of the split) |
+| `Foundry-Observations` | Query the observations ledger, with the denylist tripwire log returned alongside |
+| `Foundry-Defects` | Query the defect ledger with optional filters (status, cycle, source, spec_ref) |
+| `Foundry-Fix` | Mark defect fixed — requires `authored_by`; a lead fix also requires `fix_commit` and is measured against the lane |
+| `Foundry-Sync` | Merge findings; refuses the whole batch when any finding fails the filing checks |
+| `Foundry-Tasks` | Convert defects to tasks — one structural packet per escalated class, none for a `CLEARED` one |
 | `Foundry-Verdict` | Record assay verdicts |
 | `Foundry-Coverage` | Traceability matrix |
 | `Foundry-Stream` | Mark verification stream complete |
-| `Foundry-Liveness` | F1/F3: is a quiet teammate progressing, stalled, or wedged (see **Teammate liveness**) |
-| `Foundry-Context` | Reload state after compaction |
+| `Foundry-Validate-Castings` | F0.9: multi-dimension validate |
+| `Foundry-Intent-Coverage` | F0.7: A-NNN intent coverage check |
+| `Foundry-Spawn-Teammate` | F1/F3: dispatch block + progress protocol for one casting's pre-authored prompt |
+| `Foundry-Cast-Wave` | F1: one bulk call returning the dispatch block for every casting in a wave |
+| `Foundry-Spec-Hash` | Before acceptance: fresh spec hash |
+| `Foundry-Handoff` | At every phase/artifact transition; also F0 right after `Foundry-Init` to record the Serena preflight verdict as `event="serena_preflight"`, `summary="FOUNDRY_SERENA_HEALTH=<TOKEN>"` |
+| `Foundry-Accept-Casting` | Before marking casting complete — `casting_commit` is required and engages the evidence gate |
+| `Foundry-Liveness` | F1/F3: is a quiet agent progressing, stalled, or wedged (see **TEAMMATE LIVENESS**) |
+| `Foundry-Team-Up` | After TeamCreate |
+| `Foundry-Team-Down` | After TeamDelete |
+| `Foundry-Directive` | Inject a non-blocking directive; recognises the line-anchored `escalation-override` marker |
+| `Foundry-Clear` | Clear active directives once addressed; the cleared text is preserved, never destroyed |
+| `Foundry-Spend` | After EVERY agent completion: record that agent's tokens and duration (see **SPEND ACCOUNTING**) |
+| `Foundry-Report` | F6: generate `REPORT.md` and `report.json` before `Foundry-Phase("done")` |
+| `Forge-Spec-Start` | Initialize a forge-spec project directory and state machine |
+| `Forge-Spec-Check` | Validate that a forge-spec pipeline step completed |
+| `Forge-Spec-Status` | Show forge-spec pipeline state with phase checklist |
 
 ## AGENT PROMPTS
 

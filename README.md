@@ -126,7 +126,7 @@
 </table>
 
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.9.0-F57C00?style=flat-square" alt="foundry 4.9.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.10.0-F57C00?style=flat-square" alt="foundry 4.10.0"/> <img src="https://img.shields.io/badge/foundry--mcp-1.9.0-F57C00?style=flat-square" alt="foundry-mcp 1.9.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
 
 
 </div>
@@ -266,6 +266,10 @@ Decompose authors every teammate prompt **once**, freezes it, and validates it a
 
 **Findings have two channels.** Behaviour and security findings are defects. Comment prose — a stale line hint, a count, a direction word — goes to a typed observations ledger instead, and the server refuses to file it the other way. A security-property claim can never be demoted; trying trips a persisted audit signal.
 
+**`--max-cycles N` caps the loop, and the cap is not a refusal.** The default `0` is unbounded. The transition that would open a GRIND cycle past the cap succeeds into a named `HALTED` state, generating the report as part of that same transition so every open `LIVE` and `LATENT` defect is written down. `HALTED` is not `DONE` — it is a run that stopped with open work, and it says so.
+
+**Building foundry with foundry — launch with `--plugin-dir`.** A run whose target is the foundry plugin is started as `claude --plugin-dir <project_root>/plugins/foundry`, so the executing MCP server is the working tree and the fixes the run ships reach that same run. F0 refuses a self-targeting run whose server does not match the tree, naming the launch command; a run targeting anything else compares nothing. No run ever switches servers mid-flight.
+
 → [Full docs](plugins/foundry)
 
 </details>
@@ -361,6 +365,26 @@ flowchart LR
 <summary><b>🆕 What's new</b></summary>
 
 <br/>
+
+### foundry 4.10.0 — the run knows when to stop
+
+The successor to 4.9.0's own retrospective. `thunder-viper` shipped 4.9.0 in 22 GRIND cycles, eight of them after verification was already clean, and TEMPER never converged on its own — it had no stated end, so it ended when a human said so. Every item below exists to make a run terminate on evidence rather than on patience: findings now carry whether they were *observed* or merely *derived*, gates count only the observed ones, escalated defect families exit by a rule instead of a judgement call, and the run's own report is generated from its ledgers rather than written by the lead who is tired of it.
+
+| Adds | Where |
+|---|---|
+| **`LIVE` / `LATENT` tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT` | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
+| **Tier-aware gates** — `LIVE` and unknown-tier defects block; a `LATENT`-only backlog passes every gate and stays open, tracked, and named in the report | `inspect_clean` · ASSAY · TEMPER · NYQUIST · DONE |
+| **Escalation exits mechanically** — two consecutive cycles drawing zero `LIVE` instances, or an exhausted two-pass structural budget; `CLEARED` persists its exit reason. Clearing ends escalation, never a defect | `Foundry-Tasks` · `escalation.json` |
+| **`LATENT` fix lane** — a `LATENT` defect closes on a named regression test, without the adjacent-path declaration a `LIVE` fix still requires | `Foundry-Fix` |
+| **Bounded lead-fix lane** — the lead may fix `LATENT` at any size and `LIVE` within one non-test file and 20 lines; the **server** measures it with `git show --numstat` and writes the `lead_fix` handoff | `Foundry-Fix` · `foundry_handoff.py` |
+| **Server-side evidence sweep at the GRIND boundary** — every evidence log re-executes byte-identical at HEAD in a detached worktree, delta by default and whole-corpus before ASSAY / NYQUIST / DONE; a mismatch refuses the transition naming the log | `Foundry-Phase(inspect_start)` · `evidence.py` |
+| **FULL vs DELTA INSPECT** — the transition that OPENS an INSPECT decides its width and records the rule that fired; `Foundry-Next` only reports it | `Foundry-Phase` · `state.json` `inspect_modes` |
+| **Self-target preflight** — a run building foundry is launched with `claude --plugin-dir`, and F0 refuses when the executing server is not the working tree, naming the launch command | `Foundry-Init` |
+| **Pointer dispatch** — spawn tools return a path and a sha256 instead of prompt text; the agent reads the file and states the hash, and acceptance refuses on mismatch | `Foundry-Spawn-Teammate` · `Foundry-Cast-Wave` |
+| **Liveness-aware stall detector** — a waiting-on-N-agents notice while agents are running; a stall warning only when none are | `Foundry-Next` · `Foundry-Liveness` |
+| **`Foundry-Spend`** — per-agent tokens and duration, rolled up per phase and per cycle. The lead pastes the numbers; **the server never parses a transcript**. A forgotten record is reported, never blocking | `Foundry-Spend` |
+| **`Foundry-Report`** — `REPORT.md` and `report.json` generated from the run's ledgers across eleven required sections. The lead may append prose below a section but can never omit one; `Foundry-Phase('done')` refuses a missing section | `Foundry-Report` |
+| **`--max-cycles N`** — caps the verify-fix cycles. Reaching the cap **succeeds** into a named `HALTED` state, generating the report; `HALTED` is not `DONE` | `setup-foundry.sh` · `Foundry-Init` · `Foundry-Phase` |
 
 ### foundry 4.9.0 — the run stops manufacturing its own work
 
