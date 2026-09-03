@@ -4,7 +4,6 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: /[^ ]*/foundry-archive/[^ ]*
 # evidence-timeout: 300
-
 ........sss............................................................. [  2%]
 ........................................................................ [  4%]
 ........................................................................ [  7%]
@@ -69,7 +68,7 @@
 ........................................................................ [ 35%]
 ........................................................................ [ 38%]
 .................................s...................................... [ 40%]
-........................................................................ [ 42%]
+..s.s................................................................... [ 42%]
 ........................................................................ [ 45%]
 ........................................................................ [ 47%]
 ........................................................................ [ 49%]
@@ -169,9 +168,11 @@
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1961: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2030: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/78da7a17-b969-4967-a847-0686c6330151/scratchpad/verify-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5203: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5200: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3017 passed, 8 skipped, 3 deselected in 120.46s
+3015 passed, 10 skipped, 3 deselected in 121.62s
