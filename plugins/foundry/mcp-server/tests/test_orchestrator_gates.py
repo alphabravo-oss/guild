@@ -9461,3 +9461,410 @@ def test_a_tiered_open_record_is_not_re_tiered(run_env):
     assert result["retiered"] == 0
     ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
     assert ledger["defects"][0]["tier"] == "LIVE"
+
+
+# --------------------------------------------------------------------------- #
+# D-081 / D-082 — HALTED IS TERMINAL, AND EVERY DOOR READS IT
+#
+# ST-008: 'HALTED is not DONE.' CT-016: 'a named terminal state distinct from
+# DONE.' FR-024: 'the run ends in a named HALTED state rather than DONE.'
+# `_halt_if_capped` was the only code in the server that mentioned the state at
+# all — it WROTE `phase = HALTED` from the two doors that open a GRIND, and
+# nothing anywhere read it back. So a halted run walked to F6 DONE through a
+# gate that reported itself passed, and every phase token other than the two
+# that re-halt resumed the run outright.
+# --------------------------------------------------------------------------- #
+
+
+def _gate_phase_tokens() -> set[str]:
+    """Every literal ``foundry_gate`` branches on, from its own AST.
+
+    Derived rather than listed, for the reason `_handler_phase_tokens` is: a
+    guard satisfied by updating a copy beside the function is a guard that stops
+    covering the branch someone adds next. ``done`` and ``nyquist_done`` arrive
+    as an ``in`` tuple rather than an ``==``, so both comparison shapes are read.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo.foundry_gate)))
+    tokens: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not (isinstance(node.left, ast.Name) and node.left.id == "phase"):
+            continue
+        for op, comparator in zip(node.ops, node.comparators):
+            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    tokens.add(comparator.value)
+            elif isinstance(op, ast.In) and isinstance(comparator, ast.Tuple):
+                for element in comparator.elts:
+                    if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                        tokens.add(element.value)
+    return tokens
+
+
+def _halted_run(fdir: Path, cycle: int = 2) -> None:
+    """A run that reached the cap: exactly what `_halt_if_capped` leaves behind."""
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=cycle, max_cycles=2, nyquist=True,
+        halted_at_cycle=cycle,
+        halted_reason=f"--max-cycles 2 reached: opening GRIND cycle {cycle + 1} would exceed it",
+    )
+
+
+@pytest.mark.parametrize("token", sorted(_handler_phase_tokens()))
+def test_no_phase_token_leaves_halted(run_env, token):
+    """D-082 / ST-008 / CT-016: no transition leaves HALTED, and the refusal
+    names the halt.
+
+    Driven from state.phase HALTED with max_cycles 2, before the fix:
+    `Foundry-Phase('inspect_start')` returned ok, set phase F2 and ADVANCED the
+    cycle counter; `cast` returned ok and set F2; `temper` returned ok and set
+    F5; `nyquist` returned ok and set F5.5. Only `grind_start` and `assay_fail`
+    re-halted, because only they call `_halt_if_capped` — every other branch had
+    no HALTED precondition at all. So a halted run resumed and kept dispatching
+    with no refusal and no record that the cap had been overridden, and FR-052's
+    'Foundry-Next reports halted and stops dispatching' rested on lead
+    discipline, which is the thing the cap exists to replace.
+
+    Parametrized over the token set the drift guard derives from
+    `_phase_transition`'s OWN AST, so a branch added later is covered the day it
+    is added rather than the day someone remembers to extend a list.
+    """
+    project_root, fdir = run_env
+    _halted_run(fdir)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    _arm_ordering_token(fdir)
+
+    result = foundry_mark_phase_complete(token, project_root)
+
+    assert result.get("ok") is not True, (token, result)
+    assert result["halted"] is True
+    assert "HALTED" in result["error"], result
+    assert "NOT DONE" in result["error"], result
+    assert "Nothing leaves HALTED" in result["hint"], result
+
+    # The run did not move: not the phase, not the counter.
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == RUN_PHASE_HALTED, token
+    assert state["cycle"] == 2, token
+
+
+@pytest.mark.parametrize("phase", sorted(_gate_phase_tokens()))
+def test_every_gate_refuses_from_halted(run_env, phase):
+    """D-081's gate half: a halted run has no next gate, so no gate reports
+    itself passed.
+
+    `done` and `nyquist_done` are what made this a defect — driven, max_cycles 2
+    at cycle 2 with one open LATENT defect: `Foundry-Phase('grind_start')`
+    returned ok / halted True and state.phase HALTED, and two calls later
+    `Foundry-Gate('done')` returned passed True with reason None. The gate
+    agreed the run could finish while state.json said it had already stopped.
+    The answer is the same for every phase, which is why this is parametrized
+    over the branch set rather than over the two terminal tokens.
+    """
+    project_root, fdir = run_env
+    _halted_run(fdir)
+    _defect_ledger(fdir, [])
+    _arm_ordering_token(fdir)
+
+    gate = foundry_gate(phase, project_root)
+
+    assert gate["passed"] is False, (phase, gate)
+    assert gate["halted"] is True
+    assert "HALTED" in gate["reason"]
+    assert f"Foundry-Gate(phase='{phase}')" in gate["reason"]
+    assert [c["check"] for c in gate["checklist"]] == [
+        "run_not_halted (halted_at_cycle=2)"
+    ]
+    # A refused gate stamps nothing: `.gate-passed` is the marker the guidance
+    # engine reads to emit the transition step, and a halted run has none.
+    assert not (fdir / ".gate-passed").exists()
+
+
+def test_an_otherwise_perfect_run_still_cannot_reach_done_from_halted(run_env):
+    """D-081 at its strongest: everything else about this run passes.
+
+    Report generated, every requirement VERIFIED, zero open defects, no
+    escalated class, no active team — and the run is HALTED, so DONE is refused
+    and the halt is the reason given. HALTED and DONE are both terminal and mean
+    opposite things: DONE is 'every requirement verified and every LIVE defect
+    closed', HALTED is 'we ran out of cycles with work still open'. A run that
+    can walk from one to the other collapses the distinction the cap exists to
+    draw.
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    # Prove the fixture is otherwise clean BEFORE the halt is written.
+    _arm_ordering_token(fdir)
+    assert foundry_gate("done", project_root)["passed"] is True
+
+    _halted_run(fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("done", project_root)
+    assert gate["passed"] is False, gate
+    assert "HALTED" in gate["reason"]
+
+    for token in ("done", "nyquist_done"):
+        _arm_ordering_token(fdir)
+        result = foundry_mark_phase_complete(token, project_root)
+        assert result.get("ok") is not True, (token, result)
+        assert "HALTED" in result["error"], (token, result)
+
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == RUN_PHASE_HALTED
+    assert state["phase"] != "F6"
+
+
+def test_done_preconditions_names_the_halt_and_lets_it_claim_the_reason(run_env):
+    """D-081's filed symbol: `_done_preconditions` is the SHARED evaluation both
+    F6 doors consult, so the halt has to be visible THERE and not only in the
+    blanket guards at the gate and the transition.
+
+    It claims `reason` LAST, which in this function's ordering discipline means
+    it wins: on a halted run every other failure is a detail of a run that has
+    already stopped, and telling a lead to fix three open LIVE defects on a run
+    that ended two cycles ago sends them to do work that cannot be gated.
+    """
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    _generate_report(project_root, fdir)
+    _halted_run(fdir)
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False
+    assert "HALTED" in outcome["reason"], outcome
+    # The open LIVE defect is still REPORTED in the checklist — it is just not
+    # what the lead is told to go and do.
+    assert "D-001" not in outcome["reason"], outcome["reason"]
+    row = next(c for c in outcome["checklist"] if c["check"].startswith("run_not_halted"))
+    assert row["ok"] is False
+    assert "max-cycles" in row["halted_reason"]
+    assert any(
+        c["check"].startswith("zero_blocking_defects") for c in outcome["checklist"]
+    )
+
+
+def test_a_running_run_carries_the_passing_halt_row(run_env):
+    """The mirror: the named check is present and OK on a run that has not
+    halted, so the checklist a lead reads answers the question either way rather
+    than only when the answer is bad."""
+    project_root, fdir = run_env
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is True, outcome
+    row = next(c for c in outcome["checklist"] if c["check"] == "run_not_halted")
+    assert row["ok"] is True
+
+
+def test_the_halt_is_read_through_one_reader(run_env):
+    """One rule, one implementation. `_halted_state` is the ONLY comparison of
+    `state.json`'s phase against RUN_PHASE_HALTED in the transition, gate and
+    done-precondition paths — a terminal state each door decides for itself is a
+    terminal state each door can decide differently, which is exactly how
+    `_halt_if_capped` came to be wired into two doors of ten.
+    """
+    import inspect as _inspect
+
+    for fn in (fo._phase_transition, fo.foundry_gate, fo._done_preconditions,
+               fo.foundry_mark_phase_complete):
+        source = _inspect.getsource(fn)
+        assert "RUN_PHASE_HALTED" not in source, fn.__name__
+        assert ("_halted_refusal(" in source) or ("_halted_state(" in source), fn.__name__
+
+
+def test_the_phase_token_guard_did_not_change_the_derived_branch_set(run_env):
+    """The HALTED guard compares no phase literal, so the drift guard that
+    derives the accepted token set from `_phase_transition`'s own
+    `phase == "<literal>"` comparisons still reads exactly the ten branches."""
+    assert _handler_phase_tokens() == set(fo.PHASE_TOKENS)
+    assert len(_handler_phase_tokens()) == 10
+
+
+# --------------------------------------------------------------------------- #
+# D-089 — the filing doors advertise the location the report promises
+# --------------------------------------------------------------------------- #
+
+
+def _tool_schema(name: str) -> tuple[str, dict]:
+    from foundry_mcp import server as foundry_server
+
+    tool = next(t for t in asyncio.run(foundry_server.list_tools()) if t.name == name)
+    return tool.description or "", tool.inputSchema
+
+
+def test_the_single_filing_door_advertises_that_a_latent_row_needs_a_location():
+    """NFR-003 / AC-036 / D-089: REPORT.md's LATENT backlog claims 'Each row
+    names where the work is, because this list is read by a lead who has no
+    defects.json to join against (D-029)' — and `Foundry-Defect` accepted a
+    LATENT filing with no file_path and no symbol, which rendered as
+    '| D-002 | no-location | 1 |  |  | prove | ... |' directly beneath that
+    claim. The report held up its half; the filing door did not, so the exact
+    failure D-029 closed was reachable again through the front door.
+    """
+    description, schema = _tool_schema("Foundry-Defect")
+
+    assert "LATENT" in description and "file_path" in description
+    file_path = schema["properties"]["file_path"]
+    assert "REQUIRED on a LATENT filing" in file_path["description"]
+    assert "D-029" in file_path["description"]
+    # The location is a PAIR, and the symbol half is what survives line drift.
+    assert "symbol" in file_path["description"]
+    assert "symbol" in schema["properties"]["symbol"]["description"]
+
+
+def test_the_batch_filing_door_advertises_the_same_obligation():
+    """The SAME obligation on the door a whole INSPECT stream files through.
+    Two filing doors that disagree about what a defect must carry would be a
+    worse bug than any either could have alone.
+    """
+    description, schema = _tool_schema("Foundry-Sync")
+
+    assert "LATENT" in description and "`file`" in description
+    item = schema["properties"]["findings"]["items"]["properties"]
+    assert "REQUIRED on a LATENT finding" in item["file"]["description"]
+    assert "D-029" in item["file"]["description"]
+    assert "batch is refused" in item["file"]["description"]
+
+
+# --------------------------------------------------------------------------- #
+# D-097 — the payload does not argue with itself about Foundry-Next
+# --------------------------------------------------------------------------- #
+
+
+def test_the_rules_block_and_the_gate_note_are_the_same_string(run_env):
+    """FR-044 / AC-035 / OT-028 / D-097.
+
+    The CRITICAL RULES block that heads EVERY Foundry-Next payload read 'NEVER
+    stop between phases. Call Foundry-Next after each step and follow it.' A
+    gate is a step, so the lead met an unconditional instruction at the top of
+    the payload and the note that qualifies it at the tail of the imperative —
+    on the three imperatives that carry it, hundreds of tokens further down.
+    FR-044's own rationale is that 'the word optional appeared ZERO times in the
+    imperatives'; adding the note fixed that surface and left the contradicting
+    general rule standing above it.
+
+    Pinned as ONE STRING rather than as two texts that happen to agree: a test
+    asserting both say 'OPTIONAL' does not stop them saying different things,
+    and this file's documented failure mode is that a rule stated in N copies
+    becomes a rule stated N different ways.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+
+    instructions = foundry_next_action(project_root)["instructions"]
+
+    assert fo._GATE_THEN_PHASE_EXCEPTION in instructions
+    assert fo._GATE_THEN_PHASE_EXCEPTION in fo._GATE_THEN_PHASE_NOTE
+    assert fo._GATE_THEN_PHASE_NOTE == "\n" + fo._GATE_THEN_PHASE_EXCEPTION
+
+    # The exception is stated inside the rule it qualifies, not somewhere else
+    # in the payload: the rule line and the exception are one sentence sequence.
+    rule_line = next(
+        line for line in instructions.splitlines()
+        if line.startswith("- NEVER stop between phases")
+    )
+    assert "OPTIONAL" in rule_line
+    assert "REQUIRED everywhere except exactly one place" in rule_line
+    assert not rule_line.endswith("Call Foundry-Next after each step and follow it.")
+
+
+def test_the_announced_field_has_one_name_across_both_surfaces(run_env):
+    """D-097's second half: commands/start.md calls it the INSPECT 'mode' while
+    the imperatives called it the 'width and rule', so a lead reading the two
+    surfaces had to work out they meant the same field. The one string names it
+    both ways."""
+    assert "mode" in fo._GATE_THEN_PHASE_EXCEPTION
+    assert "width" in fo._GATE_THEN_PHASE_EXCEPTION
+    assert "rule" in fo._GATE_THEN_PHASE_EXCEPTION
+
+    start_md = (
+        Path(__file__).resolve().parents[3] / "foundry" / "commands" / "start.md"
+    )
+    if start_md.exists():
+        gate_then_phase = next(
+            line for line in start_md.read_text(encoding="utf-8").splitlines()
+            if line.startswith("**Gate then Phase.**")
+        )
+        assert "OPTIONAL" in gate_then_phase
+        assert "mode" in gate_then_phase
+
+
+# --------------------------------------------------------------------------- #
+# D-077 (sync half) — one re-tier rule, two doors, one implementation
+# --------------------------------------------------------------------------- #
+
+
+def test_the_sync_door_calls_the_shared_retier_helper():
+    """D-077: the match-and-re-tier rule lived twice — a loop inside
+    `foundry_sync_defects` and a second copy inside `foundry_add_defect`. Two
+    copies of 'which stored record IS this finding' means a stream's exit from
+    an untiered record depends on WHICH door it happened to file through.
+    `foundry.retier_matching_untiered` is the one implementation; this door
+    calls it and re-implements nothing.
+    """
+    import inspect as _inspect
+
+    source = _inspect.getsource(fo.foundry_sync_defects)
+    assert "retier_matching_untiered(" in source
+    # The local loop is gone: no hand-rolled match on the four identity fields.
+    assert 'd["retiered_in_cycle"]' not in source
+    assert 'd["tier"] = norm["tier"]' not in source
+
+
+def test_the_untiered_hint_names_both_filing_doors(run_env):
+    """FR-051 / D-077: the hint used to say 'have the filing stream re-file it'
+    while only one door matched an existing untiered record, so a stream that
+    followed it through the other door got a SECOND open record beside the
+    untiered one and the blocking count did not move. A hint that is actionable
+    only through the door it does not name is not a hint.
+    """
+    project_root, fdir = run_env
+    _defect_ledger(fdir, [_tiered("D-001", None)])
+
+    blocking = fo._blocking_defects(fdir)
+
+    assert blocking["blocking"] == 1
+    assert "Foundry-Defect" in blocking["hint"]
+    assert "Foundry-Sync" in blocking["hint"]
+    assert "IN PLACE" in blocking["hint"]
+
+
+def test_the_sync_door_still_re_tiers_in_place(run_env):
+    """The behaviour the helper has to preserve: the record KEEPS ITS ID, so
+    every citation and every task already naming it stays valid, and the ledger
+    does not grow a duplicate."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [_tiered("D-001", None)])
+
+    result = fo.foundry_sync_defects(
+        1,
+        [{
+            "description": "the handler never calls the store",
+            "source": "trace", "type": "UNWIRED", "file": "src/api/a.py",
+            "symbol": "handle", "tier": "LATENT", "class": "UNWIRED_SURFACE",
+            "reproduction_attempted": "drove every caller; none reach it",
+        }],
+        project_root,
+    )
+
+    assert result["retiered_ids"] == ["D-001"], result
+    assert result["added"] == 0, result
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [d["id"] for d in records] == ["D-001"]
+    assert records[0]["tier"] == "LATENT"
+    assert fo._blocking_defects(fdir)["blocking"] == 0

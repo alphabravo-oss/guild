@@ -1074,9 +1074,20 @@ def _blocking_defects(fdir: Path) -> dict:
             if live
             else ""
         ) + (
+            # D-077: the hint names BOTH doors, because both now honour it.
+            # It used to say "have the filing stream re-file it" while only
+            # `Foundry-Defect` matched an existing untiered record — so a
+            # stream that followed the hint through `Foundry-Sync`, which is
+            # the door a whole INSPECT stream files through, got a SECOND open
+            # record beside the untiered one and the blocking count did not
+            # move. Naming one door and meaning one door is what made the hint
+            # actionable only by accident.
             "Have the filing stream re-file each untiered defect with tier=LIVE "
-            "or tier=LATENT; an untiered record is not a judgement, it is a "
-            "record made before the tier existed."
+            "or tier=LATENT — through Foundry-Defect or Foundry-Sync; either "
+            "door matches the open untiered record on (source, type, file, "
+            "symbol) and re-tiers it IN PLACE, so it keeps its id and every "
+            "citation naming it stays valid. An untiered record is not a "
+            "judgement, it is a record made before the tier existed."
             if unknown
             else ""
         )
@@ -1429,6 +1440,38 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
         hint = "ASSAY must write ALL verdicts to verdicts.json — including THIN/PARTIAL, not just VERIFIED."
         verdicts_complete = False
 
+    # ST-008 / CT-016 / FR-024 / D-081 — "HALTED IS NOT DONE", AS A PRECONDITION
+    # OF BEING DONE.
+    #
+    # LAST of the reason-claiming branches, which in this function's ordering
+    # discipline means it WINS: the branch that claims `reason` last is the one
+    # the lead is told about, and on a halted run every other failure is a
+    # detail of a run that has already stopped. Telling a lead to fix three open
+    # LIVE defects on a run that ended two cycles ago sends them to do work that
+    # cannot be gated.
+    #
+    # Its own named branch here, and not merely covered by the blanket guards at
+    # the gate and the transition, because THIS is the shared evaluation of "may
+    # this run finish" that both F6 doors consult (D-037 / D-043 / D-044). A
+    # precondition of finishing that only two of its three readers can see is
+    # the drift shape this helper exists to prevent, and the checklist a lead
+    # reads is produced here.
+    halted = _halted_state(fdir)
+    if halted is not None:
+        passed = False
+        refusal = _halted_refusal(fdir, "Foundry-Phase(phase='done')") or {}
+        reason = refusal.get("error", "the run is HALTED")
+        hint = refusal.get("hint", "")
+
+    checklist.append({
+        "check": (
+            "run_not_halted"
+            + (f" (halted_at_cycle={halted['halted_at_cycle']})" if halted else "")
+        ),
+        "ok": halted is None,
+        "halted_reason": (halted or {}).get("halted_reason", ""),
+    })
+
     checklist.append({
         "check": f"spec_requirements_parsed (count={spec_count})",
         "ok": spec_count > 0,
@@ -1474,6 +1517,38 @@ def foundry_gate(
             "reason": corrupt["error"],
             "hint": corrupt["hint"],
             "corrupt_artifacts": corrupt["corrupt_artifacts"],
+        }
+
+    # ST-008 / CT-016 / D-081 — EVERY GATE REFUSES FROM HALTED, NAMING THE HALT.
+    #
+    # Ahead of the ordering-token check for the same reason the transition puts
+    # it there: "you must call Foundry-Next first" is an instruction to prepare
+    # for a call that cannot succeed. `done` and `nyquist_done` are the two that
+    # made this a defect — `Foundry-Gate('done')` returned passed True on a
+    # HALTED run, so the gate agreed the run could finish while state.json said
+    # it had already stopped — but the answer is the same for every phase: a
+    # halted run has no next gate, so no gate may report itself passed.
+    #
+    # Reshaped from `_halted_refusal`'s strings rather than re-worded: the gate
+    # and the transition answering the same question in different words is the
+    # drift this module has paid for at both F6 doors already.
+    if (halted := _halted_refusal(fdir, f"Foundry-Gate(phase='{phase}')")) is not None:
+        return {
+            "phase": phase,
+            "passed": False,
+            "reason": halted["error"],
+            "hint": halted["hint"],
+            "checklist": [{
+                "check": (
+                    f"run_not_halted (halted_at_cycle="
+                    f"{halted['halted_at_cycle']})"
+                ),
+                "ok": False,
+                "halted_reason": halted["halted_reason"],
+            }],
+            "halted": True,
+            "halted_at_cycle": halted["halted_at_cycle"],
+            "halted_reason": halted["halted_reason"],
         }
 
     checklist: list[dict] = []
@@ -1938,6 +2013,37 @@ def _record_stream_rollup(
     }
 
 
+def _recorded_prove_roster(fdir: Path, cycle: int) -> list[str] | None:
+    """The PROVE rows THIS cycle's recorded DELTA decision named, or None.
+
+    None means "no DELTA roster applies to this cycle" — the run is at FULL, the
+    run predates the width, or the newest recorded decision belongs to another
+    cycle — and the caller then measures against the spec exactly as it did
+    before the width existed. An empty LIST is a different answer from None: the
+    decision recorded a roster and the roster is empty, which
+    `_prove_delta_sample` produces only when the spec parses to zero rows.
+
+    THE CYCLE MUST MATCH, and that is not defensive padding.
+    `_current_inspect_mode` returns the NEWEST entry, and a width is a fact
+    about one crossing: a roster decided for cycle 5 says nothing about what
+    cycle 4's PROVE owed. On the live path the two are equal by construction —
+    `inspect_start` stamps `entry["cycle"]` from the same counter
+    `_check_streams_complete` and `foundry_mark_stream` read — so the check
+    costs nothing there, and a resumed archive whose counter and ledger
+    disagree falls back rather than measuring one cycle's work against another
+    cycle's roster.
+    """
+    recorded = _current_inspect_mode(fdir)
+    if not recorded or recorded.get("mode") != "DELTA":
+        return None
+    if recorded.get("cycle") != cycle:
+        return None
+    sample = recorded.get("prove_sample")
+    if not isinstance(sample, list):
+        return None
+    return [row for row in sample if isinstance(row, str)]
+
+
 def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) -> dict | None:
     """Evaluate this stream's per-cycle coverage threshold, once, on the total.
 
@@ -1953,6 +2059,39 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
     marker the streams-complete check counted as PRESENT while the threshold
     silently evaluated nothing, so 40% coverage passed. "No numbers" must mean
     "read them from the marker", never "assume the threshold is met".
+
+    D-080 — THE PROVE THRESHOLD IS MEASURED AGAINST THE WIDTH THE SERVER
+    RECORDED, AND UNTIL IT WAS, DELTA WAS UNREACHABLE ON THE GUIDED PATH.
+    -------------------------------------------------------------------
+    `_check_streams_complete` was made to READ the recorded roster — GI-008
+    names "a streams-complete check that reads a roster nothing recorded" as
+    the violation — and then handed each member of that roster to this
+    function, which measured PROVE against
+    `_count_spec_requirements(project_root) * 0.95` and consulted no recorded
+    decision at all. So the one check that CONSUMES the roster ignored the
+    width the `inspect_start` transition had just decided, and a PROVE that
+    checked exactly the roster the server itself recorded was reported
+    incomplete forever.
+
+    Driven end to end on a 40-requirement spec with a recorded DELTA decision
+    whose `prove_sample` is 12 rows: `Foundry-Stream(prove, items_checked=12)`
+    warned "PROVE checked 12 requirements across cycle 5 but the spec has 40.
+    Coverage is 30%"; `_check_streams_complete` returned complete False,
+    missing 'prove'; `Foundry-Phase('inspect_clean')` refused with "streams
+    incomplete: prove"; and `Foundry-Next`'s F2 branch returned
+    action=run_streams with "Missing: prove" and kept returning it. Re-marking
+    prove at 38/40 cleared it immediately — that is, a DELTA cycle could only
+    be closed by running PROVE at FULL width, the lead never reached the
+    DELTA-width refusal that would have told them to widen, and AC-018's
+    saving was exactly zero.
+
+    NO 0.95 SLACK ON THE DELTA ARM. At FULL the denominator is the whole spec
+    and the 5% is tolerance for a matrix that moved under a long stream. A
+    DELTA roster is a NAMED, FINITE list of rows the server itself drew — the
+    rows tied to the defects the preceding GRIND fixed, plus the sampled
+    remainder, by id — so "which of these did you not check" has an answer and
+    there is nothing to be tolerant of. `checked >= len(roster)` is the whole
+    test.
     """
     totals = _rollup_totals(fdir, cycle, stream) or _marker_counts(
         fdir / f".{stream}-complete"
@@ -1962,6 +2101,33 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
     checked = totals["items_checked"]
 
     if stream == "prove":
+        # AC-018 / FR-012 / FR-013 / AC-017: the recorded roster first. A DELTA
+        # cycle owes the rows its own decision named and nothing else; only a
+        # cycle with no DELTA roster falls through to the spec-wide threshold.
+        roster = _recorded_prove_roster(fdir, cycle)
+        if roster is not None:
+            required = len(roster)
+            if required > 0 and checked < required:
+                return {
+                    "stream": "prove",
+                    "checked": checked,
+                    "required": required,
+                    "coverage": f"{checked / required * 100:.0f}%",
+                    "mode": "DELTA",
+                    "roster": roster,
+                    "reason": (
+                        f"PROVE checked {checked} of the {required} requirement "
+                        f"row(s) cycle {cycle}'s recorded DELTA roster names "
+                        f"({', '.join(roster[:12])}"
+                        + (", ..." if len(roster) > 12 else "")
+                        + "). That roster IS this INSPECT's width — the rows "
+                        "tied to the defects the preceding GRIND fixed plus the "
+                        "sampled remainder — so every row in it is owed, and no "
+                        "row outside it is."
+                    ),
+                }
+            return None
+
         spec_count = _count_spec_requirements(project_root)
         if spec_count > 0 and checked < spec_count * 0.95:
             return {
@@ -3016,6 +3182,98 @@ def _waiting_on_agents(project_root: str) -> dict:
     return result
 
 
+def _halted_state(fdir: Path) -> dict | None:
+    """The run's HALTED record, or None when the run is not halted.
+
+    THE ONLY READ of `state.json.phase == RUN_PHASE_HALTED`, for the reason
+    `_current_inspect_mode` is the only read of the recorded width: a terminal
+    state that each door decides for itself is a terminal state each door can
+    decide differently.
+    """
+    state = _load_json(fdir / "state.json")
+    if state.get("phase") != RUN_PHASE_HALTED:
+        return None
+    return {
+        "halted_at_cycle": state.get("halted_at_cycle"),
+        "halted_reason": (
+            str(state.get("halted_reason") or "").strip()
+            or "the configured cycle cap was reached"
+        ),
+        "max_cycles": state.get("max_cycles", 0),
+    }
+
+
+def _halted_refusal(fdir: Path, surface: str) -> dict | None:
+    """ST-008 / CT-016 / FR-024 / FR-045 / FR-052 — HALTED is terminal, and
+    every door that could leave it reads THIS.
+
+    Returns None when the run may proceed, otherwise the refusal `surface`
+    should return, carrying `error` / `hint` in the house shape plus the halt
+    record. `foundry_gate` reshapes the same two strings into its
+    `reason` / `hint` pair; nothing recomputes the judgement.
+
+    D-081 / D-082 — HALTED WAS WRITTEN AND READ BY NOTHING.
+    ------------------------------------------------------
+    ST-008 says "HALTED is not DONE", CT-016 calls it "a named terminal state
+    distinct from DONE", FR-024 says "the run ends in a named HALTED state
+    rather than DONE" — and `_halt_if_capped` was the only code in the server
+    that mentioned the state at all. It wrote `phase = HALTED` from the two
+    doors that open a GRIND and then nothing, anywhere, asked.
+
+    Driven, both halves. (1) max_cycles 2 at cycle 2 with one open LATENT
+    defect: `Foundry-Phase('grind_start')` returned ok / halted True and
+    state.phase HALTED; two calls later `Foundry-Gate('done')` returned passed
+    True with reason None and `Foundry-Phase('done')` returned ok, phase F6,
+    "Run archived." The cap exists precisely so the run does not end as DONE,
+    and the F6 state recorded nothing about it having fired. (2) From
+    state.phase HALTED: `Foundry-Phase('inspect_start')` returned ok, set F2
+    and ADVANCED the cycle counter; `cast` returned ok and set F2; `temper`
+    returned ok and set F5; `nyquist` returned ok and set F5.5. Only
+    `grind_start` and `assay_fail` re-halted, because only they call
+    `_halt_if_capped`; every other branch had no HALTED precondition at all. So
+    a halted run resumed and kept dispatching with no refusal and no record
+    that the cap had been overridden — and FR-052's "Foundry-Next reports
+    halted and stops dispatching" rested on lead discipline, which is the thing
+    the cap exists to replace.
+
+    NOT A WAIVER AND NOT A RESUME PATH. There is deliberately no token, flag or
+    argument that leaves HALTED, because "the operator may override the cap
+    in-place" is how a bounded run becomes an unbounded one. The remedy the
+    hint names is a NEW run with a higher `--max-cycles`, which starts a fresh
+    counter and a fresh state file, so the override is a decision someone makes
+    on the record rather than one more call in the loop.
+    """
+    halted = _halted_state(fdir)
+    if halted is None:
+        return None
+    cycle_text = (
+        f"cycle {halted['halted_at_cycle']}"
+        if isinstance(halted["halted_at_cycle"], int)
+        else "its cycle cap"
+    )
+    return {
+        "error": (
+            f"Cannot call {surface} — this run is HALTED. It stopped at "
+            f"{cycle_text} because {halted['halted_reason']}. HALTED is a "
+            "terminal state and it is NOT DONE: the run ended with open work "
+            "and the report says what."
+        ),
+        "hint": (
+            f"Nothing leaves HALTED — no phase token, no gate. Read "
+            f"{REPORT_MD_FILENAME}, tell the user what remains open by tier, "
+            "and stop. To carry the remaining work forward, start a NEW run "
+            "(Foundry-Init) with a higher --max-cycles; the cap is not "
+            "overridden in place."
+        ),
+        "halted": True,
+        "phase": RUN_PHASE_HALTED,
+        "halted_at_cycle": halted["halted_at_cycle"],
+        "halted_reason": halted["halted_reason"],
+        "max_cycles": halted["max_cycles"],
+        "report": str(fdir / REPORT_MD_FILENAME),
+    }
+
+
 def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     """ST-008 / CT-016 — halt the run instead of opening GRIND number N+1.
 
@@ -4032,6 +4290,19 @@ def foundry_mark_phase_complete(
     if (corrupt := _artifact_guard(fdir)):
         return corrupt
 
+    # ST-008 / CT-016 \u2014 ASKED BEFORE THE ORDERING TOKEN, AND THE ORDER MATTERS.
+    #
+    # The token handshake is a protocol precondition of a transition; the halt
+    # is the fact that there are no more transitions. A halted run whose lead
+    # called Foundry-Phase without a preceding Foundry-Next would otherwise be
+    # told "Must call Foundry-Next before phase transitions" \u2014 an instruction to
+    # go and arm a token for a call that can never succeed. This is the SAME
+    # `_halted_refusal` the transition itself calls; one rule, one
+    # implementation, and the second call site below is what holds if anything
+    # ever reaches `_phase_transition` by another route.
+    if (halted := _halted_refusal(fdir, f"Foundry-Phase(phase='{phase}')")) is not None:
+        return halted
+
     nac = fdir / ".next-action-called"
     if not nac.exists():
         return {
@@ -4053,7 +4324,22 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
     verbatim what lived in the public function, and the guards that derive the
     accepted phase-token set from an AST walk read THIS function, because this
     is where the branches are.
+
+    D-082 — NO TRANSITION LEAVES HALTED, AND THE GUARD IS STATED ONCE.
+    -----------------------------------------------------------------
+    Stated here, above the chain, rather than as an arm inside each of the ten
+    branches. Ten copies of one precondition is exactly the shape that produced
+    the defect: `_halt_if_capped` was wired into `grind_start` and `assay_fail`
+    and every other branch silently resumed the run. The next branch added to
+    this chain inherits the guard by standing below it.
+
+    It compares no phase literal, so the AST drift guard that derives the
+    accepted token set from this function's own `phase == "<literal>"`
+    comparisons still reads exactly the ten branches and no eleventh.
     """
+    if (halted := _halted_refusal(fdir, f"Foundry-Phase(phase='{phase}')")) is not None:
+        return halted
+
     if phase == "start_cast":
         _update_phase(fdir, "F1")
         return {"ok": True, "phase": "F1", "message": "Phase is now F1 (CAST). Create team and build."}
@@ -7597,6 +7883,7 @@ def foundry_sync_defects(
         asserts_code_behaviour,
         ledger_transaction,
         record_denylist_tripwire,
+        retier_matching_untiered,
         validate_defect_filing,
     )
 
@@ -7859,30 +8146,31 @@ def foundry_sync_defects(
             # was. The record KEEPS ITS ID, so every citation and every task
             # already naming it stays valid, and `retiered_in_cycle` records when
             # the classification arrived.
-            retier_id = None
-            for d in _dict_records(records):
-                if d.get("status") != "open" or defect_tier(d) != TIER_UNKNOWN:
-                    continue
-                if (
-                    d.get("source") == norm["source"]
-                    and d.get("type") == norm["type"]
-                    and (d.get("file") or "") == (finding.get("file") or "")
-                    and (d.get("symbol") or "") == (symbol or "")
-                ):
-                    retier_id = d.get("id")
-                    d["tier"] = norm["tier"]
-                    d["reproduction_attempted"] = (
-                        norm["reproduction_attempted"]
-                        if norm["tier"] == "LATENT"
-                        else None
-                    )
-                    # Filled only when ABSENT: a class the earlier filing
-                    # declared is what escalation has been keying on, and
-                    # overwriting it here would move a class mid-run.
-                    if not str(d.get("class") or "").strip():
-                        d["class"] = norm["class"]
-                    d["retiered_in_cycle"] = server_cycle
-                    break
+            # D-077 — ONE RULE, TWO DOORS, ONE IMPLEMENTATION.
+            #
+            # The match-and-re-tier rule lived twice: this loop, and a second
+            # copy inside `foundry_add_defect`. Two copies of "which stored
+            # record IS this finding" is the same drift shape the tier read, the
+            # sweep, the handoff writer and the report generator are each
+            # deliberately owned by ONE module — and it is worse here, because
+            # the two doors disagreeing means a stream's exit from an untiered
+            # record depends on WHICH door it happened to file through.
+            # `foundry.retier_matching_untiered` is now that one implementation
+            # (casting 2 owns `tools/foundry.py`); this door calls it and
+            # re-implements nothing. It returns the id of the record it
+            # re-tiered, or None when no open untiered record matches on
+            # (source, type, file, symbol).
+            retier_id = retier_matching_untiered(
+                records,
+                source=norm["source"],
+                type=norm["type"],
+                file=finding.get("file") or "",
+                symbol=symbol or "",
+                tier=norm["tier"],
+                reproduction_attempted=norm["reproduction_attempted"],
+                defect_class=norm["class"],
+                cycle=server_cycle,
+            )
             if retier_id is not None:
                 retiered += 1
                 retiered_ids.append(retier_id)
@@ -8466,7 +8754,16 @@ def foundry_next_action(
     critical_rules = (
         "\n\nCRITICAL RULES:"
         "\n- NEVER ask 'Want me to proceed?' or 'Should I continue?' \u2014 just do it."
-        "\n- NEVER stop between phases. Call Foundry-Next after each step and follow it."
+        # FR-044 / AC-035 / OT-028 / D-097 — the rule and its ONE exception, in
+        # the same sentence, quoting the same constant the imperatives append.
+        # This line used to end at "follow it." full stop, which a lead reading
+        # top-to-bottom took as unconditional and which contradicted the note
+        # `_GATE_THEN_PHASE_NOTE` carries at the tail of the same payload.
+        "\n- NEVER stop between phases. Call Foundry-Next after each step and "
+        "follow it. REQUIRED everywhere except exactly one place: "
+        + _GATE_THEN_PHASE_EXCEPTION
+        + " Skipping it there is correct and is not a shortcut; skipping it "
+        "anywhere else is."
         "\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says."
         "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
         "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
@@ -8598,13 +8895,38 @@ def foundry_next_action(
 # Written once and appended to each sequence that pairs them, rather than typed
 # into three imperatives: this file's own history is that a rule stated in N
 # copies becomes a rule stated N different ways.
-_GATE_THEN_PHASE_NOTE = (
-    "\nFoundry-Next between the Gate and the Phase call is OPTIONAL — the gate "
-    "no longer consumes the ordering token, so Foundry-Phase straight after a "
-    "passing Foundry-Gate is accepted. Call Foundry-Next there only if you want "
-    "the INSPECT width and rule announced; do not call it to satisfy the "
+# D-097 — THE EXCEPTION IS ONE STRING, AND BOTH SURFACES ARE THAT STRING.
+#
+# The global CRITICAL RULES block that heads EVERY Foundry-Next payload read
+# "NEVER stop between phases. Call Foundry-Next after each step and follow it."
+# A gate is a step, so the lead met an unconditional instruction at the top of
+# the payload and the note that qualifies it at the tail of the imperative,
+# hundreds of tokens further down and only on the three imperatives that carry
+# it. FR-044's own rationale is that "the word optional appeared ZERO times in
+# the imperatives"; adding the note fixed that surface and left the
+# contradicting general rule standing above it, so the payload argued with
+# itself on every call.
+#
+# Extracted rather than reworded in two places. `_GATE_THEN_PHASE_NOTE` is now
+# a newline plus this constant and the rules block quotes the same constant, so
+# the two surfaces are byte-identical by construction and cannot drift into two
+# spellings of one rule — which is this file's documented failure mode and the
+# whole reason the note was written once and appended.
+#
+# It names the announced thing BOTH ways ("mode (its width)" and "the rule that
+# fired") because commands/start.md calls it the INSPECT "mode" while the
+# imperatives called it the "width and rule", and a lead reading the two
+# surfaces had to work out they meant the same field.
+_GATE_THEN_PHASE_EXCEPTION = (
+    "Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is "
+    "OPTIONAL — the gate no longer consumes the ordering token, so "
+    "Foundry-Phase straight after a passing Foundry-Gate is accepted. That is "
+    "where the INSPECT mode (its width) and the rule that fired are announced, "
+    "so call it there when you want them; never call it to satisfy the "
     "protocol."
 )
+
+_GATE_THEN_PHASE_NOTE = "\n" + _GATE_THEN_PHASE_EXCEPTION
 
 # Action → imperative-header map. Each action returned by
 # _compute_next_action maps to a "YOUR NEXT CALL(S)" directive that the lead

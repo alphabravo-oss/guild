@@ -227,7 +227,13 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Defect",
-            description="Log a defect from any verification stream. Appends to ledger and forge-log.",
+            description=(
+                "Log a defect from any verification stream. Appends to ledger "
+                "and forge-log. A LATENT filing must carry file_path: the F6 "
+                "report's LATENT backlog is the list a lead reads with no "
+                "defects.json to join against, and a row that names no location "
+                "names a fault nobody can find."
+            ),
             inputSchema={
                 "type": "object",
                 # CT-001 / CT-002 - `tier` and `defect_class` are REQUIRED, and
@@ -269,8 +275,42 @@ async def list_tools() -> list[Tool]:
                     },
                     "description": {"type": "string"},
                     "spec_ref": {"type": "string"},
-                    "symbol": {"type": "string"},
-                    "file_path": {"type": "string"},
+                    "symbol": {
+                        "type": "string",
+                        "description": (
+                            "The symbol the finding is about, paired with "
+                            "file_path as a `path#Symbol` cite. The symbol is "
+                            "the authoritative half: a cite whose symbol "
+                            "resolves stays valid however far the code has "
+                            "moved inside the file."
+                        ),
+                    },
+                    # NFR-003 / AC-036 / D-089 — REQUIRED ON A LATENT FILING.
+                    #
+                    # The report holds up its half of D-029 and the filing door
+                    # did not. REPORT.md's LATENT backlog renders each row's
+                    # File and Symbol columns under its own claim that "Each row
+                    # names where the work is, because this list is read by a
+                    # lead who has no defects.json to join against (D-029)" —
+                    # and a LATENT defect filed through this door with neither
+                    # field was ACCEPTED and rendered as
+                    # "| D-002 | no-location | 1 |  |  | prove | ... |". The
+                    # exact failure D-029 closed was reachable again through the
+                    # front door. Declared here so the obligation is advertised
+                    # to every stream that reads the tool surface; the refusal
+                    # is server-side.
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED on a LATENT filing, and expected on every "
+                            "filing. Repo-relative path. A LATENT defect is "
+                            "carried to the F6 report's backlog and read there "
+                            "by a lead with no defects.json to join against "
+                            "(D-029), so a backlog row with no location names a "
+                            "fault whose site costs more to re-find than to fix. "
+                            "Pair it with `symbol`."
+                        ),
+                    },
                     # FR-001 / FR-007 — the handler has accepted both since the
                     # observations split landed, but neither had a schema
                     # property or a dispatch path, so over MCP the comment-prose
@@ -533,7 +573,10 @@ async def list_tools() -> list[Tool]:
                 "automatically. source and type are validated against the canonical "
                 "vocabulary and never coerced: an unknown or absent source is refused "
                 "rather than silently recorded as 'trace'. The whole batch is refused "
-                "if any finding is invalid, so nothing lands half-applied."
+                "if any finding is invalid, so nothing lands half-applied. A LATENT "
+                "finding must carry `file`: the F6 report's LATENT backlog is the list "
+                "a lead reads with no defects.json to join against, and a row that "
+                "names no location names a fault nobody can find."
             ),
             inputSchema={
                 "type": "object",
@@ -554,8 +597,38 @@ async def list_tools() -> list[Tool]:
                             "properties": {
                                 "description": {"type": "string"},
                                 "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
-                                "symbol": {"type": "string"},
-                                "file": {"type": "string"},
+                                "symbol": {
+                                    "type": "string",
+                                    "description": (
+                                        "The symbol the finding is about, "
+                                        "paired with `file` as a `path#Symbol` "
+                                        "cite. The symbol is the authoritative "
+                                        "half and survives line drift."
+                                    ),
+                                },
+                                # NFR-003 / AC-036 / D-089 — the SAME obligation
+                                # the single door advertises, on the door a whole
+                                # INSPECT stream actually files through. The
+                                # report promises "Each row names where the work
+                                # is ... (D-029)"; a batch that files LATENT rows
+                                # with no location makes the report say
+                                # otherwise.
+                                "file": {
+                                    "type": "string",
+                                    "description": (
+                                        "REQUIRED on a LATENT finding, and "
+                                        "expected on every finding. "
+                                        "Repo-relative path. A LATENT defect is "
+                                        "carried to the F6 report's backlog and "
+                                        "read there by a lead with no "
+                                        "defects.json to join against (D-029), "
+                                        "so a backlog row with no location names "
+                                        "a fault whose site costs more to "
+                                        "re-find than to fix. Pair it with "
+                                        "`symbol`. The whole batch is refused if "
+                                        "a LATENT finding omits it."
+                                    ),
+                                },
                                 "spec_ref": {"type": "string"},
                                 "type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
                                 "tier": {

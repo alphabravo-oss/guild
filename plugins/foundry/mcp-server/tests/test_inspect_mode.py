@@ -1696,3 +1696,183 @@ def test_the_inspect_start_row_is_written_flat_not_nested(run_env):
     bucket = rollup["cycles"][str(result["cycle"])]
     assert "inspect_mode" in bucket
     assert fo.TEMPER_ENTRY_ROLLUP_KEY not in bucket
+
+
+# --------------------------------------------------------------------------- #
+# D-080 / AC-018 / AC-017 / FR-012 / FR-013 — the check that CONSUMES the roster
+# measures against the roster
+#
+# `_check_streams_complete` was made to READ the recorded roster and then handed
+# each member of it to `_coverage_shortfall`, which measured PROVE against the
+# spec's whole requirement count and consulted no recorded decision. So a PROVE
+# that checked exactly the roster the server itself recorded was reported
+# incomplete forever, DELTA was unreachable on the guided path, and AC-018's
+# saving was zero: the only way to close a DELTA cycle was to run PROVE at FULL
+# width.
+# --------------------------------------------------------------------------- #
+
+
+def _delta_cycle_with_a_roster(project_root, fdir, *, ids: list[str]) -> dict:
+    """Drive a real DELTA `inspect_start` and return its recorded decision.
+
+    A cleared ledger with one defect fixed in the closing GRIND: that is the
+    ordinary cycle AC-016's "and DELTA otherwise" describes, and the fixed row
+    is what gives `prove_sample` a tied member to prove the roster is not just
+    the random draw.
+    """
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F3", cycle=1, spec_path="")
+    _write_defects(fdir, [
+        {**_open_live("D-002"), "status": "fixed", "fixed_in_cycle": 1,
+         "spec_ref": "FR-007"},
+    ])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+    assert result["ok"] is True, result
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["mode"] == "DELTA", recorded
+    return recorded
+
+
+def _mark(project_root: str, stream: str, cycle: int, checked: int, total: int) -> dict:
+    return fo.foundry_mark_stream(
+        stream, cycle, items_checked=checked, items_total=total,
+        project_root=project_root,
+    )
+
+
+def test_a_delta_cycle_that_checked_its_recorded_roster_is_complete(run_env):
+    """D-080's pin: a DELTA cycle whose PROVE checked exactly the recorded
+    roster is complete.
+
+    AC-018: 'In DELTA mode the PROVE roster names the matrix rows tied to the
+    defects fixed in the preceding GRIND plus ten rows drawn with a seed derived
+    from the cycle number.' That roster IS the width, so checking every row in
+    it is the whole obligation — and on a 40-requirement spec it is eleven rows,
+    not thirty-eight.
+    """
+    project_root, fdir = run_env
+    ids = [f"FR-{n:03d}" for n in range(1, 41)]
+    recorded = _delta_cycle_with_a_roster(project_root, fdir, ids=ids)
+    roster = recorded["prove_sample"]
+    cycle = recorded["cycle"]
+
+    assert "FR-007" in roster
+    assert len(roster) == 1 + PROVE_DELTA_SAMPLE_SIZE
+    assert len(roster) < len(ids), "the fixture must be narrower than the spec"
+
+    marked = _mark(project_root, "prove", cycle, len(roster), len(roster))
+    assert "coverage_shortfall" not in marked, marked
+    for wire in ("trace", "test"):
+        _mark(project_root, wire, cycle, 1, 1)
+
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is True, streams
+    assert streams["missing"] == ""
+    assert streams["shortfalls"] == []
+
+
+def test_the_delta_shortfall_names_the_roster_not_the_spec_count(run_env):
+    """One row short of the recorded roster IS a shortfall, and the refusal
+    names the roster it was measured against.
+
+    NO 0.95 SLACK ON THIS ARM. At FULL the denominator is the whole spec and the
+    5% is tolerance for a matrix that moved under a long stream; a DELTA roster
+    is a finite list of rows the server drew BY ID, so 'which of these did you
+    not check' has an answer.
+    """
+    project_root, fdir = run_env
+    ids = [f"FR-{n:03d}" for n in range(1, 41)]
+    recorded = _delta_cycle_with_a_roster(project_root, fdir, ids=ids)
+    roster = recorded["prove_sample"]
+    cycle = recorded["cycle"]
+
+    marked = _mark(project_root, "prove", cycle, len(roster) - 1, len(roster))
+    shortfall = marked["coverage_shortfall"]
+
+    assert shortfall["required"] == len(roster)
+    assert shortfall["checked"] == len(roster) - 1
+    assert shortfall["mode"] == "DELTA"
+    assert shortfall["roster"] == roster
+    # The old refusal named the SPEC count, which is the number this cycle was
+    # explicitly not asked for.
+    assert str(len(ids)) not in shortfall["reason"], shortfall["reason"]
+    assert str(len(roster)) in shortfall["reason"]
+    assert "FR-007" in shortfall["reason"]
+
+    streams = _check_streams_complete(project_root)
+    assert "prove" in streams["missing"]
+
+
+def test_the_full_arm_still_measures_prove_against_the_spec(run_env):
+    """The FULL half is unchanged: the roster is the whole spec, so the >=95%
+    threshold against `_count_spec_requirements` still applies.
+
+    Driven on the F2 entry, which records FULL / first_of_phase, so the DELTA
+    reader returns None and the spec arm runs exactly as before.
+    """
+    project_root, fdir = run_env
+    ids = [f"FR-{n:03d}" for n in range(1, 41)]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F1", cycle=0, spec_path="")
+    _write_manifest(fdir)
+    _arm(fdir)
+    assert foundry_mark_phase_complete("cast", project_root)["inspect_mode"] == "FULL"
+
+    cycle = _current_cycle(fdir)
+    assert fo._recorded_prove_roster(fdir, cycle) is None
+
+    shortfall = _mark(project_root, "prove", cycle, 11, 40)["coverage_shortfall"]
+    assert shortfall["required"] == 40
+    assert "mode" not in shortfall
+    assert _mark(project_root, "prove", cycle, 27, 40).get("coverage_shortfall") is None
+
+
+def test_a_delta_cycle_at_its_recorded_width_reaches_the_widening_refusal(run_env):
+    """The end-to-end D-080 named: with the roster checked, the run reaches the
+    refusal that tells the lead to WIDEN, instead of being told forever that
+    PROVE is missing.
+
+    Before the fix `Foundry-Phase('inspect_clean')` answered 'streams
+    incomplete: prove' at every width, and `Foundry-Next`'s F2 branch kept
+    returning action=run_streams with 'Missing: prove'. Both are the streams
+    check speaking for the width check, so the lead never saw the one refusal
+    that has an action attached to it.
+    """
+    project_root, fdir = run_env
+    ids = [f"FR-{n:03d}" for n in range(1, 41)]
+    recorded = _delta_cycle_with_a_roster(project_root, fdir, ids=ids)
+    cycle = recorded["cycle"]
+    _mark(project_root, "prove", cycle, len(recorded["prove_sample"]),
+          len(recorded["prove_sample"]))
+    for wire in ("trace", "test"):
+        _mark(project_root, wire, cycle, 1, 1)
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_clean", project_root)
+
+    assert "streams incomplete" not in result.get("error", ""), result
+    assert "DELTA width" in result["error"], result
+    assert "inspect_start" in result["hint"]
+
+    nxt = foundry_next_action(project_root)
+    assert "Missing: prove" not in json.dumps(nxt)
+
+
+def test_the_roster_reader_refuses_a_decision_from_another_cycle(run_env):
+    """`_current_inspect_mode` returns the NEWEST entry, and a width is a fact
+    about ONE crossing: a roster decided for cycle 5 says nothing about what
+    cycle 4's PROVE owed. A mismatched cycle falls back to the spec arm rather
+    than measuring one cycle's work against another cycle's roster.
+    """
+    project_root, fdir = run_env
+    ids = [f"FR-{n:03d}" for n in range(1, 41)]
+    recorded = _delta_cycle_with_a_roster(project_root, fdir, ids=ids)
+    cycle = recorded["cycle"]
+
+    assert fo._recorded_prove_roster(fdir, cycle) == recorded["prove_sample"]
+    assert fo._recorded_prove_roster(fdir, cycle + 1) is None
+    assert fo._recorded_prove_roster(fdir, cycle - 1) is None
