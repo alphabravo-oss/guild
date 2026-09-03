@@ -2024,13 +2024,40 @@ def foundry_add_defect(
             # second writer here would be the FR-002 defect returning: an audit
             # control that only records the attempts one of its callers makes.
             #
-            # `record_denylist_tripwire` names the highest-certainty denylist
-            # class that matched the finding, which for a filing that declared
-            # a non-comment `target_kind` is NON_COMMENT rather than
-            # SECURITY_PROPERTY_CLAIM. That is not a disagreement: the refusal
-            # names the predicate the LATENT gate consulted, the tripwire names
-            # why the finding could never have been demoted at all. Both are
-            # true of the same finding and both are recorded.
+            # D-083 — THE TRIPWIRE RECORDS THE SAME CLASS THE REFUSAL NAMES.
+            #
+            # `record_denylist_tripwire` does not receive the refusal's class;
+            # it re-derives one through `vocab.never_demote_class`. This
+            # comment used to argue that the two answering differently "is not
+            # a disagreement" — the refusal naming the predicate the LATENT
+            # gate consulted, the tripwire naming why the finding could never
+            # be demoted at all. That rationale was wrong and D-083 is the
+            # defect it excused: `_NEVER_DEMOTE_PREDICATES` led with
+            # NON_COMMENT, whose predicate fires for ANY declared non-comment
+            # `target_kind`, so a filing that named a real subject persisted
+            # NON_COMMENT while this very call refused it naming
+            # SECURITY_PROPERTY_CLAIM. One event, two artifacts that
+            # contradict each other — and the losing shapes (`code`, `test`)
+            # are the DEFAULT shape of every production-code filing, so an
+            # auditor querying observations.json.tripwire for
+            # SECURITY_PROPERTY_CLAIM found nothing for exactly the filings
+            # AC-007 is about.
+            #
+            # Casting 1 reordered that tuple most-specific-first, so the
+            # security entry — the one a refusal also names, on the same
+            # `_SECURITY_RE` this gate consults through
+            # `is_security_property_text` — is now returned ahead of the
+            # generic catch-all. Driven at this door across target_kind "",
+            # code, test, comment and config: refusal and tripwire both read
+            # SECURITY_PROPERTY_CLAIM in all five. The two artifacts of one
+            # event agree, which is the only thing that makes the audit ledger
+            # queryable by class.
+            #
+            # Held by `tests/test_vocab.py#test_the_defect_door_audits_under_
+            # the_class_it_refuses` for this door and its `_the_sync_door_`
+            # sibling for the batch one — pinned at the doors rather than only
+            # at the predicate tuple, because it is the DOOR that writes the
+            # two artifacts an auditor later compares.
             record_denylist_tripwire(
                 fdir, finding, cycle=_server_cycle(fdir), source=source
             )
