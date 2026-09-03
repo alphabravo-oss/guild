@@ -4,7 +4,7 @@
 # evidence-timeout: 600
 
 .............................................                            [100%]
-45 passed in 0.45s
+45 passed in 0.60s
 
 === cost is reported by the lead, never parsed by the server ===
 MCP serverInfo.version: 1.9.0 == package __version__: True
