@@ -4,7 +4,7 @@
 == D-052: the call sight prose instructed, through the shipped Foundry-Defect schema ==
    before this fix -> Foundry-Defect refused — unusable argument(s): tier — required, and absent; defect_class — required, and absent.
    as its shape documents now -> ACCEPTED
-   and the door behind that schema -> ACCEPTED
+   and the door behind that schema -> Missing file_path on a LATENT filing: None. A LATENT defect is carried as a backlog entry that promises a location (the batch door spells this key `file`).
 
 == D-052: no surface documents a way past that door ==
    sight still offers a hand-written defects.json entry: False
@@ -64,7 +64,7 @@
    plugins/foundry/agents/tracer.md             missing=none                        recorded=none
    plugins/foundry/skills/prove/SKILL.md        missing=none                        recorded=none
    plugins/foundry/skills/sight/SKILL.md        missing=none                        recorded=none
-   plugins/foundry/skills/temper/SKILL.md       missing=['SECURITY_PROPERTY_CLAIM'] recorded=['SECURITY_PROPERTY_CLAIM']
+   plugins/foundry/skills/temper/SKILL.md       missing=none                        recorded=none
    plugins/foundry/skills/trace/SKILL.md        missing=none                        recorded=none
 
 == D-063: the shape the skills document, driven through BOTH surfaces ==
