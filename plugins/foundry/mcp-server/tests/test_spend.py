@@ -882,8 +882,11 @@ def test_the_unreported_bucket_count_is_written_not_left_at_zero(run_env):
     summary = fo._spend_summary(fdir)
 
     assert summary["total"]["unreported"] == 2
-    assert summary["by_phase"]["cast"]["unreported"] == 1
-    assert summary["by_phase"]["grind"]["unreported"] == 1
+    # D-048: bucketed under the RUN PHASE the verb maps to, never under the verb
+    # itself. `by_phase["grind"]` was a phantom bucket keyed by a dispatch verb.
+    assert summary["by_phase"]["F1"]["unreported"] == 1
+    assert summary["by_phase"]["F3"]["unreported"] == 1
+    assert "cast" not in summary["by_phase"] and "grind" not in summary["by_phase"]
     # ...and the persisted document carries it too, rather than the zero C-4's
     # shape would otherwise leave sitting in state.json forever.
     assert _read_state(fdir)["spend"]["total"]["unreported"] == 2
@@ -899,7 +902,7 @@ def test_a_phase_with_no_recorded_spend_still_gets_its_unreported_count(run_env)
 
     summary = fo._spend_summary(fdir)
 
-    assert summary["by_phase"]["cast"]["unreported"] == 1
+    assert summary["by_phase"]["F1"]["unreported"] == 1
     assert summary["total"]["unreported"] == 1
     assert summary["total"]["tokens"] == 0
 
@@ -1053,9 +1056,13 @@ def test_the_init_success_names_which_build_is_executing(run_env):
 
 
 def test_the_spend_schema_documents_the_spellings_the_run_records(run_env):
-    """D-013's documentation half: 'The Foundry-Spend schema documents the id
-    as "casting-3" and the phase as "e.g. F1, F2, F3" while spawns.log records
-    "cast".'
+    """D-013's documentation half, one vocabulary along (D-048).
+
+    D-013 read "spawns.log records 'cast'" and documented the VERB. That put a
+    dispatch verb in a field CT-013 calls a phase, and `by_phase` grew a bucket
+    keyed `grind`. The reconciliation runs the other way now: the dispatch side
+    maps its verbs to run phase ids, so the schema documents the RUN PHASE and
+    names the verbs only as accepted input.
 
     A schema description is the only place a lead learns what to type, so a
     spelling no ledger writes is not a documentation nit — it is the reason no
@@ -1069,8 +1076,9 @@ def test_the_spend_schema_documents_the_spellings_the_run_records(run_env):
     props = tools["Foundry-Spend"].inputSchema["properties"]
 
     phase_doc = props["phase"]["description"]
+    for run_phase in ("F1", "F2", "F3"):
+        assert f"'{run_phase}'" in phase_doc, phase_doc
     assert "'cast'" in phase_doc and "'grind'" in phase_doc, phase_doc
-    assert "'F2'" in phase_doc, phase_doc
     agent_doc = props["agent"]["description"]
     assert "casting-" in agent_doc, agent_doc
     assert "spawns.log" in agent_doc, agent_doc
@@ -1078,18 +1086,107 @@ def test_the_spend_schema_documents_the_spellings_the_run_records(run_env):
 
 def test_the_documented_phase_spelling_actually_clears_a_dispatch(run_env):
     """The claim the documentation makes, driven: a lead who types what the
-    schema says clears the dispatch on the exact pair, not merely by the
-    forgiving any-phase fallback."""
+    schema says clears the dispatch on the exact pair.
+
+    D-047 removed the forgiving fallback this used to lean on, so the pair is
+    now the only thing that clears anything — which makes the documented
+    spelling load-bearing rather than merely tidy.
+    """
     project_root, fdir = run_env
     _write_state(fdir, phase="F1", cycle=0)
     _write_spawns(fdir, [{"casting_id": 3, "phase": "cast"}])
 
     assert fo._unreported_dispatches(fdir) == [
-        {"agent": "casting-3", "phase": "cast"}
+        {"agent": "casting-3", "phase": "F1"}
     ]
+
+    foundry_record_spend("casting-3", "F1", 1_000, 1_000,
+                         project_root=project_root)
+
+    assert fo._unreported_dispatches(fdir) == []
+    assert fo._spend_summary(fdir)["by_phase"]["F1"]["tokens"] == 1_000
+
+
+def test_the_dispatch_verb_a_lead_can_see_also_clears_the_dispatch(run_env):
+    """CT-013 verbatim: 'none; unreported dispatches are listed, never refused.'
+
+    A lead reading `spawns.log` sees `cast`, and D-048's reconciliation must not
+    turn that reasonable guess into a phantom bucket nothing clears. The verb is
+    mapped to its run phase at the door, so the ledger holds one vocabulary
+    whichever spelling arrives.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_spawns(fdir, [{"casting_id": 3, "phase": "cast"}])
 
     foundry_record_spend("casting-3", "cast", 1_000, 1_000,
                          project_root=project_root)
 
     assert fo._unreported_dispatches(fdir) == []
-    assert fo._spend_summary(fdir)["by_phase"]["cast"]["tokens"] == 1_000
+    assert fo._spend_summary(fdir)["by_phase"]["F1"]["tokens"] == 1_000
+    assert "cast" not in fo._spend_summary(fdir)["by_phase"]
+    row = json.loads(
+        (fdir / "spend.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert row["phase"] == "F1"
+
+
+def test_a_phase_gap_is_visible_when_the_same_agent_reported_elsewhere(run_env):
+    """FR-022 verbatim: 'the report shows N agents unreported per phase so the
+    gap is visible.'
+
+    D-047: `_unreported_dispatches` carried the clause
+    `or row["agent"] in reported_agents`, so one spend call anywhere cleared
+    EVERY dispatch of that agent. Driven: casting-3 dispatched at CAST and again
+    at GRIND, spend reported for CAST only — the GRIND dispatch appeared
+    nowhere, and the only agent the list could ever show was one that never
+    reported at all. That is the exact measurement gap FR-022 names, invisible
+    on the surface built to display it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [
+        {"casting_id": 3, "phase": "cast"},
+        {"casting_id": 3, "phase": "grind"},
+    ])
+
+    foundry_record_spend("casting-3", "F1", 500, 500, project_root=project_root)
+
+    assert fo._unreported_dispatches(fdir) == [
+        {"agent": "casting-3", "phase": "F3"}
+    ]
+    summary = fo._spend_summary(fdir)
+    assert summary["by_phase"]["F3"]["unreported"] == 1
+    assert summary["by_phase"]["F1"]["unreported"] == 0
+
+
+def test_foundry_next_and_the_report_name_the_same_unreported_pairs(run_env):
+    """THE ADJACENT PATH, and why D-047 and D-048 are one class rather than two.
+
+    Two surfaces answer this question — Foundry-Next renders
+    `_unreported_dispatches` and the F6 report renders
+    `foundry_report._read_unreported_dispatches` — and D-013 unified their
+    agent-ID spelling on a rule that was wrong on both. They call one pure
+    helper now, so the projection to `(agent, phase)` must agree exactly.
+    """
+    from foundry_mcp.tools.foundry_report import _read_unreported_dispatches
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [
+        {"casting_id": 3, "phase": "cast"},
+        {"casting_id": 4, "phase": "grind"},
+    ])
+    foundry_record_spend("casting-3", "F1", 500, 500, project_root=project_root)
+
+    section, problem = _read_unreported_dispatches(fdir)
+    assert problem is None, problem
+    from_report = {
+        (agent, phase)
+        for phase, agents in section["by_phase"].items()
+        for agent in agents
+    }
+    from_next = {
+        (row["agent"], row["phase"]) for row in fo._unreported_dispatches(fdir)
+    }
+    assert from_next == from_report == {("casting-4", "F3")}

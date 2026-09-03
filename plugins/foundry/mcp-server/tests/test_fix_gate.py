@@ -2620,12 +2620,21 @@ def test_a_successful_lead_fix_appends_a_lead_fix_handoff_record(run_env):
     assert record["fix_commit"] == commit
 
 
-def test_a_latent_lead_fix_is_recorded_as_unmeasured(run_env):
-    """The handoff has to say WHICH KIND of lead fix it was.
+def test_a_latent_lead_fix_records_its_file_and_line_count_unmeasured(run_env):
+    """GI-003 verbatim: 'the server itself appends a `lead_fix` handoff record
+    carrying the defect id, tier, file, line count and test.'
 
-    `file` and `line_count` are None on a LATENT fix, which is the record stating
-    truthfully that it was accepted unmeasured — rather than reporting a
-    measurement nobody took, or omitting the keys and making a reader guess.
+    D-046: NO TIER CARVE-OUT. GI-003, AC-022 and OT-010 all state that field
+    list flat, and this record used to emit `file: None, line_count: None` for
+    every LATENT lead fix — so AC-022's "the generated report lists it"
+    rendered blank columns and a reader could not tell a deliberately
+    unmeasured fix from a measurement nobody took.
+
+    What IS LIVE-only is the LANE, and this fixture proves both halves at once:
+    the commit is 40 added lines, twice `LEAD_LANE_MAX_LINES`, so accepting it
+    is FR-046 / CT-006 / ST-004's "a LATENT lead fix is not measured" —
+    measured meaning JUDGED — while the record still carries the file and the
+    count the requirement names.
     """
     project_root, fdir = run_env
     _repo(project_root)
@@ -2634,10 +2643,11 @@ def test_a_latent_lead_fix_is_recorded_as_unmeasured(run_env):
     locator = _regression_test_file(project_root)
     commit = _commit_changing(project_root, {"src/sweeper.py": 40})
 
-    _mark_defect_fixed(
+    result = _mark_defect_fixed(
         defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
         regression_test=locator, project_root=project_root,
     )
+    assert result["ok"] is True, result
 
     record = [
         json.loads(line)
@@ -2645,10 +2655,46 @@ def test_a_latent_lead_fix_is_recorded_as_unmeasured(run_env):
         if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
     ][0]
     assert record["tier"] == "LATENT"
-    assert record["file"] is None
-    assert record["line_count"] is None
+    assert record["file"] == "src/sweeper.py"
+    assert record["line_count"] == 40
     assert record["test"] == locator
     assert record["fix_commit"] == commit
+
+
+def test_the_latent_lane_records_the_measurement_without_applying_it(run_env):
+    """FR-046 verbatim: 'Foundry-Fix with authored_by=lead measures fix_commit
+    only when the defect is LIVE.'
+
+    The adjacent path to D-046's fix, driven rather than argued: populating the
+    record from `_numstat_measurement` must not drag the LANE along with it. A
+    commit that would be refused outright on the LIVE lane — two non-test files,
+    41 added lines — is accepted here, and the record carries the count that
+    would have refused it.
+    """
+    project_root, fdir = run_env
+    _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LATENT")
+    locator = _regression_test_file(project_root)
+    commit = _commit_changing(
+        project_root, {"src/sweeper.py": 21, "src/other.py": 20}
+    )
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        regression_test=locator, project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    record = [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
+    ][0]
+    # The FIRST non-test path git reported, and the count over ALL of them —
+    # the same reduction the LIVE lane measures, recorded rather than judged.
+    assert record["line_count"] == 41
+    assert record["file"] in ("src/sweeper.py", "src/other.py")
 
 
 def test_a_teammate_fix_writes_no_lead_fix_record(run_env):

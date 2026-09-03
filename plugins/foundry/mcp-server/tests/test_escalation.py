@@ -899,15 +899,17 @@ def test_the_cleared_class_that_carries_a_latent_backlog_passes_done(run_env):
 def test_a_class_whose_defects_all_closed_does_not_deadlock_done(run_env):
     """The deadlock the ruling must NOT be implemented into.
 
-    Both exit arms iterate `_escalated_classes`, which returns nothing for a
-    class with no open defects. So a class that escalated and was then fully
-    FIXED reaches neither arm and keeps `status: ESCALATED` in escalation.json
-    forever. Keying the guard on that file directly would make DONE
-    unreachable by any means — overrides included, since they are filtered
-    inside `_escalated_classes` and a direct read bypasses them.
+    Keyed on what `_escalated_classes` returns — "still escalating with open
+    work" — this run finishes, and a guard keyed on `escalation.json`'s status
+    field directly would refuse it forever on a record no gate can change.
 
-    Keyed on what `_escalated_classes` returns, "still escalating with open
-    work", the same run finishes.
+    The reason given here used to be that both exit arms iterated
+    `_escalated_classes`, so a fully-fixed class reached neither. D-043 removed
+    that half: the arms walk the persisted entries now and such a class clears
+    on `clean_cycles`. What survives, and is why the guard stays where it is, is
+    the OVERRIDE half — escalation overrides are filtered inside
+    `_escalated_classes`, so a DONE guard reading the file directly would refuse
+    a run the operator had explicitly de-escalated.
     """
     project_root, fdir = run_env
     defects = _latent_recurring([0, 1, 2])
@@ -2452,6 +2454,148 @@ def test_latent_instances_do_not_reset_the_clean_count(run_env):
     assert entry["live_clean_cycles"] == 2
     assert entry["status"] == "CLEARED"
     assert entry["exit_reason"] == "clean_cycles"
+
+
+# --------------------------------------------------------------------------- #
+# D-043 — a class whose instances were all FIXED must still leave escalation
+# --------------------------------------------------------------------------- #
+
+
+def _fix_every_instance(fdir: Path, cycle: int) -> None:
+    """Close every open defect, the way a GRIND cycle that succeeded would."""
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = cycle
+    _write_defects(fdir, defects)
+
+
+def test_a_class_whose_instances_were_all_fixed_clears_on_the_clean_arm(run_env):
+    """AC-004 verbatim: 'escalation.json records for the class a status, the
+    exit reason (clean-cycles or budget), the cycle it cleared and the
+    structural packets it consumed.'
+
+    D-043: it recorded none of them for the commonest ending of all. Both exit
+    arms iterated `_escalated_classes`, which opens with
+    `if not bucket["open"]: continue`, so the moment a structural fix actually
+    WORKED and every instance closed, the class became invisible to both arms.
+    Driven over four real GRIND->INSPECT crossings: `live_clean_cycles` 0, 0, 0,
+    0; `status` ESCALATED; `exit_reason` null; `cleared_at_cycle` null — and the
+    generated report's escalated-classes row carried a blank exit reason while
+    report.json carried `by_status {"CLEARED": 0, "ESCALATED": 1}`, calling
+    finished work unresolved in the section AC-004 and FR-023 name.
+
+    A class with nothing open draws zero LIVE instances by construction, which
+    is exactly the condition ST-001 counts, so `clean_cycles` is the arm that
+    fires and no third exit reason is needed (`ESCALATION_EXIT_REASONS` is
+    frozen at {clean_cycles, budget}).
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    assert _escalation_entry(fdir)["status"] == "ESCALATED"
+
+    _fix_every_instance(fdir, cycle=3)
+    # `_escalated_classes` drops the class from here on — that is the blindness
+    # the arms used to inherit.
+    assert _escalated_classes(fdir, project_root) == {}
+
+    _cross_boundary(fdir, project_root)          # closes cycle 3, the excluded one
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 0
+
+    _cross_boundary(fdir, project_root)          # closes cycle 4 — one clean
+    assert _escalation_entry(fdir)["live_clean_cycles"] == 1
+    assert _escalation_entry(fdir)["status"] == "ESCALATED"
+
+    third = _cross_boundary(fdir, project_root)  # closes cycle 5 — two clean
+
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "CLEARED"
+    assert entry["exit_reason"] == "clean_cycles"
+    assert entry["exit_reason"] in ESCALATION_EXIT_REASONS
+    assert entry["cleared_at_cycle"] == 5
+    assert isinstance(entry["structural_packets_dispatched"], int)
+    assert third["escalation_cleared"][0]["class"] == "FALSE_DOCUMENTED_CONTRACT"
+
+
+def test_the_exit_arms_read_the_escalation_ledger_not_the_open_work(run_env):
+    """THE PROPERTY, derived from the source rather than from the one symptom.
+
+    D-043's cause is a roster, not a count: both arms asked
+    `_escalated_classes` — a function whose contract is "classes with open work
+    that are still escalating" — for the answer to "which classes has the run
+    recorded as ESCALATED". Those are different questions, and a future edit
+    that puts either arm back on the first one re-opens every symptom at once.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    for fn in (fo._advance_escalation_clean_cycles, fo._spend_structural_budget):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        called = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "_escalated_classes" not in called, (
+            f"{fn.__name__} iterates _escalated_classes again, which omits a "
+            "class with no open instances — D-043's exact blindness."
+        )
+        assert "_persisted_escalations" in called, (
+            f"{fn.__name__} no longer reads the persisted ESCALATED roster, so "
+            "a class the ledger records as escalated can be unreachable again."
+        )
+
+
+def test_an_overridden_class_is_not_cleared_by_an_arm(run_env):
+    """The adjacent path the ledger read opens, closed deliberately.
+
+    `_escalated_classes` filters classes the operator de-escalated with a
+    directive; a roster read straight off `escalation.json` would not, and an
+    arm would then stamp CLEARED with an exit reason no rule earned — recording
+    the operator's decision as the machine's, irreversibly, because CLEARED is
+    terminal and withdrawing the directive could never bring the class back.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    _fix_every_instance(fdir, cycle=3)
+    foundry_inject_directive(
+        "escalation-override: FALSE_DOCUMENTED_CONTRACT", project_root=project_root
+    )
+
+    for _ in range(4):
+        _cross_boundary(fdir, project_root)
+
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == "ESCALATED", (
+        "an override de-escalates a class; it must not be laundered into a "
+        "machine-earned CLEARED"
+    )
+    assert entry["exit_reason"] is None
+
+
+def test_the_recorded_proposal_never_asserts_a_fixed_instance_is_open(run_env):
+    """AC-004's record is read by the F6 report, so a stale field is a false
+    statement in the run's own final artifact.
+
+    D-043: `foundry_defects_to_tasks` wrote
+    `info.get("proposal") or _structural_proposal(info)`, so the FIRST proposal
+    a class drew was the one every later report carried — open counts and
+    defect ids frozen at that moment. This run's own report.json asserted a
+    class 'still has 3 open instance(s)' and that all three 'must reach fixed'
+    when all three were fixed.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    assert "3 open instance(s)" in _escalation_entry(fdir)["proposal"]
+
+    _fix_every_instance(fdir, cycle=3)
+    foundry_defects_to_tasks(project_root)
+
+    proposal = _escalation_entry(fdir)["proposal"]
+    assert "3 open instance(s)" not in proposal, proposal
+    assert "must reach fixed" not in proposal, proposal
+    assert "every instance of it is now closed" in proposal, proposal
 
 
 def _grind_cycle(fdir: Path, project_root: str) -> dict:

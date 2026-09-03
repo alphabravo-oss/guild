@@ -1180,9 +1180,24 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # Its own named precondition, because it is the one refusal a lead clears
     # with a tool call rather than with work: `Foundry-Report`. Read through
     # casting 5's `report_status`, which answers "present, and which sections
-    # are missing" from `report.json` and never from REPORT.md — so the prose
-    # GI-006 explicitly permits the lead to append below the sections cannot
-    # make a present section look absent.
+    # are missing" from BOTH documents — `report.json` for "which sections were
+    # generated" and REPORT.md for "which sections a reader can still find" —
+    # and returns the union.
+    #
+    # D-050: this block used to claim `report_status` read the JSON "and never
+    # from REPORT.md", and argued from that claim that markdown could not be
+    # confused by appended prose. The claim outlived the code it described:
+    # D-015 moved the read onto both documents after `rm REPORT.md` left the
+    # DONE gate passing, and this block kept the case for the behaviour that
+    # drive removed. A maintainer reading it would have concluded REPORT.md was
+    # unchecked and could have reverted D-015 as redundant, which is the whole
+    # cost of stale prose surviving beside new prose.
+    #
+    # The prose GI-006 explicitly permits the lead to append BELOW the sections
+    # still cannot make a present section look absent, but that is now true for
+    # a stated mechanism rather than by not looking: `_markdown_missing_sections`
+    # matches whole heading lines, so appended paragraphs add headings without
+    # removing any.
     #
     # STATED FIRST, deliberately, in the ordering discipline this function
     # already holds: the branch that claims `reason` is the LAST one to fail, so
@@ -1303,11 +1318,18 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # reads: it skips any class `escalation.json` records as CLEARED, and it
     # returns nothing for a class whose defects have all closed. So "still
     # returned here" IS "still ESCALATED with open work", and a class that
-    # cleared — or emptied — does not appear. Reading `escalation.json`
-    # directly instead would deadlock: both exit arms iterate this same
-    # function, so a class that escalated and was then fully fixed reaches
-    # neither arm, keeps `status: ESCALATED` in the file forever, and DONE
-    # could never be reached again by any means, override included.
+    # cleared — or emptied — does not appear.
+    #
+    # This block used to add that reading `escalation.json` directly would
+    # DEADLOCK, because both exit arms iterated this same function and so a
+    # class that escalated and was then fully fixed reached neither arm. That
+    # was true when it was written and D-043 made it false: the arms now walk
+    # the persisted entries themselves (see `_persisted_escalations`), so such a
+    # class advances a clean cycle at every boundary and CLEARS with
+    # `clean_cycles`. The guard nonetheless STAYS on `_escalated_classes`, per
+    # the D-034 ruling — that is where the operator's escalation overrides are
+    # filtered, and a DONE guard that bypassed them would refuse a run the
+    # operator had explicitly de-escalated.
     escalated_open = _escalated_classes(fdir, project_root)
     latent_only_classes = sorted(
         key for key, info in escalated_open.items()
@@ -2883,73 +2905,65 @@ def _spend_ledger_rows(fdir: Path) -> list[dict]:
     return rows
 
 
-def _dispatched_agents(fdir: Path) -> list[dict]:
-    """Agents this run DISPATCHED, from `spawns.log` and the INSPECT roster.
+# D-048 — ONE ROLL-UP DICT, ONE PHASE VOCABULARY.
+#
+# `spawns.log` records the DISPATCH VERB a teammate was handed out under —
+# this run's own log carries `cast` 18 times and `grind` 7 — while
+# `Foundry-Spend`'s schema documents the phase as a RUN PHASE ID and the
+# ledger buckets under `F1`. So `state.json.spend.by_phase` grew a bucket keyed
+# `grind`, which is not a phase, carrying tokens 0; and the exact
+# `(agent, phase)` pair could never match for a teammate dispatch, which is
+# what the agent-wide fallback in `_unreported_dispatches` was written to work
+# around (D-047). Reconciling the two vocabularies is what makes the exact test
+# the workable one and removes the need for the fallback at all.
+#
+# OWNED HERE because this module owns the dispatch side: `foundry_spawn` writes
+# the verbs and this module maps them. `foundry_report` READS this constant
+# through a function-local import rather than re-typing the mapping, so both
+# surfaces bucket identically or neither does.
+DISPATCH_PHASE_TO_RUN_PHASE = {"cast": "F1", "grind": "F3"}
 
-    Two sources because neither sees every agent (C-5). `spawns.log` is the
-    record of what the run handed out and covers every CAST and GRIND teammate;
-    the F2 stream agents are spawned from the roster the INSPECT-opening
-    transition recorded, and never appear in `spawns.log` at all.
 
-    D-013 — THE CASTING FALLBACK IS `foundry_spawn`'s SPELLING, NOT A LOCAL ONE.
-    ---------------------------------------------------------------------------
-    A real `spawns.log` row carries `casting_id` and NO `agent` key, so the
-    fallback below is the branch that fires in production, not an edge case.
-    It used to be `str(row["casting_id"])`, which keys that row as `1` — while
-    `foundry_report._read_unreported_dispatches` keyed the SAME row as
-    `casting-1`, and `foundry_spawn` seeds the progress ledger under
-    `casting-1` too. Two derivations of one fact disagreed where the operator
-    could not see it: Foundry-Next and the report named DIFFERENT agents as
-    unreported, no single `Foundry-Spend` call could clear both surfaces, and
-    the spelling the `Foundry-Spend` schema documents cleared neither.
+def _spawn_rows(fdir: Path) -> list[dict]:
+    """The `spawns.log` rows, exactly as casting 4's `foundry_spawn.py` wrote them.
 
-    So the id comes from `_agent_id_for_casting`, which is the door that MINTS
-    it. Imported lazily, like every other cross-casting seam in this module:
-    `foundry_spawn` imports this module, so a module-level import would close
-    the cycle, while a call-time one runs when every module in the chain is
-    already built.
+    Handed to `unreported_dispatch_pairs` unchanged — the verb-to-phase mapping
+    and the agent-id spelling are both applied inside it, from the constant and
+    the minting function passed in, so nothing is normalised twice or normalised
+    differently by the two surfaces that read this log.
     """
-    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
-
-    agents: list[dict] = []
+    rows: list[dict] = []
     text, problem = read_text_file(fdir / "spawns.log")
-    if problem is None:
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(row, dict):
-                continue
-            agent = row.get("agent") or row.get("agent_id")
-            if not agent and row.get("casting_id") is not None:
-                agent = _agent_id_for_casting(row["casting_id"])
-            if not agent:
-                continue
-            agents.append({"agent": str(agent), "phase": str(row.get("phase", ""))})
+    if problem is not None:
+        return rows
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
 
-    # D-013, second axis — THE STREAM ROSTER IS READ THE WAY THE REPORT READS
-    # IT, AND ITS PHASE IS THE ONE THE SPEND SCHEMA DOCUMENTS.
-    #
-    # This arm used to walk `stream_scope` (the roster the INSPECT-opening
-    # transition RECORDED) and spell each agent's phase `cycle-{N}`, while
-    # `foundry_report._read_unreported_dispatches` walks the stream RECORDS in
-    # the same bucket and spells the phase `F2`. Same two facts, two
-    # derivations, disagreeing on both — so the report and Foundry-Next named
-    # different agents as unreported even after the id spelling was unified,
-    # and `by_phase` bucketed a stream agent under a key that is not a phase at
-    # all. `Foundry-Spend`'s own schema documents the phase as "e.g. F1, F2,
-    # F3"; `cycle-1` is a cycle, and no lead could ever have typed it.
-    #
-    # The report's rule is adopted verbatim rather than re-decided: a stream is
-    # a bucket key whose VALUE is a record carrying `records`, which is what
-    # keeps the C-6 additions (`inspect_mode`, `stream_scope`,
-    # `evidence_sweep`) out of the roster without a denylist that needs an edit
-    # every time the roll-up gains a field. The cycle survives as its own key,
-    # so the per-cycle bucket still gets its count without overloading `phase`.
+
+def _stream_dispatch_cycles(fdir: Path) -> dict[str, list[str]]:
+    """`{stream wire id: [server cycles it ran in]}` from `stream-rollup.json`.
+
+    The F2 stream agents appear in no `spawns.log` row at all, so this is the
+    only record that they were dispatched. A stream is a bucket key whose VALUE
+    is a record carrying `records` — testing the value rather than keeping a
+    denylist of non-stream keys is what keeps the C-6 additions
+    (`inspect_mode`, `stream_scope`, `evidence_sweep`) out of the roster without
+    an edit every time the roll-up gains a field.
+
+    The cycle is kept as its own axis and never folded into the phase: every
+    INSPECT stream shares the phase `F2`, and `cycle-1` is a cycle, not a phase
+    a lead could ever type into `Foundry-Spend`.
+    """
+    cycles: dict[str, list[str]] = {}
     rollup = _load_json(fdir / ROLLUP_FILENAME).get("cycles", {})
     if isinstance(rollup, dict):
         for cycle_key, bucket in rollup.items():
@@ -2957,43 +2971,98 @@ def _dispatched_agents(fdir: Path) -> list[dict]:
                 continue
             for stream, entry in bucket.items():
                 if isinstance(entry, dict) and "records" in entry:
-                    agents.append(
-                        {"agent": str(stream), "phase": "F2", "cycle": str(cycle_key)}
-                    )
-    return agents
+                    cycles.setdefault(str(stream), []).append(str(cycle_key))
+    return {stream: sorted(seen) for stream, seen in cycles.items()}
+
+
+def _stream_roster(fdir: Path) -> dict[str, list[str]]:
+    """C-5's `{run phase id: [F2 stream agent ids]}`, as the helper wants it."""
+    streams = sorted(_stream_dispatch_cycles(fdir))
+    return {"F2": streams} if streams else {}
+
+
+def _dispatch_pairs(fdir: Path, spend_rows: list[dict]) -> list[dict]:
+    """`unreported_dispatch_pairs` for this run — THE one rule, called once.
+
+    D-047 / D-048: the rule used to live here AND in
+    `foundry_report._read_unreported_dispatches`, two derivations of one
+    question that D-013 had already unified on the wrong answer. It is now
+    casting 5's pure helper in `foundry_state`, the only module both readers
+    already import; this function supplies the run's four inputs and nothing
+    else, so `Foundry-Next` and the F6 report cannot drift apart again.
+
+    Passing an EMPTY `spend_rows` asks the same helper the denominator question
+    — "every dispatched pair, nothing cleared" — rather than walking the two
+    sources a second time here with a second set of rules.
+
+    Both imports are lazy for this module's standing reason: `foundry_spawn`
+    imports this module, so a module-level import closes the cycle, while a
+    call-time one runs when every module in the chain is already built.
+    """
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+    from foundry_mcp.tools.foundry_state import unreported_dispatch_pairs
+
+    return unreported_dispatch_pairs(
+        dispatch_rows=_spawn_rows(fdir),
+        stream_roster=_stream_roster(fdir),
+        spend_rows=spend_rows,
+        phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
+        agent_id_of=_agent_id_for_casting,
+    )
+
+
+def _dispatched_agents(fdir: Path) -> list[dict]:
+    """Every `(agent, phase)` this run DISPATCHED, with its cycle where known.
+
+    Two sources, because neither sees every agent (C-5): `spawns.log` covers
+    every CAST and GRIND teammate, and the F2 stream agents are spawned from the
+    roster the INSPECT-opening transition recorded and appear in `spawns.log`
+    never. Both are reconciled by `_dispatch_pairs`, so the phase on every row
+    here is a RUN PHASE ID.
+
+    The cycle rides beside the pair rather than inside it. One stream agent
+    unreported across three cycles is three rows here and one pair there, which
+    is what lets `by_cycle` carry a per-cycle count while `by_phase` and the F6
+    report read the pair.
+    """
+    cycles = _stream_dispatch_cycles(fdir)
+    rows: list[dict] = []
+    for pair in _dispatch_pairs(fdir, []):
+        stamps = cycles.get(pair["agent"], []) if pair["phase"] == "F2" else []
+        if stamps:
+            rows.extend({**pair, "cycle": stamp} for stamp in stamps)
+        else:
+            rows.append(dict(pair))
+    return rows
 
 
 def _unreported_dispatches(fdir: Path) -> list[dict]:
-    """Dispatched agents with no `spend.jsonl` line for that phase (AC-034).
+    """Dispatched agents with no `spend.jsonl` line for THAT phase (AC-034).
 
     DERIVED, never refused on. FR-022 is explicit: "A forgotten Foundry-Spend
     never blocks a gate; the report shows N agents unreported per phase so the
     gap is visible." An accounting omission is a thing to SEE, not a thing to
     stop a run over.
+
+    D-047 — PER PHASE, WHICH IS WHAT FR-022 ASKS FOR. This carried a second
+    clause, `or row["agent"] in reported_agents`, which cleared EVERY dispatch
+    of any agent that reported spend once anywhere. Driven: casting-3
+    dispatched at two phases with spend reported for one of them appeared
+    nowhere in the list, so the very gap the section exists to show was the one
+    shape it could not show. The clause is gone; a pair is unreported when no
+    spend row carries that exact `(agent, phase)`.
     """
-    reported = {
-        (str(r.get("agent", "")), str(r.get("phase", "")))
-        for r in _spend_ledger_rows(fdir)
+    unreported = {
+        (pair["agent"], pair["phase"])
+        for pair in _dispatch_pairs(fdir, _spend_ledger_rows(fdir))
     }
-    reported_agents = {agent for agent, _phase in reported}
-    # Deduped on the full triple, not on `(agent, phase)`: every INSPECT stream
-    # shares the phase `F2`, so collapsing on the pair would keep one cycle's
-    # dispatch and silently drop the rest, and the per-cycle bucket would then
-    # count only whichever cycle happened to be read first. The extra key
-    # changes nothing for a reader that projects back to `(agent, phase)`,
-    # which is exactly what the report's cross-check does.
-    seen: set[tuple[str, str, str]] = set()
-    unreported: list[dict] = []
-    for row in _dispatched_agents(fdir):
-        key = (row["agent"], row["phase"], str(row.get("cycle", "")))
-        if key in seen:
-            continue
-        seen.add(key)
-        if (row["agent"], row["phase"]) in reported or row["agent"] in reported_agents:
-            continue
-        unreported.append(row)
     return sorted(
-        unreported, key=lambda r: (r["agent"], r["phase"], str(r.get("cycle", "")))
+        (
+            row
+            for row in _dispatched_agents(fdir)
+            if (row["agent"], row["phase"]) in unreported
+        ),
+        key=lambda r: (r["agent"], r["phase"], str(r.get("cycle", ""))),
     )
 
 
@@ -3165,9 +3234,19 @@ def foundry_record_spend(
         return max(0, int(value))
 
     server_cycle = _current_cycle(fdir)
+    # D-048: the LEDGER STORES A RUN PHASE ID. A lead typing the dispatch verb
+    # they can see in `spawns.log` — `cast`, `grind` — used to have it recorded
+    # verbatim, which grew a `by_phase` bucket keyed by a verb that is not a
+    # phase and cleared no dispatch, because the dispatch side is keyed `F1` /
+    # `F3`. Mapped through the constant this module owns rather than refused,
+    # because CT-013 says this door never refuses and a rejected cost report is
+    # a cost report nobody files twice. An unknown value is still recorded as
+    # spelled: it is somebody's phase, and dropping it would lose the number.
+    recorded_phase = _identity(phase, "phase")
+    recorded_phase = DISPATCH_PHASE_TO_RUN_PHASE.get(recorded_phase, recorded_phase)
     row = {
         "agent": _identity(agent, "agent"),
-        "phase": _identity(phase, "phase"),
+        "phase": recorded_phase,
         "cycle": server_cycle,
         "declared_cycle": cycle,
         "tokens": _count(tokens, "tokens"),
@@ -3371,6 +3450,35 @@ def _sweep_evidence_at_boundary(
     record = {
         "scope": "full" if full else "delta",
         "logs_reexecuted": [str(p) for p in outcome.get("logs_reexecuted", [])],
+        # CT-007 — THE PER-LOG COLUMN, CARRIED THROUGH TO THE ARTIFACT.
+        #
+        # "sweep result recorded per log with scope (delta or full) and elapsed
+        # seconds" is one requirement with two halves, and this wrapper used to
+        # land only the first. `sweep_evidence_at_head` computed `per_log` — a
+        # row for EVERY log in scope, matched or not, each with its own elapsed
+        # seconds — and this function copied six sibling fields and dropped it,
+        # so the column reached neither `stream-rollup.json`, nor the transition
+        # result, nor the report. Driven (D-044): the persisted record's keys
+        # were exactly ['elapsed_seconds', 'logs_reexecuted', 'mismatches',
+        # 'pool_size', 'scope', 'swept_at'] with `elapsed_seconds` a single run
+        # total, while one layer down the producer had the per-log rows in hand.
+        # `test_evidence.py` asserted against the producer directly, which is
+        # how a whole-suite pass sat on top of the gap.
+        #
+        # Copied field by field rather than passed through whole, for the same
+        # reason `mismatches` is: this is the C-6 document shape and a producer
+        # that grows a field does not silently widen a persisted artifact.
+        "per_log": [
+            {
+                "log": row.get("log", ""),
+                "elapsed_seconds": row.get("elapsed_seconds", 0.0),
+                "matched": bool(row.get("matched")),
+                "exit_code": row.get("exit_code"),
+                "failure_token": row.get("failure_token"),
+            }
+            for row in outcome.get("per_log", [])
+            if isinstance(row, dict)
+        ],
         "mismatches": [
             {"log": m.get("log", ""), "reason": m.get("reason", "")}
             for m in outcome.get("mismatches", [])
@@ -4709,10 +4817,57 @@ def _escalated_classes(
     overrides = _escalation_overrides(project_root) if apply_overrides else set()
     recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
 
-    # D-102: resolve every record's class in ONE pass over the whole ledger, so
-    # a cluster split across declared and undeclared records still accumulates
-    # as one class. Per-record `_defect_class` cannot see the ledger, and that
-    # blindness is what let a mixed cluster escape.
+    buckets = _class_buckets(defects)
+
+    escalated: dict[str, dict] = {}
+    for key, bucket in buckets.items():
+        if not bucket["open"]:
+            continue
+        if "*" in overrides or key in overrides:
+            continue
+        # ST-001 / ST-002 — THE MECHANICAL EXIT, READ FROM THE LEDGER THAT
+        # RECORDS IT.
+        #
+        # This function had exactly one exit: a class stopped escalating when
+        # every instance of it closed. thunder-viper is what that costs. An
+        # adversarial prover with no convergence criterion re-filed the same
+        # class at a finer boundary in cycles 19, 20 and 21 — never driving a
+        # live instance — so the class never emptied, never stopped drawing a
+        # structural packet, and the run ended only when a human told the lead
+        # to fix the last defects directly.
+        #
+        # Two exits now sit beside closure, and CLEARED is the persisted answer
+        # to both. Whichever fired is recorded with its reason, so "why did this
+        # class stop escalating" is answerable from an artifact rather than from
+        # a status flag alone. CLEARED is terminal and outranks the cycle count:
+        # a class that has left escalation does not re-enter it because three
+        # more instances arrive — its open LIVE instances are ordinary blocking
+        # defects fixed one at a time (AC-003), which is exactly what escalation
+        # was an alternative to.
+        if (recorded.get(key) or {}).get("status") == "CLEARED":
+            continue
+        run_len, _run_end = _consecutive_run(bucket["cycles"])
+        if run_len < ESCALATION_CYCLES:
+            continue
+        escalated[key] = _class_info(key, bucket, recorded)
+    return escalated
+
+
+def _class_buckets(defects: list) -> dict[str, dict]:
+    """Aggregate every defect record by resolved class, open and closed alike.
+
+    D-102: resolve every record's class in ONE pass over the whole ledger, so a
+    cluster split across declared and undeclared records still accumulates as
+    one class. Per-record `_defect_class` cannot see the ledger, and that
+    blindness is what let a mixed cluster escape.
+
+    D-043 — LIFTED OUT OF `_escalated_classes` SO THE EXIT ARMS CAN SEE A CLASS
+    WITH NOTHING OPEN. `_escalated_classes` drops such a class by design (it has
+    no work to packet), and while the aggregation lived inside it the arms could
+    reach the CURRENT open counts of a class only through the one caller that
+    filters it out. The buckets themselves make no judgement about escalation;
+    they are just "what does the ledger say about each class right now".
+    """
     resolved = _resolve_defect_classes(defects)
 
     buckets: dict[str, dict] = {}
@@ -4753,65 +4908,67 @@ def _escalated_classes(
             bucket["sources"].add(d["source"])
         if d.get("status") == "open":
             bucket["open"].append(d)
+    return buckets
 
-    escalated: dict[str, dict] = {}
-    for key, bucket in buckets.items():
-        if not bucket["open"]:
-            continue
-        if "*" in overrides or key in overrides:
-            continue
-        # ST-001 / ST-002 — THE MECHANICAL EXIT, READ FROM THE LEDGER THAT
-        # RECORDS IT.
-        #
-        # This function had exactly one exit: a class stopped escalating when
-        # every instance of it closed. thunder-viper is what that costs. An
-        # adversarial prover with no convergence criterion re-filed the same
-        # class at a finer boundary in cycles 19, 20 and 21 — never driving a
-        # live instance — so the class never emptied, never stopped drawing a
-        # structural packet, and the run ended only when a human told the lead
-        # to fix the last defects directly.
-        #
-        # Two exits now sit beside closure, and CLEARED is the persisted answer
-        # to both. Whichever fired is recorded with its reason, so "why did this
-        # class stop escalating" is answerable from an artifact rather than from
-        # a status flag alone. CLEARED is terminal and outranks the cycle count:
-        # a class that has left escalation does not re-enter it because three
-        # more instances arrive — its open LIVE instances are ordinary blocking
-        # defects fixed one at a time (AC-003), which is exactly what escalation
-        # was an alternative to.
-        if (recorded.get(key) or {}).get("status") == "CLEARED":
-            continue
-        run_len, run_end = _consecutive_run(bucket["cycles"])
-        if run_len < ESCALATION_CYCLES:
-            continue
-        escalated[key] = {
-            "class": key,
-            "declared": bucket["declared"],
-            "cycles": sorted(bucket["cycles"]),
-            "consecutive_cycles": run_len,
-            "escalated_at_cycle": run_end,
-            "defect_ids": [d["id"] for d in bucket["open"]],
-            # FR-001 / C-3: the two halves of "what is still open", split by the
-            # axis that decides what happens to each. Open LIVE (and untiered)
-            # instances stay blocking defects fixed per-instance; open LATENT
-            # instances go to the F6 named backlog and block nothing. Computed
-            # here, where the bucket is already in hand, rather than re-derived
-            # by every reader of the escalation record.
-            "open_live_defect_ids": [
-                d["id"] for d in bucket["open"] if defect_tier(d) != "LATENT"
-            ],
-            "open_latent_defect_ids": [
-                d["id"] for d in bucket["open"] if defect_tier(d) == "LATENT"
-            ],
-            "open_count": len(bucket["open"]),
-            "total_count": bucket["total"],
-            "files": sorted(bucket["files"]),
-            "symbols": sorted(bucket["symbols"]),
-            "spec_refs": sorted(bucket["spec_refs"]),
-            "sources": sorted(bucket["sources"]),
-            "proposal": (recorded.get(key) or {}).get("proposal", ""),
-        }
-    return escalated
+
+def _class_info(key: str, bucket: dict, recorded: dict) -> dict:
+    """One class's CURRENT view, as every escalation writer and reader wants it.
+
+    Derived from the ledger on every call and never cached, so "how many
+    instances of this class are open" is answered by the ledger rather than by
+    whatever the last recording happened to write. That is the property D-043
+    needed: a class whose instances have all been fixed reports zero open here,
+    and the proposal regenerated from it cannot go on asserting they are open.
+    """
+    run_len, run_end = _consecutive_run(bucket["cycles"])
+    return {
+        "class": key,
+        "declared": bucket["declared"],
+        "cycles": sorted(bucket["cycles"]),
+        "consecutive_cycles": run_len,
+        "escalated_at_cycle": run_end,
+        "defect_ids": [d["id"] for d in bucket["open"]],
+        # FR-001 / C-3: the two halves of "what is still open", split by the
+        # axis that decides what happens to each. Open LIVE (and untiered)
+        # instances stay blocking defects fixed per-instance; open LATENT
+        # instances go to the F6 named backlog and block nothing. Computed
+        # here, where the bucket is already in hand, rather than re-derived
+        # by every reader of the escalation record.
+        "open_live_defect_ids": [
+            d["id"] for d in bucket["open"] if defect_tier(d) != "LATENT"
+        ],
+        "open_latent_defect_ids": [
+            d["id"] for d in bucket["open"] if defect_tier(d) == "LATENT"
+        ],
+        "open_count": len(bucket["open"]),
+        "total_count": bucket["total"],
+        "files": sorted(bucket["files"]),
+        "symbols": sorted(bucket["symbols"]),
+        "spec_refs": sorted(bucket["spec_refs"]),
+        "sources": sorted(bucket["sources"]),
+        "proposal": (recorded.get(key) or {}).get("proposal", ""),
+    }
+
+
+def _empty_class_bucket(key: str) -> dict:
+    """The bucket of a class the defect ledger no longer carries at all.
+
+    An escalation.json entry can outlive every record that produced it — a
+    resumed archive whose defects.json was truncated, a class key renamed by a
+    later filing. The arms still have to be able to reach that entry, and
+    "nothing open, nothing seen" is the honest reading rather than a KeyError.
+    """
+    return {
+        "class": key,
+        "cycles": set(),
+        "declared": False,
+        "open": [],
+        "total": 0,
+        "files": set(),
+        "symbols": set(),
+        "spec_refs": set(),
+        "sources": set(),
+    }
 
 
 def _override_instruction(class_key: str) -> str:
@@ -4944,6 +5101,19 @@ def _structural_proposal(info: dict) -> str:
     if info["symbols"]:
         spread += f", {len(info['symbols'])} symbol(s)"
     cycles = ", ".join(str(c) for c in info["cycles"])
+    # D-043: the zero-open reading has its own sentence, because the general one
+    # below interpolates a defect list and an open count and reads as a demand
+    # when both are empty — "still has 0 open instance(s) ... all of  must reach
+    # fixed" was in this run's own report about a class whose every instance had
+    # been fixed. A class with nothing open is a statement of fact, not a packet.
+    if not info["open_count"]:
+        return (
+            f"NO STRUCTURAL WORK OPEN — defect class '{info['class']}' ({origin}) "
+            f"recurred for {info['consecutive_cycles']} consecutive cycles "
+            f"(cycles seen: {cycles}) across {spread}, and every instance of it "
+            f"is now closed. Recorded so the class's history stays readable; "
+            f"there is nothing here to dispatch."
+        )
     return (
         f"STRUCTURAL FIX REQUIRED — defect class '{info['class']}' ({origin}) has "
         f"recurred for {info['consecutive_cycles']} consecutive cycles "
@@ -5005,13 +5175,38 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
     Every write preserves an existing value: this function records proposals and
     refreshes the derived views, and must never reset a counter another boundary
     advanced.
+
+    D-043 — EVERY RECORDED CLASS IS REFRESHED, NOT ONLY THE ESCALATING ONES.
+    -----------------------------------------------------------------------
+    The derived views — the proposal, `defect_ids`, `open_latent_defect_ids` —
+    are answers to "what is open in this class RIGHT NOW", and this function
+    used to refresh them only for the classes `_escalated_classes` returned. A
+    class drops out of that set the moment its last instance is fixed, so the
+    last thing ever written about it was written when it still had open work,
+    and the F6 report went on printing that. The counters are untouched here as
+    before; only the derived views are re-derived, for every entry the document
+    already carries.
     """
     path = fdir / ESCALATION_FILENAME
+    recorded = _load_json(path).get("classes", {})
+    if not escalated and not (isinstance(recorded, dict) and recorded):
+        # Nothing escalating and nothing on record: return before opening the
+        # transaction, so a run that never escalated anything never grows an
+        # `escalation.json` to say so.
+        return
+    defects = _load_json(fdir / "defects.json").get("defects", [])
+    buckets = _class_buckets(defects)
     with _document_transaction(path) as data:
         classes = data.setdefault("classes", {})
         if not isinstance(classes, dict):
             classes = data["classes"] = {}
-        for key, info in escalated.items():
+        keys = list(escalated) + [k for k in classes if k not in escalated]
+        for key in keys:
+            info = escalated.get(key) or _class_info(
+                key, buckets.get(key) or _empty_class_bucket(key), classes
+            )
+            if key not in escalated:
+                info["proposal"] = _structural_proposal(info)
             entry = classes.setdefault(key, {})
             if not isinstance(entry, dict):
                 entry = classes[key] = {}
@@ -5051,8 +5246,67 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
         data["updated_at"] = _now()
 
 
+# D-043 — THE EXIT ARMS WALK THE LEDGER THAT RECORDS ESCALATION, NOT THE
+# LEDGER THAT RECORDS WORK.
+# ---------------------------------------------------------------------------
+# Both arms used to iterate `_escalated_classes`, whose very first line is
+# `if not bucket["open"]: continue`. So a class that escalated and then had
+# every instance FIXED was invisible to both: `live_clean_cycles` stayed 0
+# across every later boundary, `status` stayed ESCALATED, `exit_reason` stayed
+# null, and both F6 artifacts reported it as unresolved work forever — the
+# REPORT.md row carrying a blank exit reason, report.json carrying
+# `by_status {"CLEARED": 0, "ESCALATED": 1}`.
+#
+# Driven (D-043): class escalated through the real door over three consecutive
+# cycles, every instance then set to fixed, then four real GRIND->INSPECT
+# crossings. live_clean_cycles 0, 0, 0, 0.
+#
+# Termination did still happen, because `_escalated_classes` returns nothing
+# for such a class and so the DONE guard passed it — but that is CLOSURE, the
+# pre-existing exit, and it leaves no record of itself. ST-001 and ST-002 name
+# two arms and AC-004 requires the exit reason to be ON the record;
+# `ESCALATION_EXIT_REASONS` is casting 1's frozenset {clean_cycles, budget} and
+# a third reason is not ours to add. So the arms are made REACHABLE instead:
+# they walk the persisted entries, and a class with nothing open draws zero LIVE
+# instances by definition, advances a clean cycle at every boundary, and CLEARS
+# with `clean_cycles` — which is exactly what happened to it.
+#
+# The DONE guard is unchanged and still keyed on what `_escalated_classes`
+# returns (the D-034 ruling), so nothing here can deadlock it.
+
+
+def _persisted_escalations(
+    fdir: Path, project_root: str, classes: dict
+) -> list[str]:
+    """The class keys `escalation.json` currently records as ESCALATED.
+
+    Sorted, so both arms walk in one order and the document they write is
+    stable across runs.
+
+    OVERRIDES ARE HONOURED HERE TOO. `_escalated_classes` filters a class the
+    operator de-escalated with a directive, and an arm reading the file directly
+    would bypass that filter and eventually stamp the class CLEARED with an exit
+    reason no rule earned — recording the operator's decision as the machine's,
+    irreversibly, since CLEARED is terminal and a withdrawn directive could
+    never bring the class back.
+    """
+    overrides = _escalation_overrides(project_root)
+    if "*" in overrides:
+        return []
+    return sorted(
+        key
+        for key, entry in classes.items()
+        if isinstance(entry, dict)
+        and key not in overrides
+        and (entry.get("status") or "ESCALATED") == "ESCALATED"
+    )
+
+
 def _spend_structural_budget(
-    fdir: Path, escalated: dict[str, dict], packet_cycle: int
+    fdir: Path,
+    project_root: str,
+    escalated: dict[str, dict],
+    packet_cycle: int,
 ) -> list[dict]:
     """Count this dispatch against each class's structural-pass budget (ST-002).
 
@@ -5067,50 +5321,65 @@ def _spend_structural_budget(
     is the guard, which also makes the record legible: `structural_packet_cycles`
     reads as "the cycles this class was worked structurally in".
 
+    D-043: the SPEND is keyed on `escalated` — only a class that actually drew a
+    packet on this call may have one counted against it — while the CLEAR check
+    runs over every persisted ESCALATED entry. The two are different questions
+    and were previously answered by one loop over `escalated`, which is what
+    made a class the ledger still records as ESCALATED unreachable once its
+    instances closed. Nothing here increments for a class that got no packet.
+
     Returns the classes that CLEARED on this dispatch, each with its exit
     reason, for the caller to report.
     """
     cleared: list[dict] = []
-    if not escalated:
+    recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+    if not isinstance(recorded, dict):
+        recorded = {}
+    # Nothing escalated and nothing recorded as escalated: return before opening
+    # the transaction, so an ordinary run never grows an `escalation.json` it has
+    # no escalation to put in.
+    if not escalated and not _persisted_escalations(fdir, project_root, recorded):
         return cleared
+    defects = _load_json(fdir / "defects.json").get("defects", [])
+    buckets = _class_buckets(defects)
     with _document_transaction(fdir / ESCALATION_FILENAME) as data:
         classes = data.setdefault("classes", {})
         if not isinstance(classes, dict):
             classes = data["classes"] = {}
         for key in sorted(escalated):
-            info = escalated[key]
             entry = classes.setdefault(key, {})
             if not isinstance(entry, dict):
                 entry = classes[key] = {}
             _escalation_entry_defaults(entry)
-            entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
-
+            entry.setdefault("escalated_at_cycle", escalated[key]["escalated_at_cycle"])
             if packet_cycle not in entry["structural_packet_cycles"]:
                 entry["structural_packet_cycles"].append(packet_cycle)
                 entry["structural_packets_dispatched"] = (
                     entry["structural_packets_dispatched"] + 1
                 )
 
-            if (
-                entry["status"] == "ESCALATED"
-                and entry["structural_packets_dispatched"] >= STRUCTURAL_PASS_BUDGET
-            ):
-                entry["status"] = "CLEARED"
-                entry["exit_reason"] = "budget"
-                entry["cleared_at_cycle"] = packet_cycle
-                entry["open_latent_defect_ids"] = info.get(
-                    "open_latent_defect_ids", []
-                )
-                cleared.append({
-                    "class": key,
-                    "exit_reason": "budget",
-                    "cleared_at_cycle": packet_cycle,
-                    "structural_packets_dispatched": entry[
-                        "structural_packets_dispatched"
-                    ],
-                    "open_live_defect_ids": info.get("open_live_defect_ids", []),
-                    "open_latent_defect_ids": info.get("open_latent_defect_ids", []),
-                })
+        for key in _persisted_escalations(fdir, project_root, classes):
+            entry = classes[key]
+            _escalation_entry_defaults(entry)
+            if entry["structural_packets_dispatched"] < STRUCTURAL_PASS_BUDGET:
+                continue
+            info = _class_info(
+                key, buckets.get(key) or _empty_class_bucket(key), classes
+            )
+            entry["status"] = "CLEARED"
+            entry["exit_reason"] = "budget"
+            entry["cleared_at_cycle"] = packet_cycle
+            entry["open_latent_defect_ids"] = info["open_latent_defect_ids"]
+            cleared.append({
+                "class": key,
+                "exit_reason": "budget",
+                "cleared_at_cycle": packet_cycle,
+                "structural_packets_dispatched": entry[
+                    "structural_packets_dispatched"
+                ],
+                "open_live_defect_ids": info["open_live_defect_ids"],
+                "open_latent_defect_ids": info["open_latent_defect_ids"],
+            })
         data["updated_at"] = _now()
     return cleared
 
@@ -5165,25 +5434,34 @@ def _advance_escalation_clean_cycles(
     receive is already in the ledger. Evaluating the cycle being entered would
     ask about work that has not happened.
 
+    D-043: the roster is the PERSISTED one — every class `escalation.json`
+    records as ESCALATED — and not what `_escalated_classes` returns. The
+    difference is a class whose instances have all been fixed: it has no open
+    work, so `_escalated_classes` drops it, so it used to reach this arm never
+    and sat at ESCALATED for the rest of the run while the F6 report called it
+    unresolved. It has zero LIVE instances by construction, which is precisely
+    the condition ST-001 counts, so it now advances a clean cycle at every
+    crossing and CLEARS with `clean_cycles` like any other quiet class.
+
     Returns the list of classes that CLEARED on this crossing, so the transition
     can report them.
     """
-    escalated = _escalated_classes(fdir, project_root)
-    if not escalated:
+    recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+    if not isinstance(recorded, dict):
+        recorded = {}
+    if not _persisted_escalations(fdir, project_root, recorded):
         return []
     defects = _load_json(fdir / "defects.json").get("defects", [])
+    buckets = _class_buckets(defects)
 
     cleared: list[dict] = []
     with _document_transaction(fdir / ESCALATION_FILENAME) as data:
         classes = data.setdefault("classes", {})
         if not isinstance(classes, dict):
             classes = data["classes"] = {}
-        for key, info in sorted(escalated.items()):
-            entry = classes.setdefault(key, {})
-            if not isinstance(entry, dict):
-                entry = classes[key] = {}
+        for key in _persisted_escalations(fdir, project_root, classes):
+            entry = classes[key]
             _escalation_entry_defaults(entry)
-            entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
 
             # ST-001's guard: "the class must have been escalated before the two
             # cycles began". The cycle a class escalated ON is the cycle whose
@@ -5199,22 +5477,20 @@ def _advance_escalation_clean_cycles(
             else:
                 entry["live_clean_cycles"] = entry["live_clean_cycles"] + 1
 
-            if (
-                entry["status"] == "ESCALATED"
-                and entry["live_clean_cycles"] >= LIVE_CLEAN_CYCLES_TO_CLEAR
-            ):
+            if entry["live_clean_cycles"] >= LIVE_CLEAN_CYCLES_TO_CLEAR:
+                info = _class_info(
+                    key, buckets.get(key) or _empty_class_bucket(key), classes
+                )
                 entry["status"] = "CLEARED"
                 entry["exit_reason"] = "clean_cycles"
                 entry["cleared_at_cycle"] = completed_cycle
-                entry["open_latent_defect_ids"] = info.get(
-                    "open_latent_defect_ids", []
-                )
+                entry["open_latent_defect_ids"] = info["open_latent_defect_ids"]
                 cleared.append({
                     "class": key,
                     "exit_reason": "clean_cycles",
                     "cleared_at_cycle": completed_cycle,
-                    "open_live_defect_ids": info.get("open_live_defect_ids", []),
-                    "open_latent_defect_ids": info.get("open_latent_defect_ids", []),
+                    "open_live_defect_ids": info["open_live_defect_ids"],
+                    "open_latent_defect_ids": info["open_latent_defect_ids"],
                 })
         data["updated_at"] = _now()
     return cleared
@@ -6486,13 +6762,36 @@ def foundry_mark_defect_fixed(
     # named violation, so the record is a side effect of the accepted call and
     # cannot be forgotten. It is written AFTER the ledger commits, because a
     # handoff naming a fix the transaction then rolled back would be the same
-    # gap pointing the other way. `file` and `line_count` are None on a LATENT
-    # fix — the record says, truthfully, that it was accepted unmeasured.
+    # gap pointing the other way.
+    #
+    # D-046 — MEASURING IS NOT RECORDING, AND THE LANE TEST IS THE ONLY THING
+    # THAT IS LIVE-ONLY.
+    # ----------------------------------------------------------------------
+    # This branch read `None if latent_lane else ...`, so a LATENT lead fix
+    # emitted `{'file': None, 'line_count': None}` while the LIVE fix beside it
+    # in the same run emitted the real file and count. GI-003 states the record
+    # verbatim as "carrying the defect id, tier, file, line count and test",
+    # AC-022 and OT-010 repeat that field list, and not one of the three carries
+    # a tier carve-out. What IS LIVE-only is FR-046 / CT-006 / ST-004's
+    # ELIGIBILITY test — "measures fix_commit only when the defect is LIVE" is
+    # about whether the lane refuses, not about whether the numbers are written
+    # down. `_numstat_measurement` is a pure read of the commit and
+    # `_lead_lane_problem` is the separate limit check, so the two were already
+    # separable and only this call site conflated them.
+    #
+    # Consequence of the conflation: AC-022's "the generated report lists it"
+    # rendered blank file and line columns for every LATENT lead fix, and a
+    # report reader could not tell a deliberately unmeasured fix from a
+    # measurement nobody took.
+    #
+    # A commit git cannot read still records None on the LATENT lane, because
+    # there the measurement genuinely was not taken. It cannot arise on the LIVE
+    # lane: `_lead_lane_problem` has already refused an unreadable commit above.
     lead_fix_record = None
     if author == "lead":
-        measured = (
-            None if latent_lane else _numstat_measurement(commit, project_root)
-        )
+        measured = _numstat_measurement(commit, project_root)
+        if not measured["ok"]:
+            measured = None
         lead_fix_record = _record_lead_fix_handoff(
             fdir,
             defect_id=defect_id,
@@ -7112,14 +7411,28 @@ def foundry_defects_to_tasks(
     data = _load_json(fdir / "defects.json")
     open_defects = [d for d in data.get("defects", []) if d.get("status") == "open"]
 
+    escalated = _escalated_classes(fdir, project_root)
+    # D-043: REGENERATED, never carried forward. This read
+    # `info.get("proposal") or _structural_proposal(info)`, and `info["proposal"]`
+    # is whatever `escalation.json` recorded on some earlier cycle — so the first
+    # proposal a class ever drew was the one every later packet and every later
+    # report carried, open counts and defect ids frozen at that moment. A class
+    # whose three instances had since been FIXED still had the run's own final
+    # report asserting it "still has 3 open instance(s)" and that all three
+    # "must reach fixed". The string is cheap; the staleness was not.
+    for key, info in escalated.items():
+        info["proposal"] = _structural_proposal(info)
+    # D-043: recorded BEFORE the nothing-to-do return below, not after. The
+    # derived views on the escalation record — the proposal, `defect_ids`, the
+    # LATENT backlog — are answers about the CURRENT ledger, and the run state
+    # in which they most need refreshing is exactly the one this function used
+    # to return from first: every instance fixed, nothing left to packet. The
+    # record then kept the last thing said about the class while it still had
+    # open work, and the F6 report printed it.
+    _record_escalation_proposals(fdir, escalated)
+
     if not open_defects:
         return {"ok": True, "tasks": [], "count": 0, "escalated_classes": []}
-
-    escalated = _escalated_classes(fdir, project_root)
-    for key, info in escalated.items():
-        info["proposal"] = info.get("proposal") or _structural_proposal(info)
-    if escalated:
-        _record_escalation_proposals(fdir, escalated)
 
     # ST-002 / FR-002 — THE STRUCTURAL-PASS BUDGET, SPENT HERE.
     #
@@ -7139,7 +7452,9 @@ def foundry_defects_to_tasks(
     # BY the second pass, not instead of it. It is the NEXT call that emits
     # nothing, because `_escalated_classes` skips a CLEARED class.
     packet_cycle = _current_cycle(fdir)
-    budget_cleared = _spend_structural_budget(fdir, escalated, packet_cycle)
+    budget_cleared = _spend_structural_budget(
+        fdir, project_root, escalated, packet_cycle
+    )
 
     escalated_ids = {did for info in escalated.values() for did in info["defect_ids"]}
 

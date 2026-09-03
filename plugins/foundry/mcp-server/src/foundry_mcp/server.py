@@ -947,17 +947,19 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["agent", "phase", "tokens", "duration_ms"],
                 "properties": {
-                    # D-013 — THE DOCUMENTED SPELLINGS ARE THE RECORDED ONES.
+                    # D-013 / D-048 — THE DOCUMENTED SPELLINGS ARE THE RECORDED
+                    # ONES, AND THE PHASE IS A RUN PHASE.
                     #
-                    # These two descriptions named spellings no ledger writes:
-                    # a teammate dispatch is recorded in `spawns.log` with
-                    # phase `cast` or `grind`, never `F1`. A lead typing the
-                    # documented value bucketed its roll-up under a phase
-                    # nothing was dispatched in, and the unreported list only
-                    # cleared because "reported in ANY phase clears the agent"
-                    # is deliberately forgiving. Both halves are stated, so the
-                    # exact pair is typeable and the forgiveness is not a
-                    # secret.
+                    # D-013 found these two descriptions naming spellings no
+                    # ledger wrote, and closed it by documenting `spawns.log`'s
+                    # DISPATCH VERBS (`cast`, `grind`). That put a verb in the
+                    # phase field: `by_phase` then grew a bucket keyed `grind`,
+                    # which is not a phase, and the unreported list cleared only
+                    # through an agent-wide fallback that hid every per-phase
+                    # gap. D-048 reconciles the two vocabularies the other way —
+                    # the dispatch side maps its verbs to run phase ids
+                    # (`DISPATCH_PHASE_TO_RUN_PHASE`) and the ledger stores run
+                    # phase ids — so this description names those.
                     "agent": {
                         "type": "string",
                         "description": (
@@ -970,12 +972,15 @@ async def list_tools() -> list[Tool]:
                     "phase": {
                         "type": "string",
                         "description": (
-                            "The phase the agent was DISPATCHED in, as the run "
-                            "recorded it: 'cast' or 'grind' for a teammate, 'F2' "
-                            "for an INSPECT stream agent. Any other value is "
+                            "The RUN PHASE the agent was dispatched in: one of "
+                            "F0, F1, F2, F3, F4, F5, F5.5, F6. A CAST teammate "
+                            "is 'F1', a GRIND teammate 'F3', an INSPECT stream "
+                            "agent 'F2'. The dispatch verbs spawns.log records "
+                            "('cast', 'grind') are accepted and mapped to 'F1' "
+                            "and 'F3' before the ledger is written, so either "
+                            "spelling clears the dispatch; any other value is "
                             "recorded verbatim and still counts toward the "
-                            "totals; matching the recorded spelling is what "
-                            "makes the per-phase roll-up read correctly."
+                            "totals."
                         ),
                     },
                     "tokens": {"type": "integer", "description": "Total tokens from the usage block."},
@@ -1234,11 +1239,123 @@ _DISPATCH = {
 }
 
 
-@server.call_tool()
+# D-042 — THE SDK'S REFUSAL DOES NOT NAME THE FIELD, SO THIS SERVER TAKES THE
+# VALIDATION BACK.
+# ---------------------------------------------------------------------------
+# `mcp.server.lowlevel.Server.call_tool` validates `arguments` against the
+# advertised `inputSchema` BEFORE dispatch and, on failure, returns
+# `Input validation error: <jsonschema message>` and nothing else. Driven over
+# the real MCP transport: `Foundry-Defect(tier='MAJOR')` came back as the whole
+# response text
+#
+#     Input validation error: 'MAJOR' is not one of ['LATENT', 'LIVE']
+#
+# — a message indistinguishable from the same validator's output for
+# `defect_type`, `target_kind` or `authored_by`, because the offending PROPERTY
+# is nowhere in it. CT-001's errors column requires "refusal naming the missing
+# tier" and AC-006 requires a tier outside the vocabulary to be "refused naming
+# the field". The handler's own field-naming refusal (`validate_defect_filing`)
+# never ran: the SDK had already answered.
+#
+# `validate_input=False` turns off the SDK's copy and this module runs the SAME
+# validation itself, against the SAME advertised schema, so nothing is relaxed
+# — `required`, `type` and every `enum` are still enforced, and `list_tools`
+# still advertises them for a client to read. What changes is only who renders
+# the failure: the house `{error, hint, missing_fields, invalid_fields}` shape
+# every other refusal in this server uses, naming each offending property.
+#
+# Applied at the boundary rather than per handler deliberately: the defect is
+# one property short in one tool, but the SHAPE is every enum-valued argument of
+# every tool, and thirty handlers each remembering to re-check their own enums
+# is the arrangement D-127 already cost this server once.
+_SCHEMAS: dict[str, dict] = {}
+
+
+async def _tool_schema(name: str) -> dict | None:
+    """The advertised `inputSchema` for ``name``, read from `list_tools` itself.
+
+    One source of truth: whatever a client is told the arguments must satisfy is
+    exactly what this server checks them against. Cached because the tool list
+    is built from module-level vocabulary frozensets and cannot change within a
+    process.
+    """
+    if not _SCHEMAS:
+        for tool in await list_tools():
+            _SCHEMAS[tool.name] = tool.inputSchema
+    return _SCHEMAS.get(name)
+
+
+def _argument_refusal(name: str, schema: dict, arguments: dict) -> dict | None:
+    """None when ``arguments`` satisfy ``schema``; otherwise the house refusal.
+
+    EVERY failing property is named in ONE refusal, under the two keys this
+    server already uses for the distinction that matters to a caller: a field
+    that is absent goes in `missing_fields`, a field that is present and
+    unusable goes in `invalid_fields` with the reason. That is
+    `foundry_mark_defect_fixed`'s established shape, reused rather than
+    reinvented.
+
+    An `enum` failure names the vocabulary it missed, because the caller's next
+    move is to pick a member of it and no other message tells them what the
+    members are.
+    """
+    import jsonschema
+
+    # `validator_for` is what `jsonschema.validate` — the call the SDK made —
+    # selects with, so the DRAFT SEMANTICS are unchanged by moving the check
+    # here. Only the rendering of a failure moves.
+    validator = jsonschema.validators.validator_for(schema)(schema)
+    errors = sorted(validator.iter_errors(arguments or {}), key=str)
+    if not errors:
+        return None
+
+    missing: list[str] = []
+    invalid: list[dict] = []
+    for err in errors:
+        if err.validator == "required":
+            for prop in err.validator_value:
+                if prop not in (arguments or {}) and prop not in missing:
+                    missing.append(prop)
+            continue
+        field = ".".join(str(part) for part in err.absolute_path) or "<arguments>"
+        if err.validator == "enum":
+            reason = (
+                f"{err.instance!r} is not one of "
+                f"{sorted(str(v) for v in err.validator_value)}"
+            )
+        else:
+            reason = err.message
+        entry = {"field": field, "reason": reason}
+        if entry not in invalid:
+            invalid.append(entry)
+
+    named = [f"{item['field']} — {item['reason']}" for item in invalid]
+    named += [f"{field} — required, and absent" for field in missing]
+    return {
+        "error": f"{name} refused — unusable argument(s): " + "; ".join(named) + ".",
+        "missing_fields": missing + [item["field"] for item in invalid],
+        "invalid_fields": invalid,
+        "hint": (
+            "Each field named above is checked against the schema this server "
+            f"advertises for {name}; read it back with the client's tool "
+            "listing. A value refused against an enum must be one of the "
+            "members quoted in the reason — the vocabulary is closed and the "
+            "server rejects anything outside it before the handler runs."
+        ),
+    }
+
+
+@server.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
     if not handler:
         return [TextContent(type="text", text=format_result(name, {"error": f"Unknown tool: {name}"}))]
+
+    schema = await _tool_schema(name)
+    if schema is not None:
+        refusal = _argument_refusal(name, schema, arguments)
+        if refusal is not None:
+            return [TextContent(type="text", text=format_result(name, refusal))]
 
     # D-098: the outermost net. Every handler returns named refusals as dicts
     # (the house pattern) and none is supposed to raise, but this boundary used
