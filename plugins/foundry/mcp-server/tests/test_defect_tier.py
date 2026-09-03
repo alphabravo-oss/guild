@@ -1600,3 +1600,19 @@ def test_the_live_prose_floor_cannot_refuse_a_latent_filing():
     assert "description" not in _coverage_diff_latent(), (
         "the shape under test stopped being the one that has no description"
     )
+
+
+def test_the_scan_text_is_deterministic_for_a_given_filing():
+    """`security_scan_text` is quoted back into the tripwire record, and the
+    D-083 property it serves is that two artifacts of ONE event agree. A caller
+    assembling a finding in Python can hand it a set — never decoded JSON, but
+    a test or a helper — and set iteration order is not stable across
+    interpreters. Two scans of one filing must be one string."""
+    from foundry_mcp.tools.foundry import security_scan_text
+
+    finding = _coverage_diff_latent(
+        evidence={"console": {"CE-1", "CE-2", "CE-3", _SMUGGLED_CLAIM}}
+    )
+
+    assert security_scan_text(finding) == security_scan_text(dict(finding))
+    assert validate_defect_filing(finding)["denylist_class"] == SECURITY_PROPERTY_CLAIM

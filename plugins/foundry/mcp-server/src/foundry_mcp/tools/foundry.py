@@ -1097,8 +1097,18 @@ def _collect_prose(value: object, into: list[str], depth: int = 0) -> None:
                 continue
             _collect_prose(item, into, depth + 1)
         return
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple)):
         for item in value:
+            _collect_prose(item, into, depth + 1)
+        return
+    if isinstance(value, (set, frozenset)):
+        # Sorted by their text, because `security_scan_text` promises a
+        # deterministic string for a given filing and a set's iteration order
+        # is not. A set never arrives from decoded JSON; it arrives from a
+        # hand-built mapping (a test, a caller assembling a finding in
+        # Python), and that caller must get the same scan text twice — the
+        # tripwire record quotes this string back.
+        for item in sorted(value, key=repr):
             _collect_prose(item, into, depth + 1)
 
 
