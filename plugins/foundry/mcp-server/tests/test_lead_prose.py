@@ -563,20 +563,71 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "Never derive this roster from a COUNT",
     ),
-    # D-026 / AC-036: start.md stated `final_gate` as the SPEC's condition
-    # while `_decide_inspect_mode` fires on two proxies for it, so the lead's
-    # own file promised a gate stricter than the server enforces.
+    # D-138 / FR-011 / US-004: start.md taught the PRE-D-068 rule. `final_gate`
+    # fired on `blocking == 0` once; it fires on two TRANSITION facts now (the
+    # F2->F2 widening re-open, and a GRIND entered from ASSAY/TEMPER/NYQUIST
+    # feedback), and the lead's own file promised a width the server had
+    # stopped recording -- driven, a one-handler GRIND that start.md called
+    # FULL/final_gate was recorded DELTA/delta.
     (
-        "final-gate-is-two-proxies",
-        "AC-036",
+        "final-gate-is-two-transition-facts",
+        "FR-011",
         START_MD,
-        "on either of TWO PROXIES",
+        "on either of the TWO TRANSITION FACTS",
     ),
     (
-        "final-gate-proxies-are-what-fires",
-        "AC-036",
+        "final-gate-names-the-widening-re-open",
+        "FR-011",
         START_MD,
-        "**The proxies are what fires, not the intent.**",
+        "this crossing is the F2\u2192F2 widening re-open",
+    ),
+    (
+        "final-gate-reads-the-transition-not-the-ledger",
+        "FR-011",
+        START_MD,
+        "**`final_gate` reads the transition, never the defect ledger.**",
+    ),
+    # AC-016 / FR-049: the close-out sent every clean cycle to `inspect_clean`,
+    # which a DELTA cycle is refused at. The width decides the crossing, so the
+    # routing sentence has to state the width.
+    (
+        "clean-delta-does-not-open-assay",
+        "AC-016",
+        START_MD,
+        "**Zero blocking defects does not by itself open ASSAY",
+    ),
+    (
+        "clean-delta-widens-from-f2",
+        "FR-049",
+        START_MD,
+        "call `Foundry-Phase(phase='inspect_start')` AGAIN, from F2",
+    ),
+    (
+        "both-assay-doors-check-the-width",
+        "FR-049",
+        START_MD,
+        "**Both doors into ASSAY check the width by name, and both refuse a `DELTA` cycle:**",
+    ),
+    # US-007 / FR-021 (D-126): the lead was steered by a Foundry-Next field
+    # that no longer exists, so the trigger could never fire. The replacement
+    # steers by the roll-up `Foundry-Next` actually carries.
+    (
+        "context-steers-by-measured-spend",
+        "FR-021",
+        START_MD,
+        "the only number the server has about that is a MEASURED one",
+    ),
+    (
+        "context-no-field-estimates-lead-context",
+        "US-007",
+        START_MD,
+        "**No field estimates YOUR remaining context, and none is coming:**",
+    ),
+    (
+        "context-nothing-to-save-before-handover",
+        "US-007",
+        START_MD,
+        "**`Foundry-Context` READS the run back on the far side of a handover; it writes nothing and saves nothing**",
     ),
     (
         "uncomputable-diff-is-full",
@@ -761,6 +812,80 @@ def test_lead_prose_pin(requirement: str, path: Path, phrase: str) -> None:
 # ---------------------------------------------------------------------------
 # Negative pins: claims that had to GO
 # ---------------------------------------------------------------------------
+
+
+#: Spellings a ruling RETIRED, mapped to what start.md says instead. A positive
+#: pin cannot see a retired sentence that survives BESIDE its replacement --
+#: which is the whole shape of the stale-prose class -- so the retirement is
+#: asserted as an absence, per spelling, in the file that has to have dropped it.
+_RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
+    # D-126 / US-007: `Foundry-Next` returned no such key. Driven -- three spend
+    # records, and the response carried action, details, directives, display,
+    # executing_server, instructions, phase and spend, so the trigger this
+    # sentence gave the lead could never fire. The steer is the measured
+    # `spend` roll-up now.
+    (
+        "estimated_usage",
+        "FR-021",
+        "the CONTEXT MANAGEMENT steer names the `spend` roll-up Foundry-Next "
+        "really carries, not a field that was deleted from the server",
+    ),
+    # D-126 / US-007: `foundry_get_context` is a READER ("Return all foundry
+    # state in one call. Use after compaction or session start."). Calling it
+    # before a handover preserved nothing; every tool call had already written
+    # the run dir.
+    (
+        "save state via `Foundry-Context`",
+        "US-007",
+        "Foundry-Context reads the run back after a handover -- it writes "
+        "nothing, so there is no state for it to save first",
+    ),
+    # D-138 / FR-011: the pre-D-068 `final_gate` framing. `blocking == 0` was
+    # the proxy, and removing it is what made DELTA reachable at all.
+    (
+        "on either of TWO PROXIES",
+        "FR-011",
+        "final_gate fires on two TRANSITION facts -- the F2->F2 widening "
+        "re-open, or a GRIND entered from ASSAY/TEMPER/NYQUIST feedback",
+    ),
+    (
+        "The proxies are what fires, not the intent.",
+        "FR-011",
+        "the sentence it qualified is gone; what fires is named directly",
+    ),
+    # D-138 / AC-016: the close-out routed every clean cycle to `inspect_clean`,
+    # which refuses a DELTA cycle naming final_gate. Driven -- a cleared ledger
+    # plus a one-handler GRIND recorded DELTA/delta, and inspect_clean refused.
+    (
+        'Zero defects → `Foundry-Phase("inspect_clean")` → F4',
+        "AC-016",
+        "the recorded width decides the crossing: FULL goes to inspect_clean, "
+        "DELTA goes back through inspect_start from F2",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("spelling", "requirement", "instead"),
+    _RETIRED_START_MD_SPELLINGS,
+    ids=[s for s, _, _ in _RETIRED_START_MD_SPELLINGS],
+)
+def test_start_md_dropped_the_retired_spelling(
+    spelling: str, requirement: str, instead: str
+) -> None:
+    """The retired sentence is GONE, not sitting beside its replacement.
+
+    Every instance of the stale-prose class this run escalated arrived the same
+    way: a new paragraph was written and the old one was left two paragraphs
+    up, so the file stated a live rule and a dead one with equal authority and
+    the lead had no way to tell which was which.
+    """
+    assert spelling not in _flat(START_MD), (
+        f"{_rel(START_MD)} still contains {spelling!r} ({requirement}), which "
+        f"names a mechanism the server no longer has. Instead: {instead}. "
+        f"Delete the retired sentence -- do not leave it beside the one that "
+        f"replaced it."
+    )
 
 
 def test_temper_no_longer_claims_a_completion_check_nobody_performs() -> None:

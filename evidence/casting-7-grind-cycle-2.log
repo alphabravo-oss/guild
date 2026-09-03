@@ -1,14 +1,14 @@
-# evidence-cmd: cd plugins/foundry && python3 -c 'import re,pathlib; r=lambda p: pathlib.Path(p).read_text(); c=lambda p,s: r(p).count(s); n=lambda p,s: len(re.findall(s, r(p), re.I)); T="skills/temper/SKILL.md"; S="commands/start.md"; H="commands/help.md"; R="README.md"; M="plugin manifest against plugin manifest"; print("D-019 stale ASSAY claim (want 0):", c(T,"terminates with zero OPEN findings")); print("D-019 effort grade by name (want 0):", n(T,r"\*\*Minor\*\*|\*\*Major\*\*|minor \(implemented\)")); print("D-019 tier-aware ASSAY exit (want 1):", c(T,"ASSAY passes when no `LIVE` defect and no")); print("D-024 sweep named in start.md (want >0):", n(S,r"sweep")); print("D-025 roster binding clause (want 1):", c(S,"Never derive this roster from a COUNT")); print("D-025 exempt member bound (want 1):", c(S,"The one roster member it is not written into is")); print("D-026 final_gate proxies (want 1):", c(S,"on either of TWO PROXIES")); print("D-026 uncomputable-diff arm (want 1):", c(S,"an UNCOMPUTABLE GRIND diff")); print("D-027 stale __version__ comparison (want 0):", c(S,"against the executing server")); print("D-027 manifest-vs-manifest in start/help/README (want 1 1 1):", c(S,M), c(H,M), c(R,M)); print("D-028 banned spelling in start.md (want 0):", n(S,r"severity"))'
+# evidence-cmd: cd plugins/foundry && python3 -c 'import re,pathlib; r=lambda p: pathlib.Path(p).read_text(); c=lambda p,s: r(p).count(s); n=lambda p,s: len(re.findall(s, r(p), re.I)); T="skills/temper/SKILL.md"; S="commands/start.md"; H="commands/help.md"; R="README.md"; M="plugin manifest against plugin manifest"; print("D-019 stale ASSAY claim (want 0):", c(T,"terminates with zero OPEN findings")); print("D-019 effort grade by name (want 0):", n(T,r"\*\*Minor\*\*|\*\*Major\*\*|minor \(implemented\)")); print("D-019 tier-aware ASSAY exit (want 1):", c(T,"ASSAY passes when no `LIVE` defect and no")); print("D-024 sweep named in start.md (want >0):", n(S,r"sweep")); print("D-025 roster binding clause (want 1):", c(S,"Never derive this roster from a COUNT")); print("D-025 exempt member bound (want 1):", c(S,"The one roster member it is not written into is")); print("D-026/D-138 final_gate transition facts (want 1):", c(S,"on either of the TWO TRANSITION FACTS")); print("D-026 uncomputable-diff arm (want 1):", c(S,"an UNCOMPUTABLE GRIND diff")); print("D-027 stale __version__ comparison (want 0):", c(S,"against the executing server")); print("D-027 manifest-vs-manifest in start/help/README (want 1 1 1):", c(S,M), c(H,M), c(R,M)); print("D-028 banned spelling in start.md (want 0):", n(S,r"severity"))'
 # evidence-for: FR-025, FR-030, AC-038, GI-002, FR-007, AC-036, FR-018, FR-026, AC-005
 # evidence-timeout: 300
 
 D-019 stale ASSAY claim (want 0): 0
 D-019 effort grade by name (want 0): 0
 D-019 tier-aware ASSAY exit (want 1): 1
-D-024 sweep named in start.md (want >0): 7
+D-024 sweep named in start.md (want >0): 8
 D-025 roster binding clause (want 1): 1
 D-025 exempt member bound (want 1): 1
-D-026 final_gate proxies (want 1): 1
+D-026/D-138 final_gate transition facts (want 1): 1
 D-026 uncomputable-diff arm (want 1): 1
 D-027 stale __version__ comparison (want 0): 0
 D-027 manifest-vs-manifest in start/help/README (want 1 1 1): 1 1 1
