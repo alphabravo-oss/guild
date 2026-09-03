@@ -1,10 +1,10 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_nyquist_flag.py && uv run --quiet python -c "import inspect;from foundry_mcp.tools.foundry_orchestrator import foundry_mark_phase_complete as f;src = inspect.getsource(f);print(chr(10) + '=== both F6 doors read one evaluation, and it now names the report ===');print('done and nyquist_done both consult _done_preconditions:', src.count('_done_preconditions') >= 2);print('accepted phase tokens:', src.count('elif phase ==') + 1)"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_nyquist_flag.py && uv run --quiet python -c "import inspect;from foundry_mcp.tools.foundry_orchestrator import _phase_transition as f;src = inspect.getsource(f);print(chr(10) + '=== both F6 doors read one evaluation, and it now names the report ===');print('done and nyquist_done both consult _done_preconditions:', src.count('_done_preconditions') >= 2);print('accepted phase tokens:', src.count('elif phase ==') + 1)"
 # evidence-for: GI-006, CT-014, ST-010, AC-036, OT-025
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
 ...........................                                              [100%]
-27 passed in 0.53s
+27 passed in 1.35s
 
 === both F6 doors read one evaluation, and it now names the report ===
 done and nyquist_done both consult _done_preconditions: True
