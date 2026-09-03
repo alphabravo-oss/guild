@@ -1,0 +1,43 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import re,pathlib,subprocess,sys; sys.path.insert(0,"src"); from foundry_mcp.schemas import vocab; R=pathlib.Path.cwd().parents[2]; PAT=re.compile(r"(?<![A-Za-z0-9_])\"?type\"?\s*:\s*\"([A-Z][A-Z0-9_]*)\""); SURF=["agents/tracer.md","agents/flow-tracer.md","agents/coverage-diff.md","agents/assayer.md","agents/research-auditor.md","skills/sight/SKILL.md","skills/prove/SKILL.md","skills/trace/SKILL.md","agents/teammate.md","skills/temper/SKILL.md"]; old=lambda f: subprocess.run(["git","-C",str(R),"show","2c23bb4:plugins/foundry/"+f],capture_output=True,text=True).stdout; new=lambda f: (R/"plugins/foundry"/f).read_text(encoding="utf-8"); bad=lambda t: sorted(x for x in set(PAT.findall(t)) if x not in vocab.DEFECT_TYPES); print("== D-174 filing-type half: the `type` each surface teaches, against the door that reads it =="); print("   vocabulary READ from schemas/vocab.py#DEFECT_TYPES, never re-typed:", len(vocab.DEFECT_TYPES), "members"); print(); print("== BEFORE (tree 2c23bb4) -- a stream copying its own instructions is refused =="); [print("   %-34s %s" % (f, bad(old(f)) or "clean")) for f in SURF]; print(); print("== AFTER (this commit) =="); [print("   %-34s %s" % (f, bad(new(f)) or "clean")) for f in SURF]; print(); print("== the four corrected spellings, driven through the shipped door rung =="); from foundry_mcp.tools.foundry import DEFECT_TYPES as D; [print("   %-22s -> %-8s (%s)" % (o, "REFUSED" if o not in D else "accepted", n + " is a member: " + str(n in D))) for o,n in [("MISSING_COVERAGE_LIST","MISSING"),("DISCONNECTED","UNWIRED"),("CHAIN_BROKEN","UNWIRED"),("SERENA_UNAVAILABLE","BROKEN")]]; print(); print("== the verdict axis is untouched: still spelled in prose, still not filed =="); ft=new("agents/flow-tracer.md"); [print("   %-14s in verdict prose: %-5s as a filed type: %s" % (v, str(v in ft), str(v in bad(ft)))) for v in ["SOURCED","UNBUILT","DISCONNECTED","STUB","CHAIN_BROKEN","NOT_VERIFIED"]]'
+# evidence-for: GI-001, AC-009, FR-004, FR-007, NFR-005
+
+== D-174 filing-type half: the `type` each surface teaches, against the door that reads it ==
+   vocabulary READ from schemas/vocab.py#DEFECT_TYPES, never re-typed: 13 members
+
+== BEFORE (tree 2c23bb4) -- a stream copying its own instructions is refused ==
+   agents/tracer.md                   ['SERENA_UNAVAILABLE']
+   agents/flow-tracer.md              ['CHAIN_BROKEN', 'DISCONNECTED', 'SERENA_UNAVAILABLE']
+   agents/coverage-diff.md            ['MISSING_COVERAGE_LIST']
+   agents/assayer.md                  clean
+   agents/research-auditor.md         clean
+   skills/sight/SKILL.md              clean
+   skills/prove/SKILL.md              clean
+   skills/trace/SKILL.md              clean
+   agents/teammate.md                 clean
+   skills/temper/SKILL.md             clean
+
+== AFTER (this commit) ==
+   agents/tracer.md                   clean
+   agents/flow-tracer.md              clean
+   agents/coverage-diff.md            clean
+   agents/assayer.md                  clean
+   agents/research-auditor.md         clean
+   skills/sight/SKILL.md              clean
+   skills/prove/SKILL.md              clean
+   skills/trace/SKILL.md              clean
+   agents/teammate.md                 clean
+   skills/temper/SKILL.md             clean
+
+== the four corrected spellings, driven through the shipped door rung ==
+   MISSING_COVERAGE_LIST  -> REFUSED  (MISSING is a member: True)
+   DISCONNECTED           -> REFUSED  (UNWIRED is a member: True)
+   CHAIN_BROKEN           -> REFUSED  (UNWIRED is a member: True)
+   SERENA_UNAVAILABLE     -> REFUSED  (BROKEN is a member: True)
+
+== the verdict axis is untouched: still spelled in prose, still not filed ==
+   SOURCED        in verdict prose: True  as a filed type: False
+   UNBUILT        in verdict prose: True  as a filed type: False
+   DISCONNECTED   in verdict prose: True  as a filed type: False
+   STUB           in verdict prose: True  as a filed type: False
+   CHAIN_BROKEN   in verdict prose: True  as a filed type: False
+   NOT_VERIFIED   in verdict prose: True  as a filed type: False

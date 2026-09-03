@@ -34,7 +34,7 @@ Read `manifest.json`. If `spec_type` is not `MIGRATION`, write a minimal result 
 For each casting in `manifest.json`:
 - Read `must_haves.coverage_list` — an array of strings shaped like `source_file:symbol` (e.g. `internal/web/workloads_test.go:TestCreateCluster`)
 - Collect all coverage entries with the casting id they belong to
-- If any casting has no `coverage_list`, flag as `MISSING_COVERAGE_LIST` defect and continue
+- If any casting has no `coverage_list`, flag as `MISSING_COVERAGE_LIST` and continue — that is the finding's name in this report, and it files as `type: "MISSING"` per the vocabulary rule under Step 6
 
 ### Step 3: For each source entry, search for a destination
 
@@ -105,7 +105,7 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
       "casting_id": 4
     },
     {
-      "type": "MISSING_COVERAGE_LIST",
+      "type": "MISSING",
       "failure": "casting declares no coverage_list",
       "class": "migration-casting-shipped-without-a-coverage-list",
       "tier": "LATENT",
@@ -131,6 +131,8 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
 `class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the check and observed the wrong result (a destination symbol the `grep` did not find, an assertion count you counted and compared), `LATENT` when you derived the finding and had no reachable instance to drive at all, in which case `reproduction_attempted` rides beside it as the third entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 `COVERAGE_INCOMPLETE` and `THIN_MIGRATION` defects flow into `Foundry-Sync` and feed F3 GRIND.
+
+**The flag name is not the filed `type`.** `MISSING_COVERAGE_LIST` and `ORPHAN_DESTINATION` are this stream's own words for what it found, and they stay where they are — in the prose above and in the `orphans` array. But `defects[].type` rides `Foundry-Sync` to a door that reads a DIFFERENT closed vocabulary, `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, and refuses any spelling that is not a member of it — naming the offending finding and discarding the whole batch. File a casting that declares no `coverage_list` as `MISSING`; `COVERAGE_INCOMPLETE` and `THIN_MIGRATION` are members already and file under their own names. Read the members at that module and never re-type them here — a hand-copied list in this file is a second copy free to drift, and the drift surfaces as a refusal naming a `type` these instructions taught. No exceptions, no deferrals, no "the flag name reads clearer in the filing."
 
 ## Rules
 

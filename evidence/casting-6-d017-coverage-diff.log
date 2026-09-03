@@ -5,12 +5,12 @@
    validate_defect_filing is the ONE gate both Foundry-Defect and Foundry-Sync call
    COVERAGE_INCOMPLETE    before this fix -> REFUSED on tier: Invalid tier: None. Must be one of: LATENT, LIVE
    THIN_MIGRATION         before this fix -> REFUSED on tier: Invalid tier: None. Must be one of: LATENT, LIVE
-   MISSING_COVERAGE_LIST  before this fix -> REFUSED on tier: Invalid tier: None. Must be one of: LATENT, LIVE
+   MISSING                before this fix -> REFUSED on tier: Invalid tier: None. Must be one of: LATENT, LIVE
 
 == D-017 resolution: the same entries as the file documents them today ==
    COVERAGE_INCOMPLETE    tier=LIVE    class=casting-4-v2-port-is-incomplete                   -> ACCEPTED
    THIN_MIGRATION         tier=LIVE    class=casting-4-v2-port-is-incomplete                   -> ACCEPTED
-   MISSING_COVERAGE_LIST  tier=LATENT  class=migration-casting-shipped-without-a-coverage-list -> ACCEPTED
+   MISSING                tier=LATENT  class=migration-casting-shipped-without-a-coverage-list -> ACCEPTED
 
 == the batch door refuses the WHOLE batch on one bad finding ==
    findings that must pass for a coverage_diff sync to land: 3
@@ -18,7 +18,7 @@
    findings that pass now: 3
 
 == FR-004 / CT-001: the LATENT entry reproduction_attempted, driven through vocab ==
-   MISSING_COVERAGE_LIST -> ACCEPTED
+   MISSING -> ACCEPTED
 
 == the roster is DERIVED, so the next stream cannot be forgotten the way this one was ==
    agents/*.md naming Foundry-Sync AND documenting a defects array:

@@ -154,7 +154,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
   ],
   "defects": [
     {
-      "type": "DISCONNECTED",
+      "type": "UNWIRED",
       "packet_id": "P6",
       "produced_symbol": "web.dashboard.handleWorkloads",
       "class": "handlers-render-without-reading-collected-state",
@@ -163,7 +163,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
       "fix_hint": "pageData already embeds *ClusterStatus so .Deployments is accessible in the template — but handler should confirm the field is populated before render"
     },
     {
-      "type": "CHAIN_BROKEN",
+      "type": "UNWIRED",
       "packet_id": "P7",
       "produced_symbol": "web.dashboard.renderPage",
       "class": "handlers-render-without-reading-collected-state",
@@ -202,6 +202,8 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
 
 Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `CHAIN_BROKEN` go to GRIND as code fixes. `NOT_VERIFIED` is equally a defect and is equally never waived, but its remedy is environmental — restore Serena and re-run FLOW_TRACE — not a code edit.
 
+**The verdict word is not the filed `type`.** The six verdicts above are this stream's own vocabulary and they stay exactly where they are — in `summary`, and in every `results` entry's `verdict`. But `defects[].type` rides `Foundry-Sync` to a door that reads a DIFFERENT closed vocabulary, `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, and refuses any spelling that is not a member of it — naming the offending finding and discarding the whole batch. File `UNBUILT` as `MISSING`, `DISCONNECTED` and `CHAIN_BROKEN` as `UNWIRED`, `STUB` as `HOLLOW`, and `NOT_VERIFIED` as `BROKEN` carrying `"cause": "SERENA_UNAVAILABLE"`; the verdict word stays in `verdict`, where nothing refuses it. Read the members at that module and never re-type them here — a hand-copied list in this file is a second copy free to drift, and the drift surfaces as a refusal naming a `type` these instructions taught. No exceptions, no deferrals, no "the verdict word reads clearer in the filing."
+
 ## Rules
 
 - **Read-only.** Never modify code.
@@ -212,7 +214,7 @@ Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `C
 - **Name the class when packets share a root cause.** Four DISCONNECTED packets all missing the same upstream field are one class, not four — put it in each record's `class` field, spelled identically (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class buy one structural fix instead of four repeated point fixes; unnamed, escalation never sees the pattern. Name a class on EVERY defect, including a packet that fails alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty.
 - **Orphan warnings are NOT defects.** V3 allows helper functions and private types within a hop. Warnings surface teammate creativity for human review, but do not block.
 - **NEVER emit `SOURCED` for a packet you did not actually walk.** `SOURCED` claims all four levels passed against real Serena responses. If the tools never answered, you did not verify the packet — the verdict is `NOT_VERIFIED`, never `SOURCED`. No exceptions, no deferrals, no "the code looked right."
-- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected packet. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
+- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "BROKEN"` carrying `"cause": "SERENA_UNAVAILABLE"`, naming every affected packet. `NOT_VERIFIED` is this stream's verdict word and `SERENA_UNAVAILABLE` is the cause; neither is a `DEFECT_TYPES` member, and a `type` that is not a member is refused at the door with the whole batch discarded — which would land exactly when Serena is already down and this filing is the only record that it was. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
 - **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
 - **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed two-member vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. A security-property claim can NEVER be `LATENT` — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Both tiers are defects, both get fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
 - **Name a location on every `LATENT` filing.** A `LATENT` record is carried into the report's LATENT backlog as a promise that a later cycle can go and drive it, and a row carrying a description and no path is a promise nothing can collect. Put the bare repo-relative path in `file` — no line number; a `#Symbol` beside it is fine — exactly as this file's report shape shows it. This one is EXPECTED rather than refused: the doors accept a `LATENT` filing that names no location and the report renders that row as unlocated, which is worth more than a filing re-worded until it claims a location the stream never had. Expected is not optional in practice — you swept something to write `reproduction_attempted`, so say where you swept. No exceptions, no deferrals, no "the description says roughly where."

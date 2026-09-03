@@ -4333,6 +4333,108 @@ def test_each_stream_agent_shape_works_a_latent_entry(path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# D-174 (filing-type half) / FR-004 / CT-002 -- the `type` a surface publishes
+# is a type the door accepts
+# ---------------------------------------------------------------------------
+#
+# The tier and class rungs above sweep every published `defects` entry, and
+# `validate_defect_filing` -- the shared validator both doors call, and the
+# function `test_every_documented_latent_example_survives_the_filing_door`
+# drives the examples through -- reads `tier` and `class` and NOT `type`. The
+# `type` rung lives one layer out, in `tools/foundry.py`:
+#
+#     if defect_type not in DEFECT_TYPES:
+#         ... "Use the closest member of the canonical set"
+#
+# So a published example could carry a `type` no door would ever accept and
+# every check in this module stayed green. Four did, across three surfaces:
+#
+#     agents/coverage-diff.md   "type": "MISSING_COVERAGE_LIST"
+#     agents/flow-tracer.md     "type": "DISCONNECTED", "type": "CHAIN_BROKEN"
+#     agents/tracer.md          `type: "SERENA_UNAVAILABLE"`  (a Rules bullet)
+#     agents/flow-tracer.md     `type: "SERENA_UNAVAILABLE"`  (a Rules bullet)
+#
+# Driven: a stream that copies its own instructions' shape meets
+# `Foundry-Sync` refusing the WHOLE batch, naming a `type` those instructions
+# taught it. The last two are worse than an example, because they sit under
+# `**`NOT_VERIFIED` is a defect, not a deferral.**` -- an absolute promising
+# the filing is never waived and never omitted, whose one prescribed `type`
+# the door always refused, at the moment Serena was already down and that
+# filing was the only record of it.
+#
+# Each surface keeps its OWN verdict vocabulary (flow-tracer's `SOURCED`/
+# `CHAIN_BROKEN` summary counts, coverage-diff's `ORPHAN_DESTINATION`): those
+# are a different axis and nothing files them. `vocab.py`'s own DEFECT_TYPES
+# comment sets the precedent -- tracer.md keeps `MISPLACED` as its verdict
+# word while persisting `type: "ARCHITECTURAL_PLACEMENT"`. What is pinned here
+# is only the value that rides the wire.
+
+#: A `type` field set to an UPPER_SNAKE literal, anywhere in a surface --
+#: inside a normative JSON example or inline in a Rules bullet, quoted as
+#: `"type"` or bare as `type`. The case class is what separates a defect type
+#: from a JSON-Schema one: `"type": "string"` / `"array"` / `"object"` in the
+#: skills' findings schemas are lower case and never match, so the schema
+#: blocks need no exclusion list that could rot. The lookbehind is what keeps
+#: `"spec_type": "MIGRATION"` out -- without it the pattern matches the tail
+#: of any `*_type` key and reports a spec type as a bad defect type.
+_TYPE_LITERAL_RE = re.compile(r'(?<![A-Za-z0-9_])"?type"?\s*:\s*"([A-Z][A-Z0-9_]*)"')
+
+
+def test_the_published_type_sweep_is_not_vacuous() -> None:
+    """Floor check: a regex that matches nothing pins nothing.
+
+    The sweep below passes trivially on a corpus where no surface publishes a
+    `type` literal at all -- which is also what a broken regex looks like.
+    This is the floor that fails first, and it names the members the corpus is
+    known to carry so a pattern that silently stopped matching UPPER_SNAKE
+    values cannot be mistaken for a clean corpus.
+    """
+    found: set[str] = set()
+    for path in DEFECT_FILING_SURFACES:
+        found.update(_TYPE_LITERAL_RE.findall(_read(path)))
+    assert found, (
+        "no surface in DEFECT_FILING_SURFACES publishes a `type` literal any "
+        "more. Either every example lost its `type` -- which is itself the "
+        "defect, since `type` is required on the wire -- or _TYPE_LITERAL_RE "
+        "stopped matching. Fix whichever it is; never delete this floor."
+    )
+    assert "MISSING" in found, (
+        f"the corpus publishes {sorted(found)} and not the single most common "
+        f"defect type. That is a regex regression, not a corpus change."
+    )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_every_published_type_is_a_vocabulary_member(path: Path) -> None:
+    """D-174: the spelling a surface teaches is one the door accepts.
+
+    Swept over DEFECT_FILING_SURFACES rather than DEFECT_FILING_AGENTS, and
+    over the RAW text rather than over `_example_defect_records`, because two
+    of the four originals were not in a `defects` array at all -- they were
+    inline in a Rules bullet that names the `type` to file. A sweep scoped to
+    parsed JSON would have found half the class and called it fixed.
+
+    Compared against ``vocab.DEFECT_TYPES`` read from the module, never a list
+    re-typed here: a member added by RFC is accepted the moment the vocabulary
+    accepts it, and the bug and its check cannot end up on the same side of
+    one edit.
+    """
+    published = sorted(set(_TYPE_LITERAL_RE.findall(_read(path))))
+    refused = [t for t in published if t not in vocab.DEFECT_TYPES]
+    assert not refused, (
+        f"{_rel(path)} teaches its stream to file {refused} as a `type`, and "
+        f"none is a member of vocab.DEFECT_TYPES "
+        f"({sorted(vocab.DEFECT_TYPES)}). `tools/foundry.py`'s rung refuses "
+        f"that filing -- and at the batch door it refuses the WHOLE batch, so "
+        f"one copied example discards every other finding of the cycle. The "
+        f"stream's own verdict words are a different axis and belong in "
+        f"`verdict`, in `summary` and in prose; only the value on the wire is "
+        f"swept here. Fix the SURFACE (or extend the vocabulary by RFC), "
+        f"never this assertion."
+    )
+
+
+# ---------------------------------------------------------------------------
 # FR-019 / FR-040 -- pointer dispatch, teammate side
 # ---------------------------------------------------------------------------
 
