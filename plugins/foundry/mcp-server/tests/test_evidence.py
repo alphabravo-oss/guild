@@ -4390,6 +4390,112 @@ def test_a_cd_is_not_a_walk_root_on_its_own(tmp_path):
     )
 
 
+def test_the_delta_arm_expands_a_shell_glob_path_operand(tmp_path):
+    """D-045 / FR-009 verbatim: 'any log whose command references a touched
+    file'.
+
+    D-030 named 'glob forms' among the shapes that 'all resolve to nothing' and
+    closed only the directory-operand, bare-command and `grep -r` halves. Every
+    command below answered False at the door, and each fails a DIFFERENT arm:
+    `cat` and `wc` reach no walker at all, so only the literal-suffix arm ran
+    and it searched the command text for a path a glob never spells; `pytest`,
+    `grep` and `ruff` DO reach the walk-root arm, which then compared the
+    operand `src/*.py` as a literal path segment that `src/mod.py` neither
+    equals nor sits beneath. Under-selection is the error this predicate exists
+    to avoid — a log not swept that should have been is a broken evidence
+    artifact carried silently past the boundary that would have caught it."""
+    from foundry_mcp.tools.evidence import _sweep_command_references
+
+    for cmd, touched in (
+        ("cat src/*.py", "src/mod.py"),
+        ("pytest tests/*.py", "tests/test_x.py"),
+        ("grep foo src/**/*.py", "src/a/b.py"),
+        ("grep foo src/**/*.py", "src/b.py"),          # `**/` spans zero dirs
+        ("wc -l evidence/*.log", "evidence/casting-5-x.log"),
+        ("uv run pytest tests/test_*.py",
+         "plugins/foundry/mcp-server/tests/test_vocab.py"),
+        ("ruff check src/*.py", "src/mod.py"),
+        ("wc -l evidence/casting-?-x.log", "evidence/casting-5-x.log"),
+        ("wc -l evidence/casting-[0-9]-x.log", "evidence/casting-5-x.log"),
+    ):
+        assert _sweep_command_references(cmd, [touched]), (cmd, touched)
+
+    # A glob that is a WALK ROOT reads the subtrees it names, so a file any
+    # depth below a matched directory is referenced.
+    assert _sweep_command_references(
+        "pytest tests/*", ["plugins/x/tests/sub/test_y.py"]
+    )
+
+    # The separator rules are the shell's, not `fnmatch`'s: a `*` stays inside
+    # one path segment, so a glob is still a discriminating test rather than a
+    # DELTA scope that quietly became a FULL one.
+    for cmd, touched in (
+        ("cat src/*.py", "docs/README.md"),
+        ("cat src/*.py", "src/mod.txt"),               # the extension holds
+        ("cat src/*.py", "src/a/b.py"),                # `*` does not cross `/`
+        ("wc -l evidence/casting-[!0-9]-x.log", "evidence/casting-5-x.log"),
+    ):
+        assert not _sweep_command_references(cmd, [touched]), (cmd, touched)
+
+    # A flag's VALUE is not a path. `-k` takes a pytest name selector, and
+    # reading it as a glob would select every log whose command filters by
+    # name — over-selection wide enough to make DELTA meaningless.
+    assert not _sweep_command_references(
+        'pytest -k "test_*" tests/test_evidence.py', ["src/other.py"]
+    )
+
+    # An unlexable command fails OPEN on this rule rather than raising: the
+    # literal arm still runs and a FULL sweep re-executes the log regardless.
+    assert _sweep_command_references('echo "unbalanced src/mod.py',
+                                     ["src/mod.py"])
+    assert not _sweep_command_references('echo "unbalanced', ["src/mod.py"])
+
+
+def test_a_glob_referenced_log_is_selected_and_re_executed(tmp_path):
+    """D-045 through the doors the scope actually flows through.
+
+    The test above drives the predicate; this drives what the predicate is FOR.
+    The log belongs to no casting the diff touched — `src/alpha.py` is casting
+    1's, and this log is casting 9's — so the command-reference arm is its only
+    delta test, and the glob is the only thing in the command that names the
+    touched file. Selection then has to survive the next rung: the scope is
+    handed to `sweep_evidence_at_head`, which re-executes it in the bounded
+    pool, so a log selected here is a log actually re-run at HEAD."""
+    corpus = _default_sweep_corpus()
+    corpus["casting-9-globref.log"] = _sweep_log(
+        "casting-9-globref",
+        for_ids="OT-016",
+        cmd="cat replay-casting-9-globref.txt src/*.py",
+        body="def alpha():\n    return 'alpha'\n"
+             "def beta():\n    return 'beta'\n",
+    )
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    # `cat replay… src/*.py` concatenates the replay body and both sources, so
+    # the committed log has to carry all three or it would not reproduce.
+    (env["evidence_dir"] / "casting-9-globref.log").write_text(
+        "# evidence-cmd: cat replay-casting-9-globref.txt src/*.py\n"
+        "# evidence-for: OT-016\n"
+        "\n"
+        "def alpha():\n    return 'alpha'\n"
+        "def beta():\n    return 'beta'\n",
+        encoding="utf-8",
+    )
+    (env["project_root"] / "replay-casting-9-globref.txt").write_text(
+        "", encoding="utf-8"
+    )
+    _run_git(["add", "-A"], env["project_root"])
+    _run_git(["commit", "-q", "--amend", "--no-edit"], env["project_root"])
+
+    assert "casting-9-globref.log" in _sweep_scope_names(
+        env, ["src/beta.py"], full=False
+    ), "the glob operand names src/beta.py; nothing else in the command does"
+    result = _sweep(env, full=False, touched=["src/beta.py"])
+    assert result["ok"] is True, result["mismatches"]
+    assert any(
+        name.endswith("casting-9-globref.log") for name in result["logs_reexecuted"]
+    ), result["logs_reexecuted"]
+
+
 def test_select_sweep_scope_returns_sorted_paths(tmp_path):
     """A sweep result is read by a human diffing cycle N against cycle N-1. A
     set's iteration order would make two identical sweeps look different."""
@@ -5028,6 +5134,26 @@ def test_demo_sweep_scope_and_cost(tmp_path, capsys):
         for name in full_sweep["logs_reexecuted"]:
             print(f"    reexecuted {name}")
         print(f"    mismatches={full_sweep['mismatches']}")
+
+        print("=== FR-009: a command reaches a touched file by glob too "
+              "(D-045) ===")
+        from foundry_mcp.tools.evidence import _sweep_command_references
+
+        for cmd, touched in (
+            ("cat src/*.py", "src/mod.py"),
+            ("pytest tests/*.py", "tests/test_x.py"),
+            ("grep foo src/**/*.py", "src/a/b.py"),
+            ("wc -l evidence/*.log", "evidence/casting-5-x.log"),
+            ("uv run pytest tests/test_*.py",
+             "plugins/foundry/mcp-server/tests/test_vocab.py"),
+            ("ruff check src/*.py", "src/mod.py"),
+            ("cat src/*.py", "src/a/b.py"),
+            ("cat src/*.py", "src/mod.txt"),
+            ("cat src/*.py", "docs/README.md"),
+        ):
+            verdict = _sweep_command_references(cmd, [touched])
+            print(f"    {'in scope    ' if verdict else 'out of scope'}  "
+                  f"{cmd!r} vs {touched}")
 
         print("=== FR-031: the pool size is derived from the corpus ===")
         print(f"    ceiling (measured from the committed corpus) = {SWEEP_POOL_CEILING}")

@@ -2555,10 +2555,45 @@ def _sweep_command_references(cmd: str, touched: list[str]) -> bool:
     `plugins/foundry/mcp-server` and does not reference every file under it —
     a `cd` sets the cwd, it does not make the shell read the tree. Only a
     walking program with no path operand promotes its cwd to a walk root.
+
+    A SHELL GLOB IS A PATH OPERAND AND NEITHER ARM EXPANDED ONE (D-045)
+    ------------------------------------------------------------------
+    D-030 named "glob forms" among the shapes that "all resolve to nothing"
+    and closed the directory-operand, bare-command and `grep -r` halves. The
+    glob half stayed open, and it fails in BOTH arms at once: `cat src/*.py`
+    reaches no walker so only the literal arm runs, and it searches the command
+    text for `src/mod.py`, which a glob never spells; `ruff check src/*.py`
+    DOES reach a walker, and the operand `src/*.py` is then compared as a
+    literal path segment, so `src/mod.py` neither equals it nor starts with
+    `src/*.py/`. Driven at the door: `cat src/*.py`, `pytest tests/*.py`,
+    `grep foo src/**/*.py`, `wc -l evidence/*.log`, `uv run pytest
+    tests/test_*.py` and `ruff check src/*.py` every one answered False.
+
+    So a glob-shaped operand gets its own arm (`_sweep_glob_operands`), and it
+    is the LITERAL ARM GENERALISED, not a new kind of test: where that arm asks
+    "is this exact suffix present at a path boundary", this one asks "does this
+    glob match this suffix". Both quantify over the same suffix ladder for the
+    same reason — commands spell `tests/*.py` where the diff says
+    `plugins/foundry/mcp-server/tests/test_vocab.py` — which is also why the
+    glob arm needs NO cwd tracking: matching every suffix already subsumes what
+    joining a `cd`-established cwd onto the pattern would buy, so re-deriving
+    the cwd here would be a second derivation of a fact this arm never reads.
+
+    A glob-shaped WALK ROOT is handled separately and more loosely, because a
+    walker handed `tests/*` reads the SUBTREES the glob names: such a root
+    matches the touched path or any directory above it. `cat *` therefore
+    selects every touched file, which is what `cat *` honestly does; a quoted
+    `grep '*' f.txt` over-selects and costs the seconds the asymmetry above
+    says are the right ones to spend.
     """
     if not cmd:
         return False
     walk_roots = _sweep_walk_roots(cmd)
+    literal_roots = [root for root in walk_roots if not _sweep_is_glob(root)]
+    root_globs = _sweep_glob_matchers(
+        [root for root in walk_roots if _sweep_is_glob(root)]
+    )
+    operand_globs = _sweep_glob_matchers(_sweep_glob_operands(cmd))
     for raw in touched:
         path = str(raw).replace("\\", "/").strip()
         while path.startswith("./"):
@@ -2576,10 +2611,163 @@ def _sweep_command_references(cmd: str, touched: list[str]) -> bool:
             # The walk-root arm: is this touched path (or a suffix of it)
             # inside a directory the command walks? "" is the whole cwd, which
             # a walker with no operand reads in full.
-            for root in walk_roots:
+            for root in literal_roots:
                 if root == "" or suffix == root or suffix.startswith(root + "/"):
                     return True
+            # The glob-operand arm: the literal arm generalised (D-045).
+            for matcher in operand_globs:
+                if matcher.fullmatch(suffix):
+                    return True
+            # A glob WALK ROOT names directories, so everything beneath a
+            # matched one is walked: test the suffix and every path above it.
+            for matcher in root_globs:
+                if matcher.fullmatch(suffix):
+                    return True
+                for end in range(start + 1, len(segments)):
+                    if matcher.fullmatch("/".join(segments[start:end])):
+                        return True
     return False
+
+
+#: The three shell-glob metacharacters. `{a,b}` brace expansion is deliberately
+#: absent: it is a bash-ism rather than a glob, `shlex` does not treat it as one
+#: either, and every form D-045 names is built from these three.
+_SWEEP_GLOB_CHARS: frozenset[str] = frozenset("*?[")  # 3 metacharacters
+
+
+def _sweep_is_glob(token: str) -> bool:
+    """Does ``token`` carry a shell-glob metacharacter?"""
+    return any(ch in _SWEEP_GLOB_CHARS for ch in token)
+
+
+def _sweep_glob_to_regex(pattern: str) -> str:
+    """Translate a shell glob into a regex source string. Never raises.
+
+    NOT ``fnmatch.translate`` (D-045). ``fnmatch`` is a FILENAME matcher: its
+    ``*`` crosses ``/`` freely, so ``src/*.py`` would match ``src/a/b/c.py``
+    and, worse, ``tests/*`` would match every file at any depth — turning every
+    DELTA scope containing one glob into a FULL one. The separator rules here
+    are the shell's own:
+
+      ``**/``  zero or more leading directories  -> ``(?:.*/)?``
+      ``**``   crosses separators                -> ``.*``
+      ``*``    within one segment                -> ``[^/]*``
+      ``?``    one character, not a separator    -> ``[^/]``
+      ``[..]`` a character class, ``!`` negating -> ``[..]`` / ``[^..]``
+
+    An unterminated ``[`` is emitted as a literal bracket rather than treated
+    as a class, which is what the shell does with it too, and means a command
+    carrying a stray bracket degrades to a narrower match instead of an
+    exception. Everything else is ``re.escape``d, so a `.` in `*.py` is a dot.
+    """
+    parts: list[str] = []
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "*":
+            if pattern.startswith("**", index):
+                index += 2
+                if index < length and pattern[index] == "/":
+                    index += 1
+                    parts.append("(?:.*/)?")
+                else:
+                    parts.append(".*")
+                continue
+            parts.append("[^/]*")
+            index += 1
+            continue
+        if char == "?":
+            parts.append("[^/]")
+            index += 1
+            continue
+        if char == "[":
+            close = index + 1
+            if close < length and pattern[close] in "!^":
+                close += 1
+            if close < length and pattern[close] == "]":
+                close += 1
+            while close < length and pattern[close] != "]":
+                close += 1
+            if close >= length:
+                parts.append(re.escape("["))
+                index += 1
+                continue
+            body = pattern[index + 1:close].replace("\\", "\\\\")
+            if body[:1] in ("!", "^"):
+                body = "^" + body[1:]
+            parts.append(f"[{body}]")
+            index = close + 1
+            continue
+        parts.append(re.escape(char))
+        index += 1
+    return "".join(parts)
+
+
+def _sweep_glob_matchers(patterns: list[str]) -> list[re.Pattern[str]]:
+    """Compile each glob ONCE per call, dropping any that will not compile.
+
+    Compiled up front rather than inside the touched-file loop because that
+    loop runs once per suffix of every path in the GRIND diff, and at the
+    observed run scale (A-AUTO-002) a diff of fifty files is ordinary.
+
+    A pattern that will not compile is DROPPED rather than raised on: this
+    predicate's contract is a bool, `select_sweep_scope`'s other arms still
+    run, and a FULL sweep re-executes the log regardless. Refusing here would
+    turn a stray metacharacter in one command into a refused transition.
+    """
+    matchers: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        if not pattern:
+            continue
+        try:
+            matchers.append(re.compile(_sweep_glob_to_regex(pattern)))
+        except re.error:
+            continue
+    return matchers
+
+
+def _sweep_glob_operands(cmd: str) -> list[str]:
+    """Every glob-shaped path operand in ``cmd``. ``[]`` when it cannot be lexed.
+
+    D-045. The operand rules are `_sweep_walk_roots`' rules, held to
+    deliberately: a token is not an operand when it is a separator, when it is
+    a flag (`-l`, `--quiet`), or when it is the VALUE of a flag that takes one
+    (`-k 'test_*'` is a pytest SELECTOR, not a path, and reading it as one
+    would select every log whose command filters by name).
+
+    Unlike `_sweep_walk_roots` this does NOT track a `cd`-established cwd, and
+    the omission is the point rather than an oversight: the caller matches each
+    pattern against every trailing suffix of the touched path, so the bare
+    `tests/*.py` already answers everything the cwd-joined
+    `plugins/foundry/mcp-server/tests/*.py` would. Tracking the cwd here would
+    be a second derivation of a fact this arm never consults — the house
+    anti-pattern the module comment on `_dispatched_agents` names.
+
+    Returns `[]` on an unlexable command, which is the same fail-OPEN rule
+    `_sweep_walk_roots` holds: the literal arm still runs, and the log is
+    re-executed by any FULL sweep.
+    """
+    tokens = _shell_tokens(cmd)
+    if tokens is None:
+        return []
+    consumed = {
+        index + 1
+        for index, token in enumerate(tokens)
+        if token in _SWEEP_OPERAND_FLAG_VALUES and index + 1 < len(tokens)
+    }
+    operands: list[str] = []
+    for index, token in enumerate(tokens):
+        if index in consumed or token in _STUB_CMD_SEPARATORS:
+            continue
+        if token.startswith("-") or not _sweep_is_glob(token):
+            continue
+        text = token.replace("\\", "/").strip().rstrip("/")
+        while text.startswith("./"):
+            text = text[2:]
+        if text:
+            operands.append(text)
+    return operands
 
 
 #: Programs that read a directory tree rather than the operands they are

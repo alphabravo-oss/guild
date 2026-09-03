@@ -4,7 +4,6 @@
 # evidence-timeout: 300
 
 
-
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -30,6 +29,16 @@
     reexecuted evidence/casting-2-beta.log
     reexecuted evidence/wave-report-sections.log
     mismatches=[]
+=== FR-009: a command reaches a touched file by glob too (D-045) ===
+    in scope      'cat src/*.py' vs src/mod.py
+    in scope      'pytest tests/*.py' vs tests/test_x.py
+    in scope      'grep foo src/**/*.py' vs src/a/b.py
+    in scope      'wc -l evidence/*.log' vs evidence/casting-5-x.log
+    in scope      'uv run pytest tests/test_*.py' vs plugins/foundry/mcp-server/tests/test_vocab.py
+    in scope      'ruff check src/*.py' vs src/mod.py
+    out of scope  'cat src/*.py' vs src/a/b.py
+    out of scope  'cat src/*.py' vs src/mod.txt
+    out of scope  'cat src/*.py' vs docs/README.md
 === FR-031: the pool size is derived from the corpus ===
     ceiling (measured from the committed corpus) = 8
     pool([])            == 0            : True
@@ -42,4 +51,4 @@
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
 .
-1 passed, 256 deselected in 0.62s
+1 passed, 258 deselected in 0.58s
