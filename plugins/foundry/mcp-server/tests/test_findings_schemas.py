@@ -721,6 +721,38 @@ def test_tier_is_required_and_reproduction_attempted_is_not() -> None:
         assert not _finding_errors(schema, _minimal_finding()), name
 
 
+@pytest.mark.parametrize("path", BLOCK_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_the_finding_required_list_is_exactly_what_the_documents_require(
+    path: Path,
+) -> None:
+    """D-039 — the `tier`/`class` split is DERIVED, not decided here.
+
+    findings.py states its rule for `required` as "what that skill's own block
+    requires". Nothing checked it, so the difference between a required `class`
+    and an optional `tier` read as an unexplained inconsistency, which is
+    exactly how D-039 was filed.
+
+    Asserting equality against the document turns the split into a fact with an
+    owner. It also makes it self-correcting in the one direction that matters:
+    when the blocks add `tier` to their `required` lists, this fails naming the
+    field, and findings.py has to follow before the suite is green again. The
+    reverse is covered too — a field quietly added here that no block requires
+    would make this module stricter than the document, which is D-071.
+    """
+    block = _documented_block(path)
+    documented = block["properties"]["findings"]["items"].get("required") or []
+    served = SCHEMAS[_documented_schema_name(path)]
+    enforced = served["properties"]["findings"]["items"]["required"]
+
+    assert sorted(enforced) == sorted(documented), (
+        f"{_rel(path)} requires {sorted(documented)} of a finding and "
+        f"SCHEMAS[{_documented_schema_name(path)!r}] enforces {sorted(enforced)}. "
+        f"findings.py derives its `required` list from these blocks, so the two "
+        f"cannot differ: if the block moved, move the schema to match — do not "
+        f"relax this assertion."
+    )
+
+
 def test_the_read_side_sentinel_is_not_a_filable_tier() -> None:
     """D-039's second reason, as a fact rather than a claim.
 
