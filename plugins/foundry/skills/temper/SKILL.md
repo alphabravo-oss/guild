@@ -115,13 +115,18 @@ missing retry/timeout handling, UX improvements.
 For each suggestion:
 1. Check feasibility (does the backend support it?)
 2. Route it by WHERE the work lands, never by how much of it there is: a frontend-only
-   change under 50 lines is implemented in the run, and one that needs backend work or a
-   refactor goes to `foundry-archive/{run}/temper/suggestion-backlog.md`. **Never grade a
-   suggestion by effort** — no `minor`, no `major`, no `critical`, and no fresh spelling
-   for the same axis next cycle. The work-effort grade is abolished across this release
-   and a suggestion is not where it comes back. `tier` grades a FINDING by whether you
-   drove it or derived it, which is evidence rather than effort; a suggestion carries no
-   grade at all, only a destination.
+   change is implemented in the run, and one that needs backend work or a refactor goes to
+   `foundry-archive/{run}/temper/suggestion-backlog.md`. Nothing here routes on how large a
+   fix looks, and no line count appears in the rule — a size threshold is the work-effort
+   grade wearing a number, and it reinstates on the routing axis exactly what the next
+   sentence abolishes on the naming one. **Never grade a suggestion by effort** — no
+   `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no
+   fresh spelling for the same axis next cycle. That is the same six names `## Key
+   Constraints` bans on a defect, banned here on a suggestion, so the two rules cannot
+   drift into disagreeing about which words are the axis. The work-effort grade is
+   abolished across this release and a suggestion is not where it comes back. `tier` grades
+   a FINDING by whether you drove it or derived it, which is evidence rather than effort; a
+   suggestion carries no grade at all, only a destination.
 
 ### Phase C4: REPORT
 
@@ -134,7 +139,9 @@ Create `foundry-archive/{run}/temper/temper-{timestamp}.md`. Required sections:
 - **STUCK domains** — what couldn't be fixed and why
 
 Sync findings to the foundry defect tracker via the `Foundry-Defect` MCP tool with
-`source: "temper"`. The lead routes them through F3 GRIND.
+`source: "temper"`, each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT`
+filing — `reproduction_attempted`, per the filing rules in `## Key Constraints`. The lead
+routes them through F3 GRIND.
 
 ---
 
@@ -147,7 +154,9 @@ Temper is NOT a single pass. It cycles: probe → fix → re-probe → SOLID or 
 1. Pick the next unprobed domain (most complex/risky first)
 2. Probe it (C2). If SOLID, move on.
 3. If findings exist:
-   a. Sync findings to the foundry defect tracker via `Foundry-Defect` with `source: "temper"`, `T-` IDs
+   a. Sync findings to the foundry defect tracker via `Foundry-Defect` with `source: "temper"`,
+      `T-` IDs, each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT` filing —
+      `reproduction_attempted`, per the filing rules in `## Key Constraints`
    b. Route fixes through F3 GRIND (DO NOT fix directly)
    c. After fixes, re-probe the same domain
    d. If still not SOLID after 3 attempts → mark STUCK, move on
@@ -204,8 +213,9 @@ Runs when `--url <url>` was passed to `/foundry:start`. Exploratory, not spec-ba
 ### Findings routing
 
 After each sweep pass, sync findings via `Foundry-Defect` with `source: "temper"`
-and `TS-` IDs. F3 GRIND fixes them. Then start the next sweep pass focusing on
-changed files.
+and `TS-` IDs, each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT`
+filing — `reproduction_attempted`, per the filing rules in `## Key Constraints`. F3 GRIND
+fixes them. Then start the next sweep pass focusing on changed files.
 
 ### When the sweep ends
 
@@ -235,14 +245,19 @@ hold, keep sweeping; once they do, temper is finished and says so.
   explicit directive. Durable cites are symbol-only, optionally with a quoted snippet; a
   line hint belongs only in a commit-pinned run artifact, where it is frozen against the one
   commit it was written at.
-- **Every temper finding carries a `tier`, like any other stream's.** `LIVE` when you drove
-  the domain and observed the wrong result — and probing IS driving it, so most temper
-  findings are `LIVE`. `LATENT` when you derived the finding and found no reachable
-  instance, in which case the filing MUST carry a `reproduction_attempted` statement
-  naming what you drove and what it found; the filing door refuses a `LATENT` finding
-  without one. A security-property claim can NEVER be `LATENT`. Temper gets no separate
-  tier vocabulary and no discretion the other streams lack: escalation exits by the same
-  rule everywhere, and both tiers are defects that get fixed.
+- **Every temper finding carries a `tier`, like any other stream's.** Probing IS driving the
+  domain, so most temper findings are `LIVE`. Temper gets no separate tier vocabulary and no
+  discretion the other streams lack: escalation exits by the same rule everywhere, and both
+  tiers are defects that get fixed. The five rules below are the ones every defect-filing
+  stream carries, word-identically, and they are reproduced here rather than summarised:
+  temper files into the same ledger through the same doors, so a micro-domain probe is a
+  different lens on the code, not a different contract with the defect ledger. A rule restated
+  in temper's own words would be one more spelling of a refusal the doors report in one.
+- **Name the class when instances share a root cause.** Three HOLLOW verdicts behind one missing middleware are one class, not three unrelated defects — put the shared root cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). A class that draws new defects for three consecutive cycles escalates to a single structural-fix packet, and that only fires if you named it — `systemic_patterns` is your prose summary and nothing downstream consumes it. Name a class on EVERY defect, including one that genuinely stands alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty. Never invent a class to bundle findings that do not share a cause.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed two-member vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. A security-property claim can NEVER be `LATENT` — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Both tiers are defects, both get fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches the thing it enumerates — that class is comment prose. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. This is a channel, not a severity tier, and it buys you no discretion over anything else.
+- **Declare `target_kind` on every filing.** That refusal is not automatic — it fires only when your call DECLARES what the finding is about: `target_kind: "comment"` when the verdict concerns a code comment, otherwise what the subject really is (`code`, `test`, `config`, `doc`). Omit the field and the server has nothing to judge, so a line-drift finding is accepted into `defects.json` and the split above did nothing. Every `Foundry-Defect` and `Foundry-Sync` call carries it, on every verdict, including the ones you are certain about.
 - **Exhaustive** — probe every domain, sweep every file; don't skip what "looks fine"
 - **No assumptions** — "the function exists" is not evidence; "`path#Symbol` does X" is
 - **Fix direction must be specific** — "fix saveCredentials" is useless; include what the function MUST do

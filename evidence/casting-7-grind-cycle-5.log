@@ -1,0 +1,45 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import pathlib,re,sys; sys.path.insert(0,"src"); from foundry_mcp.tools.foundry import validate_defect_filing as V; R=pathlib.Path(".."); T=R/"skills/temper/SKILL.md"; A=R/"agents/assayer.md"; S=R/"commands/start.md"; t=T.read_text(encoding="utf-8"); flat=" ".join(t.split()); CASES=[("LATENT security claim",{"tier":"LATENT","class":"auth","description":"the login endpoint does not verify the authentication token signature"}),("empty class",{"tier":"LIVE","class":"","description":"T-login-3 handler returns 200 on failure"}),("LATENT, no reproduction_attempted",{"tier":"LATENT","class":"unwired-handler","description":"no call site found"})]; print("=== the doors a temper filing meets (CT-001 / CT-002 / CT-003) ==="); print("\n".join("  %-33s -> field=%-22s denylist_class=%s"%(n,(V(f) or {}).get("field"),(V(f) or {}).get("denylist_class")) for n,f in CASES)); SUR=sorted(p for p in [*(R/"agents").glob("*.md"),*(R/"skills").glob("*/SKILL.md")] if "Foundry-Defect" in p.read_text(encoding="utf-8") or "Foundry-Sync" in p.read_text(encoding="utf-8")); NM=[p for p in SUR if "SECURITY_PROPERTY_CLAIM" in p.read_text(encoding="utf-8")]; print("\n=== D-079: the refusal token every filing surface must teach ==="); print("  surfaces naming SECURITY_PROPERTY_CLAIM: %d of %d"%(len(NM),len(SUR))); print("\n".join("      %-8s %s"%("names" if p in NM else "MISSING",p.name if p.name!="SKILL.md" else p.parent.name+"/SKILL.md") for p in SUR)); C=" ".join("each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT` filing — `reproduction_attempted`, per the filing rules in `## Key Constraints`".split()); print("\n=== D-091: temper names the fields its own doors require ==="); print("  sync instructions carrying the field clause (want 3):",flat.count(C)); print("  the class rule present (want 1):",flat.count("refuse a filing whose `class` is empty")); print("\n=== D-094: the C3 routing rule carries no size threshold ==="); print("  under-50-lines threshold (want 0):",t.count("under 50 lines")); print("  routes-by-where-not-size clause (want 1):",flat.count("Nothing here routes on how large a fix looks")); print("\n=== D-095: the work-effort grade banned by all six names, on both artifacts ==="); SIX=["minor","major","critical","severity","priority","impact"]; DB=flat.split("- **No severity classification.**")[1].split(" - **")[0]; SB=flat.split("**Never grade a suggestion by effort**")[1].split(". That is the same six")[0]; print("  defect-level ban names:",[n for n in SIX if "`%s`"%n in DB]); print("  suggestion-level ban names:",[n for n in SIX if "`%s`"%n in SB]); print("  Set-tier-on-every-filing imperative (want 1):",t.count("- **Set `tier` on every filing;")); H=["- **Name the class when instances share a root cause.**","- **No severity classification.**","- **Set `tier` on every filing;","- **Comment-prose findings are observations, not defects.**","- **Declare `target_kind` on every filing.**"]; AL=A.read_text(encoding="utf-8").splitlines(); TL=t.splitlines(); print("\n=== the five shared bullets are byte-identical with agents/assayer.md ==="); print("\n".join("  %-56s assayer=%d temper=%d identical=%s"%(h[:56],len([x for x in AL if x.startswith(h)]),len([x for x in TL if x.startswith(h)]),[x for x in AL if x.startswith(h)]==[x for x in TL if x.startswith(h)]) for h in H)); SEG=" ".join(S.read_text(encoding="utf-8").split()).split("the tier rule is written into the `## Rules` block of ")[1].split(". The one roster member it is not written into is ")[0]; print("\n=== start.md tier roster admits a skills/ filing surface (D-054 follow-on) ==="); print("  roster members parsed:",re.findall(r"`(agents/[^`]+\.md|skills/[^`]+/SKILL\.md)`",SEG))'
+# evidence-for: FR-025, AC-038, AC-005, FR-026, FR-004, FR-007, FR-030, AC-007, AC-009, AC-010
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+=== the doors a temper filing meets (CT-001 / CT-002 / CT-003) ===
+  LATENT security claim             -> field=description            denylist_class=SECURITY_PROPERTY_CLAIM
+  empty class                       -> field=class                  denylist_class=None
+  LATENT, no reproduction_attempted -> field=reproduction_attempted denylist_class=None
+
+=== D-079: the refusal token every filing surface must teach ===
+  surfaces naming SECURITY_PROPERTY_CLAIM: 10 of 10
+      names    assayer.md
+      names    coverage-diff.md
+      names    flow-tracer.md
+      names    research-auditor.md
+      names    teammate.md
+      names    tracer.md
+      names    prove/SKILL.md
+      names    sight/SKILL.md
+      names    temper/SKILL.md
+      names    trace/SKILL.md
+
+=== D-091: temper names the fields its own doors require ===
+  sync instructions carrying the field clause (want 3): 3
+  the class rule present (want 1): 1
+
+=== D-094: the C3 routing rule carries no size threshold ===
+  under-50-lines threshold (want 0): 0
+  routes-by-where-not-size clause (want 1): 1
+
+=== D-095: the work-effort grade banned by all six names, on both artifacts ===
+  defect-level ban names: ['minor', 'major', 'critical', 'severity', 'priority', 'impact']
+  suggestion-level ban names: ['minor', 'major', 'critical', 'severity', 'priority', 'impact']
+  Set-tier-on-every-filing imperative (want 1): 1
+
+=== the five shared bullets are byte-identical with agents/assayer.md ===
+  - **Name the class when instances share a root cause.**  assayer=1 temper=1 identical=True
+  - **No severity classification.**                        assayer=1 temper=1 identical=True
+  - **Set `tier` on every filing;                          assayer=1 temper=1 identical=True
+  - **Comment-prose findings are observations, not defects assayer=1 temper=1 identical=True
+  - **Declare `target_kind` on every filing.**             assayer=1 temper=1 identical=True
+
+=== start.md tier roster admits a skills/ filing surface (D-054 follow-on) ===
+  roster members parsed: ['agents/assayer.md', 'agents/tracer.md', 'agents/flow-tracer.md', 'agents/research-auditor.md', 'agents/coverage-diff.md', 'skills/sight/SKILL.md']

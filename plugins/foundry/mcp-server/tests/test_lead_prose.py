@@ -41,6 +41,12 @@ SETUP_SH = SCRIPTS / "setup-foundry.sh"
 PLUGIN_README = FOUNDRY_ROOT / "README.md"
 ROOT_README = REPO_ROOT / "README.md"
 
+#: The source copy of the shared filing rules. Every defect-filing surface's
+#: block is copied from here, so the sweep below compares against it rather
+#: than against a second literal in this module -- a literal is a copy free to
+#: drift from both, which is the defect the sweep exists to catch.
+ASSAYER = AGENTS / "assayer.md"
+
 SERVER_PY = MCP_SRC / "server.py"
 PLUGIN_MANIFEST = FOUNDRY_ROOT / ".claude-plugin" / "plugin.json"
 PYPROJECT = FOUNDRY_ROOT / "mcp-server" / "pyproject.toml"
@@ -686,6 +692,54 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         PLUGIN_README,
         "F1/F3 dispatch a pointer to the frozen file rather than its text",
     ),
+    # --- GRIND cycle 5 ------------------------------------------------------
+    # D-079 / D-091 / D-094 / D-095, all four filed against the ONE file that
+    # instructs a filing without carrying the filing rules. The word-identity
+    # sweep below is the structural half; these are the claims that sweep
+    # cannot see, because they are about what temper says in its OWN voice
+    # around the pasted block.
+    #
+    # D-094 / FR-030: the C3 routing sentence forbade routing by size and then
+    # routed by "under 50 lines" in its own second clause -- the work-effort
+    # axis surviving inside the sentence that abolishes it.
+    (
+        "temper-suggestions-no-size-threshold",
+        "FR-030",
+        TEMPER_SKILL,
+        "Nothing here routes on how large a fix looks, and no line count appears "
+        "in the rule",
+    ),
+    # D-095 / AC-009: temper banned three of the six names, and only on a
+    # suggestion. The defect-level ban now arrives with the shared block; this
+    # pins the suggestion-level one to the SAME six, so the two cannot drift
+    # into disagreeing about which words are the axis.
+    (
+        "temper-suggestion-ban-names-all-six",
+        "AC-009",
+        TEMPER_SKILL,
+        "no `minor`, no `major`, no `critical`, no `severity`, no `priority`, "
+        "no `impact`, and no fresh spelling for the same axis next cycle",
+    ),
+    # D-091 / CT-002: temper's file never told it to set `class`, and every
+    # filing instruction in it named only `source`. Both doors refuse a filing
+    # with an empty class, and Foundry-Sync refuses the WHOLE batch on one.
+    (
+        "temper-filing-instruction-names-the-fields",
+        "CT-002",
+        TEMPER_SKILL,
+        "each carrying `tier`, `defect_class`, `target_kind` and — on a "
+        "`LATENT` filing — `reproduction_attempted`, per the filing rules in "
+        "`## Key Constraints`",
+    ),
+    # D-054 follow-on / FR-007: the roster sentence read as "the agent files",
+    # which is a roster short by one now that sight files through the same door
+    # from under `skills/`.
+    (
+        "tier-roster-admits-a-skill",
+        "FR-007",
+        START_MD,
+        "and into the `#### Filing rules` block of `skills/sight/SKILL.md`",
+    ),
 )
 
 
@@ -726,6 +780,90 @@ def test_temper_no_longer_claims_a_completion_check_nobody_performs() -> None:
     assert "tier-aware gates" in flat, (
         f"{_rel(TEMPER_SKILL)} removed the false completion claim without "
         f"replacing it. Anti-pattern 7 has to say what really blocks a run."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The shared filing-rule block temper carries word-identically (D-079 / D-091 /
+# D-095)
+# ---------------------------------------------------------------------------
+#
+# temper is a `vocab.DEFECT_SOURCE_IDS` member whose own file instructs three
+# `Foundry-Defect` calls, so it meets the same doors every stream meets. For
+# four cycles it met them carrying a PARAPHRASE: it stated the security rule as
+# "A security-property claim can NEVER be `LATENT`" without naming
+# `SECURITY_PROPERTY_CLAIM`, the token the refusal actually reports; it never
+# told itself to set `class`, which both doors refuse an empty one of and which
+# `Foundry-Sync` refuses a whole BATCH over; and it banned three of the six
+# work-effort names on a suggestion and none of them on a defect. Each cycle
+# closed the clause that had been filed and left the paraphrase, and the class
+# came back.
+#
+# So this sweep pins the SHAPE rather than the clauses: the bullets temper
+# carries must be BYTE-IDENTICAL with `agents/assayer.md`'s, which is where
+# every filing surface's copy comes from. A paraphrase fails here whatever
+# tokens it happens to contain, and a rule assayer gains later fails here until
+# temper gains it too -- which is the half a token sweep structurally cannot
+# see.
+
+#: The bullets every defect-filing surface carries word-identically, keyed by
+#: the bolded imperative each opens with. Order matters and is asserted below:
+#: the no-severity bullet points forward at "the `tier` axis the next rule
+#: makes required", and the `target_kind` bullet points back at "that refusal"
+#: and "the split above" -- both of which are the comment-prose bullet. A block
+#: that drops the middle bullet keeps two dangling references, which is the
+#: state `skills/sight/SKILL.md` is in today.
+_SHARED_FILING_BULLETS = (
+    "- **Name the class when instances share a root cause.**",
+    "- **No severity classification.**",
+    "- **Set `tier` on every filing;",
+    "- **Comment-prose findings are observations, not defects.**",
+    "- **Declare `target_kind` on every filing.**",
+)
+
+
+def _bullet(path: Path, head: str) -> str:
+    """The one line in `path` opening with `head`, failing loudly on 0 or many."""
+    hits = [line for line in _read(path).splitlines() if line.startswith(head)]
+    assert len(hits) == 1, (
+        f"{_rel(path)} carries {len(hits)} bullets opening {head!r}, expected "
+        f"exactly 1. Two copies of a shared rule is the drift this sweep "
+        f"exists to catch; zero means the rule was dropped or reworded."
+    )
+    return hits[0]
+
+
+@pytest.mark.parametrize("head", _SHARED_FILING_BULLETS)
+def test_temper_carries_the_shared_filing_bullet_verbatim(head: str) -> None:
+    """D-079 / D-091 / D-095: temper's copy is the source's copy, byte for byte."""
+    source = _bullet(ASSAYER, head)
+    assert _bullet(TEMPER_SKILL, head) == source, (
+        f"{_rel(TEMPER_SKILL)}'s {head!r} bullet has drifted from "
+        f"{_rel(ASSAYER)}'s. These are shared rules: the doors report ONE "
+        f"refusal per violation, so a surface that words the rule differently "
+        f"teaches its stream a vocabulary the refusal will not use. Copy the "
+        f"line from {_rel(ASSAYER)} rather than re-wording it here, and if the "
+        f"rule itself is wrong, change it at the source and re-copy."
+    )
+
+
+def test_the_shared_filing_bullets_are_in_the_order_their_references_need() -> None:
+    """The back-references only resolve in one order, and sight proves it.
+
+    `skills/sight/SKILL.md` carries four of these five -- it drops the
+    comment-prose bullet and keeps the `target_kind` bullet that says "that
+    refusal is not automatic" and "the split above did nothing", leaving both
+    pointing at nothing. temper's copy must not inherit that: this asserts the
+    antecedent is present AND above the bullet that refers to it.
+    """
+    text = _read(TEMPER_SKILL)
+    positions = [text.index(_bullet(TEMPER_SKILL, head)) for head in _SHARED_FILING_BULLETS]
+    assert positions == sorted(positions), (
+        f"{_rel(TEMPER_SKILL)}'s shared filing bullets are out of order. "
+        f"Expected {list(_SHARED_FILING_BULLETS)}: the no-severity bullet names "
+        f"'the `tier` axis the next rule makes required', so the tier bullet "
+        f"must follow it, and the `target_kind` bullet's 'that refusal' and "
+        f"'the split above' are the comment-prose bullet, so it must precede."
     )
 
 
@@ -833,13 +971,24 @@ def test_start_md_tools_table_rows_are_two_column() -> None:
 # assertion tracks the prose instead of becoming a third copy free to drift
 # from both.
 
-#: The sentence in start.md's F2 roster whose backticked `agents/*.md` paths
-#: are the tier rule's fresh-checkout roster. Anchored on both ends so a
-#: nearby paragraph's agent references cannot leak into the derivation.
+#: The sentence in start.md's F2 roster whose backticked prose paths are the
+#: tier rule's fresh-checkout roster. Anchored on both ends so a nearby
+#: paragraph's agent references cannot leak into the derivation.
 _TIER_ROSTER_RE = re.compile(
     r"the tier rule is written into the `## Rules` block of (.+?)\. "
     r"The one roster member it is not written into is `([^`]+)`"
 )
+
+#: A roster member's path, in either spelling a filing surface can have. The
+#: alternation is the D-054 lesson arriving on the LEAD's side of the protocol:
+#: `test_protocol_prose.py` derives its filing corpus over BOTH `agents/*.md`
+#: and `skills/*/SKILL.md` because a surface joins it by NAMING A FILING DOOR,
+#: not by living in `agents/`. This pattern matched only the first spelling, so
+#: `skills/sight/SKILL.md` -- a first-class member of that corpus, carrying the
+#: tier, class and `target_kind` rules word-identically -- could not be named
+#: in the roster sentence at all: adding it parsed the list one member short
+#: and the sweep below then read a roster that no longer matched the corpus.
+_ROSTER_PATH_RE = re.compile(r"`(agents/[^`]+\.md|skills/[^`]+/SKILL\.md)`")
 
 
 def _claimed_tier_roster() -> tuple[list[str], str]:
@@ -852,7 +1001,7 @@ def _claimed_tier_roster() -> tuple[list[str], str]:
         f"count, with nothing saying who the count leaves out. Restore both "
         f"halves of the sentence rather than relaxing this pattern."
     )
-    return re.findall(r"`(agents/[^`]+\.md)`", match.group(1)), match.group(2)
+    return _ROSTER_PATH_RE.findall(match.group(1)), match.group(2)
 
 
 def test_the_tier_roster_derivation_is_not_vacuous() -> None:
@@ -868,6 +1017,16 @@ def test_the_tier_roster_derivation_is_not_vacuous() -> None:
         f"defect-filing stream agents are the floor; a parse this small means "
         f"the sentence changed shape and this test is now checking nothing."
     )
+    # The widened alternation needs its own vacuity guard: a pattern that admits
+    # `skills/*/SKILL.md` and never matches one is indistinguishable from the
+    # agent-only pattern it replaced, which is the state D-054 left the roster in.
+    assert any(rel.startswith("skills/") for rel in named), (
+        f"{_rel(START_MD)}'s tier-rule roster parsed to {named!r}, which names "
+        f"no `skills/*/SKILL.md` member. A filing surface joins this roster by "
+        f"naming a filing door, not by living in `agents/` -- and a roster that "
+        f"lists only agents is the one this sentence's own closing clause warns "
+        f"against reading as a count."
+    )
     assert exempt.startswith("agents/"), (
         f"{_rel(START_MD)} names {exempt!r} as the exempt roster member, which "
         f"is not an agent file path."
@@ -875,32 +1034,43 @@ def test_the_tier_roster_derivation_is_not_vacuous() -> None:
 
 
 def test_every_agent_start_md_names_really_carries_the_tier_rule() -> None:
-    """FR-007 / D-025: start.md's claim about the agent files must be true.
+    """FR-007 / D-025: start.md's claim about the roster files must be true.
 
     "It is in force on a fresh checkout" is a claim about files start.md does
     not own. If the ruling is missing from one of them, the lead is told no
     per-run directive is needed and the stream files without a tier anyway --
     which the door then refuses mid-INSPECT, with the protocol's own prose as
     the reason the lead trusted it would not.
+
+    A roster member under `skills/` is checked over the WHOLE file rather than
+    over a `## Rules` block, because a skill carries no such heading: sight
+    states the rules under `#### Filing rules` and temper under
+    `## Key Constraints`. Demanding one heading of both populations is what
+    made the roster agent-only in the first place, and the substance -- the
+    tier the door refuses without -- is what the claim is actually about.
     """
     named, exempt = _claimed_tier_roster()
     for rel in named:
-        agent = AGENTS / Path(rel).name
-        assert agent.is_file(), (
+        member = FOUNDRY_ROOT / rel
+        assert member.is_file(), (
             f"{_rel(START_MD)} names {rel} as carrying the tier rule, but that "
             f"file does not exist."
         )
-        body = agent.read_text(encoding="utf-8")
-        rules = body.split("## Rules", 1)
-        assert len(rules) == 2, (
-            f"{_rel(agent)} has no `## Rules` block, so {_rel(START_MD)} is "
-            f"wrong to list it among the files that carry the tier rule there. "
-            f"Move it to the exemption clause instead."
-        )
-        assert "LATENT" in rules[1], (
-            f"{_rel(agent)}'s `## Rules` block does not state the tier rule, "
+        body = member.read_text(encoding="utf-8")
+        if member.name == "SKILL.md":
+            scope, where = body, "file"
+        else:
+            rules = body.split("## Rules", 1)
+            assert len(rules) == 2, (
+                f"{_rel(member)} has no `## Rules` block, so {_rel(START_MD)} "
+                f"is wrong to list it among the agent files that carry the tier "
+                f"rule there. Move it to the exemption clause instead."
+            )
+            scope, where = rules[1], "`## Rules` block"
+        assert "LATENT" in scope, (
+            f"{_rel(member)}'s {where} does not state the tier rule, "
             f"but {_rel(START_MD)} says it does. Either the rule was dropped "
-            f"from the agent file -- restore it -- or start.md must stop "
+            f"from the roster file -- restore it -- or start.md must stop "
             f"claiming it and bind the file in the exemption clause. Never fix "
             f"this by deleting the claim's file list; a roster stated as a bare "
             f"count is the defect this test exists for."
