@@ -3,8 +3,8 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
 
-...............................................                          [100%]
-47 passed in 7.33s
+.................................................                        [100%]
+49 passed in 8.31s
 
 === the width is decided at the transition, reported everywhere else ===
 modes: DELTA FULL
