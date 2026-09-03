@@ -72,7 +72,10 @@ PRECEDENCE RULE (AC-002 — the never-weaken guarantee)
 -----------------------------------------------------
 `never_demote_class` OUTRANKS `observation_class`. A finding matching both is
 a DEFECT, and the denylist match is what a caller reports so the audit
-tripwire can name exactly which entry fired. Because of this ordering the
+tripwire can name exactly which entry fired. When SEVERAL denylist entries
+match one finding, the entry reported is the most specific one — the generic
+NON_COMMENT catch-all is evaluated last, so it never masks the entry a
+refusal also names (D-083; see `_NEVER_DEMOTE_PREDICATES`). Because of this ordering the
 denylist patterns are deliberately biased toward OVER-matching: a false
 denylist hit costs one observation that stays a defect, while a false miss
 would demote a real security or spec-behaviour finding. Only the second
@@ -1093,13 +1096,45 @@ _OBSERVATION_PREDICATES: tuple[tuple[str, object], ...] = (
     (ENUMERATION, is_enumeration),
 )
 
-# Ordered by descending structural certainty, so the class a caller reports
-# on the audit tripwire is the most mechanically-grounded one that matched.
+# ORDERED MOST-SPECIFIC FIRST, GENERIC CATCH-ALL LAST (D-083 / AC-007 /
+# OT-005 / CT-003).
+#
+# The order is the answer. `never_demote_class` returns the FIRST match, and
+# that answer is what `record_denylist_tripwire` persists as
+# `observations.json.tripwire[].denylist_class` — the field an auditor queries
+# a run by. So this tuple decides what the audit ledger SAYS happened.
+#
+# It used to lead with NON_COMMENT, on the argument that it was the most
+# "structurally certain" match. `is_non_comment` fires for ANY declared
+# `target_kind` other than "comment", so leading with it swallowed every other
+# entry whenever the filer named a real subject. Driven through both shipped
+# doors with ONE description asserting an authentication property across four
+# target_kinds: `code` and `test` persisted NON_COMMENT while
+# `validate_defect_filing` refused the very same call naming
+# SECURITY_PROPERTY_CLAIM; `comment` and absent persisted
+# SECURITY_PROPERTY_CLAIM. One event wrote two artifacts that disagreed — and
+# the two shapes that lost the security signal are the DEFAULT shape of every
+# production-code filing, so an auditor grepping the tripwire ledger for
+# SECURITY_PROPERTY_CLAIM found nothing for exactly the filings AC-007 is
+# about.
+#
+# SECURITY_PROPERTY_CLAIM therefore leads: it is the one entry a REFUSAL also
+# names (the LATENT denylist rung in `validate_defect_filing`, which consults
+# `is_security_property_text` on the description alone), and the tripwire may
+# not disagree with the refusal it was fired for. NON_COMMENT goes last, where
+# it now means what an auditor reads it to mean — no more specific entry
+# matched, and the SUBJECT alone is why this finding can never be demoted.
+#
+# Rejected: passing the refusal's class into the tripwire writer as an
+# override. That repairs two call sites and leaves this dispatcher — which
+# `foundry_add_observation`'s refusal text and the forge-log mirror also read
+# — still answering NON_COMMENT, so the same disagreement returns through the
+# next caller.
 _NEVER_DEMOTE_PREDICATES: tuple[tuple[str, object], ...] = (
-    (NON_COMMENT, is_non_comment),
-    (UNRESOLVABLE_CITE, is_unresolvable_cite),
     (SECURITY_PROPERTY_CLAIM, is_security_property_claim),
+    (UNRESOLVABLE_CITE, is_unresolvable_cite),
     (SPEC_REQUIRED_BEHAVIOUR_CLAIM, is_spec_required_behaviour_claim),
+    (NON_COMMENT, is_non_comment),
 )
 
 
@@ -1116,11 +1151,15 @@ def observation_class(finding: Mapping[str, object]) -> str | None:
 
 
 def never_demote_class(finding: Mapping[str, object]) -> str | None:
-    """Name the first denylist class that matches, else None.
+    """Name the MOST SPECIFIC denylist class that matches, else None.
 
     A non-None result means the finding can never be recorded as an
     observation; the caller rejects the demotion and fires the audit
     tripwire naming exactly this class.
+
+    "Most specific" is carried by `_NEVER_DEMOTE_PREDICATES`' declaration
+    order, not decided here — see that tuple's comment for why the generic
+    NON_COMMENT catch-all is evaluated last (D-083).
     """
     for name, predicate in _NEVER_DEMOTE_PREDICATES:
         if predicate(finding):

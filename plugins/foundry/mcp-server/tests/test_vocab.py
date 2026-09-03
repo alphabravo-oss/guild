@@ -18,6 +18,7 @@ Two guarantees carry the most weight:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -634,6 +635,202 @@ def test_a_security_term_inside_an_identifier_does_not_match() -> None:
     assert not vocab.is_security_property_claim(finding)
     assert vocab.never_demote_class(finding) is None
     assert vocab.observation_class(finding) == vocab.LINE_DRIFT_CITE
+
+
+# ---------------------------------------------------------------------------
+# D-083 — the audit record names the class the refusal names (AC-007 / OT-005
+# / CT-003).
+#
+# `record_denylist_tripwire` does not receive the refusal's class; it RE-DERIVES
+# one from `never_demote_class`. So the two artifacts one filing event writes —
+# the refusal handed back to the stream and the tripwire persisted in
+# observations.json — agree only if the dispatcher returns the same entry the
+# LATENT denylist rung refused on. With NON_COMMENT leading the tuple they did
+# not: `target_kind` "code" and "test" recorded NON_COMMENT under a refusal
+# naming SECURITY_PROPERTY_CLAIM, and those two are the DEFAULT shape of a
+# production-code filing, so the security signal was lost for exactly the
+# filings AC-007 is about.
+#
+# Driven here across all four subject declarations, on BOTH shipped doors,
+# because a fix that held on one door and not the other is the same defect one
+# door along.
+# ---------------------------------------------------------------------------
+
+#: One description asserting an authentication property. Identical across every
+#: case below — only the SUBJECT declaration moves, which is what makes the
+#: subject the sole variable under test.
+_AUTH_CLAIM = (
+    "The session endpoint accepts the bearer token without verifying its "
+    "signature, so authentication is never enforced on the route."
+)
+
+#: Every subject a stream declares. `None` means the field is not passed at
+#: all, which is what a caller does by default — the field is optional in the
+#: advertised schema.
+_SUBJECT_DECLARATIONS = ("code", "test", "comment", None)
+_SUBJECT_IDS = ("code", "test", "comment", "absent")
+
+
+@pytest.fixture
+def run_env(tmp_path, monkeypatch):
+    """Activate a foundry run under tmp_path; yield (project_root, fdir).
+
+    The synthetic-run-directory shape tests/test_escalation.py established and
+    every door-level test in this suite is built on. Only what the two filing
+    doors read is written: a state.json for the server-side cycle, and the
+    castings/ directory the run layout expects.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools import foundry_state
+
+    run_name = "vocab-denylist-run"
+    fdir = tmp_path / "foundry-archive" / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "state.json").write_text(
+        json.dumps({"phase": "F2", "cycle": 3}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        fo,
+        "_check_active_teams",
+        lambda _pr: {"active": False, "teams": [], "live_panes": []},
+    )
+
+    foundry_state.set_active_run(run_name)
+    try:
+        yield str(tmp_path), fdir
+    finally:
+        foundry_state.clear_active_run()
+
+
+def _fired_classes(fdir: Path) -> list[str]:
+    """The denylist_class of every tripwire record persisted so far."""
+    ledger = json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+    return [t["denylist_class"] for t in ledger["tripwire"]]
+
+
+def test_the_generic_catch_all_is_evaluated_last() -> None:
+    """D-083 — the declaration ORDER is the audit answer, so it is pinned.
+
+    `never_demote_class` returns the first match. Which entry that is decides
+    what `observations.json.tripwire[].denylist_class` says, so the order is a
+    contract, not a reading convenience.
+    """
+    order = [name for name, _ in vocab._NEVER_DEMOTE_PREDICATES]
+
+    assert set(order) == set(vocab.NEVER_DEMOTE_CLASSES), (
+        f"the dispatcher and the frozenset disagree about the roster: "
+        f"{sorted(order)} vs {sorted(vocab.NEVER_DEMOTE_CLASSES)}"
+    )
+    assert order[0] == vocab.SECURITY_PROPERTY_CLAIM, (
+        f"{order[0]} is evaluated before {vocab.SECURITY_PROPERTY_CLAIM}. The "
+        f"security entry is the ONE a refusal also names — the LATENT rung in "
+        f"validate_defect_filing — and the tripwire may not disagree with the "
+        f"refusal it was fired for."
+    )
+    assert order[-1] == vocab.NON_COMMENT, (
+        f"{order[-1]} is evaluated after {vocab.NON_COMMENT}. is_non_comment "
+        f"matches ANY declared non-comment target_kind, so anything behind it "
+        f"is unreachable for a filing that named its subject — which is every "
+        f"production-code filing."
+    )
+
+
+@pytest.mark.parametrize(
+    "target_kind", _SUBJECT_DECLARATIONS, ids=_SUBJECT_IDS
+)
+def test_a_security_claim_outranks_the_non_comment_catch_all(
+    target_kind: str | None,
+) -> None:
+    """The dispatcher, isolated from the doors: the subject never masks the
+    claim. All four declarations answer SECURITY_PROPERTY_CLAIM."""
+    finding: dict[str, object] = {"description": _AUTH_CLAIM}
+    if target_kind is not None:
+        finding["target_kind"] = target_kind
+
+    assert vocab.never_demote_class(finding) == vocab.SECURITY_PROPERTY_CLAIM, (
+        f"target_kind={target_kind!r} masked the security entry, so the audit "
+        f"record for this filing names the subject instead of the claim"
+    )
+
+
+@pytest.mark.parametrize(
+    "target_kind", _SUBJECT_DECLARATIONS, ids=_SUBJECT_IDS
+)
+def test_the_defect_door_audits_under_the_class_it_refuses(
+    run_env, target_kind: str | None
+) -> None:
+    """Foundry-Defect: the refusal's class and the persisted tripwire's class
+    are ONE value, whatever subject the filer declared."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    args: dict[str, object] = {
+        "cycle": 3,
+        "source": "prove",
+        "defect_type": "WRONG",
+        "description": _AUTH_CLAIM,
+        "defect_class": "AUTH_NOT_ENFORCED",
+        "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of both roots finds 0 sites",
+    }
+    if target_kind is not None:
+        args["target_kind"] = target_kind
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Defect"](args)
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["denylist_class"] == vocab.SECURITY_PROPERTY_CLAIM, result
+    assert _fired_classes(fdir) == [result["denylist_class"]], (
+        f"one filing event wrote two artifacts that disagree: the refusal says "
+        f"{result['denylist_class']} and the tripwire says "
+        f"{_fired_classes(fdir)}. An auditor querying observations.json for "
+        f"{vocab.SECURITY_PROPERTY_CLAIM} finds nothing for this filing."
+    )
+
+
+@pytest.mark.parametrize(
+    "target_kind", _SUBJECT_DECLARATIONS, ids=_SUBJECT_IDS
+)
+def test_the_sync_door_audits_under_the_class_it_refuses(
+    run_env, target_kind: str | None
+) -> None:
+    """Foundry-Sync, the door a whole INSPECT stream files through. Same
+    invariant, same four declarations — the two doors cannot be trusted to
+    remember an audit class each."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    finding: dict[str, object] = {
+        "source": "prove",
+        "type": "WRONG",
+        "description": _AUTH_CLAIM,
+        "class": "AUTH_NOT_ENFORCED",
+        "tier": "LATENT",
+        "reproduction_attempted": "AST sweep of both roots finds 0 sites",
+    }
+    if target_kind is not None:
+        finding["target_kind"] = target_kind
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Sync"](
+            {"cycle": 3, "findings": [finding]}
+        )
+    finally:
+        foundry_server._project_root = previous_root
+
+    refused = result["refusals"][0]
+    assert refused["denylist_class"] == vocab.SECURITY_PROPERTY_CLAIM, result
+    assert _fired_classes(fdir) == [refused["denylist_class"]], (
+        f"the batch door's refusal says {refused['denylist_class']} and its "
+        f"tripwire says {_fired_classes(fdir)}"
+    )
 
 
 # ---------------------------------------------------------------------------
