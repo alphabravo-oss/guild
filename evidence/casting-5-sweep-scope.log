@@ -4,6 +4,7 @@
 # evidence-timeout: 300
 
 
+
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -41,4 +42,4 @@
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
 .
-1 passed, 249 deselected in 0.28s
+1 passed, 256 deselected in 0.62s

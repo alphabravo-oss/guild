@@ -4220,12 +4220,20 @@ def test_a_log_is_keyed_by_its_evidence_for_header_when_the_name_cannot(tmp_path
 
     # The falsifier: strip the header and the same diff selects nothing, so
     # the selection above cannot have come from the filename.
+    #
+    # The edit is COMMITTED, and that is not ceremony (D-016): the scope reads
+    # the corpus at HEAD, so an uncommitted edit is not the corpus and would
+    # correctly change nothing. `test_the_scope_reads_the_corpus_at_head_not_the_working_tree`
+    # below drives that distinction directly.
     (env["evidence_dir"] / "wave-report-sections.log").write_text(
         _sweep_log("wave-report-sections", for_ids="AC-036").replace(
             "# evidence-for: AC-036\n", ""
         ),
         encoding="utf-8",
     )
+    _run_git(["add", "-A"], env["project_root"])
+    _run_git(["commit", "-q", "-m", "strip the evidence-for header"],
+             env["project_root"])
     assert _sweep_scope_names(env, ["tests/fixtures/gamma/rows.json"],
                               full=False) == []
 
@@ -4280,6 +4288,106 @@ def test_a_delta_sweep_over_an_untouched_tree_selects_nothing(tmp_path):
     env = _build_sweep_repo(tmp_path)
     assert _sweep_scope_names(env, ["docs/README.md"], full=False) == []
     assert _sweep_scope_names(env, [], full=False) == []
+
+
+def test_the_scope_reads_the_corpus_at_head_not_the_working_tree(tmp_path):
+    """D-016 / GI-002 / ST-005: the sweep proves the COMMITTED corpus still
+    reproduces, so the enumeration has to be at HEAD too.
+
+    `select_sweep_scope` globbed the live tree while `sweep_evidence_at_head`
+    compared inside a detached worktree at HEAD, so the two halves of one
+    boundary disagreed about what the corpus IS. Driven the way it bites:
+    delete a committed log from the working tree and the FULL scope went to
+    ZERO, so the boundary returned `ok: True` having checked nothing."""
+    env = _build_sweep_repo(tmp_path)
+    (env["evidence_dir"] / "casting-1-alpha.log").unlink()
+    (env["evidence_dir"] / "casting-2-beta.log").unlink()
+
+    assert _sweep_scope_names(env, [], full=True) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ], "a log removed from the working tree is still committed at HEAD"
+
+    # And the sweep really does re-execute them: the committed bytes and the
+    # command both come out of the worktree, so a working tree missing the log
+    # entirely is no obstacle.
+    result = _sweep(env, full=True)
+    assert result["ok"] is True, result["mismatches"]
+    assert sorted(Path(name).name for name in result["logs_reexecuted"]) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ]
+
+
+def test_a_log_in_an_evidence_subdirectory_is_in_scope(tmp_path):
+    """D-016's second half: the old enumeration was `glob('*.log')`, which is
+    FLAT, so a log under `evidence/<subdir>/` was in no scope ever — not even a
+    FULL one. `ls-tree -r` is recursive, which is the whole fix."""
+    env = _build_sweep_repo(tmp_path)
+    nested = env["evidence_dir"] / "wave-2"
+    nested.mkdir()
+    (nested / "casting-6-nested.log").write_text(
+        _sweep_log("casting-6-nested", for_ids="CT-007"), encoding="utf-8"
+    )
+    from foundry_mcp.tools.evidence import _strip_leading_header_block
+
+    (env["project_root"] / "replay-casting-6-nested.txt").write_text(
+        _strip_leading_header_block(
+            _sweep_log("casting-6-nested", for_ids="CT-007")
+        ),
+        encoding="utf-8",
+    )
+    _run_git(["add", "-A"], env["project_root"])
+    _run_git(["commit", "-q", "-m", "a nested evidence log"], env["project_root"])
+
+    assert "casting-6-nested.log" in _sweep_scope_names(env, [], full=True)
+    result = _sweep(env, full=True)
+    assert result["ok"] is True, result["mismatches"]
+
+
+def test_the_delta_arm_recognises_a_directory_a_command_walks(tmp_path):
+    """D-030 / FR-042's second arm, on the spellings the corpus actually uses.
+
+    The reference test matched literal path suffixes only, so `pytest tests/`,
+    a bare `pytest`, and `grep -r foo src/` all answered False — every one of
+    which genuinely re-executes the changed surface. The delta arm therefore
+    under-selected, and under-selection is the error this test exists to avoid:
+    a log NOT swept that should have been is a broken artifact carried past the
+    boundary that would have caught it."""
+    from foundry_mcp.tools.evidence import _sweep_command_references
+
+    touched = ["plugins/foundry/mcp-server/tests/test_vocab.py"]
+    for cmd in (
+        "cd plugins/foundry/mcp-server && pytest tests/",
+        "cd plugins/foundry/mcp-server && uv run --with pytest pytest -q",
+        "cd plugins/foundry/mcp-server && uv run --with pytest pytest -q "
+        "-p no:cacheprovider tests",
+        "grep -rn 'def test_' plugins/foundry/mcp-server/tests",
+        "pytest",
+    ):
+        assert _sweep_command_references(cmd, touched), cmd
+
+    # A walker pointed somewhere else does NOT reach it.
+    assert not _sweep_command_references(
+        "cd plugins/foundry/mcp-server && pytest src/", touched
+    )
+
+
+def test_a_cd_is_not_a_walk_root_on_its_own(tmp_path):
+    """D-030's boundary, and the reason the two arms are different tests.
+
+    `cd X && pytest tests/test_evidence.py` names its target exactly. Treating
+    the `cd` operand as a walk root would make that command reference every
+    file under `plugins/foundry/mcp-server`, which is the over-matching the
+    original suffix rule was written to prevent. A `cd` sets the working
+    directory; only a walker with NO path operand promotes it to a root."""
+    from foundry_mcp.tools.evidence import _sweep_command_references
+
+    cmd = "cd plugins/foundry/mcp-server && pytest tests/test_evidence.py"
+    assert not _sweep_command_references(
+        cmd, ["plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py"]
+    )
+    assert _sweep_command_references(
+        cmd, ["plugins/foundry/mcp-server/tests/test_evidence.py"]
+    )
 
 
 def test_select_sweep_scope_returns_sorted_paths(tmp_path):
@@ -4503,17 +4611,133 @@ def test_a_log_that_is_not_committed_at_head_is_named(tmp_path):
     """ST-005 taken literally: the sweep compares the COMMITTED corpus at HEAD.
 
     A log sitting in the working tree that no commit carries has nothing to
-    re-execute against, and reporting it as a pass would let an uncommitted
-    artifact clear a boundary that exists to check committed ones. Named, not
-    dropped."""
+    re-execute against, and it is not part of the corpus this boundary checks —
+    whether a casting committed its evidence is `Foundry-Accept-Casting`'s
+    question, asked at the casting commit.
+
+    Two halves, and D-016 is why they are separate. The SCOPE is enumerated at
+    HEAD, so an uncommitted log is never selected. The sweep's own guard stays
+    anyway, for a caller that hands it a path directly: reporting such a log as
+    a PASS would let an artifact with no committed counterpart clear a boundary
+    that exists to check committed ones."""
+    from foundry_mcp.tools.evidence import sweep_evidence_at_head
+
     env = _build_sweep_repo(tmp_path)
-    (env["evidence_dir"] / "casting-4-uncommitted.log").write_text(
+    uncommitted = env["evidence_dir"] / "casting-4-uncommitted.log"
+    uncommitted.write_text(
         _sweep_log("casting-4-uncommitted", for_ids="CT-007"), encoding="utf-8"
     )
+
+    # Half one: it is not in the committed corpus, so a FULL sweep passes and
+    # never sees it.
+    result = _sweep(env, full=True)
+    assert result["ok"] is True, result["mismatches"]
+    assert not any("casting-4" in name for name in result["logs_reexecuted"])
+
+    # Half two: handed to the sweep directly, it is NAMED, never dropped.
+    forced = sweep_evidence_at_head(
+        project_root=env["project_root"], run_dir=env["run_dir"],
+        logs=[uncommitted],
+    )
+    assert forced["ok"] is False
+    mismatch = [m for m in forced["mismatches"] if "casting-4" in m["log"]][0]
+    assert "not committed at HEAD" in mismatch["reason"]
+
+
+def test_every_log_in_scope_reports_its_own_elapsed_seconds(tmp_path):
+    """D-032 / CT-007 verbatim: 'sweep result recorded per log with scope
+    (delta or full) and elapsed seconds'.
+
+    Only mismatches carried a time, so the column the contract specifies was
+    absent for exactly the logs that passed — and a lead tuning NFR-004's pool
+    could not see which log was the straggler, because a straggler that PASSES
+    is the ordinary case."""
+    env = _build_sweep_repo(tmp_path)
+    result = _sweep(env, full=True)
+    assert result["ok"] is True, result["mismatches"]
+
+    per_log = result["per_log"]
+    assert [row["log"] for row in per_log] == result["logs_reexecuted"], (
+        "one row per log in scope, in the same order as the path list"
+    )
+    for row in per_log:
+        assert row["matched"] is True
+        assert row["exit_code"] == 0
+        assert row["failure_token"] is None
+        assert isinstance(row["elapsed_seconds"], float)
+        assert row["elapsed_seconds"] >= 0.0
+
+
+def test_a_mismatched_log_carries_timing_on_both_records(tmp_path):
+    """The per-log row exists for a FAILING log too, and it does not replace
+    the mismatch's own `elapsed_seconds`: the mismatch times the COMMAND, the
+    per-log row times the whole operation, and a lead debugging a timeout
+    wants the first while a lead tuning the pool wants the second."""
+    corpus = _default_sweep_corpus()
+    corpus["casting-1-alpha.log"] = _sweep_log(
+        "casting-1-alpha", for_ids="CT-007", cmd="echo drifted",
+        body="the committed body\n",
+    )
+    env = _build_sweep_repo(tmp_path, logs=corpus)
     result = _sweep(env, full=True)
     assert result["ok"] is False
-    mismatch = [m for m in result["mismatches"] if "casting-4" in m["log"]][0]
-    assert "not committed at HEAD" in mismatch["reason"]
+
+    row = [r for r in result["per_log"] if "casting-1-alpha" in r["log"]][0]
+    assert row["matched"] is False
+    assert row["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH"
+    assert row["elapsed_seconds"] >= 0.0
+    mismatch = [m for m in result["mismatches"] if "casting-1-alpha" in m["log"]][0]
+    assert "elapsed_seconds" in mismatch
+    # And the clean logs still get their rows.
+    assert len(result["per_log"]) == len(result["logs_reexecuted"]) == 3
+
+
+def test_the_pool_dispatches_the_longest_log_first(tmp_path):
+    """D-040 / NFR-004: 'pool size and log ordering are tuned to that', where
+    'that' is finishing well inside the INSPECT the sweep precedes.
+
+    The order was a plain `sorted()` — tuned for a reader diffing two sweeps,
+    which is a real goal but not the one the requirement names. Longest
+    Processing Time first is the makespan heuristic: with a fixed pool,
+    dispatching the 300-second log last leaves every other worker idle behind
+    it. The estimate is the log's own declared `# evidence-timeout:`."""
+    from foundry_mcp.tools.evidence import _sweep_submission_order
+
+    corpus = {
+        "casting-1-alpha.log": _sweep_log(
+            "casting-1-alpha", for_ids="CT-007",
+            extra_headers="# evidence-timeout: 5\n",
+        ),
+        "casting-2-beta.log": _sweep_log(
+            "casting-2-beta", for_ids="CT-014",
+            extra_headers="# evidence-timeout: 300\n",
+        ),
+        "casting-3-gamma.log": _sweep_log(
+            "casting-3-gamma", for_ids="AC-036",
+            extra_headers="# evidence-timeout: 60\n",
+        ),
+    }
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    logs = sorted(env["evidence_dir"].glob("*.log"))
+    assert [p.name for p in logs] == [
+        "casting-1-alpha.log", "casting-2-beta.log", "casting-3-gamma.log"
+    ], "alphabetical order puts the 300-second log in the middle"
+
+    order = _sweep_submission_order(
+        logs, project_root=env["project_root"],
+        worktree_path=env["project_root"],   # HEAD == the working tree here
+    )
+    assert [p.name for p in order] == [
+        "casting-2-beta.log", "casting-3-gamma.log", "casting-1-alpha.log"
+    ], "longest declared timeout dispatched first"
+
+    # REPORTING order is unchanged — a lead diffing cycle N against N-1 still
+    # sees the caller's order, which is what the old `sorted()` was for.
+    result = _sweep(env, full=True)
+    assert result["ok"] is True, result["mismatches"]
+    assert [Path(n).name for n in result["logs_reexecuted"]] == [
+        "casting-1-alpha.log", "casting-2-beta.log", "casting-3-gamma.log"
+    ]
 
 
 def test_the_sweep_kills_a_log_that_exceeds_its_declared_timeout(tmp_path):

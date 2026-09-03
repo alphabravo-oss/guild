@@ -2535,9 +2535,30 @@ def _sweep_command_references(cmd: str, touched: list[str]) -> bool:
     A suffix must begin at a path boundary in the command text — start of
     string, or a character that is not a path character — so `vocab.py` does
     not match `myvocab.py` and `evidence.py` does not match `test_evidence.py`.
+
+    A LITERAL SUFFIX IS NOT THE ONLY WAY A COMMAND REACHES A FILE (D-030)
+    ---------------------------------------------------------------------
+    The literal test alone answered False for `pytest tests/`, for a bare
+    `pytest`, and for `grep -r foo src/` — every one of which genuinely
+    re-executes the changed surface. The delta arm therefore under-selected in
+    exactly the shape the corpus is full of, and under-selection is the error
+    this test is built to avoid: a log NOT swept that should have been is a
+    broken artifact carried silently past the boundary.
+
+    So a second arm reads the command's WALK ROOTS (`_sweep_walk_roots`): a
+    recursive program's directory operand, or its working directory when it was
+    given no operand at all. A touched file beneath a walk root is referenced.
+
+    The two arms are deliberately different tests, and the difference is what
+    keeps the boundary rule intact. `cd plugins/foundry/mcp-server && pytest
+    tests/test_evidence.py` names its target exactly, so it does NOT walk
+    `plugins/foundry/mcp-server` and does not reference every file under it —
+    a `cd` sets the cwd, it does not make the shell read the tree. Only a
+    walking program with no path operand promotes its cwd to a walk root.
     """
     if not cmd:
         return False
+    walk_roots = _sweep_walk_roots(cmd)
     for raw in touched:
         path = str(raw).replace("\\", "/").strip()
         while path.startswith("./"):
@@ -2552,7 +2573,136 @@ def _sweep_command_references(cmd: str, touched: list[str]) -> bool:
                 before = cmd[index - 1] if index else ""
                 if before not in _SWEEP_PATH_CHARS:
                     return True
+            # The walk-root arm: is this touched path (or a suffix of it)
+            # inside a directory the command walks? "" is the whole cwd, which
+            # a walker with no operand reads in full.
+            for root in walk_roots:
+                if root == "" or suffix == root or suffix.startswith(root + "/"):
+                    return True
     return False
+
+
+#: Programs that read a directory tree rather than the operands they are
+#: handed. DERIVED from the committed corpus's own `# evidence-cmd:` headers —
+#: every command in `evidence/` is a pytest invocation, a `python3 scripts/*.py`
+#: run, or a grep/awk pipeline — plus the linters and type checkers a foundry
+#: casting's verification command routinely adds. `grep` is listed
+#: unconditionally rather than only under `-r`: including a log that did not
+#: need sweeping costs seconds, and the asymmetry stated above says which way
+#: to err.
+_SWEEP_WALKER_PROGRAMS: frozenset[str] = frozenset(
+    {
+        "pytest", "py.test", "unittest", "nosetests", "tox",
+        "grep", "egrep", "fgrep", "rg", "ag", "ack", "find",
+        "ruff", "mypy", "pyright", "flake8", "pylint", "black", "isort",
+    }
+)  # 20 programs
+
+
+#: Tokens that are never a path operand: a flag, a separator, or a `-k`-style
+#: value. Anything else in operand position is treated as a path, because a
+#: false path costs an unnecessary sweep and a missed one costs a defect.
+_SWEEP_OPERAND_FLAG_VALUES: frozenset[str] = frozenset(
+    {"-k", "-m", "-e", "--deselect", "-p", "--ignore", "-n", "--with", "-c"}
+)
+
+
+def _sweep_walk_roots(cmd: str) -> list[str]:
+    """Directories ``cmd`` reads recursively. ``""`` means the whole cwd.
+
+    D-030. Walks the token stream tracking two things: the current working
+    directory (set by a `cd` at any command position, since the corpus spells
+    almost every command `cd plugins/foundry/mcp-server && …`) and, at each
+    command position, whether the program is one that walks a tree.
+
+    A walker with directory or path operands contributes each of them, joined
+    onto the current cwd. A walker with NO path operand — a bare `pytest`, a
+    `ruff check` — walks its cwd, so the cwd itself becomes the root; when no
+    `cd` preceded it that is `""`, the whole tree, which is the honest answer.
+
+    Returns ``[]`` when the command cannot be lexed. That is the same
+    fail-OPEN rule `_shell_tokens`'s callers hold: an unparseable command is
+    never judged on this rule's word, and the literal-suffix arm still runs.
+    """
+    tokens = _shell_tokens(cmd)
+    if tokens is None:
+        return []
+
+    def _norm(raw: str) -> str:
+        text = raw.replace("\\", "/").strip().rstrip("/")
+        while text.startswith("./"):
+            text = text[2:]
+        return text
+
+    def _join(base: str, path: str) -> str:
+        if not base or path.startswith("/"):
+            return path
+        return f"{base}/{path}"
+
+    # A flag's VALUE is not an operand and is not a program. `-p
+    # no:cacheprovider` and `--deselect tests/x.py::y` both appear verbatim in
+    # the committed corpus, and reading either as a path would invent a root.
+    consumed = {
+        index + 1
+        for index, token in enumerate(tokens)
+        if token in _SWEEP_OPERAND_FLAG_VALUES and index + 1 < len(tokens)
+    }
+
+    def _operands(start: int) -> list[str]:
+        out: list[str] = []
+        for index in range(start, len(tokens)):
+            if tokens[index] in _STUB_CMD_SEPARATORS:
+                break
+            if index in consumed or tokens[index].startswith("-"):
+                continue
+            out.append(tokens[index])
+        return out
+
+    # A walker is looked for at EVERY token position, not only at a command
+    # position, because the corpus almost never invokes one directly: the
+    # standing spelling is `uv run --quiet --with pytest pytest …`, where
+    # `uv` holds the command position and the program that actually walks the
+    # tree is an operand of it. Restricting the search to command position
+    # found a walker in none of those, which is most of the corpus.
+    roots: list[str] = []
+    cwd = ""
+    at_command_position = True
+    for index, token in enumerate(tokens):
+        if token in _STUB_CMD_SEPARATORS:
+            at_command_position = True
+            continue
+        if index in consumed:
+            at_command_position = False
+            continue
+        if at_command_position and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*=.*", token, re.DOTALL
+        ):
+            continue
+        name = token.rsplit("/", 1)[-1]
+        if at_command_position and name == "cd":
+            targets = _operands(index + 1)
+            if targets:
+                cwd = _join(cwd, _norm(targets[0]))
+            at_command_position = False
+            continue
+        at_command_position = False
+        if name not in _SWEEP_WALKER_PROGRAMS:
+            continue
+        # A walker's sub-command (`ruff check`) is an operand too. A bare word
+        # naming no real path simply never matches a touched file, so keeping
+        # it costs nothing and dropping it would need a per-program operand
+        # grammar this does not have.
+        paths = [_norm(o) for o in _operands(index + 1) if _norm(o)]
+        if paths:
+            for path in paths:
+                roots.append(_join(cwd, path))
+                roots.append(path)       # the cwd-relative spelling too
+        else:
+            # No path operand: the walker reads its working directory. With no
+            # preceding `cd` that is `""` — the whole tree, which is what a
+            # bare `pytest` at the repo root honestly does.
+            roots.append(cwd)
+    return roots
 
 
 #: Characters that may appear immediately before a path without ending it. A
@@ -2572,6 +2722,151 @@ def _iter_substring_starts(haystack: str, needle: str):
     while start != -1:
         yield start
         start = haystack.find(needle, start + 1)
+
+
+def _sweep_git(args: list[str], *, stdin: bytes | None = None) -> bytes | None:
+    """Run a read-only git command. Returns stdout, or None on ANY failure.
+
+    Never raises and never reports a reason: every caller's fallback is the
+    working tree, and a sweep that could not consult git degrades to the
+    behaviour it had before rather than refusing. The refusal that matters is
+    the sweep's own, and it is raised where HEAD is resolved.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            input=stdin,
+            capture_output=True,
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _sweep_repo_root(evidence_dir: Path) -> Path | None:
+    """The work-tree root containing ``evidence_dir``, or None outside git."""
+    probe = evidence_dir
+    while not probe.is_dir():
+        parent = probe.parent
+        if parent == probe:
+            return None
+        probe = parent
+    out = _sweep_git(["-C", str(probe), "rev-parse", "--show-toplevel"])
+    if not out:
+        return None
+    root = out.decode("utf-8", errors="replace").strip()
+    return Path(root) if root else None
+
+
+def _sweep_head_blobs(root: Path, rel_names: list[str]) -> dict[str, str]:
+    """Read every named path's content AT HEAD in ONE `git cat-file --batch`.
+
+    One subprocess for the whole corpus, not one per log: at the observed run
+    scale (A-AUTO-002 — around forty to fifty logs by DONE) a `git show` per
+    log is fifty process spawns inside a transition NFR-004 asks to finish
+    well inside the INSPECT it precedes.
+
+    `--batch` answers each `HEAD:<path>` request with ``<oid> SP <type> SP
+    <size> LF``, then exactly ``<size>`` bytes, then a trailing LF; a request
+    it cannot resolve comes back as ``<request> SP missing LF`` and is simply
+    absent from the result. Parsed on BYTES because the size is a byte count —
+    decoding first would desynchronise the cursor on any log holding a
+    multi-byte character, and the corpus is full of pytest output that does.
+    """
+    if not rel_names:
+        return {}
+    stdin = "".join(f"HEAD:{name}\n" for name in rel_names).encode("utf-8")
+    out = _sweep_git(["-C", str(root), "cat-file", "--batch"], stdin=stdin)
+    if out is None:
+        return {}
+
+    blobs: dict[str, str] = {}
+    cursor = 0
+    for name in rel_names:
+        newline = out.find(b"\n", cursor)
+        if newline == -1:
+            break
+        header = out[cursor:newline].decode("utf-8", errors="replace").split()
+        cursor = newline + 1
+        if len(header) < 3 or header[1] != "blob":
+            # "missing" / "ambiguous": no content follows, so the cursor is
+            # already at the next header.
+            continue
+        try:
+            size = int(header[2])
+        except ValueError:
+            break
+        blobs[name] = out[cursor:cursor + size].decode("utf-8", errors="replace")
+        cursor += size + 1  # the trailing LF git writes after the content
+    return blobs
+
+
+def _sweep_corpus(evidence_dir: Path) -> tuple[list[Path], dict[Path, str]]:
+    """The committed corpus AT HEAD, plus each log's text at HEAD (D-016).
+
+    Returns ``(sorted absolute log paths, {path: text at HEAD})``. The paths
+    are spelled in the WORKING tree — `_sweep_one_log` maps them through
+    `relative_to(project_root)` into the sweep worktree, so a log that exists
+    at HEAD and not in the working tree resolves correctly and is re-executed.
+
+    WHY HEAD AND NOT THE WORKING TREE
+    ---------------------------------
+    This globbed `evidence_dir` in the live tree while `sweep_evidence_at_head`
+    compared inside a detached worktree at HEAD, so the two halves of one
+    boundary disagreed about what the corpus IS. Driven: a log committed at
+    HEAD but removed from the working tree produced a FULL scope of ZERO, and
+    the boundary that exists to prove the committed evidence still reproduces
+    returned ``ok: True`` having checked none of it. ST-005 says "byte-identical
+    at HEAD"; the enumeration has to be at HEAD too or the sweep is measuring a
+    corpus nobody committed.
+
+    `ls-tree -r` is also RECURSIVE, which closes the second half of the same
+    defect: the old `glob('*.log')` was flat, so a log under `evidence/<subdir>/`
+    was in no scope, ever — not even a FULL one.
+
+    Outside a git work tree (a synthetic fixture directory, a tarball) there is
+    no HEAD to read, so this falls back to a RECURSIVE filesystem walk. That is
+    a degradation, never a refusal: `select_sweep_scope` returns a scope and the
+    sweep's own HEAD resolution is where an un-sweepable tree is named.
+    """
+    root = _sweep_repo_root(evidence_dir)
+    if root is not None:
+        try:
+            rel_dir = evidence_dir.resolve().relative_to(root.resolve())
+        except (ValueError, OSError):
+            rel_dir = None
+        if rel_dir is not None:
+            out = _sweep_git(
+                ["-C", str(root), "ls-tree", "-r", "-z", "--name-only", "HEAD",
+                 "--", str(rel_dir)]
+            )
+            if out is not None:
+                names = sorted(
+                    name
+                    for name in out.decode("utf-8", errors="replace").split("\0")
+                    if name.endswith(".log")
+                )
+                blobs = _sweep_head_blobs(root, names)
+                logs = [root / name for name in names]
+                return logs, {
+                    root / name: text for name, text in blobs.items()
+                }
+
+    try:
+        logs = sorted(p for p in evidence_dir.rglob("*.log") if p.is_file())
+    except OSError:
+        # An unreadable evidence directory is not this function's refusal to
+        # make: it returns nothing, and the caller's own sweep reports a corpus
+        # of zero rather than a traceback across the MCP boundary.
+        return [], {}
+    texts: dict[Path, str] = {}
+    for log in logs:
+        try:
+            texts[log] = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return logs, texts
 
 
 def select_sweep_scope(
@@ -2615,13 +2910,7 @@ def select_sweep_scope(
     that cannot be keyed by either is not dropped silently — its only delta
     test is the command-reference arm, and `full=True` sweeps it regardless.
     """
-    try:
-        candidates = sorted(p for p in evidence_dir.glob("*.log") if p.is_file())
-    except OSError:
-        # An unreadable evidence directory is not this function's refusal to
-        # make: it returns nothing, and the caller's own sweep reports a corpus
-        # of zero rather than a traceback across the MCP boundary.
-        return []
+    candidates, texts = _sweep_corpus(evidence_dir)
     if full:
         return candidates
 
@@ -2640,10 +2929,8 @@ def select_sweep_scope(
             keyed.add(name_match.group(1))
         header: dict[str, Any] = {"cmd": None, "evidence_for": []}
         try:
-            header = _parse_evidence_header(
-                log.read_text(encoding="utf-8", errors="replace")
-            )
-        except (OSError, ValueError):
+            header = _parse_evidence_header(texts.get(log, ""))
+        except ValueError:
             # A log whose header will not parse is still a log. It cannot be
             # keyed by requirement and its command cannot be read, so it falls
             # out of the DELTA scope — and a FULL sweep will re-execute it and
@@ -2737,6 +3024,61 @@ def _sweep_mismatch(
         "exit_code": exit_code,
         "elapsed_seconds": round(elapsed_seconds, 3),
     }
+
+
+def _sweep_head_log_path(log: Path, project_root: Path, worktree_path: Path) -> Path:
+    """Where ``log`` lives inside the sweep worktree, best effort."""
+    try:
+        return worktree_path / log.resolve().relative_to(project_root.resolve())
+    except (ValueError, OSError):
+        return worktree_path / log.name
+
+
+def _sweep_submission_order(
+    logs: list[Path], *, project_root: Path, worktree_path: Path
+) -> list[Path]:
+    """NFR-004 — dispatch order chosen for WALL TIME, not for reading.
+
+    "pool size and log ordering are tuned to that", where "that" is finishing
+    well inside the INSPECT the sweep precedes. The order was a plain
+    `sorted()`, which is tuned for a reader diffing two sweeps — a real goal,
+    but a different one, and the requirement names wall time.
+
+    Longest Processing Time first: with a fixed pool, dispatching the longest
+    jobs first is the classic makespan heuristic, and it bounds the finish at
+    (4/3 - 1/(3m)) times optimal. The failure it removes is concrete — the
+    corpus holds one 300-second integration log among a dozen 5-second greps,
+    and a `sorted()` order that happens to dispatch it LAST leaves seven idle
+    workers waiting five minutes on one straggler.
+
+    The estimate is the log's own `# evidence-timeout:` — the author's stated
+    upper bound, already validated at acceptance — falling back to the shared
+    default, with byte size breaking ties because a longer capture came from a
+    longer command (a pytest suite prints more than a grep). Read from the
+    WORKTREE, so a log absent from the working tree is still estimated.
+
+    Reporting order is unaffected: the caller re-keys results into the input
+    order, so two identical sweeps still print identically (see
+    `sweep_evidence_at_head`).
+    """
+    def _weight(log: Path) -> tuple[int, int, str]:
+        head_log = _sweep_head_log_path(log, project_root, worktree_path)
+        declared = EVIDENCE_TIMEOUT_DEFAULT_SECONDS
+        size = 0
+        try:
+            text = head_log.read_text(encoding="utf-8", errors="replace")
+            size = len(text)
+            header = _parse_evidence_header(text)
+            value = header.get("timeout")
+            if isinstance(value, int) and value > 0:
+                declared = value
+        except (OSError, ValueError):
+            pass
+        # Negated so `sorted` ascending puts the heaviest first; the name is
+        # the final tie-break so the order is deterministic for a given corpus.
+        return (-declared, -size, log.name)
+
+    return sorted(logs, key=_weight)
 
 
 def _sweep_one_log(
@@ -2861,6 +3203,45 @@ def _sweep_one_log(
         )
 
 
+def _sweep_run_one(
+    log: Path,
+    *,
+    project_root: Path,
+    worktree_path: Path,
+    timeout_seconds: float | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """`_sweep_one_log` plus its own wall time. Returns ``(record, mismatch)``.
+
+    CT-007 asks for the sweep result "recorded per log with scope (delta or
+    full) and elapsed seconds", and only MISMATCHES carried a time — so the
+    column the contract names was absent for exactly the logs that passed, and
+    a lead tuning NFR-004's pool could not see which log was the straggler.
+
+    The measurement is the WHOLE per-log operation: reading the committed bytes
+    out of the worktree, running the command, and comparing. A mismatch record
+    keeps its own narrower `elapsed_seconds` — the command's run alone — beside
+    this one, because that is the number a lead debugging a timeout wants and
+    it is not the same number.
+    """
+    started = time.monotonic()
+    log_name, mismatch = _sweep_one_log(
+        log,
+        project_root=project_root,
+        worktree_path=worktree_path,
+        timeout_seconds=timeout_seconds,
+    )
+    record = {
+        "log": log_name,
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "matched": mismatch is None,
+        # A matched log reached the comparison, which `_sweep_one_log` only
+        # does after the command exited 0.
+        "exit_code": 0 if mismatch is None else mismatch.get("exit_code"),
+        "failure_token": None if mismatch is None else mismatch.get("failure_token"),
+    }
+    return record, mismatch
+
+
 def sweep_evidence_at_head(
     *,
     project_root: Path,
@@ -2896,10 +3277,16 @@ def sweep_evidence_at_head(
 
     Returns:
         ``{'ok': bool, 'scope_count': int, 'logs_reexecuted': [str],
+        'per_log': [{'log', 'elapsed_seconds', 'matched', 'exit_code',
+        'failure_token'}],
         'mismatches': [{'log', 'reason', 'expected_sha256', 'actual_sha256',
         'redacted_log_sha256', 'redacted_captured_sha256', 'failure_token',
         'exit_code', 'elapsed_seconds'}], 'elapsed_seconds': float,
         'pool_size': int, 'head_commit': str | None, 'error': str | None}``.
+
+    ``per_log`` is CT-007's "recorded per log ... and elapsed seconds", and it
+    carries a row for EVERY log in scope, matched or not — the timing column
+    used to exist only on mismatches, so the logs that passed had none.
 
     ``ok`` is False when any log mismatched OR when the sweep could not run at
     all (no HEAD to resolve, no worktree to create). ``error`` is non-None only
@@ -2918,6 +3305,7 @@ def sweep_evidence_at_head(
         "ok": True,
         "scope_count": scope_count,
         "logs_reexecuted": [],
+        "per_log": [],
         "mismatches": [],
         "elapsed_seconds": 0.0,
         "pool_size": _derive_sweep_pool_size(logs, pool_size),
@@ -2987,26 +3375,44 @@ def sweep_evidence_at_head(
             return result
 
         pool = result["pool_size"]
-        executed: list[str] = []
-        mismatches: list[dict[str, Any]] = []
+        # NFR-004 — DISPATCH order is longest-first (see
+        # `_sweep_submission_order`); REPORTING order is the caller's, restored
+        # below. The two goals are different and were previously served by one
+        # `sorted()` that met neither: a lead diffing cycle N against N-1 needs
+        # a stable list, and the pool needs the straggler started first.
+        order = _sweep_submission_order(
+            logs, project_root=project_root, worktree_path=worktree_path
+        )
+        outcomes: dict[Path, tuple[dict[str, Any], dict[str, Any] | None]] = {}
         with ThreadPoolExecutor(max_workers=pool) as executor:
-            for log_name, mismatch in executor.map(
-                lambda log: _sweep_one_log(
+            futures = {
+                executor.submit(
+                    _sweep_run_one,
                     log,
                     project_root=project_root,
                     worktree_path=worktree_path,
                     timeout_seconds=timeout_seconds,
-                ),
-                logs,
-            ):
-                executed.append(log_name)
-                if mismatch is not None:
-                    mismatches.append(mismatch)
-        # `executor.map` preserves the INPUT order regardless of completion
-        # order, so two sweeps over the same scope report the same list. A lead
-        # diffing cycle N against cycle N-1 needs that; `as_completed` would
-        # make an unchanged sweep look reshuffled every time.
+                ): log
+                for log in order
+            }
+            for future, log in futures.items():
+                outcomes[log] = future.result()
+
+        executed: list[str] = []
+        per_log: list[dict[str, Any]] = []
+        mismatches: list[dict[str, Any]] = []
+        for log in logs:
+            record, mismatch = outcomes[log]
+            executed.append(record["log"])
+            per_log.append(record)
+            if mismatch is not None:
+                mismatches.append(mismatch)
         result["logs_reexecuted"] = executed
+        # CT-007's per-log column. `logs_reexecuted` stays a list of relative
+        # paths because that is what C-6 writes into `stream-rollup.json` and
+        # casting 3 reads; the timing rides beside it rather than changing the
+        # element type of a field another casting already consumes.
+        result["per_log"] = per_log
         result["mismatches"] = mismatches
         result["ok"] = not mismatches
     finally:

@@ -23,14 +23,15 @@ WHAT THIS MODULE MAY IMPORT
 ---------------------------
 `schemas.vocab` and `tools.foundry_state`, and nothing else from the package.
 
-That is not stylistic. `foundry_orchestrator` imports this module (the
-`Foundry-Report` tool and the `done` transition both call into it), and
-`foundry_spawn` imports `foundry_orchestrator`. An import of `foundry_spawn`
-from here would therefore close a cycle in the import graph — the exact cycle
-`foundry_state`'s own leaf-module contract exists to keep open. The one place
-that bites is `_agent_id_for_casting`, whose spelling `foundry_spawn` owns and
-this module has to re-derive; `tests/test_report.py` pins the two against each
-other at CI time so the copy cannot drift.
+— at MODULE level. That is not stylistic. `foundry_orchestrator` imports this
+module (the `Foundry-Report` tool and the `done` transition both call into it),
+and `foundry_spawn` imports `foundry_orchestrator`, so a module-level import of
+`foundry_spawn` from here would close a cycle in the import graph — the exact
+cycle `foundry_state`'s own leaf-module contract exists to keep open.
+
+A FUNCTION-LOCAL import closes nothing: it runs at call time, when every module
+in that chain is already built. `_agent_id_for_casting` uses one, and D-013 is
+why it is no longer a hand-typed copy — see that function.
 
 NFR-002: cost is TOKENS and MINUTES. There is no dollar figure, no currency
 symbol and no price table anywhere in either output. A second hand-kept price
@@ -60,7 +61,12 @@ from foundry_mcp.schemas.vocab import (
     TIER_UNKNOWN,
     defect_tier,
 )
-from foundry_mcp.tools.foundry_state import read_document, read_jsonl
+from foundry_mcp.tools.foundry_state import (
+    derive_cycle_count,
+    read_document,
+    read_jsonl,
+    read_text_file,
+)
 
 # ---------------------------------------------------------------------------
 # Ledger filenames. Named here rather than spelled at each reader so a rename
@@ -78,20 +84,32 @@ ROLLUP_FILENAME = "stream-rollup.json"
 
 
 def _agent_id_for_casting(casting_id: int | str) -> str:
-    """The ledger agent id for a casting's teammate.
+    """The ledger agent id for a casting's teammate — the CANONICAL spelling.
 
-    A DELIBERATE second spelling of `foundry_spawn._agent_id_for_casting`, and
-    the module docstring says why it cannot be an import: this module is
-    imported by `foundry_orchestrator`, which `foundry_spawn` imports, so
-    reaching for the original would close a cycle in the import graph.
+    Delegates to `foundry_spawn._agent_id_for_casting`, which owns it because
+    it is the door that seeds the progress ledger with it.
 
-    The drift that costs is real — key a spawn row `casting-3` here and
-    `teammate-3` there and every teammate appears in `unreported_dispatches`
-    forever, because the spend ledger's agent ids would match neither. So
-    `test_report.py` imports BOTH and asserts they agree over a range of ids.
-    A copy pinned by a test is not the same thing as a copy.
+    WHY THE IMPORT IS LAZY, AND WHY IT IS AN IMPORT AT ALL (D-013)
+    --------------------------------------------------------------
+    This was a hand-typed copy, excused in its own docstring as "a DELIBERATE
+    second spelling" because a module-level import would close a cycle:
+    `foundry_orchestrator` imports this module and `foundry_spawn` imports
+    `foundry_orchestrator`. The excuse was sound about the cycle and wrong
+    about the remedy — a function-local import runs at CALL time, when every
+    module in that chain is already built, so the cycle never forms and the
+    second derivation is simply unnecessary.
+
+    It was not harmless. Two derivations of one fact disagreed in production:
+    this module keyed a live `spawns.log` row (which carries no `agent` key)
+    as `casting-1` while `foundry_orchestrator._dispatched_agents` fell back to
+    the bare `casting_id` and keyed the SAME row as `1`. No single
+    `Foundry-Spend` call could clear both surfaces, so Foundry-Next and the
+    report named different agents as unreported and the operator had no
+    spelling that satisfied either.
     """
-    return f"casting-{casting_id}"
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting as spelling
+
+    return spelling(casting_id)
 
 
 def _now() -> str:
@@ -212,10 +230,22 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
         bucket["ids"].append(record.get("id"))
 
         if tier == "LATENT" and status == "open":
+            # D-029 — `file` and `symbol` are part of the backlog row, not
+            # decoration. NFR-003 makes this list the artifact that carries
+            # LATENT work ACROSS runs, and the next run's lead receives it with
+            # no defects.json to join against: a row saying only "the delta arm
+            # under-selects" names a fault with no location, and re-finding the
+            # site costs more than the fix. `source` and `type` come with them
+            # because they are what the receiving lead routes the item on.
             latent_backlog.append(
                 {
                     "id": record.get("id"),
                     "class": record.get("class"),
+                    "file": record.get("file"),
+                    "symbol": record.get("symbol"),
+                    "source": record.get("source"),
+                    "type": record.get("type"),
+                    "spec_ref": record.get("spec_ref"),
                     "description": record.get("description"),
                     "reproduction_attempted": record.get("reproduction_attempted"),
                     "cycle": record.get("cycle"),
@@ -489,11 +519,31 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
     if problem is not None:
         return {}, problem
 
+    # D-013 — a spend record clears its agent on BOTH surfaces, whichever
+    # spelling of the phase it carries.
+    #
+    # `spawns.log` records `phase: "cast"` and `phase: "grind"`; the
+    # `Foundry-Spend` schema documents the phase as "e.g. F1, F2, F3"; the F2
+    # stream roster is keyed by wire id under a cycle bucket. Matching only on
+    # the exact `(agent, phase)` pair meant a lead who called Foundry-Spend
+    # with the documented spelling cleared NOTHING, and no spelling existed
+    # that cleared this section and Foundry-Next together.
+    #
+    # So the rule is `foundry_orchestrator._unreported_dispatches`'s rule,
+    # adopted verbatim rather than re-decided: an exact pair clears that pair,
+    # and an agent that reported spend in ANY phase is a reported agent. The
+    # section is advisory (AC-034), so the forgiving direction is the correct
+    # one — its job is to show a lead which agents were never accounted for,
+    # not to audit which phase they were accounted for under.
     reported: set[tuple[str, str]] = set()
+    reported_agents: set[str] = set()
     for entry in spend:
         agent = entry.get("agent")
         phase = entry.get("phase")
-        if isinstance(agent, str) and agent and isinstance(phase, str) and phase:
+        if not isinstance(agent, str) or not agent:
+            continue
+        reported_agents.add(agent)
+        if isinstance(phase, str) and phase:
             reported.add((agent, phase))
 
     dispatched: set[tuple[str, str]] = set()
@@ -524,14 +574,18 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
                 if isinstance(entry, dict) and "records" in entry:
                     dispatched.add((str(stream), "F2"))
 
-    missing = sorted(dispatched - reported)
+    missing = sorted(
+        (agent, phase)
+        for agent, phase in dispatched
+        if (agent, phase) not in reported and agent not in reported_agents
+    )
     by_phase: dict[str, list[str]] = {}
     for agent, phase in missing:
         by_phase.setdefault(phase, []).append(agent)
     return {
         "count": len(missing),
         "dispatched": len(dispatched),
-        "reported": len(dispatched & reported),
+        "reported": len(dispatched) - len(missing),
         "by_phase": {k: sorted(v) for k, v in sorted(by_phase.items())},
         "note": (
             "Advisory only. An agent listed here was dispatched and never "
@@ -551,52 +605,193 @@ def _executing_versions_section(state: dict) -> dict:
     }
 
 
+def _wall_clock_minutes(run_dir: Path) -> float | None:
+    """Minutes between the first and last `handoffs.jsonl` timestamp, or None.
+
+    The handoff ledger is the only artifact stamped across the whole run, so
+    its first and last records bound the wall clock. None — never 0.0 — when
+    the ledger is absent, empty or carries no parseable timestamp: a run that
+    took no measurable time and a run nobody measured are different facts, and
+    NFR-001's comparison is unreadable if they print the same.
+    """
+    records, problem = read_jsonl(run_dir / HANDOFFS_FILENAME)
+    if problem is not None or not records:
+        return None
+    moments: list[datetime] = []
+    for record in records:
+        raw = record.get("timestamp")
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            moments.append(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    if len(moments) < 2:
+        return None
+    span = (max(moments) - min(moments)).total_seconds()
+    return None if span < 0 else round(span / 60.0, 1)
+
+
+def _archive_metrics(
+    run_dir: Path, *, state: dict | None = None, inspect_modes: dict | None = None
+) -> dict:
+    """NFR-001's four columns, derived from ONE archive. D-037.
+
+    "The report prints both runs side by side (cycles, defects by tier, tokens,
+    wall clock)" — four metrics, and only the first had a value on either side
+    before this. The other three were computed for the current run and never
+    for the baseline, so the comparison the requirement names could not be read
+    off the report at all.
+
+    Both columns are derived by THIS function, from whichever archive directory
+    they name. That is the D-036 lesson applied to the remaining three metrics
+    before it can be re-learned: two columns of one comparison computed by two
+    different readers is how the cycle count came to disagree with itself, and
+    a side-by-side table is exactly the surface where a half-unit of drift is
+    invisible and decisive.
+
+    Every metric is None when its ledger cannot supply it. thunder-viper ran on
+    the 4.7.3 server cache and wrote no `spend.jsonl`, so its token column is
+    honestly null and stays null — a fabricated 0 would read as "that run cost
+    nothing", which is the one thing it certainly did not.
+    """
+    if state is None:
+        state, _problem = read_document(run_dir / STATE_FILENAME)
+    if inspect_modes is None:
+        inspect_modes = _inspect_modes_section(state)
+
+    cycles = derive_cycle_count(run_dir)
+
+    # None, not 0, when the archive recorded no `inspect_modes` at all: a run
+    # that wrote the list and never opened an F5 INSPECT really did do zero
+    # post-verification cycles, while a pre-release run that never wrote the
+    # list cannot say. `_inspect_modes_section` keeps the raw entries, so the
+    # two are distinguishable here and nowhere else.
+    recorded_modes = state.get("inspect_modes")
+    post_verification: int | None = None
+    if isinstance(recorded_modes, list):
+        post_verification = len(
+            {
+                decision.get("cycle")
+                for decision in inspect_modes.get("per_cycle", {}).values()
+                if decision.get("phase") == "F5"
+            }
+        )
+
+    defects, problem = read_document(run_dir / DEFECTS_FILENAME)
+    by_tier: dict[str, int] | None = None
+    if problem is None and isinstance(defects.get("defects"), list):
+        by_tier = dict.fromkeys(sorted(DEFECT_TIER_OR_UNKNOWN), 0)
+        for record in defects["defects"]:
+            if isinstance(record, dict):
+                by_tier[defect_tier(record)] += 1
+
+    spend_rows, problem = read_jsonl(run_dir / SPEND_LEDGER_FILENAME)
+    tokens: int | None = None
+    if problem is None and spend_rows:
+        tokens = sum(_as_count(row.get("tokens")) for row in spend_rows)
+
+    return {
+        "run": run_dir.name,
+        "grind_cycles": cycles["count"],
+        "post_verification_cycles": post_verification,
+        "defects_by_tier": by_tier,
+        "tokens": tokens,
+        "wall_clock_minutes": _wall_clock_minutes(run_dir),
+    }
+
+
 def _baseline_comparison_section(
     run_dir: Path, inspect_modes: dict, state: dict
 ) -> dict:
     """NFR-001 / AC-036 — this run's numbers beside thunder-viper's.
 
-    The baseline is READ from vocab, never re-derived: thunder-viper's archive
-    has no stream-rollup, no inspect_modes and a cycle counter that stayed at
-    0, so its 22 GRIND cycles and 8 post-verification cycles are not
-    recoverable from it. `measure-run.py` reads the same two constants, which
-    is what makes the CLI and this report incapable of disagreeing about the
-    baseline they measure against.
+    The two CYCLE numbers are READ from vocab: thunder-viper's 22 GRIND cycles
+    and 8 post-verification cycles are what OT-030 names, and reading them from
+    the constant is what makes this report and `measure-run.py` incapable of
+    disagreeing about the target they measure against.
+
+    The archive itself is read too, when it is beside this run under the same
+    `foundry-archive/` root, and that is what supplies NFR-001's other three
+    columns (D-037). Every value it yields is derived by `_archive_metrics`,
+    the same function that derives this run's — see its docstring. The recorded
+    constants remain the FLOOR for the baseline's own cycles: if its archive
+    derives fewer than the 22 it is on record as having run, the derivation is
+    measuring wrong, not measuring a better run, and the recorded number wins.
 
     `dict(...)` copies rather than embedding the module objects. The two
     constants are plain dicts (they have to be — `report.json` is
     `json.dumps`'d wholesale and a `MappingProxyType` is not serializable), so
     embedding them would put a mutable module global into the document.
 
+    THE CYCLE COUNT IS `derive_cycle_count`'s, NOT `state["cycle"]` (D-036)
+    ----------------------------------------------------------------------
+    This section published the raw counter while `measure-run.py` published
+    that counter + 1, and the two straddle `CONVERGENCE_TARGET["grind_cycles"]`
+    differently: a run at index 12 met the target here and missed it there. One
+    derivation now, hosted in `foundry_state`, called by both.
+
     NFR-001: "Numbers are the target, not a gate." Nothing here refuses
     anything. `meets_target` is None for a number this archive could not
-    supply, because "did not meet" and "cannot say" are different answers.
+    supply, because "did not meet" and "cannot say" are different answers —
+    and it is never True on an unavailable number, which is how the CLI came to
+    certify thunder-viper itself as meeting the target its 22 cycles created.
     """
-    cycle = state.get("cycle")
-    grind_cycles = cycle if isinstance(cycle, int) and not isinstance(cycle, bool) else None
-    post_verification = sum(
-        1
-        for decision in inspect_modes.get("per_cycle", {}).values()
-        if decision.get("phase") == "F5"
-    )
     target = dict(CONVERGENCE_TARGET)
+    baseline_recorded = dict(THUNDER_VIPER_BASELINE)
+    current = _archive_metrics(run_dir, state=state, inspect_modes=inspect_modes)
+
+    baseline_dir = run_dir.parent / str(baseline_recorded.get("run", ""))
+    baseline_note = (
+        f"cycles from vocab.THUNDER_VIPER_BASELINE; the other columns are "
+        f"derived from {baseline_dir.name}/ when that archive sits beside this "
+        f"run."
+    )
+    if baseline_dir.is_dir() and baseline_dir.resolve() != run_dir.resolve():
+        baseline = _archive_metrics(baseline_dir)
+    else:
+        baseline = {
+            "run": baseline_recorded.get("run"),
+            "grind_cycles": None,
+            "post_verification_cycles": None,
+            "defects_by_tier": None,
+            "tokens": None,
+            "wall_clock_minutes": None,
+        }
+        baseline_note += (
+            " That archive is not present here, so those three columns are "
+            "null rather than fabricated."
+        )
+    # The recorded numbers are the floor for the baseline's own cycles.
+    for key in ("grind_cycles", "post_verification_cycles"):
+        recorded = baseline_recorded.get(key)
+        derived = baseline.get(key)
+        baseline[key] = (
+            recorded if not isinstance(derived, int) else max(derived, recorded)
+        )
+
+    def _meets(value: object, limit: object) -> bool | None:
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+        return value <= limit
+
     return {
-        "baseline": dict(THUNDER_VIPER_BASELINE),
+        "baseline": baseline_recorded,
+        "baseline_metrics": baseline,
         "target": target,
-        "current": {
-            "run": run_dir.name,
-            "grind_cycles": grind_cycles,
-            "post_verification_cycles": post_verification,
-        },
+        "current": current,
         "meets_target": {
-            "grind_cycles": (
-                None if grind_cycles is None
-                else grind_cycles <= target["grind_cycles"]
+            "grind_cycles": _meets(
+                current["grind_cycles"], target["grind_cycles"]
             ),
-            "post_verification_cycles": (
-                post_verification <= target["post_verification_cycles"]
+            "post_verification_cycles": _meets(
+                current["post_verification_cycles"],
+                target["post_verification_cycles"],
             ),
         },
+        "metrics": ("grind_cycles", "post_verification_cycles",
+                    "defects_by_tier", "tokens", "wall_clock_minutes"),
+        "baseline_note": baseline_note,
         "note": "Numbers are the target, not a gate (NFR-001).",
     }
 
@@ -697,10 +892,14 @@ def _render_section(key: str, value: dict) -> list[str]:
     if key == "latent_backlog":
         return (
             [f"{value.get('open_count', 0)} open LATENT defects carried forward "
-             "(NFR-003).", ""]
+             "(NFR-003). Each row names where the work is, because this list "
+             "is read by a lead who has no defects.json to join against "
+             "(D-029).", ""]
             + _md_table(
-                ["ID", "Class", "Cycle", "Reproduction attempted", "Description"],
-                [[d.get("id"), d.get("class"), d.get("cycle"),
+                ["ID", "Class", "Cycle", "File", "Symbol", "Source",
+                 "Reproduction attempted", "Description"],
+                [[d.get("id"), d.get("class"), d.get("cycle"), d.get("file"),
+                  d.get("symbol"), d.get("source"),
                   d.get("reproduction_attempted"), d.get("description")]
                  for d in value.get("defects", [])],
             )
@@ -785,20 +984,38 @@ def _render_section(key: str, value: dict) -> list[str]:
         )
     if key == "baseline_comparison":
         baseline = value.get("baseline") or {}
+        metrics = value.get("baseline_metrics") or {}
         target = value.get("target") or {}
         current = value.get("current") or {}
+
+        def _tiers(counts: object) -> str | None:
+            if not isinstance(counts, dict):
+                return None
+            return ", ".join(f"{k} {v}" for k, v in counts.items())
+
+        # NFR-001's four columns, side by side: "cycles, defects by tier,
+        # tokens, wall clock". A row whose baseline cell is blank is a column
+        # thunder-viper's archive cannot supply, not one nobody thought to
+        # print — `baseline_note` below says which.
         return (
             _md_table(
                 ["Metric", f"Baseline ({baseline.get('run')})", "Target",
                  f"This run ({current.get('run')})"],
-                [["GRIND cycles", baseline.get("grind_cycles"),
+                [["GRIND cycles", metrics.get("grind_cycles"),
                   target.get("grind_cycles"), current.get("grind_cycles")],
                  ["Post-verification cycles",
-                  baseline.get("post_verification_cycles"),
+                  metrics.get("post_verification_cycles"),
                   target.get("post_verification_cycles"),
-                  current.get("post_verification_cycles")]],
+                  current.get("post_verification_cycles")],
+                 ["Defects by tier", _tiers(metrics.get("defects_by_tier")),
+                  None, _tiers(current.get("defects_by_tier"))],
+                 ["Tokens", metrics.get("tokens"), None,
+                  current.get("tokens")],
+                 ["Wall clock (minutes)", metrics.get("wall_clock_minutes"),
+                  None, current.get("wall_clock_minutes")]],
             )
-            + ["", str(value.get("note", ""))]
+            + ["", str(value.get("baseline_note", "")),
+               "", str(value.get("note", ""))]
         )
     return ["_None recorded._"]
 
@@ -917,12 +1134,22 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     md_path = run_dir / REPORT_MD_FILENAME
     json_path = run_dir / REPORT_JSON_FILENAME
     try:
+        # D-015 — THE MARKDOWN IS WRITTEN FIRST, and the order is the point.
+        #
+        # `report_status` now requires BOTH documents, so whichever is written
+        # second is the one whose absence holds the DONE gate shut. Writing the
+        # JSON first meant an OSError on the markdown left a complete
+        # `report.json` behind and a gate that opened on it — a run reaching
+        # DONE with no REPORT.md at all, which is GI-006's violation column
+        # word for word. Write the markdown first and the same failure leaves
+        # no JSON, so the gate stays shut and `Foundry-Report` is simply run
+        # again.
+        md_path.write_text(
+            _render_markdown(run_dir.name, generated_at, sections), encoding="utf-8"
+        )
         json_path.write_text(
             json.dumps(document, indent=2, sort_keys=False, default=str) + "\n",
             encoding="utf-8",
-        )
-        md_path.write_text(
-            _render_markdown(run_dir.name, generated_at, sections), encoding="utf-8"
         )
     except OSError as exc:
         return {
@@ -941,49 +1168,101 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     }
 
 
+def _markdown_missing_sections(run_dir: Path) -> tuple[list[str], str | None]:
+    """The required `## ` headings REPORT.md does not carry (D-015).
+
+    Returns ``(missing_section_keys, problem)``. A heading counts as present
+    when a line reading exactly `## <title>` is there, at any depth in the
+    document and in any order — because GI-006 licenses the lead to APPEND
+    prose, and appended prose can put arbitrary text between, above and below
+    the generated headings without omitting one.
+
+    The match is on the whole trimmed line rather than a prefix, so a lead's
+    own `## Appendix` never counts as a generated section and a generated
+    heading with a suffix bolted on ("## LATENT backlog (see below)") reads as
+    the edit it is.
+    """
+    text, problem = read_text_file(run_dir / REPORT_MD_FILENAME)
+    if problem is not None:
+        return list(REPORT_REQUIRED_SECTIONS), problem
+    if not (run_dir / REPORT_MD_FILENAME).exists():
+        return (
+            list(REPORT_REQUIRED_SECTIONS),
+            f"{REPORT_MD_FILENAME} does not exist",
+        )
+    headings = {line.strip() for line in text.splitlines()}
+    return [
+        key
+        for key in REPORT_REQUIRED_SECTIONS
+        if f"## {_SECTION_TITLES[key]}" not in headings
+    ], None
+
+
 def report_status(run_dir: Path) -> dict:
     """`{'present': bool, 'missing_sections': [...]}` — the DONE gate's read.
 
     GI-006 gives the lead permission to APPEND prose and no permission to omit
-    a section, and this is where the second half is checked. It reads
-    `report.json` off disk every time rather than trusting anything
-    `generate_report` returned, because the gap the check exists to close is
-    exactly the one where somebody edited the file after it was generated.
+    a section, and this is where the second half is checked. Both documents are
+    read off disk every time rather than trusting anything `generate_report`
+    returned, because the gap the check exists to close is exactly the one
+    where somebody edited a file after it was generated.
 
-    The markdown is deliberately NOT the surface checked. Prose appended below
-    a heading, a heading re-worded, a table reflowed — all of those are things
-    the lead is allowed to do, and any of them could make a markdown scan
-    report a missing section that is present. The JSON's top-level keys are
-    machine-written and machine-read, so they answer the question exactly.
+    BOTH DOCUMENTS, NOT JUST THE JSON (D-015)
+    -----------------------------------------
+    This read the JSON alone, and the docstring argued the case: the JSON's
+    keys are machine-written and machine-read, so they answer the question
+    exactly, while a markdown scan could be confused by a reflowed table.
 
-    A `report.json` that is absent, unreadable, or not an object all report
-    `present: False` with EVERY section missing. That is the honest answer: no
-    section can be shown to be there. `problem` carries the reason when there
-    is one, so a caller refusing the DONE transition can say whether the report
-    was never generated or is corrupt.
+    The argument was for the wrong question. GI-006's violation column names
+    "a lead-authored REPORT.md that lacks the generated sections" in those
+    words, and REPORT.md is the document a human actually reads — the JSON
+    exists for tools. Driven: delete REPORT.md outright and the DONE gate still
+    passed, so a run could reach DONE with no operator-readable report at all,
+    which is the exact outcome GI-006 exists to prevent.
+
+    So the JSON answers "which sections were generated" and the markdown
+    answers "which sections a reader can still find", and `missing_sections` is
+    the union. The confusability worry is handled by matching whole heading
+    lines (see `_markdown_missing_sections`) rather than by not looking.
+
+    A document that is absent, unreadable, or not an object reports every
+    section missing. That is the honest answer: no section can be shown to be
+    there. `problem` carries the reason when there is one, so a caller refusing
+    the DONE transition can say whether the report was never generated or is
+    corrupt.
     """
     run_dir = Path(run_dir)
-    data, problem = read_document(run_dir / REPORT_JSON_FILENAME)
     path = run_dir / REPORT_JSON_FILENAME
-    if problem is not None:
+    md_path = run_dir / REPORT_MD_FILENAME
+    md_missing, md_problem = _markdown_missing_sections(run_dir)
+
+    data, problem = read_document(path)
+    if problem is not None or not path.exists() or not data:
+        json_problem = problem or (
+            None if path.exists() else f"{REPORT_JSON_FILENAME} does not exist"
+        )
         return {
             "present": False,
             "missing_sections": list(REPORT_REQUIRED_SECTIONS),
             "report_json": str(path),
-            "problem": problem,
+            "report_md": str(md_path),
+            "missing_from_json": list(REPORT_REQUIRED_SECTIONS),
+            "missing_from_markdown": md_missing,
+            "problem": json_problem or md_problem,
         }
-    if not path.exists() or not data:
-        return {
-            "present": False,
-            "missing_sections": list(REPORT_REQUIRED_SECTIONS),
-            "report_json": str(path),
-            "problem": None if path.exists() else f"{REPORT_JSON_FILENAME} does not exist",
-        }
-    missing = [s for s in REPORT_REQUIRED_SECTIONS if s not in data]
+
+    json_missing = [s for s in REPORT_REQUIRED_SECTIONS if s not in data]
+    # Union, in REPORT_REQUIRED_SECTIONS order — a caller naming the missing
+    # sections in a refusal reads them in the order the report declares them.
+    both = set(json_missing) | set(md_missing)
+    missing = [s for s in REPORT_REQUIRED_SECTIONS if s in both]
     return {
         "present": not missing,
         "missing_sections": missing,
         "report_json": str(path),
-        "problem": None,
+        "report_md": str(md_path),
+        "missing_from_json": json_missing,
+        "missing_from_markdown": md_missing,
+        "problem": md_problem,
         "generated_at": data.get("generated_at"),
     }

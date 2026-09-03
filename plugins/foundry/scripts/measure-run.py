@@ -84,7 +84,11 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+    from foundry_mcp.tools.foundry_state import (
+        derive_cycle_count,
+        read_json,
+        read_text_file,
+    )
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
@@ -102,7 +106,11 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+    from foundry_mcp.tools.foundry_state import (
+        derive_cycle_count,
+        read_json,
+        read_text_file,
+    )
 
 
 # Derived, never re-typed — foundry_mcp.schemas.vocab is the single source of
@@ -162,10 +170,12 @@ CSV_COLUMNS = (
 @dataclass
 class MeasureResult:
     cohort_id: str = ""
-    # A COUNT of the cycles the run executed, not the server's 0-based index
-    # (see _reconcile_final_cycle_index). 0 means no measurement was possible —
-    # only an invalid run dir short-circuits before the count is computed.
-    cycles: int = 0
+    # A COUNT of the cycles the run executed, not the server's 0-based index.
+    # `foundry_state.derive_cycle_count` is where that conversion happens, once,
+    # for this command AND for foundry_report (D-036). None means NO ledger in
+    # the archive could supply a number — distinct from a measured 0, and the
+    # distinction is load-bearing: `meets_target` is never True on None.
+    cycles: int | None = None
     per_stream_defects: dict[str, int] = field(default_factory=dict)
     f2_context_pct: float | None = None
     wall_clock_seconds: float = 0.0
@@ -290,15 +300,47 @@ def _read_handoffs_wall_clock(run_dir: Path) -> tuple[float, list[str]]:
     return (0.0, UNAVAIL) if seconds < 0 else (float(seconds), [])
 
 
-def _read_state_cycle_count(run_dir: Path) -> tuple[int, list[str]]:
-    INV = ["PHASE9_CYCLE_COUNT_INVALID"]
-    data = _load_json(run_dir / "state.json")
-    if not isinstance(data, dict):
-        return 0, INV
-    cycle = data.get("cycle")
-    if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 0:
-        return 0, INV
-    return cycle, []
+def _read_cycle_count(run_dir: Path) -> tuple[int | None, list[str]]:
+    """The run's cycle COUNT and the tokens its derivation earned. D-036.
+
+    ONE derivation, and it is not this file's. `foundry_state.derive_cycle_count`
+    hosts it because this script and `foundry_mcp.tools.foundry_report` both
+    need it and they had grown two: this one published
+    ``_reconcile_final_cycle_index + 1`` while the report published the raw
+    ``state.json["cycle"]``. They differ by exactly one, which is enough to
+    straddle ``CONVERGENCE_TARGET["grind_cycles"]`` — a run at index 12 met the
+    effort's own target on one surface and missed it on the other.
+
+    THE THIRD SOURCE, AND WHAT IT RESCUED (D-022)
+    ---------------------------------------------
+    The old pair of sources — ``state.json["cycle"]`` and the roll-up's highest
+    key — were BOTH blind on thunder-viper: its counter was written once as 0
+    and never incremented, and it wrote no ``stream-rollup.json`` at all. This
+    command therefore reported the 22-cycle baseline as ONE cycle and printed
+    ``meets_target: true`` for it — certifying the very run whose 22 cycles are
+    the entire reason ``CONVERGENCE_TARGET`` exists.
+
+    The defect ledger stamps the cycle each filing was made in, so its highest
+    is a floor on the cycles a run executed, and adding it reproduces BOTH
+    published baselines from their own archives: thunder-viper 21 + 1 = 22, and
+    grand-vulture 17 + 1 = 18, which is NFR-001's "18 cycles, 168 defects".
+
+    Two tokens, and only the first two conditions earn one. A `state.json` that
+    cannot supply a counter at all is malformed (Test 5). A roll-up proving a
+    HIGHER cycle than the counter names the stale counter (Test 23 /
+    survey/data.md FI-1). A defect ledger proving more cycles does NOT: the
+    roll-up is keyed BY the counter, so it is direct evidence the counter is
+    stale, while a defect's `cycle` is stamped by whichever door filed it.
+    Treating the ledger as an indictment would make every healthy 4.7.3-era
+    archive exit nonzero, which is the over-firing calibration D-034 undid.
+    """
+    derived = derive_cycle_count(run_dir)
+    tokens: list[str] = []
+    if derived["sources"]["state_cycle"] is None:
+        tokens.append("PHASE9_CYCLE_COUNT_INVALID")
+    elif derived["stale_counter"]:
+        tokens.append("PHASE9_CYCLE_COUNT_INVALID")
+    return derived["count"], tokens
 
 
 def _read_stream_rollup(
@@ -352,32 +394,17 @@ def _read_stream_rollup(
     return coverage, highest, fts
 
 
-def _reconcile_final_cycle_index(
-    recorded: int, rollup_highest: int | None
-) -> tuple[int, list[str]]:
-    """Reconcile state.json's counter against the roll-up's own cycle keys.
+def _cycles_meet(value: int | None, limit: int) -> bool | None:
+    """``value <= limit``, or None when nothing measured the value.
 
-    Returns the final cycle INDEX, not a count. The server's counter is
-    0-based: Foundry-Init writes 0, the F1 -> F2 entry from CAST is the run's
-    first INSPECT rather than a new cycle, and only the F3 GRIND -> F2 INSPECT
-    boundary increments (foundry_orchestrator.foundry_mark_phase_complete,
-    ``inspect_start``). So a run that executed N cycles ends at index N-1, and
-    the caller converts once — see ``_extract_per_run``.
-
-    This is NOT a second counter. The roll-up is keyed BY that same counter
-    (FR-005 / ST-001), so its highest key is the counter's own value as of the
-    last stream record — read from the artifact rather than recomputed.
-
-    survey/data.md FI-1: ``state.json["cycle"]`` was written once as 0 and never
-    incremented, so an unrepaired archive reports 0 cycles and the convergence
-    gate PASSes on a number the run never had. When the roll-up proves a higher
-    cycle, report the proven value and NAME the stale counter rather than
-    passing a gate on fiction. Migration (migrate-archive.py step 5) is what
-    repairs the archive; this is the detector that stops it going unnoticed.
+    D-022's rule, in one place: `meets_target` is NEVER True on a number this
+    archive could not supply. "Did not meet" and "cannot say" are different
+    answers, and printing the first for the second is what let this command
+    certify an archive it had failed to measure.
     """
-    if rollup_highest is None or rollup_highest <= recorded:
-        return recorded, []
-    return rollup_highest, ["PHASE9_CYCLE_COUNT_INVALID"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value <= limit
 
 
 def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
@@ -642,7 +669,7 @@ def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
 
 
 def _baseline_comparison(
-    run_dir: Path, cycles: int, post_verification_cycles: int | None
+    run_dir: Path, cycles: int | None, post_verification_cycles: int | None
 ) -> dict[str, Any]:
     """NFR-001 / AC-039 / OT-030 — this run's numbers beside thunder-viper's.
 
@@ -660,6 +687,28 @@ def _baseline_comparison(
     """
     target_cycles = CONVERGENCE_TARGET["grind_cycles"]
     target_post = CONVERGENCE_TARGET["post_verification_cycles"]
+
+    # D-022 — the RECORDED baseline is a floor for the baseline's OWN archive.
+    #
+    # thunder-viper's counter never moved, so measuring its archive used to
+    # yield 1 against a constant of 22 and this command printed
+    # `meets_target: true` for it: the acceptance instrument certifying the
+    # very run whose 22 cycles are the entire reason CONVERGENCE_TARGET exists.
+    # `_read_cycle_count`'s third source now derives 22 from that archive
+    # directly, and this is the belt beside it — a derivation that comes in
+    # UNDER the number the baseline is on record as having run is measuring
+    # wrong, not measuring a better run.
+    if cycles is not None and run_dir.name == THUNDER_VIPER_BASELINE["run"]:
+        cycles = max(cycles, THUNDER_VIPER_BASELINE["grind_cycles"])
+    if (
+        post_verification_cycles is not None
+        and run_dir.name == THUNDER_VIPER_BASELINE["run"]
+    ):
+        post_verification_cycles = max(
+            post_verification_cycles,
+            THUNDER_VIPER_BASELINE["post_verification_cycles"],
+        )
+
     return {
         "baseline": dict(THUNDER_VIPER_BASELINE),
         "target": dict(CONVERGENCE_TARGET),
@@ -669,10 +718,9 @@ def _baseline_comparison(
             "post_verification_cycles": post_verification_cycles,
         },
         "meets_target": {
-            "grind_cycles": cycles <= target_cycles,
-            "post_verification_cycles": (
-                None if post_verification_cycles is None
-                else post_verification_cycles <= target_post
+            "grind_cycles": _cycles_meet(cycles, target_cycles),
+            "post_verification_cycles": _cycles_meet(
+                post_verification_cycles, target_post
             ),
         },
     }
@@ -719,11 +767,20 @@ def _yield_band_verdict(per_stream_defects: dict[str, int]) -> str:
 
 
 def _compute_gate_verdicts(
-    cycles: int, per_stream_defects: dict[str, int],
+    cycles: int | None, per_stream_defects: dict[str, int],
     f2_context_pct: float | None, wall_clock_regression_pct: float | None,
 ) -> dict[str, str]:
+    # D-022 — an UNMEASURED cycle count is MISSING, never PASS. The count used
+    # to be forced to an int, so an archive no ledger could speak for arrived
+    # here as 1 and passed the convergence gate on a number nobody had. MISSING
+    # is the same verdict the two operator-supplied gates use for the same
+    # reason, and `_exit_status` maps it to 0: an unmeasured gate is honest,
+    # not failed.
     return {
-        "cycles": "PASS" if cycles <= MAX_CYCLES_FOR_CONVERGENCE else "FAIL",
+        "cycles": (
+            "MISSING" if not isinstance(cycles, int) or isinstance(cycles, bool)
+            else "PASS" if cycles <= MAX_CYCLES_FOR_CONVERGENCE else "FAIL"
+        ),
         "defect_yield_per_stream": _yield_band_verdict(per_stream_defects),
         "f2_context_pct": (
             "MISSING" if f2_context_pct is None
@@ -808,18 +865,14 @@ def _extract_per_run(
     r.wall_clock_seconds = wall_clock; failure_tokens.extend(wf)
     coverage, rollup_highest, rf = _read_stream_rollup(run_dir)
     r.per_cycle_coverage = coverage; failure_tokens.extend(rf)
-    recorded, cycf = _read_state_cycle_count(run_dir)
+    # INDEX -> COUNT, converted exactly once and NOT here: the server's counter
+    # is 0-based, so a run that executed N cycles ends at index N-1, and
+    # publishing the raw index reported every run one cycle short. That
+    # conversion, and the choice of which ledgers get a vote, now live in
+    # `foundry_state.derive_cycle_count` so this command and `foundry_report`
+    # cannot answer differently (D-036 / D-022 — see `_read_cycle_count`).
+    r.cycles, cycf = _read_cycle_count(run_dir)
     failure_tokens.extend(cycf)
-    final_index, recf = _reconcile_final_cycle_index(recorded, rollup_highest)
-    # INDEX -> COUNT, converted exactly once. The server's counter is 0-based
-    # (see _reconcile_final_cycle_index), so a run that executed N cycles ends
-    # at index N-1. ``cycles`` is named as a COUNT and its gate reads as one,
-    # so publishing the raw index reported every run one cycle short: on
-    # grand-vulture — whose defects span 18 distinct cycles and whose defect
-    # total the same command reads as exactly 168 — it printed 17 against
-    # NFR-001's baseline sentence "18 cycles, 168 defects", and the convergence
-    # gate admitted one more cycle than MAX_CYCLES_FOR_CONVERGENCE names.
-    r.cycles = final_index + 1; failure_tokens.extend(recf)
     per_stream, df = _read_defects_per_stream(run_dir)
     r.per_stream_defects = per_stream; failure_tokens.extend(df)
     # The NFR-001 / AC-039 columns. None of them contributes a failure token or

@@ -175,6 +175,122 @@ def read_jsonl(path: Path) -> tuple[list[dict], str | None]:
     return records, None
 
 
+def derive_cycle_count(run_dir: Path) -> dict:
+    """The run's GRIND cycle count. ONE derivation, read by every surface.
+
+    Returns, and never raises::
+
+        {"count": int | None,     # cycles EXECUTED — index + 1
+         "index": int | None,     # the server's 0-based counter at the end
+         "sources": {"state_cycle": int | None,
+                     "rollup_highest": int | None,
+                     "defect_max_cycle": int | None},
+         "stale_counter": bool,   # the roll-up proves the counter did not move
+         "problems": [str]}       # artifacts that exist and would not read
+
+    WHY THIS LIVES IN THE LEAF MODULE (D-036)
+    -----------------------------------------
+    There were two derivations of this one fact and they disagreed.
+    ``measure-run.py::_extract_per_run`` published ``_reconcile_final_cycle_index
+    + 1``; ``foundry_report.py::_baseline_comparison_section`` published the raw
+    ``state.json["cycle"]``. They differ by exactly one, which is enough to
+    straddle ``CONVERGENCE_TARGET["grind_cycles"]``: a run at index 12 passed
+    the report's ``<= 12`` and failed the CLI's, so the same archive met the
+    effort's own target on one surface and missed it on the other.
+
+    So it is hosted once, HERE, because this is the only module both readers
+    already import and it is reachable from either without closing a cycle in
+    the import graph. The derivation needs ``json`` and ``pathlib`` and nothing
+    else, so the leaf contract at the top of this file holds unchanged — a
+    caller that needs a name from ``vocab`` passes it in or reads it itself.
+
+    WHY THREE SOURCES AND NOT ONE (D-022)
+    -------------------------------------
+    ``state.json["cycle"]`` alone reported thunder-viper — a 22-cycle run, the
+    baseline the whole convergence target exists to beat — as ONE cycle, and
+    ``measure-run.py`` duly certified it ``meets_target: true``. Its counter was
+    written once as 0 and never incremented (survey/data.md FI-1), and it wrote
+    no ``stream-rollup.json`` at all, so both of the old sources were blind.
+
+    The defect ledger is not blind: every filing stamps the cycle it was filed
+    in, so the highest is a floor on the cycles the run executed. Adding it as a
+    third source reproduces BOTH known baselines from their own archives rather
+    than from a constant — thunder-viper 21 + 1 = 22, which is
+    ``THUNDER_VIPER_BASELINE["grind_cycles"]``, and grand-vulture 17 + 1 = 18,
+    which is NFR-001's "18 cycles, 168 defects". Two independent confirmations
+    that the formula measures the thing it names.
+
+    ``stale_counter`` stays keyed to the ROLL-UP alone, never to the defect
+    ledger. The roll-up is keyed BY the server counter (FR-005 / ST-001), so a
+    roll-up key above the counter is direct proof the counter is stale and
+    worth naming. A defect's ``cycle`` is stamped at filing time and, on a
+    pre-release archive, by whichever door filed it — it proves cycles ran
+    without indicting the counter. Reporting it as staleness would make every
+    healthy 4.7.3-era archive exit nonzero, which is the over-firing
+    calibration D-034 already had to undo.
+
+    ``count`` is None only when NO source could supply a number: "cannot say"
+    and "one cycle" are different answers, and the caller that turns this into
+    a target verdict has to be able to tell them apart.
+    """
+    problems: list[str] = []
+
+    def _cycle(value: object) -> int | None:
+        # ``bool`` is an ``int`` subclass and ``True`` is not cycle 1.
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
+    state, problem = read_document(run_dir / "state.json")
+    if problem is not None:
+        problems.append(problem)
+    state_cycle = _cycle(state.get("cycle"))
+
+    rollup_highest: int | None = None
+    rollup, problem = read_document(run_dir / "stream-rollup.json")
+    if problem is not None:
+        problems.append(problem)
+    cycles = rollup.get("cycles")
+    if isinstance(cycles, dict):
+        for raw_key in cycles:
+            try:
+                key = int(raw_key)
+            except (TypeError, ValueError):
+                continue
+            if key >= 0 and (rollup_highest is None or key > rollup_highest):
+                rollup_highest = key
+
+    defect_max: int | None = None
+    defects, problem = read_document(run_dir / "defects.json")
+    if problem is not None:
+        problems.append(problem)
+    records = defects.get("defects")
+    if isinstance(records, list):
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            value = _cycle(record.get("cycle"))
+            if value is not None and (defect_max is None or value > defect_max):
+                defect_max = value
+
+    known = [v for v in (state_cycle, rollup_highest, defect_max) if v is not None]
+    index = max(known) if known else None
+    return {
+        "count": None if index is None else index + 1,
+        "index": index,
+        "sources": {
+            "state_cycle": state_cycle,
+            "rollup_highest": rollup_highest,
+            "defect_max_cycle": defect_max,
+        },
+        "stale_counter": (
+            rollup_highest is not None
+            and rollup_highest > (state_cycle if state_cycle is not None else -1)
+        ),
+        "problems": problems,
+    }
+
+
 def document_refusal(path: Path, problem: str) -> dict:
     """The house named refusal for an unreadable document, shaped ONCE.
 

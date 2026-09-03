@@ -17,10 +17,20 @@
 #
 # Every column the archive cannot supply is null -- never 0, and never a
 # failure token. Exit 0: a pre-release archive is not a failure.
+#
+# GRIND cycle 2, D-022 / D-036: `cycles` is now derived by
+# foundry_state.derive_cycle_count -- ONE derivation, called by this command
+# and by foundry_report -- and it consults the DEFECT LEDGER as well as the
+# counter and the roll-up. That is what rescues an archive whose counter never
+# moved: this fixture's records span cycles 0-5, so it reports six cycles
+# rather than the one its stale counter alone would give. On the real
+# thunder-viper archive the same derivation reproduces the published 22, and
+# `meets_target.grind_cycles` there is FALSE -- the tool no longer certifies
+# the run whose 22 cycles are the reason the target exists.
 
 {
   "cohort_id": "",
-  "cycles": 1,
+  "cycles": 6,
   "per_stream_defects": {
     "TRACE": 1,
     "PROVE": 2,
@@ -51,7 +61,7 @@
     },
     "current": {
       "run": "thunder_viper_shape",
-      "grind_cycles": 1,
+      "grind_cycles": 6,
       "post_verification_cycles": null
     },
     "meets_target": {

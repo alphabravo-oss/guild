@@ -4,6 +4,7 @@
 # evidence-timeout: 300
 
 
+
 === report.json top-level keys ===
   generated_at
   run
@@ -62,8 +63,8 @@
 === baseline comparison (AC-036) ===
   baseline thunder-viper: grind=22 post_verification=8
   target: grind=12 post_verification=3
-  this run: grind=5 post_verification=1
+  this run: grind=6 post_verification=1
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
-1 passed, 46 deselected in 0.21s
+1 passed, 59 deselected in 0.11s

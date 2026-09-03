@@ -1830,6 +1830,102 @@ def test_thunder_viper_prints_the_baseline_beside_the_current_run() -> None:
     )
 
 
+@pytest.mark.skipif(
+    not THUNDER_VIPER.exists(),
+    reason=(
+        f"thunder-viper archive not present in this checkout: {THUNDER_VIPER} "
+        "(foundry-archive/ is git-ignored)"
+    ),
+)
+def test_the_baseline_archive_never_reports_that_it_met_the_target() -> None:
+    """D-022 / AC-039 / OT-030, on the archive that exposed it, READ-ONLY.
+
+    This command printed `meets_target: true` for thunder-viper. Its baseline
+    column read 22 from the constant while the archive-derived column for the
+    SAME archive said 1 — its counter was written once as 0 and never
+    incremented, and it wrote no stream-rollup.json, so both of the sources
+    this tool consulted were blind. The acceptance instrument therefore
+    certified the very run whose 22 cycles are the entire reason
+    CONVERGENCE_TARGET exists.
+
+    The fix is a third source rather than a special case: the defect ledger
+    stamps the cycle each filing was made in, so its highest is a floor on the
+    cycles a run executed, and on this archive that reproduces the published 22
+    exactly. The recorded constant stays as a floor beneath it."""
+    # READ from vocab so this assertion cannot drift from the constant the
+    # command itself compares against.
+    from foundry_mcp.schemas import vocab
+
+    recorded = vocab.THUNDER_VIPER_BASELINE["grind_cycles"]
+    before = _tree_digest(THUNDER_VIPER)
+    payload = json.loads(_invoke_measure_run(str(THUNDER_VIPER))[1])
+
+    assert payload["cycles"] == recorded, (
+        "the 22 cycles are derivable from the archive's own defect ledger"
+    )
+    comparison = payload["baseline_comparison"]
+    assert comparison["current"]["grind_cycles"] == recorded
+    assert comparison["meets_target"]["grind_cycles"] is False
+    assert payload["gate_verdicts"]["cycles"] == "FAIL"
+    # Still not a token: a pre-release archive is healthy, and the defect
+    # ledger proving cycles is not evidence that the COUNTER is stale — only
+    # the roll-up, which is keyed by that counter, is (D-034's calibration).
+    assert payload["failure_tokens"] == [], payload["failure_tokens"]
+    assert _tree_digest(THUNDER_VIPER) == before, "the archive must be untouched"
+
+
+def test_an_archive_with_no_cycle_evidence_reports_missing_not_pass(
+    tmp_path: Path,
+) -> None:
+    """D-022's other half: `meets_target` is never True on a number nobody
+    measured.
+
+    The count used to be forced to an int, so an archive no ledger could speak
+    for arrived at the gate as 1 and PASSED the convergence gate. "Did not
+    meet" and "cannot say" are different answers."""
+    run_dir = tmp_path / "no_ledgers"
+    run_dir.mkdir()
+    (run_dir / "handoffs.jsonl").write_text(
+        '{"timestamp": "2026-08-01T00:00:00+00:00"}\n'
+        '{"timestamp": "2026-08-01T01:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+
+    assert payload["cycles"] is None
+    assert payload["gate_verdicts"]["cycles"] == "MISSING"
+    assert payload["baseline_comparison"]["meets_target"]["grind_cycles"] is None
+    # A state.json that cannot supply a counter is still malformed and named.
+    assert "PHASE9_CYCLE_COUNT_INVALID" in payload["failure_tokens"]
+
+
+def test_measure_run_and_the_report_derive_the_cycle_count_identically(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-036 — two derivations of one fact that could disagree.
+
+    `_extract_per_run` published `final_index + 1` while
+    `foundry_report._baseline_comparison_section` published the raw
+    `state.json["cycle"]`. They differ by exactly one, which straddles
+    `CONVERGENCE_TARGET["grind_cycles"]`: a run at index 12 met the effort's
+    own target on one surface and missed it on the other. Both now call
+    `foundry_state.derive_cycle_count`, and this drives BOTH over one archive
+    and asserts the two answers are the same number."""
+    from foundry_mcp.tools.foundry_report import generate_report
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    run_dir = make_run_dir(rollup=_rollup_doc({"3": {"prove": _entry(80, 80, 1)}}))
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+
+    result = generate_report(run_dir.parent, run_dir)
+    assert result["ok"] is True, result
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+
+    shared = derive_cycle_count(run_dir)["count"]
+    assert payload["cycles"] == shared
+    assert report["baseline_comparison"]["current"]["grind_cycles"] == shared
+
+
 def _tree_digest(root: Path) -> str:
     """Path-sensitive content hash of a tree. Mirrors test_migrate_archive."""
     import hashlib

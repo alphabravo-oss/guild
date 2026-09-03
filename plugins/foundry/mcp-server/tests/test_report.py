@@ -470,18 +470,103 @@ def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
 
 
 def test_the_agent_id_spelling_agrees_with_the_spawn_doors(report_env):
-    """The pin on `foundry_report._agent_id_for_casting`'s deliberate copy.
+    """D-013 — there is ONE agent-id spelling and `foundry_spawn` owns it.
 
-    It cannot IMPORT the original: `foundry_orchestrator` imports this module
-    and `foundry_spawn` imports `foundry_orchestrator`, so reaching for it
-    would close a cycle in the import graph. The copy is only safe while the
-    two spellings agree, and this is where that is checked — key a spawn row
-    `casting-3` in one and `teammate-3` in the other and every teammate is
-    reported unreported forever, because the ledger's ids match neither."""
+    This used to pin a hand-typed copy against the original. A copy pinned by
+    a test is still a second derivation, and it drifted where no test was
+    watching: this module keyed a live `spawns.log` row as `casting-1` while
+    `foundry_orchestrator._dispatched_agents` keyed the SAME row as `1`, so no
+    single `Foundry-Spend` call could clear both surfaces. The copy is gone —
+    `_agent_id_for_casting` now delegates — and this asserts the delegation
+    holds across the id shapes a manifest actually carries."""
     from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting as spawn_spelling
 
     for casting_id in (1, 5, 42, "7", "wave-3"):
         assert fr._agent_id_for_casting(casting_id) == spawn_spelling(casting_id)
+
+
+def test_a_live_spawn_row_is_keyed_by_the_canonical_spelling(report_env):
+    """D-013 — a real `spawns.log` row carries `casting_id` and NO `agent` key.
+
+    That is the row shape `foundry_spawn` writes, and it is where the two
+    spellings parted: this module keyed it `casting-1` while
+    `foundry_orchestrator._dispatched_agents` fell back to the bare
+    `casting_id` and keyed it `1`. Neither id was wrong on its own; what was
+    wrong is that there were two, so no `Foundry-Spend` call could clear both
+    surfaces and the documented spelling cleared neither."""
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+
+    (report_env / "spawns.log").write_text(
+        json.dumps({"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 9,
+                    "phase": "cast", "wave": 1, "prompt_hash": "sha256:deadbeef",
+                    "bulk": True}) + "\n",
+        encoding="utf-8",
+    )
+    (report_env / SPEND_LEDGER_FILENAME).write_text("", encoding="utf-8")
+
+    _generate(report_env)
+    section = _document(report_env)["unreported_dispatches"]
+    assert _agent_id_for_casting(9) == "casting-9"
+    assert section["by_phase"]["cast"] == ["casting-9"]
+    assert "9" not in section["by_phase"]["cast"], (
+        "the bare casting_id is the OTHER surface's old spelling"
+    )
+
+
+def test_one_spend_call_clears_the_agent_whatever_phase_it_names(report_env):
+    """D-013's operator-visible half. `spawns.log` records `phase: "cast"`; the
+    `Foundry-Spend` schema documents the phase as "e.g. F1, F2, F3". Matching
+    on the exact pair meant a lead who used the documented spelling cleared
+    NOTHING and no spelling existed that cleared this section and Foundry-Next
+    together.
+
+    The rule adopted is `foundry_orchestrator._unreported_dispatches`'s own —
+    an agent that reported spend in ANY phase is a reported agent — taken
+    rather than re-decided, because agreeing with the other surface is the
+    whole point of the fix."""
+    (report_env / "spawns.log").write_text(
+        json.dumps({"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 9,
+                    "phase": "cast"}) + "\n",
+        encoding="utf-8",
+    )
+    (report_env / SPEND_LEDGER_FILENAME).write_text(
+        json.dumps({"agent": "casting-9", "phase": "F1", "cycle": 0,
+                    "tokens": 1000, "duration_ms": 60000,
+                    "recorded_at": "2026-09-03T01:00:00+00:00"}) + "\n",
+        encoding="utf-8",
+    )
+    _generate(report_env)
+    section = _document(report_env)["unreported_dispatches"]
+    named = {a for agents in section["by_phase"].values() for a in agents}
+    assert "casting-9" not in named, (
+        "one Foundry-Spend call, whatever phase it named, clears the agent"
+    )
+    # The F2 stream roster in stream-rollup.json still contributes its own
+    # unreported agents; this is about casting-9 and nothing else.
+    assert named, "the fixture's F2 roster is untouched by this test"
+
+
+def test_the_report_and_foundry_next_name_the_same_unreported_agents(report_env):
+    """D-013 stated as the property that was violated: two derivations of one
+    fact must not disagree.
+
+    `Foundry-Next` renders `foundry_orchestrator._unreported_dispatches` and
+    the report renders `_read_unreported_dispatches`; they read the same two
+    ledgers and must answer the same question the same way, or the operator has
+    no spelling that satisfies both."""
+    from foundry_mcp.tools.foundry_orchestrator import _unreported_dispatches
+
+    _generate(report_env)
+    section = _document(report_env)["unreported_dispatches"]
+    from_report = {
+        (agent, phase)
+        for phase, agents in section["by_phase"].items()
+        for agent in agents
+    }
+    from_next = {
+        (row["agent"], row["phase"]) for row in _unreported_dispatches(report_env)
+    }
+    assert from_report == from_next, sorted(from_report ^ from_next)
 
 
 def test_executing_versions_names_the_server_that_ran(report_env):
@@ -505,7 +590,170 @@ def test_baseline_comparison_reads_the_two_vocab_constants(report_env):
     assert section["baseline"] == THUNDER_VIPER_BASELINE
     assert section["target"] == CONVERGENCE_TARGET
     assert section["current"]["run"] == "finer-boundary-run"
-    assert section["current"]["grind_cycles"] == 5
+    # A COUNT, not the raw 0-based counter (D-036). The fixture's counter sits
+    # at 5, so the run executed six cycles — and `measure-run.py` publishes the
+    # same six, because both now call `foundry_state.derive_cycle_count`.
+    assert section["current"]["grind_cycles"] == 6
+
+
+def test_the_latent_backlog_says_where_each_defect_lives(report_env):
+    """D-029 / NFR-003: 'LATENT stays open, tracked, and listed in the report.'
+
+    The backlog is the ONE artifact that carries LATENT work across runs, and
+    the next run's lead receives it with no defects.json to join against. A row
+    that named only an id and a description named a fault with no location, so
+    the item was not actionable and re-finding the site cost more than the fix
+    would have. `file` and `symbol` are part of the row."""
+    _generate(report_env)
+    rows = _document(report_env)["latent_backlog"]["defects"]
+    assert rows, "the fixture carries two open LATENT defects"
+    source = {d["id"]: d for d in _read_json(report_env, "defects.json")["defects"]}
+    for row in rows:
+        for field in ("file", "symbol", "source", "type", "spec_ref"):
+            assert field in row, (row["id"], field)
+        assert row["file"] == source[row["id"]]["file"]
+        assert row["symbol"] == source[row["id"]]["symbol"]
+
+    # And the operator-readable half carries them too — the markdown is the
+    # document the receiving lead actually opens.
+    markdown = _markdown(report_env)
+    backlog = markdown.split("## LATENT backlog", 1)[1].split("\n## ", 1)[0]
+    for row in rows:
+        assert str(row["file"]) in backlog, row["id"]
+
+
+def test_the_baseline_comparison_prints_nfr_001s_four_metrics(report_env, tmp_path):
+    """D-037 / NFR-001 verbatim: 'The report prints both runs side by side
+    (cycles, defects by tier, tokens, wall clock).'
+
+    Four metrics, both columns. Three of them had a value for the current run
+    only, so the comparison the requirement names could not be read off the
+    report at all. The baseline archive is planted beside this run — which is
+    where a real `foundry-archive/` keeps it — and every column it can supply
+    is derived by the SAME function that derives this run's."""
+    baseline_dir = report_env.parent / THUNDER_VIPER_BASELINE["run"]
+    baseline_dir.mkdir()
+    _write_json(baseline_dir, "state.json", {"phase": "F6", "cycle": 0})
+    _write_json(baseline_dir, "defects.json", {"defects": [
+        {"id": "D-001", "cycle": 21, "status": "fixed"},      # no tier: unknown
+        {"id": "D-002", "cycle": 3, "status": "open", "tier": "LIVE"},
+    ]})
+    (baseline_dir / "handoffs.jsonl").write_text(
+        '{"timestamp": "2026-08-01T00:00:00+00:00", "event": "start"}\n'
+        '{"timestamp": "2026-08-01T02:30:00+00:00", "event": "done"}\n',
+        encoding="utf-8",
+    )
+
+    _generate(report_env)
+    section = _document(report_env)["baseline_comparison"]
+    metrics = section["baseline_metrics"]
+    current = section["current"]
+
+    for key in ("grind_cycles", "post_verification_cycles", "defects_by_tier",
+                "tokens", "wall_clock_minutes"):
+        assert key in metrics, key
+        assert key in current, key
+
+    # Cycles: the recorded constant is the FLOOR for the baseline's own run.
+    # Its counter stayed at 0, its ledger proves 21, and 22 is what it is on
+    # record as having executed — a derivation that undercounts the baseline is
+    # measuring wrong, not measuring a better run.
+    assert metrics["grind_cycles"] == THUNDER_VIPER_BASELINE["grind_cycles"]
+    assert metrics["post_verification_cycles"] == (
+        THUNDER_VIPER_BASELINE["post_verification_cycles"]
+    )
+    # Defects by tier and wall clock come off the archive itself.
+    assert metrics["defects_by_tier"] == {"LATENT": 0, "LIVE": 1, TIER_UNKNOWN: 1}
+    assert metrics["wall_clock_minutes"] == 150.0
+    # It wrote no spend ledger, so tokens is null — never a fabricated 0, which
+    # would read as "that run cost nothing".
+    assert metrics["tokens"] is None
+
+    # Every metric appears in the operator-readable table.
+    table = _markdown(report_env).split("## Baseline comparison", 1)[1]
+    for label in ("GRIND cycles", "Post-verification cycles", "Defects by tier",
+                  "Tokens", "Wall clock"):
+        assert label in table, label
+
+
+def test_an_absent_baseline_archive_is_null_columns_not_fabricated_ones(report_env):
+    """D-037's honest-null half. `foundry-archive/` is git-ignored and a
+    checkout will usually not have thunder-viper's archive at all, so the three
+    derived columns must be null with the reason stated — not zeros, and not a
+    refusal."""
+    _generate(report_env)
+    section = _document(report_env)["baseline_comparison"]
+    metrics = section["baseline_metrics"]
+    assert metrics["defects_by_tier"] is None
+    assert metrics["tokens"] is None
+    assert metrics["wall_clock_minutes"] is None
+    assert "null rather than fabricated" in section["baseline_note"]
+    # The two recorded cycle numbers still print — they come from vocab.
+    assert metrics["grind_cycles"] == THUNDER_VIPER_BASELINE["grind_cycles"]
+
+
+def test_the_report_and_measure_run_derive_the_cycle_count_the_same_way(report_env):
+    """D-036: two derivations of one fact that could disagree.
+
+    `measure-run.py::_extract_per_run` published `final_index + 1` while this
+    module published the raw `state.json["cycle"]`. They differ by exactly one,
+    which is enough to straddle `CONVERGENCE_TARGET["grind_cycles"]`: a run at
+    index 12 met the effort's own target on one surface and missed it on the
+    other. There is one derivation now, in `foundry_state`, and this asserts
+    the report publishes ITS answer rather than a second one."""
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    _generate(report_env)
+    current = _document(report_env)["baseline_comparison"]["current"]
+    derived = derive_cycle_count(report_env)
+
+    assert current["grind_cycles"] == derived["count"]
+    assert derived["count"] == derived["index"] + 1
+    # And the counter is not the only source: the fixture's roll-up and defect
+    # ledger corroborate it, which is what rescues an archive whose counter
+    # never moved.
+    assert derived["sources"]["state_cycle"] == 5
+    assert derived["sources"]["rollup_highest"] == 5
+    assert derived["sources"]["defect_max_cycle"] == 5
+
+
+def test_a_stale_counter_is_outvoted_by_the_ledgers(report_env):
+    """D-022's mechanism, on the report side. thunder-viper's counter was
+    written once as 0 and never incremented, so `state["cycle"]` alone reported
+    a 22-cycle run as one cycle and the convergence surfaces certified it.
+
+    The defect ledger stamps the cycle each filing was made in, so its highest
+    is a floor on the cycles the run executed. Zero the counter here and the
+    count must hold."""
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 0
+    _write_json(report_env, "state.json", state)
+
+    derived = derive_cycle_count(report_env)
+    assert derived["sources"]["state_cycle"] == 0
+    assert derived["count"] == 6, "the ledgers still prove six cycles"
+
+    _generate(report_env)
+    assert _document(report_env)["baseline_comparison"]["current"][
+        "grind_cycles"
+    ] == 6
+
+
+def test_the_cycle_count_is_none_when_no_ledger_can_supply_one(tmp_path):
+    """"Cannot say" and "one cycle" are different answers, and the surface that
+    turns this into a target verdict has to tell them apart — `meets_target` is
+    never True on a number nobody measured (D-022)."""
+    from foundry_mcp.tools.foundry_state import derive_cycle_count
+
+    empty = tmp_path / "no-ledgers"
+    empty.mkdir()
+    derived = derive_cycle_count(empty)
+    assert derived["count"] is None
+    assert derived["index"] is None
+    assert derived["stale_counter"] is False
+    assert derived["problems"] == []
 
 
 def test_the_report_copies_the_baseline_dicts_rather_than_embedding_them(report_env):
@@ -614,9 +862,11 @@ def test_report_status_names_the_sections_that_were_removed(report_env):
 def test_appended_prose_never_makes_a_section_look_missing(report_env):
     """GI-006's first half: 'The lead may append prose.'
 
-    `report_status` reads the JSON, not the markdown, precisely so that
-    appending prose, rewording a heading or reflowing a table — all things the
-    lead is allowed to do — cannot make a present section look absent."""
+    The markdown IS read (D-015), so this is the half that has to keep
+    working: a lead's own `## ` heading appended below the generated ones is
+    permitted and must not register as a section, present or missing. Whole
+    heading LINES are matched, never prefixes, which is what lets the two
+    coexist."""
     _generate(report_env)
     md_path = report_env / REPORT_MD_FILENAME
     md_path.write_text(
@@ -627,6 +877,72 @@ def test_appended_prose_never_makes_a_section_look_missing(report_env):
     status = report_status(report_env)
     assert status["present"] is True
     assert status["missing_sections"] == []
+
+
+def test_the_done_gate_opens_report_md_and_not_only_the_json(report_env):
+    """D-015 / GI-006's violation column, verbatim: 'a run reaching DONE with a
+    lead-authored REPORT.md that lacks the generated sections, or no report at
+    all.'
+
+    Driven the simplest way there is — delete REPORT.md. The gate read
+    `report.json` alone, so the run reached DONE with no operator-readable
+    report in the archive at all, which is the second disjunct of that clause
+    word for word. REPORT.md is the document a human reads; the JSON exists for
+    tools, and a gate that checks only the tools' copy is not checking the
+    thing GI-006 names."""
+    _generate(report_env)
+    assert report_status(report_env)["present"] is True
+
+    (report_env / REPORT_MD_FILENAME).unlink()
+    status = report_status(report_env)
+    assert status["present"] is False
+    assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
+    assert status["missing_from_json"] == [], (
+        "the JSON is intact — it is REPORT.md's absence that must close the gate"
+    )
+    assert REPORT_MD_FILENAME in status["problem"]
+
+
+def test_a_section_heading_deleted_from_report_md_is_named_back(report_env):
+    """D-015 / GI-006's first disjunct: a REPORT.md that LACKS a generated
+    section, with the JSON left complete.
+
+    A lead who edits the markdown and drops a heading is exactly the case
+    GI-006's 'cannot omit a section' addresses, and the omission has to be
+    named — casting 3's refusal reads `missing_sections` to say which."""
+    _generate(report_env)
+    md_path = report_env / REPORT_MD_FILENAME
+    md_path.write_text(
+        md_path.read_text(encoding="utf-8").replace("## LATENT backlog", "", 1),
+        encoding="utf-8",
+    )
+    status = report_status(report_env)
+    assert status["present"] is False
+    assert status["missing_sections"] == ["latent_backlog"]
+    assert status["missing_from_markdown"] == ["latent_backlog"]
+    assert status["missing_from_json"] == []
+
+
+def test_a_failed_markdown_write_leaves_no_json_for_the_gate_to_pass(report_env):
+    """D-015's third aggravator: the write ORDER decides which document's
+    absence holds the gate.
+
+    `generate_report` wrote `report.json` first, so an OSError on the markdown
+    left a complete JSON behind and a satisfied gate — a half-written report
+    that opens DONE. Driven by making the markdown path unwritable: the call
+    must refuse AND leave no `report.json` for a later `report_status` to pass
+    on."""
+    md_path = report_env / REPORT_MD_FILENAME
+    md_path.mkdir()          # a directory occupying the name: write_text raises OSError
+
+    result = generate_report(report_env.parent.parent, report_env)
+    assert result["ok"] is False, result
+    assert REPORT_MD_FILENAME in result["error"] or str(report_env) in result["error"]
+    assert not (report_env / REPORT_JSON_FILENAME).exists(), (
+        "the JSON was written before the markdown failed, so the DONE gate "
+        "would open on a report whose readable half does not exist"
+    )
+    assert report_status(report_env)["present"] is False
 
 
 def test_report_status_on_a_corrupt_report_names_the_problem(report_env):
@@ -727,26 +1043,75 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     import graph — the same cycle `foundry_state`'s leaf-module contract exists
     to keep open.
 
-    Asserted on the SOURCE rather than on `sys.modules`, because an import
-    inside a function body would be invisible to the latter and is exactly as
-    dangerous."""
+    Asserted on the SOURCE rather than on `sys.modules`, and split by DEPTH.
+
+    D-013 sharpened what this test is for. It used to demand that no
+    `foundry_mcp` name appear anywhere in the file outside the two leaf
+    modules, function bodies included, on the grounds that a body-level import
+    is "exactly as dangerous". That is what forced `_agent_id_for_casting` to
+    be a hand-typed copy of `foundry_spawn`'s spelling — and the copy then
+    disagreed with `foundry_orchestrator._dispatched_agents` in production,
+    which is a live defect traded for a cycle that cannot actually form.
+
+    A body-level import runs at CALL time, when every module in the chain is
+    already built, so it closes nothing. The real rule is about MODULE level,
+    and that is what is asserted here — plus, below, that the one body-level
+    import really is body-level and really does work from a cold interpreter."""
     import ast
 
     source = Path(fr.__file__).read_text(encoding="utf-8")
-    reached: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+
+    def _imported(node: ast.AST) -> set[str]:
+        names: set[str] = set()
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
             "foundry_mcp"
         ):
-            reached.add(node.module)
+            names.add(node.module)
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("foundry_mcp"):
-                    reached.add(alias.name)
-    assert reached == {
+            names |= {a.name for a in node.names if a.name.startswith("foundry_mcp")}
+        return names
+
+    module_level: set[str] = set()
+    for node in tree.body:
+        module_level |= _imported(node)
+    assert module_level == {
         "foundry_mcp.schemas.vocab",
         "foundry_mcp.tools.foundry_state",
-    }, sorted(reached)
+    }, sorted(module_level)
+
+    nested: set[str] = set()
+    for node in ast.walk(tree):
+        if node in tree.body:
+            continue
+        nested |= _imported(node)
+    assert nested == {"foundry_mcp.tools.foundry_spawn"}, sorted(nested)
+
+
+def test_the_lazy_spawn_import_works_from_a_cold_interpreter():
+    """D-013's proof that the deferred import closes no cycle.
+
+    A fresh interpreter imports `foundry_report` FIRST — the direction that
+    would deadlock if the import were at module level, since `foundry_spawn`
+    imports `foundry_orchestrator` which imports this module — and then calls
+    the helper, which is what triggers the deferred import. Run in a
+    subprocess because an in-process assertion proves nothing once the whole
+    package is already in `sys.modules`."""
+    import subprocess
+    import sys
+
+    program = (
+        "from foundry_mcp.tools import foundry_report as fr;"
+        "from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting as s;"
+        "print(fr._agent_id_for_casting(7) == s(7))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True, text=True,
+        cwd=str(Path(fr.__file__).parents[2]),   # src/, where foundry_mcp lives
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "True", (proc.stdout, proc.stderr)
 
 
 def test_foundry_state_still_imports_nothing_from_its_own_package():
