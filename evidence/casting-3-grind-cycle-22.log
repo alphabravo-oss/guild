@@ -17,7 +17,7 @@ ESCALATION_STATUSES           : CLEARED ESCALATED
     {"status": "CLEARED"}  ok=True  classes=[] persisted=[] recurring=[]
 
 -- Foundry-Report on the same fixtures: the OTHER terminal artifact --
-    {"status": "BOGUS"}    count=1 ESCALATED=0 CLEARED=0 row_status=BOGUS
+    {"status": "BOGUS"}    count=1 ESCALATED=1 CLEARED=0 row_status=ESCALATED
     "just a string"        count=1 ESCALATED=1 CLEARED=0 row_status=ESCALATED
     ["ESCALATED"]          count=1 ESCALATED=1 CLEARED=0 row_status=ESCALATED
     null                   count=1 ESCALATED=1 CLEARED=0 row_status=ESCALATED
@@ -58,7 +58,7 @@ INSPECT_MODES                 : DELTA FULL
     mode 7          recorded=null     unrecorded_problem=True  assay_passed=False
 
 -- and a malformed CURRENT decision is never answered with an older valid one --
-    last entry {"mode": "FULL"}   current="FULL"   assay_passed=True
+    last entry {"mode": "FULL"}   current=null     assay_passed=False
     last entry {"mode": "BOGUS"}  current=null     assay_passed=False
     last entry {"mode": ""}       current=null     assay_passed=False
     last entry "junk"             current=null     assay_passed=False

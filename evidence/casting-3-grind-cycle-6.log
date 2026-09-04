@@ -31,7 +31,7 @@ refused from: F0 F1 F4 F5 F5.5 F6
 F6 is the one exception and says why: True
 
 === D-117: an unrecorded width is a refusal, not full width ===
-reason: this INSPECT has no recorded width — nothing has recorded an inspect_modes entry for it, so the roster, the rule and the evidence sweep it was opened with are all unknown
+reason: this INSPECT (cycle 0) has no recorded width — nothing has recorded an inspect_modes entry for it, so the roster, the rule and the evidence sweep it was opened with are all unknown
 hint names every recording transition: True
 
 === D-111 / D-112: both exit arms, and the distance to each ===
