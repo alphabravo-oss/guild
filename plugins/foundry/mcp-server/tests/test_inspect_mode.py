@@ -4691,3 +4691,175 @@ def test_the_cycle_stamp_is_checked_in_the_one_width_read(run_env):
         "against the server counter, so a decision recorded for another "
         "crossing reads as this INSPECT's width again — D-216."
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-219 — THE F5 ENTRY OPENS A FRESH INSPECT, SO IT CLEARS THE PREVIOUS ONE'S
+# COMPLETION STATE.
+#
+# GI-009's "one rule, two doors" was carried across to the `temper` branch as
+# the WIDTH half only: the branch recorded FULL / first_of_phase with the
+# five-stream roster and left the F2 INSPECT's `.{stream}-complete` markers
+# where ASSAY found them, so the roster it had just recorded was satisfied on
+# arrival by markers written before ASSAY ran. `grind_start` and `assay_fail`
+# have cleared those markers since they were written, under the reason
+# "completion state must stay honest" — a property of opening a fresh INSPECT,
+# which is what this door does.
+# --------------------------------------------------------------------------- #
+
+_F2_STREAM_MARKERS = ("trace", "prove", "test", "research_audit", "test01")
+
+
+def _mark_streams_complete(fdir: Path, streams=_F2_STREAM_MARKERS) -> None:
+    """Write the completion sentinel a stream writes when it reports."""
+    for stream in streams:
+        (fdir / fo._stream_marker(stream)).write_text(
+            f"{fo._now()} cycle=1\n", encoding="utf-8"
+        )
+
+
+def test_the_f5_entry_clears_the_previous_inspects_completion_markers(run_env):
+    """AC-016 verbatim: 'The phase-entry transition into F2 and into F5 records
+    FULL with rule first_of_phase'. GI-009 verbatim: 'One rule: whichever
+    Foundry-Phase transition opens an INSPECT ... records the mode'.
+
+    D-219, driven. Five markers on disk from the F2 INSPECT, a run at F4, and
+    `foundry_mark_phase_complete('temper')` returned ok with mode FULL, rule
+    first_of_phase and `required_streams ['trace','prove','test',
+    'research_audit','test01']` — while every one of those five markers was
+    still on disk, so `_check_streams_complete` answered `complete True,
+    missing ''` for an INSPECT in which none of the five had run.
+
+    The roster the transition records and the completion state it opens on are
+    the same rule seen twice; recording the first without clearing the second
+    is what let a TEMPER INSPECT report five streams complete before it began.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=5)
+    _write_manifest(fdir)
+    _mark_streams_complete(fdir)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("temper", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F5"
+    assert result["inspect_rule"] == "first_of_phase"
+    assert set(_F2_STREAM_MARKERS) <= set(result["required_streams"]), result
+
+    for stream in _F2_STREAM_MARKERS:
+        assert not (fdir / fo._stream_marker(stream)).exists(), (
+            f"{stream}'s F2 completion marker survived the F5 entry"
+        )
+
+    # ...and the consequence the markers had, which is the harm: the roster the
+    # transition just recorded is now genuinely outstanding.
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert set(_F2_STREAM_MARKERS) <= set(streams["missing"].split()), streams
+
+
+def test_the_f5_entry_leaves_completion_state_alone_when_it_refuses(run_env):
+    """ST-006 / GI-009 — the ordering, not just the clearing.
+
+    A refused crossing must leave the run exactly as it found it: the mode is
+    recorded after the sweep refusal point and so is the marker clear. Driven
+    through the refusal this branch already has — a committed evidence log that
+    no longer reproduces — because a clear placed before it would destroy the
+    F2 INSPECT's completion state for a transition that never happened, and the
+    run would sit in F4 unable to say what it had already run.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", cycle=5)
+    _write_manifest(fdir)
+    _mark_streams_complete(fdir)
+    _evidence_log(
+        project_root, "casting-1-handler.log",
+        "echo the-handler-calls-the-store", "the-handler-does-not\n",
+    )
+    _git(Path(project_root), "add", "-A")
+    _git(Path(project_root), "commit", "-qm", "evidence")
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("temper", project_root)
+
+    assert result.get("ok") is not True, result
+    assert _read_state(fdir)["phase"] == "F4"
+    for stream in _F2_STREAM_MARKERS:
+        assert (fdir / fo._stream_marker(stream)).exists(), (
+            f"{stream}'s marker was cleared by a transition that was refused"
+        )
+
+
+def test_the_grind_doors_clear_through_the_same_one_spelling(run_env):
+    """FR-013 / CT-002 — THE ADJACENT PATH: the two doors that already cleared.
+
+    `_clear_stream_completion_markers` was extracted from two byte-identical
+    loops in `grind_start` and `assay_fail`, and those two transitions are a
+    different caller of it than the `temper` entry the defect was found on.
+    Both are driven here over the whole recordable vocabulary — not just the
+    five streams a FULL roster names — because the loop they carried derived
+    its family from `VALID_STREAMS` and the extraction has to keep deriving it:
+    a helper that quietly narrowed to the roster would leave `sight`, `probe`,
+    `coverage_diff` and `flow_trace` stale across every GRIND cycle.
+    """
+    project_root, fdir = run_env
+
+    for token in ("grind_start", "assay_fail"):
+        _write_state(fdir, phase="F2" if token == "grind_start" else "F4", cycle=2)
+        _mark_streams_complete(fdir, sorted(fo.VALID_STREAMS))
+        (fdir / fo.INSPECT_CLEAN_MARKER).write_text("x\n", encoding="utf-8")
+        (fdir / fo.TASKS_GENERATED_MARKER).write_text("x\n", encoding="utf-8")
+        _arm(fdir)
+
+        result = foundry_mark_phase_complete(token, project_root)
+
+        assert result["ok"] is True, (token, result)
+        assert result["phase"] == "F3", (token, result)
+        for stream in sorted(fo.VALID_STREAMS):
+            assert not (fdir / fo._stream_marker(stream)).exists(), (token, stream)
+        assert not (fdir / fo.INSPECT_CLEAN_MARKER).exists(), token
+        assert not (fdir / fo.TASKS_GENERATED_MARKER).exists(), token
+
+
+def test_no_phase_branch_spells_the_marker_family_by_hand():
+    """FR-013 / CT-002 verbatim: the stream vocabulary is READ, never re-typed.
+
+    The class behind D-219 is that the marker-clear list was a hand-built copy
+    of the vocabulary living inside a phase branch, so a third door needing it
+    got nothing — and the fix would have been a third copy if it were written
+    the way the first two were. `_stream_marker`'s own docstring records what
+    that cost the last time ("Five call sites spelled f'.{stream}-complete'").
+
+    Derived from the module's own AST rather than from a list of branches, so a
+    branch added tomorrow is covered the day it is added: no call to
+    `_stream_marker` may appear anywhere inside `_phase_transition`, which is
+    where every phase branch lives (`foundry_mark_phase_complete` is the thin
+    wrapper that guards and dispatches into it). Clearing goes through
+    `_clear_stream_completion_markers`, and reading a single named marker
+    belongs to the helper that owns that marker.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(fo._phase_transition))
+    # The guard is only worth what its subject is: assert the branches really
+    # are in this function before asserting what they do not contain.
+    assert 'phase == "temper"' in source and 'phase == "grind_start"' in source, (
+        "_phase_transition no longer holds the phase branches — point this "
+        "guard at whatever does"
+    )
+    tree = ast.parse(source)
+    spelled = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_stream_marker"
+    ]
+    assert not spelled, (
+        "_phase_transition builds a stream-marker path itself at line(s) "
+        f"{spelled} — clear through _clear_stream_completion_markers so every "
+        "door that opens an INSPECT clears the same family"
+    )

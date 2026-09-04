@@ -2949,6 +2949,59 @@ def foundry_gate(
 VALID_STREAMS = STREAM_WIRE_IDS
 
 
+def _clear_stream_completion_markers(fdir: Path) -> list[str]:
+    """Unlink every completion marker the INSPECT that is ending left behind.
+
+    Returns the markers that actually existed, so a caller can say what it
+    cleared. Derived from the canonical stream vocabulary rather than listed,
+    for the reason stated above this function: the marker-clear lists were two
+    of the six hand-typed copies of that vocabulary, and a stream added to
+    `vocab.py` has to be cleared the day it is added or its marker goes stale
+    across a boundary.
+
+    D-219 — ONE SPELLING, BECAUSE THE THIRD DOOR NEEDED IT AND DID NOT HAVE IT.
+    -------------------------------------------------------------------------
+    This was two byte-identical loops inside `foundry_mark_phase_complete`, in
+    `grind_start` and `assay_fail`, each carrying the comment "completion state
+    must stay honest". The `temper` branch — which opens TEMPER's INSPECT, and
+    records the five-stream FULL roster to prove it (GI-009: "One rule, two
+    doors") — carried only the width half of that rule. Driven through the real
+    handlers: a run at F4 with `.trace-complete`, `.prove-complete`,
+    `.test-complete`, `.research_audit-complete` and `.test01-complete` all
+    present from the F2 INSPECT, `foundry_mark_phase_complete('temper')`
+    returned ok with mode FULL, rule first_of_phase and the five-stream roster;
+    all five markers were still on disk afterwards; `_check_streams_complete`
+    answered `complete True, missing ''` for F5 and `_format_status_display`
+    drew `[✓]prove [✓]research_audit [✓]test [✓]test01 [✓]trace` — five streams
+    reported complete for a TEMPER INSPECT in which none of them ran. It
+    compounded through `_coverage_shortfall`, which is consulted only for a
+    stream that is NOT missing and reads the current cycle's roll-up: in F5
+    that is still the F2 cycle's numbers, so the earlier INSPECT's coverage met
+    the thresholds too. Clearing the markers closes both halves — a missing
+    stream is never coverage-checked.
+
+    THE TWO REMAINING INSPECT-OPENING DOORS DO NOT CALL THIS, and that is a
+    statement about reachable state rather than an omission. `cast` enters F2
+    from F1, which is entered by `start_cast` before any stream can have
+    reported; `inspect_start` enters F2 from F3, and F3 is entered ONLY by the
+    two doors below, both of which clear on the way in. Those two INSPECTs
+    therefore open on a cleared state by construction, and a call here would
+    have no reachable state behind it. `temper` is the one door that opens an
+    INSPECT from a phase — F4 — that nothing on the path from F2 ever cleared.
+    """
+    markers = [_stream_marker(stream) for stream in sorted(VALID_STREAMS)] + [
+        INSPECT_CLEAN_MARKER,
+        TASKS_GENERATED_MARKER,
+    ]
+    cleared: list[str] = []
+    for marker in markers:
+        path = fdir / marker
+        if path.exists():
+            cleared.append(marker)
+        path.unlink(missing_ok=True)
+    return cleared
+
+
 # --------------------------------------------------------------------------- #
 # Per-cycle stream roll-up (FR-014 / CT-003 / AC-020 / OT-009).
 #
@@ -7984,9 +8037,9 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # Every recordable stream marker is cleared (derived from the canonical
         # stream vocabulary so new streams cannot go stale across GRIND cycles),
         # not just the required subset — completion state must stay honest.
-        stream_markers = [_stream_marker(s) for s in sorted(VALID_STREAMS)]
-        for marker in stream_markers + [INSPECT_CLEAN_MARKER, TASKS_GENERATED_MARKER]:
-            (fdir / marker).unlink(missing_ok=True)
+        # D-219: through the ONE spelling, which the `temper` branch needed and
+        # a third copy of this loop would not have given it.
+        _clear_stream_completion_markers(fdir)
         _update_phase(fdir, "F3")
         return {"ok": True, "phase": "F3",
                 "message": "All markers cleared \u2192 phase is now F3 (GRIND). Full INSPECT must re-run after."}
@@ -8002,9 +8055,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # exactly the one --max-cycles exists to bound.
         if (halt := _halt_if_capped(fdir, project_root, "assay_fail")) is not None:
             return halt
-        stream_markers = [_stream_marker(s) for s in sorted(VALID_STREAMS)]
-        for marker in stream_markers + [INSPECT_CLEAN_MARKER, TASKS_GENERATED_MARKER]:
-            (fdir / marker).unlink(missing_ok=True)
+        _clear_stream_completion_markers(fdir)
         _update_phase(fdir, "F3")
         return {"ok": True, "phase": "F3",
                 "message": "ASSAY failed \u2192 phase is now F3 (GRIND). Fix defects, then full INSPECT, then ASSAY again."}
@@ -8039,6 +8090,28 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         if not sweep["ok"]:
             return _sweep_refusal(sweep, _current_cycle(fdir), token="temper")
 
+        # D-219 / GI-009 / AC-016 — AND THE OTHER HALF OF "ONE RULE, TWO DOORS".
+        #
+        # The width half was carried across to this door and the completion
+        # half was not: this branch recorded FULL / first_of_phase with the
+        # five-stream roster and left the F2 INSPECT's `.{stream}-complete`
+        # markers on disk, so the roster it had just recorded was satisfied on
+        # arrival by markers written before ASSAY. Driven: five markers present
+        # at F4, `temper` returns ok with `required_streams ['trace','prove',
+        # 'test','research_audit','test01']`, and `_check_streams_complete`
+        # then answers `complete True, missing ''` for an INSPECT in which none
+        # of the five ran. `grind_start` and `assay_fail` have cleared them
+        # since they were written, under the reason "completion state must stay
+        # honest"; that reason is a property of opening a fresh INSPECT, not of
+        # entering GRIND, and F5 is the one entry no earlier crossing cleared
+        # for. See `_clear_stream_completion_markers` for why the other two
+        # INSPECT-opening doors inherit a cleared state without calling it.
+        #
+        # AFTER the sweep refusal above and immediately before the phase write,
+        # so a refused crossing leaves the run's completion state exactly as it
+        # found it — the same ordering this branch already holds for the mode
+        # record and the roll-up.
+        cleared = _clear_stream_completion_markers(fdir)
         _update_phase(fdir, "F5")
         _record_inspect_mode(fdir, entry)
         # D-070: under the F5 entry's own key, beside the mode it just
@@ -8057,11 +8130,15 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
             "evidence_sweep": sweep["record"],
+            "cleared_markers": cleared,
             "message": (
                 f"Phase is now F5 (TEMPER), mode {entry['mode']} "
-                f"(rule {entry['rule']}). Evidence sweep re-executed "
-                f"{len(sweep['record']['logs_reexecuted'])} log(s) at "
-                f"{sweep['record']['scope']} scope."
+                f"(rule {entry['rule']}). Required streams: "
+                f"{', '.join(entry['required_streams'])} — TEMPER's INSPECT "
+                f"runs them itself; {len(cleared)} stale completion marker(s) "
+                "from the previous INSPECT were cleared. Evidence sweep "
+                f"re-executed {len(sweep['record']['logs_reexecuted'])} log(s) "
+                f"at {sweep['record']['scope']} scope."
             ),
         }
 
