@@ -72,7 +72,6 @@ defects"; migrate-then-measure on a copy of that archive must print both.
 from __future__ import annotations
 import argparse, csv, io, json, sys
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -240,18 +239,6 @@ class MeasureResult:
             "gate_verdicts": self.gate_verdicts,
             "failure_tokens": self.failure_tokens,
         }
-
-
-def _parse_iso8601(stamp: Any) -> datetime | None:
-    if not isinstance(stamp, str):
-        return None
-    s = stamp.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
 
 
 def _load_json(path: Path) -> Any:

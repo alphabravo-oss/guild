@@ -1,0 +1,113 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && python3 -c "import ast,pathlib;R=pathlib.Path('..').resolve();EX=frozenset({'.venv','venv','site-packages','node_modules','__pycache__','.tox','.pytest_cache','.ruff_cache'});keep=lambda p:EX.isdisjoint(p.parts);py=[p for p in sorted(R.rglob('*.py')) if keep(p)];md=[p for p in sorted(R.rglob('*.md')) if keep(p)];N='_parse'+'_iso8601';rel=lambda p:str(p.relative_to(R));hits=sorted(rel(p) for p in py+md if N in p.read_text(encoding='utf-8',errors='replace'));M=R/'scripts/measure-run.py';src=M.read_text(encoding='utf-8');tree=ast.parse(src);helpers={n.name:n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name.startswith('_') and not n.name.startswith('__')};named=lambda t:{n.id for n in ast.walk(t) if isinstance(n,ast.Name)}|{n.attr for n in ast.walk(t) if isinstance(n,ast.Attribute)}|{n.value for n in ast.walk(t) if isinstance(n,ast.Constant) and isinstance(n.value,str)};reach=set().union(*[named(ast.parse(p.read_text(encoding='utf-8'))) for p in py if p!=M])|set().union(*[({x for c in ast.iter_child_nodes(n) for x in named(c)}-{n.name}) if n in helpers.values() else named(n) for n in tree.body]);print(chr(10)+'=== D-199 / FR-032 / NFR-001: the superseded helper is gone from the shipped script ===');print('  c1727f3 deleted its last call site when the wall-clock derivation moved to');print('  foundry_state.handoffs_wall_clock_seconds. Nothing named it afterwards, and');print('  nothing deleted it either. The reachability pin D-196 shipped reads only');print('  foundry_orchestrator.py, so a SHIPPED script kept a helper reachable by nothing.');print(chr(10)+'  %-52s %s'%('plugin-owned .py and .md files searched for the name',len(py)+len(md)));print('  %-52s %s'%('files naming it',hits or 'none'));print('  %-52s %s'%('datetime, the import it alone used',sorted({t for t in ('datetime',) if t in src}) or 'absent from the module'));print(chr(10)+'=== the pin casting 3 widens, run here over measure-run.py ===');print('  %-52s %s'%('private module-level functions in the script',len(helpers)));print('  %-52s %s'%('reachable by nothing outside their own body',sorted(n for n in helpers if n not in reach) or 'none'));print('  %-52s %s'%('plugin .py files that vouch for them',len(py)))" && python3 ../scripts/measure-run.py tests/fixtures/measure_run/thunder_viper_shape | python3 -c "import json,sys;b=json.load(sys.stdin)['baseline_comparison'];print(chr(10)+'=== AC-039 / NFR-001 / OT-030: the table the deletion did not disturb ===');print('  %-22s %s'%('baseline',json.dumps(b['baseline'])));print('  %-22s %s'%('target',json.dumps(b['target'])));print('  %-22s cycles=%s post_verification=%s'%('current',b['current']['grind_cycles'],b['current']['post_verification_cycles']));print('  %-22s %s'%('meets_target',json.dumps(b['meets_target'])));print('  %-22s %s'%('wall clock (minutes)',b['current']['wall_clock_minutes']));print('  the wall clock above is derived by foundry_state.handoffs_wall_clock_seconds --');print('  the survivor the deleted helper was superseded by, still on the live path.')" && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_measure_run.py
+# evidence-for: D-199, FR-032, NFR-001, AC-039
+# evidence-volatile: [0-9]+\.[0-9]+s
+# evidence-timeout: 600
+
+# GRIND cycle 17, casting 1. D-199 (LATENT, class superseded-helper-left-
+# unreachable) — my half only: the deletion. Casting 3 concurrently widens the
+# D-196 reachability pin from foundry_orchestrator.py alone to every tracked
+# plugin .py file; that widened pin is D-199's regression test and casting 3
+# files the Foundry-Fix. This log is the deletion landing under it.
+#
+# What was wrong: commit c1727f3 ("one derivation per number, on both surfaces
+# that print it", this run, 2026-09-03) moved the wall-clock derivation out of
+# measure-run.py into foundry_state.handoffs_wall_clock_seconds and deleted the
+# one line that called _parse_iso8601:
+#     -        ts = _parse_iso8601(entry.get("timestamp")) if isinstance(entry, dict) else None
+# The helper itself was left behind. A repo-wide grep at HEAD d872362 returned
+# exactly one line for the name — its own def. measure-run.py is a NAMED
+# Modified File carrying AC-039, OT-030 and NFR-001, and FR-032's "derived from
+# one constant rather than typed in several places" is the row D-196 was
+# accepted on, so the class had a live instance in shipped code the shipped pin
+# could not see.
+#
+# What changed: _parse_iso8601 deleted from plugins/foundry/scripts/measure-run.py,
+# together with `from datetime import datetime` — the module's ONLY use of the
+# datetime name was that function's annotation and its fromisoformat call, so
+# the import died with it. Nothing else was touched: the deletion has no
+# callers to rewire because it had none.
+#
+# The first section below sweeps all 111 plugin-owned .py and .md files for the
+# name and finds none, then runs the D-196 pin's own algorithm over
+# measure-run.py — 30 private module-level functions, zero reachable by nothing.
+# The second runs the CLI over the committed thunder_viper_shape fixture (the
+# real foundry-archive/ is untracked, so a detached worktree at this commit
+# cannot see it; the fixture carries thunder-viper's exact structural gaps and
+# is what casting-1-baseline-comparison.log already re-executes against) and
+# shows the AC-039/NFR-001/OT-030 table intact, wall clock still coming from
+# the survivor the deleted helper was superseded by. The third is
+# tests/test_measure_run.py, green. The one `s` in the progress dots is the
+# pre-existing cohort-stub skip, not a new skip mark.
+#
+# Additionally run by hand, and NOT in the body because the archive is
+# untracked and would not exist in the re-execution worktree:
+#   cd plugins/foundry/mcp-server && python3 ../scripts/measure-run.py ../../../foundry-archive/daring-orca
+# exit 0, no traceback, baseline 22/8 beside current 17/0 against the 12/3
+# target, wall_clock_seconds 107135.39247.
+# `git status --porcelain foundry-archive/thunder-viper` is empty: that archive
+# was read by nothing here and written by nothing.
+
+
+=== D-199 / FR-032 / NFR-001: the superseded helper is gone from the shipped script ===
+  c1727f3 deleted its last call site when the wall-clock derivation moved to
+  foundry_state.handoffs_wall_clock_seconds. Nothing named it afterwards, and
+  nothing deleted it either. The reachability pin D-196 shipped reads only
+  foundry_orchestrator.py, so a SHIPPED script kept a helper reachable by nothing.
+
+  plugin-owned .py and .md files searched for the name 111
+  files naming it                                      none
+  datetime, the import it alone used                   absent from the module
+
+=== the pin casting 3 widens, run here over measure-run.py ===
+  private module-level functions in the script         30
+  reachable by nothing outside their own body          none
+  plugin .py files that vouch for them                 67
+
+=== AC-039 / NFR-001 / OT-030: the table the deletion did not disturb ===
+  baseline               {"run": "thunder-viper", "grind_cycles": 22, "post_verification_cycles": 8}
+  target                 {"grind_cycles": 12, "post_verification_cycles": 3}
+  current                cycles=6 post_verification=None
+  meets_target           {"grind_cycles": true, "post_verification_cycles": null}
+  wall clock (minutes)   1470.8
+  the wall clock above is derived by foundry_state.handoffs_wall_clock_seconds --
+  the survivor the deleted helper was superseded by, still on the live path.
+.........s......................................................
+=== D-182 — a cycle bucket carrying its own C-6 facts ===
+  the five keys `_record_cycle_facts` writes beside the stream
+  tranches, in the shape the live archive holds them:
+    inspect_mode    (str)
+    inspect_rule    (str)
+    stream_scope    (dict)
+    evidence_sweep  (dict)
+    temper_entry    (dict)
+
+  measure-run.py over that archive, as a real process:
+    exit code:      0
+    failure_tokens: []
+    cycles:         4
+    coverage read:  ['PROVE', 'RESEARCH_AUDIT', 'TRACE']
+  before this fix the same document produced PHASE9_SCHEMA_INVALID
+  for the two string keys, PHASE9_UNKNOWN_STREAM for the three
+  mapping keys, and exit 1 — a schema fault asserted about the
+  shape the spec's own Data Model widened the document to.
+
+=== the filing's own control — the same archive with only
+=== those keys stripped, and nothing else changed ===
+    exit code:      0
+    failure_tokens: []
+    cycles:         4
+
+  keys differing between the two payloads: []
+  every published value identical — the five keys carry no
+  measurement this command publishes. The numbers were never the
+  defect; the VERDICT on a well-formed artifact was. NFR-001:
+  'Numbers are the target, not a gate'.
+
+=== one definition, both readers ===
+  foundry_orchestrator._stream_dispatch_cycles: ['prove', 'research_audit', 'trace']
+  foundry_state.is_stream_record:               ['prove', 'research_audit', 'trace']
+  the same three keys, from the rule stated once rather than
+  hand-typed a third time — which is how the third walker of
+  this bucket came to be missing it.
+.        [100%]
+64 passed, 1 skipped in 4.09s
