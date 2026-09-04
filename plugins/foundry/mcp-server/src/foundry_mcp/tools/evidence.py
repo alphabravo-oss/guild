@@ -1393,13 +1393,121 @@ _STUB_TIMESTAMP_LINE_RE = re.compile(
 
 
 def _strip_leading_header_block(text: str) -> str:
-    """Drop the leading ``# evidence-*:`` comment block, keeping the body.
+    """Drop the maximal leading run of ``#`` and blank lines, keeping the rest.
 
     Unlike ``_strip_header_and_blank_lines`` this preserves the body verbatim
     — interior blank lines and all — because the byte comparator's whole job
     is an exact match on what the command emitted.
+
+    THIS IS A RUN FINDER, NOT A HEADER FINDER (D-200). The run it drops is a
+    SUPERSET of the header: ``_EVIDENCE_HEADER_BLOCK_RE`` alternates ``#``
+    lines and blank lines in one pass, so it does not stop at the header/body
+    blank separator and keeps eating any further leading ``#`` or blank lines
+    past it. That is harmless on a committed log whose body starts with real
+    output, and it is why this remains the right helper for the test harnesses
+    that build a replay file from a synthetic log. It is NOT sound to apply
+    independently to the two sides of a comparison — see
+    ``_split_committed_header`` for what the comparator uses and why.
     """
     return _EVIDENCE_HEADER_BLOCK_RE.sub("", text, count=1)
+
+
+# D-200 — the narrowest prefix that is PROVABLY header. A line matching the
+# directive grammar cannot be command output in any log the parser accepts,
+# so a contiguous leading run of them plus the single blank separator is the
+# floor below which stripping cannot erase content. Only the disagreement
+# branch of ``_split_committed_header`` uses it, where the two sides have
+# already been shown to disagree and the job is a legible diff.
+_EVIDENCE_DIRECTIVE_LINE_RE = re.compile(r"^[ \t]*#[ \t]*evidence-[a-z][a-z0-9-]*[ \t]*:")
+
+
+def _leading_comment_blank_run(text: str) -> list[str]:
+    """The maximal leading run of ``#``/blank lines, as lines with newlines."""
+    match = _EVIDENCE_HEADER_BLOCK_RE.match(text)
+    return match.group(0).splitlines(keepends=True) if match else []
+
+
+def _provable_header_prefix(text: str) -> str:
+    """The contiguous leading ``# evidence-*:`` directives + one blank line."""
+    lines = text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and _EVIDENCE_DIRECTIVE_LINE_RE.match(lines[i]):
+        i += 1
+    if i and i < len(lines) and not lines[i].strip():
+        i += 1  # the single blank separator every writer emits
+    return "".join(lines[:i])
+
+
+def _split_committed_header(log_text: str, captured: str) -> str:
+    """Return the committed log's header — the leading run the command did NOT emit.
+
+    WHY THE TWO SIDES ARE DECIDED TOGETHER (FR-010 / D-200)
+    -------------------------------------------------------
+    Both comparator call sites used to run ``_strip_leading_header_block``
+    independently on each side and hand the two results to
+    ``_compare_byte_match``. The comment above them asserted the regex "only
+    matches a LEADING run of ``#`` comment and blank lines, so it cannot eat
+    content" — false the moment the CONTENT starts with ``#``, which is
+    exactly the shape D-198 had just established is legitimate. Driven live at
+    f5b487b: a committed log of ``<directives> + "# FABRICATED..." + blank +
+    "REAL_TAIL"`` and a capture of ``"# a completely different comment" +
+    blank + "REAL_TAIL"`` both reduced to ``"REAL_TAIL\\n"`` and the comparator
+    returned matched=True. Driven one door further, ``Foundry-Phase
+    (inspect_start)`` on a committed log whose three captured ``#`` lines
+    disagree with HEAD returned no error, no mismatches, and advanced the
+    cycle counter — so a fabricated leading comment block passed both
+    ``Foundry-Accept-Casting`` (FR-010) and the boundary sweep (GI-002 /
+    ST-005). D-198 was the false-REFUSAL half of the same helper family; this
+    is the false-ACCEPT half.
+
+    THE STRIP IS ONE DECISION OVER BOTH SIDES, WHICH IS WHY IT LIVES HERE.
+    The sound definition of the header is not a shape at all: it is the part
+    of the committed file the re-execution did not produce. So the captured
+    side is NEVER stripped, and the committed side loses exactly the prefix
+    the capture did not emit — computed by asking whether the capture's own
+    leading ``#``/blank run is a LINE-ALIGNED SUFFIX of the committed one:
+
+      * capture's run is empty (every log in this run's 74-log corpus whose
+        command output does not begin with ``#`` or a blank): the header is
+        the whole committed run and the capture passes through whole, which
+        is byte-for-byte the verdict the old code reached — the old code
+        stripped nothing from that capture either. Unchanged, by construction.
+      * capture's run equals the committed run (the ``use_cat_replay``
+        harness, whose replay file holds the FULL rewritten evidence so both
+        sides carry the header): the header is empty and the two full texts
+        are compared. Still a match, for the right reason.
+      * capture's run is a proper suffix (the honest log whose captured body
+        legitimately starts with ``#`` lines — D-198's own subject): the
+        header is the committed run minus those lines, so the captured ``#``
+        lines are compared on both sides instead of vanishing from both.
+      * capture's run is NOT a suffix: the two sides disagree about their
+        leading content, which is the D-200 forgery. Strip only the provable
+        header so the unified diff names the first differing line, and let
+        ``_compare_byte_match`` refuse.
+
+    Line alignment is load-bearing: a raw ``str.endswith`` would accept a
+    capture whose run is ``"\\n"`` against a committed run of
+    ``"# evidence-cmd: X\\n"``, splitting mid-line and silently donating the
+    directive's own newline to the body. The comparison is over lines, so the
+    suffix test is over lines.
+    """
+    committed_run = _leading_comment_blank_run(log_text)
+    captured_run = _leading_comment_blank_run(captured)
+    n = len(captured_run)
+    if n == 0 or (n <= len(committed_run) and committed_run[len(committed_run) - n :] == captured_run):
+        return "".join(committed_run[: len(committed_run) - n])
+    return _provable_header_prefix(log_text)
+
+
+def _header_stripped_pair(log_text: str, captured: str) -> tuple[str, str]:
+    """``(committed_body, captured_body)`` for the byte comparator.
+
+    The single entry point both comparator call sites use, so the two halves
+    of the strip cannot drift apart again (D-200). The captured side is
+    returned verbatim: a re-execution capture is all output.
+    """
+    header = _split_committed_header(log_text, captured)
+    return log_text[len(header) :], captured
 
 
 def _strip_header_and_blank_lines(text: str) -> list[str]:
@@ -1853,16 +1961,23 @@ def _verify_one_evidence_file(
     # header lines. It went unnoticed because `casting_commit` was unreachable
     # over MCP, so this comparison had never run outside the test harness.
     #
-    # The strip is applied SYMMETRICALLY, which is what keeps both conventions
-    # working: a real evidence file (committed header+body vs captured body)
-    # matches on the body, and the `use_cat_replay` harness (whose replay file
-    # deliberately holds the full rewritten evidence, so BOTH sides carry the
-    # header) still compares body against body. The regex only matches a
-    # LEADING run of `#` comment and blank lines, so it cannot eat content.
+    # D-200 CORRECTS THIS COMMENT. It used to say the strip was applied
+    # SYMMETRICALLY and that "the regex only matches a LEADING run of `#`
+    # comment and blank lines, so it cannot eat content" — false whenever the
+    # CONTENT starts with `#`, and a symmetric strip is precisely what let two
+    # differing leading comment blocks reduce to the same bytes and ACCEPT.
+    # `_header_stripped_pair` decides the strip once, over both sides: the
+    # capture is never stripped, and the committed side loses exactly the
+    # prefix the capture did not emit. Both conventions still work — a real
+    # evidence file (committed header+body vs captured body) matches on the
+    # body, and the `use_cat_replay` harness (whose replay file deliberately
+    # holds the full rewritten evidence, so BOTH sides carry the header) lands
+    # on the equal-runs case and compares the two full texts.
+    committed_body, captured_body = _header_stripped_pair(log_text, captured)
     try:
         matched, diff, redacted_log, redacted_captured = _compare_byte_match(
-            committed=_strip_leading_header_block(log_text),
-            captured=_strip_leading_header_block(captured),
+            committed=committed_body,
+            captured=captured_body,
             volatile_patterns=header.get("volatile", []),
         )
     except ValueError as exc:
@@ -3470,10 +3585,17 @@ def _sweep_one_log(
                 elapsed_seconds=elapsed,
             )
 
+        # D-200: the same one-decision strip the acceptance door uses. The
+        # boundary sweep took the same false ACCEPT — driven at f5b487b,
+        # `Foundry-Phase(inspect_start)` on a committed log whose three
+        # captured `#` lines disagreed with HEAD reported no mismatch and
+        # advanced the cycle counter — so both callers route through
+        # `_header_stripped_pair` rather than stripping each side alone.
+        committed_body, captured_body = _header_stripped_pair(log_text, captured)
         try:
             matched, diff, redacted_log, redacted_captured = _compare_byte_match(
-                committed=_strip_leading_header_block(log_text),
-                captured=_strip_leading_header_block(captured),
+                committed=committed_body,
+                captured=captured_body,
                 volatile_patterns=header.get("volatile", []),
             )
         except ValueError as exc:
