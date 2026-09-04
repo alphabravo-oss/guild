@@ -34,7 +34,13 @@ from pathlib import Path
 from typing import Any
 
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
-from foundry_mcp.tools.foundry_handoff import _hash_str
+# D-184 / D-187: the THIRD reader of "which requirement IDs does this casting
+# own" reads the one derivation too, rather than keeping the full-text scan
+# D-180 replaced in the other two. The edge is not new — `_hash_str` has come
+# from this module all along — and it stays acyclic: `foundry_handoff` reaches
+# BACK into this module only through a lazy in-function import inside
+# `foundry_accept_casting`, never at module top.
+from foundry_mcp.tools.foundry_handoff import _hash_str, declared_requirement_ids
 from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 from foundry_mcp.tools.worktree_helpers import (
@@ -2466,13 +2472,13 @@ def _sweep_relative_log_name(log: Path, project_root: Path) -> str:
 
 
 def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
-    """Map each requirement ID to the casting ids whose `spec_text` cites it.
+    """Map each requirement ID to the casting ids that DECLARE it.
 
     This is the SECOND source for keying a log to a casting, and it exists
     because the first one is a filename convention. `# evidence-for:` names
     REQUIREMENTS, not castings, so resolving it needs the manifest: a casting's
     `spec_text` is the verbatim `<spec_requirements>` block its prompt carried,
-    and the IDs in it are exactly the IDs that casting is answerable for.
+    and the IDs it DECLARES there are the IDs that casting is answerable for.
 
     Both sources are used, unioned, because either alone loses logs. A log
     named off-convention has no filename key; a log with no `# evidence-for:`
@@ -2480,10 +2486,41 @@ def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
     it simply falls through to the command-reference test in
     `select_sweep_scope`, and is back in scope the moment `full=True`.
 
-    Reads the requirement grammar from `_REQUIREMENT_ID_RE`, which is
-    `vocab.REQUIREMENT_ID_RE` (D-150) — never a re-typed pattern, because a
-    seventh copy of that regex is how OT- and GI- IDs became invisible last
-    time.
+    DECLARED, NOT MENTIONED (D-184 / D-187)
+    ---------------------------------------
+    The sentence above used to end "and the IDs IN it are exactly the IDs that
+    casting is answerable for", and this loop was a bare
+    `_REQUIREMENT_ID_RE.findall(spec_text)` over the whole block. That claim is
+    false and D-180 disproved it at two other doors — the acceptance gate and
+    the F0.9 validator — by replacing the same `findall` with
+    `declared_requirement_ids`, which judges POSITION: an ID is declared when it
+    is the subject of its own line, and merely quoted when it appears inside
+    another requirement's prose. This reader was the third and was not migrated
+    with them, so one rule kept two owners and a survivor.
+
+    Driven on this run's manifest at HEAD 0e09b40: `['NFR-002']` resolved to
+    castings `{'5', '2'}` — casting 5 declares it, casting 2 merely quotes
+    'NFR-002' once inside OT-005's statement text — so casting 5's own evidence
+    became keyed to casting 2 and was re-executed on any DELTA cycle whose diff
+    touched casting 2. Nine IDs were mis-attributed that way (GI-003, NFR-002,
+    US-001..US-005, US-007, US-008; US-008 alone widened from {3,5} to
+    {1,2,3,5,7,8}), and on the one-file diff PROVE drove the boundary selected
+    44 of 62 logs where FR-009's rule selects 28. FR-009 defines the delta set
+    as "casting key_files intersect the GRIND diff, plus any log whose command
+    references a touched file" — a log keyed through a QUOTATION satisfies
+    neither arm, so every one of those extra 16 was outside the rule.
+
+    Widening is the cheap direction of that error and is why it survived: it
+    costs seconds per cycle and refuses nothing. The expensive direction is the
+    same mapping used in a boundary refusal, which would name a log the diff
+    never touched (FR-042 / OT-008).
+
+    The requirement GRAMMAR still comes from `_REQUIREMENT_ID_RE` — via
+    `declared_requirement_ids`, which builds its position rule from
+    `REQUIREMENT_ID_RE.pattern` rather than re-typing it (D-150). The header
+    scan at the top of this module keeps the bare `findall`, and correctly: a
+    `# evidence-for:` line is a comma-separated LIST of ids, not prose, so
+    there is no subject position for the rule to judge.
     """
     mapping: dict[str, set[str]] = {}
     castings = manifest.get("castings")
@@ -2498,7 +2535,7 @@ def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
         spec_text = entry.get("spec_text")
         if not isinstance(spec_text, str):
             continue
-        for req_id in _REQUIREMENT_ID_RE.findall(spec_text):
+        for req_id in declared_requirement_ids(spec_text):
             mapping.setdefault(req_id, set()).add(str(casting_id))
     return mapping
 

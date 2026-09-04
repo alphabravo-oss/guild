@@ -1,0 +1,57 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider -s tests/test_evidence.py -k demo_grind_cycle_13
+# evidence-for: US-003, GI-002, ST-005, CT-007, AC-014, FR-009, FR-042, OT-016
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# GRIND cycle 13 — D-184 and D-187, one symbol, one fix.
+#
+# `evidence.py#_sweep_requirement_to_castings` was the THIRD reader of "which
+# requirement IDs does this casting own". D-180 replaced the full-text
+# `REQUIREMENT_ID_RE.findall` over a casting's whole `<spec_requirements>`
+# block with the position-based `declared_requirement_ids` at the acceptance
+# gate and at the F0.9 validator, and pinned those two against one block. This
+# reader was never migrated with them, so one rule kept two owners and a
+# survivor: a requirement merely QUOTED inside another requirement's prose
+# still keyed a log to the quoting casting.
+#
+# FR-009, verbatim: "Per cycle: re-execute only logs whose casting's key_files
+# intersect the GRIND diff, plus any log whose command references a touched
+# file; full corpus at the INSPECT before ASSAY/NYQUIST/DONE and whenever the
+# FULL rule fires (A-014). Logs run in parallel (bounded pool)." A log keyed
+# through a quotation satisfies neither arm.
+#
+# Driven below on a miniature of the exact shape: casting 2 declares CT-014 and
+# names casting 3's AC-036 inside CT-014's own statement text. The companion
+# log `casting-5-grind-cycle-13-real-corpus.log` drives the same fix against
+# this run's real manifest and its 62-log corpus.
+
+
+=== the block: one declaration whose prose names another casting's requirement ===
+    - **CT-014** [derived from A-024]: the report carries every
+      section, so a run whose AC-036 sections are absent is
+      refused at the done transition.
+=== what the two readers make of it ===
+    REQUIREMENT_ID_RE.findall over the whole block : ['AC-036', 'CT-014']
+    declared_requirement_ids (subject position)    : ['CT-014']
+    AC-036 is DECLARED by casting 3; casting 2 only names it inside CT-014's statement.
+=== the mapping a `# evidence-for:` header is keyed through ===
+    AC-036 -> ['3']
+    CT-007 -> ['1']
+    CT-014 -> ['2']
+=== three readers of one question, on one block (D-180 pinned two; this was the third) ===
+    acceptance gate demands : ['CT-014']
+    F0.9 validator credits  : ['CT-014']
+    evidence sweep keys     : ['CT-014']
+    all three agree         : True
+=== FR-009 — which logs the DELTA boundary re-executes ===
+    wave-report-sections.log is off-convention, so its only key is `# evidence-for: AC-036`
+    diff touches casting 2's key_files  touched=['src/beta.py']
+      keyed by declaration : ['casting-2-beta.log']
+      keyed by the scan    : ['casting-2-beta.log', 'wave-report-sections.log']
+    diff touches casting 3's key_files  touched=['tests/fixtures/gamma/rows.json']
+      keyed by declaration : ['wave-report-sections.log']
+      keyed by the scan    : ['wave-report-sections.log']
+    the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
+    FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
+.
+1 passed, 265 deselected in 0.41s

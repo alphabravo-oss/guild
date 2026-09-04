@@ -4566,6 +4566,251 @@ def test_a_glob_referenced_log_is_selected_and_re_executed(tmp_path):
     ), result["logs_reexecuted"]
 
 
+# --- D-184 / D-187: the sweep keys a log by what a casting DECLARES --------- #
+#
+# `_sweep_requirement_to_castings` resolved a log's `# evidence-for:` ids
+# through a bare `REQUIREMENT_ID_RE.findall` over each casting's whole
+# `<spec_requirements>` block — the exact full-text scan D-180 replaced at the
+# acceptance gate and at the F0.9 validator, left standing here because this
+# third reader was never migrated with them. An id merely QUOTED inside another
+# requirement's prose keyed the log to the quoting casting, so a DELTA sweep
+# re-executed logs FR-009's rule does not select.
+#
+# `_QUOTING_SWEEP_MANIFEST` is that shape in miniature: casting 2 declares
+# CT-014 and quotes casting 3's AC-036 inside CT-014's own statement text.
+
+_QUOTING_SWEEP_MANIFEST = {
+    "castings": [
+        {
+            "id": 1,
+            "key_files": ["src/alpha.py"],
+            "spec_text": "- **CT-007**: the sweep re-executes at HEAD\n",
+        },
+        {
+            "id": 2,
+            "key_files": ["src/beta.py"],
+            # One declaration, whose prose names another casting's requirement
+            # as an example. AC-036 is declared NOWHERE in this block.
+            "spec_text": (
+                "- **CT-014** [derived from A-024]: the report carries every\n"
+                "  section, so a run whose AC-036 sections are absent is\n"
+                "  refused at the done transition.\n"
+            ),
+        },
+        {
+            "id": 3,
+            "key_files": ["tests/fixtures/gamma/"],
+            "spec_text": "- **AC-036**: the report names every section\n",
+        },
+    ]
+}
+
+
+def test_a_requirement_quoted_in_another_castings_prose_does_not_key_a_log(tmp_path):
+    """FR-009 verbatim: 'Per cycle: re-execute only logs whose casting's
+    key_files intersect the GRIND diff, plus any log whose command references a
+    touched file.'
+
+    `wave-report-sections.log` is off-convention, so its ONLY key is
+    `# evidence-for: AC-036`. AC-036 is declared by casting 3 and quoted by
+    casting 2, and the log's command names no file in either casting. A diff
+    touching casting 2's key_files therefore satisfies neither arm of FR-009,
+    and the log must stay out of scope; a diff touching casting 3's must still
+    select it, or the fix would have bought correctness by losing the key
+    entirely."""
+    env = _build_sweep_repo(tmp_path)
+    env["manifest"] = _QUOTING_SWEEP_MANIFEST
+
+    assert _sweep_scope_names(env, ["src/beta.py"], full=False) == [
+        "casting-2-beta.log"
+    ], (
+        "a log keyed only by an id casting 2 QUOTES was selected on casting 2's "
+        "diff — neither FR-009 arm holds for it"
+    )
+    # The falsifier: the DECLARED key still works, so the header source is
+    # narrowed rather than dropped.
+    assert _sweep_scope_names(
+        env, ["tests/fixtures/gamma/rows.json"], full=False
+    ) == ["wave-report-sections.log"]
+    # And FULL is untouched — the whole-corpus arm never consulted the mapping.
+    assert _sweep_scope_names(env, ["src/beta.py"], full=True) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ]
+
+
+def test_the_sweep_resolves_a_header_id_to_the_declaring_casting_only(tmp_path):
+    """D-184 at the mapping itself, where the widening starts.
+
+    Driven on this run's own manifest the same way: `NFR-002` resolved to
+    castings `{'5', '2'}` because casting 2's block quotes it once inside
+    OT-005's statement text, and casting 5 — which declares it — found its own
+    evidence keyed to a casting that does not own the requirement."""
+    from foundry_mcp.tools.evidence import _sweep_requirement_to_castings
+
+    mapping = _sweep_requirement_to_castings(_QUOTING_SWEEP_MANIFEST)
+
+    assert mapping["AC-036"] == {"3"}, (
+        f"AC-036 is declared by casting 3 and quoted by casting 2; the mapping "
+        f"resolved it to {sorted(mapping['AC-036'])}"
+    )
+    assert mapping["CT-014"] == {"2"}
+    assert mapping["CT-007"] == {"1"}
+    # A-024 is an ANSWER id, not a requirement family, and never was in scope.
+    assert set(mapping) == {"AC-036", "CT-014", "CT-007"}, sorted(mapping)
+
+
+def test_all_three_readers_derive_one_owned_set_from_one_block(tmp_path):
+    """D-184 / D-187 as AGREEMENT, which is the property that was actually
+    lost — not "the sweep is right" but "the sweep, the acceptance gate and the
+    F0.9 validator give ONE answer to one question."
+
+    D-180 made the gate and the validator share `declared_requirement_ids` and
+    pinned the two of them against one block. This casting's sweep was the
+    third reader of the same question and kept the scan D-180 removed, so the
+    rule had two owners and a survivor: the gate could demand evidence of
+    casting 3 for AC-036 while the boundary re-executed casting 3's log on
+    casting 2's diff, and nothing in the tree compared them.
+
+    The validator is driven for real here. The gate's demanded set is
+    `declared_requirement_ids` itself — `foundry_accept_casting` calls it and
+    `test_a_requirement_quoted_in_another_requirements_prose_is_not_owned`
+    drives that door — and the test below pins that no reader may re-derive it.
+    """
+    from foundry_mcp.tools.foundry import foundry_init
+    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
+    from foundry_mcp.tools.foundry_validate import foundry_validate_castings
+
+    from foundry_mcp.tools.evidence import _sweep_requirement_to_castings
+
+    quoting = next(
+        c for c in _QUOTING_SWEEP_MANIFEST["castings"] if c["id"] == 2
+    )
+    block = quoting["spec_text"]
+
+    # One spec naming both ids, so the validator's "covered" and "uncovered"
+    # are complementary halves of a known whole and its answer reads as a SET.
+    init = foundry_init(project_root=str(tmp_path))
+    fdir = Path(init["foundry_dir"])
+    (fdir / "spec.md").write_text(
+        "# Spec\n\n"
+        "- **CT-014**: the report carries every section.\n"
+        "- **AC-036**: the report names every section.\n",
+        encoding="utf-8",
+    )
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "spec_type": "GREENFIELD",
+                "castings": [
+                    {
+                        "id": "2",
+                        "title": "the quoting casting",
+                        "spec_text": block,
+                        "observable_truths": ["a", "b", "c"],
+                        "key_files": ["src/beta.py"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "beta.py").write_text(
+        "def beta():\n    return 'beta'\n", encoding="utf-8"
+    )
+
+    set_active_run(init["run_name"])
+    try:
+        validator = foundry_validate_castings(str(tmp_path))
+    finally:
+        clear_active_run()
+
+    gate_demands = set(declared_requirement_ids(block))
+
+    dim1 = validator["dimensions"]["requirement_coverage"]
+    uncovered = {
+        rid
+        for issue in dim1["issues"]
+        if issue["type"] == "uncovered_requirements"
+        for rid in issue["ids"]
+    }
+    validator_credits = {"CT-014", "AC-036"} - uncovered
+
+    mapping = _sweep_requirement_to_castings(
+        {"castings": [{"id": "2", "key_files": ["src/beta.py"],
+                       "spec_text": block}]}
+    )
+    sweep_keys = {rid for rid, ids in mapping.items() if "2" in ids}
+
+    assert gate_demands == validator_credits == sweep_keys, (
+        f"one block, three answers: the acceptance gate demands "
+        f"{sorted(gate_demands)}, F0.9 credits {sorted(validator_credits)} and "
+        f"the evidence sweep keys {sorted(sweep_keys)}"
+    )
+    assert sweep_keys == {"CT-014"}, sorted(sweep_keys)
+    assert "AC-036" not in sweep_keys, (
+        "all three agree, but on the OLD answer: AC-036 is quoted inside "
+        "CT-014's prose and declared nowhere in this casting"
+    )
+
+
+def test_no_reader_of_the_owned_set_derives_it_inline():
+    """The KEY LINK, asserted where its loss would be silent.
+
+    D-180 pinned two modules against re-deriving the declared set inline, and
+    the pin held — for those two. This module was the third reader and was
+    outside it, which is precisely how the scan survived a defect filed against
+    it. Extended to all three so a fourth reader cannot appear the same way."""
+    from foundry_mcp.tools import evidence as evidence_module
+    from foundry_mcp.tools import foundry_handoff as handoff_module
+    from foundry_mcp.tools import foundry_validate as validate_module
+
+    modules = (evidence_module, handoff_module, validate_module)
+    for module in modules:
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "declared_requirement_ids" in source, Path(module.__file__).name
+
+    # Defined ONCE. Asked of the AST rather than of the text, so the prose in
+    # each module explaining the rejected reading cannot trip the pin.
+    definitions = [
+        node.name
+        for module in modules
+        for node in ast.walk(
+            ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        )
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "declared_requirement_ids"
+    ]
+    assert definitions == ["declared_requirement_ids"], definitions
+
+    # And the one place in THIS module that still scans a whole text for
+    # requirement ids is the `# evidence-for:` header, which is a
+    # comma-separated LIST and has no subject position to judge. Asked of the
+    # AST for the same reason as above: the docstring that explains the
+    # rejected reading names the call, and a text scan would count the prose.
+    findall_args = [
+        node.args[0].id if isinstance(node.args[0], ast.Name) else "<expr>"
+        for node in ast.walk(
+            ast.parse(
+                Path(evidence_module.__file__).read_text(encoding="utf-8")
+            )
+        )
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "findall"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "_REQUIREMENT_ID_RE"
+        and node.args
+    ]
+    assert findall_args == ["raw_val"], (
+        f"a full-text requirement scan reappeared in evidence.py, over "
+        f"{findall_args} — the only text this module may scan whole is the "
+        f"`# evidence-for:` header value"
+    )
+
+
 def test_select_sweep_scope_returns_sorted_paths(tmp_path):
     """A sweep result is read by a human diffing cycle N against cycle N-1. A
     set's iteration order would make two identical sweeps look different."""
@@ -5253,3 +5498,150 @@ def test_demo_sweep_scope_and_cost(tmp_path, capsys):
     assert _sweep(env, full=True)["ok"] is True
     assert _derive_sweep_pool_size([], None) == 0
     assert _sweep_log_timeout({"timeout": 300}, None) == 300
+
+
+# --------------------------------------------------------------------------- #
+# GRIND cycle 13 — D-184 and D-187, one symbol, one fix.
+#
+# `_sweep_requirement_to_castings` was the third reader of "which requirement
+# IDs does this casting own" and the only one D-180 did not migrate off the
+# full-text scan. Printed here as the three readers agreeing on one block, and
+# as the DELTA scope FR-009 actually names.
+# --------------------------------------------------------------------------- #
+
+
+def test_demo_grind_cycle_13_declared_ownership_keys_the_sweep(tmp_path, capsys):
+    """D-184 / D-187: FR-009, FR-042, GI-002, AC-014, OT-016, ST-005, CT-007.
+
+    Everything printed is asserted below the print block, and nothing printed
+    is environment-dependent — no tmp path, no clock, no cpu count — because
+    this transcript is byte-compared in a detached worktree."""
+    import copy
+
+    from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
+    from foundry_mcp.tools.evidence import _sweep_requirement_to_castings
+    from foundry_mcp.tools.foundry import foundry_init
+    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
+    from foundry_mcp.tools.foundry_validate import foundry_validate_castings
+
+    env = _build_sweep_repo(tmp_path)
+    env["manifest"] = _QUOTING_SWEEP_MANIFEST
+    block = next(
+        c for c in _QUOTING_SWEEP_MANIFEST["castings"] if c["id"] == 2
+    )["spec_text"]
+
+    scanned = sorted(set(REQUIREMENT_ID_RE.findall(block)))
+    declared = declared_requirement_ids(block)
+    mapping = _sweep_requirement_to_castings(_QUOTING_SWEEP_MANIFEST)
+
+    # The scope the OLD reader produced, reconstructed by DECLARING what the
+    # scan merely found: that is exactly the belief `findall` handed the
+    # keying, so running the shipped selector over it reproduces the shipped
+    # bug without a second copy of the selector.
+    as_scanned = copy.deepcopy(_QUOTING_SWEEP_MANIFEST)
+    for casting in as_scanned["castings"]:
+        casting["spec_text"] = "".join(
+            f"- **{rid}**\n"
+            for rid in sorted(set(REQUIREMENT_ID_RE.findall(casting["spec_text"])))
+        )
+    old_env = dict(env, manifest=as_scanned)
+
+    # The F0.9 validator, driven for real on the same block.
+    init = foundry_init(project_root=str(tmp_path / "validate"))
+    fdir = Path(init["foundry_dir"])
+    (fdir / "spec.md").write_text(
+        "# Spec\n\n"
+        "- **CT-014**: the report carries every section.\n"
+        "- **AC-036**: the report names every section.\n",
+        encoding="utf-8",
+    )
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "spec_type": "GREENFIELD",
+            "castings": [{
+                "id": "2", "title": "the quoting casting", "spec_text": block,
+                "observable_truths": ["a", "b", "c"],
+                "key_files": ["src/beta.py"],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / "validate" / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "validate" / "src" / "beta.py").write_text(
+        "def beta():\n    return 'beta'\n", encoding="utf-8"
+    )
+    set_active_run(init["run_name"])
+    try:
+        validator = foundry_validate_castings(str(tmp_path / "validate"))
+    finally:
+        clear_active_run()
+    uncovered = {
+        rid
+        for issue in validator["dimensions"]["requirement_coverage"]["issues"]
+        if issue["type"] == "uncovered_requirements"
+        for rid in issue["ids"]
+    }
+    validator_credits = sorted({"CT-014", "AC-036"} - uncovered)
+    sweep_keys = sorted(rid for rid, ids in mapping.items() if "2" in ids)
+
+    with capsys.disabled():
+        print()
+        print("=== the block: one declaration whose prose names another "
+              "casting's requirement ===")
+        for line in block.rstrip("\n").splitlines():
+            print(f"    {line}")
+        print("=== what the two readers make of it ===")
+        print(f"    REQUIREMENT_ID_RE.findall over the whole block : {scanned}")
+        print(f"    declared_requirement_ids (subject position)    : {declared}")
+        print("    AC-036 is DECLARED by casting 3; casting 2 only names it "
+              "inside CT-014's statement.")
+
+        print("=== the mapping a `# evidence-for:` header is keyed through ===")
+        for rid in sorted(mapping):
+            print(f"    {rid} -> {sorted(mapping[rid])}")
+
+        print("=== three readers of one question, on one block (D-180 pinned "
+              "two; this was the third) ===")
+        print(f"    acceptance gate demands : {declared}")
+        print(f"    F0.9 validator credits  : {validator_credits}")
+        print(f"    evidence sweep keys     : {sweep_keys}")
+        print(f"    all three agree         : "
+              f"{declared == validator_credits == sweep_keys}")
+
+        print("=== FR-009 — which logs the DELTA boundary re-executes ===")
+        print("    wave-report-sections.log is off-convention, so its only key "
+              "is `# evidence-for: AC-036`")
+        for label, touched in (
+            ("diff touches casting 2's key_files", ["src/beta.py"]),
+            ("diff touches casting 3's key_files",
+             ["tests/fixtures/gamma/rows.json"]),
+        ):
+            print(f"    {label}  touched={touched}")
+            print(f"      keyed by declaration : "
+                  f"{_sweep_scope_names(env, touched, full=False)}")
+            print(f"      keyed by the scan    : "
+                  f"{_sweep_scope_names(old_env, touched, full=False)}")
+        print("    the extra log satisfies NEITHER FR-009 arm: casting 3's "
+              "key_files are not in the diff and its command names no touched "
+              "file.")
+        print(f"    FULL rule fired  scope="
+              f"{_sweep_scope_names(env, ['src/beta.py'], full=True)}")
+
+    assert scanned == ["AC-036", "CT-014"]
+    assert declared == ["CT-014"]
+    assert mapping == {"AC-036": {"3"}, "CT-007": {"1"}, "CT-014": {"2"}}
+    assert declared == validator_credits == sweep_keys
+    assert _sweep_scope_names(env, ["src/beta.py"], full=False) == [
+        "casting-2-beta.log"
+    ]
+    assert _sweep_scope_names(old_env, ["src/beta.py"], full=False) == [
+        "casting-2-beta.log", "wave-report-sections.log"
+    ]
+    assert _sweep_scope_names(
+        env, ["tests/fixtures/gamma/rows.json"], full=False
+    ) == ["wave-report-sections.log"]
+    assert _sweep_scope_names(env, ["src/beta.py"], full=True) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ]
