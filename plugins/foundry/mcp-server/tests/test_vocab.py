@@ -2055,26 +2055,38 @@ def test_the_retired_lead_lane_pin_actually_fires() -> None:
 @pytest.mark.parametrize(
     "path,expected",
     [
-        # Collected by the declared configuration: `test_*.py` under `tests`.
+        # A `PYTEST_PYTHON_FILES` basename, in ANY directory (cycle-27
+        # ruling): under a testpath, at the repo root, and nested deep
+        # somewhere that is not a test tree at all.
         ("plugins/foundry/mcp-server/tests/test_vocab.py", True),
         ("tests/test_real.py", True),
+        ("tests/test_dir_case.py", True),
         ("packages/api/tests/test_sweeper.py", True),
+        ("test_root_case.py", True),
+        ("verifier/deep/test_nested_case.py", True),
         # pytest's own fixed filename, loaded from the rootdir down.
         ("tests/conftest.py", True),
         ("conftest.py", True),
+        ("verifier/deep/conftest.py", True),
         # D-222, escape 1: no pyproject.toml in this repo names `*_test.py`,
         # and the driven commit shipped 400 lines of it beside a 5-line source
         # file through a lane bounded at one file and twenty lines.
         ("pkg/thing_test.py", False),
         ("src/helpers_test.py", False),
+        ("root_case_test.py", False),
         # D-222, escape 2: a `tests` segment is not a licence over every file
         # beneath it. `python_files` still has to match the basename.
         ("src/tests/production_helper.py", False),
         ("src/tests/__init__.py", False),
         ("mypkg/tests/big_module.py", False),
         ("tests/fixtures/measure_run/state_cycle_3.json", False),
-        # `test_*.py` OUTSIDE every declared testpath is not collected either.
-        ("test_sample.py", False),
+        # D-231, the over-correction the cycle-27 ruling reverses: this row
+        # read False, and with it the lane refused an in-lane LIVE lead fix
+        # whose regression test sat outside `tests/`. `testpaths` SEEDS
+        # argument-less collection; it does not stop a `test_*.py` elsewhere
+        # from being a test, and the lane measures a commit in the TARGET
+        # repo, which owes this repo no directory layout.
+        ("test_sample.py", True),
         ("plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py", False),
         ("src/latest/handler.py", False),   # `latest` is not `tests`
         ("src/tests_helper.py", False),     # nor is `tests_helper`
@@ -2097,6 +2109,20 @@ def test_is_test_file_matches_pytest_discovery(path: str, expected: bool) -> Non
     `pytest --collect-only` does, and
     `test_is_test_file_agrees_with_real_pytest_in_both_directions` drives that
     agreement against real pytest rather than against this table.
+
+    D-231 — AND THE NARROWING OVER-CORRECTED, SO THE OTHER HARM LANDED.
+    ------------------------------------------------------------------
+    That fix ALSO required a `PYTEST_TESTPATHS` run in the directory part,
+    which made `test_root_case.py` and `verifier/deep/test_nested_case.py`
+    SOURCE files. Driven at the real Foundry-Fix door: an in-lane LIVE lead
+    fix — one non-test file, 20 lines, plus its regression test — was refused
+    with "changes 2 non-test file(s) (lanemod0691.py, test_lane0692.py) — the
+    lane requires exactly 1", which is the SECOND harm the paragraph above
+    names, spending the whole budget on the regression test. The cycle-27
+    lead ruling settles it: the BASENAME is the whole test, in any directory,
+    because `testpaths` only seeds argument-less collection and the lane
+    measures a commit in the TARGET repo. `*_test.py` stays source — no
+    `pyproject.toml` in this repo declares it — so D-222 does not reopen.
     """
     assert vocab.is_test_file(path) is expected
 
@@ -2175,10 +2201,10 @@ def test_vocab_mirrors_every_declared_pytest_discovery_setting() -> None:
         )
 
 
-#: The shapes D-222 was driven on, plus the one file the driven
-#: `pytest --collect-only` actually collected. Materialised into a throwaway
-#: repo below and judged against real pytest, so the corpus is not a
-#: restatement of the predicate under test.
+#: The shapes D-222 was driven on, the three D-231 was driven on, and the
+#: files the driven `pytest --collect-only` actually collects. Materialised
+#: into a throwaway repo below and judged against real pytest, so the corpus
+#: is not a restatement of the predicate under test.
 _FR034_CANDIDATE_FILES = (
     "tests/test_real.py",
     "tests/__init__.py",
@@ -2190,6 +2216,28 @@ _FR034_CANDIDATE_FILES = (
     "src/tests/__init__.py",
     "src/tests/production_helper.py",
     "src/tests/big_module.py",
+    # D-231 — a `test_*.py` outside every declared testpath, at the root and
+    # nested, plus the `*_test.py` spelling that stays SOURCE beside them.
+    "test_root_case.py",
+    "verifier/deep/test_nested_case.py",
+    "root_case_test.py",
+)
+
+#: The candidates that carry a real `def test_...`, so `--collect-only` has an
+#: item to report for them. Enumerated rather than derived from
+#: `PYTEST_PYTHON_FILES`, because a corpus built by the predicate under test
+#: proves nothing about it. Two members are DELIBERATELY uncollectable:
+#: pytest skips `root_case_test.py` and `tests/helpers_test.py` on the
+#: basename alone, however many tests they define — which is the D-222
+#: direction re-driven, now that the D-231 rows have widened the other one.
+_FR034_FILES_WITH_A_TEST = frozenset(
+    {
+        "tests/test_real.py",
+        "tests/helpers_test.py",
+        "test_root_case.py",
+        "verifier/deep/test_nested_case.py",
+        "root_case_test.py",
+    }
 )
 
 
@@ -2231,6 +2279,18 @@ def test_is_test_file_agrees_with_real_pytest_in_both_directions(tmp_path) -> No
     `conftest.py` is the one deliberate exception and it is asserted as one:
     pytest hardcodes the name and loads it from the rootdir down, so it never
     appears as a collected node id even though it is unambiguously pytest's.
+
+    D-231 — AND THE COLLECTION IS DRIVEN WITH AN EXPLICIT PATH ARGUMENT.
+    -------------------------------------------------------------------
+    This ran `--collect-only` with no path. Argument-less collection seeds
+    itself from `testpaths`, so it reports "not collected" for every
+    `test_*.py` outside `tests/` whatever pytest would say about one — and
+    the guard therefore PINNED the over-correction D-231 names instead of
+    catching it. With `.` passed, pytest answers for the whole throwaway
+    repo: `test_root_case.py` and `verifier/deep/test_nested_case.py` come
+    back collected, while `root_case_test.py` and `tests/helpers_test.py` do
+    not, though all four define a test function. That is the cycle-27 ruling,
+    driven rather than restated.
     """
     (tmp_path / "pyproject.toml").write_text(
         _pytest_ini_options_block(), encoding="utf-8"
@@ -2238,16 +2298,21 @@ def test_is_test_file_agrees_with_real_pytest_in_both_directions(tmp_path) -> No
     for rel in _FR034_CANDIDATE_FILES:
         target = tmp_path / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        if rel == "tests/test_real.py":
-            target.write_text("def test_real():\n    assert True\n", encoding="utf-8")
+        if rel in _FR034_FILES_WITH_A_TEST:
+            target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
         elif rel.endswith(".json"):
             target.write_text("{}\n", encoding="utf-8")
         else:
             target.write_text("VALUE = 1\n", encoding="utf-8")
 
+    # The "." is load-bearing (D-231). Argument-less collection SEEDS itself
+    # from `testpaths`, so it can only ever answer for files under `tests/`
+    # and would pin the very over-correction this test exists to catch. An
+    # explicit path argument is what makes pytest answer for the whole repo,
+    # which is the question the lane actually asks of a TARGET commit.
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-         "--collect-only"],
+         "--collect-only", "."],
         cwd=str(tmp_path), capture_output=True, text=True, timeout=300,
     )
     collected = {
@@ -2255,7 +2320,11 @@ def test_is_test_file_agrees_with_real_pytest_in_both_directions(tmp_path) -> No
         for line in proc.stdout.splitlines()
         if "::" in line and not line.startswith(" ")
     }
-    assert collected == {"tests/test_real.py"}, (
+    assert collected == {
+        "tests/test_real.py",
+        "test_root_case.py",
+        "verifier/deep/test_nested_case.py",
+    }, (
         "the throwaway repo did not collect what this repo's configuration "
         f"says it should (rc={proc.returncode}); collected={sorted(collected)}\n"
         f"{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"

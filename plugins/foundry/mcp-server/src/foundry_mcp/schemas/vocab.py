@@ -742,7 +742,33 @@ LEAD_LANE_MAX_LINES = 20
 #: filesystem, and the caller that actually holds the target root
 #: (`_numstat_measurement`) would have to thread it in, which is a different
 #: casting's file. It is recorded in the run's concerns.md, not built here.
+#:
+#: BUT THE NARROWING WENT ONE STEP TOO FAR (D-231)
+#: -----------------------------------------------
+#: That fix ALSO required a `PYTEST_TESTPATHS` run in the directory part, so
+#: `is_test_file` answered False for a `test_*.py` anywhere but under
+#: `tests/`. Driven at the real Foundry-Fix door: an in-lane LIVE lead fix —
+#: one non-test file, 20 lines, plus its regression test — was refused with
+#: "changes 2 non-test file(s) (lanemod0691.py, test_lane0692.py) — the lane
+#: requires exactly 1". Re-driven one layout at a time, `tests/test_dir_case.py`
+#: was accepted while `test_root_case.py`, `root_case_test.py` and
+#: `verifier/deep/test_nested_case.py` were all refused.
+#:
+#: The cycle-27 lead ruling settles the reading: `testpaths` SEEDS
+#: argument-less collection and is NOT a filter — `pytest --collect-only .`
+#: against this same configuration collects a root-level `test_*.py` — and the
+#: lane measures a commit in the TARGET repo, which carries no obligation to
+#: keep its tests under `tests/`. So the BASENAME is the whole rule.
+#:
+#: D-222 does not reopen under it, because the basename still has to match:
+#: `src/helpers_test.py` and `src/tests/production_helper.py` are both still
+#: SOURCE, and both 405-line escapes are still refused by the lane.
 PYTEST_PYTHON_FILES: tuple[str, ...] = ("test_*.py",)  # 1 glob
+
+#: Mirrored for the `tomllib` equality pin in `tests/test_vocab.py` and for
+#: the derived refusal phrase rung 2 of `_regression_test_problem` prints.
+#: NOT read by `is_test_file` — see the D-231 note above. A constant that
+#: classifies nothing cannot narrow the lane again.
 PYTEST_TESTPATHS: tuple[str, ...] = ("tests",)  # 1 path
 
 #: pytest's OWN fixed filename. `conftest.py` is hardcoded inside pytest and is
@@ -752,24 +778,16 @@ PYTEST_TESTPATHS: tuple[str, ...] = ("tests",)  # 1 path
 #: only under a testpath.
 PYTEST_CONFTEST_BASENAME = "conftest.py"
 
-#: `PYTEST_TESTPATHS` as segment runs, so a multi-segment testpath is matched
-#: as a contiguous run of directories rather than as unrelated segment names.
-_PYTEST_TESTPATH_RUNS: tuple[tuple[str, ...], ...] = tuple(
-    tuple(s for s in _normalise_path(testpath).split("/") if s)
-    for testpath in PYTEST_TESTPATHS
-)
-
 
 def is_test_file(path: str) -> bool:
-    """True when this repo's pytest configuration collects `path` (FR-034).
+    """True when pytest's configured discovery calls `path` a test (FR-034).
 
-    Exactly what the declared configuration reaches: a basename matching a
-    `PYTEST_PYTHON_FILES` glob, somewhere under a `PYTEST_TESTPATHS` run of
-    directories, plus pytest's own `conftest.py`. Everything else is a SOURCE
-    file for the lane count — a `*_test.py` no declared config names, an
-    `__init__.py` or a JSON fixture sitting beside the tests, a production
-    module under some directory that merely happens to be called `tests`.
-    Pure and never raises.
+    The BASENAME is the whole rule: a name matching a `PYTEST_PYTHON_FILES`
+    glob, in ANY directory, plus pytest's own `conftest.py`. Everything else
+    is a SOURCE file for the lane count — a `*_test.py` no declared config
+    names, an `__init__.py` or a JSON fixture sitting beside the tests, a
+    production module under some directory that merely happens to be called
+    `tests`. Pure and never raises.
 
     The glob is MATCHED WITH `fnmatch`, which is the matcher pytest itself
     applies to `python_files`, so the pattern is consumed from the mirrored
@@ -777,28 +795,30 @@ def is_test_file(path: str) -> bool:
     `*_test.py` came to be in a roster no `pyproject.toml` in this repo asks
     for (D-222).
 
-    The testpath is matched anywhere in the directory part rather than
-    anchored, deliberately: a caller hands in a path relative to the REPO
-    root (`plugins/foundry/mcp-server/tests/test_vocab.py`) while `testpaths`
-    is relative to each package's own rootdir, and the PURITY RULE forbids
-    resolving rootdirs from here. Unanchored is the honest approximation and
-    it errs toward calling a file source, which is the direction the lane
-    bound survives.
+    WHY THE DIRECTORY IS NOT CONSULTED AT ALL (D-231)
+    -------------------------------------------------
+    This required a `PYTEST_TESTPATHS` run in the directory part, and both
+    surfaces that read it then disagreed with pytest for every `test_*.py`
+    outside `tests/`. `_numstat_measurement` counted the regression test as a
+    second SOURCE file and the lane refused an in-lane lead fix; rung 2 of
+    `_regression_test_problem` refused the locator that named the same test.
+    Neither is what pytest answers: `testpaths` seeds ARGUMENT-LESS collection
+    only, and `pytest --collect-only .` against this configuration collects a
+    root-level `test_*.py`. The lane also measures a commit in the TARGET
+    repo, which owes this repo no directory layout.
+
+    The alternative shape — keeping the testpath run as a second accepting
+    arm rather than a required one — was rejected as dead logic: the basename
+    has to match in both arms, so the disjunct decides nothing and only
+    invites the same narrowing back. `tests/test_vocab.py` drives this against
+    real pytest with an explicit path argument rather than against a table.
     """
     normalised = _normalise_path(path)
     if not normalised:
         return False
-    segments = normalised.split("/")
-    basename = segments[-1]
+    basename = normalised.rsplit("/", 1)[-1]
     if basename == PYTEST_CONFTEST_BASENAME:
         return True
-    directories = segments[:-1]
-    if not any(
-        tuple(directories[i : i + len(run)]) == run
-        for run in _PYTEST_TESTPATH_RUNS
-        for i in range(len(directories) - len(run) + 1)
-    ):
-        return False
     return any(fnmatchcase(basename, glob) for glob in PYTEST_PYTHON_FILES)
 
 
