@@ -9,6 +9,7 @@
    (the shape these six surfaces published at 916c1ca)
    plugins/foundry/agents/assayer.md          row 0 -> REFUSED naming findings[0].description, findings[0].source
    plugins/foundry/agents/assayer.md          row 1 -> REFUSED naming findings[0].description, findings[0].source
+   plugins/foundry/agents/assayer.md          row 2 -> REFUSED naming findings[0].description, findings[0].source
    plugins/foundry/agents/coverage-diff.md    row 0 -> REFUSED naming findings[0].description, findings[0].source
    plugins/foundry/agents/coverage-diff.md    row 1 -> REFUSED naming findings[0].description, findings[0].source
    plugins/foundry/agents/coverage-diff.md    row 2 -> REFUSED naming findings[0].description, findings[0].source
@@ -24,6 +25,7 @@
 == D-209 resolution: the same rows as the surfaces document them today ==
    plugins/foundry/agents/assayer.md          row 0 -> ACCEPTED
    plugins/foundry/agents/assayer.md          row 1 -> ACCEPTED
+   plugins/foundry/agents/assayer.md          row 2 -> ACCEPTED
    plugins/foundry/agents/coverage-diff.md    row 0 -> ACCEPTED
    plugins/foundry/agents/coverage-diff.md    row 1 -> ACCEPTED
    plugins/foundry/agents/coverage-diff.md    row 2 -> ACCEPTED
@@ -37,12 +39,12 @@
    plugins/foundry/skills/sight/SKILL.md      row 1 -> REFUSED naming findings[0].source
 
 == CT-002: one refused finding discards the WHOLE batch, so the count is what matters ==
-   documented filing rows in the corpus: 13
+   documented filing rows in the corpus: 14
    rows that landed before this fix: 0
-   rows that land now: 11
+   rows that land now: 12
 
 == the one surface still short a field, and exactly which one ==
    plugins/foundry/skills/sight/SKILL.md      row 0 -> REFUSED naming findings[0].source
    plugins/foundry/skills/sight/SKILL.md      row 1 -> REFUSED naming findings[0].source
-..................................                                       [100%]
-34 passed, 491 deselected in 0.35s
+.......................................                                  [100%]
+39 passed, 492 deselected in 0.42s

@@ -10,7 +10,7 @@ agents/coverage-diff.md                        tier-required=True class-required
 prove/SKILL.md                                 tier-in-schema=True reproduction_attempted-in-schema=True no-severity-property=True
 trace/SKILL.md                                 tier-in-schema=True reproduction_attempted-in-schema=True no-severity-property=True
 
-assayer.md                                     example defect entries: [('LIVE', True, False), ('LATENT', True, True)]
+assayer.md                                     example defect entries: [('LIVE', True, False), ('LATENT', True, True), ('LIVE', True, False)]
 tracer.md                                      example defect entries: [('LIVE', True, False), ('LATENT', True, True)]
 flow-tracer.md                                 example defect entries: [('LIVE', True, False), ('LATENT', True, True)]
 research-auditor.md                            example defect entries: [('LIVE', True, False), ('LATENT', True, True)]

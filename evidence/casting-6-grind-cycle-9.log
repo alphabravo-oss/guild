@@ -4,7 +4,7 @@
 == D-160 as filed: grep -ciE 'inspect_mode|touched_file|diff_base' over the shipped artifacts ==
    plugins/foundry/agents/tracer.md             at f77d5b8=8  now=9
    plugins/foundry/skills/trace/SKILL.md        at f77d5b8=0  now=10
-   plugins/foundry/agents/assayer.md            at f77d5b8=8  now=9
+   plugins/foundry/agents/assayer.md            at f77d5b8=8  now=10
    plugins/foundry/skills/prove/SKILL.md        at f77d5b8=7  now=8
 
 == D-160: every width clause the pins hold, on BOTH TRACE surfaces ==
