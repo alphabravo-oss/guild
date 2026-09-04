@@ -9,8 +9,8 @@ pytest green: tests/test_inspect_mode.py tests/test_orchestrator_gates.py tests/
   temper        clears through _clear_stream_completion_markers: True
   grind_start   clears through _clear_stream_completion_markers: True
   assay_fail    clears through _clear_stream_completion_markers: True
-  cast          clears through _clear_stream_completion_markers: False
-  inspect_start clears through _clear_stream_completion_markers: False
+  cast          clears through _clear_stream_completion_markers: True
+  inspect_start clears through _clear_stream_completion_markers: True
   branches that still spell the marker family by hand: 0
 
 === D-218: the terminal transition writes the artifact it closes the run with ===

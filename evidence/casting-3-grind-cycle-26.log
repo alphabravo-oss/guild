@@ -1,0 +1,25 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_inspect_mode.py > /dev/null && echo "pytest green: tests/test_inspect_mode.py" && uv run --quiet --with pytest pytest -p no:cacheprovider -v --no-header tests/test_inspect_mode.py -k "clears_the_delta_inspects or clears_completion_markers_an_earlier or clears_what_the_grind_left or leaves_completion_state_alone or every_inspect_opening_door" 2>&1 | sed -n 's/^\(tests\/test_inspect_mode\.py::[A-Za-z_0-9]*\) PASSED.*/  PASSED  \1/p' && uv run --quiet python -c "import inspect;from foundry_mcp.tools import foundry_orchestrator as fo;Q=chr(34);src=inspect.getsource(fo._phase_transition);B={p.split(Q)[0]: p.split(Q,2)[2] for p in src.split('elif phase == '+Q)[1:]};O=lambda t: '_decide_inspect_mode(' in B.get(t,'');C=lambda t: '_clear_stream_completion_markers(' in B.get(t,'');print(chr(10)+'=== D-221: opening an INSPECT and clearing the previous one are ONE rule, at every door ===');[print('  %-14s opens an INSPECT: %-5s   clears the previous one: %s' % (t, O(t), C(t))) for t in sorted(B)];print(chr(10)+'  doors that open an INSPECT without clearing:', sorted(t for t in B if O(t) and not C(t)) or 'none');print('  markers each such door clears:', len(fo.VALID_STREAMS)+2, '(every recordable stream, plus .inspect-clean and .tasks-generated)')"
+# evidence-for: GI-009, US-004, AC-016, AC-017, FR-012, OT-012, OT-014
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+pytest green: tests/test_inspect_mode.py
+  PASSED  tests/test_inspect_mode.py::test_the_f5_entry_leaves_completion_state_alone_when_it_refuses
+  PASSED  tests/test_inspect_mode.py::test_the_widening_re_open_clears_the_delta_inspects_completion_markers
+  PASSED  tests/test_inspect_mode.py::test_the_f2_entry_clears_completion_markers_an_earlier_inspect_left
+  PASSED  tests/test_inspect_mode.py::test_the_grind_to_inspect_crossing_clears_what_the_grind_left
+  PASSED  tests/test_inspect_mode.py::test_a_refused_inspect_start_leaves_completion_state_alone
+  PASSED  tests/test_inspect_mode.py::test_every_inspect_opening_door_clears_the_previous_inspects_completion_state
+
+=== D-221: opening an INSPECT and clearing the previous one are ONE rule, at every door ===
+  assay_fail     opens an INSPECT: False   clears the previous one: True
+  cast           opens an INSPECT: True    clears the previous one: True
+  done           opens an INSPECT: False   clears the previous one: False
+  grind_start    opens an INSPECT: False   clears the previous one: True
+  inspect_clean  opens an INSPECT: False   clears the previous one: False
+  inspect_start  opens an INSPECT: True    clears the previous one: True
+  nyquist        opens an INSPECT: False   clears the previous one: False
+  nyquist_done   opens an INSPECT: False   clears the previous one: False
+  temper         opens an INSPECT: True    clears the previous one: True
+
+  doors that open an INSPECT without clearing: none
+  markers each such door clears: 11 (every recordable stream, plus .inspect-clean and .tasks-generated)
