@@ -254,8 +254,9 @@ def derive_cycle_count(run_dir: Path) -> dict:
     WHY THIS LIVES IN THE LEAF MODULE (D-036)
     -----------------------------------------
     There were two derivations of this one fact and they disagreed.
-    ``measure-run.py::_extract_per_run`` published ``_reconcile_final_cycle_index
-    + 1``; ``foundry_report.py::_baseline_comparison_section`` published the raw
+    ``measure-run.py::_extract_per_run`` published its own reconciled 0-based
+    cycle INDEX plus one; ``foundry_report.py::_baseline_comparison_section``
+    published the raw
     ``state.json["cycle"]``. They differ by exactly one, which is enough to
     straddle ``CONVERGENCE_TARGET["grind_cycles"]``: a run at index 12 passed
     the report's ``<= 12`` and failed the CLI's, so the same archive met the
@@ -408,7 +409,7 @@ def derive_cycle_count(run_dir: Path) -> dict:
 #
 # ``stream-rollup.json``'s ``cycles[<cycle>]`` bucket holds two kinds of key,
 # because it has two writers. ``_record_stream_rollup`` accumulates one STREAM's
-# tranches under its wire id; ``_record_cycle_facts`` writes the C-6 facts that
+# tranches under its wire id; ``_record_cycle_rollup`` writes the C-6 facts that
 # describe the CYCLE ITSELF -- ``inspect_mode``, ``inspect_rule``,
 # ``stream_scope``, ``evidence_sweep``, and a nested ``temper_entry`` sub-bucket
 # -- BESIDE them, in the same mapping. Three modules walk that bucket and every

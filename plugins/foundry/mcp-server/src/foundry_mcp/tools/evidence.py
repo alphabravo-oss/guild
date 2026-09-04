@@ -1459,7 +1459,8 @@ def _strip_leading_header_block(text: str) -> str:
 # advanced; the identical claim without the leading ``#`` correctly REFUSED.
 # B and C differed by one character, because the accept branch returned the
 # whole committed ``#``/blank run as "header" and never tested a line of it
-# against the grammar ``_provable_header_prefix`` defined ten lines above.
+# against the writer's grammar — the one ``_provable_header_lines`` applies,
+# over the closed directive set ``_KNOWN_HEADER_DIRECTIVES``.
 #
 # WHY THE KNOWN-DIRECTIVE SET AND NOT ANY ``# evidence-*:`` SHAPE.
 # ---------------------------------------------------------------

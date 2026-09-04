@@ -204,13 +204,17 @@ def _rewrite_evidence_for_scenario(
         rewritten_header = _HEADER_CMD_RE.sub(
             _replace_cmd_line(new_cmd), header, count=1
         )
-        # Prepend a synthetic body-line that carries the cmd-first-token
-        # ("cat") so ``_is_stub_pattern_no_cmd_in_header`` doesn't fire on
-        # the synth replay path. Real fixtures (e.g., a real pytest log)
-        # would naturally have the cmd-token in the first 3 body lines via
-        # ``pytest test session starts``; the synth ``cat replay.txt`` cmd
-        # needs an explicit anchor. Both committed log AND replay file get
-        # the same prefix → byte-match succeeds.
+        # Prepend a synthetic body-line carrying the cmd's first token
+        # ("cat"). The rule this anchored against is GONE: D-062 retired the
+        # first-token-in-output reading that required the command's first
+        # token in the first three body lines, because it called 19 of 25
+        # genuine logs stubs. The surviving command-side rule is
+        # ``_is_stub_pattern_vacuous_cmd``, and it deliberately CLEARS this
+        # path — ``cat`` is kept out of ``_STUB_VACUOUS_PROGRAMS`` precisely
+        # so this replay harness stays legitimate. What still makes the
+        # anchor correct is byte-match symmetry: committed log AND replay
+        # file get the same prefix, so ``cat replay.txt`` reproduces the
+        # committed bytes exactly.
         anchor_line = f"[replay] cat {replay_file_name}\n"
         body_with_anchor = anchor_line + body
         full_rewritten = rewritten_header + body_with_anchor

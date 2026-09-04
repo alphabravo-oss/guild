@@ -10,7 +10,7 @@ Plan 04-02 territory (parser + constants + module skeleton — 4 unit tests):
 
 Plan 04-03 territory (worktree + subprocess + redaction + comparator + stub
 library — 15 tests, mix of integration via run_accept_casting_with_evidence
-and unit tests against ``evidence._is_stub_pattern`` family):
+and unit tests against the ``evidence._is_stub_pattern_*`` family):
   - test_clean_evidence_accepts_with_provenance
   - test_volatile_undeclared_rejects_with_diff
   - test_volatile_declared_redaction_passes
@@ -3588,8 +3588,9 @@ def test_an_honest_log_with_a_varying_duration_still_passes_the_whole_verifier()
 # D-143 — the discrimination rung's DENYLIST becomes an ALLOWLIST.
 # (FR-017 / AC-023 / OT-011 — SECURITY-RELEVANT, A-AUTO-005.)
 #
-# D-135 shipped `_is_unstructured_token(t) = t.isalpha() or t.isdigit()` and
-# refused when either side was true. That is a denylist of two shapes with
+# D-135 shipped a token test of exactly `t.isalpha() or t.isdigit()` — the
+# helper is gone, so there is no name here to look up — and refused when
+# either side was true. That is a denylist of two shapes with
 # ACCEPT as the default, so one non-alphanumeric character anywhere in the
 # disagreeing token made a verdict read as a volatile field. PROVE drove 13
 # forgery shapes and 8 were accepted end to end through the shipped
@@ -4441,7 +4442,7 @@ def _protocol_stdout_scan() -> tuple:
     checked — a loud entry name offends unless every one of its import sites
     sits in a function that redirects stdout. No directory is exempt by
     NAME. The CLI validator clears this because its one entry point, ``main``,
-    is imported solely inside ``intent_coverage._call_validator_in_process``,
+    is imported solely inside ``intent_coverage._run_validator_in_process``,
     which redirects; delete that redirect and it becomes an offender.
     """
     modules = {_module_name(p): p for p in _package_modules(_SERVER_PKG)}
