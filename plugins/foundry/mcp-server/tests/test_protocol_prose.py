@@ -5595,12 +5595,19 @@ def test_the_prove_roster_key_the_prose_names_is_the_one_the_gate_reads(
     fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d104-roster"
     fdir.mkdir(parents=True, exist_ok=True)
     roster = ["FR-007", "US-002"]
+    # The top-level `cycle` matches the entry's stamp because a run whose
+    # counter says 0 while its INSPECT was opened for cycle 6 is an archive no
+    # transition writes (D-216: every crossing stamps the counter it holds).
+    # This read passes its cycle explicitly, so the fixture would resolve
+    # either way — but a fixture is a claim about a real archive, and the one
+    # below is the shape `inspect_start` leaves behind.
     (fdir / "state.json").write_text(
         json.dumps(
             {
+                "cycle": 6,
                 "inspect_modes": [
                     {"mode": "DELTA", "cycle": 6, "rule": "delta", key: roster}
-                ]
+                ],
             }
         ),
         encoding="utf-8",
@@ -5783,10 +5790,23 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
     fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d160-roster"
     fdir.mkdir(parents=True, exist_ok=True)
     roster = ["src/handler.py"]
+    # The top-level `cycle` is load-bearing here, and its absence is what made
+    # this fixture stop describing a real run. `_maybe_skip_trace` asks
+    # `_current_inspect_mode` about the cycle the COUNTER holds, and since
+    # D-216 that read answers None for an entry stamped for any other crossing
+    # — so a state.json carrying a cycle-9 decision beside a counter reading 0
+    # (the default for an absent key) is an unrecorded width, and this
+    # function returns the `_unrecorded_width_problem` refusal, which carries
+    # a `reason` and a `hint` and no `details` at all. The assertion below then
+    # died on the missing key rather than on the roster it is here to drive.
+    # The repair is the archive, not the read: every transition that opens an
+    # INSPECT stamps the counter it holds inside the same transaction, so a
+    # decision for cycle 9 only ever sits beside a counter at 9.
     (fdir / "state.json").write_text(
         json.dumps(
             {
                 "phase": "F2",
+                "cycle": 9,
                 "inspect_modes": [
                     {
                         "mode": "DELTA",
