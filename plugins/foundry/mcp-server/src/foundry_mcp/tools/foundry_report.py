@@ -650,7 +650,15 @@ def _inspect_axis_note(
             f"a recorded decision names cycle {axis_top}, above the highest "
             "cycle this run's other ledgers reach"
         )
-    if grind_cycles is None or axis_length == grind_cycles:
+    if grind_cycles is None:
+        # Unreachable while `derive_cycle_count` returns a count whenever it
+        # returns an index — an archive with no index took the branch above.
+        # Written as WORDS rather than an f-string anyway, because if that
+        # coupling ever loosens the alternative is `None` standing in for a
+        # number in operator prose, which is exactly D-151's class on this
+        # module's other generated sentences.
+        tail = "does not publish a GRIND cycle count."
+    elif axis_length == grind_cycles:
         tail = f"publishes as {grind_cycles} GRIND cycles."
     elif reasons:
         tail = (
