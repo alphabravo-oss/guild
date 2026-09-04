@@ -1249,8 +1249,19 @@ def test_the_research_audit_arm_is_unmoved_by_the_test01_source_ladder(run_env):
     writing into the same `stream_scope` object. A three-source ladder wired
     into the shared branch instead of into `test01`'s own predicate would move
     this arm too, and it must not: research_audit's covered set comes from the
-    run's OWN manifest and is therefore computable on every run, self-targeting
-    or not.
+    run's OWN manifest, so a self-target ladder is not its ladder.
+
+    D-208 CORRECTS THIS DOCSTRING'S PREMISE. It said the research set "is
+    therefore computable on every run, self-targeting or not". It is computable
+    on every run WHOSE MANIFEST THIS SERVER CAN READ, which is not the same
+    claim: with `castings/manifest.json` DELETED, `_load_json` yields `{}` and
+    the arm — two-valued at the time — recorded `scope: skipped, detail: "no
+    file research_audit covers was touched"`, a negative about a set it had
+    never read. The premise was the reason this arm was left two-valued while
+    its sibling gained the third value, and that is exactly how the class
+    recurred a fourth time. The manifest fixture below is what makes the set
+    computable HERE; `test_an_absent_manifest_leaves_the_research_set_unknown`
+    drives the case this docstring used to deny.
 
     Driven on the non-self-targeting fixture, in BOTH directions, so the
     assertion is that the arm still DECIDES rather than that it still answers
@@ -1266,11 +1277,17 @@ def test_the_research_audit_arm_is_unmoved_by_the_test01_source_ladder(run_env):
     }])
     (fdir / "spec.md").write_text(_PRODUCT_CONTRACTS_TABLE, encoding="utf-8")
 
-    touched = fo._research_scope_touched(fdir, ["src/api/users.py"])
+    touched = fo._research_scope_touched(fdir, project_root, ["src/api/users.py"])
     assert touched["touched"] is True, touched
+    assert touched["computable"] is True, touched
     assert "research_context" in touched["detail"], touched
-    untouched = fo._research_scope_touched(fdir, ["src/zzz.py"])
+    untouched = fo._research_scope_touched(fdir, project_root, ["src/zzz.py"])
     assert untouched["touched"] is False, untouched
+    # D-208: a COMPUTED miss — the manifest was read and declares no covered
+    # file the diff touched. `computable` is what says so, and it is the whole
+    # difference between this and the absent-manifest case.
+    assert untouched["computable"] is True, untouched
+    assert untouched["source"] == "manifest", untouched
     assert untouched["detail"] == "", untouched
 
     # And through the transition, where the two arms share a branch: test01 is
@@ -1285,6 +1302,334 @@ def test_the_research_audit_arm_is_unmoved_by_the_test01_source_ladder(run_env):
     assert "research_context" in scope["research_audit"]["detail"]
     assert "could not be computed" not in scope["research_audit"]["detail"]
     assert "could not be computed" in scope["test01"]["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# D-208 — THE STRUCTURAL FIX: ONE THREE-VALUED ANSWER, THROUGH ONE PATH
+#
+# The class `inspect-mode-rule-is-a-proxy-not-the-fact` recurred at cycles 3, 5,
+# 18, 19 and 20, escalated for three consecutive cycles, because every fix
+# repaired ONE arm of the shared DELTA conditional branch and left its sibling
+# answering a two-valued question about a covered set it had derived by proxy or
+# could not derive at all. These tests pin the two axes the lead ruled on: WHAT
+# an arm answers (three values, never two) and HOW it is shared (one path, one
+# registry, one checked shape — so a fourth conditional stream cannot arrive
+# two-valued).
+# --------------------------------------------------------------------------- #
+
+
+def _no_manifest_run(project_root: str, fdir: Path) -> None:
+    """The reported fixture: everything `_product_run` sets up, minus the
+    manifest, which is the one uncomputable shape the artifact guard lets
+    through (an invalid-JSON or wrong-shape manifest IS named and refuses)."""
+    _product_run(project_root, fdir)
+    (fdir / "castings" / "manifest.json").unlink()
+
+
+def test_an_absent_manifest_leaves_the_research_set_unknown_and_requires_it(
+    run_env,
+):
+    """D-208, driven where PROVE drove it: `Foundry-Phase('inspect_start')`
+    through `server.call_tool`'s dispatcher, on a non-self-targeting run whose
+    `castings/manifest.json` has been DELETED.
+
+    ST-007 verbatim: research_audit and test01 'are required by the
+    streams-complete check only when the diff touches a file they cover, and not
+    required otherwise'. Locked FR-047 names research_audit FIRST: 'In DELTA
+    mode Foundry-Next names research_audit and test01 as required only for a
+    touched scope, and the streams-complete check enforces exactly that set.'
+
+    Before the fix this recorded `research_audit` {scope skipped, detail 'no
+    file research_audit covers was touched'} — a NEGATIVE about a manifest the
+    server had never read, since `_load_json` yields `{}` for an absent document
+    — while `test01`, in the SAME `stream_scope` of the SAME transition,
+    recorded 'could not be computed'. Two arms of one decision, one input,
+    opposite failure directions.
+
+    The CONTROL is the same fixture with its manifest: the touched key_file of a
+    casting declaring `research_context` still requires the stream, and for a
+    NAMED reason. Without that half this would pass on a predicate that had
+    simply started requiring everything.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _no_manifest_run(project_root, fdir)
+    _grind_touching(project_root, fdir, "src/api/users.py")
+    _arm(fdir)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Phase"]({"phase": "inspect_start"})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["ok"] is True, result
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["mode"] == "DELTA", recorded
+    assert "research_audit" in recorded["required_streams"], recorded
+    scope = recorded["stream_scope"]["research_audit"]
+    assert scope["scope"] == "full", scope
+    # The detail is the ONLY place the third state is written down — it is
+    # persisted into state.json and stream-rollup.json and read back by the F6
+    # per-cycle scope column — so it must say the set was not computable, and
+    # WHY, not merely that the stream is required.
+    assert "could not be computed" in scope["detail"], scope
+    assert "manifest" in scope["detail"], scope
+    # ...and it is the same sentence the sibling arm writes, because it is the
+    # same fact about a different set.
+    assert "could not be computed" in recorded["stream_scope"]["test01"]["detail"]
+
+
+def test_the_touched_key_file_control_still_requires_research_audit(run_env):
+    """The control D-208's fix must not move: FR-047's positive half.
+
+    Same run, manifest present, casting 1 declaring a `research_context` and the
+    diff touching its key_file. The stream is required for a reason that NAMES
+    the casting and the file — never the uncomputable-set sentence.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, self_target=False)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir, castings=[{
+        "id": 1,
+        "key_files": ["src/api/users.py"],
+        "research_context": "research/api.md",
+    }])
+    (fdir / "spec.md").write_text(_PRODUCT_CONTRACTS_TABLE, encoding="utf-8")
+    _grind_touching(project_root, fdir, "src/api/users.py")
+    _arm(fdir)
+
+    assert foundry_mark_phase_complete("inspect_start", project_root)["ok"] is True
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["mode"] == "DELTA", recorded
+    assert "research_audit" in recorded["required_streams"], recorded
+    scope = recorded["stream_scope"]["research_audit"]
+    assert scope["scope"] == "full", scope
+    assert "casting 1 declares research_context" in scope["detail"], scope
+    assert "could not be computed" not in scope["detail"], scope
+
+
+def test_a_read_manifest_declaring_no_research_context_is_a_computed_miss(run_env):
+    """The line the lead ruling draws: 'absent manifest is unknown, not empty;
+    read manifest and no research_context declared is a computed miss.'
+
+    Both directions, so the assertion is that the arm still DECIDES rather than
+    that it has started answering one way. A fix that routed every miss to
+    unknown would require research_audit on every DELTA cycle of every run and
+    would delete US-004's saving outright.
+    """
+    project_root, fdir = run_env
+    _product_run(project_root, fdir)          # manifest present, no research_context
+
+    miss = fo._research_scope_touched(fdir, project_root, ["src/api/users.py"])
+    assert miss["touched"] is False, miss
+    assert miss["computable"] is True, miss
+    assert miss["source"] == "manifest", miss
+    assert miss["detail"] == "", miss
+
+    (fdir / "castings" / "manifest.json").unlink()
+    unknown = fo._research_scope_touched(fdir, project_root, ["src/api/users.py"])
+    assert unknown["touched"] is True, unknown
+    assert unknown["computable"] is False, unknown
+    assert unknown["source"] == "unknown", unknown
+    assert "could not be computed" in unknown["detail"], unknown
+
+
+def test_every_delta_conditional_arm_answers_the_shared_three_valued_shape(
+    run_env,
+):
+    """The pin that iterates `DELTA_CONDITIONAL_STREAMS`.
+
+    ST-007 governs a SET of streams, not two named ones, so the property is
+    asserted over the vocabulary rather than over `research_audit` and `test01`
+    by name — an arm added to the set later is covered by this test the day it
+    is added, which is the whole of the structural fix's second axis.
+
+    Every arm carries the same four keys, and each of the three values is
+    REACHABLE through the same shared path: a computed hit, a computed miss, and
+    an unknown when the document its covered set comes from is gone.
+    """
+    project_root, fdir = run_env
+    _product_run(project_root, fdir, test01_scope=["src/api/users.py"])
+    _write_manifest(
+        fdir,
+        castings=[{
+            "id": 1,
+            "key_files": ["src/api/users.py"],
+            "research_context": "research/api.md",
+            "test01_scope": ["src/api/users.py"],
+        }],
+    )
+
+    for wire in sorted(DELTA_CONDITIONAL_STREAMS):
+        hit = fo._delta_conditional_scope(
+            fdir, project_root, wire, ["src/api/users.py"]
+        )
+        assert set(fo._CONDITIONAL_ANSWER_KEYS) <= set(hit), (wire, hit)
+        assert hit["touched"] is True and hit["computable"] is True, (wire, hit)
+        assert hit["detail"], (wire, hit)
+
+        miss = fo._delta_conditional_scope(fdir, project_root, wire, ["src/zzz.py"])
+        assert set(fo._CONDITIONAL_ANSWER_KEYS) <= set(miss), (wire, miss)
+        assert miss["touched"] is False and miss["computable"] is True, (wire, miss)
+        assert miss["detail"] == "", (wire, miss)
+
+    # The third value, for BOTH arms at once: with the manifest gone, neither
+    # covered set can be computed and neither may answer a negative.
+    (fdir / "castings" / "manifest.json").unlink()
+    for wire in sorted(DELTA_CONDITIONAL_STREAMS):
+        unknown = fo._delta_conditional_scope(
+            fdir, project_root, wire, ["src/api/users.py"]
+        )
+        assert set(fo._CONDITIONAL_ANSWER_KEYS) <= set(unknown), (wire, unknown)
+        assert unknown["touched"] is True, (wire, unknown)
+        assert unknown["computable"] is False, (wire, unknown)
+        assert unknown["source"] == "unknown", (wire, unknown)
+        assert f"the set of files {wire} covers could not be computed" in (
+            unknown["detail"]
+        ), (wire, unknown)
+
+    # And every member of the vocabulary is answerable at all — a conditional
+    # stream with no registered predicate is the next instance of this class
+    # waiting to happen, so the registry is asserted to cover the set.
+    assert DELTA_CONDITIONAL_STREAMS <= set(fo._DELTA_CONDITIONAL_PREDICATES)
+
+
+def test_a_conditional_stream_with_no_predicate_is_required_not_skipped(
+    run_env, monkeypatch
+):
+    """The fourth-stream guard, driven.
+
+    `DELTA_CONDITIONAL_STREAMS` is casting 1's vocabulary and this module's
+    registry is separate from it by design. So the failure that has recurred
+    five times is asserted from its far end: a member of the vocabulary this
+    server has no predicate for is REQUIRED with a detail naming that fact, and
+    is never skipped on a negative nobody computed.
+    """
+    project_root, fdir = run_env
+    _product_run(project_root, fdir)
+
+    answer = fo._delta_conditional_scope(
+        fdir, project_root, "a_stream_added_later", ["src/api/users.py"]
+    )
+    assert answer["touched"] is True, answer
+    assert answer["computable"] is False, answer
+    assert "no registered predicate" in answer["detail"], answer
+
+
+def test_a_two_valued_arm_reads_as_unknown_rather_than_as_a_negative(
+    run_env, monkeypatch
+):
+    """The shape is CHECKED, not assumed — the second axis of the structural
+    fix, driven by supplying exactly the shape D-208 was filed on.
+
+    A predicate registered with the pre-fix two-valued `{touched, detail}`
+    answer has not said whether its covered set was computed, and the shared
+    path must read that as the unknown rather than reaching into it for
+    `touched` and believing the False. Without this assertion the registry is
+    just a lookup table and the next arm added is free to be two-valued again.
+    """
+    project_root, fdir = run_env
+    _product_run(project_root, fdir)
+    monkeypatch.setitem(
+        fo._DELTA_CONDITIONAL_PREDICATES,
+        "research_audit",
+        lambda fdir, project_root, touched: {"touched": False, "detail": ""},
+    )
+
+    answer = fo._delta_conditional_scope(
+        fdir, project_root, "research_audit", ["src/api/users.py"]
+    )
+    assert answer["touched"] is True, answer
+    assert answer["computable"] is False, answer
+    assert "computable" in answer["detail"] and "source" in answer["detail"], answer
+
+
+def test_inspect_clean_demands_the_stream_the_unknown_research_set_required(
+    run_env,
+):
+    """D-208 ADJACENT-PATH TEST.
+
+    The defect's own path is the `inspect_start` transition writing
+    `research_audit`'s cell of the DELTA conditional roster. The ADJACENT path
+    driven here is `Foundry-Phase('inspect_clean')` — a DIFFERENT transition,
+    reached later in the same cycle, which does not decide the roster at all but
+    CONSUMES it through `_check_streams_complete`. It is the path most exposed
+    by this fix: a stream that becomes required must be one the run can actually
+    satisfy, or the fix trades a false skip for a deadlock at the next door.
+
+    Both halves are asserted, because "it refuses" and "it can be cleared" are
+    different claims and only the pair is the requirement (AC-017 / FR-047).
+    """
+    project_root, fdir = run_env
+    _no_manifest_run(project_root, fdir)
+    _grind_touching(project_root, fdir, "src/api/users.py")
+    _arm(fdir)
+
+    assert foundry_mark_phase_complete("inspect_start", project_root)["ok"] is True
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    cycle = recorded["cycle"]
+    assert "research_audit" in recorded["required_streams"], recorded
+
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert "research_audit" in streams["missing"], streams
+
+    _arm(fdir)
+    refusal = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert refusal.get("ok") is not True, refusal
+    assert "research_audit" in json.dumps(refusal), refusal
+
+    # ...and the door opens once the roster it was actually given is checked.
+    # The GRIND's own defect is closed alongside, because `inspect_clean`
+    # refuses on an open LIVE defect too (CT-008) and a door held shut by two
+    # reasons proves nothing about either.
+    _mark(project_root, "prove", cycle, len(recorded["prove_sample"]),
+          len(recorded["prove_sample"]))
+    for wire in recorded["required_streams"]:
+        if wire != "prove":
+            _mark(project_root, wire, cycle, 1, 1)
+    assert _check_streams_complete(project_root)["complete"] is True
+    _write_defects(fdir, [])
+
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert "research_audit" not in json.dumps(clean), clean
+    # What is left is the door's OWN pre-existing refusal — a DELTA cycle does
+    # not open ASSAY — and naming it here is the point: the stream requirement
+    # this fix created appears and disappears exactly with its marker, and it
+    # displaces nothing else this door enforces.
+    assert clean.get("inspect_mode") == "DELTA", clean
+    assert "DELTA width" in clean["error"], clean
+
+
+def test_a_research_skipped_record_outranks_an_unknown_covered_set(run_env):
+    """The second adjacent branch through the changed code, and the one the fix
+    could most easily have broken.
+
+    AC-017's exception — 'or a research_skipped record exists' — is a fact the
+    RUN recorded about itself, so it outranks anything the covered set can say,
+    an unknown one included: a run that skipped research has no research to have
+    deviated from, whatever moved. The recorded detail says exactly that, in the
+    same words the FULL branch writes for the same fact, rather than 'no file
+    research_audit covers was touched' — which would be a reason this branch
+    never evaluated, and recording an unevaluated reason is D-208 itself.
+    """
+    project_root, fdir = run_env
+    _no_manifest_run(project_root, fdir)
+    _write_state(fdir, phase="F3", cycle=1, self_target=False, research_skipped=True)
+    _grind_touching(project_root, fdir, "src/api/users.py")
+    _arm(fdir)
+
+    assert foundry_mark_phase_complete("inspect_start", project_root)["ok"] is True
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["mode"] == "DELTA", recorded
+    assert "research_audit" not in recorded["required_streams"], recorded
+    scope = recorded["stream_scope"]["research_audit"]
+    assert scope["scope"] == "skipped", scope
+    assert scope["detail"] == "research_skipped record", scope
 
 
 def test_a_stem_colliding_grind_diff_leaves_test01_unrequired_over_mcp(run_env):

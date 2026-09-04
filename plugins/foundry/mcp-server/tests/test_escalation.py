@@ -1204,6 +1204,219 @@ def test_an_operator_override_still_clears_the_persisted_guard(run_env):
     assert checks[escalation_check]["ok"] is True, outcome["reason"]
 
 
+# --------------------------------------------------------------------------- #
+# D-210 — THE CLOSED VOCABULARY, ON THE READS THAT DECIDE (ST-010)
+#
+# `ESCALATION_STATUSES` was consulted by `foundry_report.py` and
+# `scripts/measure-run.py` — two REPORT BUILDERS — and by neither deciding
+# read. So a persisted status that was neither member was not ESCALATED at one
+# door and not CLEARED at the other: every door agreed the class was neither,
+# and DONE passed. The absent-status default was always right; it was the
+# PRESENT-but-unknown value that failed open.
+# --------------------------------------------------------------------------- #
+
+
+def _gate_over_the_wire(project_root: str, fdir: Path, gate: str) -> dict:
+    """`Foundry-Gate` through `server.py`'s own dispatcher.
+
+    The same door D-210 was driven at. The dispatcher is what a lead's call
+    actually reaches, and it is where a checklist entry becomes the answer the
+    run acts on. The ordering token is armed here because every gate consumes
+    one and a refusal for the want of it would answer a different question.
+    """
+    from foundry_mcp import server as foundry_server
+
+    _arm(fdir)
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        return foundry_server._DISPATCH["Foundry-Gate"]({"phase": gate})
+    finally:
+        foundry_server._project_root = previous_root
+
+
+def _escalation_check(outcome: dict) -> dict:
+    """The `escalated_classes_cleared` checklist entry, whichever counts it
+    happens to carry in its label."""
+    return next(
+        c for c in outcome["checklist"]
+        if c["check"].startswith("escalated_classes_cleared")
+    )
+
+
+def _fixed_class_with_status(fdir: Path, status) -> None:
+    """A run whose class has every instance FIXED, and one persisted status.
+
+    Everything open is closed, so `_escalated_classes` returns {} and the ONLY
+    thing that can hold DONE is the persisted status — which is what makes this
+    fixture measure the deciding read rather than the ledger recurrence beside
+    it.
+    """
+    defects = _latent_recurring([0, 1, 2])
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 2
+    _ready_for_f6(fdir, defects)
+    entry: dict = {"exit_reason": None}
+    if status is not _ABSENT:
+        entry["status"] = status
+    (fdir / "escalation.json").write_text(
+        json.dumps({"classes": {"FALSE_DOCUMENTED_CONTRACT": entry}}),
+        encoding="utf-8",
+    )
+
+
+_ABSENT = object()   #: no `status` key at all — a pre-change archive's shape.
+
+
+@pytest.mark.parametrize("status", [
+    "ESCALATED",     # the vocabulary member that blocks
+    _ABSENT,         # absent — always blocked, and still must
+    None,            # null — always blocked, and still must
+    "",              # present, empty, not a member
+    "cleared",       # present, right word, wrong case: not a member
+    "BOGUS",         # present, not a member at all
+    "CLEARED ",      # present, trailing space: not a member
+])
+def test_a_status_outside_the_closed_vocabulary_blocks_done(run_env, status):
+    """ST-010 verbatim: 'the generated report exists with every required
+    section; no LIVE defect open; every escalated class CLEARED'.
+
+    D-210, driven at `server.call_tool`'s `Foundry-Gate('done')` on a run whose
+    class has every instance fixed. `_persisted_escalations` read
+    `(entry.get("status") or "ESCALATED") == "ESCALATED"`, so ESCALATED, `null`
+    and `""` each rendered `escalated_classes_cleared ok:false classes:[K]`
+    while `"cleared"` and `"BOGUS"` each rendered `ok:true classes:[]` —
+    BYTE-IDENTICAL to a genuine CLEARED — and the report showed the class in
+    neither bucket with count 1. CLEARED is terminal and retires a class from
+    structural work for the rest of the run, and no value nothing in this
+    system writes may buy that.
+
+    Parametrised over the whole shape of the field rather than over the one
+    reported spelling: the property is "not a member of `ESCALATION_STATUSES`",
+    and a fix keyed on `"BOGUS"` would pass a test that named only `"BOGUS"`.
+    """
+    project_root, fdir = run_env
+    _fixed_class_with_status(fdir, status)
+
+    check = _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))
+    assert check["ok"] is False, check
+    assert check["classes"] == ["FALSE_DOCUMENTED_CONTRACT"], check
+    assert check["persisted_escalated_classes"] == [
+        "FALSE_DOCUMENTED_CONTRACT"
+    ], check
+    # The ledger-recurrence half sees nothing — every instance is fixed — so
+    # the persisted read is unambiguously what answered.
+    assert check["recurring_classes"] == [], check
+
+
+def test_the_one_vocabulary_member_that_clears_still_clears(run_env):
+    """The control D-210's fix must not move.
+
+    Without this half the parametrised test above would pass on a read that had
+    simply started blocking everything, which would deadlock every run that
+    legitimately cleared a class — the D-034 ruling's explicit prohibition.
+    """
+    project_root, fdir = run_env
+    _fixed_class_with_status(fdir, "CLEARED")
+
+    check = _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))
+    assert check["ok"] is True, check
+    assert check["classes"] == [], check
+    assert check["persisted_escalated_classes"] == [], check
+
+
+def test_the_status_resolver_is_the_one_path_both_deciding_reads_take(run_env):
+    """THE PROPERTY, derived from the source rather than from the symptom.
+
+    D-210's cause is that each deciding read carried its own opinion of one
+    field: `_persisted_escalations` asked "is it ESCALATED" and
+    `_escalated_classes` asked "is it CLEARED", and a value that was neither
+    answered no to both. `_done_preconditions` then assembled its union from two
+    different readings of the same byte string.
+
+    Both now resolve through `_escalation_status`, and that is asserted from the
+    source — a future edit that inlines a literal comparison back into either
+    read re-opens the divergence whatever the parametrised drive above happens
+    to cover. Mirrors `test_the_exit_arms_read_the_escalation_ledger_not_the_
+    open_work`'s AST shape.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    def _calls(fn) -> set[str]:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        return {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+    for reader in (fo._persisted_escalations, fo._escalated_classes):
+        assert "_escalation_status" in _calls(reader), (
+            f"{reader.__name__} no longer resolves the persisted status through "
+            "the closed vocabulary, so a value outside it can read as neither "
+            "ESCALATED nor CLEARED again — D-210."
+        )
+
+    # And the resolver answers ONLY in the vocabulary, whatever it is handed.
+    for handed in ("BOGUS", "cleared", "", None, 7, ["CLEARED"]):
+        assert fo._escalation_status({"status": handed}) in ESCALATION_STATUSES
+    assert fo._escalation_status({}) in ESCALATION_STATUSES
+    assert fo._escalation_status(None) in ESCALATION_STATUSES
+    assert fo._escalation_status("not a mapping") in ESCALATION_STATUSES
+
+
+def test_the_two_status_names_are_exactly_the_closed_vocabulary(run_env):
+    """The comparands are pinned to casting 1's frozenset (D-210, axis 1).
+
+    `ESCALATION_STATUSES` is the vocabulary and membership in it is what
+    decides; these two names are the only place this module says WHICH member
+    each read asks about. Pinning the pair here means a member renamed or
+    dropped in casting 1's `vocab.py` fails a test in this module, rather than
+    quietly leaving a read matching nothing.
+    """
+    assert {
+        fo.ESCALATION_STATUS_ESCALATED,
+        fo.ESCALATION_STATUS_CLEARED,
+    } == set(ESCALATION_STATUSES)
+
+
+def test_the_report_and_the_gate_agree_about_an_unknown_status(run_env):
+    """The other half of D-210's observable: what the run's own artifact says.
+
+    The pre-fix drive's worst property was not that DONE passed — it was that
+    DONE passed while `report.json` counted the class in NEITHER bucket with
+    `count: 1`, so the two artifacts of one run disagreed and neither said the
+    class was still escalated. The gate now blocks, and the report's CLEARED
+    bucket does not claim it: nothing anywhere calls this class retired.
+
+    `by_status` is `foundry_report.py`'s (casting 5's) roll-up and still counts
+    an out-of-vocabulary status in neither bucket, so `sum(by_status.values())`
+    is short of `count`. That is recorded as a concern for its owner; what is
+    asserted here is the part this casting owns — the gate blocks, and no
+    artifact reads the class as CLEARED.
+    """
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    project_root, fdir = run_env
+    _fixed_class_with_status(fdir, "BOGUS")
+
+    assert _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))["ok"] is False
+
+    assert generate_report(Path(project_root), fdir)["ok"] is True
+    section = json.loads(
+        (fdir / "report.json").read_text(encoding="utf-8")
+    )["escalated_classes"]
+    assert section["count"] == 1, section
+    assert section["by_status"]["CLEARED"] == 0, section
+    row = section["classes"][0]
+    assert row["class"] == "FALSE_DOCUMENTED_CONTRACT", row
+    assert row["status"] != "CLEARED", row
+    assert row["exit_reason"] is None, row
+
+
 def test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice(run_env):
     """D-057: the clean arm counted inspect_start CALLS, not server cycles.
 

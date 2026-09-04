@@ -23,6 +23,7 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
     DELTA_CONDITIONAL_STREAMS,
+    ESCALATION_STATUSES,
     FIX_AUTHORS,
     FULL_ROSTER_STREAMS,
     INSPECT_DELTA_RULE,
@@ -3806,7 +3807,9 @@ def _skipped_streams(fdir: Path) -> set[str]:
     return _skipped_stream_ids(fdir)
 
 
-def _research_scope_touched(fdir: Path, touched: list[str]) -> dict:
+def _research_scope_touched(
+    fdir: Path, project_root: str, touched: list[str]
+) -> dict:
     """Did the GRIND diff touch a file RESEARCH_AUDIT covers (ST-007)?
 
     A casting declaring a `research_context` is a casting whose code was written
@@ -3814,38 +3817,119 @@ def _research_scope_touched(fdir: Path, touched: list[str]) -> dict:
     those recommendations reads. A diff touching none of them cannot have
     deviated from research that no longer applies to anything that moved.
 
-    Returns `{"touched": bool, "detail": str}`. The detail is the caller's
-    provenance string for a MATCH — it names WHICH casting and WHICH file
-    matched rather than asserting that one did; see `_test01_scope_touched`'s
-    D-204 note for what an unnamed "a covered file was touched" cost. It is
-    empty when nothing matched, because the skip's provenance is the caller's
-    own sentence and a second, unread one is a second thing that can drift.
+    Returns the shared conditional answer — `{"touched", "computable",
+    "source", "detail"}` — because it is one arm of `DELTA_CONDITIONAL_STREAMS`
+    and every arm answers the same three-valued question through
+    `_delta_conditional_scope`. `source` names WHICH source answered:
+    `no diff`, `manifest`, or `unknown`. The detail names WHICH casting and
+    WHICH file matched on a hit, and WHY the set was not computable on an
+    unknown; it is empty on a COMPUTED miss, because the skip's provenance is
+    the caller's own sentence and a second, unread one is a second thing that
+    can drift.
 
-    THIS ARM'S TWO AXES WERE ALREADY THE RIGHT ONES, which is why D-204 named
-    only its sibling. WHICH names: the manifest's own `key_files` cells, a
+    ``project_root`` is not read here. It is in the signature because every
+    conditional arm is called through ONE signature by the shared path, and an
+    arm whose shape the shared path cannot call is an arm that gets called
+    some other way — which is the whole of D-208.
+
+    D-208 — A MANIFEST THIS SERVER NEVER READ IS NOT A MANIFEST DECLARING NO
+    RESEARCH.
+    -----------------------------------------------------------------------
+    This returned a two-valued `{touched, detail}` with no third value, and
+    took its covered set from `_load_json(castings/manifest.json)`, which
+    yields `{}` for an ABSENT document — so `manifest.get("castings", [])` was
+    empty and the arm returned `touched: False`, INDISTINGUISHABLE from a
+    manifest that was read and declares no `research_context`.
+
+    Driven at the wire at 916c1ca: a non-self-targeting run, manifest declaring
+    casting 1 with `research_context` and key_files ["src/api/users.py"], a
+    control cycle touching that key_file recorded `research_audit`
+    {scope full, detail "casting 1 declares research_context and the diff
+    touched its key_file src/api/users.py"}. With `castings/manifest.json`
+    DELETED and the identical diff, `Foundry-Phase('inspect_start')` returned
+    ok and recorded `research_audit` {scope skipped, detail "no file
+    research_audit covers was touched"} — a NEGATIVE about a set it had not
+    read — while `test01`, in the SAME `stream_scope`, recorded "could not be
+    computed". Two arms of one decision, one input, opposite failure
+    directions. The artifact guard does not close it: an invalid-JSON or
+    wrong-shape manifest IS named and refuses at the entry point, so the ABSENT
+    manifest is the one uncomputable shape that reaches this arm.
+
+    The line is drawn at whether the document was READ, per the lead ruling:
+    absent (or unreadable, or with a `castings` cell of the wrong type) is
+    UNKNOWN and therefore required; read, with no casting declaring a
+    `research_context`, is a computed miss and therefore skipped. The cycle-20
+    docstring in `test_the_research_audit_arm_is_unmoved_by_the_test01_source_
+    ladder` asserted this set was "computable on every run"; that premise is
+    what this drive falsified, and it is corrected there.
+
+    THE TWO AXES ARE UNCHANGED AND WERE ALWAYS RIGHT, which is why D-204 named
+    only the sibling. WHICH names: the manifest's own `key_files` cells, a
     declared list, never prose. HOW they map to files: they ARE files, compared
     by whole-string equality against the diff, so there is no mapping step to
-    get wrong. The sibling had prose on the first axis and a stem search on the
-    second, and both had to move.
+    get wrong. What moved is a third axis the sibling already had — HOW MANY
+    ANSWERS the question has.
     """
     if not touched:
-        return {"touched": False, "detail": ""}
+        return {
+            "touched": False,
+            "computable": True,
+            "source": "no diff",
+            "detail": "",
+        }
+
+    manifest_path = fdir / "castings" / "manifest.json"
+    if not manifest_path.exists():
+        # `_load_json` cannot tell this from an empty document BY DESIGN (read
+        # its docstring), so the absence is tested here rather than inferred
+        # from a `{}` that means four different things.
+        return _covered_set_unknown(
+            "research_audit",
+            "the run has no castings/manifest.json, so which castings declare "
+            "a research_context is unknown",
+        )
+    problem = _document_problem(manifest_path)
+    if problem is not None:
+        # `_artifact_guard` names this at the MCP entry point and refuses, so
+        # in practice it does not reach here. It is answered anyway: a reader
+        # that would return a negative for a document it could not read is the
+        # defect, whether or not some caller happens to shield it.
+        return _covered_set_unknown("research_audit", problem)
+
+    manifest = _load_json(manifest_path)
+    castings = manifest.get("castings")
+    if castings is None:
+        castings = []
+    if not isinstance(castings, list):
+        return _covered_set_unknown(
+            "research_audit",
+            f"castings/manifest.json's castings cell is a "
+            f"{type(castings).__name__}, not a list of castings",
+        )
+
     touched_set = set(touched)
-    manifest = _load_json(fdir / "castings" / "manifest.json")
-    for casting in manifest.get("castings", []) or []:
+    for casting in castings:
         if not isinstance(casting, dict) or not casting.get("research_context"):
             continue
         for f in casting.get("key_files") or []:
             if isinstance(f, str) and f.strip() in touched_set:
                 return {
                     "touched": True,
+                    "computable": True,
+                    "source": "manifest",
                     "detail": (
                         f"casting {casting.get('id', '?')} declares "
                         f"research_context and the diff touched its key_file "
                         f"{f.strip()}"
                     ),
                 }
-    return {"touched": False, "detail": ""}
+    # READ, and it declares no covered file the diff touched. A computed miss.
+    return {
+        "touched": False,
+        "computable": True,
+        "source": "manifest",
+        "detail": "",
+    }
 
 
 def _contracts_surface_cells(project_root: str) -> tuple[list[tuple[str, str]], str | None]:
@@ -4015,21 +4099,42 @@ def _path_matches(covered: str, candidate: str) -> bool:
     return left == right or left.endswith(f"/{right}") or right.endswith(f"/{left}")
 
 
-def _test01_covered_set_unknown(reason: str) -> dict:
-    """The THIRD answer: the covered set could not be computed, so require it.
+#: THE ANSWER SHAPE every member of ``DELTA_CONDITIONAL_STREAMS`` returns.
+#: Named once, here, because ``_delta_conditional_scope`` validates against
+#: this tuple: an arm that answers with fewer keys has not given a narrower
+#: answer, it has left the question unanswered, and D-208 is what reading the
+#: first as the second costs.
+_CONDITIONAL_ANSWER_KEYS = ("touched", "computable", "source", "detail")
+
+
+def _covered_set_unknown(wire: str, reason: str) -> dict:
+    """The THIRD answer, for ANY conditional stream: the covered set could not
+    be computed, so require the stream.
 
     Mirrors `_decide_inspect_mode`'s uncomputable-diff arm one function over —
     "the GRIND diff could not be computed ..., so the verifier cannot be shown
     to be untouched" — because it is the same sentence about a different set,
     and the two must not disagree about which way an unknown fails.
+
+    D-208 — ONE CONSTRUCTOR FOR EVERY ARM, NOT ONE PER ARM.
+    ------------------------------------------------------
+    This was `_test01_covered_set_unknown`, and the class it belongs to
+    (`inspect-mode-rule-is-a-proxy-not-the-fact`) recurred for three straight
+    cycles because each fix taught ONE arm of the shared DELTA branch a lesson
+    its sibling never heard: D-204 anchored test01's WHICH and HOW, D-207 gave
+    test01 the third value, and D-208 then found `_research_scope_touched`
+    still answering a two-valued question about a manifest it had not read.
+    The wire id is a parameter so the sentence is the SAME sentence whichever
+    stream could not be computed — for `test01` it is byte-identical to the one
+    D-207 shipped.
     """
     return {
         "touched": True,
         "computable": False,
         "source": "unknown",
         "detail": (
-            f"the set of files test01 covers could not be computed ({reason}), "
-            "so test01 cannot be shown to be untouched"
+            f"the set of files {wire} covers could not be computed ({reason}), "
+            f"so {wire} cannot be shown to be untouched"
         ),
     }
 
@@ -4192,7 +4297,8 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
     # of. Off a self-target the registry describes a different program than the
     # spec does, so an empty intersection is evidence of nothing.
     if _load_json(fdir / "state.json").get("self_target") is not True:
-        return _test01_covered_set_unknown(
+        return _covered_set_unknown(
+            "test01",
             "the run's manifest declares no test01_scope and state.json does "
             "not record self_target, so the executing server's tool registry "
             "describes a different program than the one under test"
@@ -4200,7 +4306,8 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
 
     rows, spec_problem = _contracts_surface_cells(project_root)
     if spec_problem is not None:
-        return _test01_covered_set_unknown(
+        return _covered_set_unknown(
+            "test01",
             f"the run's Contracts table could not be read ({spec_problem})"
         )
     if not rows:
@@ -4211,7 +4318,8 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
 
     registry = _registry_tool_modules()
     if not registry:
-        return _test01_covered_set_unknown(
+        return _covered_set_unknown(
+            "test01",
             "the executing server's tool registry could not be read, so which "
             "module implements a named surface is unknown"
         )
@@ -4236,6 +4344,106 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
                             ),
                         }
     return {"touched": False, "computable": True, "source": "registry", "detail": ""}
+
+
+#: WIRE ID -> the predicate that answers "did the diff touch a file this
+#: stream covers". Every member of `DELTA_CONDITIONAL_STREAMS` (casting 1's
+#: vocabulary) belongs here, under ONE signature — `(fdir, project_root,
+#: touched)` — so `_delta_conditional_scope` can call any of them without
+#: knowing which it is holding. `_research_scope_touched` does not read
+#: `project_root`; taking it anyway is the price of there being one signature
+#: rather than one call site per stream, and it is a price worth paying: an
+#: `if wire == "research_audit" else` ladder in the caller is exactly where the
+#: two arms drifted into different answer shapes for three cycles.
+_DELTA_CONDITIONAL_PREDICATES = {
+    "research_audit": _research_scope_touched,
+    "test01": _test01_scope_touched,
+}
+
+
+def _delta_conditional_scope(
+    fdir: Path, project_root: str, wire: str, touched: list[str]
+) -> dict:
+    """The ONE path every conditional stream's answer comes through (ST-007).
+
+    Returns the shared three-valued answer — `{"touched", "computable",
+    "source", "detail"}` — for any member of `DELTA_CONDITIONAL_STREAMS`, and
+    routes every way of NOT having an answer to the same place:
+    `_covered_set_unknown`, which is `touched: True` and therefore REQUIRED
+    with a detail naming why. Never raises, so a malformed arm degrades the
+    width to "run it" rather than taking the transition down.
+
+    D-208 — THE STRUCTURAL FIX. THE CLASS WAS NEVER ABOUT ONE PREDICATE.
+    -------------------------------------------------------------------
+    `inspect-mode-rule-is-a-proxy-not-the-fact` recurred at cycles 3, 5, 18, 19
+    and 20 and was escalated for three consecutive cycles. Each instance was a
+    conditional arm answering a TWO-VALUED question — touched / not touched —
+    about a covered set it had derived by proxy (D-204: a substring search of
+    the spec's prose; D-207: the executing server's own tool registry, which
+    describes a different program off a self-target) or could not derive at all
+    (D-208: `castings/manifest.json` absent, read as a manifest declaring no
+    research). Each fix repaired ONE arm. The lead's ruling names the root
+    cause the three share: the answer SHAPE was per-arm, so a lesson taught to
+    one arm reached no other, and the caller's `if wire == ... else ...` ladder
+    let two arms of one branch disagree about how many answers the question
+    has.
+
+    BOTH AXES, and this function is the second of them:
+
+      WHAT an arm answers  three values, never two. `touched` is the width
+                           decision, `computable` says whether it was derived
+                           or defaulted, `source` names which source derived
+                           it, `detail` is the sentence recorded into
+                           `state.json.inspect_modes` and `stream-rollup.json`.
+      HOW it is shared     this function. Every arm is reached through the
+                           `_DELTA_CONDITIONAL_PREDICATES` registry under one
+                           signature, and its answer is CHECKED against
+                           `_CONDITIONAL_ANSWER_KEYS` before the caller reads
+                           `touched` out of it. So a fourth conditional stream
+                           added to the vocabulary with no predicate, or with a
+                           two-valued one, is REQUIRED with an honest detail —
+                           it cannot be silently skipped on a negative nobody
+                           computed, which is the only failure this class has
+                           ever had.
+
+    A stream registered here but absent from `DELTA_CONDITIONAL_STREAMS` is
+    simply never asked; the vocabulary decides which streams are conditional,
+    this registry decides how each is answered, and neither is derived from the
+    other.
+    """
+    predicate = _DELTA_CONDITIONAL_PREDICATES.get(wire)
+    if predicate is None:
+        return _covered_set_unknown(
+            wire,
+            f"{wire} is a conditional stream with no registered predicate in "
+            "this server, so what it covers is not something this server can "
+            "state",
+        )
+    try:
+        answer = predicate(fdir, project_root, touched)
+    except Exception as exc:  # pragma: no cover - defensive; see the house rule
+        # The house rule is that a tool never raises across the MCP boundary.
+        # An arm that raises has not answered, and an unanswered question is
+        # the unknown, not the negative.
+        return _covered_set_unknown(
+            wire, f"its predicate raised {type(exc).__name__}"
+        )
+    if not isinstance(answer, dict):
+        return _covered_set_unknown(
+            wire,
+            f"its predicate answered with a {type(answer).__name__} rather "
+            "than the shared conditional answer",
+        )
+    missing = [k for k in _CONDITIONAL_ANSWER_KEYS if k not in answer]
+    if missing:
+        return _covered_set_unknown(
+            wire,
+            "its predicate answered without "
+            f"{', '.join(missing)} — the shared conditional answer is "
+            f"{', '.join(_CONDITIONAL_ANSWER_KEYS)}, and an arm short of it "
+            "has not said whether its covered set was computed at all",
+        )
+    return answer
 
 
 def _prove_delta_sample(
@@ -4504,8 +4712,14 @@ def _decide_inspect_mode(
             scope[wire] = {"scope": "full", "detail": "every item in scope"}
         prove_sample: list[str] = []
     else:
-        research_scope = _research_scope_touched(fdir, touched)
-        test01_scope = _test01_scope_touched(fdir, project_root, touched)
+        # D-208: EVERY conditional arm is answered through one path, before the
+        # roster loop, so the loop below selects an answer by wire id rather
+        # than naming each stream and its predicate in one breath. That naming
+        # is where the two arms drifted into different answer shapes.
+        conditional = {
+            wire: _delta_conditional_scope(fdir, project_root, wire, touched)
+            for wire in sorted(DELTA_CONDITIONAL_STREAMS)
+        }
         # The GRIND that just ended is `cycle - 1` on the `inspect_start`
         # boundary, where the counter has already been advanced for the INSPECT
         # this roster is for.
@@ -4519,13 +4733,22 @@ def _decide_inspect_mode(
                 continue
             if wire in DELTA_CONDITIONAL_STREAMS:
                 # ST-007: required ONLY when the diff touches a file they cover.
-                decision = (
-                    research_scope if wire == "research_audit" else test01_scope
-                )
-                needed = decision["touched"]
+                decision = conditional[wire]
                 if wire == "research_audit" and research_skipped:
-                    needed = False
-                if not needed:
+                    # A RECORDED skip is a computed fact about the run and
+                    # outranks anything the covered set says, an unknown one
+                    # included — the run has no research to audit against
+                    # whatever moved. Stated in its own words: "no file
+                    # research_audit covers was touched" would be a reason this
+                    # branch never evaluated, and D-208 is precisely what
+                    # recording an unevaluated reason costs. Same sentence the
+                    # FULL branch writes for the same fact.
+                    scope[wire] = {
+                        "scope": "skipped",
+                        "detail": "research_skipped record",
+                    }
+                    continue
+                if not decision["touched"]:
                     scope[wire] = {
                         "scope": "skipped",
                         "detail": f"no file {wire} covers was touched",
@@ -4546,6 +4769,12 @@ def _decide_inspect_mode(
                 # fails closed exactly as an uncomputable GRIND diff does. The
                 # detail is the only place that distinction is written down, so
                 # it is copied through verbatim rather than re-summarised.
+                #
+                # D-208: and BOTH arms now reach this line the same way — the
+                # answer is selected out of `conditional` by wire id, so
+                # whichever stream could not compute its covered set writes the
+                # same shaped sentence here, and neither can reach the skip
+                # above on a negative it never computed.
                 scope[wire] = {"scope": "full", "detail": decision["detail"]}
                 continue
             required.append(wire)
@@ -8567,7 +8796,14 @@ def _escalated_classes(
         # more instances arrive — its open LIVE instances are ordinary blocking
         # defects fixed one at a time (AC-003), which is exactly what escalation
         # was an alternative to.
-        if (recorded.get(key) or {}).get("status") == "CLEARED":
+        # D-210: through the vocabulary. This read `.get("status") ==
+        # "CLEARED"` — correct for the two spellings this module writes and
+        # silently wrong for every other, since a value that is not the literal
+        # simply fell through as still-escalated at THIS door while
+        # `_persisted_escalations` dropped it at the other. Both doors now
+        # resolve the same way, so the union in `_done_preconditions` cannot be
+        # assembled from two different opinions of one field.
+        if _escalation_status(recorded.get(key)) == ESCALATION_STATUS_CLEARED:
             continue
         run_len, _run_end = _consecutive_run(bucket["cycles"])
         if run_len < ESCALATION_CYCLES:
@@ -8860,7 +9096,7 @@ def _escalation_entry_defaults(entry: dict) -> dict:
     anything but zero would clear classes in an old archive that nothing ever
     measured.
     """
-    entry.setdefault("status", "ESCALATED")
+    entry.setdefault("status", ESCALATION_STATUS_ESCALATED)
     entry.setdefault("exit_reason", None)
     entry.setdefault("cleared_at_cycle", None)
     entry.setdefault("structural_packets_dispatched", 0)
@@ -9006,6 +9242,70 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
 # returns (the D-034 ruling), so nothing here can deadlock it.
 
 
+# D-210 — THE CLOSED VOCABULARY, ENFORCED ON THE READS THAT DECIDE.
+#
+# `ESCALATION_STATUSES` is casting 1's closed vocabulary and was consulted by
+# `foundry_report.py` and `scripts/measure-run.py` — two REPORT BUILDERS —
+# and by neither deciding read. `_persisted_escalations` tested
+# `(entry.get("status") or "ESCALATED") == "ESCALATED"` and `_escalated_classes`
+# tested `.get("status") == "CLEARED"`, so a value that was NEITHER was not
+# ESCALATED (it blocked nothing) and not CLEARED. The absent-status default was
+# always right — it blocks. It was the PRESENT-but-unknown value that failed
+# open.
+#
+# Driven at `server.call_tool` `Foundry-Gate('done')` at 916c1ca on a run whose
+# class K has every instance fixed: status ESCALATED, `null` and `""` each
+# rendered `escalated_classes_cleared ok:false classes:[K]`; status `"cleared"`
+# (lowercase) and `"BOGUS"` each rendered `ok:true classes:[]`, BYTE-IDENTICAL
+# to a genuine CLEARED, and the report showed the class in neither bucket with
+# count 1. The orchestrator is this file's only writer and writes only the two
+# literals, so the state is reachable only through a hand-edited or
+# foreign-written `escalation.json` — LATENT, and fixed on the read that would
+# have believed it.
+#
+# BOTH AXES. WHAT is compared: `ESCALATION_STATUSES` itself, by membership, so
+# the vocabulary is what decides rather than a literal typed beside it. HOW an
+# out-of-vocabulary value reads: as ESCALATED, so an unknown fails CLOSED the
+# way an absent one already did — CLEARED is terminal and retires a class from
+# structural work for the rest of the run, and no value nothing in this system
+# writes should be able to buy that.
+#
+# The two members are named ONCE, here, and `tests/test_escalation.py` pins the
+# pair to equal `ESCALATION_STATUSES`, so a member renamed or dropped in
+# casting 1's vocab.py fails a test in this module instead of quietly matching
+# nothing. Every read and every write of the field below goes through these two
+# names.
+ESCALATION_STATUS_ESCALATED = "ESCALATED"
+ESCALATION_STATUS_CLEARED = "CLEARED"
+
+
+def _escalation_status(entry: object) -> str:
+    """One class's persisted status, resolved against the CLOSED vocabulary.
+
+    Returns a member of `ESCALATION_STATUSES` and nothing else, so no caller
+    ever compares a raw persisted value to anything. Three ways in, ONE way
+    out:
+
+      * a member of the vocabulary          -> itself
+      * absent, or `null`                   -> ESCALATED (a class nothing has
+                                               cleared has not been cleared)
+      * present and NOT a member, or an
+        entry that is not a mapping at all  -> ESCALATED (D-210)
+
+    The third rung is the fix: `"cleared"`, `""` and `"BOGUS"` all used to read
+    as "not ESCALATED" at one door and "not CLEARED" at the other, which is
+    every door agreeing the class was neither. It now reads exactly as the
+    absent value does, and for the same reason — the only status that retires a
+    class is the one the vocabulary spells.
+    """
+    if not isinstance(entry, dict):
+        return ESCALATION_STATUS_ESCALATED
+    raw = entry.get("status")
+    if isinstance(raw, str) and raw in ESCALATION_STATUSES:
+        return raw
+    return ESCALATION_STATUS_ESCALATED
+
+
 def _persisted_escalations(
     fdir: Path, project_root: str, classes: dict
 ) -> list[str]:
@@ -9029,7 +9329,10 @@ def _persisted_escalations(
         for key, entry in classes.items()
         if isinstance(entry, dict)
         and key not in overrides
-        and (entry.get("status") or "ESCALATED") == "ESCALATED"
+        # D-210: through the vocabulary. This read `(entry.get("status") or
+        # "ESCALATED") == "ESCALATED"`, so a status of `"BOGUS"` was not
+        # ESCALATED and this door let it past.
+        and _escalation_status(entry) == ESCALATION_STATUS_ESCALATED
     )
 
 
@@ -9350,7 +9653,7 @@ def _advance_escalation_exits(
                 info = _class_info(
                     key, buckets.get(key) or _empty_class_bucket(key), classes
                 )
-                entry["status"] = "CLEARED"
+                entry["status"] = ESCALATION_STATUS_CLEARED
                 entry["exit_reason"] = reason
                 entry["cleared_at_cycle"] = boundary_cycle
                 entry["open_latent_defect_ids"] = info["open_latent_defect_ids"]
