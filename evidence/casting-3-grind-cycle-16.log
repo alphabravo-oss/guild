@@ -1,0 +1,52 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_orchestrator_gates.py && uv run --quiet --with pytest python -c "import asyncio,ast,json,pathlib,re,tempfile;from mcp import types;from foundry_mcp import server as S;from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state;plain=lambda t:re.sub(chr(27)+r'\[[0-9;]*m','',t);SHAPES=['test_observations/generated/.hypothesis/unicode_data/14.0.0','traces/scratch/v1.2','proofs/cache/node_modules/pkg-1.0.0','unicode_data/15.1.0','.hypothesis/examples'];DOORS=[('Foundry-Next',{}),('Foundry-Spend',{'agent':'casting-3','phase':'F3','tokens':1000,'duration_ms':60000}),('Foundry-Stream',{'stream':'trace','cycle':1,'items_checked':3})];setattr(fo,'_check_active_teams',lambda _pr:{'active':False,'teams':[],'live_panes':[]});W=lambda d,n,s:(d/n).write_text(s,encoding='utf-8');seed=lambda name:(lambda root,fdir:((fdir/'castings').mkdir(parents=True),W(fdir,'state.json',json.dumps({'phase':'F2','cycle':1})),W(fdir,'defects.json',json.dumps({'defects':[]})),W(fdir,'castings/manifest.json',json.dumps({'castings':[],'waves':[]})),(fdir/'traces').mkdir(exist_ok=True),W(fdir,'traces/TRACE-cycle-1.md','# trace'+chr(10)),foundry_state.set_active_run(name),setattr(S,'_project_root',str(root)),fdir)[-1])(*(lambda r:(r,r/'foundry-archive'/name))(pathlib.Path(tempfile.mkdtemp())));wire=lambda n,a:plain(asyncio.run(S.server.request_handlers[types.CallToolRequest](types.CallToolRequest(method='tools/call',params=types.CallToolRequestParams(name=n,arguments=a)))).root.content[0].text);names=lambda ps:sorted(p.split(' could')[0] for p in ps);row=lambda shape:(lambda fdir:(lambda _:'  %-58s %-12s %s'%(shape,names(fo._run_artifact_problems(fdir)) or 'clean',[d for d,a in DOORS if 'Run artifacts cannot be read' in wire(d,a)] or 'none'))((fdir/shape).mkdir(parents=True)))(seed('d195'));print(chr(10)+'=== D-195 / CT-012 / CT-013: a directory is not a document, whatever its name ===');print('  CT-012'+chr(39)+'s errors cell for Foundry-Next is verbatim '+chr(39)+'none; never blocks'+chr(39)+'; CT-013'+chr(39)+'s for');print('  Foundry-Spend is '+chr(39)+'none; unreported dispatches are listed, never refused'+chr(39)+'. Every state');print('  document below is valid and readable; the only addition is one empty DIRECTORY.');print(chr(10)+'  %-58s %-12s %s'%('directory planted in the run tree','guard','doors refused'));print('  %-58s %-12s %s'%('-'*33,'-'*5,'-'*13));print(chr(10).join(row(s) for s in SHAPES));foundry_state.clear_active_run();print(chr(10)+'  Path('+chr(39)+'14.0.0'+chr(39)+').suffix is %r, so the old is_dir()-and-no-suffix skip opened it'%pathlib.Path('14.0.0').suffix);print('  as a run document. Membership is now the guard'+chr(39)+'s own decoder table:');print('    _STRICT_ARTIFACT_DECODERS keys = %s'%sorted(fo._STRICT_ARTIFACT_DECODERS));print('    _is_document_position(14.0.0) = %s   _is_document_position(state.json) = %s'%(fo._is_document_position(pathlib.Path('14.0.0')),fo._is_document_position(pathlib.Path('state.json'))));print(chr(10)+'=== D-140 held: a directory AT a document position is still named, at any depth ===');d140=seed('d140');(d140/'state.json').unlink();(d140/'state.json').mkdir();(d140/'castings'/'manifest.json').unlink();(d140/'castings'/'manifest.json').mkdir();(d140/'traces'/'scratch'/'v1.2').mkdir(parents=True);print('  state.json and castings/manifest.json replaced by DIRECTORIES, one scratch dir beside them');print('    named: %s'%names(fo._run_artifact_problems(d140)));foundry_state.clear_active_run();print(chr(10)+'=== D-007 held: the fix did not buy its quiet by going soft ===');d007=seed('d007');(d007/'unicode_data'/'15.1.0').mkdir(parents=True);(d007/'defects.json').write_bytes(b'\xe9\x00 not a readable artifact'+bytes([10]));(d007/'state.json.9.9.tmp').write_bytes(b'\xe9 half a document');print('  scratch dir + an in-flight .tmp sidecar + one genuinely corrupt document');print('    named: %s'%names(fo._run_artifact_problems(d007)));foundry_state.clear_active_run();print(chr(10)+'=== D-196 / FR-032 / FR-011: no superseded helper is left reachable by nothing ===');mod=pathlib.Path(fo.__file__).resolve();EX=frozenset({'.venv','venv','site-packages','node_modules','__pycache__','.tox'});files=[p for p in sorted(mod.parents[4].rglob('*.py')) if EX.isdisjoint(p.parts)];trees={p:ast.parse(p.read_text(encoding='utf-8')) for p in files};helpers={n.name:n for n in trees[mod].body if isinstance(n,ast.FunctionDef) and n.name.startswith('_') and not n.name.startswith('__')};named=lambda t:{n.id for n in ast.walk(t) if isinstance(n,ast.Name)}|{n.attr for n in ast.walk(t) if isinstance(n,ast.Attribute)}|{n.value for n in ast.walk(t) if isinstance(n,ast.Constant) and isinstance(n.value,str)};reach=set().union(*[named(t) for p,t in trees.items() if p!=mod])|set().union(*[({x for c in ast.iter_child_nodes(n) for x in named(c)}-{n.name}) if n in helpers.values() else named(n) for n in trees[mod].body]);print('  %d plugin-owned python files scanned, %d private module-level functions in the module'%(len(files),len(helpers)));print('  reachable by nothing outside its own body: %s'%sorted(n for n in helpers if n not in reach));print(chr(10)+'  the two the class produced, both a SPLIT that rewired every caller to the survivor:');print(chr(10).join('    %-24s gone: %-6s survivor %-26s present: %s'%(d,d not in helpers,a,a in helpers) for d,a in (('_spec_relative_path','_spec_relative_paths'),('_override_value','_override_value_quoting'))));print(chr(10)+'  and prose is not reachability: the first draft of the pin was a text sweep and');print('  PASSED at the pre-fix commit, because the comment explaining the pin spelled the name.');src=mod.read_text(encoding='utf-8');print(chr(10).join('    %-20s appears in the module text %d time(s), every one inside a docstring'%(n,len(re.findall(r'\b'+n+r'\b',src))) for n in ('_spec_relative_path','_override_value')))"
+# evidence-for: CT-012, CT-013, FR-011, FR-032
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+........................................................................ [ 14%]
+........................................................................ [ 29%]
+........................................................................ [ 44%]
+........................................................................ [ 59%]
+........................................................................ [ 74%]
+........................................................................ [ 89%]
+..................................................                       [100%]
+482 passed in 18.01s
+
+=== D-195 / CT-012 / CT-013: a directory is not a document, whatever its name ===
+  CT-012's errors cell for Foundry-Next is verbatim 'none; never blocks'; CT-013's for
+  Foundry-Spend is 'none; unreported dispatches are listed, never refused'. Every state
+  document below is valid and readable; the only addition is one empty DIRECTORY.
+
+  directory planted in the run tree                          guard        doors refused
+  ---------------------------------                          -----        -------------
+  test_observations/generated/.hypothesis/unicode_data/14.0.0 clean        none
+  traces/scratch/v1.2                                        clean        none
+  proofs/cache/node_modules/pkg-1.0.0                        clean        none
+  unicode_data/15.1.0                                        clean        none
+  .hypothesis/examples                                       clean        none
+
+  Path('14.0.0').suffix is '.0', so the old is_dir()-and-no-suffix skip opened it
+  as a run document. Membership is now the guard's own decoder table:
+    _STRICT_ARTIFACT_DECODERS keys = ['.json']
+    _is_document_position(14.0.0) = False   _is_document_position(state.json) = True
+
+=== D-140 held: a directory AT a document position is still named, at any depth ===
+  state.json and castings/manifest.json replaced by DIRECTORIES, one scratch dir beside them
+    named: ['manifest.json', 'state.json']
+
+=== D-007 held: the fix did not buy its quiet by going soft ===
+  scratch dir + an in-flight .tmp sidecar + one genuinely corrupt document
+    named: ['defects.json']
+
+=== D-196 / FR-032 / FR-011: no superseded helper is left reachable by nothing ===
+  67 plugin-owned python files scanned, 155 private module-level functions in the module
+  reachable by nothing outside its own body: []
+
+  the two the class produced, both a SPLIT that rewired every caller to the survivor:
+    _spec_relative_path      gone: True   survivor _spec_relative_paths       present: True
+    _override_value          gone: True   survivor _override_value_quoting    present: True
+
+  and prose is not reachability: the first draft of the pin was a text sweep and
+  PASSED at the pre-fix commit, because the comment explaining the pin spelled the name.
+    _spec_relative_path  appears in the module text 1 time(s), every one inside a docstring
+    _override_value      appears in the module text 2 time(s), every one inside a docstring
