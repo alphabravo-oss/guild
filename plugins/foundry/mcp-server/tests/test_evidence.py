@@ -4811,6 +4811,49 @@ def test_no_reader_of_the_owned_set_derives_it_inline():
     )
 
 
+def test_the_narrowed_delta_scope_still_re_executes_in_the_shared_pool(tmp_path):
+    """The ADJACENT path to D-184 / D-187: what runs concurrently downstream of
+    the scope decision.
+
+    The defect was found in the SELECTION. What consumes that selection is
+    `sweep_evidence_at_head`, which opens ONE detached worktree at HEAD and
+    re-executes every selected log inside it in a bounded thread pool — so a
+    change to which logs come out of `select_sweep_scope` changes what those
+    workers share a worktree with. Narrowing the scope must still produce a
+    real sweep of the logs that remain, not an empty pass: `ok: True` with an
+    empty `logs_reexecuted` is exactly the shape a broken boundary wears.
+
+    Driven on the quoting manifest, on casting 3's diff — the arm the fix
+    KEEPS — so the pool is exercised on a scope that reached it through the
+    changed mapping."""
+    env = _build_sweep_repo(tmp_path)
+    env["manifest"] = _QUOTING_SWEEP_MANIFEST
+
+    result = _sweep(env, full=False, touched=["tests/fixtures/gamma/rows.json"])
+
+    assert result["ok"] is True, result["mismatches"]
+    assert result["scope_count"] == 1
+    assert result["logs_reexecuted"] == ["evidence/wave-report-sections.log"]
+    assert result["pool_size"] == 1, "one log, one worker — derived, not fixed"
+    assert result["mismatches"] == []
+
+    # And the arm the fix REMOVES costs the pool nothing at all: casting 2's
+    # diff selects only casting 2's own log, so the log keyed through a
+    # quotation is not carried into the worktree to be re-run for nothing.
+    on_casting_2 = _sweep(env, full=False, touched=["src/beta.py"])
+    assert on_casting_2["ok"] is True, on_casting_2["mismatches"]
+    assert on_casting_2["logs_reexecuted"] == ["evidence/casting-2-beta.log"]
+
+    # The FULL transition through the same caller never consults the mapping
+    # at all, and still sweeps the whole committed corpus concurrently.
+    every = _sweep(env, full=True)
+    assert every["ok"] is True, every["mismatches"]
+    assert sorted(Path(n).name for n in every["logs_reexecuted"]) == [
+        "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
+    ]
+    assert every["pool_size"] >= 1
+
+
 def test_select_sweep_scope_returns_sorted_paths(tmp_path):
     """A sweep result is read by a human diffing cycle N against cycle N-1. A
     set's iteration order would make two identical sweeps look different."""

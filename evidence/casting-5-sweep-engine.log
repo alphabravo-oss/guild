@@ -6,7 +6,7 @@
 ........................................................................ [ 27%]
 ........................................................................ [ 54%]
 ........................................................................ [ 81%]
-...............................................
+................................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -81,5 +81,5 @@
       keyed by the scan    : ['wave-report-sections.log']
     the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
     FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
-.                        [100%]
-265 passed, 1 deselected in 18.69s
+.                       [100%]
+266 passed, 1 deselected in 20.68s
