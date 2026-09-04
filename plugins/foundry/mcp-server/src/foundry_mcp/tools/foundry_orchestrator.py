@@ -10108,8 +10108,24 @@ def foundry_mark_defect_fixed(
             return hash_refusal
 
     # FR-053 / CT-005 / AC-020: a lead fix always names its commit, whatever the
-    # tier. The commit is what the `lead_fix` handoff record carries, so the
-    # audit trail exists even on a LATENT fix that is never measured (FR-046).
+    # tier. The commit is what the `lead_fix` handoff record carries.
+    #
+    # D-194's sibling in this file, restated to the ruling's TWO HALVES. This
+    # said the audit trail exists "even on a LATENT fix that is never
+    # measured", and that is not what the door below does:
+    #
+    #   1. THE COMMIT IS MEASURED ON BOTH TIERS. `_numstat_measurement` runs on
+    #      the LATENT arm too — that is why an unresolvable fix_commit is
+    #      refused there (D-132) and why a LATENT `lead_fix` record carries a
+    #      real per-file measurement rather than nulls (D-046 / D-073).
+    #   2. THE LANE LIMIT REFUSES ONLY WHEN LIVE. `_lead_lane_problem`'s file
+    #      and line bounds are what FR-046 / CT-006 / ST-004 scope to LIVE:
+    #      "measures fix_commit only when the defect is LIVE" is about whether
+    #      the lane REFUSES, not about whether the numbers are taken.
+    #
+    # "Never measured" was the retired spelling for "no limit applies", and a
+    # comment that keeps it tells the next author the LATENT arm takes no git
+    # read at all — which is precisely the reading D-132 was filed against.
     if author == "lead" and not commit:
         return {
             "error": (
@@ -10541,6 +10557,118 @@ def _mint_defect_id(records: list) -> str:
     from foundry_mcp.tools.foundry import allocate_record_id
 
     return allocate_record_id(records, prefix="D")
+
+
+def new_defect_record(
+    *,
+    cycle: int,
+    declared_cycle: int,
+    source: str,
+    defect_type: str,
+    tier: str,
+    defect_class: str,
+    description: str,
+    reproduction_attempted: str | None = "",
+    spec_ref: str = "",
+    symbol: str = "",
+    file_path: str = "",
+    target_kind: str = "",
+    record_id: str = "",
+    created_at: str | None = None,
+) -> dict:
+    """The persisted defect record — ONE shape definition, BOTH filing doors.
+
+    C-2 / CT-001 / CT-002 / US-002. Returns the dict a filing door appends to
+    ``defects.json``. The caller supplies the id — ``foundry_add_defect``
+    assigns it inside its own transaction, ``foundry_sync_defects`` mints it as
+    it builds — and every other field is derived here, once.
+
+    WHY THIS IS A FUNCTION (D-192)
+    ------------------------------
+    The record was TWO hand-typed literals: one in ``foundry_add_defect``
+    (tools/foundry.py), one in the write loop of ``foundry_sync_defects``
+    below. The batch door's literal carried a comment asserting that "the batch
+    door writes the SAME record shape as the single door, field for field", and
+    that claim was false. Driven at HEAD 3584f55 with one finding carrying
+    ``target_kind='code'`` through both doors: ``Foundry-Defect`` persisted
+    D-001 with ``target_kind='code'``; ``Foundry-Sync`` persisted D-002 with no
+    ``target_kind`` key at all. Enforcement was unaffected — both doors refuse
+    comment prose identically across LINE_DRIFT_CITE, PROSE_COUNT,
+    DIRECTION_WORD and ENUMERATION, and the LATENT security denylist fires at
+    both — but the durable record was not: a Sync-filed defect carried no
+    evidence that the declaration had ever been made, so it could not be
+    audited for it while the same finding filed one door over could.
+
+    That is D-119 (the two doors disagreeing about which cycle a record
+    belonged to) and D-077 (the re-tier rule implemented at one door only) a
+    third field along, and the answer is the one those two took: the rule is
+    DERIVED ONCE and both doors call it. A COMMENT asserting that two literals
+    agree was the alternative, and it is what stood here — it is not a
+    mechanism, it goes stale the moment either literal gains a field, and
+    nothing fails when it does.
+
+    ``target_kind`` is written CONDITIONALLY, exactly as the single door writes
+    it: absence stays absence. ``vocab.is_non_comment`` reads ``bool(kind)``, so
+    ``""`` and absent answer alike today — but the guarantee this function
+    exists to hold is field-for-field agreement with the SINGLE door's shipped
+    output, not with a tidier shape, and a record that grows a key it never
+    carried is a change to every pre-change archive read.
+
+    WHERE THIS BELONGS (concerns.md, GRIND cycle 15)
+    -----------------------------------------------
+    The natural site is ``tools/foundry.py``, beside ``validate_defect_filing``
+    and ``retier_matching_untiered`` — the two other rules both doors share —
+    where neither door needs a new import edge. That file belongs to casting 2
+    and this casting may not write it, so the definition lives here, the batch
+    door calls it, and ``foundry_add_defect`` keeps its literal until casting 2
+    imports this name. Until then the agreement is held by
+    ``tests/test_orchestrator_gates.py`` — see
+    ``test_both_filing_doors_persist_one_record_shape_over_the_wire``, which
+    files ONE finding through both doors over MCP and refuses any difference
+    outside ``id`` and ``created_at``.
+    """
+    record = {
+        "id": record_id,
+        # ST-001: the server's counter is the authority, full stop.
+        "cycle": cycle,
+        # D-119: the caller's asserted cycle is persisted beside the server's,
+        # never instead of it, so a divergence is visible to migrate and
+        # escalation tooling instead of silent.
+        "declared_cycle": declared_cycle,
+        "source": source,
+        "type": defect_type,
+        # CT-001 / FR-004: the evidence axis, on every record. Written from the
+        # validated value, so a persisted record's tier is always a member of
+        # DEFECT_TIERS — vocab.TIER_UNKNOWN is a READ-side sentinel for records
+        # written before this release and is NEVER written by a door.
+        "tier": tier,
+        # CT-002 / FR-007: unconditional, because the validator has already
+        # refused an absent or blank class. A record without the key can no
+        # longer be produced, so escalation never has to handle one.
+        "class": defect_class,
+        # FR-004 / FR-029: the negative result a LATENT filing is answerable
+        # for, and explicitly `None` on a LIVE record rather than "" — absent
+        # evidence and empty evidence are different claims, and a LIVE record's
+        # reproduction lives in the description where the stream put it.
+        "reproduction_attempted": reproduction_attempted if tier == "LATENT" else None,
+        "description": description,
+        "spec_ref": spec_ref,
+        "symbol": symbol,
+        "file": file_path,
+        "status": "open",
+        "fixed_in_cycle": None,
+        # C-2 / GI-003: the three fields Foundry-Fix sets when this defect is
+        # closed, seeded null at filing so every record has one shape from the
+        # moment it exists. A reader asking "who fixed this and with what test"
+        # gets `None` from an open defect rather than a KeyError.
+        "regression_test": None,
+        "authored_by": None,
+        "fix_commit": None,
+        "created_at": created_at if created_at is not None else _now(),
+    }
+    if target_kind:
+        record["target_kind"] = target_kind
+    return record
 
 
 # D-049 / CT-002 / AC-019 — what makes an incoming finding the SAME defect
@@ -11117,51 +11245,40 @@ def foundry_sync_defects(
                 # audit signal that fires only for the filing path that did not
                 # need auditing.
 
-            defect = {
-                "id": _mint_defect_id(records),
-                "cycle": server_cycle,
-                # D-119: the caller's asserted cycle is persisted beside the
-                # server's, never instead of it. The two filing doors used to
-                # disagree about WHICH cycle a record belonged to whenever the
-                # counter was malformed — one fell back to the caller's value,
-                # this one resolved to 0 — so the same findings filed through
-                # different doors produced different cycle runs, and a class
-                # that recurred three straight cycles escaped escalation while
-                # the AC-011 DONE guard passed. Both doors now resolve to 0 and
-                # both record what the caller claimed, so the divergence is
-                # visible to migrate/escalation tooling instead of silent.
-                "declared_cycle": cycle,
-                "source": norm["source"],
-                "type": norm["type"],
-                # C-2 / CT-001 — the batch door writes the SAME record shape as
-                # the single door, field for field. `validate_defect_filing` has
-                # already refused an absent or unknown tier, an absent class and
-                # a LATENT filing with no negative result, so every key below is
-                # written from a validated value. `tier` is always a member of
-                # DEFECT_TIERS: vocab.TIER_UNKNOWN is a READ-side sentinel for
-                # pre-change archives and is never written by a door.
-                "tier": norm["tier"],
-                "class": norm["class"],
-                # FR-004 / FR-029: `None` on a LIVE record rather than "" —
-                # absent evidence and empty evidence are different claims, and a
-                # LIVE record's reproduction is in the description.
-                "reproduction_attempted": (
-                    norm["reproduction_attempted"] if norm["tier"] == "LATENT" else None
-                ),
-                "description": desc,
-                "spec_ref": finding.get("spec_ref", ""),
-                "symbol": symbol,
-                "file": finding.get("file", ""),
-                "status": "open",
-                "fixed_in_cycle": None,
-                # The three fields Foundry-Fix sets on closure, seeded null so
-                # every record has one shape from the moment it exists and the
-                # report never has to branch on whether the fix door has run.
-                "regression_test": None,
-                "authored_by": None,
-                "fix_commit": None,
-                "created_at": _now(),
-            }
+            # C-2 / CT-001 / D-192 — THE SHAPE IS `new_defect_record`'S, NOT A
+            # SECOND LITERAL THAT MERELY CLAIMS TO MATCH IT.
+            #
+            # What stood here was the same eighteen keys hand-typed a second
+            # time, under a comment asserting "the batch door writes the SAME
+            # record shape as the single door, field for field". The assertion
+            # was false for `target_kind`, which the single door persisted and
+            # this one dropped — see `new_defect_record` for the driven
+            # divergence and for why a comment is not a mechanism.
+            #
+            # `validate_defect_filing` has already refused an absent or unknown
+            # tier, an absent class and a LATENT filing with no negative result,
+            # so every value passed below is a validated one.
+            defect = new_defect_record(
+                record_id=_mint_defect_id(records),
+                cycle=server_cycle,
+                declared_cycle=cycle,
+                source=norm["source"],
+                defect_type=norm["type"],
+                tier=norm["tier"],
+                defect_class=norm["class"],
+                reproduction_attempted=norm["reproduction_attempted"],
+                description=desc,
+                spec_ref=finding.get("spec_ref", ""),
+                symbol=symbol,
+                file_path=finding.get("file", ""),
+                # D-192: the declaration the caller made, carried ONTO the
+                # record. This door read `target_kind` only as a demotion signal
+                # (the `declared_comment` branch above) and then discarded it,
+                # so a Sync-filed defect could not be audited for a declaration
+                # the same finding preserves when it is filed one door over.
+                target_kind=finding.get("target_kind") or "",
+                created_at=_now(),
+            )
             records.append(defect)
             added += 1
 

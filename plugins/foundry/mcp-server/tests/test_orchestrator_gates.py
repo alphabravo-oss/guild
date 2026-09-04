@@ -11743,6 +11743,139 @@ def test_both_filing_doors_audit_under_the_class_their_refusal_names(run_env):
     assert set(classes) == {"SECURITY_PROPERTY_CLAIM"}, classes
 
 
+#: The finding both doors file in the shape-agreement test below. Spelled ONCE
+#: and translated into each door's argument names by the two helpers under it,
+#: because two hand-typed copies of "the finding" is the same arrangement the
+#: test is about.
+_ONE_FINDING = {
+    "source": "prove",
+    "type": "UNWIRED",
+    "description": (
+        "the delta roster is recorded at the transition and the "
+        "streams-complete check rebuilds it instead of reading it"
+    ),
+    "spec_ref": "US-002",
+    "symbol": "foundry_sync_defects",
+    "file": "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py",
+    "tier": "LATENT",
+    "class": "two-surfaces-of-one-rule-disagree",
+    "reproduction_attempted": (
+        "drove Foundry-Next twice in the same DELTA cycle and compared the two "
+        "rosters; both matched, so there is no reachable instance"
+    ),
+}
+
+
+def _single_door_arguments(declared_kind: str | None) -> dict:
+    """`_ONE_FINDING` under Foundry-Defect's argument names."""
+    args = {
+        "cycle": 1,
+        "source": _ONE_FINDING["source"],
+        "defect_type": _ONE_FINDING["type"],
+        "description": _ONE_FINDING["description"],
+        "spec_ref": _ONE_FINDING["spec_ref"],
+        "symbol": _ONE_FINDING["symbol"],
+        "file_path": _ONE_FINDING["file"],
+        "tier": _ONE_FINDING["tier"],
+        "defect_class": _ONE_FINDING["class"],
+        "reproduction_attempted": _ONE_FINDING["reproduction_attempted"],
+    }
+    if declared_kind is not None:
+        args["target_kind"] = declared_kind
+    return args
+
+
+def _batch_door_arguments(declared_kind: str | None) -> dict:
+    """The same finding under Foundry-Sync's `findings` item names."""
+    finding = dict(_ONE_FINDING)
+    if declared_kind is not None:
+        finding["target_kind"] = declared_kind
+    return {"cycle": 1, "findings": [finding]}
+
+
+@pytest.mark.parametrize("declared_kind", ["code", None])
+def test_both_filing_doors_persist_one_record_shape_over_the_wire(
+    run_env, declared_kind
+):
+    """CT-001 and CT-002 name ONE surface: 'Foundry-Defect and Foundry-Sync'.
+    US-002 verbatim: 'As a verification stream, I want to file each defect as
+    LIVE or LATENT from the evidence I actually drove, so that a reachable
+    failure blocks the run exactly as today while a scan-derivation gap is
+    tracked without re-litigation.'
+
+    D-192 — TWO LITERALS, ONE CLAIM THAT THEY AGREE, AND THEY DID NOT.
+    ------------------------------------------------------------------
+    The batch door's record literal carried a comment asserting "the batch door
+    writes the SAME record shape as the single door, field for field". Driven
+    at HEAD 3584f55 with one finding carrying `target_kind='code'` through both
+    doors: Foundry-Defect persisted D-001 WITH `target_kind='code'` and
+    Foundry-Sync persisted D-002 with no `target_kind` key at all. Enforcement
+    was identical at both doors and that is not what was lost — the durable
+    RECORD was: a Sync-filed defect carried no evidence the declaration had
+    ever been made, so it could not be audited for it while the same finding
+    filed one door over could.
+
+    The fix is `foundry_orchestrator.new_defect_record`, one shape definition
+    the batch door builds from. THIS TEST is what makes it stay one: a comment
+    asserting two literals agree fails silently, and the assertion below fails
+    loudly, the first time either door persists a field the other does not.
+
+    OVER THE WIRE, not through the Python functions. The MCP SDK validates
+    arguments against the advertised `inputSchema` before dispatch, and a
+    schema that never advertised `target_kind` on one of the two doors would
+    lose the field just as thoroughly as a record literal that dropped it — so
+    the transport a stream actually files through is the one that has to agree.
+
+    Parametrised over a DECLARED kind and an omitted one, because absence is a
+    load-bearing value here: `vocab.is_non_comment` reads a present-and-not-
+    "comment" `target_kind`, so a door that helpfully wrote `""` where the
+    caller declared nothing would be inventing a declaration, and every
+    pre-change archive read would change shape under it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [])
+
+    import foundry_mcp.server as srv
+
+    previous = srv._project_root
+    try:
+        srv._project_root = project_root
+        single_out = _drive_mcp("Foundry-Defect", _single_door_arguments(declared_kind))
+        batch_out = _drive_mcp("Foundry-Sync", _batch_door_arguments(declared_kind))
+    finally:
+        srv._project_root = previous
+
+    stored = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(stored) == 2, (stored, single_out, batch_out)
+    single, batch = stored
+    assert single["id"] == "D-001" and batch["id"] == "D-002", stored
+
+    # The keys themselves, first: a field one door writes and the other omits is
+    # exactly D-192, and it reads as an absent key rather than a wrong value.
+    assert set(single) == set(batch), {
+        "only_single_door": sorted(set(single) - set(batch)),
+        "only_batch_door": sorted(set(batch) - set(single)),
+    }
+
+    # Then the values. `id` is minted per record and `created_at` is stamped at
+    # write time, so those two are the only legitimate difference between one
+    # finding filed twice.
+    differing = {k for k in single if single[k] != batch[k]}
+    assert differing <= {"id", "created_at"}, {
+        k: (single[k], batch[k]) for k in sorted(differing - {"id", "created_at"})
+    }
+
+    # And the field D-192 was actually about, named rather than merely covered
+    # by the set comparison above.
+    if declared_kind is None:
+        assert "target_kind" not in batch, batch
+        assert "target_kind" not in single, single
+    else:
+        assert batch["target_kind"] == declared_kind, batch
+        assert single["target_kind"] == declared_kind, single
+
+
 def test_the_argument_refusal_block_argues_from_a_record_that_supports_it():
     """D-156, the fifth filing of `stale-prose-survives-beside-new-prose`.
 
