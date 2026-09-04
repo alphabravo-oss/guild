@@ -213,6 +213,7 @@ If previous trace results are provided, compare:
   ],
   "defects": [
     {
+      "source": "trace",
       "type": "MISSING",
       "symbol": "DeleteUser",
       "spec_ref": "US-7",
@@ -221,6 +222,7 @@ If previous trace results are provided, compare:
       "description": "No DeleteUser function found in any service file"
     },
     {
+      "source": "trace",
       "type": "UNWIRED",
       "symbol": "PurgeUserSessions",
       "spec_ref": "US-12",

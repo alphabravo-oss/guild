@@ -154,6 +154,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
   ],
   "defects": [
     {
+      "source": "flow_trace",
       "type": "UNWIRED",
       "packet_id": "P6",
       "produced_symbol": "web.dashboard.handleWorkloads",
@@ -163,6 +164,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
       "fix_hint": "pageData already embeds *ClusterStatus so .Deployments is accessible in the template — but handler should confirm the field is populated before render"
     },
     {
+      "source": "flow_trace",
       "type": "UNWIRED",
       "packet_id": "P7",
       "produced_symbol": "web.dashboard.renderPage",

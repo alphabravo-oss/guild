@@ -270,6 +270,7 @@ When reporting HOLLOW verdicts for stubs, include:
   ],
   "defects": [
     {
+      "source": "assay",
       "id": "US-7",
       "verdict": "MISSING",
       "description": "No implementation found for account deletion",
@@ -278,6 +279,7 @@ When reporting HOLLOW verdicts for stubs, include:
       "spec_text_cited": "Users shall be able to delete their account and all associated data"
     },
     {
+      "source": "assay",
       "id": "US-12",
       "verdict": "THIN",
       "description": "services/user.go#PurgeUser deletes the account row but never cascades to sessions",

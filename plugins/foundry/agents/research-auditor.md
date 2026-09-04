@@ -113,6 +113,7 @@ Output a single JSON result:
   ],
   "defects": [
     {
+      "source": "research_audit",
       "type": "RESEARCH_DEVIATION",
       "recommendation_id": "RA-7",
       "recommendation": "Use k8s.io/client-go/kubernetes/fake for tests",
@@ -123,6 +124,7 @@ Output a single JSON result:
       "spec_ref": "research/kubernetes-deployments.md#testing"
     },
     {
+      "source": "research_audit",
       "type": "RESEARCH_DEVIATION",
       "recommendation_id": "RA-9",
       "recommendation": "Never construct a rest.Config by hand; use clientcmd",

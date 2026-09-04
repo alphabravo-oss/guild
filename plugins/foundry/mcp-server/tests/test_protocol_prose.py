@@ -6209,3 +6209,274 @@ def test_teammate_completion_checklist_names_the_failing_then_passing_account() 
         "Foundry-Fix call. Without the reason a teammate reads the bullet as "
         "duplication of a field it already passed and drops one of the two."
     )
+
+
+# ---------------------------------------------------------------------------
+# D-209 / FR-007 / CT-002 -- a documented filing row is a call the door ACCEPTS
+# ---------------------------------------------------------------------------
+#
+# Two pins above already drove the documented rows, and both drove a PARTIAL
+# door. `test_every_documented_latent_example_survives_the_filing_door` calls
+# `validate_defect_filing`, which reads `tier`, `class` and
+# `reproduction_attempted` and nothing else;
+# `test_every_published_type_is_a_vocabulary_member` compares one field against
+# one vocabulary. Neither ever asked whether the row would be ACCEPTED, and the
+# advertised schema requires four fields, not three.
+#
+# So `agents/coverage-diff.md` published a report block in which every row was
+# refused. That file was edited TWICE in this run (14210f3 "the fifth filing
+# stream learns tier and class", 5c69e05 "a stream's own example files a type
+# its door accepts"), gained `class`, `tier`, `target_kind`, a third row
+# carrying LATENT plus `reproduction_attempted`, and two paragraphs asserting
+# that class and tier are required on every defect -- and every row still
+# carried no `description`, which `findings[].required` has listed all along.
+# Driven at 916c1ca through `server.call_tool("Foundry-Sync", ...)`, each of
+# the three rows verbatim:
+#
+#     Foundry-Sync refused - unusable argument(s): findings[0].description -
+#     required, and absent; findings[0].source - required, and absent.
+#
+# and `defects.json` stayed empty. CT-002's errors cell is what turns that into
+# a lost cycle rather than a lost row: one refused finding discards the whole
+# batch, so the shape a stream copies from its own instructions takes the
+# stream's other findings down with it.
+#
+# `source` was missing from the documented rows of ALL SIX filing surfaces, not
+# just coverage-diff's -- the class is `filing-surface-prose-omits-a-field-its-
+# own-door-requires` and it was corpus-wide. The five agent surfaces now name
+# their own wire id on every row, which is also the only place a pin can READ
+# it from: four of them declare a stream id nowhere else in the file, so a pin
+# that supplied `source` itself would be supplying it from a hand-typed
+# per-file table -- a second copy of a closed vocabulary, which is the failure
+# `_EXPECTED_TYPE_ENUM` and `DEFECT_FILING_AGENTS` both exist to avoid.
+#
+# WHY THIS IS DRIVEN AND NOT A FIELD-PRESENCE CHECK
+# -------------------------------------------------
+# A presence check derived from the schema catches an absent field and stops
+# there. The door is a ladder: house schema validation, then `source` against
+# DEFECT_SOURCE_IDS, then `type` against DEFECT_TYPES, then the shared filing
+# validator's tier/class/LATENT/denylist rungs. Driving the row through
+# `server.call_tool` -- the same entry the SDK uses, with the server's own
+# validation in place of the SDK's (D-042) -- puts every rung of that ladder
+# behind this pin at once, and does it against the schema a client is actually
+# served rather than against a re-reading of the module source.
+
+
+def _documented_filing_rows(path: Path) -> list[dict]:
+    """Every entry of every `defects` array in a file's normative examples.
+
+    Malformed blocks read as "no rows" rather than raising, exactly as
+    ``_documents_a_defects_array`` treats them -- several surfaces fence
+    illustrative fragments and placeholder sketches as ```json, and one of
+    those must not take this module down at collection time. The silence is
+    safe only because ``test_the_driven_filing_roster_is_not_vacuous`` below
+    asserts the known carriers still yield rows.
+    """
+    rows: list[dict] = []
+    try:
+        records = _example_records(path)
+    except (json.JSONDecodeError, AssertionError):
+        return rows
+    for record in records:
+        entries = record.get("defects")
+        if isinstance(entries, list):
+            rows.extend(row for row in entries if isinstance(row, dict))
+    return rows
+
+
+def _sync_required_fields() -> frozenset[str]:
+    """What `Foundry-Sync` requires on a finding, per the ADVERTISED schema.
+
+    Read from ``list_tools()`` rather than re-typed here, so the day the door
+    requires a fifth field every documented row that lacks it fails HERE --
+    which is the whole of D-209's second axis. The array is located by the
+    same shape ``test_spec_ref_is_a_real_parameter_on_every_filing_surface``
+    locates it by: the findings array is spelled `findings` on the wire while
+    the prose and the ledger both call the records defects.
+    """
+    items = _tool_schema("Foundry-Sync")["properties"]["findings"]["items"]
+    required = frozenset(items.get("required", ()))
+    assert required, (
+        "Foundry-Sync's findings item advertises no `required` array. Either "
+        "the obligation moved (in which case this derivation must follow it) "
+        "or it was dropped, which is CT-002's contract going away silently."
+    )
+    return required
+
+
+#: Filing surfaces whose documented rows are NOT driven, mapped to the one
+#: required field their rows omit.
+#:
+#: This is a DEBT LEDGER, not a licence: every entry is a live instance of the
+#: D-209 class sitting in a file the casting that found it may not write.
+#: ``test_the_undriven_surfaces_still_earn_their_exemption`` asserts each entry
+#: is still refused AND still refused for exactly the recorded field, so an
+#: exempt surface cannot quietly break some other way, and the day someone adds
+#: the missing field the exemption test goes RED telling them to delete the
+#: entry. An empty mapping is the finished state.
+_UNDRIVEN_FILING_SURFACES = {
+    SIGHT_SKILL: "source",
+}
+
+#: The surfaces whose rows are driven: the derived filing roster minus the
+#: debt ledger. Derived on both sides -- a new filing surface joins by
+#: documenting a `defects` array, and it is driven from that moment unless
+#: someone puts it in the ledger above and says which field it is missing.
+DRIVEN_FILING_SURFACES = tuple(
+    path for path in DEFECT_FILING_AGENTS if path not in _UNDRIVEN_FILING_SURFACES
+)
+
+
+def _sync_one(row: dict, project_root: str) -> dict:
+    """Drive one documented row through `Foundry-Sync` and return the result.
+
+    Through ``server.call_tool``, because that is the door D-209 was driven at
+    and the only one that runs the house schema validation the SDK's copy was
+    turned off for (D-042). The result is recovered the way the four width
+    surfaces tell a stream to recover one -- partition on
+    ``display.RESULT_JSON_MARKER``, ``json.loads`` the remainder -- rather than
+    by reading the formatter's internals.
+    """
+    from foundry_mcp import server as foundry_server
+
+    blocks = asyncio.run(
+        foundry_server.call_tool("Foundry-Sync", {"cycle": 1, "findings": [row]})
+    )
+    text = "\n".join(getattr(block, "text", str(block)) for block in blocks)
+    _, marker, tail = text.partition(_display.RESULT_JSON_MARKER)
+    return json.loads(tail if marker else text)
+
+
+@pytest.fixture
+def sync_door(tmp_path: Path, monkeypatch):
+    """A scratch run with `_project_root` pointed at it, torn down after.
+
+    The run is thrown away with ``tmp_path``, so a driven row never touches
+    the archive of the run these tests are executing inside.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools.foundry import foundry_init
+
+    foundry_init(project_root=str(tmp_path))
+    monkeypatch.setattr(foundry_server, "_project_root", str(tmp_path))
+    try:
+        yield str(tmp_path)
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_the_driven_filing_roster_is_not_vacuous() -> None:
+    """Floor check: a sweep over an empty roster asserts nothing.
+
+    ``_documented_filing_rows`` swallows an unparseable block by design, so a
+    fence that stopped parsing looks identical to a file with no rows -- and
+    the pins below would go green on a corpus where every example had been
+    deleted. This is the floor that fails first, and it names the five agent
+    surfaces whose report shape is the thing being pinned.
+    """
+    carriers = {_rel(p) for p in DRIVEN_FILING_SURFACES if _documented_filing_rows(p)}
+    expected = {_rel(p) for p in (*STREAM_AGENTS, COVERAGE_DIFF)}
+    missing = sorted(expected - carriers)
+    assert not missing, (
+        f"{missing} yield no documented filing rows any more. Either the "
+        f"report shape lost its `defects` array -- which is itself the defect, "
+        f"since the shape a stream copies is the only thing that teaches it "
+        f"what to file -- or the example stopped parsing as JSON. Fix the "
+        f"file; never narrow this roster to match it."
+    )
+
+
+@pytest.mark.parametrize("path", DRIVEN_FILING_SURFACES, ids=_rel)
+def test_every_documented_filing_row_carries_every_required_field(path: Path) -> None:
+    """D-209 axis 1, said in the failure message the door cannot say.
+
+    The driven pin below is the stronger check and would catch this too, but
+    it reports whichever rung answered first. This one names the field and the
+    file directly, and it is derived from the advertised schema, so a fifth
+    required field lands here the moment the door declares it.
+    """
+    required = _sync_required_fields()
+    gaps = {
+        i: sorted(required - set(row))
+        for i, row in enumerate(_documented_filing_rows(path))
+        if required - set(row)
+    }
+    assert not gaps, (
+        f"{_rel(path)} documents filing row(s) missing required field(s): "
+        f"{gaps}. `Foundry-Sync` advertises {sorted(required)} as required on "
+        f"every finding and refuses the WHOLE batch when one finding fails, so "
+        f"a stream that copies this shape loses the findings beside it too. "
+        f"Add the field to the EXAMPLE; never relax this assertion."
+    )
+
+
+@pytest.mark.parametrize("path", DRIVEN_FILING_SURFACES, ids=_rel)
+def test_every_documented_filing_row_lands_at_the_door(path: Path, sync_door) -> None:
+    """D-209 / FR-007 / CT-002: the shape a stream copies is ACCEPTED.
+
+    Every row is driven VERBATIM -- nothing added, nothing renamed. That is
+    the property being pinned: a stream that files its own instructions'
+    example must not meet a refusal naming a field those instructions never
+    taught it.
+
+    TRUE POSITIVES THIS KEEPS (each is a rung of the door's ladder, and each
+    fails here naming the file):
+      - a row missing `description`, `source`, `tier` or `class` -- the whole
+        advertised `required` array, not just the field D-209 was filed for;
+      - a row whose `source` is not a `DEFECT_SOURCE_IDS` member;
+      - a row whose `type` is not a `DEFECT_TYPES` member (D-174's class,
+        driven rather than pattern-matched);
+      - a LATENT row with no `reproduction_attempted`, or one the placeholder
+        predicate refuses ("n/a", "none", "tbd");
+      - a row a surface teaches as LATENT whose prose asserts a security
+        property, which the denylist refuses as SECURITY_PROPERTY_CLAIM;
+      - any field the door starts requiring after today.
+    """
+    rows = _documented_filing_rows(path)
+    for i, row in enumerate(rows):
+        result = _sync_one(row, sync_door)
+        refused = bool(result.get("error")) or bool(result.get("refusals"))
+        assert not refused, {
+            "file": _rel(path),
+            "row_index": i,
+            "row_keys": sorted(row),
+            "why": (
+                "this surface documents a filing row that `Foundry-Sync` "
+                "REFUSES. A stream copying its own instructions' shape has its "
+                "whole batch discarded and hears about it as a refusal naming "
+                "a field the instructions never mentioned. Fix the EXAMPLE (or "
+                "the door), never this assertion."
+            ),
+            "error": result.get("error"),
+            "missing_fields": result.get("missing_fields"),
+            "invalid_fields": result.get("invalid_fields"),
+            "refusals": result.get("refusals"),
+        }
+
+
+def test_the_undriven_surfaces_still_earn_their_exemption(sync_door) -> None:
+    """The debt ledger is checked, not trusted.
+
+    An exemption list nobody re-tests is how a known gap becomes a permanent
+    one. Each entry must still be refused -- otherwise the surface was fixed
+    and the entry is stale -- and must still be refused for EXACTLY the
+    recorded field, so an exempt surface that breaks some other way is not
+    covered by an exemption written for a different reason.
+    """
+    for path, field in _UNDRIVEN_FILING_SURFACES.items():
+        rows = _documented_filing_rows(path)
+        assert rows, (
+            f"{_rel(path)} is on the undriven ledger but documents no filing "
+            f"rows at all. Delete the entry: there is nothing left to exempt."
+        )
+        for i, row in enumerate(rows):
+            result = _sync_one(row, sync_door)
+            assert result.get("missing_fields") == [f"findings[{0}].{field}"], (
+                f"{_rel(path)} row {i} no longer refuses for exactly "
+                f"{field!r} (missing_fields={result.get('missing_fields')!r}, "
+                f"error={result.get('error')!r}). If the row now LANDS, delete "
+                f"the `_UNDRIVEN_FILING_SURFACES` entry so the row joins "
+                f"DRIVEN_FILING_SURFACES. If it refuses for something else, "
+                f"that is a second defect the exemption was never written to "
+                f"cover -- file it rather than widening the entry."
+            )

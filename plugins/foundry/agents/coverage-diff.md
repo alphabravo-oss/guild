@@ -84,7 +84,9 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
   },
   "defects": [
     {
+      "source": "coverage_diff",
       "type": "COVERAGE_INCOMPLETE",
+      "description": "internal/web/workloads_v2_test.go exists but carries no TestStatusInjection: grep -E \"func TestStatusInjection\" on the destination returns nothing, so casting 4's port dropped the symbol its coverage_list claims.",
       "source_entry": "internal/web/workloads_test.go:TestStatusInjection",
       "expected_destination": "internal/web/workloads_v2_test.go:TestStatusInjection",
       "failure": "destination symbol not found",
@@ -94,7 +96,9 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
       "casting_id": 4
     },
     {
+      "source": "coverage_diff",
       "type": "THIN_MIGRATION",
+      "description": "internal/web/workloads_v2_test.go#TestReadyReplicas ports the symbol and then asserts 3 times against the source's 12, under the 80% floor, so the destination exists and the behaviour it was supposed to carry does not.",
       "source_entry": "internal/web/workloads_test.go:TestReadyReplicas",
       "destination": "internal/web/workloads_v2_test.go:TestReadyReplicas",
       "source_assertions": 12,
@@ -105,7 +109,9 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
       "casting_id": 4
     },
     {
+      "source": "coverage_diff",
       "type": "MISSING",
+      "description": "Casting 7 declares no coverage_list, so every source entry in its scope is unverifiable by this stream: there is no enumerated list to derive a destination from and nothing to diff the destination files against.",
       "failure": "casting declares no coverage_list",
       "class": "migration-casting-shipped-without-a-coverage-list",
       "tier": "LATENT",
@@ -128,7 +134,7 @@ This is not a full behavioral check (that's the assayer's job at F4), just a heu
 
 `source_entry` and `expected_destination` are the exception that proves the rule, not a carve-out: they echo a `coverage_list` entry's own `source_file:symbol` shape. That colon separates a path from a **symbol**, never from a line, so it is already a symbol reference and nothing about it can drift as code moves — which is why the FR-004 placement rule has no quarrel with it and why "convert every colon" would be wrong here. The argument stands on the shape itself, NOT on enforcement: `foundry_validate.py` checks only that each `coverage_list` entry is a string, so a colonless entry is caught nowhere in the pipeline. A **re-spelled** entry has one catcher and only one — when the manifest declares a `source_inventory`, Dimension 8 cross-checks the coverage entries against it, and the counterpart the re-spelling stopped claiming is reported as `uncovered_source_entry`. That check fires on the inventory entry left uncovered, never on the misspelling itself, and a manifest with no `source_inventory` gets no check at all. Assume nothing is watching the spelling unless you have read an inventory in the manifest. Reproduce those two values byte-for-byte as the manifest spells them, because the manifest is the only thing that spells them; write every other cite as `path#Symbol`.
 
-`class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the check and observed the wrong result (a destination symbol the `grep` did not find, an assertion count you counted and compared), `LATENT` when you derived the finding and had no reachable instance to drive at all, in which case `reproduction_attempted` rides beside it as the third entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+Every row above carries `description`, `source`, `tier` and `class`, because those four are the `findings` item's `required` array in `plugins/foundry/mcp-server/src/foundry_mcp/server.py#Foundry-Sync`, and a finding missing any one of them is refused with the WHOLE batch discarded — read that array at the schema rather than trusting this sentence to have stayed complete, exactly as you read the defect types at the module that declares them. `plugins/foundry/mcp-server/tests/test_protocol_prose.py#test_every_documented_filing_row_lands_at_the_door` drives every row above through that door verbatim, so a field added to the required array fails there instead of arriving mid-cycle as a refused batch. `description` is the one prose field the door reads: `failure`, `source_entry` and `expected_destination` are this stream's own detail and none of them substitutes for it, so a row whose only account of what it found sits in `failure` files a defect the ledger renders blank. `source` is this stream's wire id `coverage_diff`, a member of `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_SOURCE_IDS` — an unattributed finding was once rewritten to `trace` and persisted as if TRACE had found it, which is the mis-attribution the door now refuses rather than repeats. `class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the check and observed the wrong result (a destination symbol the `grep` did not find, an assertion count you counted and compared), `LATENT` when you derived the finding and had no reachable instance to drive at all, in which case `reproduction_attempted` rides beside it as the third entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 `COVERAGE_INCOMPLETE` and `THIN_MIGRATION` defects flow into `Foundry-Sync` and feed F3 GRIND.
 
