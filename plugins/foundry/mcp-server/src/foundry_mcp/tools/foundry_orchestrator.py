@@ -293,6 +293,101 @@ def _is_write_sidecar(path: Path) -> bool:
     return path.name.endswith((_TX_TMP_SUFFIX, _TX_LOCK_SUFFIX))
 
 
+# D-206 — A CHECKOUT THIS PACKAGE NESTS UNDER THE RUN DIR IS NOT ONE OF THE
+# RUN'S ARTIFACTS.
+#
+# The same D-007 principle as the sidecars above, one rung out: scaffolding a
+# writer puts BESIDE an artifact is not an artifact, and neither is a whole
+# second repository a writer puts UNDER one. ``_run_artifact_problems``
+# rglobbed the entire run directory with no exclusion for it, and every
+# worktree this package creates is rooted directly there:
+# ``worktree_helpers._setup_worktree`` computes
+# ``base = run_dir / "worktrees" / f"{dir_prefix}{casting_id}"``, and
+# ``_sweep_evidence_at_boundary`` calls ``sweep_evidence_at_head(...,
+# run_dir=fdir, ...)`` — so the GI-002 boundary sweep's detached checkout of the
+# WHOLE project lands at ``fdir/worktrees/sweep-evidence``, virtualenvs,
+# ``.dist-info`` trees, compiled extensions and non-UTF-8 test fixtures
+# included, inside the tree the guard walks.
+#
+# Driven: one non-UTF-8 fixture under ``fdir/worktrees/sweep-evidence/`` made
+# ``_artifact_guard`` refuse the whole run — "Run artifacts cannot be read: ...
+# could not be read (UnicodeDecodeError)" — and the guard runs at the top of
+# every MCP entry point in this module, so EVERY door was refusable for the
+# duration of any sweep. CT-012's errors cell for Foundry-Next reads "none;
+# never blocks" and CT-013's for Foundry-Spend reads "none; unreported
+# dispatches are listed, never refused"; both were false while the server's own
+# boundary sweep was in flight. Observed for real in GRIND cycle 19: casting 3's
+# ``Foundry-Fix`` was refused while casting 5's sweep was running, naming ~40
+# entries under ``worktrees/sweep-evidence/plugins/foundry/mcp-server/.venv/``.
+# The hint made it worse than a bare false refusal — "repair or delete the named
+# file(s) in the run directory" is destructive advice aimed at a peer's live
+# checkout.
+#
+# BOTH AXES, because closing one is how this returns. WHAT IS WALKED: this run's
+# own artifacts, never a checkout the package nests beneath them. HOW MEMBERSHIP
+# IS DECIDED: by the position the WRITER declares it nests worktrees at. Not by
+# the contents — probing each directory for a ``.git`` entry would fail OPEN the
+# day a worktree's pointer file is absent or renamed, bringing the whole
+# virtualenv back into scope silently, which is this defect again with a longer
+# fuse. And not by any segment spelled this way: a ``worktrees`` directory
+# somewhere else under the run dir is not a position ``_setup_worktree`` roots
+# at, and unguarding it would be the same over-reach pointing the other way.
+#
+# ONE WORD, AND A PIN THAT WATCHES IT. The exclusion and ``_setup_worktree``
+# must not drift, and the one-declaration shape — exporting this name from
+# ``worktree_helpers`` and importing it — belongs to that module's owner, so it
+# is recorded in ``foundry-archive/daring-orca/concerns.md`` rather than reached
+# across for. Until then
+# ``test_the_worktrees_exclusion_names_what_setup_worktree_roots_under``
+# derives the directory name from ``_setup_worktree``'s own source and fails the
+# day the two disagree — the drift-guard shape
+# ``test_the_document_suffix_table_covers_every_declared_run_artifact`` already
+# uses one axis over.
+RUN_WORKTREES_DIRNAME = "worktrees"
+
+
+def _is_run_worktrees_root(fdir: Path, candidate: Path) -> bool:
+    """Is ``candidate`` the run's worktrees root — the subtree to walk past?
+
+    The EXACT directory ``_setup_worktree`` roots under, tested by position
+    (``fdir``'s own child) and not by name alone, so nothing deeper in the run
+    tree can borrow the exclusion by being spelled the same way.
+    """
+    return candidate.name == RUN_WORKTREES_DIRNAME and candidate.parent == fdir
+
+
+def _run_artifact_candidates(fdir: Path) -> list[Path]:
+    """Every path under ``fdir`` the guard judges, in ``sorted(rglob)`` order.
+
+    ``os.walk`` rather than ``rglob`` because the worktrees subtree has to be
+    PRUNED, not filtered after the fact. It holds a whole project checkout —
+    this repo's is tens of thousands of paths once its virtualenvs are in it —
+    and ``_artifact_guard`` runs at the top of every MCP entry point, so a
+    post-hoc filter would still pay the walk and a ``stat`` of every one of
+    them on every tool call while a sweep is in flight.
+
+    The closing ``sorted`` is what makes this a NARROWING of the old candidate
+    set rather than a re-ordering of it: over the paths that remain it yields
+    exactly what ``sorted(fdir.rglob("*"))`` yielded, so the guard's "in stable
+    order" contract and every problem string's position are unchanged.
+    """
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(fdir):
+        here = Path(dirpath)
+        kept: list[str] = []
+        for name in dirnames:
+            child = here / name
+            if _is_run_worktrees_root(fdir, child):
+                continue
+            found.append(child)
+            kept.append(name)
+        # In place, because that is the ONLY assignment ``os.walk`` reads back
+        # to decide what it descends into.
+        dirnames[:] = kept
+        found.extend(here / name for name in filenames)
+    return sorted(found)
+
+
 def _save_json(path: Path, data: dict) -> None:
     """Atomic JSON write — write to a UNIQUE .tmp, then rename.
 
@@ -893,14 +988,17 @@ def _is_document_position(candidate: Path) -> bool:
 def _run_artifact_problems(fdir: Path) -> list[str]:
     """Named problems for every unreadable run artifact, in stable order.
 
-    Membership is the whole tree (``rglob``), not the top level plus one
-    hand-named manifest. A DIRECTORY is a container and is walked past — except
-    one occupying a path a reader OPENS as a document, which is a directory
-    sitting where a reader will open a file (D-140: ``state.json`` as a
-    directory passed the old ``is_file()`` filter, so the guard saw nothing and
-    the write raised IsADirectoryError instead of refusing by name). Which
-    paths those are is ``_is_document_position``'s question, and D-195 is what
-    answering it from the basename's punctuation cost.
+    Membership is the whole tree, not the top level plus one hand-named
+    manifest — minus the one subtree that is not this run's artifacts at all,
+    the checkouts ``_setup_worktree`` nests at ``fdir/worktrees`` (D-206;
+    ``_run_artifact_candidates`` is where that is pruned and why). A DIRECTORY
+    is a container and is walked past — except one occupying a path a reader
+    OPENS as a document, which is a directory sitting where a reader will open a
+    file (D-140: ``state.json`` as a directory passed the old ``is_file()``
+    filter, so the guard saw nothing and the write raised IsADirectoryError
+    instead of refusing by name). Which paths those are is
+    ``_is_document_position``'s question, and D-195 is what answering it from
+    the basename's punctuation cost.
 
     ...plus the run's DECLARED EXTERNAL INPUTS (D-145), because "the artifacts
     this run reads" and "the files under this run's directory" were never the
@@ -910,7 +1008,7 @@ def _run_artifact_problems(fdir: Path) -> list[str]:
     if not fdir or not fdir.exists():
         return []
     problems: list[str] = []
-    for candidate in sorted(fdir.rglob("*")):
+    for candidate in _run_artifact_candidates(fdir):
         if candidate.is_dir() and not _is_document_position(candidate):
             continue
         # D-007: a write primitive's own scaffolding is not one of this run's
@@ -3750,22 +3848,40 @@ def _research_scope_touched(fdir: Path, touched: list[str]) -> dict:
     return {"touched": False, "detail": ""}
 
 
-def _contracts_surface_cells(project_root: str) -> list[tuple[str, str]]:
-    """The spec's Contracts table as `(row id, surface cell)` pairs.
+def _contracts_surface_cells(project_root: str) -> tuple[list[tuple[str, str]], str | None]:
+    """The spec's Contracts table as `(row id, surface cell)` pairs, and why not.
+
+    Returns `(rows, problem)`. `problem` is None when the spec was READ — even
+    if it holds no Contracts table at all — and a named reason when it could
+    not be, so the caller can tell "this spec declares no surfaces" from "this
+    server cannot see what it declares".
 
     The table is read as CELLS, not as text. Rows are the pipe-delimited lines
     of the `## Contracts` section, the surface column is located by its header
     name rather than by index (a table that gains a column ahead of `surface`
     must not silently start returning `input`), and the alignment row is
-    skipped. Returns `[]` when the spec cannot be read or has no such table —
-    an unreadable spec names no surfaces, so nothing is covered by it.
+    skipped.
+
+    D-207 — `[]` USED TO MEAN BOTH THINGS, AND THE CALLER READ IT AS THE
+    HARMLESS ONE.
+    ---------------------------------------------------------------------
+    The docstring said it outright: "Returns [] when the spec cannot be read or
+    has no such table — an unreadable spec names no surfaces, so nothing is
+    covered by it." A spec with no table genuinely covers nothing and TEST-01
+    SKIPs on it with a reason; a spec that could not be read covers an UNKNOWN
+    set, and the two arrived at `_test01_scope_touched` as the same empty list,
+    where the second was asserted as a negative. A covered set the server cannot
+    compute is not an empty covered set — the same sentence that governs the
+    arm below, applied to the document this one reads.
     """
     spec_path = _resolve_spec_path(project_root)
-    if spec_path is None or not spec_path.exists():
-        return []
+    if spec_path is None:
+        return [], "the run records no readable spec path"
+    if not spec_path.exists():
+        return [], f"the run's spec {spec_path.name} does not exist"
     text, problem = read_text_file(spec_path)
     if problem is not None:
-        return []
+        return [], problem
 
     lines = text.splitlines()
     lowered = [line.strip().lower() for line in lines]
@@ -3774,7 +3890,8 @@ def _contracts_surface_cells(project_root: str) -> list[tuple[str, str]]:
         None,
     )
     if start is None:
-        return []
+        # READ, and it declares no surfaces. That is an answer, not a failure.
+        return [], None
     end = next(
         (i for i in range(start + 1, len(lines)) if lowered[i].startswith("## ")),
         len(lines),
@@ -3799,7 +3916,7 @@ def _contracts_surface_cells(project_root: str) -> list[tuple[str, str]]:
             continue  # the alignment row
         if column < len(cells):
             rows.append((cells[0], cells[column]))
-    return rows
+    return rows, None
 
 
 def _registry_tool_modules() -> dict[str, list[str]]:
@@ -3898,16 +4015,115 @@ def _path_matches(covered: str, candidate: str) -> bool:
     return left == right or left.endswith(f"/{right}") or right.endswith(f"/{left}")
 
 
-def _test01_scope_touched(project_root: str, touched: list[str]) -> dict:
+def _test01_covered_set_unknown(reason: str) -> dict:
+    """The THIRD answer: the covered set could not be computed, so require it.
+
+    Mirrors `_decide_inspect_mode`'s uncomputable-diff arm one function over —
+    "the GRIND diff could not be computed ..., so the verifier cannot be shown
+    to be untouched" — because it is the same sentence about a different set,
+    and the two must not disagree about which way an unknown fails.
+    """
+    return {
+        "touched": True,
+        "computable": False,
+        "source": "unknown",
+        "detail": (
+            f"the set of files test01 covers could not be computed ({reason}), "
+            "so test01 cannot be shown to be untouched"
+        ),
+    }
+
+
+def _declared_test01_scope(fdir: Path) -> list[str]:
+    """The paths the RUN ITSELF declares TEST-01 covers, in declared order.
+
+    Read from `castings/manifest.json` — the document the decompose step writes
+    and the one artifact that describes THIS run's target rather than the
+    program the server happens to be executing. Both homes the lead ruling
+    named are accepted, because either is the run "already recording" it: a
+    top-level `test01_scope` list, and a `test01_scope` list on any casting row
+    of the same manifest. Additive on both, so `migrate-archive.py` learns
+    nothing and a pre-change archive simply declares none.
+    """
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    declared: list[str] = []
+
+    def _absorb(cells: object) -> None:
+        if not isinstance(cells, list):
+            return
+        declared.extend(
+            c.strip() for c in cells if isinstance(c, str) and c.strip()
+        )
+
+    _absorb(manifest.get("test01_scope"))
+    for casting in manifest.get("castings", []) or []:
+        if isinstance(casting, dict):
+            _absorb(casting.get("test01_scope"))
+    return declared
+
+
+def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> dict:
     """Did the GRIND diff touch a file TEST-01 covers (ST-007)?
 
     TEST-01 derives property tests from the spec's Contracts table and drives
     the surfaces that table names, so its scope is the modules that IMPLEMENT
     those surfaces, plus the schemas the surfaces validate against. Returns
-    `{"touched": bool, "detail": str}`; on a match the detail names the surface
-    and the file, so the provenance recorded beside the roster can be checked
-    rather than believed, and it is empty otherwise for the reason
-    `_research_scope_touched` states.
+    `{"touched": bool, "computable": bool, "source": str, "detail": str}`; on a
+    match the detail names what matched, so the provenance recorded beside the
+    roster can be checked rather than believed, and it is empty on a computed
+    miss for the reason `_research_scope_touched` states.
+
+    `source` names WHICH of the three sources answered — `declared`, `registry`,
+    `schemas`, `no diff`, or `unknown` — so the recorded scope says where its
+    answer came from and not merely what it was.
+
+    D-207 — A COVERED SET THE SERVER CANNOT COMPUTE IS NOT AN EMPTY COVERED SET.
+    ---------------------------------------------------------------------------
+    D-204's fix moved this question onto the EXECUTING SERVER's own tool
+    registry, which answers correctly on exactly one kind of run: one whose
+    target IS this plugin. `_registry_tool_modules` yields foundry tool names
+    bound to paths under the executing package's `src/foundry_mcp/`, while
+    `_contracts_surface_cells` reads the TARGET run's spec. Off a self-target
+    the two sides describe DIFFERENT PROGRAMS and can never intersect, so the
+    only arm that could fire was the `schemas/` short-circuit — and a touched
+    `schemas/` path already trips `verifier_touched` into FULL one function
+    over, so in practice nothing could fire at all.
+
+    Driven at the wire at 31cc192: a non-self-targeting run whose spec Contracts
+    names `POST /api/users (create)` and `DELETE /api/users/:id`, whose casting
+    key_file is `src/api/users.py`, and whose GRIND diff touched exactly that
+    module recorded DELTA with `required_streams` ['trace','prove','test'] and
+    `stream_scope.test01` = {scope: 'skipped', detail: 'no file test01 covers
+    was touched'}. At cb77e83 the retired predicate returned True for that input
+    and False for `src/api/other.py` and `src/zzz.py` — so the D-204 fix
+    NARROWED a behaviour that was already correct on the non-self-target path
+    while widening the self-target one. The same fail-open sat behind the
+    registry's own `except ImportError -> {}`.
+
+    THE ASYMMETRY IS THE DEFECT. The decision function one rung over fails
+    CLOSED on an uncomputable GRIND diff — FULL, "the GRIND diff could not be
+    computed" — and this one failed OPEN on an uncomputable covered set. ST-007,
+    Locked FR-047 and AC-017 require EXACTLY the covered set; an unknown one is
+    not the empty one.
+
+    BOTH AXES, per the lead ruling. WHERE THE COVERED SET COMES FROM, in
+    precedence order:
+
+      1. `test01_scope` DECLARED by the run's own manifest, when present. The
+         run's statement about its own target, true whatever the server is.
+      2. otherwise the REGISTRY mapping — but only when the executing server can
+         SHOW the target is this plugin, which is `state.json`'s `self_target`,
+         the fact `foundry._self_target_preflight` computed and the run recorded
+         at init. Recorded rather than recomputed: recomputing spawns git and
+         reads plugin manifests on a per-boundary path, and it answers about NOW
+         rather than about what this run was admitted on.
+      3. otherwise UNKNOWN, and unknown is required, never skipped.
+
+    WHAT AN UNKNOWN SET MEANS: `_test01_covered_set_unknown` — required, scope
+    `full`, and a detail that says the set was not computable and why, in the
+    same words the uncomputable-diff arm uses. A missing key on a pre-change
+    archive reads as absent and therefore as unknown, which is the fail-closed
+    direction, so archive compatibility costs a stream and never a false skip.
 
     D-204 — A RULE ABOUT THE FACT IS NOT THE FACT, AND BOTH AXES WERE PROSE.
     ----------------------------------------------------------------------
@@ -3934,23 +4150,71 @@ def _test01_scope_touched(project_root: str, touched: list[str]) -> dict:
     since CT-004/005/006 all spell `Foundry-Fix` and `fix` is that file's stem.
     """
     if not touched:
-        return {"touched": False, "detail": ""}
+        return {"touched": False, "computable": True, "source": "no diff", "detail": ""}
     candidates = [t for t in touched if t]
 
+    # Source-independent and first: a `schemas/` path is inside TEST-01's scope
+    # by construction, whoever the target is, because every Contracts surface
+    # validates against the schemas. No registry and no declaration is consulted
+    # to know that, so nothing about the ladder below can make it unknown.
     schema_hits = [t for t in candidates if "schemas/" in f"/{t}"]
     if schema_hits:
         return {
             "touched": True,
+            "computable": True,
+            "source": "schemas",
             "detail": (
                 f"{schema_hits[0]} is a schemas/ file, which every Contracts "
                 "surface validates against"
             ),
         }
 
-    rows = _contracts_surface_cells(project_root)
-    registry = _registry_tool_modules() if rows else {}
-    if not rows or not registry:
-        return {"touched": False, "detail": ""}
+    # (1) The run's own declaration wins outright when it exists — it describes
+    # THIS run's target, so neither the executing server's identity nor its
+    # registry is consulted, and a miss against it is a computed miss.
+    declared = _declared_test01_scope(fdir)
+    if declared:
+        for covered in declared:
+            for candidate in candidates:
+                if _path_matches(covered, candidate):
+                    return {
+                        "touched": True,
+                        "computable": True,
+                        "source": "declared",
+                        "detail": (
+                            f"the run's manifest declares test01_scope "
+                            f"{covered}, and the diff touched {candidate}"
+                        ),
+                    }
+        return {"touched": False, "computable": True, "source": "declared", "detail": ""}
+
+    # (2) The registry, and ONLY on a run this server can show it is the target
+    # of. Off a self-target the registry describes a different program than the
+    # spec does, so an empty intersection is evidence of nothing.
+    if _load_json(fdir / "state.json").get("self_target") is not True:
+        return _test01_covered_set_unknown(
+            "the run's manifest declares no test01_scope and state.json does "
+            "not record self_target, so the executing server's tool registry "
+            "describes a different program than the one under test"
+        )
+
+    rows, spec_problem = _contracts_surface_cells(project_root)
+    if spec_problem is not None:
+        return _test01_covered_set_unknown(
+            f"the run's Contracts table could not be read ({spec_problem})"
+        )
+    if not rows:
+        # READ, and it names no surfaces. TEST-01 itself SKIPs with a reason on
+        # such a spec, so this is a genuinely empty covered set — the one case
+        # the D-207 sentence does NOT reach.
+        return {"touched": False, "computable": True, "source": "registry", "detail": ""}
+
+    registry = _registry_tool_modules()
+    if not registry:
+        return _test01_covered_set_unknown(
+            "the executing server's tool registry could not be read, so which "
+            "module implements a named surface is unknown"
+        )
 
     for row_id, surface in rows:
         for tool in sorted(registry):
@@ -3963,13 +4227,15 @@ def _test01_scope_touched(project_root: str, touched: list[str]) -> dict:
                     if _path_matches(module_file, candidate):
                         return {
                             "touched": True,
+                            "computable": True,
+                            "source": "registry",
                             "detail": (
                                 f"{row_id} names surface {tool}, which "
                                 f"{_repo_relative(project_root, Path(module_file))} "
                                 f"implements, and the diff touched {candidate}"
                             ),
                         }
-    return {"touched": False, "detail": ""}
+    return {"touched": False, "computable": True, "source": "registry", "detail": ""}
 
 
 def _prove_delta_sample(
@@ -4239,7 +4505,7 @@ def _decide_inspect_mode(
         prove_sample: list[str] = []
     else:
         research_scope = _research_scope_touched(fdir, touched)
-        test01_scope = _test01_scope_touched(project_root, touched)
+        test01_scope = _test01_scope_touched(fdir, project_root, touched)
         # The GRIND that just ended is `cycle - 1` on the `inspect_start`
         # boundary, where the counter has already been advanced for the INSPECT
         # this roster is for.
@@ -4272,6 +4538,14 @@ def _decide_inspect_mode(
                 # read back by the F6 per-cycle scope column — so when the
                 # predicate answered yes for a file named nowhere in the spec,
                 # nothing downstream could tell that from a real hit.
+                #
+                # D-207: `full` here now covers TWO things, and the detail is
+                # what separates them — a computed hit naming what matched, or a
+                # covered set the server could not compute at all, naming why.
+                # Both are REQUIRED, which is the whole point: an unknown set
+                # fails closed exactly as an uncomputable GRIND diff does. The
+                # detail is the only place that distinction is written down, so
+                # it is copied through verbatim rather than re-summarised.
                 scope[wire] = {"scope": "full", "detail": decision["detail"]}
                 continue
             required.append(wire)

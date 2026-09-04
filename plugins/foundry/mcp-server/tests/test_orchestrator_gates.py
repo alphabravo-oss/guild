@@ -7971,6 +7971,257 @@ def test_the_external_input_reader_is_total_on_its_own_merits(tmp_path, monkeypa
 
 
 # --------------------------------------------------------------------------- #
+# D-206 (GI-002 / CT-012 / CT-013) — THE GUARD DESCENDED INTO THE RUN'S OWN
+# SWEEP WORKTREE AND REFUSED EVERY DOOR ON WHAT IT FOUND THERE.
+#
+# `_run_artifact_problems` walked the WHOLE run directory with no exclusion for
+# the run's own `worktrees/` subtree, and every worktree this package creates is
+# rooted exactly there: `worktree_helpers._setup_worktree` computes
+# `run_dir / "worktrees" / f"{dir_prefix}{casting_id}"`, and the GI-002 boundary
+# sweep passes `run_dir=fdir`, so `fdir/worktrees/sweep-evidence/` is a detached
+# checkout of the WHOLE project — virtualenvs, `.dist-info` trees, compiled
+# extensions and non-UTF-8 fixtures included — sitting inside the walked tree.
+#
+# Driven: one non-UTF-8 fixture under that path made `_artifact_guard` refuse
+# the entire run, and the guard runs at the top of every MCP entry point, so
+# every door was refusable for the duration of any sweep. CT-012's errors cell
+# for Foundry-Next reads "none; never blocks"; CT-013's for Foundry-Spend reads
+# "none; unreported dispatches are listed, never refused". Both were false while
+# the server's own boundary sweep was in flight. Observed in GRIND cycle 19:
+# casting 3's `Foundry-Fix` was refused mid-sweep naming ~40 entries under
+# `worktrees/sweep-evidence/plugins/foundry/mcp-server/.venv/`, and the hint
+# — "repair or delete the named file(s)" — was destructive advice pointed at a
+# peer's live checkout.
+#
+# BOTH AXES ARE PINNED BELOW. WHAT IS WALKED: the run's own artifacts, and the
+# true positives outside `worktrees/` are asserted in the SAME fixture as the
+# silence inside it, so a fix that bought the silence by weakening the guard
+# fails here. HOW MEMBERSHIP IS DECIDED: by the position the writer declares,
+# derived back out of `_setup_worktree`'s own source so the exclusion and the
+# creation cannot drift.
+# --------------------------------------------------------------------------- #
+
+#: The shapes that make the guard speak, planted wherever a test wants them.
+#: One of each family the guard has ever been filed on: D-140/D-197's directory
+#: at a document position, D-195's version-number scratch directory (silent by
+#: contract), and the undecodable file this defect was driven with.
+def _plant_corrupt_shapes(under: Path) -> None:
+    under.mkdir(parents=True, exist_ok=True)
+    (under / "payload.log").write_bytes(b"\xff\xfe not utf-8 at all\n")
+    (under / "state.json").mkdir(exist_ok=True)           # D-140's shape
+    (under / "spawns.log").mkdir(exist_ok=True)           # D-197's shape
+    (under / ".last-next-at").mkdir(exist_ok=True)        # D-201's shape
+    (under / "some_pkg-1.2.3.dist-info").mkdir(exist_ok=True)
+    (under / "14.0.0").mkdir(exist_ok=True)               # D-195's control
+
+
+def _populate_sweep_worktree(fdir: Path) -> Path:
+    """A checkout exactly where `_setup_worktree` roots the boundary sweep's."""
+    tree = (
+        fdir / fo.RUN_WORKTREES_DIRNAME / "sweep-evidence"
+        / "plugins" / "foundry" / "mcp-server" / ".venv" / "lib"
+    )
+    _plant_corrupt_shapes(tree)
+    return tree
+
+
+def test_the_guard_walks_past_the_run_s_own_worktrees_subtree(run_env):
+    """D-206. GI-002 puts the sweep's checkout under the run dir; the guard
+    judges the run's ARTIFACTS, and a checkout the package nests beneath them is
+    not one.
+
+    Every shape the guard has ever been filed on is planted TWICE — once inside
+    `worktrees/`, once outside it — in one fixture, so the silence and the
+    speech are asserted against each other. A fix that bought the silence by
+    weakening `_is_document_position` or the decode ladder fails the second
+    half; a fix that kept the speech by narrowing the exclusion to one prefix
+    fails the `worktrees/casting-9/` arm.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+
+    # Inside: the sweep's tree, and a casting worktree under a DIFFERENT prefix
+    # — `_setup_worktree`'s `dir_prefix` is a parameter, so the exclusion is the
+    # directory, never one spelling of what is nested in it.
+    _populate_sweep_worktree(fdir)
+    _plant_corrupt_shapes(fdir / fo.RUN_WORKTREES_DIRNAME / "casting-9" / "src")
+    _plant_corrupt_shapes(
+        fdir / fo.RUN_WORKTREES_DIRNAME / "test-deriver-cycle-3" / "deep" / "nest"
+    )
+
+    assert fo._run_artifact_problems(fdir) == [], (
+        "a checkout this package nests under the run dir is not one of the "
+        "run's artifacts"
+    )
+    assert fo._artifact_guard(fdir) is None
+
+    # Outside: the same shapes, still named. These are D-140, D-197 and D-201's
+    # true positives, and they are the reason the exclusion is a POSITION rather
+    # than a relaxation of what counts as broken.
+    _plant_corrupt_shapes(fdir / "traces")
+    problems = fo._run_artifact_problems(fdir)
+    for named in ("payload.log", "state.json", "spawns.log", ".last-next-at"):
+        assert any(named in p for p in problems), (named, problems)
+    # D-195's control is still silent, on both sides of the exclusion.
+    assert not any("14.0.0" in p for p in problems), problems
+    guard = fo._artifact_guard(fdir)
+    assert guard is not None and "payload.log" in guard["error"]
+
+
+def _setup_worktree_root_dirnames() -> list[str]:
+    """The directory `_setup_worktree` nests worktrees under, read from itself.
+
+    `base = run_dir / <dirname> / f"{dir_prefix}{casting_id}"` — the string
+    joined onto `run_dir` is the directory EVERY worktree this package creates
+    lands in, whatever prefix sits beneath it. A list, not a string, so a
+    writer that grew a second root is a visible disagreement rather than a
+    silently-picked first hit.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from foundry_mcp.tools import worktree_helpers
+
+    source = textwrap.dedent(inspect.getsource(worktree_helpers._setup_worktree))
+    fn = ast.parse(source).body[0]
+    roots: list[str] = []
+    for node in ast.walk(fn):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+            continue
+        left, right = node.left, node.right
+        if (
+            isinstance(left, ast.Name)
+            and left.id == "run_dir"
+            and isinstance(right, ast.Constant)
+            and isinstance(right.value, str)
+        ):
+            roots.append(right.value)
+    return roots
+
+
+def test_the_worktrees_exclusion_names_what_setup_worktree_roots_under():
+    """D-206's HOW-MEMBERSHIP axis: the exclusion and the creation cannot drift.
+
+    `worktree_helpers._setup_worktree` is the ONE writer that decides where a
+    worktree is nested, and it spells that directory as a literal inside its own
+    body. `RUN_WORKTREES_DIRNAME` is a second spelling of the same fact in
+    another module, which is exactly the hand-kept-list shape D-129 and D-138
+    were filed on — so the fact is derived back out of the writer's own source
+    and compared, and this fails the day either side moves.
+
+    The one-declaration shape (exporting the name from `worktree_helpers` and
+    importing it) belongs to that module's owning casting and is recorded in
+    `foundry-archive/daring-orca/concerns.md`; this pin is what stands in for it
+    until then.
+    """
+    roots = _setup_worktree_root_dirnames()
+
+    assert roots == [fo.RUN_WORKTREES_DIRNAME], (
+        f"_setup_worktree nests worktrees under {roots}, the guard walks past "
+        f"{fo.RUN_WORKTREES_DIRNAME!r}; one of the two has moved"
+    )
+
+
+def test_a_declared_external_input_is_still_named_beside_a_live_sweep_worktree(
+    tmp_path, monkeypatch
+):
+    """D-206 ADJACENT-PATH TEST.
+
+    The defect's own path is the rglob limb of `_run_artifact_problems` reached
+    through `_artifact_guard`. The ADJACENT path driven here is the OTHER limb
+    of the same function — `_declared_external_inputs`, D-145's addition, which
+    runs AFTER the walk and resolves files OUTSIDE the run directory entirely.
+    The prune is a change to the walk, and a prune that returned early, or that
+    swallowed the whole function's return, would take this limb with it: the
+    run's declared spec would stop being guarded the moment any worktree
+    existed, which is a silent under-report and the direction D-138 says is the
+    unrecoverable one.
+
+    Driven with the sweep worktree POPULATED, because that is the concurrent
+    state the defect occurs in — the sweep is in flight while another door is
+    called — and the external input must still be named through it.
+    """
+    from foundry_mcp import server as srv
+
+    root, fdir = _external_spec_run(
+        tmp_path, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC
+    )
+    try:
+        _populate_sweep_worktree(fdir)
+        monkeypatch.setattr(srv, "_project_root", root)
+
+        problems = fo._run_artifact_problems(fdir)
+        assert any("spec.md" in p for p in problems), problems
+        # ...and NOTHING from inside the worktree rode along with it.
+        assert not any("payload.log" in p for p in problems), problems
+
+        result = srv._DISPATCH["Foundry-Validate-Castings"]({})
+        assert result["passed"] is False, result
+        assert "spec.md" in result["error"], result
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_every_door_answers_beside_a_sweep_worktree_and_refuses_on_a_real_break(
+    tmp_path, monkeypatch
+):
+    """D-206 driven where it was reported: at `server.call_tool`'s dispatch.
+
+    CT-012 ("none; never blocks") and CT-013 ("none; unreported dispatches are
+    listed, never refused") are contract cells about doors that must not refuse,
+    and a populated `worktrees/sweep-evidence/` checkout made both of them
+    refuse. Every orchestrator door is driven twice on the same run: once with
+    the checkout populated — nothing may name it — and once with `state.json`
+    occupying a DIRECTORY position, where every door must still refuse by name.
+    Asserting only the first half would pass on a guard that had been deleted.
+    """
+    from foundry_mcp import server as srv
+
+    doors = _dispatched_orchestrator_doors()
+    assert len(doors) >= 12, doors
+
+    root = tmp_path / "proj"
+    fdir = root / "foundry-archive" / "d206"
+    (fdir / "castings").mkdir(parents=True)
+    foundry_state.set_active_run("d206")
+    try:
+        _seed_run_artifacts(str(root), fdir)
+        _populate_sweep_worktree(fdir)
+        monkeypatch.setattr(srv, "_project_root", str(root))
+
+        noisy = []
+        for tool in sorted(doors):
+            result = srv._DISPATCH[tool](_minimal_declared_args(tool))
+            text = " ".join(
+                str(result.get(key, "")) for key in ("error", "reason", "hint")
+            )
+            if "worktrees" in text or "payload.log" in text or "dist-info" in text:
+                noisy.append(f"{tool} -> {text[:160]}")
+        assert noisy == [], (
+            f"these doors refused on the run's own nested checkout: {noisy}"
+        )
+
+        # The same doors, on a real break in the same run: every one names it.
+        (fdir / "state.json").unlink()
+        (fdir / "state.json").mkdir()
+        silent = []
+        for tool in sorted(doors):
+            result = srv._DISPATCH[tool](_minimal_declared_args(tool))
+            text = " ".join(
+                str(result.get(key, "")) for key in ("error", "reason")
+            )
+            corrupt = result.get("corrupt_artifacts") or []
+            if not ("state.json" in text and any("state.json" in str(p) for p in corrupt)):
+                silent.append(f"{tool} -> {text[:160]} corrupt={corrupt}")
+        assert silent == [], (
+            f"the prune bought silence on a real break at these doors: {silent}"
+        )
+    finally:
+        foundry_state.clear_active_run()
+
+
+# --------------------------------------------------------------------------- #
 # D-157 (FR-019 / AC-004 / FR-020 / AC-025 / NFR-002 / ST-003) — A REFUSAL THE
 # HANDLER NAMED MUST REACH THE OPERATOR'S SCREEN.
 #

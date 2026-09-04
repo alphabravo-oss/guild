@@ -145,7 +145,22 @@ def _teams_active(active: bool) -> None:
 
 
 def _write_state(fdir: Path, phase: str, cycle: int = 0, **extra) -> None:
-    state = {"phase": phase, "cycle": cycle}
+    """The run's state document. `self_target` defaults TRUE — see D-207.
+
+    Every fixture in this file that exercises the TEST-01 scope predicate drives
+    it against the EXECUTING server's own `_DISPATCH` registry: `Foundry-Report`
+    resolving to `tools/foundry_report.py` is the assertion, and that is only a
+    fact about the target on a run whose target IS this plugin. So these
+    fixtures were always self-target-shaped and simply did not say so, which is
+    the pin gap D-207 names — the registry arm had full coverage and the
+    non-self-target arm had none, and the predicate quietly answered "nothing is
+    covered" for the whole of the second.
+
+    Recording it here keeps every existing fixture asserting exactly what it was
+    written to assert. A test that means the OTHER run passes
+    `self_target=False` and says so in its name.
+    """
+    state = {"phase": phase, "cycle": cycle, "self_target": True}
     state.update(extra)
     (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
@@ -761,6 +776,12 @@ def test_delta_mode_requires_neither_conditional_stream_on_an_untouched_scope(ru
     _write_state(fdir, phase="F3", cycle=1)
     _write_defects(fdir, [_open_live()])
     _write_manifest(fdir)
+    # D-207: an UNTOUCHED covered set is not an ABSENT one. This fixture wrote
+    # no spec at all, so "test01 covers nothing here" and "this server cannot
+    # see what test01 covers" were the same state, and the assertion below was
+    # passing on the second while claiming the first. The Contracts table names
+    # surfaces `src/handler.py` is not one of, which is the subject.
+    _write_spec_with_contracts(fdir, ["FR-001"])
     _grind_touching(project_root, fdir, "src/handler.py")
     _arm(fdir)
 
@@ -824,12 +845,19 @@ def test_delta_mode_requires_test01_when_a_schema_file_is_touched(run_env):
     _write_manifest(fdir)
     _write_spec(fdir, ["FR-001"])
     schema_hit = fo._test01_scope_touched(
-        project_root, ["src/foundry_mcp/schemas/x.py"]
+        fdir, project_root, ["src/foundry_mcp/schemas/x.py"]
     )
     assert schema_hit["touched"] is True, schema_hit
     assert "schemas/" in schema_hit["detail"]
-    miss = fo._test01_scope_touched(project_root, ["src/handler.py"])
+    # D-207: source-independent, so it answers ahead of the three-source ladder
+    # and needs neither a declaration nor a registry to be believed.
+    assert schema_hit["source"] == "schemas", schema_hit
+    # The spec here was READ and names no Contracts surfaces, which is a
+    # genuinely empty covered set rather than an unknown one — the one case the
+    # D-207 fail-closed rule does not reach.
+    miss = fo._test01_scope_touched(fdir, project_root, ["src/handler.py"])
     assert miss["touched"] is False, miss
+    assert miss["computable"] is True, miss
 
 
 # --------------------------------------------------------------------------- #
@@ -925,13 +953,18 @@ def test_test01_scope_is_the_registry_binding_not_a_stem_in_the_contracts_prose(
     _write_spec_with_contracts(fdir, ["FR-001"])
 
     for path in _STEM_COLLIDING_PATHS:
-        decision = fo._test01_scope_touched(project_root, [path])
+        decision = fo._test01_scope_touched(fdir, project_root, [path])
         assert decision["touched"] is False, (path, decision)
+        # D-207: a COMPUTED miss, from the registry, on a run that records
+        # self_target — not the asserted negative an unknown set used to give.
+        assert decision["computable"] is True, (path, decision)
+        assert decision["source"] == "registry", (path, decision)
 
     hit = fo._test01_scope_touched(
-        project_root, ["src/foundry_mcp/tools/foundry_report.py"]
+        fdir, project_root, ["src/foundry_mcp/tools/foundry_report.py"]
     )
     assert hit["touched"] is True, hit
+    assert hit["source"] == "registry", hit
     # The recorded provenance names the surface AND the file, so a reader of
     # state.json can check the claim instead of believing it.
     assert "CT-014" in hit["detail"], hit
@@ -953,8 +986,11 @@ def test_the_contracts_surface_column_is_read_as_cells_by_its_header(run_env):
     project_root, fdir = run_env
     _write_spec_with_contracts(fdir, ["FR-001"])
 
-    rows = fo._contracts_surface_cells(project_root)
+    rows, problem = fo._contracts_surface_cells(project_root)
 
+    # D-207: the spec was READ, so there is no problem to report — that channel
+    # exists so an unreadable spec stops arriving as an empty table.
+    assert problem is None, problem
     assert [rid for rid, _ in rows] == [
         "CT-004", "CT-007", "CT-008", "CT-012", "CT-013", "CT-014", "CT-016",
     ], rows
@@ -990,6 +1026,265 @@ def test_every_contracts_surface_resolves_to_a_module_through_the_registry():
     for tool, modules in registry.items():
         for module in modules:
             assert "foundry_mcp" in module, (tool, module)
+
+
+# --------------------------------------------------------------------------- #
+# D-207 — A COVERED SET THE SERVER CANNOT COMPUTE IS NOT AN EMPTY COVERED SET.
+#
+# D-204's fix moved TEST-01's coverage question onto the EXECUTING server's own
+# `_DISPATCH` registry, which is a fact about the target on exactly one kind of
+# run: one whose target IS this plugin. `_registry_tool_modules` yields foundry
+# tool names bound to paths under the executing package's `src/foundry_mcp/`,
+# while `_contracts_surface_cells` reads the TARGET run's spec — off a
+# self-target those describe different programs and can never intersect, so the
+# predicate answered "nothing is covered" for every non-self-targeting run and
+# the roster silently dropped `test01` from all of them.
+#
+# Driven at the wire at 31cc192: a non-self-targeting run whose spec Contracts
+# names `POST /api/users (create)` and `DELETE /api/users/:id`, whose casting
+# key_file is `src/api/users.py`, and whose GRIND diff touched exactly that
+# module recorded DELTA with required_streams ['trace','prove','test'] and
+# `stream_scope.test01` = {scope: 'skipped', detail: 'no file test01 covers was
+# touched'}. At cb77e83 the RETIRED predicate returned True for that same input,
+# so the D-204 fix narrowed a correct behaviour on the path it could not see —
+# and every fixture in this file was self-target-shaped, which is why nothing
+# caught it.
+#
+# THE ASYMMETRY IS THE DEFECT: `_decide_inspect_mode` fails CLOSED on an
+# uncomputable GRIND diff (FULL, "the GRIND diff could not be computed") and
+# this failed OPEN on an uncomputable covered set.
+#
+# BOTH AXES ARE PINNED BELOW. WHERE THE COVERED SET COMES FROM — declared by the
+# run, else the registry on a run recorded as self-targeting, else nowhere. WHAT
+# AN UNKNOWABLE SET MEANS — required, scope full, and a detail that says so.
+# --------------------------------------------------------------------------- #
+
+#: A Contracts table for a run whose target is an ORDINARY product: the surfaces
+#: are HTTP routes, and no tool name the executing server registers appears
+#: anywhere in it. This is the table the registry arm cannot answer about.
+_PRODUCT_CONTRACTS_TABLE = """
+## Contracts
+
+| ID     | surface | input | output | errors | citation |
+|--------|---------|-------|--------|--------|----------|
+| CT-001 | POST /api/users (create) | body | 201 | 400 | [from A-001] |
+| CT-002 | DELETE /api/users/:id | id | 204 | 404 | [from A-002] |
+
+## Scope
+"""
+
+
+def _product_run(project_root: str, fdir: Path, **manifest_extra) -> None:
+    """A NON-self-targeting run: a product spec, a product casting, no plugin.
+
+    `self_target=False` is the whole point — it is the fact
+    `foundry._self_target_preflight` computes and `foundry_init` records, and
+    without it the executing server's registry describes a different program
+    than this run's spec does.
+    """
+    _write_state(fdir, phase="F3", cycle=1, self_target=False)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(
+        fdir,
+        castings=[{"id": 1, "key_files": ["src/api/users.py"]}],
+        **manifest_extra,
+    )
+    (fdir / "spec.md").write_text(
+        "- **CT-001**: users can be created\n" + _PRODUCT_CONTRACTS_TABLE,
+        encoding="utf-8",
+    )
+
+
+def test_a_non_self_target_run_requires_test01_because_the_set_is_unknowable(
+    run_env,
+):
+    """ST-007 verbatim: research_audit and test01 'are required by the
+    streams-complete check only when the diff touches a file they cover, and not
+    required otherwise'. FR-047, AC-017, FR-012, CT-009. D-207.
+
+    Driven at `server.call_tool`'s dispatcher on the reported fixture. The
+    covered set here cannot be computed at all — the run declares none and the
+    executing server is not the target — and an uncomputable set is REQUIRED,
+    in the same direction and with the same shape of sentence
+    `_decide_inspect_mode` gives an uncomputable GRIND diff.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _product_run(project_root, fdir)
+    _grind_touching(project_root, fdir, "src/api/users.py")
+    _arm(fdir)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Phase"]({"phase": "inspect_start"})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["ok"] is True, result
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["mode"] == "DELTA", recorded
+    assert "test01" in recorded["required_streams"], recorded
+    scope = recorded["stream_scope"]["test01"]
+    assert scope["scope"] == "full", scope
+    # The detail is the ONLY place the third state is written down, and it is
+    # read back by the F6 per-cycle scope column — so it must say the set was
+    # not computable, and why, not merely that the stream is required.
+    assert "could not be computed" in scope["detail"], scope
+    assert "self_target" in scope["detail"], scope
+
+
+def test_a_declared_test01_scope_answers_for_a_run_the_registry_cannot_describe(
+    run_env,
+):
+    """FR-047 / AC-017: the first source in the precedence order.
+
+    A run that DECLARES what TEST-01 covers is answerable whatever the executing
+    server is, so the same non-self-targeting fixture becomes computable and
+    both directions are asserted: the declared file requires the stream and
+    names the declaration, and a file outside the declaration does not require
+    it. Without the second half this would pass on a predicate that had simply
+    started saying yes to everything.
+    """
+    project_root, fdir = run_env
+    _product_run(project_root, fdir, test01_scope=["src/api/users.py"])
+
+    hit = fo._test01_scope_touched(fdir, project_root, ["src/api/users.py"])
+    assert hit["touched"] is True, hit
+    assert hit["source"] == "declared", hit
+    assert "test01_scope" in hit["detail"] and "src/api/users.py" in hit["detail"]
+
+    miss = fo._test01_scope_touched(fdir, project_root, ["src/zzz.py"])
+    assert miss["touched"] is False, miss
+    assert miss["computable"] is True, miss
+    assert miss["source"] == "declared", miss
+
+
+def test_a_declared_scope_on_a_casting_row_is_the_same_declaration(run_env):
+    """FR-047, the lead ruling's 'manifest or the decompose-plan's casting
+    table, whichever the run already records'.
+
+    Both homes are read, so decompose is not forced into one spelling before it
+    has chosen; the answer and its provenance are identical either way.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, self_target=False)
+    _write_manifest(
+        fdir,
+        castings=[{
+            "id": 1,
+            "key_files": ["src/api/users.py"],
+            "test01_scope": ["src/api/users.py"],
+        }],
+    )
+    (fdir / "spec.md").write_text(_PRODUCT_CONTRACTS_TABLE, encoding="utf-8")
+
+    hit = fo._test01_scope_touched(fdir, project_root, ["src/api/users.py"])
+    assert hit["touched"] is True and hit["source"] == "declared", hit
+    assert fo._test01_scope_touched(fdir, project_root, ["src/zzz.py"])["touched"] is False
+
+
+def test_an_unreadable_tool_registry_fails_closed(run_env, monkeypatch):
+    """D-207's second fail-open arm: `_registry_tool_modules`'s own
+    `except Exception -> {}`.
+
+    Its docstring argued the empty return honest — "without the registry there
+    is no evidence of what implements what" — which is exactly right about the
+    EVIDENCE and exactly wrong about what to do with it. No evidence is not
+    evidence of absence, and the caller was reading it as one.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)   # self_target, so arm (2) is live
+    _write_manifest(fdir)
+    _write_spec_with_contracts(fdir, ["FR-001"])
+    monkeypatch.setattr(fo, "_registry_tool_modules", lambda: {})
+
+    decision = fo._test01_scope_touched(
+        fdir, project_root, ["src/foundry_mcp/tools/foundry_report.py"]
+    )
+    assert decision["touched"] is True, decision
+    assert decision["computable"] is False, decision
+    assert "registry could not be read" in decision["detail"], decision
+
+
+def test_an_unreadable_contracts_table_fails_closed_but_an_absent_one_does_not(
+    run_env,
+):
+    """The same sentence about the document the covered set is derived FROM.
+
+    `_contracts_surface_cells` returned `[]` for a spec it could not read AND
+    for a spec that simply has no Contracts table, and the caller could not tell
+    them apart. They are different facts: a spec that was READ and names no
+    surfaces covers nothing — TEST-01 SKIPs on it with a reason — while a spec
+    that could not be read covers an unknown set.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_manifest(fdir)
+
+    # Read, no table: a computed empty covered set.
+    _write_spec(fdir, ["FR-001"])
+    rows, problem = fo._contracts_surface_cells(project_root)
+    assert (rows, problem) == ([], None)
+    absent = fo._test01_scope_touched(fdir, project_root, ["src/handler.py"])
+    assert absent["touched"] is False and absent["computable"] is True, absent
+
+    # Unreadable: an unknown one.
+    (fdir / "spec.md").write_bytes(b"## Contracts\n\n| ID | surface |\ncaf\xe9\n")
+    rows, problem = fo._contracts_surface_cells(project_root)
+    assert rows == [] and problem is not None, (rows, problem)
+    unknown = fo._test01_scope_touched(fdir, project_root, ["src/handler.py"])
+    assert unknown["touched"] is True and unknown["computable"] is False, unknown
+    assert "Contracts table could not be read" in unknown["detail"], unknown
+
+
+def test_the_research_audit_arm_is_unmoved_by_the_test01_source_ladder(run_env):
+    """D-207 ADJACENT-PATH TEST.
+
+    The defect's own path is `test01`'s cell of the DELTA conditional roster.
+    The ADJACENT path driven here is `research_audit`'s — the OTHER member of
+    `DELTA_CONDITIONAL_STREAMS`, decided by `_research_scope_touched` inside the
+    SAME loop of the same transition, reading the same `touched` list and
+    writing into the same `stream_scope` object. A three-source ladder wired
+    into the shared branch instead of into `test01`'s own predicate would move
+    this arm too, and it must not: research_audit's covered set comes from the
+    run's OWN manifest and is therefore computable on every run, self-targeting
+    or not.
+
+    Driven on the non-self-targeting fixture, in BOTH directions, so the
+    assertion is that the arm still DECIDES rather than that it still answers
+    one way.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, self_target=False)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir, castings=[{
+        "id": 1,
+        "key_files": ["src/api/users.py"],
+        "research_context": "research/api.md",
+    }])
+    (fdir / "spec.md").write_text(_PRODUCT_CONTRACTS_TABLE, encoding="utf-8")
+
+    touched = fo._research_scope_touched(fdir, ["src/api/users.py"])
+    assert touched["touched"] is True, touched
+    assert "research_context" in touched["detail"], touched
+    untouched = fo._research_scope_touched(fdir, ["src/zzz.py"])
+    assert untouched["touched"] is False, untouched
+    assert untouched["detail"] == "", untouched
+
+    # And through the transition, where the two arms share a branch: test01 is
+    # required for the unknowable-set reason, research_audit for a NAMED match,
+    # and the two details are not the same sentence.
+    _grind_touching(project_root, fdir, "src/api/users.py")
+    _arm(fdir)
+    foundry_mark_phase_complete("inspect_start", project_root)
+
+    scope = _read_state(fdir)["inspect_modes"][-1]["stream_scope"]
+    assert scope["research_audit"]["scope"] == "full"
+    assert "research_context" in scope["research_audit"]["detail"]
+    assert "could not be computed" not in scope["research_audit"]["detail"]
+    assert "could not be computed" in scope["test01"]["detail"]
 
 
 def test_a_stem_colliding_grind_diff_leaves_test01_unrequired_over_mcp(run_env):
@@ -1444,6 +1739,10 @@ def test_next_reports_the_recorded_decision_whenever_it_is_called(run_env):
     _write_state(fdir, phase="F3", cycle=1)
     _write_defects(fdir, [_open_live()])
     _write_manifest(fdir)
+    # D-207: the roster asserted below is the one a COMPUTED covered set
+    # produces; without a spec the run has no covered set to compute and
+    # test01 is required for that reason instead.
+    _write_spec_with_contracts(fdir, ["FR-001"])
     _grind_touching(project_root, fdir, "src/handler.py")
     _arm(fdir)
     foundry_mark_phase_complete("inspect_start", project_root)
