@@ -55,6 +55,8 @@
   cycle 4  F2    DELTA delta
   cycle 5  F2    FULL  final_gate
   cycle 5  F5    FULL  first_of_phase
+  axis length 6  without a decision [0]
+  The axis is this run's own cycle counter, 0 through 5 — 6 cycles, from the same `derive_cycle_count` reading `baseline_comparison` publishes as 6 GRIND cycles. Recorded decisions cover 5 of them; cycle 0 carries none — no INSPECT-opening transition recorded a mode there, and none is inferred here.
 === spend: tokens and minutes only, no money (NFR-002) ===
   phase F1    tokens=930000    minutes=42.0   records=2 agents=3
   phase F2    tokens=980000    minutes=50.0   records=2 agents=2
@@ -86,4 +88,4 @@
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
-1 passed, 95 deselected in 0.27s
+1 passed, 104 deselected in 0.06s

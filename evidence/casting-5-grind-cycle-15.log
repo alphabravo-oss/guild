@@ -1,0 +1,80 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider -s tests/test_report.py -k demo_grind_cycle_15
+# evidence-for: GI-006, CT-014, US-008, AC-036, FR-023, FR-038, OT-025
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+#
+# GRIND cycle 15 — one filing, D-193, on a number this document derived twice
+# and reconciled nowhere.
+#
+# `inspect_modes_per_cycle.cycle_count` counts the cycles the LEDGER has a
+# decision for. AC-036 names "the FULL or DELTA decision per cycle", which is
+# an axis over the run's CYCLES. The two are the same number only on a run that
+# recorded a decision in every cycle, and the run that filed this is not one:
+# REPORT.md read "5 recorded INSPECT-opening decisions over 5 cycles" and, 64
+# lines later, "| GRIND cycles | 22 |  | 12 | 15 |", with report.json carrying
+# `cycle_count` 5 beside `baseline_comparison.current.grind_cycles` 15. PROVE
+# confirmed the ten missing decisions are genuinely absent from state.json and
+# from stream-rollup.json rather than dropped by the reader, so the section was
+# under-reporting the axis rather than losing rows — and the fix is a clause,
+# not a data change.
+#
+# Four sibling sections in the same document each disclose their own gap: spend
+# says the Agents cells are blank "for want of that source, not because they
+# are zero", baseline says its null columns are "null rather than fabricated",
+# unknown-tier explains why closed records are counted but unlisted, and the
+# LATENT backlog explains an empty location cell. This was the one partial
+# section that stayed silent.
+#
+# The axis is now derived in `_inspect_modes_section` from `derive_cycle_count`
+# — the same reading `_archive_metrics` publishes as `grind_cycles`, so the two
+# numbers in the document come from ONE derivation (D-036's lesson applied to
+# the third pair) — and published as `cycle_axis_length` and
+# `cycles_without_decision` beside `cycle_count`. The disclosure sentence is
+# built once in the section, so REPORT.md and report.json carry the same words
+# and neither can drift from the other.
+#
+# The four blocks below are the four branches, each read back out of the
+# generated document: the filing run's own shape (15 cycles, 5 recorded), a run
+# that recorded every cycle, a scattered gap printed as the runs it is, and the
+# case this section REFUSES — an axis taken from the ledger being rendered
+# against it, which is complete by construction and would have turned "the
+# counter cannot say" into "nothing is missing".
+#
+# Deterministic: every run directory is built under pytest's tmp_path and no
+# path, clock reading or SHA reaches the output. The only volatile field is
+# pytest's own summary duration.
+
+
+=== D-193 — the filing run's own shape: a counter that reached 14, an inspect_modes ledger that starts at 10 ===
+  report.json inspect_modes_per_cycle.count       5
+  report.json inspect_modes_per_cycle.cycle_count 5   <- cycles that CARRY a decision
+  report.json baseline_comparison.current.grind_cycles  15   <- cycles the run RAN
+  the filing read exactly those two numbers, 64 lines apart in one REPORT.md, with nothing reconciling them and no sentence naming the cycles that recorded nothing.
+
+  the axis is now derived, from the reading the baseline section already used:
+  cycle_axis_length        15
+  cycles_without_decision  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  same reading as the baseline: True
+
+  and REPORT.md says it, in the words report.json carries:
+  5 recorded INSPECT-opening decisions over the 5 cycles that carry one; by mode: {'DELTA': 0, 'FULL': 5}. One row per decision: a cycle carries two rows when an F5 INSPECT reopened it after its F2 one, and neither is dropped.
+  The axis is this run's own cycle counter, 0 through 14 — 15 cycles, from the same `derive_cycle_count` reading `baseline_comparison` publishes as 15 GRIND cycles. Recorded decisions cover 5 of them; cycles 0-9 carry none — no INSPECT-opening transition recorded a mode there, and none is inferred here.
+
+  the same sentence is in report.json: True
+
+=== the other arm: a run that recorded every cycle says so, so 'no sentence' is never the answer ===
+  cycle_axis_length 6  cycles_without_decision []
+  Recorded decisions cover every one of them.
+
+=== gaps print as the runs they are, never as a dump ===
+  cycles_without_decision [0, 1, 2, 4, 5, 6, 7]
+  cycles 0-2, 4-7 carry none — no INSPECT-opening transition recorded a mode there, and none is inferred here.
+
+=== what is NOT done: an axis taken from the ledger being rendered against it ===
+  a run whose counter no source can supply, whose ledger names cycles 3 and 4:
+  cycle_axis_length       None
+  cycles_without_decision None
+  This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
+  an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
+.
+1 passed, 104 deselected in 0.23s
