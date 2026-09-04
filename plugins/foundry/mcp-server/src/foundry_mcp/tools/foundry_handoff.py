@@ -955,7 +955,6 @@ def foundry_accept_casting(
         _read_spec_format_version,
         verify_evidence,
     )
-    from foundry_mcp.tools.foundry_state import get_run_dir as _get_run_dir
 
     # Resolve run_dir for worktree storage. fdir is the active foundry
     # run dir (computed at function entry); pass it through so the
