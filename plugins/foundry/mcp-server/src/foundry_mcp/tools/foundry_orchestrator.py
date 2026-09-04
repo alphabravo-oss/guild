@@ -3419,25 +3419,6 @@ def _grind_diff(fdir: Path, project_root: str) -> dict:
     return {"files": files, "base": base, "source": source, "problem": ""}
 
 
-def _spec_relative_path(project_root: str) -> str | None:
-    """The run's spec as a repo-relative path, for `is_verifier_path`.
-
-    The spec is NOT a member of VERIFIER_PATH_PATTERNS on purpose — a run's spec
-    lives wherever `state.json.spec_path` says, and a static pattern would
-    either miss it or sweep in every unrelated spec.md in the tree. So it is
-    passed at call time, which means resolving it here.
-
-    ONE spelling, which is why `_spec_relative_paths` exists beside it: this
-    function answers "where is the spec" and `_resolve_spec_path` PREFERS the
-    run-dir copy, so on a run that has both it never returns the other. See
-    D-102 in the plural version below.
-    """
-    resolved = _resolve_spec_path(project_root)
-    if resolved is None:
-        return None
-    return _repo_relative(project_root, resolved)
-
-
 def _repo_relative(project_root: str, path: Path) -> str:
     """`path` spelled relative to `project_root`, or unchanged when it is not under it."""
     try:
@@ -3448,6 +3429,18 @@ def _repo_relative(project_root: str, path: Path) -> str:
 
 def _spec_relative_paths(project_root: str) -> list[str]:
     """EVERY repo-relative spelling of this run's spec, for `is_verifier_path`.
+
+    The spec is NOT a member of VERIFIER_PATH_PATTERNS on purpose — a run's spec
+    lives wherever `state.json.spec_path` says, and a static pattern would
+    either miss it or sweep in every unrelated spec.md in the tree. So it is
+    passed at call time, which means resolving it here. FR-032's "one constant
+    rather than typed in several places" is why this is the ONLY resolver: a
+    singular `_spec_relative_path` was written first, superseded by this one
+    when D-102 landed, and left in the file with a docstring presenting it as a
+    live sibling — so the next reader had to derive from call-site absence that
+    it was dead (D-196). It is gone;
+    `test_every_private_orchestrator_function_is_reachable` is what keeps the
+    next superseded helper from being left behind the same way.
 
     D-102 — THE SPEC HAS TWO LEGAL SPELLINGS AND THE FULL RULE SAW ONE.
     ------------------------------------------------------------------
@@ -7674,21 +7667,22 @@ _OVERRIDE_ALL_VALUES = frozenset({"*", "all", "any", "every"})  # 4 spellings
 _OVERRIDE_QUOTES = ('"', "'", "`")
 
 
-def _override_value(raw: str) -> str:
-    """The class key a scoped marker names, unwrapped and trimmed."""
-    return _override_value_quoting(raw)[0]
-
-
 def _override_value_quoting(raw: str) -> tuple[str, bool]:
     """The class key a scoped marker names, and whether it was QUOTE-WRAPPED.
 
-    D-139: the two halves used to be one function that returned only the value,
-    so the wildcard test ran on the ALREADY-UNWRAPPED string and quoting could
-    not protect a class key spelled like a wildcard. ``escalation-override:
-    "all"`` read back as ``{"*"}`` — every escalated class — when the operator
-    had named the single class ``all``. Driven end to end with two escalated
-    classes, ``AUTH_CONTRACT`` and ``all``: sending the tool's own rendered
-    instruction de-escalated BOTH.
+    D-139: the two halves used to be one function, ``_override_value``, that
+    returned only the value, so the wildcard test ran on the ALREADY-UNWRAPPED
+    string and quoting could not protect a class key spelled like a wildcard.
+    ``escalation-override: "all"`` read back as ``{"*"}`` — every escalated
+    class — when the operator had named the single class ``all``. Driven end to
+    end with two escalated classes, ``AUTH_CONTRACT`` and ``all``: sending the
+    tool's own rendered instruction de-escalated BOTH.
+
+    D-196's second instance: that split left ``_override_value`` behind as a
+    one-line wrapper over this function with no caller anywhere, named only in
+    a test docstring narrating the defect above. It is gone; the pin
+    ``test_every_private_orchestrator_function_is_reachable`` is what found it,
+    which is the whole reason the pin reads CODE rather than prose.
 
     Whether the key was quoted is what distinguishes "this value IS the
     wildcard spelling" from "this value is a class key that LOOKS like one",

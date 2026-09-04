@@ -3631,6 +3631,122 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
 
 
 # --------------------------------------------------------------------------- #
+# D-196 — A SUPERSEDED HELPER WAS LEFT BEHIND BY ITS OWN FIX.
+#
+# `_spec_relative_path` (singular) answered "where is this run's spec".
+# `_spec_relative_paths` (plural) was added beside it to fix D-102, the FULL
+# rule was rewired to call the plural, and the singular was left in the file —
+# reachable by nothing, with a docstring presenting it as a live sibling ("ONE
+# spelling, which is why `_spec_relative_paths` exists beside it"). So the next
+# reader had to derive from CALL-SITE ABSENCE that it was dead, which is the
+# one thing a docstring should never make them do. FR-032 asks for one
+# constant rather than several spellings; two resolvers, one unreachable, is
+# that duplication surviving its own fix.
+#
+# The pin is over the MODULE, not over that one name: a test naming
+# `_spec_relative_path` would pass the day it is deleted and catch nothing
+# afterwards, which is how the class comes back on the next superseded helper.
+# --------------------------------------------------------------------------- #
+
+#: Private module-level functions that are deliberately unreferenced.
+#:
+#: EMPTY, and it is meant to stay that way. A private helper with no caller is
+#: dead code by definition; the escape hatch exists only for a name that some
+#: mechanism reaches WITHOUT naming it in source (a getattr dispatch, a
+#: plugin-style registry), and adding one costs a comment here saying which
+#: mechanism reaches it and how. "It will be used soon" is not that comment.
+_UNREFERENCED_ORCHESTRATOR_HELPERS: dict[str, str] = {}
+
+
+def _named_in_code(tree: ast.AST) -> set[str]:
+    """Every identifier `tree` NAMES IN CODE — not in prose.
+
+    THE PROSE HAS TO BE EXCLUDED OR THE PIN CANNOT FAIL. Written first as a
+    text sweep, this passed at the pre-fix commit: the very comment above,
+    which spells `_spec_relative_path` to explain why the pin exists, was
+    counted as a reference and resurrected the dead helper. Reachability is a
+    property of CODE, so it is read from the syntax tree: a load, an attribute,
+    or a string that IS the name (`monkeypatch.setattr(fo, "_helper", ...)` and
+    `getattr` dispatch both spell it that way, and neither is a call site a
+    grep for `_helper(` would find either).
+    """
+    named: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            named.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            named.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            named.add(node.value)  # exact-match only; a docstring MENTION is not one
+    return named
+
+
+def test_every_private_orchestrator_function_is_reachable():
+    """FR-032 verbatim: the verifier-path decision is 'derived from one constant
+    rather than typed in several places'. D-196.
+
+    Every private module-level function in `foundry_orchestrator.py` must be
+    named in code somewhere OUTSIDE its own body — in any Python file the
+    plugin ships, so a helper reached only from a test still counts. A name
+    nothing names is a helper whose caller was rewired away from it and which
+    nobody deleted.
+    """
+    module_path = Path(fo.__file__).resolve()
+    plugin_root = module_path.parents[4]  # .../plugins/foundry
+    assert plugin_root.name == "foundry", plugin_root
+
+    module_tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    helpers = {
+        node.name: node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("_")
+        and not node.name.startswith("__")
+    }
+    # A derivation that silently found nothing would pass forever.
+    assert len(helpers) >= 100, len(helpers)
+
+    reachable: set[str] = set()
+    scanned = 0
+    for path in sorted(plugin_root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        scanned += 1
+        if path != module_path:
+            reachable |= _named_in_code(tree)
+            continue
+        # In the defining module, a helper's OWN body does not vouch for it:
+        # a recursive call is not a caller. Everything else in the file does.
+        for node in tree.body:
+            if node in helpers.values():
+                reachable |= {
+                    name
+                    for child in ast.iter_child_nodes(node)
+                    for name in _named_in_code(child)
+                } - {node.name}
+            else:
+                reachable |= _named_in_code(node)
+    assert scanned >= 50, scanned
+
+    orphans = sorted(
+        name
+        for name in helpers
+        if name not in reachable
+        and name not in _UNREFERENCED_ORCHESTRATOR_HELPERS
+    )
+    assert orphans == [], (
+        f"private module-level function(s) reachable by nothing: {orphans}. "
+        f"A helper nothing in the plugin names outside its own body was "
+        f"superseded and left behind (D-196). Delete it, or make it the "
+        f"survivor's helper and call it -- and if some mechanism reaches it "
+        f"without naming it, record that mechanism in "
+        f"_UNREFERENCED_ORCHESTRATOR_HELPERS."
+    )
+
+
+# --------------------------------------------------------------------------- #
 # D-042 / CT-001 / AC-006 — a refusal over MCP names the offending property
 # --------------------------------------------------------------------------- #
 
@@ -4045,9 +4161,10 @@ def test_every_rendered_override_instruction_round_trips():
     D-133 verified only the BARE branch and returned the quoted fallback
     unverified. For the four keys spelled like a wildcard that fallback did not
     merely fail, it read back as the WILDCARD: `escalation-override: "all"`
-    returned {'*'}, because `_override_value` stripped the quotes BEFORE the
-    value was tested against `_OVERRIDE_ALL_VALUES`. Quoting could not protect
-    a class key spelled like a wildcard, which is the one thing quoting is for.
+    returned {'*'}, because the unwrap that `_override_value_quoting` now does
+    stripped the quotes BEFORE the value was tested against
+    `_OVERRIDE_ALL_VALUES`. Quoting could not protect a class key spelled like
+    a wildcard, which is the one thing quoting is for.
     """
     table = render_override_roundtrip_table()
     assert "MISMATCH" not in table, table
