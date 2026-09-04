@@ -1,10 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_spend.py && uv run --quiet python -c "import asyncio, inspect;from foundry_mcp import __version__, server as S;from foundry_mcp.tools.foundry_orchestrator import foundry_record_spend;tools = {t.name: t for t in asyncio.run(S.list_tools())};print(chr(10) + '=== cost is reported by the lead, never parsed by the server ===');print('MCP serverInfo.version:', S.server.version, '== package __version__:', S.server.version == __version__);print('Foundry-Spend inputs:', ' '.join(inspect.signature(foundry_record_spend).parameters));print('Foundry-Spend registered:', 'Foundry-Spend' in tools, 'dispatched:', 'Foundry-Spend' in S._DISPATCH);print('Foundry-Report registered:', 'Foundry-Report' in tools, 'dispatched:', 'Foundry-Report' in S._DISPATCH);print('any dollar figure in the Foundry-Spend description:', chr(36) in tools['Foundry-Spend'].description)"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_spend.py > /dev/null && echo "pytest green: tests/test_spend.py" && uv run --quiet python -c "import asyncio, inspect;from foundry_mcp import __version__, server as S;from foundry_mcp.tools.foundry_orchestrator import foundry_record_spend;tools = {t.name: t for t in asyncio.run(S.list_tools())};print(chr(10) + '=== cost is reported by the lead, never parsed by the server ===');print('MCP serverInfo.version:', S.server.version, '== package __version__:', S.server.version == __version__);print('Foundry-Spend inputs:', ' '.join(inspect.signature(foundry_record_spend).parameters));print('Foundry-Spend registered:', 'Foundry-Spend' in tools, 'dispatched:', 'Foundry-Spend' in S._DISPATCH);print('Foundry-Report registered:', 'Foundry-Report' in tools, 'dispatched:', 'Foundry-Report' in S._DISPATCH);print('any dollar figure in the Foundry-Spend description:', chr(36) in tools['Foundry-Spend'].description)"
 # evidence-for: US-006, US-007, GI-005, CT-011, CT-013, AC-027, AC-028, AC-033, AC-034, FR-017, FR-021, FR-022, FR-037, OT-018, OT-019, OT-023, OT-024
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
-
-.......................................................                  [100%]
-55 passed in 0.86s
+pytest green: tests/test_spend.py
 
 === cost is reported by the lead, never parsed by the server ===
 MCP serverInfo.version: 1.9.0 == package __version__: True

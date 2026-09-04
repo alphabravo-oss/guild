@@ -1,11 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_inspect_mode.py && uv run --quiet python -c "from foundry_mcp.schemas.vocab import INSPECT_MODES, INSPECT_FULL_RULES, INSPECT_DELTA_RULE, FULL_ROSTER_STREAMS, DELTA_CONDITIONAL_STREAMS, PROVE_DELTA_SAMPLE_SIZE;import inspect, foundry_mcp.tools.foundry_orchestrator as fo;src = inspect.getsource(fo._compute_next_action);print(chr(10) + '=== the width is decided at the transition, reported everywhere else ===');print('modes:', ' '.join(sorted(INSPECT_MODES)));print('rules forcing FULL:', ' '.join(sorted(INSPECT_FULL_RULES)));print('rule recorded otherwise:', INSPECT_DELTA_RULE);print('FULL roster:', ' '.join(FULL_ROSTER_STREAMS));print('DELTA-conditional streams:', ' '.join(sorted(DELTA_CONDITIONAL_STREAMS)));print('PROVE rows sampled on a DELTA cycle:', PROVE_DELTA_SAMPLE_SIZE);print('_compute_next_action decides the width:', '_decide_inspect_mode' in src)"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_inspect_mode.py > /dev/null && echo "pytest green: tests/test_inspect_mode.py" && uv run --quiet python -c "from foundry_mcp.schemas.vocab import INSPECT_MODES, INSPECT_FULL_RULES, INSPECT_DELTA_RULE, FULL_ROSTER_STREAMS, DELTA_CONDITIONAL_STREAMS, PROVE_DELTA_SAMPLE_SIZE;import inspect, foundry_mcp.tools.foundry_orchestrator as fo;src = inspect.getsource(fo._compute_next_action);print(chr(10) + '=== the width is decided at the transition, reported everywhere else ===');print('modes:', ' '.join(sorted(INSPECT_MODES)));print('rules forcing FULL:', ' '.join(sorted(INSPECT_FULL_RULES)));print('rule recorded otherwise:', INSPECT_DELTA_RULE);print('FULL roster:', ' '.join(FULL_ROSTER_STREAMS));print('DELTA-conditional streams:', ' '.join(sorted(DELTA_CONDITIONAL_STREAMS)));print('PROVE rows sampled on a DELTA cycle:', PROVE_DELTA_SAMPLE_SIZE);print('_compute_next_action decides the width:', '_decide_inspect_mode' in src)"
 # evidence-for: US-004, GI-002, GI-008, GI-009, ST-005, ST-006, ST-007, CT-007, CT-009, AC-013, AC-014, AC-016, AC-017, AC-018, AC-019, FR-009, FR-011, FR-012, FR-013, FR-033, FR-042, FR-043, FR-047, FR-049, OT-008, OT-012, OT-013, OT-014, OT-015, OT-016
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
-
-........................................................................ [ 69%]
-...............................                                          [100%]
-103 passed in 15.14s
+pytest green: tests/test_inspect_mode.py
 
 === the width is decided at the transition, reported everywhere else ===
 modes: DELTA FULL
