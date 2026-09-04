@@ -4233,7 +4233,7 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
          rather than about what this run was admitted on.
       3. otherwise UNKNOWN, and unknown is required, never skipped.
 
-    WHAT AN UNKNOWN SET MEANS: `_test01_covered_set_unknown` — required, scope
+    WHAT AN UNKNOWN SET MEANS: `_covered_set_unknown` — required, scope
     `full`, and a detail that says the set was not computable and why, in the
     same words the uncomputable-diff arm uses. A missing key on a pre-change
     archive reads as absent and therefore as unknown, which is the fail-closed
@@ -6651,8 +6651,13 @@ def _current_inspect_mode(fdir: Path, cycle: int | None = None) -> dict | None:
     # AGAINST `INSPECT_MODES`, AND THE LAST ENTRY IS THE ONE THAT DECIDES.
     #
     # `inspect_modes` is append-only and the last entry IS the current
-    # decision — `_stamp_fix_after_decision` already reads it that way. This
-    # walked BACKWARDS past any entry with a falsy `mode`, and tested that
+    # decision — `_note_fix_after_inspect_decision` stamps `fixes_after_decision`
+    # onto that same entry, reading it the same way and testing neither the
+    # vocabulary nor the cycle stamp itself. That stays inert because the stamp
+    # is read back only HERE, at `inspect_clean`, which asks
+    # `_unrecorded_width_problem` first: the states where a bare `modes[-1]` and
+    # this function would disagree are exactly the states that door has already
+    # refused. This walked BACKWARDS past any entry with a falsy `mode`, and tested that
     # `mode` for truthiness rather than for membership of the vocabulary that
     # spells it, so a hand-edited or foreign-written `"delta"` (lowercase) or
     # `"BOGUS"` was a recorded width. `_unrecorded_width_problem` then answered
@@ -9322,8 +9327,9 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
             # that call is mandatory — `foundry_gate`'s grind branch refuses
             # without `.tasks-generated`, which only that tool writes — so the
             # marker walked forward once per cycle, and ST-001's guard
-            # (`completed_cycle <= escalated_at`) in
-            # `_advance_escalation_clean_cycles` then skipped the count forever.
+            # (`completed_cycle <= escalated_at`), which `_clean_arm_step`
+            # applies for `_advance_escalation_exits` at each boundary, then
+            # skipped the count forever.
             #
             # Driven: class escalated at cycle 3, one LATENT instance filed at a
             # finer boundary each later cycle -> escalated_at walked 4, 5, 6
@@ -9332,10 +9338,10 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
             # finer-boundary loop this exit exists to end could not converge on
             # the clean arm at all.
             #
-            # `setdefault` is what the other two writers of this key already do
-            # (`_spend_structural_budget`, `_advance_escalation_clean_cycles`);
-            # this one was the odd writer out, which is why the record disagreed
-            # with itself depending on which boundary touched it last.
+            # `setdefault` is what the only other writer of this key already
+            # does (`_spend_structural_budget`); this one was the odd writer
+            # out, which is why the record disagreed with itself depending on
+            # which boundary touched it last.
             entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
             entry["consecutive_cycles"] = info["consecutive_cycles"]
             entry["defect_ids"] = info["defect_ids"]

@@ -4382,7 +4382,8 @@ def test_a_malformed_current_width_is_not_answered_with_an_older_valid_one(
     """The axis the obvious fix gets wrong.
 
     `inspect_modes` is append-only and the LAST entry is the current decision —
-    `_stamp_fix_after_decision` already reads it that way. Adding a membership
+    `_note_fix_after_inspect_decision` stamps that entry on the same reading.
+    Adding a membership
     test to the old backwards walk would have made this state report cycle 1's
     FULL as cycle 2's width and PASS the ASSAY gate that refuses it today: a
     fix that opens a door currently shut, in the name of closing another.

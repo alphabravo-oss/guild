@@ -3600,8 +3600,9 @@ def test_the_clean_arm_fires_across_real_grind_cycles_not_just_boundaries(
     draws zero LIVE instances ... LATENT instances do not reset the count.'
 
     D-001: the arm could not fire in a REAL cycle. The re-dated latch made
-    ST-001's own guard — `completed_cycle <= escalated_at` in
-    `_advance_escalation_clean_cycles` — skip the count on every crossing, so
+    ST-001's own guard — `completed_cycle <= escalated_at`, applied by
+    `_clean_arm_step` for `_advance_escalation_exits` — skip the count on every
+    crossing, so
     `live_clean_cycles` sat at 0 forever and only the budget arm could ever
     terminate a class. That is the exact finer-boundary loop this effort exists
     to end, converging on the arm the effort added.

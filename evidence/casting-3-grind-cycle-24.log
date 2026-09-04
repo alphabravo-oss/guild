@@ -1,0 +1,28 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys,pathlib;sys.path.insert(0,'.');from foundry_mcp.tools import foundry_orchestrator as fo;import tests.test_orchestrator_gates as G;root=pathlib.Path(fo.__file__).resolve().parents[4];defined=G._private_names_defined_anywhere(root);cited={};exec('''for rel in G._CASTING_KEY_FILES:\n    for ln, n in G._private_names_cited_in_prose(root / rel):\n        cited.setdefault(n, []).append(rel)\n\ndef where(n):\n    hits = [str(p.relative_to(root)) for p in sorted(root.rglob('*.py')) if G._INSTALLED_DEPENDENCY_DIRS.isdisjoint(p.parts) and ('def ' + n + '(') in p.read_text(encoding='utf-8', errors='replace')]\n    return hits[0] if hits else '<nothing defines it>'\n\nprint('== D-217 - comment-cites-a-symbol-that-does-not-exist, swept over casting 3 key_files ==')\nprint('')\nprint('-- each name the prose cited, resolved by the pin own predicate --')\nprint('')\nfor dead, live in (('_stamp_fix_after_decision', '_note_fix_after_inspect_decision'), ('_advance_escalation_clean_cycles', '_advance_escalation_exits'), ('_test01_covered_set_unknown', '_covered_set_unknown')):\n    print('  cited     %-34s defined=%-5s  prose cites now: %d' % (dead, dead in defined, len(cited.get(dead, []))))\n    print('  does it   %-34s defined=%-5s  %s' % (live, live in defined, where(live)))\n    print('')\nprint('  the one surviving cite is the past-tense line in _covered_set_unknown own')\nprint('  docstring that narrates the rename, and _PROSE_CITES_WITH_NO_DEFINITION records it.')\nprint('')\nprint('-- nothing else in these eight files cites a private name with no definition --')\nprint('')\nmissing = sorted(n for n in cited if n not in defined and n not in G._PROSE_CITES_WITH_NO_DEFINITION)\nprint('  unresolved cites outside the registry: %d' % len(missing))\nprint('  registry entries, every one a name the tree removed: %d' % len(G._PROSE_CITES_WITH_NO_DEFINITION))\nprint('  registry entries excusing a live name: %d' % len([n for n in G._PROSE_CITES_WITH_NO_DEFINITION if n in defined]))\nprint('  registry entries no prose cites: %d' % len(set(G._PROSE_CITES_WITH_NO_DEFINITION) - set(cited)))''')" && echo '' && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_orchestrator_gates.py -k prose_cites_has_a_definition > /dev/null && echo 'pytest green: test_every_private_name_this_castings_prose_cites_has_a_definition'
+# evidence-for: GI-008, GI-009, ST-001, AC-017
+# evidence-timeout: 600
+
+== D-217 - comment-cites-a-symbol-that-does-not-exist, swept over casting 3 key_files ==
+
+-- each name the prose cited, resolved by the pin own predicate --
+
+  cited     _stamp_fix_after_decision          defined=False  prose cites now: 0
+  does it   _note_fix_after_inspect_decision   defined=True   mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py
+
+  cited     _advance_escalation_clean_cycles   defined=False  prose cites now: 0
+  does it   _advance_escalation_exits          defined=True   mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py
+
+  cited     _test01_covered_set_unknown        defined=False  prose cites now: 1
+  does it   _covered_set_unknown               defined=True   mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py
+
+  the one surviving cite is the past-tense line in _covered_set_unknown own
+  docstring that narrates the rename, and _PROSE_CITES_WITH_NO_DEFINITION records it.
+
+-- nothing else in these eight files cites a private name with no definition --
+
+  unresolved cites outside the registry: 0
+  registry entries, every one a name the tree removed: 13
+  registry entries excusing a live name: 0
+  registry entries no prose cites: 0
+
+pytest green: test_every_private_name_this_castings_prose_cites_has_a_definition

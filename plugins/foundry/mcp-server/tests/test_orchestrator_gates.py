@@ -64,11 +64,13 @@ import ast
 import asyncio
 import builtins
 import importlib
+import io
 import json
 import os
 import re
 import sys
 import tempfile
+import tokenize
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -3791,12 +3793,22 @@ def _private_names_bound(node: ast.AST) -> list[str]:
 
 
 def _is_the_allowlist_statement(node: ast.AST) -> bool:
-    """Is ``node`` the ``_MECHANISM_REACHED_HELPERS`` assignment itself?
+    """Is ``node`` one of this file's allowlist assignments?
 
-    Excluded from the reference sweep so the allowlist grants exceptions rather
-    than manufacturing them — see the comment above the constant.
+    Excluded from the reference sweep so an allowlist grants exceptions rather
+    than manufacturing them — see the comment above each constant.
+
+    D-217 added the second name. `_PROSE_CITES_WITH_NO_DEFINITION`'s keys are
+    string constants that ARE private names, and `_named_in_code` counts those,
+    so without this the day one of those names is resurrected its own excuse
+    would vouch for it here — the identical hazard `_MECHANISM_REACHED_HELPERS`
+    records, arriving from the other pin.
     """
-    return "_MECHANISM_REACHED_HELPERS" in _assigned_names(node)
+    assigned = _assigned_names(node)
+    return (
+        "_MECHANISM_REACHED_HELPERS" in assigned
+        or "_PROSE_CITES_WITH_NO_DEFINITION" in assigned
+    )
 
 
 def test_every_private_function_the_plugin_ships_is_reachable():
@@ -4153,6 +4165,282 @@ def test_no_shipped_module_holds_an_unused_import():
         f"import each one names is gone or is now read normally, so the entry "
         f"outlived the exception it records. Delete it. Tolerating a stale "
         f"entry is how an allowlist becomes the place dead names go to live."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-217 — AND THE THIRD SHAPE IS A CITE WITH NOTHING UNDER IT.
+#
+# The two pins above ask "does every DEFINITION have a reader in code" and "does
+# every IMPORT have one". Both read code and exclude prose deliberately —
+# `_named_in_code`'s docstring says why: counted as references, the very
+# comments explaining a pin resurrect the names they are about. That leaves the
+# mirror question unasked, and it had gone wrong. This module and
+# tests/test_inspect_mode.py both asserted, in present tense, that a function
+# named _stamp_fix_after_decision reads `inspect_modes[-1]` as the current
+# decision. No function of that name has ever existed in this tree; the reader
+# that does it is `_note_fix_after_inspect_decision`. The sweep that filing
+# prompted found two more dead names cited the same way:
+# _advance_escalation_clean_cycles, renamed to `_advance_escalation_exits` with
+# the guard the comments attributed to it since moved again into
+# `_clean_arm_step`, in two orchestrator comments and one docstring in
+# tests/test_escalation.py; and _test01_covered_set_unknown, renamed to
+# `_covered_set_unknown`, in a docstring one function away from the one that
+# narrates that rename correctly.
+#
+# WHY PROSE IS WORTH A PIN AT ALL. The house style REQUIRES these comments —
+# every non-obvious decision carries its failure history — and the cite is how
+# the next author finds the code that history is about. A cite resolving to
+# nothing sends them hunting for a function that is not there, and the honest
+# conclusion they reach is that the comment describes a version of the file they
+# do not have. That is worse than no comment, and no pin that reads only code
+# can see it.
+#
+# THE SUBJECT SET IS THIS CASTING'S EIGHT KEY FILES, NOT THE PLUGIN, AND THAT
+# WAS MEASURED BEFORE IT WAS CHOSEN. D-199's lesson is that scoping a pin to one
+# module is how the class returns elsewhere, so the wider set was tried first:
+# nine unresolved cites across six names sit in files other castings own
+# (foundry_state.py, evidence.py, migrate-archive.py, conftest.py, foundry.py,
+# foundry_validate.py), two of them markdown emphasis rather than symbols. A
+# registry over prose this casting may not edit goes red on its owner's next
+# honest comment, and that owner cannot clear it without editing this file.
+# Recorded in concerns.md: widen the subject set the day the registry can be
+# owned by whoever writes the prose.
+# --------------------------------------------------------------------------- #
+
+#: This casting's key_files — the prose the pin below judges. Hand-listed
+#: because ownership is a fact about the RUN and not about the tree: nothing
+#: under plugins/foundry/ records which casting may edit which file, and a pin
+#: that guessed would either accuse prose this casting cannot fix or silently
+#: stop judging a file it can.
+_CASTING_KEY_FILES = (
+    "mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py",
+    "mcp-server/src/foundry_mcp/server.py",
+    "mcp-server/src/foundry_mcp/tools/display.py",
+    "mcp-server/tests/test_orchestrator_gates.py",
+    "mcp-server/tests/test_escalation.py",
+    "mcp-server/tests/test_fix_gate.py",
+    "mcp-server/tests/test_inspect_mode.py",
+    "mcp-server/tests/test_spend.py",
+)
+
+#: Private names this casting's prose cites that no definition backs, and why
+#: each one is correct anyway. Every entry is either a name the tree DELETED or
+#: RENAMED — narrated in past tense by the comment that cites it, which the
+#: house style requires and this pin therefore has to permit — or a naming
+#: CONVENTION that was never a symbol.
+#:
+#: Not "the cite is stale and we are fine with it". Three assertions hold the
+#: entries honest: a key that resolves FAILS (the name came back, so the excuse
+#: is now a lie), a key nothing cites FAILS (the comment went, so the entry
+#: outlived it), and only a name in this dict may go unresolved at all.
+#:
+#: `_is_the_allowlist_statement` skips this statement when the reachability pin
+#: sweeps for references, for the reason `_MECHANISM_REACHED_HELPERS` states two
+#: pins up: these keys are string constants that ARE names, so an entry would
+#: vouch for its own name the day someone redefines it.
+_PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
+    "_BLUE": "ANSI code deleted from both palettes as reader-less (D-202).",
+    "_BMAGENTA": "ANSI code deleted from display.py's palette (D-202).",
+    "_BG_BLUE": "ANSI background code deleted from display.py's palette (D-202).",
+    "_GATE_RANK_DELEGATED": (
+        "gate rank retired when the delegated evaluation gained one rank per "
+        "CHECK (D-190/D-191)."
+    ),
+    "_spec_relative_path": (
+        "singular resolver superseded by `_spec_relative_paths` and deleted "
+        "(D-196); four of its six cites are the pin that deleted it."
+    ),
+    "_override_value": (
+        "one-line wrapper deleted when the class key and its quoting were split "
+        "into two returns (D-139/D-196)."
+    ),
+    "_ref_names_a_test_function": (
+        "renamed to say what it measures — the leaf has no file extension — "
+        "after the lane's only 'is it a test' rung turned out to ask nothing "
+        "of the kind (D-065)."
+    ),
+    "_test01_covered_set_unknown": (
+        "renamed to `_covered_set_unknown` when the constructor was made "
+        "one-per-server rather than one-per-arm (D-208)."
+    ),
+    "_stamp_cycle": (
+        "caller-side wrapper folded back into `_server_cycle` (D-119)."
+    ),
+    "_parse_iso8601": (
+        "superseded helper deleted; named here only as a prior instance of the "
+        "escalated class this file's pins closed (D-203)."
+    ),
+    "_DOOR_WRITTEN_DEFECT_FIELDS": (
+        "superseded binding deleted; named here only as a prior instance of "
+        "that same class (D-202/D-203)."
+    ),
+    "_FILENAME": (
+        "a naming CONVENTION, never a symbol — the run-artifact scan tests "
+        "`target.id.endswith('_FILENAME')`."
+    ),
+    "_MARKER": (
+        "the other half of that convention, and the half the scan refuses to "
+        "trust on its own."
+    ),
+}
+
+
+def _private_names_defined_anywhere(plugin_root: Path) -> set[str]:
+    """Every private name BOUND by any Python the plugin ships.
+
+    Permissive on purpose, and name-keyed like the reachability pin above: defs,
+    classes, assignments, arguments and imports all count, at any nesting depth,
+    in any file. Also the bindings inside a string constant that parses as
+    Python, because this module PLANTS synthetic modules that way and a comment
+    about `_tx` is a comment about a real binding.
+
+    Permissive can only make the pin miss a stale cite; it can never accuse a
+    live one. Resolving imports per file instead would make a comment about a
+    sibling module's helper a failure, and cross-module comments are most of
+    what the house style writes.
+    """
+    names: set[str] = set()
+
+    def harvest(tree: ast.AST, depth: int) -> None:
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+            elif isinstance(node, ast.arg):
+                names.add(node.arg)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    names.add((alias.asname or alias.name).split(".")[0])
+            elif (
+                depth == 0
+                and isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and len(node.value) > 20
+            ):
+                try:
+                    harvest(ast.parse(node.value), depth + 1)
+                except (SyntaxError, ValueError, RecursionError):
+                    pass
+
+    for path in sorted(plugin_root.rglob("*.py")):
+        # The plugin's own source, not what a virtualenv dropped under it —
+        # the same exclusion, for the same reason, as the pin two sections up.
+        if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
+            continue
+        try:
+            harvest(ast.parse(path.read_text(encoding="utf-8")), 0)
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+    return {n for n in names if n.startswith("_") and not n.startswith("__")}
+
+
+#: A markdown code span holding one identifier, dotted paths included. Prose
+#: cites in this build are written that way everywhere, and the backticks are
+#: what separates a CITE from a word that happens to have an underscore in it.
+_BACKTICK_CITE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]*)`")
+
+
+def _private_names_cited_in_prose(path: Path) -> list[tuple[int, str]]:
+    """`(line, name)` for every backtick-quoted private name in `path`'s prose.
+
+    Prose is COMMENTS and DOCSTRINGS, which is exactly the surface
+    `_named_in_code` refuses to read — the two halves are complements, and
+    between them every mention of a private name in this casting's files is
+    judged by one pin or the other.
+
+    A dotted cite (`fo._helper`) is judged on its head, and a dunder is the
+    module's published surface rather than a private helper, so both are
+    handled as the reachability pin handles them.
+    """
+    source = path.read_text(encoding="utf-8")
+    found: list[tuple[int, str]] = []
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            for match in _BACKTICK_CITE.finditer(token.string):
+                found.append((token.start[0], match.group(1)))
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        doc = ast.get_docstring(node, clean=False)
+        if not doc:
+            continue
+        first = node.body[0].lineno
+        for offset, line in enumerate(doc.splitlines()):
+            for match in _BACKTICK_CITE.finditer(line):
+                found.append((first + offset, match.group(1)))
+    return [
+        (lineno, cite.split(".")[0])
+        for lineno, cite in found
+        if cite.split(".")[0].startswith("_")
+        and not cite.split(".")[0].startswith("__")
+    ]
+
+
+def test_every_private_name_this_castings_prose_cites_has_a_definition():
+    """D-217. The mirror of the two pins above, over the prose they exclude.
+
+    Every backtick-quoted private name in a comment or docstring of this
+    casting's eight key_files resolves to a definition somewhere in the Python
+    the plugin ships — or is recorded in `_PROSE_CITES_WITH_NO_DEFINITION` as a
+    name the tree deliberately removed, with the removal named.
+
+    A cite that resolves to nothing is a comment asserting a fact about code
+    that is not there. The class it belongs to is
+    `comment-cites-a-symbol-that-does-not-exist`, and it had four instances in
+    these eight files at once.
+    """
+    plugin_root = Path(fo.__file__).resolve().parents[4]  # .../plugins/foundry
+    assert plugin_root.name == "foundry", plugin_root
+
+    defined = _private_names_defined_anywhere(plugin_root)
+    # A derivation that silently found nothing would pass forever, so both
+    # halves carry a floor: the universe cites resolve AGAINST, and the cites.
+    assert len(defined) >= 500, len(defined)
+
+    cited: dict[str, list[str]] = {}
+    for rel in _CASTING_KEY_FILES:
+        path = plugin_root / rel
+        assert path.exists(), f"key_file missing from the tree: {rel}"
+        for lineno, name in _private_names_cited_in_prose(path):
+            cited.setdefault(name, []).append(f"{rel}:{lineno}")
+    assert len(cited) >= 100, sorted(cited)
+
+    unresolved = sorted(
+        f"{name} ({', '.join(sites)})"
+        for name, sites in cited.items()
+        if name not in defined and name not in _PROSE_CITES_WITH_NO_DEFINITION
+    )
+    assert unresolved == [], (
+        f"comment/docstring cite(s) naming no definition: {unresolved}. The "
+        f"prose asserts something about code that is not in the tree, which "
+        f"sends the next reader hunting for a function that does not exist "
+        f"(D-217). Rename the cite to the symbol that does the work now -- and "
+        f"if the name is genuinely one this tree removed and the comment "
+        f"narrates that removal, record where it went in "
+        f"_PROSE_CITES_WITH_NO_DEFINITION."
+    )
+
+    resurrected = sorted(
+        name for name in _PROSE_CITES_WITH_NO_DEFINITION if name in defined
+    )
+    assert resurrected == [], (
+        f"_PROSE_CITES_WITH_NO_DEFINITION entr(y/ies) excusing a LIVE name: "
+        f"{resurrected}. Something defines it again, so the entry now excuses "
+        f"a cite that needs no excuse -- and worse, it would vouch for that "
+        f"definition to the reachability pin above. Delete the entry."
+    )
+
+    unused = sorted(set(_PROSE_CITES_WITH_NO_DEFINITION) - set(cited))
+    assert unused == [], (
+        f"_PROSE_CITES_WITH_NO_DEFINITION entr(y/ies) excusing nothing: "
+        f"{unused}. No prose in these files cites the name any more, so the "
+        f"entry outlived the comment it was written for. Delete it. Tolerating "
+        f"a stale entry is how an allowlist becomes the place dead names go to "
+        f"live."
     )
 
 
