@@ -1,0 +1,67 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_orchestrator_gates.py && uv run --quiet --with pytest python -c "import asyncio,inspect,json,pathlib,re,tempfile;from mcp import types;from foundry_mcp import server as S;from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state;plain=lambda t:re.sub(chr(27)+r'\[[0-9;]*m','',t);root=pathlib.Path(tempfile.mkdtemp());fdir=root/'foundry-archive'/'ev15';(fdir/'castings').mkdir(parents=True);fo._check_active_teams=lambda _pr:{'active':False,'teams':[],'live_panes':[]};foundry_state.set_active_run('ev15');S._project_root=str(root);wire=lambda n,a:plain(asyncio.run(S.server.request_handlers[types.CallToolRequest](types.CallToolRequest(method='tools/call',params=types.CallToolRequestParams(name=n,arguments=a)))).root.content[0].text);W=lambda p,s:(fdir/p).write_text(s,encoding='utf-8');F={'source':'prove','type':'UNWIRED','description':'the delta roster is recorded at the transition and the streams-complete check rebuilds it instead of reading it','spec_ref':'US-002','symbol':'foundry_sync_defects','file':'plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py','tier':'LATENT','class':'two-surfaces-of-one-rule-disagree','reproduction_attempted':'drove Foundry-Next twice in the same DELTA cycle and compared the two rosters; both matched, so there is no reachable instance'};single=lambda k:dict({'cycle':1,'source':F['source'],'defect_type':F['type'],'description':F['description'],'spec_ref':F['spec_ref'],'symbol':F['symbol'],'file_path':F['file'],'tier':F['tier'],'defect_class':F['class'],'reproduction_attempted':F['reproduction_attempted']},**({'target_kind':k} if k else {}));batch=lambda k:{'cycle':1,'findings':[dict(F,**({'target_kind':k} if k else {}))]};drive=lambda k:(W('state.json',json.dumps({'phase':'F2','cycle':1})),W('defects.json',json.dumps({'defects':[]})),wire('Foundry-Defect',single(k)),wire('Foundry-Sync',batch(k)),json.loads((fdir/'defects.json').read_text(encoding='utf-8'))['defects'])[-1];show=lambda k,r:'  target_kind declared by the filer: %r'%(k or None)+chr(10)+'    ids minted, single door then batch door: %s'%[d['id'] for d in r]+chr(10)+'    the two records carry the SAME KEYS: %s'%(set(r[0])==set(r[1]))+chr(10)+'      keys only Foundry-Defect wrote: %s'%sorted(set(r[0])-set(r[1]))+chr(10)+'      keys only Foundry-Sync wrote:   %s'%sorted(set(r[1])-set(r[0]))+chr(10)+'    fields whose VALUES differ: %s'%sorted(x for x in r[0] if r[0][x]!=r[1][x])+chr(10)+'    target_kind on each record: %r / %r'%(r[0].get('target_kind'),r[1].get('target_kind'));print(chr(10)+'=== D-192 / US-002 / CT-001+CT-002: the two filing doors are ONE surface, driven over MCP ===');print('  One finding, filed through Foundry-Defect and then Foundry-Sync via');print('  server.request_handlers[CallToolRequest], so the advertised inputSchema is in the path.');print('  Only id and created_at may differ - id is minted per record, created_at stamped at write.');print(chr(10)+show('code',drive('code')));print(chr(10)+show('',drive('')));print(chr(10)+'  absence stays absence: vocab.is_non_comment reads a present-and-not-comment target_kind,');print('  so a door writing an empty string where the filer declared nothing would invent a claim.');print(chr(10)+'=== the mechanism, not the claim: one shape definition, called ===');src=inspect.getsource(fo.foundry_sync_defects);print('  batch door builds through new_defect_record:            %s'%('new_defect_record(' in src));print('  batch door hand-types no record literal of its own:     %s'%(src.count(chr(39)+'status'+chr(39)+': ')+src.count(chr(34)+'status'+chr(34)+': ')==0));print('  the shape states every persisted field once, in order:');print(chr(10).join('    %s'%line.strip() for line in inspect.getsource(fo.new_defect_record).splitlines() if line.strip().startswith(chr(34)) and line.strip().endswith(',')));print(chr(10)+'=== D-194 sibling / CT-005 / CT-006 / ST-004 / FR-046 / FR-053 / AC-020 ===');lane=inspect.getsource(fo.foundry_mark_defect_fixed);print('  the retired spelling is gone from the fix door:         %s'%('never measured' not in lane));print('  half 1 stated - the commit is measured on both tiers:   %s'%('THE COMMIT IS MEASURED ON BOTH TIERS' in lane));print('  half 2 stated - only the lane LIMIT refuses when LIVE:  %s'%('THE LANE LIMIT REFUSES ONLY WHEN LIVE' in lane));print('  and the door still behaves that way: the LATENT arm runs the numstat read');print('    (refusing an unresolvable fix_commit) and compares no count:            %s'%('_numstat_measurement(commit, project_root)' in lane and '_lead_lane_problem(commit, project_root)' in lane));foundry_state.clear_active_run()"
+# evidence-for: US-002, CT-005, CT-006, ST-004, FR-046, FR-053, AC-020
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+...........................                                              [100%]
+459 passed in 13.99s
+
+=== D-192 / US-002 / CT-001+CT-002: the two filing doors are ONE surface, driven over MCP ===
+  One finding, filed through Foundry-Defect and then Foundry-Sync via
+  server.request_handlers[CallToolRequest], so the advertised inputSchema is in the path.
+  Only id and created_at may differ - id is minted per record, created_at stamped at write.
+
+  target_kind declared by the filer: 'code'
+    ids minted, single door then batch door: ['D-001', 'D-002']
+    the two records carry the SAME KEYS: True
+      keys only Foundry-Defect wrote: []
+      keys only Foundry-Sync wrote:   []
+    fields whose VALUES differ: ['created_at', 'id']
+    target_kind on each record: 'code' / 'code'
+
+  target_kind declared by the filer: None
+    ids minted, single door then batch door: ['D-001', 'D-002']
+    the two records carry the SAME KEYS: True
+      keys only Foundry-Defect wrote: []
+      keys only Foundry-Sync wrote:   []
+    fields whose VALUES differ: ['created_at', 'id']
+    target_kind on each record: None / None
+
+  absence stays absence: vocab.is_non_comment reads a present-and-not-comment target_kind,
+  so a door writing an empty string where the filer declared nothing would invent a claim.
+
+=== the mechanism, not the claim: one shape definition, called ===
+  batch door builds through new_defect_record:            True
+  batch door hand-types no record literal of its own:     True
+  the shape states every persisted field once, in order:
+    "id": record_id,
+    "cycle": cycle,
+    "declared_cycle": declared_cycle,
+    "source": source,
+    "type": defect_type,
+    "tier": tier,
+    "class": defect_class,
+    "reproduction_attempted": reproduction_attempted if tier == "LATENT" else None,
+    "description": description,
+    "spec_ref": spec_ref,
+    "symbol": symbol,
+    "file": file_path,
+    "status": "open",
+    "fixed_in_cycle": None,
+    "regression_test": None,
+    "authored_by": None,
+    "fix_commit": None,
+    "created_at": created_at if created_at is not None else _now(),
+
+=== D-194 sibling / CT-005 / CT-006 / ST-004 / FR-046 / FR-053 / AC-020 ===
+  the retired spelling is gone from the fix door:         True
+  half 1 stated - the commit is measured on both tiers:   True
+  half 2 stated - only the lane LIMIT refuses when LIVE:  True
+  and the door still behaves that way: the LATENT arm runs the numstat read
+    (refusing an unresolvable fix_commit) and compares no count:            True
