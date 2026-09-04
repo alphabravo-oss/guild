@@ -3,11 +3,11 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
 
-........................................................................ [ 27%]
-........................................................................ [ 54%]
-........................................................................ [ 82%]
-...............................................                          [100%]
-263 passed in 3.82s
+........................................................................ [ 26%]
+........................................................................ [ 53%]
+........................................................................ [ 80%]
+.....................................................                    [100%]
+269 passed in 4.20s
 
 === D-179: the number on screen is the number the result states ===
   fixture: one stream agent missed in three INSPECT cycles, plus one teammate
@@ -21,6 +21,7 @@
 === every counted Foundry-Next fact line is tied to the field its result states ===
   Unreported  Unreported:\s+(\d+)\s              -> the result STATES it at spend.unreported_count
   Spend       over (\d+) reported agent\(s\)     -> the result STATES it at spend.total.agents
+  Spend       ,\s+(\d+) matching no dispatch     -> the result states no count; len(spend.unmatched_agents) is the ONE derivation
   Waiting     Waiting:\s+(\d+) agent\(s\)        -> the result STATES it at waiting_on_agents.count
   PROVE       PROVE:\s+(\d+) row\(s\)            -> the result states no count; len(inspect_mode.prove_sample) is the ONE derivation
   TRACE       TRACE:\s+(\d+) file\(s\)           -> the result states no count; len(inspect_mode.touched_files) is the ONE derivation
