@@ -231,8 +231,8 @@
 ........................................................................ [ 34%]
 ........................................................................ [ 36%]
 ........................................................................ [ 38%]
-.................................................................s...... [ 40%]
-.......................................s.s.....
+.......................................................................s [ 40%]
+.............................................s.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -270,7 +270,7 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-......................... [ 41%]
+................... [ 41%]
 ........................................................................ [ 43%]
 ........................................................................ [ 45%]
 ........................................................................ [ 47%]
@@ -280,17 +280,18 @@
 ........................................................................ [ 55%]
 ........................................................................ [ 57%]
 ........................................................................ [ 59%]
-........................................................................ [ 61%]
+........................................................................ [ 60%]
 ........................................................................ [ 62%]
 ........................................................................ [ 64%]
 ........................................................................ [ 66%]
 ........................................................................ [ 68%]
 ........................................................................ [ 70%]
 ........................................................................ [ 72%]
-............................................................s..s.s..s... [ 74%]
-........................................................................ [ 76%]
+..................................................................s..s.s [ 74%]
+..s..................................................................... [ 76%]
 ........................................................................ [ 78%]
-.....................................................................
+........................................................................ [ 80%]
+...
 === report.json top-level keys ===
   generated_at
   run
@@ -442,8 +443,7 @@
   the axis is narrowed, not emptied — a stream agent IS stamped, by the roll-up's own cycle bucket:
   one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
   the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
-. [ 80%]
-
+.
 === D-193 — the filing run's own shape: a counter that reached 14, an inspect_modes ledger that starts at 10 ===
   report.json inspect_modes_per_cycle.count       5
   report.json inspect_modes_per_cycle.cycle_count 5   <- cycles that CARRY a decision
@@ -475,9 +475,9 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-........................................................................ [ 82%]
+.................................................................. [ 81%]
 ........................................................................ [ 83%]
-................................ss.ss.ssss.ssssssss.ssss.s..ss.sss...... [ 85%]
+......................................ss.ss.ssss.ssssssss.ssss.s..ss.sss [ 85%]
 ........................................................................ [ 87%]
 ........................................................................ [ 89%]
 ........................................................................ [ 91%]
@@ -485,13 +485,13 @@
 ........................................................................ [ 95%]
 ........................................................................ [ 97%]
 ........................................................................ [ 99%]
-..............................                                           [100%]
+....................................                                     [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/suite/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2178: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2247: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/wt-c7-cycle28/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2178: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/wt-c7-cycle28/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2247: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/wt-c7-cycle28/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -522,4 +522,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3738 passed, 36 skipped, 3 deselected in 172.50s
+3744 passed, 36 skipped, 3 deselected in 156.52s
