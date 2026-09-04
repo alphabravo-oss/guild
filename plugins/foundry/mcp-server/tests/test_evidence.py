@@ -693,11 +693,22 @@ def _build_divergent_spec_repo(
     *,
     replay_body_only: bool = False,
     req_ids: tuple = ("AC-023",),
+    evidence_body: str = _EVIDENCE_BODY,
+    header_prose: str = "",
 ) -> dict:
     """A repo whose stale ``specs/spec.md`` is v2.0 and whose RUN spec is v2.1.
 
     Returns the arguments ``foundry_accept_casting`` needs, plus the two spec
     paths so a test can assert which one was read.
+
+    ``evidence_body`` is what the committed log's BODY is — everything below
+    the header block's blank separator, i.e. exactly what the re-executed
+    command emits. ``header_prose`` is free ``#`` prose appended to the header
+    directives, ABOVE that separator, which is where every writer in this
+    plugin puts it. The two knobs exist for D-198: the whole defect is that
+    the stub detector could not tell a ``#`` line in one position from a ``#``
+    line in the other, so a test that pins the distinction has to be able to
+    put a comment line on either side of the separator.
     """
     from foundry_mcp.tools.foundry import foundry_init
     from foundry_mcp.tools.foundry_handoff import _hash_str, foundry_spec_hash
@@ -734,14 +745,15 @@ def _build_divergent_spec_repo(
     evidence_log = (
         "# evidence-cmd: cat replay.txt\n"
         f"# evidence-for: {', '.join(req_ids)}\n"
-        "\n" + _EVIDENCE_BODY
+        + header_prose
+        + "\n" + evidence_body
     )
     # replay_body_only mirrors what a REAL evidence command does: it emits the
     # body alone, never the `# evidence-*:` header lines that only exist in the
     # committed file. The default (full-file replay) mirrors conftest's
     # use_cat_replay harness. Both must verify.
     (project_root / "replay.txt").write_text(
-        _EVIDENCE_BODY if replay_body_only else evidence_log, encoding="utf-8"
+        evidence_body if replay_body_only else evidence_log, encoding="utf-8"
     )
     evidence_dir = project_root / "evidence"
     evidence_dir.mkdir()
@@ -1140,6 +1152,248 @@ def test_strip_leading_header_block_keeps_the_body_verbatim():
     )
     # No header at all → unchanged.
     assert _strip_leading_header_block("plain\noutput\n") == "plain\noutput\n"
+
+
+# --------------------------------------------------------------------------- #
+# D-198 / FR-010 / CT-015 / AC-015 — the stub detector discriminates
+# fabrication, not punctuation.
+#
+# `_strip_header_and_blank_lines` dropped every line whose lstrip started with
+# `#`, anywhere in the file, and both stub rules then judged a body missing its
+# captured lines. Driven end to end at the MCP door on two runs identical but
+# for three characters. The command in both:
+#
+#     sed -n '1,3p' src/guard.py && printf '<three ISO stamps>'
+#
+# — a teammate showing the source it changed plus three stamps. Run A, where
+# guard.py's first three lines are comments in this codebase's own house style:
+# ACCEPTANCE REFUSED, EVIDENCE_STUB_DETECTED / EVIDENCE_STUB_TIMESTAMP_CLUSTER,
+# because a six-line body of which three are timestamps (50%) was read as a
+# three-line body of which three are timestamps (100%) — the strip deleted the
+# denominator. Run B, the same three lines with the leading `# ` removed and
+# nothing else changed: accepted. The bare-ack arm failed the same way: nine
+# comment lines then `PASS` fullmatched `_STUB_BARE_ACK_RE` on a body reduced
+# to the word `PASS`.
+#
+# Not hypothetical on this corpus: 15 of the run's 70 committed logs already
+# have a majority-`#` body under the old strip, and none of them trips a
+# pattern only because of what the rest of their bodies happen to hold.
+#
+# THE TRUE POSITIVES THE NARROWING KEEPS
+# --------------------------------------
+# A genuine bare-ack stub (header, then `PASS`) and a genuine timestamp cluster
+# (header, then only timestamps) have no `#` line below the separator to
+# restore, so both still fire with their own sub-token. Those two are pinned
+# here beside the two false refusals this closes, at the unit surface and again
+# at the wire, so a future widening of the strip cannot pass by making the
+# detector blind instead of accurate.
+# --------------------------------------------------------------------------- #
+
+#: Run A: a `sed`-style capture whose first three lines are source comments,
+#: then three timestamps. Real evidence, 50% timestamps.
+_D198_RUN_A_BODY = (
+    "# The guard's decoder table is its statement of which names a reader "
+    "opens\n"
+    "# AS a document -- one declaration, so the two cannot drift.\n"
+    "# D-195: a dot is not a document type.\n"
+    "2026-09-04T05:00:00\n"
+    "2026-09-04T05:00:01\n"
+    "2026-09-04T05:00:02\n"
+)
+
+#: Run B: byte-for-byte Run A with the three leading `# ` removed. The ONLY
+#: difference between the two, and under the old strip the whole verdict.
+_D198_RUN_B_BODY = _D198_RUN_A_BODY.replace("# ", "", 3)
+
+#: A genuine bare-ack stub: the body really is one acknowledgement.
+_D198_BARE_ACK_BODY = "PASS\n"
+
+#: A genuine fabricated-bulk cluster: the body really is only timestamps.
+_D198_TIMESTAMP_CLUSTER_BODY = "".join(
+    f"2026-05-05T10:00:0{i}Z\n" for i in range(5)
+)
+
+#: Header prose, `#` lines ABOVE the blank separator. Two jobs: it is where a
+#: real writer puts the log's explanation, and it carries every shape here past
+#: EVIDENCE_STUB_MIN_BYTES so TOO_SMALL cannot pre-empt the rule under test —
+#: a bare-ack body is 5 bytes, and a TOO_SMALL hit would pin nothing about the
+#: bare-ack rule at all.
+_D198_HEADER_PROSE = (
+    "#\n"
+    "# D-198 fixture. The lines below this block are captured output, and a\n"
+    "# `#` among them is a comment the command PRINTED, not a directive this\n"
+    "# file declares. The separator is the blank line, exactly as every\n"
+    "# writer in this plugin emits it.\n"
+)
+
+
+def _d198_log(body: str) -> str:
+    """A committed evidence file: directives, prose, separator, then body."""
+    return (
+        "# evidence-cmd: cat replay.txt\n"
+        "# evidence-for: AC-023\n"
+        + _D198_HEADER_PROSE
+        + "\n"
+        + body
+    )
+
+
+def test_a_hash_line_below_the_separator_is_captured_output_not_header():
+    """D-198: the header is the CONTIGUOUS leading `#` run, and a `#` line in
+    the captured body survives into what the stub rules judge.
+
+    The old strip deleted both, so the two rules that divide by the body's
+    length divided by the wrong number.
+    """
+    from foundry_mcp.tools.evidence import _strip_header_and_blank_lines
+
+    body = _strip_header_and_blank_lines(_d198_log(_D198_RUN_A_BODY))
+
+    # Every directive and prose line above the separator is gone...
+    assert not any("evidence-cmd" in ln for ln in body), body
+    assert not any("D-198 fixture" in ln for ln in body), body
+    # ...and all six captured lines survive, comments included, so the
+    # timestamp ratio is 3/6 rather than 3/3.
+    assert body == _D198_RUN_A_BODY.splitlines(), body
+    assert len(body) == 6 and sum(
+        1 for ln in body if ln.startswith("2026-")
+    ) == 3, body
+
+    # No header at all: nothing to strip, blanks still dropped.
+    assert _strip_header_and_blank_lines("a\n\nb\n") == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "body, token",
+    [
+        pytest.param(_D198_RUN_A_BODY, None, id="run-A-comments-then-stamps"),
+        pytest.param(_D198_RUN_B_BODY, None, id="run-B-plain-then-stamps"),
+        pytest.param(
+            "".join(f"# comment line {i} of the capture\n" for i in range(9))
+            + "PASS\n",
+            None,
+            id="nine-captured-comments-then-PASS",
+        ),
+        pytest.param(
+            _D198_BARE_ACK_BODY,
+            "EVIDENCE_STUB_BARE_PASS",
+            id="true-positive-bare-ack",
+        ),
+        pytest.param(
+            _D198_TIMESTAMP_CLUSTER_BODY,
+            "EVIDENCE_STUB_TIMESTAMP_CLUSTER",
+            id="true-positive-timestamp-cluster",
+        ),
+    ],
+)
+def test_the_stub_rules_judge_the_captured_body_and_still_catch_real_stubs(
+    body, token
+):
+    """D-198 both directions in one table.
+
+    The first three rows are the false refusals the narrowing closes; the last
+    two are the true positives it keeps. `cat` is deliberately non-vacuous
+    (see the stub-library header), so rule 2 never fires here and each row
+    lands on the rule it names.
+    """
+    assert evidence._check_stub_patterns(
+        _d198_log(body), "cat replay.txt"
+    ) == token
+
+
+def _drive_accept_casting_over_mcp(arguments: dict) -> dict:
+    """Call Foundry-Accept-Casting through the MCP REQUEST HANDLER.
+
+    Not `_DISPATCH`, and not `server.call_tool`: the request handler is the
+    transport a client reaches, and it validates arguments against the
+    advertised `inputSchema` before dispatching.
+
+    `Foundry-Accept-Casting` has no display formatter, so `format_result`
+    falls through to indented JSON and the response IS the result with no
+    `RESULT_JSON_MARKER` above it. Both shapes are read here rather than only
+    the marked one, so registering a formatter for this tool later changes
+    which branch runs and not whether the test can see the result.
+    """
+    import asyncio
+
+    from mcp import types
+
+    import foundry_mcp.server as srv
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER
+
+    handler = srv.server.request_handlers[types.CallToolRequest]
+    request = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(
+            name="Foundry-Accept-Casting", arguments=arguments
+        ),
+    )
+    text = asyncio.run(handler(request)).root.content[0].text
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    if RESULT_JSON_MARKER in plain:
+        _, _, plain = plain.partition(RESULT_JSON_MARKER + "\n")
+    return json.loads(plain)
+
+
+@pytest.mark.parametrize(
+    "body, sub_token",
+    [
+        pytest.param(_D198_RUN_A_BODY, None, id="run-A-comments-then-stamps"),
+        pytest.param(_D198_RUN_B_BODY, None, id="run-B-plain-then-stamps"),
+        pytest.param(
+            _D198_BARE_ACK_BODY,
+            "EVIDENCE_STUB_BARE_PASS",
+            id="true-positive-bare-ack",
+        ),
+        pytest.param(
+            _D198_TIMESTAMP_CLUSTER_BODY,
+            "EVIDENCE_STUB_TIMESTAMP_CLUSTER",
+            id="true-positive-timestamp-cluster",
+        ),
+    ],
+)
+def test_the_acceptance_door_refuses_stubs_and_not_honest_comment_output(
+    tmp_path, body, sub_token
+):
+    """D-198 at the wire — FR-010's converse.
+
+    "No acceptance without EVID-01/EVID-02 running" is not satisfied by a door
+    that also refuses evidence which ran, reproduces byte-identically and is
+    honest. Driven through the MCP request handler on the SAME repo shape with
+    only the committed body changed: Run A and Run B are both accepted, and
+    both genuine stubs are still refused with EVIDENCE_STUB_DETECTED naming
+    their own sub-token in `failure_detail`.
+    """
+    from foundry_mcp import server
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(
+        tmp_path, evidence_body=body, header_prose=_D198_HEADER_PROSE
+    )
+    server_project_root = server._project_root
+    server._project_root = str(env["project_root"])
+    try:
+        result = _drive_accept_casting_over_mcp({
+            "casting_id": 1,
+            "spec_hash": env["spec_hash"],
+            "prompt_hash": env["prompt_hash"],
+            "completion_report": (
+                "AC-023 implemented at src/gate.py#accept_casting\n"
+            ),
+            "casting_commit": env["casting_commit"],
+        })
+    finally:
+        server._project_root = server_project_root
+        clear_active_run()
+
+    if sub_token is None:
+        assert result["evidence_verdict"] == "accepted", result
+        assert result["evidence_tally"]["rejected"] == 0, result
+        assert result["ok"] is True, result
+    else:
+        assert result["ok"] is False, result
+        assert result["failure_token"] == "EVIDENCE_STUB_DETECTED", result
+        assert sub_token in result["failure_detail"], result
 
 
 def test_missing_spec_path_is_visible_as_a_v20_downgrade(tmp_path):
@@ -5688,3 +5942,190 @@ def test_demo_grind_cycle_13_declared_ownership_keys_the_sweep(tmp_path, capsys)
     assert _sweep_scope_names(env, ["src/beta.py"], full=True) == [
         "casting-1-alpha.log", "casting-2-beta.log", "wave-report-sections.log",
     ]
+
+
+
+# --------------------------------------------------------------------------- #
+# GRIND cycle 17 — D-198, one symbol, one narrowing.
+#
+# The stub library's discriminator was punctuation, not fabrication. Printed
+# here as the two runs the defect drove, the corpus that already sits one
+# capture-shape away from the same refusal, and the true positives the
+# narrowing keeps.
+# --------------------------------------------------------------------------- #
+
+#: The corpus is pinned at the commit D-198 was driven against, extracted with
+#: `git show`, so these counts stay frozen while `evidence/` grows every cycle.
+_D198_CORPUS_COMMIT = "d872362cd792e7ae9ae2e90f0999186ba8b8c1fb"
+
+
+def _d198_old_strip(text: str) -> list[str]:
+    """The strip this cycle replaced, reconstructed verbatim.
+
+    Every line whose lstrip started with `#`, anywhere in the file. That is
+    precisely the belief the two stub rules were handed, so the transcript
+    below compares the SHIPPED helper against the shipped behaviour it
+    replaced rather than against a paraphrase of it.
+    """
+    return [
+        ln for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+
+
+def _d198_old_token(text: str, cmd: str) -> str | None:
+    """`_check_stub_patterns` as it read before the narrowing.
+
+    Rules 1 and 2 never touched the strip and are called through to the
+    shipped code; rules 3 and 4 are the two that divided by the body's length,
+    and they are re-expressed here over `_d198_old_strip` so the old verdict is
+    computed rather than remembered.
+    """
+    if evidence._is_stub_pattern_too_small(text, evidence.EVIDENCE_STUB_MIN_BYTES):
+        return evidence.EVIDENCE_STUB_TOO_SMALL
+    if cmd and evidence._is_stub_pattern_vacuous_cmd(cmd):
+        return evidence.EVIDENCE_STUB_VACUOUS_CMD
+    body = _d198_old_strip(text)
+    body_text = "\n".join(body).strip()
+    if body_text and evidence._STUB_BARE_ACK_RE.fullmatch(body_text):
+        return evidence.EVIDENCE_STUB_BARE_PASS
+    stamps = sum(1 for ln in body if evidence._STUB_TIMESTAMP_LINE_RE.match(ln))
+    if len(body) >= 3 and stamps >= 3 and stamps >= int(0.8 * len(body)):
+        return evidence.EVIDENCE_STUB_TIMESTAMP_CLUSTER
+    return None
+
+
+def _d198_pinned_corpus() -> list[tuple[str, str]]:
+    """(name, text) for every evidence log committed at the pinned commit."""
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            check=True, capture_output=True, text=True,
+        ).stdout
+
+    names = sorted(
+        n for n in git(
+            "ls-tree", "-r", "--name-only", _D198_CORPUS_COMMIT, "--", "evidence/"
+        ).splitlines() if n.endswith(".log")
+    )
+    return [(Path(n).name, git("show", f"{_D198_CORPUS_COMMIT}:{n}")) for n in names]
+
+
+def test_demo_grind_cycle_17_the_stub_rules_judge_the_captured_body(capsys):
+    """D-198: FR-010, CT-015, AC-015.
+
+    Everything printed is asserted below the print block, and nothing printed
+    is environment-dependent — no tmp path, no clock, no cpu count, and a
+    corpus pinned by commit — because this transcript is byte-compared in a
+    detached worktree.
+    """
+    cmd = "cat replay.txt"
+    shapes = {
+        "run A — three captured comment lines, then three stamps":
+            _d198_log(_D198_RUN_A_BODY),
+        "run B — the same, leading '# ' removed, nothing else changed":
+            _d198_log(_D198_RUN_B_BODY),
+        "the bare-ack arm — nine captured comment lines, then PASS":
+            _d198_log(
+                "".join(f"# comment line {i} of the capture\n" for i in range(9))
+                + "PASS\n"
+            ),
+    }
+    keepers = {
+        "a genuine bare ack — header, then PASS":
+            _d198_log(_D198_BARE_ACK_BODY),
+        "a genuine cluster — header, then timestamps only":
+            _d198_log(_D198_TIMESTAMP_CLUSTER_BODY),
+    }
+
+    corpus = _d198_pinned_corpus()
+    nonblank = lambda text: [ln for ln in text.splitlines() if ln.strip()]
+    #: PROVE's metric: the body the old strip left was a minority of the file's
+    #: non-blank lines, so most of what it judged had been deleted.
+    majority_hash = sorted(
+        (name, len(nonblank(text)) - len(_d198_old_strip(text)), len(nonblank(text)))
+        for name, text in corpus
+        if len(nonblank(text)) - len(_d198_old_strip(text))
+        > len(nonblank(text)) / 2
+    )
+    #: The load-bearing set: logs carrying `#` lines BELOW the separator, i.e.
+    #: in captured output. Every one of these is a capture-shape away from the
+    #: refusal Run A took.
+    reshaped = sorted(
+        (
+            (name, len(_d198_old_strip(text)),
+             len(evidence._strip_header_and_blank_lines(text)))
+            for name, text in corpus
+            if len(_d198_old_strip(text))
+            != len(evidence._strip_header_and_blank_lines(text))
+        ),
+        key=lambda row: (row[1] - row[2], row[0]),
+    )
+    hits = {
+        name: token for name, text in corpus
+        if (token := evidence._check_stub_patterns(
+            text, evidence._parse_evidence_header(text).get("cmd") or ""
+        ))
+    }
+    old_hits = {
+        name: token for name, text in corpus
+        if (token := _d198_old_token(
+            text, evidence._parse_evidence_header(text).get("cmd") or ""
+        ))
+    }
+
+    with capsys.disabled():
+        print("=== D-198: two runs identical but for three characters ===")
+        print("    command in both: sed -n '1,3p' src/guard.py && printf "
+              "'<three ISO stamps>'")
+        for label, text in shapes.items():
+            old_body = _d198_old_strip(text)
+            new_body = evidence._strip_header_and_blank_lines(text)
+            print(f"    {label}")
+            print(f"        old strip: body lines {len(old_body):>2} -> "
+                  f"{_d198_old_token(text, cmd)}")
+            print(f"        shipped  : body lines {len(new_body):>2} -> "
+                  f"{evidence._check_stub_patterns(text, cmd)}")
+        print("=== the true positives the narrowing keeps ===")
+        for label, text in keepers.items():
+            print(f"    {label}")
+            print(f"        old strip: {_d198_old_token(text, cmd)}")
+            print(f"        shipped  : {evidence._check_stub_patterns(text, cmd)}")
+        print(f"=== the run's own corpus at {_D198_CORPUS_COMMIT[:7]} ===")
+        print(f"    committed evidence logs                             : "
+              f"{len(corpus)}")
+        print(f"    whose body was a minority of the file, old strip    : "
+              f"{len(majority_hash)}")
+        for name, dropped, total in majority_hash:
+            print(f"        {name:<44} {dropped:>4} of {total:>4} dropped")
+        print(f"    carrying `#` lines BELOW the separator (captured)   : "
+              f"{len(reshaped)}")
+        for name, old_n, new_n in reshaped:
+            print(f"        {name:<44} {old_n:>4} -> {new_n:>4}")
+        print(f"    stub hits over the corpus, old strip                : "
+              f"{old_hits}")
+        print(f"    stub hits over the corpus, shipped strip            : "
+              f"{hits}")
+        print("    None trips a pattern today, which is why this had not fired")
+        print("    in production and not why it could not.")
+
+    assert [evidence._check_stub_patterns(t, cmd) for t in shapes.values()] == [
+        None, None, None
+    ]
+    assert [_d198_old_token(t, cmd) for t in shapes.values()] == [
+        "EVIDENCE_STUB_TIMESTAMP_CLUSTER", None, "EVIDENCE_STUB_BARE_PASS"
+    ]
+    assert [evidence._check_stub_patterns(t, cmd) for t in keepers.values()] == [
+        "EVIDENCE_STUB_BARE_PASS", "EVIDENCE_STUB_TIMESTAMP_CLUSTER"
+    ]
+    assert len(corpus) == 70
+    assert len(majority_hash) == 15
+    assert len(reshaped) == 10
+    assert reshaped[0] == ("casting-1-rollup-preservation.log", 11, 63)
+    assert reshaped[-1] == ("casting-1-migration-tier-unknown.log", 59, 63)
+    # The extreme of the first metric: three non-blank lines, two of them
+    # header, so the old strip judged a ONE-LINE body. Its two `#` lines are
+    # both above the separator, which is why it is not in `reshaped` — it is
+    # the shape one captured comment line away from a one-line denominator.
+    assert ("casting-8-mcp-version.log", 2, 3) in majority_hash
+    assert old_hits == {} and hits == {}

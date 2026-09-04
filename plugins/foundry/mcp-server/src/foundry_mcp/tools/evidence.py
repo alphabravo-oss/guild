@@ -1403,16 +1403,49 @@ def _strip_leading_header_block(text: str) -> str:
 
 
 def _strip_header_and_blank_lines(text: str) -> list[str]:
-    """Return body lines (header `# evidence-*:` comments and blanks dropped).
+    """Return body lines: the leading header block and blanks dropped.
 
-    Helper for stub-pattern checks that operate on "real content lines"
-    rather than the literal evidence-file bytes (which include the header
-    comment block).
+    "Header block" is the CONTIGUOUS leading run of ``#`` lines — the
+    ``# evidence-*:`` directives plus whatever prose the writer wrote under
+    them — terminated by the first line that is not one, which is the blank
+    separator every writer in this plugin emits between header and body. A
+    ``#`` line BELOW that separator is captured output and survives.
+
+    WHY THE HEADER IS A LEADING RUN AND NOT "EVERY # LINE" (FR-010 / D-198)
+    ----------------------------------------------------------------------
+    This dropped every line whose lstrip started with ``#``, anywhere in the
+    file, and its two consumers then judged a body that was missing the
+    captured lines. Driven end to end at the MCP door on two runs identical
+    but for three characters: a teammate's log whose command was
+    ``sed -n '1,3p' src/guard.py && printf '<three stamps>'``, where those
+    three source lines are comments in this codebase's own house style, is a
+    six-line body of which three are timestamps (50%) — but read as a
+    three-line body of which three are timestamps (100%), because the strip
+    deleted the denominator. ``Foundry-Accept-Casting`` refused it as
+    EVIDENCE_STUB_TIMESTAMP_CLUSTER; the same capture with the leading ``# ``
+    removed was accepted. The bare-ack arm failed the same way: nine comment
+    lines then ``PASS`` fullmatched ``_STUB_BARE_ACK_RE`` on a body that had
+    been reduced to the word ``PASS``.
+
+    So the discriminator was punctuation, not fabrication, and FR-010's
+    converse went false: evidence that ran, reproduces byte-identically and
+    is honest was refused. Of the 70 logs this run has committed, 15 already
+    have a majority-``#`` body under the old strip. Whole-file ``#`` deletion
+    was rejected for exactly that reason; the leading run is what the header
+    grammar (``_EVIDENCE_HEADER_BLOCK_RE``, ``_parse_evidence_header``) has
+    always meant by "header block".
+
+    Narrowing costs the detector nothing it was catching: a genuine bare-ack
+    stub (header, then ``PASS``) and a genuine timestamp cluster (header,
+    then only timestamps) have no ``#`` line below the separator to restore,
+    so both still fire. ``tests/test_evidence.py`` pins both true positives
+    beside the two false negatives this closes.
     """
-    return [
-        ln for ln in text.splitlines()
-        if ln.strip() and not ln.lstrip().startswith("#")
-    ]
+    lines = text.splitlines()
+    start = 0
+    while start < len(lines) and lines[start].lstrip().startswith("#"):
+        start += 1
+    return [ln for ln in lines[start:] if ln.strip()]
 
 
 def _is_stub_pattern_too_small(
@@ -1556,6 +1589,14 @@ def _is_stub_pattern_timestamp_cluster(text: str) -> bool:
     ``_STUB_TIMESTAMP_LINE_RE`` AND there are at least 3 such lines. This
     catches "fabricated bulk" logs that pad out to bypass the TOO_SMALL
     threshold by repeating a timestamp shape.
+
+    D-198: "non-header" means what ``_strip_header_and_blank_lines`` now
+    implements — the CONTIGUOUS leading ``#`` block — and no longer every
+    ``#`` line in the file. This sentence was already written this way while
+    the call under it deleted comment lines out of the captured body, which
+    is what inflated the ratio: deleting a line that is not a timestamp
+    shrinks the denominator and can only push the fraction up, never down.
+    A capture that is half comments and half timestamps read as 100%.
 
     CONTEXT.md describes a stricter "<1ms cluster" rule for
     ``_check_stub_patterns``; this helper uses the broader "fabricated-bulk
