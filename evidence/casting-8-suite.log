@@ -13,7 +13,7 @@
 ........................................................................ [ 12%]
 ........................................................................ [ 14%]
 ........................................................................ [ 16%]
-.....................................
+...............................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -88,7 +88,58 @@
       keyed by the scan    : ['wave-report-sections.log']
     the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
     FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
-.................................. [ 18%]
+.=== D-198: two runs identical but for three characters ===
+    command in both: sed -n '1,3p' src/guard.py && printf '<three ISO stamps>'
+    run A — three captured comment lines, then three stamps
+        old strip: body lines  3 -> EVIDENCE_STUB_TIMESTAMP_CLUSTER
+        shipped  : body lines  6 -> None
+    run B — the same, leading '# ' removed, nothing else changed
+        old strip: body lines  6 -> None
+        shipped  : body lines  6 -> None
+    the bare-ack arm — nine captured comment lines, then PASS
+        old strip: body lines  1 -> EVIDENCE_STUB_BARE_PASS
+        shipped  : body lines 10 -> None
+=== the true positives the narrowing keeps ===
+    a genuine bare ack — header, then PASS
+        old strip: EVIDENCE_STUB_BARE_PASS
+        shipped  : EVIDENCE_STUB_BARE_PASS
+    a genuine cluster — header, then timestamps only
+        old strip: EVIDENCE_STUB_TIMESTAMP_CLUSTER
+        shipped  : EVIDENCE_STUB_TIMESTAMP_CLUSTER
+=== the run's own corpus at d872362 ===
+    committed evidence logs                             : 70
+    whose body was a minority of the file, old strip    : 15
+        casting-1-gi-007-no-throttling.log             17 of   21 dropped
+        casting-1-rollup-preservation.log              55 of   66 dropped
+        casting-1-verifier-paths.log                   36 of   62 dropped
+        casting-2-defect-tier.log                       6 of    9 dropped
+        casting-2-handoff-records.log                   6 of    8 dropped
+        casting-2-no-narrowing.log                      6 of    8 dropped
+        casting-2-observations-migration.log            6 of    9 dropped
+        casting-2-self-target.log                       6 of    8 dropped
+        casting-5-grind-cycle-10.log                   63 of   88 dropped
+        casting-5-grind-cycle-12.log                   69 of  104 dropped
+        casting-5-grind-cycle-15.log                   45 of   72 dropped
+        casting-5-grind-cycle-9.log                    43 of   80 dropped
+        casting-5-null-prose.log                       26 of   47 dropped
+        casting-7-lead-prose.log                        4 of    7 dropped
+        casting-8-mcp-version.log                       2 of    3 dropped
+    carrying `#` lines BELOW the separator (captured)   : 10
+        casting-1-rollup-preservation.log              11 ->   63
+        casting-1-verifier-paths.log                   26 ->   59
+        casting-1-baseline-comparison.log              74 ->  100
+        casting-1-convergence-columns.log             177 ->  194
+        casting-1-gi-007-no-throttling.log              4 ->   19
+        casting-5-report-generator.log                162 ->  173
+        casting-5-report-sections.log                  74 ->   85
+        casting-8-suite.log                           354 ->  365
+        casting-1-migration-round-trip.log             43 ->   53
+        casting-1-migration-tier-unknown.log           59 ->   63
+    stub hits over the corpus, old strip                : {}
+    stub hits over the corpus, shipped strip            : {}
+    None trips a pattern today, which is why this had not fired
+    in production and not why it could not.
+....................... [ 18%]
 ........................................................................ [ 20%]
 ........................................................................ [ 22%]
 ........................................................................ [ 24%]
@@ -98,8 +149,8 @@
 ........................................................................ [ 32%]
 ........................................................................ [ 34%]
 ........................................................................ [ 36%]
-...................................................................s.... [ 38%]
-........................................s.s.....
+........................................................................ [ 38%]
+......s............................................s.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -137,13 +188,13 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-........................ [ 40%]
+............. [ 40%]
 ........................................................................ [ 42%]
-........................................................................ [ 45%]
-........................................................................ [ 47%]
-........................................................................ [ 49%]
-........................................................................ [ 51%]
-........................................................................ [ 53%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
 ........................................................................ [ 55%]
 ........................................................................ [ 57%]
 ........................................................................ [ 59%]
@@ -154,10 +205,10 @@
 ........................................................................ [ 69%]
 ........................................................................ [ 71%]
 ........................................................................ [ 73%]
-.........................s..s.s..s...................................... [ 75%]
+........................................s..s.s..s....................... [ 75%]
 ........................................................................ [ 77%]
 ........................................................................ [ 79%]
-................
+...............................
 === report.json top-level keys ===
   generated_at
   run
@@ -341,22 +392,23 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-..................................................... [ 81%]
+...................................... [ 81%]
 ........................................................................ [ 83%]
-...................................................ss.ss.ssss.ssssssss.s [ 85%]
-sss.s..ss.sss........................................................... [ 87%]
-........................................................................ [ 90%]
-........................................................................ [ 92%]
-........................................................................ [ 94%]
-........................................................................ [ 96%]
-........................................................................ [ 98%]
-...............................................................          [100%]
+..................................................................ss.ss. [ 85%]
+ssss.ssssssss.ssss.s..ss.sss............................................ [ 87%]
+........................................................................ [ 89%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+......                                                                   [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-cap2/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2127: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-cap2/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2196: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-cap2/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-head/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2127: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-head/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2196: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-head/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -387,4 +439,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3483 passed, 36 skipped, 3 deselected in 149.38s
+3498 passed, 36 skipped, 3 deselected in 143.79s
