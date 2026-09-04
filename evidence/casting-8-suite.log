@@ -4,7 +4,6 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: /[^ ]*/foundry-archive/[^ ]*
 # evidence-timeout: 300
-
 ........sss............................................................. [  2%]
 ........................................................................ [  4%]
 ........................................................................ [  6%]
@@ -13,7 +12,7 @@
 ........................................................................ [ 12%]
 ........................................................................ [ 14%]
 ........................................................................ [ 16%]
-...............................................
+...........................................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -139,7 +138,52 @@
     stub hits over the corpus, shipped strip            : {}
     None trips a pattern today, which is why this had not fired
     in production and not why it could not.
-....................... [ 18%]
+.
+=== D-200: what the byte comparator strips on EACH side ===
+    the CAPTURE is stripped of nothing — a re-execution capture
+    is all output. The COMMITTED side loses exactly the prefix
+    the capture did not emit, so no strip can erase a
+    disagreement: differing leading content is removed from
+    neither side and always reaches the diff. The old shape
+    could cancel precisely because each side chose its own
+    strip in ignorance of the other.
+
+    branch                                         removed from the committed side  verdict
+    capture emits no leading run                   the whole leading run            match
+    capture IS the full file (cat-replay)          nothing                          match
+    capture's run is a proper suffix               the run minus that suffix        match
+    capture's run is NOT a suffix (the forgery)    only the provable header         REFUSED
+
+=== the forgery, driven ===
+    committed leading block : # FABRICATED: the guard holds
+    captured leading block  : # a completely different leading comment
+    tail, identical on both : REAL_TAIL_MATCHES
+    before the fix, both sides reduced to 'REAL_TAIL_MATCHES\n' and MATCHED
+    now, the diff names the first differing line:
+      -# FABRICATED: the guard holds
+      +# a completely different leading comment
+      +# written by the real command
+
+=== the true accepts kept (an honest log whose captured body starts with '#') ===
+    accepted, and the captured '#' lines are INSIDE what was
+    compared rather than agreeing because both sides emptied:
+      committed body begins : # guard: refuse on mismatch, never on shape
+      captured body begins  : # guard: refuse on mismatch, never on shape
+
+=== the real committed corpus at f5b487b: 74 logs ===
+    directives run straight into writer prose    :  8
+    directives, separator, body                  : 55
+    two blank lines after the header             :  2
+    writer prose BELOW the separator             :  9
+    new header == old strip, capture untouched   : 74 of 74
+
+=== why the two narrower candidates were rejected, measured on that corpus ===
+    strip only '# evidence-*:' directives + one blank        : breaks 19 logs
+    D-198's shape: any leading '#' run + one blank           : breaks 15 logs
+    SHIPPED: the run's prefix the capture did not emit       : breaks  0 logs
+    the two named in the defect's own fix direction are the
+    first two rows, which is why the shipped rule is neither.
+.......... [ 18%]
 ........................................................................ [ 20%]
 ........................................................................ [ 22%]
 ........................................................................ [ 24%]
@@ -150,7 +194,8 @@
 ........................................................................ [ 34%]
 ........................................................................ [ 36%]
 ........................................................................ [ 38%]
-......s............................................s.s.....
+...................s............................................s.s..... [ 40%]
+
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -188,27 +233,26 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-............. [ 40%]
 ........................................................................ [ 42%]
 ........................................................................ [ 44%]
 ........................................................................ [ 46%]
 ........................................................................ [ 48%]
 ........................................................................ [ 50%]
 ........................................................................ [ 52%]
-........................................................................ [ 55%]
-........................................................................ [ 57%]
-........................................................................ [ 59%]
-........................................................................ [ 61%]
-........................................................................ [ 63%]
-........................................................................ [ 65%]
-........................................................................ [ 67%]
-........................................................................ [ 69%]
-........................................................................ [ 71%]
-........................................................................ [ 73%]
-........................................s..s.s..s....................... [ 75%]
+........................................................................ [ 54%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+.........................................................s..s.s..s...... [ 75%]
 ........................................................................ [ 77%]
 ........................................................................ [ 79%]
-...............................
+................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -392,23 +436,23 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-...................................... [ 81%]
+..................... [ 81%]
 ........................................................................ [ 83%]
-..................................................................ss.ss. [ 85%]
-ssss.ssssssss.ssss.s..ss.sss............................................ [ 87%]
+........................................................................ [ 85%]
+...........ss.ss.ssss.ssssssss.ssss.s..ss.sss........................... [ 87%]
 ........................................................................ [ 89%]
 ........................................................................ [ 91%]
 ........................................................................ [ 93%]
 ........................................................................ [ 95%]
 ........................................................................ [ 97%]
 ........................................................................ [ 99%]
-......                                                                   [100%]
+.......................                                                  [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-head/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2127: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-head/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2196: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-head/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-final/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2127: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-final/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2196: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-final/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -439,4 +483,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3498 passed, 36 skipped, 3 deselected in 143.79s
+3515 passed, 36 skipped, 3 deselected in 147.21s
