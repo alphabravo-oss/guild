@@ -89,7 +89,6 @@ be blocked from the blocking channel, which costs exactly as much.
 from __future__ import annotations
 
 import json
-import re
 import threading
 from pathlib import Path
 
@@ -252,12 +251,14 @@ FIXTURE_CLASS = "FIXTURE_ROOT_CAUSE"
 
 
 def _file_defect(**kwargs) -> dict:
-    """``foundry_add_defect`` with the two fields CT-001 and CT-002 now require.
+    """``foundry_add_defect`` with the two fields convergence CT-001 and
+    convergence CT-002 now require.
 
     WHY THIS WRAPPER EXISTS
     -----------------------
-    ``tier`` (CT-001 / FR-004 / AC-006) and ``class`` (CT-002 / FR-007 /
-    AC-010) became REQUIRED at both filing doors, so the twenty-five filings in
+    ``tier`` (convergence CT-001 / FR-004 / AC-006) and ``class`` (convergence
+    CT-002 / FR-007 / AC-010) became REQUIRED at both filing doors, so the
+    twenty-five filings in
     this module — every one of which predates the evidence axis — would
     otherwise be refused before reaching the behaviour each test is actually
     about. Not one of those tests is ABOUT the tier: their subjects are the
@@ -2151,169 +2152,85 @@ def test_ledger_refusals_converts_only_the_shape_error() -> None:
 # --------------------------------------------------------------------------- #
 # D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED.
 #
-# THE HARM, driven by TRACE while door-driving the convergence spec's first
-# observable truth at 372da0a: the module docstring above tagged
-# `test_comment_prose_filed_as_defect_is_refused` with a bare pair of ids and
-# named no spec. Those ids resolve in BOTH
-# forge-specs/foundry-run-process-fixes/spec.md — where they ARE the
-# comment-prose refusal — and forge-specs/foundry-run-convergence/spec.md,
-# where they name the clean-cycles escalation exit that
-# tests/test_escalation.py drives. A reader, or a coverage sweep, resolving
-# them against the convergence spec landed on the wrong assertion, and the
-# mismatch was filed as a defect. The tag was never false; it was UNQUALIFIED.
+# THE MACHINERY MOVED, and this is a shim. It lives in
+# tests/test_spec_id_convention.py now, together with the roster pin that
+# applies it to every module in this directory, and that module's banner
+# carries the full history and the two reasons the per-file pins did not hold.
+# Not repeated here: two copies of one explanation drift exactly as two copies
+# of one scan do, which is the whole argument the move rests on.
 #
-# WHY A PIN AND NOT JUST THE CORRECTED TAGS. Re-tagging the thirty-six sites
-# fixes today's instance and nothing else: the next docstring written here will
-# reach for a bare id exactly as every one of those did, because bare is what
-# the surrounding file teaches. A convention that cannot be checked is a
-# comment about a comment. So this walks THIS MODULE'S OWN PROSE — every
-# docstring and every comment — and refuses an unqualified requirement id,
-# which is the same shape as the D-125 / D-127 guards above: derive the
-# membership from the file rather than re-typing it in prose and hoping.
+# WHY THE SHIM STAYS RATHER THAN THE CALL SITES MOVING. tests/test_escalation.py
+# is casting 3's and imports these four private names by hand —
+# `_prose_blocks`, `_unqualified_ids`, `_TWO_SPEC_ID_RE`, and
+# `_CONVERGENCE_IDS`, which it monkeypatches ON THIS MODULE before calling the
+# other two. Deleting them here to tidy up would turn its pin into a collection
+# error in the same cycle that was supposed to make the convention stick.
 #
-# WHY PROSE AND NOT LINES. The scan normalises each contiguous prose block
-# before matching, because the qualification and the id it qualifies are
-# routinely split by an ordinary line wrap — "evaded process-fixes\nST-002" is
-# correctly tagged and a line-oriented scan would call it a violation, then
-# teach the next author to fight the wrapper instead of naming the spec.
+# WHY `_unqualified_ids` IS A FUNCTION AND NOT A RE-EXPORT. A re-exported
+# function's globals are the module that DEFINED it, so
+# `monkeypatch.setattr(shared, "_CONVERGENCE_IDS", ...)` would set a name
+# nothing reads: casting 3's pin would go on scanning against this file's
+# declared ids instead of its own, stay green, and check the wrong thing. The
+# indirection is load-bearing; `test_the_shim_reads_this_modules_own_data` below
+# is what keeps someone from "simplifying" it away.
 #
-# THE THREE LEGAL FORMS, exactly as the module docstring states them:
-#   1. `process-fixes AC-001`, and each further id in a `/`-joined run after
-#      it — `process-fixes CT-002 / AC-019 / OT-008` qualifies all three,
-#      which is how every section header in this file is written.
-#   2. a BARE id in _CONVERGENCE_IDS. Stated as a closed set rather than
-#      inferred, because a NEW bare id is precisely the drift this exists to
-#      catch, and an inferred set would agree with whatever was written last.
-#   3. anything in CODE — a `spec_ref=` fixture literal, a parametrize entry,
-#      this module's own constants. Those are input handed to the door under
-#      test, not a claim about which requirement a test proves, and the module
-#      docstring says so.
-# Two prose blocks are exempt and both are named: the module docstring, which
-# is the legend and whose job is to name both sides of every collision, and
-# this comment block, which is the explanation and must be free to do the same.
+# WHAT THE SENTINEL LINE ABOVE STILL DOES. `prose_blocks` keys its exemption off
+# it: a module carrying the sentinel is one that EXPLAINS the collision, so its
+# docstring and this comment block are free to name both sides of it. The shim
+# passes `require_sentinel=True`, so deleting the line raises instead of quietly
+# widening what this file scans.
 # --------------------------------------------------------------------------- #
+
+from tests.test_spec_id_convention import (  # noqa: E402
+    LEGACY_ID_FAMILIES,
+    PIN_SENTINEL,
+    id_pattern,
+    prose_blocks,
+    unqualified_ids,
+)
+
 
 def _own_source() -> str:
     return Path(__file__).read_text(encoding="utf-8")
 
 
-_TWO_SPEC_ID_RE = re.compile(r"\b(?:AC|OT|FR|CT|ST|NFR)-\d{3}\b")
+#: The requirement-id families this module's pin matches. One deliberate step
+#: narrower than the roster pin's: tests/test_escalation.py runs its own pin
+#: through this shim and cites three bare `GI` ids, so widening here would turn
+#: a green pin red in a file this casting may not edit.
+_TWO_SPEC_ID_RE = id_pattern(LEGACY_ID_FAMILIES)
 
-#: A `/`-joined continuation — an `AC-NNN / ` segment sitting between a
-#: qualification and the id it still governs. Written with a placeholder
-#: rather than a real id because this pin reads its own prose, and an example
-#: here would have to be a citation there.
-_ID_CHAIN_RE = re.compile(r"(?:AC|OT|FR|CT|ST|NFR)-\d{3} / $")
+#: The convergence-spec ids this module cites BARE. EMPTY now, because the
+#: convention became total and every id in this module's prose carries its spec.
+#: The name survives only because tests/test_escalation.py monkeypatches it here
+#: with its own declared set before calling `_unqualified_ids`.
+_CONVERGENCE_IDS = frozenset()  # 0 items
 
-#: The convergence-spec ids this module cites BARE, per the module docstring's
-#: "a BARE id cites forge-specs/foundry-run-convergence/spec.md" rule. Every
-#: one of them ALSO resolves in the process-fixes spec — the collision between
-#: the two specs is total, not partial — so membership is declared here, never
-#: guessed at.
-_CONVERGENCE_IDS = frozenset(
-    {"AC-006", "AC-010", "CT-001", "CT-002", "FR-004", "FR-007"}
-)  # 6 items
-
-_PIN_SENTINEL = "# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED."
+_PIN_SENTINEL = PIN_SENTINEL
 
 
 def _unqualified_ids(text: str) -> list[str]:
-    """Every requirement id in ``text`` that names neither spec.
+    """`unqualified_ids` bound to whatever data THIS module declares.
 
-    ``text`` is one prose block with its line wrapping already collapsed, so a
-    qualification and the id it governs are adjacent however the source broke
-    the line.
+    The `_CONVERGENCE_IDS` lookup is deliberately a module-global read at call
+    time rather than a default argument captured at definition time, so
+    casting 3's `monkeypatch.setattr` on this module reaches it.
     """
-    found: list[str] = []
-    for match in _TWO_SPEC_ID_RE.finditer(text):
-        prefix = text[: match.start()]
-        while True:
-            stripped = _ID_CHAIN_RE.sub("", prefix)
-            if stripped == prefix:
-                break
-            prefix = stripped
-        if prefix.endswith("process-fixes "):
-            continue
-        if match.group(0) in _CONVERGENCE_IDS:
-            continue
-        found.append(f"{match.group(0)} in ...{text[max(0, match.start() - 60):match.end() + 20]}...")
-    return found
+    return unqualified_ids(text, bare_ok=_CONVERGENCE_IDS, families=LEGACY_ID_FAMILIES)
 
 
 def _prose_blocks(source: str) -> list[tuple[int, str]]:
-    """(lineno, normalised text) for every docstring and comment block.
-
-    The module docstring and this file's own D-178 comment block are dropped:
-    both are ABOUT the collision and must name both sides of it.
-    """
-    import io
-    import tokenize
-
-    tree = ast.parse(source)
-    blocks: list[tuple[int, str]] = []
-
-    module_docstring_line = None
-    if tree.body and isinstance(tree.body[0], ast.Expr):
-        first = tree.body[0].value
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            module_docstring_line = first.lineno
-
-    for node in ast.walk(tree):
-        if not isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
-            continue
-        if not node.body or not isinstance(node.body[0], ast.Expr):
-            continue
-        value = node.body[0].value
-        if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            blocks.append((value.lineno, " ".join(value.value.split())))
-
-    # Comments, grouped into contiguous runs so a wrapped comment paragraph is
-    # one block rather than N unrelated lines.
-    comments: list[tuple[int, str]] = []
-    readline = io.StringIO(source).readline
-    for token in tokenize.generate_tokens(readline):
-        if token.type == tokenize.COMMENT:
-            comments.append((token.start[0], token.string.lstrip("#").strip()))
-
-    run_start: int | None = None
-    run_text: list[str] = []
-    prev_line = -10
-    for lineno, text in comments + [(10**9, "")]:
-        if lineno != prev_line + 1:
-            if run_start is not None:
-                blocks.append((run_start, " ".join(" ".join(run_text).split())))
-            run_start, run_text = lineno, []
-        run_text.append(text)
-        prev_line = lineno
-
-    pin_line = next(
-        (i + 1 for i, line in enumerate(source.split("\n")) if line == _PIN_SENTINEL),
-        None,
-    )
-    assert pin_line is not None, (
-        "the D-178 sentinel comment is gone; either it was renamed (restore it) "
-        "or this pin is being disabled by deletion"
-    )
-    pin_block_start = max(
-        (start for start, _ in blocks if start <= pin_line), default=pin_line
-    )
-
-    return [
-        (start, text)
-        for start, text in blocks
-        if start not in (module_docstring_line, pin_block_start)
-    ]
+    """`prose_blocks` with the sentinel deletion guard armed."""
+    return prose_blocks(source, require_sentinel=True)
 
 
 def test_every_requirement_id_in_this_module_names_its_spec() -> None:
     """D-178's root cause, refused structurally rather than re-tagged by hand.
 
-    Every requirement id in this module's docstrings and comments is a
-    ``process-fixes`` citation or a declared convergence id. Anything else is
-    the unqualified tag that sent TRACE to the wrong assertion, and this fails
-    naming it.
+    Held here as well as by the roster pin in tests/test_spec_id_convention.py,
+    because this is the pair casting 3's own pin runs through: if the shim ever
+    stops reporting what it used to, it fails HERE, on this module's own prose,
+    rather than silently in a file this casting cannot edit.
     """
     offenders: list[str] = []
     for lineno, text in _prose_blocks(_own_source()):
@@ -2321,9 +2238,10 @@ def test_every_requirement_id_in_this_module_names_its_spec() -> None:
             offenders.append(f"line {lineno}: {offence}")
 
     assert not offenders, (
-        "unqualified requirement id(s) — D-178 again. Write "
-        "'process-fixes AC-001' for the earlier spec, or add the id to "
-        "_CONVERGENCE_IDS if it cites forge-specs/foundry-run-convergence:\n  "
+        "unqualified requirement id(s) — D-178 again. Every id in prose names "
+        "its spec: 'process-fixes AC-001' for "
+        "forge-specs/foundry-run-process-fixes, 'convergence AC-001' for "
+        "forge-specs/foundry-run-convergence. There is no bare form:\n  "
         + "\n  ".join(offenders)
     )
 
@@ -2348,7 +2266,11 @@ def test_the_pin_catches_the_bare_tag_it_was_written_for() -> None:
     assert not _unqualified_ids("process-fixes AC-001 / OT-001 is refused")
     assert not _unqualified_ids("process-fixes CT-002 / AC-019 / OT-008 — PARTIAL")
     assert not _unqualified_ids("evaded process-fixes ST-002 escalation while")
-    assert not _unqualified_ids("``tier`` (CT-001 / FR-004 / AC-006) and ``class``")
+    # The convergence half of the total convention, which is what replaced the
+    # bare form this line used to assert. `_CONVERGENCE_IDS` is empty here now,
+    # so nothing is silent by declaration any more — only by qualification.
+    assert not _unqualified_ids("``tier`` (convergence CT-001 / FR-004 / AC-006)")
+    assert _unqualified_ids("``tier`` (CT-001 / FR-004 / AC-006) and ``class``")
 
 
 def test_the_prose_scan_sees_comments_and_docstrings_alike() -> None:
@@ -2367,3 +2289,29 @@ def test_the_prose_scan_sees_comments_and_docstrings_alike() -> None:
     # And the two exempt blocks are absent: the legend and this pin's rationale.
     assert "READ THIS BEFORE GREPPING AN ID HERE" not in joined
     assert "THE TWO-SPEC ID CONVENTION IS PINNED" not in joined
+
+
+def test_the_shim_reads_this_modules_own_data(monkeypatch) -> None:
+    """The seam tests/test_escalation.py hangs on, pinned from this side.
+
+    That module patches ``_CONVERGENCE_IDS`` ON THIS MODULE and then calls
+    ``_unqualified_ids`` here, so the lookup has to happen in this namespace at
+    call time. Turn the shim into a plain re-export — the obvious tidy-up —
+    and the patch sets a name nothing reads: casting 3's pin would keep
+    scanning against whatever set this file declares, stay green, and be
+    checking the wrong module's ids. Green and wrong is the failure mode that
+    has no symptom, so it is pinned here rather than left to be noticed.
+    """
+    assert _CONVERGENCE_IDS == frozenset()
+    assert _unqualified_ids("AC-004 verbatim: 'escalation.json records'")
+
+    monkeypatch.setattr(
+        "tests.test_observations._CONVERGENCE_IDS", frozenset({"AC-004"})
+    )
+    assert not _unqualified_ids("AC-004 verbatim: 'escalation.json records'")
+
+    # The family stays narrow through the shim whatever the patch says, which
+    # is the other half of what keeps casting 3's file green: its three bare
+    # ``GI`` citations are outside LEGACY_ID_FAMILIES and stay unreported here.
+    assert not _unqualified_ids("GI-006 requires the generated report")
+    assert unqualified_ids("GI-006 requires the generated report")

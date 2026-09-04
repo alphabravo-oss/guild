@@ -4,20 +4,25 @@ One regression test per acceptance criterion, each docstring quoting the
 requirement it proves. Built on the synthetic-run shape
 ``tests/test_escalation.py`` establishes.
 
-  GI-003 / AC-022 / OT-010   the SERVER appends the lead_fix record, carrying
-                             the defect id, tier, file, line count and test.
-                             BOTH tiers are measured; a LATENT record is
-                             "recorded, lane limit not applied", and null in
-                             file/line_count means the measurement was
-                             UNAVAILABLE — git could not read the commit
-                             (D-074).
-  CT-011 / AC-030            ``check_reported_prompt_hash`` is the one
-                             implementation of the pointer-dispatch hash rung,
-                             and names both hashes when they differ.
-  CT-015 / AC-015 / FR-010 / OT-027
-                             ``foundry_accept_casting`` without casting_commit
-                             is refused naming the parameter, and a successful
-                             acceptance always carries evidence_provenance.
+Every requirement id in this module's prose is a
+``forge-specs/foundry-run-convergence`` id and says so. Six of them —
+convergence GI-003 / AC-022 / FR-010 / FR-016 / NFR-002 / OT-005 / OT-010 —
+also exist in ``forge-specs/foundry-run-process-fixes`` with entirely
+unrelated text (that spec's convergence GI-003 deletes a shell script), so the bare form
+names no spec at all. tests/test_spec_id_convention.py refuses it.
+
+  convergence GI-003 / AC-022 / OT-010
+      the SERVER appends the lead_fix record, carrying the defect id, tier,
+      file, line count and test. BOTH tiers are measured; a LATENT record is
+      "recorded, lane limit not applied", and null in file/line_count means the
+      measurement was UNAVAILABLE — git could not read the commit (D-074).
+  convergence CT-011 / AC-030
+      ``check_reported_prompt_hash`` is the one implementation of the
+      pointer-dispatch hash rung, and names both hashes when they differ.
+  convergence CT-015 / AC-015 / FR-010 / OT-027
+      ``foundry_accept_casting`` without casting_commit is refused naming the
+      parameter, and a successful acceptance always carries
+      evidence_provenance.
 """
 
 from __future__ import annotations
@@ -118,10 +123,10 @@ def _accept(root: str, **overrides) -> dict:
     return foundry_accept_casting(**args)
 
 
-# --- GI-003 / AC-022 / OT-010: the lead_fix record ---------------------------
+# --- convergence GI-003 / AC-022 / OT-010: the lead_fix record ---------------
 def test_a_lead_fix_appends_a_record_carrying_every_named_field(run_env):
-    """OT-010 verbatim: 'After a lead fix, handoffs.jsonl contains a lead_fix
-    record with the defect id, tier, file, line count and test.' GI-003 adds
+    """convergence OT-010 verbatim: 'After a lead fix, handoffs.jsonl contains a lead_fix
+    record with the defect id, tier, file, line count and test.' convergence GI-003 adds
     that the SERVER appends it — a lead fix recorded as free prose in a
     hand-written handoff is a fix nothing can total, list, or re-measure."""
     _, fdir = run_env
@@ -151,9 +156,9 @@ def test_a_lead_fix_appends_a_record_carrying_every_named_field(run_env):
 
 
 def test_a_latent_lead_fix_is_measured_like_any_other(run_env):
-    """D-074 — ST-004 / CT-006's 'a LATENT lead fix is not measured' is about
+    """D-074 — convergence ST-004 / CT-006's 'a LATENT lead fix is not measured' is about
     the lane ELIGIBILITY test, not about whether the numbers are written down.
-    GI-003 states the field list with no tier carve-out, and the caller
+    convergence GI-003 states the field list with no tier carve-out, and the caller
     measures on both lanes, so a LATENT record carries its real file and count
     and is described as 'recorded, lane limit not applied'."""
     _, fdir = run_env
@@ -245,7 +250,7 @@ def test_a_multi_file_commit_reports_its_files_rather_than_a_blank(run_env):
 
 
 def test_the_rows_are_recorded_as_handed_over_not_re_classified(run_env):
-    """FR-016 excludes test files from the count, and ``_numstat_measurement``
+    """convergence FR-016 excludes test files from the count, and ``_numstat_measurement``
     is where that happens — D-075 made it rename-aware, so a file now living
     under tests/ but renamed out of src/ is production code and STAYS in the
     measurement. A second ``is_test_file(path)`` pass here would drop exactly
@@ -324,7 +329,7 @@ def test_the_pre_ruling_call_shape_still_records(run_env):
 
 # --- D-170: one field per locator; `test` is not a slot two tests compete for -
 def test_a_regression_test_is_recorded_beside_the_adjacent_path_test(run_env):
-    """GI-003 / AC-022 — the test is one of the five things a reader must be
+    """convergence GI-003 / AC-022 — the test is one of the five things a reader must be
     able to re-derive, and for a LIVE lead fix the test that holds the fix is
     the MANDATED adjacent-path test.
 
@@ -453,7 +458,7 @@ def test_an_empty_regression_test_is_no_regression_test(run_env):
 
 
 def test_the_lead_fix_record_is_mirrored_into_handoffs_md(run_env):
-    """GI-003 — the audit log has two channels and is only useful while they
+    """convergence GI-003 — the audit log has two channels and is only useful while they
     agree. The lead_fix record goes through the SAME writer ``foundry_handoff``
     uses, so a reader of the human mirror sees the fix a reader of the JSONL
     sees."""
@@ -580,9 +585,9 @@ def test_the_writer_creates_the_run_directory_it_is_handed(tmp_path):
     assert (fdir / "handoffs.md").is_file()
 
 
-# --- CT-011 / AC-030: the reported prompt hash -------------------------------
+# --- convergence CT-011 / AC-030: the reported prompt hash -------------------
 def test_a_matching_reported_hash_returns_none(run_env):
-    """CT-011 — pointer dispatch hands the teammate a path and a hash instead
+    """convergence CT-011 — pointer dispatch hands the teammate a path and a hash instead
     of the prompt text; only an agent that actually read the file can state
     the value back. None means 'this one did'."""
     _, fdir = run_env
@@ -606,7 +611,7 @@ def test_the_comparison_value_is_the_published_spelling(run_env):
 
 
 def test_a_mismatched_hash_refuses_naming_expected_and_reported(run_env):
-    """AC-030 verbatim: 'Foundry-Accept-Casting and Foundry-Fix refuse when the
+    """convergence AC-030 verbatim: 'Foundry-Accept-Casting and Foundry-Fix refuse when the
     hash the teammate reports differs from the file's.' Both values are named:
     a refusal that reports only 'mismatch' leaves the lead unable to tell a
     teammate who read a STALE prompt from one who read no prompt at all."""
@@ -649,7 +654,7 @@ def test_a_missing_prompt_file_refuses_rather_than_returning_none(run_env):
 
 
 def test_an_undecodable_prompt_file_refuses_in_band(run_env):
-    """NFR-005 — a tool never raises across the MCP boundary. The read and the
+    """convergence NFR-005 — a tool never raises across the MCP boundary. The read and the
     decode are ONE operation: ``UnicodeDecodeError`` is not a JSONDecodeError
     and is raised before any parse, which is the D-137 family this rung would
     otherwise re-open."""
@@ -682,7 +687,7 @@ def _shell_style_digest(path: Path) -> str:
 
 
 def test_a_crlf_prompt_hashes_identically_on_both_sides(run_env):
-    """D-108 / CT-011 / AC-030 — the publisher, the checker and the teammate's
+    """D-108 / convergence CT-011 / AC-030 — the publisher, the checker and the teammate's
     own shell command produce ONE value.
 
     Both sides used to hash ``prompt_text.encode("utf-8")`` where the text came
@@ -782,14 +787,14 @@ def test_neither_spawn_door_derives_a_prompt_hash_inline():
 
 # --- D-106: `lead_fix` is a token only the server may write ------------------
 def test_the_public_handoff_door_refuses_the_reserved_lead_fix_event(run_env):
-    """GI-003 / AC-022 — 'the server itself appends a lead_fix handoff record'.
+    """convergence GI-003 / AC-022 — 'the server itself appends a lead_fix handoff record'.
 
     That is only a guarantee if the token cannot ALSO be written by hand.
     Driven: `foundry_handoff(event="lead_fix", summary="hand-written, never
     measured")` returned ok=True, and the generated report then read '2
-    lead-authored fixes (GI-003 / AC-022), 2 file rows' — the forged row
+    lead-authored fixes (convergence GI-003 / AC-022), 2 file rows' — the forged row
     rendering as 'measurement unavailable', which is D-078's sentinel for a
-    real record whose git read failed. GI-003's named violation is precisely
+    real record whose git read failed. convergence GI-003's named violation is precisely
     'a lead fix recorded only as free prose in a hand-written handoff'."""
     root, fdir = run_env
 
@@ -870,7 +875,7 @@ def test_the_server_writer_still_appends_the_reserved_event(run_env):
 
 
 def test_the_acceptance_gate_uses_the_shared_hash_check(run_env):
-    """CT-011 — one implementation for both gates. The acceptance gate's
+    """convergence CT-011 — one implementation for both gates. The acceptance gate's
     refusal is the helper's, token included, so a lead cannot learn two
     different stories about one prompt depending on which door they walked."""
     root, fdir = run_env
@@ -883,12 +888,12 @@ def test_the_acceptance_gate_uses_the_shared_hash_check(run_env):
     assert result["reported_hash"] == "sha256:deadbeefdeadbeef"
 
 
-# --- CT-015 / AC-015 / FR-010 / OT-027: casting_commit is required -----------
+# --- convergence CT-015 / AC-015 / FR-010 / OT-027: casting_commit is required ---
 def test_acceptance_without_a_casting_commit_is_refused_naming_it(run_env):
-    """OT-027 verbatim: 'Foundry-Accept-Casting without casting_commit is
+    """convergence OT-027 verbatim: 'Foundry-Accept-Casting without casting_commit is
     refused naming the parameter.'
 
-    FR-010's rule is 'No acceptance without EVID-01/EVID-02 running', and an
+    convergence FR-010's rule is 'No acceptance without EVID-01/EVID-02 running', and an
     optional casting_commit was that rule's exact negation: omitting it
     bypassed both checks and still returned ok:true — a green acceptance that
     verified nothing, which is the most expensive failure mode there is
@@ -917,7 +922,7 @@ def test_an_empty_casting_commit_is_refused_too(run_env, empty):
 
 
 def test_the_commit_refusal_is_the_first_rung(run_env):
-    """CT-015 — 'positioned so the refusal is reached before any worktree or
+    """convergence CT-015 — 'positioned so the refusal is reached before any worktree or
     subprocess work'. Driven with EVERY other precondition also broken: a
     missing required parameter is a fault in the CALL, so a lead must not have
     to produce a fresh spec hash before learning they omitted it."""
@@ -936,7 +941,7 @@ def test_the_commit_refusal_is_the_first_rung(run_env):
 
 
 def test_a_successful_acceptance_always_carries_evidence_provenance(run_env):
-    """CT-015 verbatim: 'acceptance with evidence_provenance always populated'.
+    """convergence CT-015 verbatim: 'acceptance with evidence_provenance always populated'.
 
     On a v2.0 spec the list is legitimately EMPTY and a stream-skip is
     recorded — 'always populated' means the key always carries the RESULT of
@@ -977,9 +982,10 @@ def test_the_handler_keeps_a_none_default_so_the_refusal_is_its_own(run_env):
 # `REQUIREMENT_ID_RE.findall` over the whole `<spec_requirements>` block, which
 # cannot tell a requirement ASSIGNED to the casting from one QUOTED as an
 # example inside another requirement's prose. Driven on this run: casting 2's
-# block names NFR-002 exactly once, inside OT-005's own statement text, and
-# carries no NFR-002 requirement line — yet the gate demanded a citation and an
-# evidence binding for it and refused acceptance with
+# block names convergence NFR-002 exactly once, inside convergence OT-005's own
+# statement text, and carries no convergence NFR-002 requirement line — yet the
+# gate demanded a citation and an evidence binding for it and refused
+# acceptance with
 # EVIDENCE_REQUIREMENT_UNBOUND for a requirement casting 5 owns.
 #
 # `_QUOTING_BLOCK` reproduces that shape in miniature: one declared requirement
@@ -997,9 +1003,10 @@ _QUOTING_PROMPT = (
 def test_a_requirement_quoted_in_another_requirements_prose_is_not_owned(run_env):
     """D-180 at the door that refused: the harvested set is the DECLARED set.
 
-    NFR-002 appears once in this block, inside AC-015's own statement, and the
-    casting has no NFR-002 line. Before this change the gate collected it and
-    then demanded of the teammate a citation and an evidence binding for a
+    convergence NFR-002 appears once in this block, inside convergence
+    AC-015's own statement, and the casting has no convergence NFR-002 line.
+    Before this change the gate collected it and then demanded of the teammate
+    a citation and an evidence binding for a
     requirement another casting owns — a demand no honest report can satisfy,
     whose only workaround was a knowingly false `# evidence-for:` header.
     """
@@ -1058,7 +1065,8 @@ def test_every_shape_decompose_emits_declares_its_requirement(run_env):
 
     "Derive the IDs from each requirement's own `- **ID**` tag line" drops
     every typed-table row and story heading — on casting 2 that is 10 of its
-    38 Locked requirement IDs, CT-001 through CT-016 and ST-009 among them,
+    38 Locked requirement IDs, the convergence CT-001 through convergence
+    CT-016 contract rows and convergence ST-009 among them,
     silently no longer demanding evidence. All four shapes F0.5 DECOMPOSE
     emits are declarations; only prose position is judged."""
     root, fdir = run_env
@@ -1100,12 +1108,13 @@ def test_every_shape_decompose_emits_declares_its_requirement(run_env):
 # as an example while the acceptance gate demands evidence for it from nobody,
 # and the run ships a requirement nothing verified.
 def test_the_validator_and_the_gate_agree_on_what_a_casting_owns(tmp_path):
-    """AC-015 / FR-010 adjacent path — one derivation, two callers.
+    """convergence AC-015 / FR-010 adjacent path — one derivation, two callers.
 
     Driven through `foundry_validate_castings` rather than through the
-    acceptance gate: the casting DECLARES AC-015 and merely quotes NFR-002
-    inside its prose, so F0.9 must report NFR-002 uncovered — the same verdict
-    the gate reaches when it declines to demand it of this casting.
+    acceptance gate: the casting DECLARES convergence AC-015 and merely quotes
+    convergence NFR-002 inside its prose, so F0.9 must report convergence
+    NFR-002 uncovered — the same verdict the gate reaches when it declines to
+    demand it of this casting.
     """
     from foundry_mcp.tools.foundry_state import ARCHIVE_DIR, set_active_run
     from foundry_mcp.tools.foundry_validate import foundry_validate_castings

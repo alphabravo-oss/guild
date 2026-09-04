@@ -1,23 +1,34 @@
-"""Casting 2 — every defect carries an evidence tier (US-002).
+"""Casting 2 — every defect carries an evidence tier (convergence US-002).
 
 One regression test per acceptance criterion, each docstring quoting the
 requirement it proves. Built on the synthetic-run-directory shape
 ``tests/test_escalation.py`` establishes: a run activated under ``tmp_path``,
 the real filing door driven, the persisted ledger read back.
 
-  AC-006 / CT-001 / FR-004 / OT-004   tier is required and closed; a LATENT
-                                      filing without a reproduction_attempted
-                                      statement is refused naming the field.
-  AC-007 / CT-003 / FR-005 / OT-005   a LATENT security-property claim is
-                                      refused naming SECURITY_PROPERTY_CLAIM
-                                      and fires the audit tripwire; a LATENT
-                                      filing carrying only a spec_ref and a
-                                      scan-gap description is ACCEPTED.
-  AC-010 / CT-002 / FR-007 / OT-029   class is required at both doors, and the
-                                      batch door refuses the whole batch.
-  FR-029                              the content check on the negative-result
-                                      statement refuses a placeholder by name.
-  C-2                                 the persisted record's shape.
+Every requirement id below is a ``forge-specs/foundry-run-convergence`` id and
+says so, because the same numbers exist in
+``forge-specs/foundry-run-process-fixes`` naming entirely different
+requirements. THREE IDS IN THIS FILE GO THE OTHER WAY: process-fixes FR-013
+(one canonical vocabulary module), process-fixes ST-001 (the server owns the
+cycle counter) and process-fixes ST-002 (a class escalates on the third
+consecutive cycle). tests/test_spec_id_convention.py refuses the bare form in
+either direction.
+
+  convergence AC-006 / CT-001 / FR-004 / OT-004
+      tier is required and closed; a LATENT filing without a
+      reproduction_attempted statement is refused naming the field.
+  convergence AC-007 / CT-003 / FR-005 / OT-005
+      a LATENT security-property claim is refused naming
+      SECURITY_PROPERTY_CLAIM and fires the audit tripwire; a LATENT filing
+      carrying only a spec_ref and a scan-gap description is ACCEPTED.
+  convergence AC-010 / CT-002 / FR-007 / OT-029
+      class is required at both doors, and the batch door refuses the whole
+      batch.
+  convergence FR-029
+      the content check on the negative-result statement refuses a placeholder
+      by name.
+  C-2
+      the persisted record's shape.
 
 ``validate_defect_filing`` is tested DIRECTLY as well as through
 ``foundry_add_defect``, because the batch door ``foundry_sync_defects`` is
@@ -81,9 +92,9 @@ def _finding(**overrides) -> dict:
     return finding
 
 
-# --- AC-006 / CT-001 / FR-004: the tier is required and closed ---------------
+# --- convergence AC-006 / CT-001 / FR-004: the tier is required and closed ---
 def test_a_filing_without_a_tier_is_refused_naming_the_field(run_env):
-    """AC-006 verbatim: 'A Foundry-Defect or Foundry-Sync call without tier, or
+    """convergence AC-006 verbatim: 'A Foundry-Defect or Foundry-Sync call without tier, or
     with a tier outside {LIVE, LATENT}, is refused naming the field.'"""
     project_root, fdir = run_env
 
@@ -104,7 +115,7 @@ def test_a_filing_without_a_tier_is_refused_naming_the_field(run_env):
 
 
 def test_a_tier_outside_the_closed_vocabulary_is_refused(run_env):
-    """AC-006 — 'or with a tier outside {LIVE, LATENT}'. MINOR is the shape the
+    """convergence AC-006 — 'or with a tier outside {LIVE, LATENT}'. MINOR is the shape the
     abolished severity grade would return in: a value that means 'less
     important than LIVE'. It is not coerced onto LATENT, it is refused."""
     project_root, fdir = run_env
@@ -126,8 +137,9 @@ def test_a_tier_outside_the_closed_vocabulary_is_refused(run_env):
 
 
 def test_the_refusal_lists_the_accepted_tiers_from_the_vocabulary(run_env):
-    """FR-013's rule applied to this refusal: the accepted values are READ from
-    ``DEFECT_TIERS``, never hand-typed. A refusal naming a pair the runtime no
+    """process-fixes FR-013's rule applied to this refusal: the accepted values
+    are READ from ``DEFECT_TIERS``, never hand-typed. A refusal naming a pair
+    the runtime no
     longer accepts is the drift the vocabulary module exists to stop."""
     project_root, _ = run_env
 
@@ -147,9 +159,9 @@ def test_the_refusal_lists_the_accepted_tiers_from_the_vocabulary(run_env):
         )
 
 
-# --- AC-006 / FR-029 / OT-004: the LATENT negative-result statement ----------
+# --- convergence AC-006 / FR-029 / OT-004: the LATENT negative-result statement ---
 def test_a_latent_filing_without_a_statement_is_refused_naming_it(run_env):
-    """OT-004 verbatim: 'A Foundry-Defect call with tier LATENT and no
+    """convergence OT-004 verbatim: 'A Foundry-Defect call with tier LATENT and no
     reproduction_attempted is refused naming the field; the same call with the
     statement succeeds and stores both.' This is the first half."""
     project_root, fdir = run_env
@@ -172,7 +184,7 @@ def test_a_latent_filing_without_a_statement_is_refused_naming_it(run_env):
 
 @pytest.mark.parametrize("placeholder", ["n/a", "none", "TBD", "  todo  ", ""])
 def test_a_placeholder_statement_is_refused_by_name(run_env, placeholder):
-    """FR-029 verbatim: 'a placeholder or empty statement is refused by name'.
+    """convergence FR-029 verbatim: 'a placeholder or empty statement is refused by name'.
 
     The placeholders are the spellings of 'I did not': a LATENT filing's whole
     evidence IS the negative result, so a token in that field is a filing with
@@ -196,7 +208,7 @@ def test_a_placeholder_statement_is_refused_by_name(run_env, placeholder):
 
 
 def test_a_too_short_statement_is_refused(run_env):
-    """FR-029 — the content check. A statement shorter than the floor cannot
+    """convergence FR-029 — the content check. A statement shorter than the floor cannot
     carry both a subject and a negative result, so it is a token by another
     spelling and is refused for the same reason a placeholder is."""
     project_root, _ = run_env
@@ -217,7 +229,7 @@ def test_a_too_short_statement_is_refused(run_env):
 
 
 def test_a_latent_filing_with_a_real_statement_stores_both_fields(run_env):
-    """OT-004, second half: 'the same call with the statement succeeds and
+    """convergence OT-004, second half: 'the same call with the statement succeeds and
     stores both.'"""
     project_root, fdir = run_env
     statement = "AST sweep of both roots finds 0 sites"
@@ -240,9 +252,9 @@ def test_a_latent_filing_with_a_real_statement_stores_both_fields(run_env):
     assert record["reproduction_attempted"] == statement
 
 
-# --- AC-007 / CT-003 / FR-005 / OT-005: the LATENT security denylist ---------
+# --- convergence AC-007 / CT-003 / FR-005 / OT-005: the LATENT security denylist ---
 def test_a_latent_security_property_claim_is_refused_and_fires_the_tripwire(run_env):
-    """OT-005 verbatim: 'A LATENT filing whose description asserts an
+    """convergence OT-005 verbatim: 'A LATENT filing whose description asserts an
     authentication property is refused naming SECURITY_PROPERTY_CLAIM and a
     tripwire record appears.'
 
@@ -296,9 +308,9 @@ def test_the_same_security_claim_filed_as_live_is_accepted(run_env):
 
 
 def test_a_spec_ref_alone_never_refuses_a_latent_filing(run_env):
-    """CT-003 verbatim: 'spec_ref alone never refuses a LATENT filing', and
-    OT-005: 'a LATENT filing citing NFR-002 with a scan-gap description is
-    accepted.'
+    """convergence CT-003 verbatim: 'spec_ref alone never refuses a LATENT filing', and
+    convergence OT-005: 'a LATENT filing citing convergence NFR-002 with a
+    scan-gap description is accepted.'
 
     ``never_demote_class`` returns SPEC_REQUIRED_BEHAVIOUR_CLAIM for ANY
     finding carrying a non-empty spec_ref, so routing the LATENT gate through
@@ -327,13 +339,13 @@ def test_a_spec_ref_alone_never_refuses_a_latent_filing(run_env):
     assert _tripwire(fdir) == [], "a spec_ref must not fire the denylist tripwire"
 
 
-# --- AC-010 / CT-002 / FR-007: class is required -----------------------------
+# --- convergence AC-010 / CT-002 / FR-007: class is required -----------------
 @pytest.mark.parametrize("defect_class", ["", "   "])
 def test_a_filing_without_a_class_is_refused_naming_it(run_env, defect_class):
-    """AC-010 verbatim: 'A filing without a non-empty class is refused at both
+    """convergence AC-010 verbatim: 'A filing without a non-empty class is refused at both
     doors'. Escalation keys on the declared class, so a filing without one
-    cannot recur as anything — it is invisible to ST-002 no matter how many
-    times its root cause comes back."""
+    cannot recur as anything — it is invisible to process-fixes ST-002 no
+    matter how many times its root cause comes back."""
     project_root, fdir = run_env
 
     result = foundry_add_defect(
@@ -384,14 +396,14 @@ def test_the_persisted_record_carries_every_c2_field(run_env):
     assert record["regression_test"] is None
     assert record["authored_by"] is None
     assert record["fix_commit"] is None
-    # ST-001 — the server's counter is still the authority and the caller's
+    # process-fixes ST-001 — the server's counter is still the authority and the caller's
     # claim is still persisted beside it. The new fields did not displace it.
     assert record["cycle"] == 0
     assert record["declared_cycle"] == 4
 
 
 def test_the_class_key_is_written_unconditionally(run_env):
-    """C-2 / FR-007 — ``class`` moved out of the trailing ``if defect_class:``
+    """C-2 / convergence FR-007 — ``class`` moved out of the trailing ``if defect_class:``
     block and into the record literal. The validator has already refused an
     absent one, so a keyless record can no longer be produced here, and
     escalation no longer has to handle a shape it can never be handed."""
@@ -412,7 +424,7 @@ def test_the_class_key_is_written_unconditionally(run_env):
 
 # --- the shared validator, driven directly (the batch door's contract) -------
 def test_the_validator_accepts_a_well_formed_live_finding():
-    """CT-001 / CT-002 — None means 'may be persisted'. Driven on the
+    """convergence CT-001 / CT-002 — None means 'may be persisted'. Driven on the
     finding-dict shape ``foundry_sync_defects`` passes through, because that
     door is casting 3's and lands in wave 3: the helper is what the two doors
     share, so it is what must be pinned before the second one arrives."""
@@ -420,7 +432,7 @@ def test_the_validator_accepts_a_well_formed_live_finding():
 
 
 def test_the_validator_accepts_a_well_formed_latent_finding():
-    """CT-001 — the LATENT lane, with the negative result named."""
+    """convergence CT-001 — the LATENT lane, with the negative result named."""
     assert (
         validate_defect_filing(
             _finding(
@@ -456,7 +468,7 @@ def test_the_validator_accepts_a_well_formed_latent_finding():
     ],
 )
 def test_the_validator_names_the_offending_field(overrides, field):
-    """OT-029's mechanism: the batch door refuses the whole batch 'naming the
+    """convergence OT-029's mechanism: the batch door refuses the whole batch 'naming the
     finding', which it can only do because the validator hands it back the
     field that failed. Every refusal is the house shape — ok/error/hint — and
     carries ``field``."""
@@ -477,7 +489,7 @@ def test_the_validator_check_order_is_locked():
     asserts a security property is refused for THAT, whatever else is also
     wrong with it, because the tripwire the doors fire keys on the returned
     refusal and an audit control a filer can switch off by also omitting a
-    field is not a control (AC-007 / OT-005 / CT-003)."""
+    field is not a control (convergence AC-007 / OT-005 / CT-003)."""
     everything_wrong = _finding(
         tier="LATENT",
         **{"class": ""},
@@ -507,9 +519,10 @@ def test_the_validator_check_order_is_locked():
 
 
 def test_the_denylist_outranks_a_tier_outside_the_vocabulary():
-    """CT-003 scopes the denylist to LATENT, and the first rung keys on the tier
-    the caller DECLARED. A filing with no tier is not a LATENT filing: it is
-    refused naming ``tier`` exactly as it always was, so the new rung cannot
+    """convergence CT-003 scopes the denylist to LATENT, and the first rung
+    keys on the tier the caller DECLARED. A filing with no tier is not a LATENT
+    filing: it is refused naming ``tier`` exactly as it always was, so the new
+    rung cannot
     swallow the tier refusal for a finding that never claimed the lane."""
     for tier in ("", None, "MINOR", "LIVE"):
         refusal = validate_defect_filing(
@@ -540,7 +553,7 @@ def test_the_denylist_outranks_a_tier_outside_the_vocabulary():
 def test_the_security_tripwire_fires_even_when_an_earlier_rung_fails(
     run_env, earlier_rung
 ):
-    """D-061 / AC-007 / OT-005 — 'a LATENT filing whose description matches the
+    """D-061 / convergence AC-007 / OT-005 — 'a LATENT filing whose description matches the
     security-property predicate is refused naming SECURITY_PROPERTY_CLAIM and a
     tripwire record is written'. Unconditional on the description matching: the
     doors fire ``record_denylist_tripwire`` only when the refusal they got back
@@ -645,7 +658,7 @@ _SECURITY_CLAIM = (
 def test_the_security_tripwire_fires_when_a_vocabulary_rung_also_fails(
     run_env, vocabulary_rung, named
 ):
-    """AC-007 / OT-005 / CT-003 / FR-005 — 'A LATENT filing whose description
+    """convergence AC-007 / OT-005 / CT-003 / FR-005 — 'A LATENT filing whose description
     matches the security-property predicate is refused naming
     SECURITY_PROPERTY_CLAIM and a tripwire record is written.'
 
@@ -792,7 +805,7 @@ def test_the_retier_transition_still_reaches_the_ledger(run_env):
     untiered record, so it sits past the exact code D-128 restructured. Walking
     the ladder instead of returning from it must leave the accepting path
     untouched — a filing that fails nothing must still classify D-001 in place
-    rather than appending beside it (FR-051 / D-077).
+    rather than appending beside it (convergence FR-051 / D-077).
     """
     project_root, fdir = run_env
     (fdir / "defects.json").write_text(
@@ -835,7 +848,7 @@ def test_the_validator_reads_the_mapping_and_nothing_else(tmp_path):
 
 
 def test_the_validator_never_raises_on_a_hostile_mapping():
-    """NFR-005 — the JSON layer can hand a filing door anything, and a tool
+    """convergence NFR-005 — the JSON layer can hand a filing door anything, and a tool
     never raises across the MCP boundary. Every value below is a shape the
     schema would reject but a direct caller can produce."""
     for hostile in (
@@ -853,14 +866,14 @@ def test_the_validator_never_raises_on_a_hostile_mapping():
 #
 # These five pinned the `file_path` rung GRIND cycle 5 added under D-089. The
 # lead REVERSED that ruling in cycle 6 (state.json spec_ambiguities entry 6)
-# because the rung contradicts FR-005's "refuses LATENT only when the
-# description matches the security-property regex", CT-001's two-refusal errors
-# cell and CT-003's "spec_ref alone never refuses a LATENT filing". They are
+# because the rung contradicts convergence FR-005's "refuses LATENT only when the
+# description matches the security-property regex", convergence CT-001's two-refusal errors
+# cell and convergence CT-003's "spec_ref alone never refuses a LATENT filing". They are
 # re-pointed rather than deleted: a rung that shipped once and was reversed
 # needs a test asserting the reversal, or the next author reads D-089's comment
 # and puts it back.
 def test_a_latent_filing_without_a_file_path_is_accepted(run_env):
-    """FR-005 verbatim: 'Server refuses LATENT only when the description
+    """convergence FR-005 verbatim: 'Server refuses LATENT only when the description
     matches the security-property regex ... naming the denylist class.'
 
     `only` is the whole word. A LATENT filing that named its tier, its class
@@ -1051,7 +1064,7 @@ def test_every_documented_latent_example_passes_the_filing_door():
     )
 
 
-# --- FR-051 / D-077: the untiered exit, at the single door too ---------------
+# --- convergence FR-051 / D-077: the untiered exit, at the single door too ---
 def _seed_untiered(fdir: Path, cycle: int = 3, **overrides) -> dict:
     """One open PRE-CHANGE record: no ``tier`` key at all, which is the point.
 
@@ -1097,8 +1110,8 @@ def _refile(project_root: str, **overrides) -> dict:
 
 
 def test_re_filing_an_untiered_record_at_the_single_door_classifies_it(run_env):
-    """FR-051 verbatim: 'blocks like LIVE UNTIL A STREAM RE-FILES IT WITH A
-    TIER.' AC-008. D-077.
+    """convergence FR-051 verbatim: 'blocks like LIVE UNTIL A STREAM RE-FILES IT WITH A
+    TIER.' convergence AC-008. D-077.
 
     D-062 implemented that exit at ONE of the two doors. Driven before this
     fix, on this ledger: Foundry-Sync returned {'retiered': 1, 'retiered_ids':
@@ -1128,8 +1141,9 @@ def test_re_filing_an_untiered_record_at_the_single_door_classifies_it(run_env):
 def test_the_single_door_retier_clears_the_blocking_bucket(run_env):
     """THE ADJACENT PATH: the gate reader, one module over.
 
-    FR-051's exit is only worth having if it MOVES something. ``_blocking_defects``
-    in ``foundry_orchestrator.py`` buckets by ``vocab.defect_tier`` and treats
+    convergence FR-051's exit is only worth having if it MOVES something.
+    ``_blocking_defects`` in ``foundry_orchestrator.py`` buckets by
+    ``vocab.defect_tier`` and treats
     TIER_UNKNOWN exactly like LIVE, and D-077's whole complaint is that through
     this door the blocking count stayed at 1. This drives that reader before
     and after."""
@@ -1303,8 +1317,9 @@ def test_a_live_refiling_stores_a_null_reproduction_statement(run_env):
 
 def test_the_retier_never_moves_a_class_the_record_already_declared(run_env):
     """A class the earlier filing declared is what escalation has been keying
-    on, so overwriting it here would move a class mid-run — every ST-002 count
-    against the old name would silently stop accruing."""
+    on, so overwriting it here would move a class mid-run — every
+    process-fixes ST-002 count against the old name would silently stop
+    accruing."""
     project_root, fdir = run_env
     _seed_untiered(fdir)
 
@@ -1317,8 +1332,9 @@ def test_the_retier_never_moves_a_class_the_record_already_declared(run_env):
 
 def test_the_retier_fills_a_class_the_record_never_had(run_env):
     """The other half: an ABSENT class is filled, so a re-tiered pre-change
-    record is not left invisible to ST-002. `class` became required only with
-    the tier axis, so a genuinely pre-change record can carry none."""
+    record is not left invisible to process-fixes ST-002. `class` became
+    required only with the tier axis, so a genuinely pre-change record can
+    carry none."""
     project_root, fdir = run_env
     _seed_untiered(fdir)
     ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
@@ -1363,7 +1379,7 @@ def test_the_helper_skips_a_record_it_could_not_name(run_env):
 
 
 def test_the_helper_tolerates_a_non_dict_historical_record():
-    """NFR-005 — it iterates through ``_dict_records`` like every other scan of
+    """convergence NFR-005 — it iterates through ``_dict_records`` like every other scan of
     this ledger. A raw loop raises ``AttributeError`` on a malformed historical
     record, and the raise would land INSIDE the transaction, aborting it and
     silently discarding the filing the stream just made."""
@@ -1433,7 +1449,7 @@ def _coverage_diff_latent(**overrides) -> dict:
 
 
 def test_a_security_claim_in_a_key_other_than_description_is_refused():
-    """AC-007 / CT-003 / FR-005: 'A LATENT filing whose description matches the
+    """convergence AC-007 / CT-003 / FR-005: 'A LATENT filing whose description matches the
     security-property predicate is refused naming SECURITY_PROPERTY_CLAIM.'
 
     D-147: `description` was read literally, so the predicate answered False
@@ -1461,7 +1477,7 @@ def test_a_security_claim_in_a_key_other_than_description_is_refused():
 
 
 def test_the_batch_door_refuses_and_audits_a_claim_in_an_invented_key(run_env):
-    """OT-005 / AC-007: refused naming SECURITY_PROPERTY_CLAIM 'and a tripwire
+    """convergence OT-005 / AC-007: refused naming SECURITY_PROPERTY_CLAIM 'and a tripwire
     record appears' — driven end to end through the door that HAS the channel.
 
     RETIRED SHAPE (D-158). This test used to drive the SINGLE door with the
@@ -1469,8 +1485,8 @@ def test_the_batch_door_refuses_and_audits_a_claim_in_an_invented_key(run_env):
     builds its finding from named parameters so its only channel besides the
     description is that field. The argument was wrong about the field:
     `reproduction_attempted` reports what a search did NOT find, so treating
-    it as a claim channel refused the LATENT filings AC-007 clause 2 and
-    OT-005 clause 2 require the door to accept. See the D-158 block below for
+    it as a claim channel refused the LATENT filings convergence AC-007 clause 2 and
+    convergence OT-005 clause 2 require the door to accept. See the D-158 block below for
     the two filings that drove that.
 
     The invented-key channel is real and it belongs to the BATCH door, which
@@ -1523,7 +1539,7 @@ def test_the_tripwire_names_the_class_the_refusal_named():
     Once the refusal keys on all the prose and the derivation keys on one
     field, one event writes two artifacts that contradict each other — and an
     auditor querying the tripwire ledger for SECURITY_PROPERTY_CLAIM finds
-    nothing for exactly the filings AC-007 is about. `tripwire_finding` is what
+    nothing for exactly the filings convergence AC-007 is about. `tripwire_finding` is what
     closes that, and this is the disagreement it closes."""
     from foundry_mcp.schemas.vocab import never_demote_class
     from foundry_mcp.tools.foundry import tripwire_finding
@@ -1553,7 +1569,7 @@ def test_a_claim_nested_below_the_top_level_is_read():
 
 
 def test_locators_and_the_escalation_class_are_not_scanned():
-    """CT-003: 'spec_ref alone never refuses a LATENT filing' — and the same
+    """convergence CT-003: 'spec_ref alone never refuses a LATENT filing' — and the same
     promise for the two locators and the escalation key beside it.
 
     `_SECURITY_RE` matches bounded tokens, so `src/auth/login.py` hits and so
@@ -1579,8 +1595,8 @@ def test_locators_and_the_escalation_class_are_not_scanned():
 
 
 def test_a_live_filing_that_states_nothing_is_refused_naming_the_description():
-    """CT-001 input: 'for LIVE the door and observed wrong result in the
-    description'. FR-004 verbatim: 'LIVE needs the reproduction (door +
+    """convergence CT-001 input: 'for LIVE the door and observed wrong result in the
+    description'. convergence FR-004 verbatim: 'LIVE needs the reproduction (door +
     observed wrong result).'
 
     D-147's secondary consequence: both doors accepted `description=''` and
@@ -1618,7 +1634,7 @@ def test_the_live_prose_floor_accepts_the_documented_shape_that_has_no_descripti
 
 
 def test_the_live_prose_floor_cannot_refuse_a_latent_filing():
-    """FR-005 verbatim: 'Server refuses LATENT only when the description
+    """convergence FR-005 verbatim: 'Server refuses LATENT only when the description
     matches the security-property regex ... naming the denylist class.' `only`
     is the whole word, and D-101 reversed a LATENT `file_path` rung for
     breaking it.
@@ -1649,7 +1665,8 @@ def test_the_scan_text_is_deterministic_for_a_given_filing():
 
 
 # --- D-158: the predicate reads what a filing CLAIMS, never what it SEARCHED
-# FOR (AC-007 clause 2 / OT-005 clause 2 / CT-003 / FR-005)
+# FOR — convergence AC-007 clause 2, convergence OT-005 clause 2,
+# convergence CT-003 and convergence FR-005
 #
 # D-147's fix widened the denylist rung from `description` to every prose value
 # a filing carries, and swept in `reproduction_attempted` — the one field whose
@@ -1679,8 +1696,9 @@ _NEGATIVE_SPACE_STATEMENTS = (
 def _renderer_gap(statement: str) -> dict:
     """A LATENT filing with a spec_ref and a non-security description.
 
-    AC-007 clause 2 and OT-005 clause 2 name exactly this shape as one the door
-    must ACCEPT. Only `reproduction_attempted` varies across the pairs above.
+    convergence AC-007 clause 2 and convergence OT-005 clause 2 name exactly
+    this shape as one the door must ACCEPT. Only `reproduction_attempted`
+    varies across the pairs above.
     """
     return {
         "source": "prove",
@@ -1699,11 +1717,11 @@ def _renderer_gap(statement: str) -> dict:
     "matched,control", _NEGATIVE_SPACE_STATEMENTS, ids=("security", "credentials")
 )
 def test_a_negative_space_statement_never_decides_a_filing(matched, control):
-    """FR-005 verbatim: 'Server refuses LATENT only when the DESCRIPTION
+    """convergence FR-005 verbatim: 'Server refuses LATENT only when the DESCRIPTION
     matches the security-property regex.'
 
     The statement names a security term because the filer SEARCHED for one and
-    found nothing — which is the evidence CT-001 demands of a LATENT filing.
+    found nothing — which is the evidence convergence CT-001 demands of a LATENT filing.
     Asserted as a pair so the property is 'this field is not consulted' rather
     than 'this sentence happens to pass'."""
     assert is_security_property_text(matched) is True, (
@@ -1724,8 +1742,8 @@ def test_a_negative_space_statement_never_decides_a_filing(matched, control):
     "matched,control", _NEGATIVE_SPACE_STATEMENTS, ids=("security", "credentials")
 )
 def test_both_real_doors_accept_the_negative_space_statement(run_env, matched, control):
-    """AC-007 clause 2 verbatim: 'a LATENT filing with a spec_ref and a
-    non-security description is accepted.' OT-005 clause 2 says the same.
+    """convergence AC-007 clause 2 verbatim: 'a LATENT filing with a spec_ref and a
+    non-security description is accepted.' convergence OT-005 clause 2 says the same.
 
     Driven through both REAL doors rather than the shared validator, because
     D-158 shipped on both and the batch door is the one a whole INSPECT stream
@@ -1769,7 +1787,7 @@ def test_both_real_doors_accept_the_negative_space_statement(run_env, matched, c
 def test_a_claim_in_the_description_is_still_refused_beside_an_innocent_statement(
     run_env,
 ):
-    """The refuse side, held while the accept side lands (AC-007 clause 1).
+    """The refuse side, held while the accept side lands (convergence AC-007 clause 1).
 
     D-158 is a narrowing, and the failure mode of a narrowing is taking the
     refusal with it. This is the same filing shape as the pair above with the
@@ -1865,7 +1883,7 @@ def test_the_pre_dispatch_rung_and_the_handler_build_one_mapping():
         f"argument the handler never receives"
     )
     unread = door_params - set(_FILING_ARGUMENT_NAMES) - {
-        "cycle",  # the server's counter is the authority (ST-001)
+        "cycle",  # the server's counter is the authority (process-fixes ST-001)
         "source",  # a closed vocabulary, and passed separately by the rung
         "defect_type",  # a closed vocabulary
         "project_root",  # not part of the filing
