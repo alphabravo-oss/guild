@@ -635,9 +635,29 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         total = spend.get("total") or {}
         if total.get("agents") or spend.get("unreported_count"):
             minutes = int(total.get("duration_ms", 0) // 60000)
+            # D-189: a phantom must not read as an attributed agent while a real
+            # dispatch sits unreported on the line below. One typo'd
+            # `Foundry-Spend` — `casting-l` for `casting-1` — rendered "over 1
+            # reported agent(s)" here and "Unreported: 1 casting-1@F3" two lines
+            # down, two agents on the display for what was ONE dispatch, with
+            # nothing distinguishing them. The COUNT is not filtered (the tokens
+            # were really spent, and `foundry_report` cross-checks that number
+            # against the ledger's distinct names — see `foundry_record_spend`);
+            # the names of the agents the run could not match are stated beside
+            # it instead, so the reader can tell which is which.
+            unmatched = spend.get("unmatched_agents")
+            unmatched = unmatched if isinstance(unmatched, list) else []
+            shown = ", ".join(str(name) for name in unmatched[:4])
+            more = f" (+{len(unmatched) - 4} more)" if len(unmatched) > 4 else ""
+            tail = (
+                f", {_BYELLOW}{len(unmatched)}{_RESET} matching no dispatch "
+                f"{_DIM}({shown}{more}){_RESET}"
+                if unmatched else ""
+            )
             lines.append(
                 f"  {_BWHITE}Spend:{_RESET}    {total.get('tokens', 0):,} tokens  "
                 f"{minutes}m  over {total.get('agents', 0)} reported agent(s)"
+                f"{tail}"
             )
         for label, section in (("by phase", "by_phase"), ("by cycle", "by_cycle")):
             buckets = spend.get(section) or {}

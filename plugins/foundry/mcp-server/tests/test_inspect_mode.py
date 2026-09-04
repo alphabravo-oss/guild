@@ -108,10 +108,23 @@ def run_env(tmp_path, monkeypatch):
     fdir = project_root / "foundry-archive" / RUN_NAME
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
 
+    # D-186: FLIPPABLE, not a constant. The permanent inactive stub this used to
+    # install is why no test in this file could reach `foundry_gate`'s
+    # `no_active_teams` arm — the arm that was shipping a refusal with no hint
+    # and displacing the width refusal this file exists to pin. A stub that can
+    # only answer one way makes the branch beside it unreachable, and an
+    # unreachable branch is one nothing can catch. Mirrors
+    # `test_orchestrator_gates.py`'s `_TEAM_SCAN` shape exactly, including the
+    # reset on every entry so no test leaks its team state into the next.
+    _TEAM_SCAN["active"] = False
     monkeypatch.setattr(
         fo,
         "_check_active_teams",
-        lambda _pr: {"active": False, "teams": [], "live_panes": []},
+        lambda _pr: {
+            "active": _TEAM_SCAN["active"],
+            "teams": ["foundry-cast"] if _TEAM_SCAN["active"] else [],
+            "live_panes": [],
+        },
     )
 
     foundry_state.set_active_run(RUN_NAME)
@@ -119,6 +132,16 @@ def run_env(tmp_path, monkeypatch):
         yield str(project_root), fdir
     finally:
         foundry_state.clear_active_run()
+
+
+#: Whether the patched `_check_active_teams` reports a registered team.
+#: Reset by `run_env` on every test; flipped by `_teams_active` (D-186).
+_TEAM_SCAN = {"active": False}
+
+
+def _teams_active(active: bool) -> None:
+    """Make the patched team scan report a registered team, or not."""
+    _TEAM_SCAN["active"] = active
 
 
 def _write_state(fdir: Path, phase: str, cycle: int = 0, **extra) -> None:
@@ -3238,3 +3261,155 @@ def test_an_unrecorded_width_carrying_a_fixed_defect_refuses_on_the_width(
     assert "Cannot open ASSAY" in gate["reason"], gate["reason"]
     assert "has not re-verified" not in gate["reason"], gate["reason"]
     assert "inspect_clean" not in gate["hint"], gate["hint"]
+
+
+# --------------------------------------------------------------------------- #
+# D-186 — AND THE RUNG BELOW THE ONE D-183 GUARDED WAS DOING THE SAME THING.
+#
+# D-183's fix wrapped the `.inspect-clean` strings in
+# `if assay_unrecorded is None and assay_width_ok:` — one rung, guarded. The
+# rung BELOW it, `no_active_teams`, then displaced the width refusal in exactly
+# the same way, and did it while assigning `reason` and NO hint at all.
+#
+# Driven through `server.call_tool` before the fix:
+#   * FULL/final_gate, one fixed defect, a registered team -> reason "Active
+#     teams: foundry-cast" beside the `.inspect-clean` hint. The hint answered a
+#     DIFFERENT check than the reason, and following it was actively harmful:
+#     `Foundry-Phase(phase='inspect_clean')` on the identical run returned ok
+#     True and set F4, so a lead who read the refusal and followed its hint
+#     crossed into ASSAY with the team still registered — defeating the exact
+#     check that refused.
+#   * DELTA/delta, one fixed defect, a registered team -> reason "Active teams:
+#     foundry-cast" with the FR-011 / AC-016 width refusal the arm above had
+#     already computed discarded. D-183's displacement, one rung lower.
+#   * teams-active as the only failure -> reason "Active teams: foundry-cast"
+#     with hint "" — a refusal with no remedy at all.
+#
+# No test could reach any of it, because this file's `run_env` monkeypatched
+# `_check_active_teams` to a permanent inactive stub. It is flippable now, and
+# these are the three drives.
+#
+# The fix is the mechanism, not a second guard: `_GateLadder` ranks every
+# failing check by whose remedy is not defeated by another failing check on the
+# same call, so WIDTH outranks TEAMS outranks the `.inspect-clean` MARKER, and
+# every arm carries a hint by the signature of `fail`.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_delta_cycle_with_an_active_team_still_refuses_on_its_width(
+    run_env, monkeypatch
+):
+    """FR-011 / AC-016 / NFR-005 — PROVE's second drive.
+
+    The ordinary DELTA cycle with a registered team: the gate computed the width
+    refusal in the arm above and the teams arm below overwrote it, which is
+    precisely the displacement D-183 was filed for, one rung lower. The width
+    refusal wins outright — `Foundry-Phase(phase='inspect_start')` is the one
+    remedy at this door that no other failing check can refuse.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "DELTA", INSPECT_DELTA_RULE)
+    _write_defects(fdir, [_fixed_defect()])
+    _teams_active(True)
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert gate["passed"] is False, gate
+    assert "DELTA width (rule delta)" in gate["reason"], gate["reason"]
+    assert "recorded mode is FULL" in gate["reason"], gate["reason"]
+    assert "Active teams" not in gate["reason"], gate["reason"]
+    assert "inspect_start" in gate["hint"], gate["hint"]
+
+    # The teams check has not been weakened — it still fails, its checklist
+    # entry still says so, and its own sentence is still PUBLISHED. Nothing is
+    # discarded; one thing speaks.
+    teams = next(c for c in gate["checklist"] if c["check"] == "no_active_teams")
+    assert teams["ok"] is False, teams
+    published = " ".join(r["reason"] for r in gate["refusals"])
+    assert "Active teams: foundry-cast" in published, gate["refusals"]
+    assert gate["refusals"][0]["reason"] == gate["reason"], gate["refusals"]
+    assert gate["refusals"][0]["hint"] == gate["hint"], gate["refusals"]
+
+
+def test_a_full_cycle_with_an_active_team_names_the_team_and_not_the_marker(
+    run_env, monkeypatch
+):
+    """CT-008 / NFR-005 — PROVE's first drive, and the harm it named.
+
+    At a FULL width the `.inspect-clean` arm's remedy is a call the server
+    accepts, so it is not refused — it is DEFEATED, which is worse: driven on
+    this run, `Foundry-Phase(phase='inspect_clean')` returns ok True and sets
+    F4, so a lead who reads "Active teams" and follows the `inspect_clean` hint
+    beside it crosses into ASSAY with the team still registered, defeating the
+    exact check that refused. The team must therefore own both strings.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "FULL", "final_gate")
+    _write_defects(fdir, [_fixed_defect()])
+    _teams_active(True)
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert gate["passed"] is False, gate
+    assert "Active teams: foundry-cast" in gate["reason"], gate["reason"]
+    assert gate["hint"], "a refusal with no stated next move is no remedy"
+    assert "Foundry-Team-Down" in gate["hint"], gate["hint"]
+    assert "inspect_clean" not in gate["hint"], gate["hint"]
+
+    # The harm, driven: the displaced hint's call SUCCEEDS here, which is why
+    # naming it while a team is registered was worse than naming nothing.
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean["ok"] is True, clean
+    assert clean["phase"] == "F4", clean
+
+
+def test_teams_active_alone_still_states_what_clears_it(run_env, monkeypatch):
+    """NFR-005 — PROVE's third drive: teams-active as the ONLY failure.
+
+    A FULL, clean, fully-streamed cycle with the marker written and one
+    registered team returned reason "Active teams: foundry-cast" and hint "" —
+    an empty remedy. The `inspect` and `grind` branches' sibling arms both read
+    their remedy off the team scan; only this copy read neither, and `hint` is
+    a required positional on `_GateLadder.fail` so a new arm cannot repeat it.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "FULL", "final_gate")
+    _write_defects(fdir, [])
+    (fdir / ".inspect-clean").write_text("2026-09-03T00:00:00+00:00\n", encoding="utf-8")
+    _teams_active(True)
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+
+    assert gate["passed"] is False, gate
+    assert "Active teams: foundry-cast" in gate["reason"], gate["reason"]
+    assert gate["hint"].strip(), gate
+    assert "Foundry-Team-Down" in gate["hint"], gate["hint"]
+    assert len(gate["refusals"]) == 1, gate["refusals"]
+
+
+def test_the_three_gate_branches_that_scan_teams_state_one_remedy(run_env):
+    """FR-026 / NFR-005 — the three copies, agreeing on the sentence.
+
+    D-186 names the divergence: "The `inspect` and `grind` branches' identical
+    active-teams arms BOTH set hint from teams_result.get(...); only the assay
+    branch's copy sets reason alone." The three fell back to three different
+    strings — one of them empty — so this asserts the ONE constant they now
+    share rather than three literals a later edit can drift apart again.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest(fdir)
+    _write_spec(fdir, ["FR-001"])
+    _write_defects(fdir, [_fixed_defect(cycle=1)])
+    (fdir / ".cast-complete").write_text("x\n", encoding="utf-8")
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+    _teams_active(True)
+
+    for phase in ("inspect", "grind", "assay"):
+        _arm(fdir)
+        gate = fo.foundry_gate(phase, project_root)
+        teams = next(
+            r for r in gate["refusals"] if "Active team" in r["reason"]
+        )
+        assert teams["hint"] == fo._TEAMS_DOWN_HINT, (phase, teams)

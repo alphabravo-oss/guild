@@ -406,9 +406,16 @@ def test_every_field_this_tool_coerces_is_named_in_one_call(run_env):
 
 def test_a_clean_call_carries_no_warnings_key_at_all(run_env):
     """A notice that is always present is a notice nobody reads. The key exists
-    only when something was actually coerced."""
+    only when something was actually coerced.
+
+    D-189: a "clean call" is one whose agent this run actually dispatched, so
+    the fixture says so. It previously recorded spend for `casting-3` on a run
+    whose dispatch record was empty and called that clean — which is precisely
+    the state CT-013 asks to be warned about, asserted as the silent case.
+    """
     project_root, fdir = run_env
     _write_state(fdir)
+    _write_spawns(fdir, [{"agent": "casting-3", "phase": "grind"}])
 
     result = foundry_record_spend("casting-3", "F3", 1000, 2000,
                                   project_root=project_root)
@@ -452,6 +459,187 @@ def test_with_no_active_run_it_says_so_rather_than_writing_anywhere(run_env):
     assert result.get("ok") is not True
     assert "No active foundry run" in result["error"]
     assert result["hint"]
+
+
+# --------------------------------------------------------------------------- #
+# D-189 — CT-013's ERRORS CELL NAMED A SIGNAL THE DOOR NEVER EMITTED.
+#
+# The cell reads "none; unknown agent is recorded with a warning". The door
+# warned on a DIFFERENT condition than the one the contract names — an EMPTY
+# agent name, which `_identity` files under the literal id "unknown" — so the
+# one signal that catches a mistyped agent never fired. Driven through
+# `server.call_tool` on a synthetic run: `agent='casting-99-never-dispatched'`
+# returned ok True with no warnings key at all, and so did `agent='who-is-this'`.
+#
+# The implemented condition was "the caller named no agent"; CT-013's condition
+# is "the agent is unknown", and a name this run has never dispatched is exactly
+# the latter. Nothing refuses here and nothing should — the errors cell says
+# "none". The missing half was the warning beside the acceptance.
+# --------------------------------------------------------------------------- #
+
+
+def test_an_agent_this_run_never_dispatched_is_warned_about(run_env):
+    """CT-013 verbatim: 'none; unknown agent is recorded with a warning.'
+
+    Both names PROVE drove, and the drive that localised the defect: this run
+    dispatched casting-1 and nothing else, so an id that resolves to no row in
+    the dispatch record is the contract's own "unknown agent".
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [{"agent": "casting-1", "phase": "grind"}])
+
+    for unknown in ("casting-99-never-dispatched", "who-is-this", "casting-l"):
+        result = foundry_record_spend(unknown, "F3", 1000, 2000,
+                                      project_root=project_root)
+        assert result["ok"] is True, result
+        assert "error" not in result
+        said = " ".join(result["warnings"])
+        assert unknown in said, (unknown, said)
+        assert "no dispatch" in said, (unknown, said)
+        # The record this run DOES hold is named, so the lead can see the id
+        # they meant beside the one they typed.
+        assert "casting-1" in said, (unknown, said)
+
+    # ...and the dispatched id itself is silent, so the warning discriminates.
+    clean = foundry_record_spend("casting-1", "F3", 1000, 2000,
+                                 project_root=project_root)
+    assert "warnings" not in clean, clean
+
+
+def test_the_unknown_agent_and_the_empty_name_are_two_separate_warnings(run_env):
+    """CT-013 / D-004: an empty name and an unrecognised name are different
+    mistakes with different remedies — supply the name, versus correct it — so
+    they may not collapse into one sentence.
+
+    The empty-name case keeps `_identity`'s own warning and gains no second one:
+    "unknown" is the id the coercion writes, and reporting it as an agent the
+    dispatch record does not name would be the same fact said twice.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [{"agent": "casting-1", "phase": "grind"}])
+
+    empty = foundry_record_spend("", "F3", 10, 10, project_root=project_root)
+    unknown = foundry_record_spend("casting-l", "F3", 10, 10,
+                                   project_root=project_root)
+
+    assert empty["ok"] is True and unknown["ok"] is True
+    assert len(empty["warnings"]) == 1, empty["warnings"]
+    assert "empty or missing" in empty["warnings"][0]
+    assert "no dispatch" not in " ".join(empty["warnings"]), empty["warnings"]
+
+    assert len(unknown["warnings"]) == 1, unknown["warnings"]
+    assert "no dispatch" in unknown["warnings"][0]
+    assert "empty or missing" not in unknown["warnings"][0]
+
+
+def test_the_unknown_agent_is_recorded_and_counted_not_dropped(run_env):
+    """CT-013's operative word: the unknown agent is RECORDED with a warning.
+
+    The tokens were really spent; only the attribution is in doubt. Dropping the
+    row, or holding it out of `spend.total.agents`, would answer "what did this
+    phase cost" with a number wrong in the other direction — and
+    `foundry_report._read_spend` cross-checks that roll-up against the ledger's
+    DISTINCT NAMES, so a filter on one side manufactures a false "stale
+    roll-up" disagreement on the other (D-038 / D-090).
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [{"agent": "casting-1", "phase": "grind"}])
+
+    result = foundry_record_spend("casting-l", "F3", 99_000, 600_000,
+                                  project_root=project_root)
+
+    assert result["warnings"], result
+    rows = _ledger(fdir)
+    assert [r["agent"] for r in rows] == ["casting-l"]
+    assert result["total"]["tokens"] == 99_000
+    assert result["total"]["agents"] == 1
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["spend"]["total"]["agents"] == 1
+    # And the ledger the report cross-checks against agrees with the roll-up.
+    ledger_names = {r["agent"] for r in rows}
+    assert len(ledger_names) == state["spend"]["total"]["agents"]
+
+
+def test_the_warning_reaches_the_lead_through_the_spend_display(run_env):
+    """NFR-005 — the lead reads the rendered box, not the raw dict, so a warning
+    the formatter drops is exactly as silent as no warning at all. Same adjacent
+    path D-004's own display test walks, on the new condition."""
+    from foundry_mcp.tools.display import format_result
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [{"agent": "casting-1", "phase": "grind"}])
+
+    result = foundry_record_spend("casting-l", "F3", 99_000, 600_000,
+                                  project_root=project_root)
+    rendered = format_result("Foundry-Spend", result)
+
+    for warning in result["warnings"]:
+        assert warning in _plain(rendered), (warning, _plain(rendered))
+    assert "Spend recorded" in rendered
+
+
+def test_the_next_display_does_not_pass_a_phantom_off_as_an_attributed_agent(
+    run_env,
+):
+    """AC-033 / AC-034 / FR-022 — the consequence PROVE drove end to end.
+
+    One real dispatch of casting-1, then one typo. Before this change
+    Foundry-Next rendered "over 1 reported agent(s)" AND "Unreported: 1
+    casting-1@F3" — two agents on the screen for what was ONE dispatch, with
+    nothing saying which of them is a phantom. The count is deliberately not
+    filtered (see `foundry_record_spend`'s docstring); what the display now does
+    is NAME the agents no dispatch matched, beside the count, so the two lines
+    can be reconciled by the person reading them.
+    """
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_spawns(fdir, [{"agent": "casting-1", "phase": "grind"}])
+
+    foundry_record_spend("casting-l", "F3", 99_000, 600_000,
+                         project_root=project_root)
+
+    result = foundry_next_action(project_root)
+    assert result["spend"]["unmatched_agents"] == ["casting-l"]
+    assert [u["agent"] for u in result["spend"]["unreported_dispatches"]] == [
+        "casting-1"
+    ]
+
+    rendered = _plain("\n".join(_fmt_foundry_next_lines(result)))
+    assert "over 1 reported agent(s)" in rendered, rendered
+    assert "1 matching no dispatch" in rendered, rendered
+    assert "casting-l" in rendered, rendered
+    # The real dispatch is still shown as owing a number; the two facts sit
+    # side by side rather than reading as two agents.
+    assert "Unreported: 1" in rendered, rendered
+
+    # No gate refuses on any of it (CT-013 / FR-022 / AC-034).
+    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    assert "spend" not in json.dumps(foundry_gate("grind", project_root)).lower()
+
+
+def test_a_run_that_dispatched_nothing_matches_no_agent_and_says_so(run_env):
+    """The degenerate case, stated rather than exempted.
+
+    A synthetic run — which is what PROVE drove — has no `spawns.log` and no
+    stream roster, so NO agent resolves and every one of them is unknown. That
+    is the honest answer, and exempting it would have left the filed drive
+    unfixed while adding a second condition the contract does not state.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+
+    result = foundry_record_spend("casting-3", "F3", 10, 10,
+                                  project_root=project_root)
+
+    assert result["ok"] is True, result
+    said = " ".join(result["warnings"])
+    assert "no dispatch" in said and "nothing yet" in said, said
 
 
 # --------------------------------------------------------------------------- #
@@ -1448,6 +1636,11 @@ _NEXT_COUNT_LINES = (
      ("spend", "unreported_count"), ("spend", "unreported_dispatches")),
     ("Spend", r"over (\d+) reported agent\(s\)",
      ("spend", "total", "agents"), None),
+    # D-189: the second integer on the Spend line. Registered here for the same
+    # reason every other one is — a count on the screen that no result field
+    # states is the D-179 shape, and this line now carries two.
+    ("Spend", r",\s+(\d+) matching no dispatch",
+     None, ("spend", "unmatched_agents")),
     ("Waiting", r"Waiting:\s+(\d+) agent\(s\)",
      ("waiting_on_agents", "count"), None),
     ("PROVE", r"PROVE:\s+(\d+) row\(s\)",
@@ -1515,6 +1708,10 @@ def test_every_counted_next_line_renders_the_integer_its_result_states():
                 {"agent": "casting-2", "phase": "F1"},
             ],
             "unreported_count": 2,
+            # D-189: two agents the dispatch record could not match, a length
+            # that differs from every other integer in this payload so the
+            # renderer cannot pass by reading the wrong one.
+            "unmatched_agents": ["casting-l", "who-is-this"],
         },
         "executing_server": {
             "server_version": "4.10.0", "plugin_version": "4.10.0",

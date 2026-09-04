@@ -12206,3 +12206,169 @@ def test_a_nested_finding_missing_two_fields_names_both_on_that_finding():
     assert set(refusal["missing_fields"]) == {
         "findings[1].class", "findings[1].tier",
     }, refusal["missing_fields"]
+
+
+# --------------------------------------------------------------------------- #
+# D-186 — THE GATE LADDER: ONE REFUSAL SPEAKS, AND IT IS THE ONE TO ACT ON.
+#
+# `foundry_gate`'s branches were ladders of independent checks, each writing the
+# function-locals `passed`, `reason` and `hint`, so the LAST failing check owned
+# the two strings a terminal prints. That is a GENERATOR, not a bug in one rung:
+# D-183 guarded the `.inspect-clean` rung and the rung below it —
+# `no_active_teams` — did the same thing one cycle later, while assigning
+# `reason` and no hint at all.
+#
+# The three drives are in `test_inspect_mode.py`, beside the D-183 block they
+# extend. What is pinned HERE is the mechanism itself, so a rung added later
+# cannot reintroduce either half: the ordering is declared rather than
+# positional, no computed refusal is discarded, and no arm can claim `reason`
+# without stating what clears it.
+# --------------------------------------------------------------------------- #
+
+
+def test_every_gate_refusal_states_a_remedy():
+    """NFR-005: 'Every new refusal and notice reads correctly in an interactive
+    terminal session.' A refusal with an empty `hint` states no next move.
+
+    Derived from the module's own AST rather than from a list of arms, which is
+    the whole reason it will still hold for the rung nobody has written yet:
+    `_GateLadder.fail` takes `hint` as a required positional, so an arm that
+    claims `reason` and states no remedy is not expressible, and this asserts
+    that no call site evades it with an empty literal.
+    """
+    source = Path(fo.__file__).read_text(encoding="utf-8")
+    gate = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "foundry_gate"
+    )
+
+    calls = [
+        node for node in ast.walk(gate)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "fail"
+    ]
+    assert calls, "foundry_gate records no failing check through the ladder"
+    for call in calls:
+        assert len(call.args) == 3 and not call.keywords, ast.dump(call)
+        rank, reason, hint = call.args
+        for arg, label in ((reason, "reason"), (hint, "hint")):
+            if isinstance(arg, ast.Constant):
+                assert str(arg.value).strip(), f"empty {label} at line {call.lineno}"
+        assert isinstance(rank, ast.Name) and rank.id.startswith("_GATE_RANK_"), (
+            "a rank must be one of the named constants, so the ordering is "
+            f"readable in one place (line {call.lineno})"
+        )
+
+    # ...and the three locals the last-writer-wins ladder ran on are gone, so
+    # there is nothing left for a new arm to overwrite.
+    stored = {
+        node.id for node in ast.walk(gate)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    assert not (stored & {"passed", "reason", "hint"}), sorted(stored)
+
+
+def test_the_refusal_that_speaks_is_the_highest_ranked_one(run_env):
+    """FR-011 / AC-016 / CT-008 — the ordering rule, on a run failing four
+    checks at once.
+
+    `reason` and `hint` are the pair a terminal prints, and they come from ONE
+    check — the highest-ranked failing one, whose remedy no other failing check
+    can defeat. Every other failing check's sentence is still published under
+    `refusals`, because "the width refusal the arm above computed is discarded"
+    is how D-186 names the harm: nothing is discarded now, one thing speaks.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F2", cycle=1)
+    # Open LIVE defect + no recorded width + no streams + no marker + a team.
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    _teams_active(True)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("assay", project_root)
+
+    assert gate["passed"] is False, gate
+    ranks = [r["rank"] for r in gate["refusals"]]
+    assert ranks == sorted(ranks), gate["refusals"]
+    assert len(ranks) >= 4, gate["refusals"]
+    assert gate["reason"] == gate["refusals"][0]["reason"], gate
+    assert gate["hint"] == gate["refusals"][0]["hint"], gate
+    assert all(r["hint"].strip() for r in gate["refusals"]), gate["refusals"]
+
+    # The width is the top rank at this door: `Foundry-Phase(inspect_start)` is
+    # the one remedy here that no other failing check refuses.
+    assert "Cannot open ASSAY" in gate["reason"], gate["reason"]
+    # ...and every check that failed is still named, in rank order.
+    published = " ".join(r["reason"] for r in gate["refusals"])
+    for fragment in ("Active teams", "D-001", "streams incomplete"):
+        assert fragment in published, (fragment, gate["refusals"])
+
+
+def test_a_passing_gate_publishes_no_refusals_at_all(run_env):
+    """A key that is always present is a key nobody reads — the same rule
+    `Foundry-Spend`'s warnings follow. `refusals` accompanies `reason`, and both
+    exist only when the gate refused."""
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _ready_for_the_end_gates(project_root, fdir)
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("assay", project_root)
+
+    assert gate["passed"] is True, gate
+    assert "refusals" not in gate and "reason" not in gate, gate
+
+
+def test_the_grind_gate_names_the_ledger_before_the_tasks_marker(run_env):
+    """FR-026 / NFR-005 — the same rule applied to the branch beside the one
+    D-186 was driven on, and stated because it CHANGES what a lead is told.
+
+    Under the last-writer-wins ladder a GRIND gate with an empty ledger and no
+    `.tasks-generated` marker answered "defects-to-tasks has not been run" with
+    the remedy "Call Foundry-Tasks before entering GRIND" — a call that has
+    nothing to packet on a ledger with nothing open, so following it cannot
+    change this gate's answer. The ledger read outranks the marker now.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _defect_ledger(fdir, [])
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("grind", project_root)
+
+    assert gate["passed"] is False, gate
+    assert gate["reason"] == "No open defects to grind", gate["reason"]
+    assert "skip to ASSAY" in gate["hint"], gate["hint"]
+    published = [r["reason"] for r in gate["refusals"]]
+    assert "defects-to-tasks has not been run" in published, published
+
+
+def test_the_inspect_gate_names_the_teammates_before_the_sight_url(run_env):
+    """FR-026 / NFR-005 — the third branch that scans teams, same rule.
+
+    Under source order the sight-URL check spoke last, so a run with a
+    registered team AND no target_url was told to edit `manifest.json` while a
+    teammate was still holding the tree. Shutting the team down is refused by
+    nothing and everything else waits on it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/ui/App.tsx"], no_ui=False)
+    (fdir / ".cast-complete").write_text("x\n", encoding="utf-8")
+    _teams_active(True)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("inspect", project_root)
+
+    assert gate["passed"] is False, gate
+    assert "Active teammates" in gate["reason"], gate["reason"]
+    assert gate["hint"] == fo._TEAMS_DOWN_HINT, gate["hint"]
+    # Non-vacuous: the check this arm has to OUTRANK really did fail, and its
+    # own sentence is published rather than thrown away.
+    sight = next(c for c in gate["checklist"] if c["check"] == "sight_url")
+    assert sight["ok"] is False, gate["checklist"]
+    assert any("SIGHT" in r["hint"] for r in gate["refusals"]), gate["refusals"]

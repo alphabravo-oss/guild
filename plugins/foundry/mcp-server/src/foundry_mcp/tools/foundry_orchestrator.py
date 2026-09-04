@@ -1723,6 +1723,125 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     return {"passed": passed, "reason": reason, "hint": hint, "checklist": checklist}
 
 
+# --------------------------------------------------------------------------- #
+# D-186 / D-183 / NFR-005 / FR-011 / AC-016 — ONE REFUSAL SPEAKS, AND IT IS THE
+# ONE THAT HAS TO BE ACTED ON FIRST.
+#
+# `foundry_gate`'s branches were ladders of independent checks, each writing the
+# function-locals `passed`, `reason` and `hint`, so the LAST failing check owned
+# the two strings a terminal prints. That is a generator, not a bug in one rung:
+# D-183 fixed the `.inspect-clean` rung by guarding it, and D-186 was the rung
+# BELOW it — `no_active_teams` — doing the same thing one cycle later, and doing
+# it while assigning `reason` and NO hint at all.
+#
+# Driven, before this change, through `server.call_tool` on synthetic runs:
+#   * FULL/final_gate, one fixed defect, a registered team -> reason "Active
+#     teams: foundry-cast" beside hint "Re-run the INSPECT this GRIND owes, then
+#     close it with Foundry-Phase(phase='inspect_clean')". The hint answered a
+#     different check than the reason, and FOLLOWING it was harmful: on the same
+#     run `Foundry-Phase(phase='inspect_clean')` returned ok True and set F4, so
+#     a lead reading the refusal crossed into ASSAY with the team still
+#     registered — defeating the very check that refused.
+#   * DELTA/delta, one fixed defect, a registered team -> reason "Active teams:
+#     foundry-cast", with the FR-011 / AC-016 width refusal the arm above had
+#     already computed discarded. D-183's displacement, one rung lower.
+#   * teams-active as the only failure -> reason "Active teams: foundry-cast"
+#     with hint "" — a refusal with no remedy at all.
+#
+# So the ordering is DECLARED rather than left to source position, and it is
+# declared by one rule: THE REFUSAL THAT SPEAKS IS THE ONE WHOSE REMEDY IS NOT
+# DEFEATED BY ANOTHER FAILING CHECK ON THE SAME CALL. A remedy the server would
+# reject, or that another open check makes impossible, is D-011's shape — a
+# refusal with no usable next move — and that is what ranking prevents. Ties
+# break on declaration order, so a branch's own source order still decides
+# between two checks of equal standing.
+#
+# `hint` is a REQUIRED positional on `fail`, so an arm cannot claim `reason`
+# without stating what clears it; `test_every_gate_refusal_states_a_remedy`
+# derives that obligation from this module's own AST rather than from a list.
+#
+# NOT applied to `_done_preconditions`, deliberately: that function documents an
+# explicit ordering discipline of its own ("LAST of the reason-claiming branches
+# ... means it WINS", pinned by
+# `test_done_preconditions_names_the_halt_and_lets_it_claim_the_reason`), every
+# one of its arms already carries a hint, and no instance of this class was
+# driven there. Converting it is a behaviour change to both F6 doors with
+# nothing filed behind it; the case for doing it is recorded in the run's
+# concerns.md instead of taken silently here.
+# --------------------------------------------------------------------------- #
+
+#: Remedy precedence at a gate. LOWER WINS. Each rank names the KIND of thing
+#: that is wrong, and the ordering is the order in which a lead can actually act:
+#: a remedy at rank N is not defeated by any failing check at a rank above it.
+_GATE_RANK_DELEGATED = 0   # a verdict another evaluation already ordered
+_GATE_RANK_WIDTH = 10      # the recorded INSPECT width — `inspect_start` clears
+                           # it and no other open check can refuse that call
+_GATE_RANK_TEAMS = 20      # a registered team still holds the tree; every
+                           # remedy that spawns an agent is refused until it is
+                           # down, and shutting it down is refused by nothing
+_GATE_RANK_CONFLICT = 30   # two castings own one file — teammates about to
+                           # corrupt each other's work
+_GATE_RANK_DEFECTS = 40    # the defect ledger: what GRIND is for
+_GATE_RANK_VERDICTS = 50   # the verdict ledger: what ASSAY is for
+_GATE_RANK_STREAMS = 60    # a required stream has not reported
+_GATE_RANK_MARKER = 70     # a phase marker the previous transition writes
+_GATE_RANK_CONFIG = 80     # how the run was configured or sized
+
+#: The one spelling of "shut the teammates down", so the three gate arms that
+#: fall back to it cannot drift apart again (D-186: the assay copy had no
+#: fallback at all, and the other two spelled theirs differently).
+_TEAMS_DOWN_HINT = (
+    "Shut down all teammates, call TeamDelete, then Foundry-Team-Down"
+)
+
+
+class _GateLadder:
+    """The failing checks of one `foundry_gate` branch, ranked by remedy.
+
+    ``fail(rank, reason, hint)`` records one failing check. ``outcome()``
+    returns the ``(reason, hint)`` of the LOWEST-ranked failure — ties broken by
+    declaration order — and ``refusals()`` returns every failure in that same
+    order, so a computed refusal that loses the one rendered line is still
+    PUBLISHED rather than discarded. "The width refusal the arm above computed
+    is discarded" is how D-186 names the harm; nothing is discarded now, one
+    thing simply speaks.
+    """
+
+    def __init__(self) -> None:
+        # (rank, declaration order, reason, hint) — the second element is what
+        # keeps the sort stable without depending on the sort's own guarantees.
+        self._failures: list[tuple[int, int, str, str]] = []
+
+    def fail(self, rank: int, reason: str, hint: str) -> None:
+        """Record one failing check. ``hint`` is required, and is what clears
+        THIS check — never what clears the one above or below it."""
+        self._failures.append(
+            (int(rank), len(self._failures), str(reason), str(hint))
+        )
+
+    @property
+    def passed(self) -> bool:
+        return not self._failures
+
+    def _ordered(self) -> list[tuple[int, int, str, str]]:
+        return sorted(self._failures, key=lambda item: (item[0], item[1]))
+
+    def outcome(self) -> tuple[str, str]:
+        """``(reason, hint)`` for the refusal that speaks, or two empty
+        strings when nothing failed."""
+        ordered = self._ordered()
+        if not ordered:
+            return "", ""
+        return ordered[0][2], ordered[0][3]
+
+    def refusals(self) -> list[dict]:
+        """Every failing check, highest-standing first."""
+        return [
+            {"rank": rank, "reason": reason, "hint": hint}
+            for rank, _seq, reason, hint in self._ordered()
+        ]
+
+
 def foundry_gate(
     phase: str,
     project_root: str = ".",
@@ -1780,9 +1899,10 @@ def foundry_gate(
         }
 
     checklist: list[dict] = []
-    passed = True
-    reason = ""
-    hint = ""
+    # D-186: the three locals this used to carry (`passed`, `reason`, `hint`)
+    # were a last-writer-wins ladder. Every failing check now enters the ladder
+    # with its own rank and its own remedy; see `_GateLadder` above.
+    ladder = _GateLadder()
 
     nac = fdir / ".next-action-called"
     if not nac.exists():
@@ -1843,10 +1963,13 @@ def foundry_gate(
             if kf > 8:
                 oversized.append({"id": c.get("id"), "title": c.get("title", ""), "key_files": kf})
         if oversized:
-            passed = False
             names = ", ".join(f"#{c['id']} ({c['key_files']} files)" for c in oversized)
-            reason = f"Oversized castings: {names}. Max 8 key_files per casting."
-            hint = "Split large castings into smaller ones (2-5 tasks, 2-8 files each). No teammate should get 1000 lines of work."
+            ladder.fail(
+                _GATE_RANK_CONFIG,
+                f"Oversized castings: {names}. Max 8 key_files per casting.",
+                "Split large castings into smaller ones (2-5 tasks, 2-8 files "
+                "each). No teammate should get 1000 lines of work.",
+            )
             checklist.append({"check": "casting_size", "ok": False, "oversized": oversized})
 
         file_to_casting: dict[str, list[int]] = {}
@@ -1857,32 +1980,43 @@ def foundry_gate(
         overlaps = {f: cids for f, cids in file_to_casting.items() if len(cids) > 1}
         if overlaps:
             overlap_details = [f"{f}: castings {cids}" for f, cids in overlaps.items()]
-            passed = False
-            reason = f"File overlap between castings: {'; '.join(overlap_details)}"
-            hint = "Two castings editing the same file will cause conflicts. Move shared files to an earlier casting or merge the overlapping castings."
+            # Ranked ABOVE the size check: an oversized casting is a slow wave,
+            # a shared file is two teammates overwriting each other, and the
+            # second has to be resolved before the first is worth resizing.
+            ladder.fail(
+                _GATE_RANK_CONFLICT,
+                f"File overlap between castings: {'; '.join(overlap_details)}",
+                "Two castings editing the same file will cause conflicts. Move "
+                "shared files to an earlier casting or merge the overlapping "
+                "castings.",
+            )
             checklist.append({"check": "no_file_overlap", "ok": False, "overlaps": overlaps})
         else:
             checklist.append({"check": "no_file_overlap", "ok": True})
 
     elif phase == "inspect":
         if not (fdir / ".cast-complete").exists():
-            passed = False
-            reason = "CAST not complete"
-            hint = "Complete all CAST tasks and call Foundry-Phase(phase='cast')"
+            ladder.fail(
+                _GATE_RANK_MARKER,
+                "CAST not complete",
+                "Complete all CAST tasks and call Foundry-Phase(phase='cast')",
+            )
             checklist.append({"check": "cast_complete", "ok": False})
         else:
             checklist.append({"check": "cast_complete", "ok": True})
 
         teams_result = _check_active_teams(project_root)
         if teams_result["active"]:
-            passed = False
             parts = []
             if teams_result["teams"]:
                 parts.append(f"Team dirs: {', '.join(teams_result['teams'])}")
             if teams_result.get("live_panes"):
                 parts.append(f"Live panes: {', '.join(teams_result['live_panes'])}")
-            reason = f"Active teammates: {'; '.join(parts)}"
-            hint = teams_result.get("hint", "Shut down all teammates, call TeamDelete, then Foundry-Team-Down")
+            ladder.fail(
+                _GATE_RANK_TEAMS,
+                f"Active teammates: {'; '.join(parts)}",
+                teams_result.get("hint", _TEAMS_DOWN_HINT),
+            )
             checklist.append({"check": "no_active_teams", "ok": False,
                             "teams": teams_result["teams"],
                             "live_panes": teams_result.get("live_panes", [])})
@@ -1891,9 +2025,11 @@ def foundry_gate(
 
         sight = _check_sight_required(project_root)
         if sight.get("required") and sight.get("blocked"):
-            passed = False
-            reason = sight["reason"]
-            hint = "Provide --url for SIGHT audit or update manifest.json target_url"
+            ladder.fail(
+                _GATE_RANK_CONFIG,
+                sight["reason"],
+                "Provide --url for SIGHT audit or update manifest.json target_url",
+            )
             checklist.append({"check": "sight_url", "ok": False, "reason": sight["reason"]})
         else:
             checklist.append({"check": "sight_url", "ok": True})
@@ -1902,28 +2038,38 @@ def foundry_gate(
         defects = _load_json(fdir / "defects.json")
         open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
         if open_count < 1:
-            passed = False
-            reason = "No open defects to grind"
-            hint = "Nothing to fix — skip to ASSAY"
+            # Ranked ABOVE the tasks marker: on a ledger with nothing open,
+            # `Foundry-Tasks` has nothing to packet, so telling the lead to call
+            # it — which is what the last-writer-wins ladder did — sends them to
+            # do work that cannot change this gate's answer.
+            ladder.fail(
+                _GATE_RANK_DEFECTS,
+                "No open defects to grind",
+                "Nothing to fix — skip to ASSAY",
+            )
         checklist.append({"check": f"open_defects={open_count}", "ok": open_count >= 1})
 
         teams_result = _check_active_teams(project_root)
         if teams_result["active"]:
-            passed = False
             parts = []
             if teams_result["teams"]:
                 parts.append(f"Team dirs: {', '.join(teams_result['teams'])}")
             if teams_result.get("live_panes"):
                 parts.append(f"Live panes: {', '.join(teams_result['live_panes'])}")
-            reason = f"Active teammates: {'; '.join(parts)}"
-            hint = teams_result.get("hint", "Shut down INSPECT teams first")
+            ladder.fail(
+                _GATE_RANK_TEAMS,
+                f"Active teammates: {'; '.join(parts)}",
+                teams_result.get("hint", _TEAMS_DOWN_HINT),
+            )
         checklist.append({"check": "no_active_teams", "ok": not teams_result["active"],
                          "live_panes": teams_result.get("live_panes", [])})
 
         if not (fdir / ".tasks-generated").exists():
-            passed = False
-            reason = "defects-to-tasks has not been run"
-            hint = "Call Foundry-Tasks before entering GRIND"
+            ladder.fail(
+                _GATE_RANK_MARKER,
+                "defects-to-tasks has not been run",
+                "Call Foundry-Tasks before entering GRIND",
+            )
         checklist.append({"check": "tasks_generated", "ok": (fdir / ".tasks-generated").exists()})
 
     elif phase == "assay":
@@ -1936,9 +2082,7 @@ def foundry_gate(
         defects = _load_json(fdir / "defects.json")
         open_count = blocking["blocking"]
         if open_count > 0:
-            passed = False
-            reason = blocking["reason"]
-            hint = blocking["hint"]
+            ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
         checklist.append({
             "check": (
                 f"zero_blocking_defects (live={len(blocking['live'])} "
@@ -1953,8 +2097,6 @@ def foundry_gate(
 
         streams = _check_streams_complete(project_root)
         if not streams["complete"]:
-            passed = False
-            reason = f"Verification streams incomplete: {streams.get('missing', '')}"
             # D-122 / FR-012 / AC-017 — THE HINT NAMES THE ROSTER THE
             # TRANSITION RECORDED, NOT THE ONE THAT PRE-DATES THE WIDTH.
             #
@@ -1975,12 +2117,14 @@ def foundry_gate(
             # reason's `missing` is computed from, so the two halves of one
             # refusal cannot disagree again.
             required_now = streams.get("required") or []
-            hint = (
+            ladder.fail(
+                _GATE_RANK_STREAMS,
+                f"Verification streams incomplete: {streams.get('missing', '')}",
                 "This INSPECT's recorded roster is "
                 + (", ".join(required_now) if required_now else "not recorded")
                 + f" — every one of them must complete before ASSAY. Missing: "
                 f"{streams.get('missing', '') or 'none'}. Run each missing "
-                "stream, then Foundry-Stream(stream, cycle, items_checked)."
+                "stream, then Foundry-Stream(stream, cycle, items_checked).",
             )
         checklist.append({"check": "all_streams_complete", "ok": streams["complete"],
                          "missing": streams.get("missing", "")})
@@ -2004,9 +2148,11 @@ def foundry_gate(
         assay_unrecorded = _unrecorded_width_problem(fdir)
         assay_width_ok = assay_mode.get("mode") == "FULL"
         if assay_unrecorded is not None:
-            passed = False
-            reason = f"Cannot open ASSAY — {assay_unrecorded['reason']}"
-            hint = assay_unrecorded["hint"]
+            ladder.fail(
+                _GATE_RANK_WIDTH,
+                f"Cannot open ASSAY — {assay_unrecorded['reason']}",
+                assay_unrecorded["hint"],
+            )
         # D-169 — AND THE SENTENCE STATES THE PREDICATE THIS CODE EVALUATES.
         #
         # The check is `assay_width_ok = mode == "FULL"`, and its checklist
@@ -2025,20 +2171,18 @@ def foundry_gate(
         # reads. So the mode and the rule are now reported as the FACTS they
         # are, and the condition quoted is the one evaluated one line above.
         elif not assay_width_ok:
-            passed = False
-            reason = (
+            ladder.fail(
+                _GATE_RANK_WIDTH,
                 f"cycle {assay_mode.get('cycle', '?')} ran at "
                 f"{assay_mode.get('mode') or 'unrecorded'} width (rule "
                 f"{assay_mode.get('rule') or 'unrecorded'}) — ASSAY is only "
-                "opened by an INSPECT whose recorded mode is FULL"
-            )
-            hint = (
+                "opened by an INSPECT whose recorded mode is FULL",
                 "Call Foundry-Phase(phase='inspect_start') again from F2: the "
                 "widening re-open advances the cycle, sweeps the whole evidence "
                 "corpus and records FULL. Which rule it records — final_gate "
                 "from the widening re-open, verifier_touched when the diff "
                 "cannot be measured — does not enter this check; the width "
-                "does."
+                "does.",
             )
         checklist.append({
             "check": (
@@ -2051,14 +2195,12 @@ def foundry_gate(
         if not (fdir / ".inspect-clean").exists():
             has_fixed = sum(1 for d in defects.get("defects", []) if d.get("status") == "fixed")
             if has_fixed > 0:
-                passed = False
                 # D-183 — AND IT DOES NOT DISPLACE THE WIDTH REFUSAL ABOVE IT.
                 #
-                # This branch is a ladder: every check writes `passed`, `reason`
-                # and `hint`, so the LAST failing one owns the single line a
-                # terminal renders. `has_fixed > 0` is true of every ordinary
-                # GRIND cycle — a GRIND that fixed nothing is not a GRIND — so
-                # this arm overwrote the width refusal on the normal path.
+                # `has_fixed > 0` is true of every ordinary GRIND cycle — a
+                # GRIND that fixed nothing is not a GRIND — so under the
+                # last-writer-wins ladder this arm overwrote the width refusal
+                # on the normal path.
                 #
                 # Driven through server.call_tool on a DELTA cycle carrying one
                 # fixed defect: the gate answered "GRIND fixed defects but
@@ -2077,15 +2219,22 @@ def foundry_gate(
                 # Ruling 4 in the run's spec_ambiguities and start.md's
                 # ASSAY-door paragraph both make the recorded WIDTH the whole
                 # condition: "From a cycle recorded `DELTA`: call
-                # `Foundry-Phase(phase='inspect_start')` AGAIN, from F2." So the
-                # width refusal wins outright rather than being folded into this
-                # sentence — folding would put the refused call back beside the
-                # widening one and leave the lead to pick. `passed` is still set
-                # here and the checklist entry below is still `ok: False`: the
-                # check has not been weakened, only stopped from speaking over
-                # a refusal that has to be acted on first.
-                if assay_unrecorded is None and assay_width_ok:
-                    reason = "GRIND fixed defects but INSPECT has not re-verified"
+                # `Foundry-Phase(phase='inspect_start')` AGAIN, from F2."
+                #
+                # D-186 — AND THE GUARD THAT SAID SO IS NOW THE RANK.
+                #
+                # D-183 expressed that ruling as an `if assay_unrecorded is None
+                # and assay_width_ok:` wrapper around these two strings, which
+                # fixed this rung and left the rung below it — `no_active_teams`
+                # — displacing the width refusal in exactly the same way. The
+                # ordering is declared once, in `_GATE_RANK_WIDTH` versus
+                # `_GATE_RANK_MARKER`, so this arm states its own refusal
+                # unconditionally and the ladder decides which one speaks. The
+                # check is not weakened: it still fails, and its checklist entry
+                # below is still `ok: False`.
+                ladder.fail(
+                    _GATE_RANK_MARKER,
+                    "GRIND fixed defects but INSPECT has not re-verified",
                     # D-123 / FR-044 / AC-035 — THE REMEDY NAMES A CALL THAT
                     # EXISTS.
                     #
@@ -2098,35 +2247,46 @@ def foundry_gate(
                     # AC-008 name and which FR-044's Gate-then-Phase sequence
                     # relies on. A refusal whose only stated next move is a call
                     # the server would reject is a refusal with no remedy — the
-                    # D-011 shape, on this door. Which is exactly why the guard
-                    # above is a guard and not a reordering: at a DELTA or
-                    # unrecorded width this call is refused, so naming it here
-                    # would be the same defect stated a second way.
-                    hint = (
-                        "Re-run the INSPECT this GRIND owes, then close it with "
-                        "Foundry-Phase(phase='inspect_clean') — that transition "
-                        "writes the .inspect-clean marker this check reads, and it "
-                        "is the only call that does."
-                    )
+                    # D-011 shape, on this door. It is a truthful remedy only at
+                    # a FULL width and with the teammates down, which is what
+                    # ranks WIDTH and TEAMS above this arm expresses.
+                    "Re-run the INSPECT this GRIND owes, then close it with "
+                    "Foundry-Phase(phase='inspect_clean') — that transition "
+                    "writes the .inspect-clean marker this check reads, and it "
+                    "is the only call that does.",
+                )
             checklist.append({"check": "inspect_clean", "ok": False})
         else:
             checklist.append({"check": "inspect_clean", "ok": True})
 
         teams_result = _check_active_teams(project_root)
         if teams_result["active"]:
-            passed = False
-            reason = f"Active teams: {', '.join(teams_result['teams'])}"
+            # D-186 — THIS ARM SET `reason` AND NO HINT AT ALL.
+            #
+            # Its two siblings in the `inspect` and `grind` branches both read
+            # their remedy off `teams_result`; this copy read neither, so a run
+            # whose ONLY failure was a registered team was refused with an empty
+            # `hint` — a refusal with no stated next move — and a run with a
+            # second failure inherited whatever string the arm above happened to
+            # leave behind. Both halves are closed by the same line: the remedy
+            # comes from the scan, with the ONE shared fallback the other two
+            # arms now also use.
+            ladder.fail(
+                _GATE_RANK_TEAMS,
+                f"Active teams: {', '.join(teams_result['teams'])}",
+                teams_result.get("hint", _TEAMS_DOWN_HINT),
+            )
         checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
 
     elif phase == "temper":
         verdicts = _load_json(fdir / "verdicts.json")
         non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
         if non_verified > 0:
-            passed = False
-            reason = f"{non_verified} requirement(s) not verified"
-            hint = (
+            ladder.fail(
+                _GATE_RANK_VERDICTS,
+                f"{non_verified} requirement(s) not verified",
                 "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
-                "Fix them and re-run ASSAY before entering TEMPER."
+                "Fix them and re-run ASSAY before entering TEMPER.",
             )
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
 
@@ -2137,9 +2297,7 @@ def foundry_gate(
         # either half of that.
         blocking = _blocking_defects(fdir)
         if blocking["blocking"] > 0:
-            passed = False
-            reason = blocking["reason"]
-            hint = blocking["hint"]
+            ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
         checklist.append({
             "check": (
                 f"zero_blocking_defects (live={len(blocking['live'])} "
@@ -2161,11 +2319,11 @@ def foundry_gate(
         verdicts = _load_json(fdir / "verdicts.json")
         non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
         if non_verified > 0:
-            passed = False
-            reason = f"{non_verified} requirement(s) not verified"
-            hint = (
+            ladder.fail(
+                _GATE_RANK_VERDICTS,
+                f"{non_verified} requirement(s) not verified",
                 "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
-                "Fix them and re-run ASSAY before entering NYQUIST."
+                "Fix them and re-run ASSAY before entering NYQUIST.",
             )
         checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
 
@@ -2179,9 +2337,7 @@ def foundry_gate(
         # which is the whole point of grading the evidence.
         blocking = _blocking_defects(fdir)
         if blocking["blocking"] > 0:
-            passed = False
-            reason = blocking["reason"]
-            hint = blocking["hint"]
+            ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
         checklist.append({
             "check": (
                 f"zero_blocking_defects (live={len(blocking['live'])} "
@@ -2197,9 +2353,18 @@ def foundry_gate(
         state = _load_json(fdir / "state.json")
         nyquist_on = state.get("nyquist", False)
         if not nyquist_on:
-            passed = False
-            reason = "F5.5 NYQUIST is opt-in and this run was not started with --nyquist"
-            hint = "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done')."
+            # Ranked BELOW the defect read, and that is a change from the
+            # source-order ladder this replaced. The remedy here offers
+            # "call Foundry-Gate(phase='done')" as the way past F5.5, and that
+            # call is refused while a LIVE or unknown-tier defect is open
+            # (CT-008) — so on a run failing both checks the old last-writer
+            # rendered the remedy the other failing check would reject. Same
+            # shape as D-183 and D-186, one branch over.
+            ladder.fail(
+                _GATE_RANK_CONFIG,
+                "F5.5 NYQUIST is opt-in and this run was not started with --nyquist",
+                "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done').",
+            )
         checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
 
     elif phase in ("done", "nyquist_done"):
@@ -2215,9 +2380,13 @@ def foundry_gate(
         # token other than the one it was about to call. There is one
         # definition of "the run may finish"; asking about either door asks it.
         outcome = _done_preconditions(fdir, project_root)
-        passed = outcome["passed"]
-        reason = outcome["reason"]
-        hint = outcome["hint"]
+        # D-186: `_done_preconditions` has already applied its OWN documented
+        # ordering discipline to its arms, so its single verdict enters the
+        # ladder pre-ranked and nothing here can displace it. That is what
+        # `_GATE_RANK_DELEGATED` means: not "most important", but "already
+        # ordered by the evaluation that owns these checks".
+        if not outcome["passed"]:
+            ladder.fail(_GATE_RANK_DELEGATED, outcome["reason"], outcome["hint"])
         checklist.extend(outcome["checklist"])
 
     else:
@@ -2225,10 +2394,16 @@ def foundry_gate(
                 "hint": ("Valid phases: validate, cast, inspect, grind, assay, "
                          "temper, nyquist, nyquist_done, done")}
 
-    result = {"phase": phase, "passed": passed, "checklist": checklist}
-    if not passed:
-        result["reason"] = reason
-        result["hint"] = hint
+    result = {"phase": phase, "passed": ladder.passed, "checklist": checklist}
+    if not ladder.passed:
+        result["reason"], result["hint"] = ladder.outcome()
+        # D-186: every failing check's own sentence, in the same order, so a
+        # refusal that loses the one rendered line is PUBLISHED rather than
+        # discarded — "the width refusal the arm above computed is discarded"
+        # is how the defect names the harm. `reason` and `hint` are still the
+        # single pair a terminal prints (NFR-005); this is the machine-readable
+        # rest of what the gate worked out.
+        result["refusals"] = ladder.refusals()
     else:
         # P4 (FR-005 / ST-002): a passing gate advances the guidance state.
         # Record which gate passed so the next Foundry-Next emits the
@@ -4202,6 +4377,29 @@ def _dispatched_agents(fdir: Path) -> list[dict]:
     return rows
 
 
+def _dispatched_agent_ids(fdir: Path) -> set[str]:
+    """Every agent id this run's DISPATCH RECORD names (CT-013 / D-189).
+
+    The same two sources `_unreported_dispatches` reconciles — `spawns.log`'s
+    CAST and GRIND teammates and the F2 stream roster recorded in
+    `stream-rollup.json` — read through the same `_dispatch_pairs` derivation,
+    with the phase axis dropped. CT-013's condition is "unknown AGENT", not
+    "unknown agent-phase pair": a dispatched agent whose spend is filed under a
+    phase it did not run in is a different mistake, and reporting it as an
+    unknown agent would be the false positive that teaches a lead to ignore
+    the warning.
+
+    A run with no dispatch record at all returns the empty set, and every agent
+    is then unknown, which is the honest answer: nothing was dispatched through
+    a door that records one, so there is nothing to reconcile any spend against.
+    """
+    return {
+        str(pair["agent"])
+        for pair in _dispatch_pairs(fdir, [])
+        if pair.get("agent")
+    }
+
+
 def _unreported_dispatches(fdir: Path) -> list[dict]:
     """Dispatched agents with no `spend.jsonl` line for THAT phase (AC-034).
 
@@ -4356,6 +4554,25 @@ def _spend_summary(fdir: Path) -> dict:
         "unreported_dispatches": unreported,
         "unreported_count": int(summary.get("count") or 0),
         "unreported_rows": len(unreported),
+        # D-189 — THE OTHER HALF OF THE SAME RECONCILIATION.
+        #
+        # `unreported_dispatches` names dispatches with no spend; this names
+        # spend with no dispatch. Without it, a single typo'd Foundry-Spend
+        # renders as "over 1 reported agent(s)" beside "Unreported: 1
+        # casting-1@F3" — two agents on the display for what was one dispatch,
+        # with nothing on the wire saying which of the two is a phantom. The
+        # count itself is deliberately NOT filtered (see `foundry_record_spend`'s
+        # docstring); what changes is that the display can say which agents the
+        # count could not match, so the phantom never passes as an attributed
+        # one.
+        "unmatched_agents": sorted(
+            {
+                str(r.get("agent", ""))
+                for r in _spend_ledger_rows(fdir)
+                if r.get("agent")
+            }
+            - _dispatched_agent_ids(fdir)
+        ),
     }
 
 
@@ -4387,6 +4604,23 @@ def foundry_record_spend(
     NEVER REFUSES. A malformed count is coerced to 0 and recorded; a missing run
     is the only thing that returns an error, and that is a "there is nothing to
     record against", not a judgement about the numbers.
+
+    AN UNKNOWN AGENT IS RECORDED AND COUNTED, WITH A WARNING (CT-013 / D-189).
+    CT-013's errors cell reads "none; unknown agent is recorded with a warning",
+    and RECORDED is the operative word: an agent id that matches no row in this
+    run's dispatch record gets its `spend.jsonl` line, its tokens, its
+    milliseconds and its place in every `agents` count, exactly like a
+    recognised one. The tokens were really spent — only the attribution is in
+    doubt — and a roll-up that silently dropped them would answer "what did this
+    phase cost" with a number that is wrong in the other direction. The WARNING
+    is the whole signal, and `_spend_summary` publishes `unmatched_agents` so
+    the display can name such an agent rather than let it read as an attributed
+    one. Two further reasons the count is not filtered here: `foundry_report`
+    reads `agents` off this roll-up and cross-checks it against the ledger's
+    distinct names, so a filter on one side manufactures a false disagreement on
+    the other (D-038 / D-090); and an agent legitimately spawned outside
+    Foundry-Spawn-Teammate — an ASSAY or TEMPER agent — is unmatched too, and it
+    is a real agent whose cost belongs in the total.
     """
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
@@ -4460,8 +4694,66 @@ def foundry_record_spend(
     # spelled: it is somebody's phase, and dropping it would lose the number.
     recorded_phase = _identity(phase, "phase")
     recorded_phase = DISPATCH_PHASE_TO_RUN_PHASE.get(recorded_phase, recorded_phase)
+
+    # D-189 — CT-013's SIGNAL, FIRING ON CT-013's CONDITION.
+    #
+    # CT-013's errors cell is "none; unknown agent is recorded with a warning",
+    # and the door warned on a DIFFERENT condition than the one the contract
+    # names, so the one signal that catches a mistyped agent never fired.
+    # Driven through server.call_tool on a synthetic run before this change:
+    # Foundry-Spend(agent='casting-99-never-dispatched') returned ok True with
+    # NO warnings key at all, and so did agent='who-is-this'. The only call that
+    # produced a warning was agent='' — an EMPTY name, which `_identity` files
+    # under the literal id "unknown". So the implemented condition was "the
+    # caller named no agent" while CT-013's condition is "the agent is unknown",
+    # and an agent name this run has never dispatched is exactly the latter and
+    # passed in silence. End to end: a run with one real dispatch of casting-1,
+    # then one typo — Foundry-Spend(agent='casting-l') — was accepted silently,
+    # and the next Foundry-Next rendered "over 1 reported agent(s)" AND
+    # "Unreported: 1 casting-1@F3" for what was ONE dispatch.
+    #
+    # THE TWO CONDITIONS STAY TWO WARNINGS. An empty name is a field the caller
+    # left blank; an unrecognised name is a field the caller filled in wrongly.
+    # They have different remedies — supply the name, versus correct it — so
+    # folding them into one sentence would hand the lead the wrong instruction
+    # half the time. `_identity` has already warned about the blank, and
+    # "unknown" is by construction absent from every dispatch record, so this
+    # check runs only on a name that was actually given.
+    #
+    # THE ROW IS STILL RECORDED AND STILL COUNTED, which is CT-013's own wording
+    # — "unknown agent is RECORDED with a warning" — and not merely the
+    # never-refuses clause. The tokens were really spent; only the attribution
+    # is in doubt, and dropping the row would lose a real number to fix a naming
+    # error. `spend.total.agents` therefore counts this agent like any other:
+    # `foundry_report._read_spend` cross-checks that roll-up against the
+    # ledger's DISTINCT NAMES and publishes a `disagreements` entry when the two
+    # differ, so filtering here and not there would manufacture a permanent
+    # false "stale roll-up" finding on every run carrying a typo — D-038 and
+    # D-090's class, which is two derivations of one number. What the display
+    # does instead is NAME the unmatched agents beside the count, so a phantom
+    # is never read as an attributed agent (see `_spend_summary`).
+    recorded_agent = _identity(agent, "agent")
+    if recorded_agent != "unknown":
+        known_agents = _dispatched_agent_ids(fdir)
+        if recorded_agent not in known_agents:
+            shown = sorted(known_agents)
+            named = ", ".join(shown[:6]) + (
+                f" (+{len(shown) - 6} more)" if len(shown) > 6 else ""
+            )
+            warnings.append(
+                f"agent={recorded_agent!r} matches no dispatch this run "
+                f"recorded, so this spend cannot be reconciled against any "
+                f"agent. The dispatch record (spawns.log plus the F2 stream "
+                f"roster) names "
+                + (named if shown else "nothing yet")
+                + ". The row is recorded and counted either way — re-record it "
+                "under the dispatched id if this was a typo, and disregard "
+                "this if the agent was spawned outside Foundry-Spawn-Teammate "
+                "and Foundry-Cast-Wave."
+            )
+
     row = {
-        "agent": _identity(agent, "agent"),
+        "agent": recorded_agent,
         "phase": recorded_phase,
         "cycle": server_cycle,
         "declared_cycle": cycle,
