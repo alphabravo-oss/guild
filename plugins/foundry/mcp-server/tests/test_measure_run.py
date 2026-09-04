@@ -1182,12 +1182,12 @@ def test_malformed_stream_rollup_is_a_schema_violation(
 #
 # `stream-rollup.json`'s cycle bucket has two writers and therefore two kinds
 # of key: the stream tranches `_record_stream_rollup` accumulates, and the
-# cycle-level facts `_record_cycle_facts` writes beside them. No fixture in
+# cycle-level facts `_record_cycle_rollup` writes beside them. No fixture in
 # this file carried the second kind, which is why the roll-up reader could
 # treat every key as a stream id for a whole release without a test noticing.
 # ---------------------------------------------------------------------------
 
-#: Every non-stream key `_record_cycle_facts` writes into a cycle bucket, in
+#: Every non-stream key `_record_cycle_rollup` writes into a cycle bucket, in
 #: the shape the live archive holds them (two strings, two mappings, plus the
 #: nested `temper_entry` sub-bucket the F5 entry writes under). Spelled from
 #: `foundry-archive/daring-orca/stream-rollup.json` cycle 10 rather than

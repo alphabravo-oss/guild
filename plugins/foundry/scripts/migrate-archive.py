@@ -499,7 +499,7 @@ def _rollup_needs_rebuild(existing: Any) -> bool:
     bucket.values())`` — every key in a cycle bucket assumed to be a stream, and
     the VALUE SHAPE hand-tested. That was true of the document when it was
     written and stopped being true when the spec's Data Model widened it:
-    ``_record_cycle_facts`` writes ``inspect_mode`` and ``inspect_rule`` as
+    ``_record_cycle_rollup`` writes ``inspect_mode`` and ``inspect_rule`` as
     STRINGS into the same mapping as the stream tranches, so the two NEWEST
     fields in the document read as the OLDEST shape the tool knows.
 
@@ -640,8 +640,8 @@ def _marker_max_cycle(run_dir: Path) -> int:
     return highest
 
 
-# `_rollup_max_cycle` used to live here — "highest cycle key in the roll-up
-# ALREADY ON DISK", which is what keeps step 6's post-condition unconditional
+# A private "highest cycle key in the roll-up ALREADY ON DISK" helper used to
+# live here — that axis is what keeps step 6's post-condition unconditional
 # even for a roll-up this tool did not derive (D-060). It is gone because
 # `derive_cycle_count` reads exactly that axis, and D-084 is what a SECOND
 # reader of one artifact costs: keeping a private copy of the rollup rule
