@@ -486,7 +486,58 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "report-append-not-omit",
         "GI-006",
         START_MD,
-        "You MAY APPEND PROSE BELOW ANY SECTION. You may NEVER OMIT ONE.",
+        "Every generated section ships, and you may NEVER OMIT ONE.",
+    ),
+    # D-228 / D-230 / GI-006, lead ruling of GRIND cycle 27. The seal no longer
+    # merges the lead's prose back into the position it was typed at -- doing
+    # that needs a line-granular value comparison, and a generated row whose
+    # VALUE moved between two generations is indistinguishable from a line the
+    # lead typed, so the old merge re-emitted stale generated rows as "prose
+    # you appended" and a sealed report ended with two contradictory values for
+    # one question, attributed to the operator. The seal is coarser now: it
+    # carries what lies OUTSIDE the generated skeleton and nothing else. That
+    # makes WHERE the lead types load-bearing, so start.md has to say it. A
+    # lead still following "append below any section" types inside a generated
+    # body and the next terminal transition eats it, silently.
+    (
+        "report-append-under-your-own-heading",
+        "GI-006",
+        START_MD,
+        "Append your own prose UNDER YOUR OWN `## ` HEADING",
+    ),
+    (
+        "report-seal-carries-into-one-trailing-section",
+        "GI-006",
+        START_MD,
+        "copied VERBATIM into one trailing `## Lead notes (carried by the "
+        "seal)` section appended after every generated section",
+    ),
+    # The COST of the coarser rule, stated where the lead reads it. Naming the
+    # surviving positions without naming what does not survive leaves the lead
+    # to discover the loss from a diff of the archived report.
+    (
+        "report-inside-a-section-is-regenerated-away",
+        "GI-006",
+        START_MD,
+        "Prose typed INSIDE a generated section's body is NOT carried \u2014 "
+        "it is regenerated away.",
+    ),
+    # Both READMEs carry the same tools-table row, and both promised the merge
+    # this ruling replaced. Pinned per file: the row is duplicated, so a fix
+    # applied to one and not the other is exactly the D-051 half-fix.
+    (
+        "report-seal-plugin-readme",
+        "GI-006",
+        PLUGIN_README,
+        "may append prose under a heading of their own, which the F6 seal "
+        "carries verbatim",
+    ),
+    (
+        "report-seal-root-readme",
+        "GI-006",
+        ROOT_README,
+        "may append prose under a heading of their own, which the F6 seal "
+        "carries verbatim",
     ),
     (
         "report-done-refuses",
@@ -1875,4 +1926,53 @@ def test_no_owned_prose_says_a_spawn_tool_hands_back_the_prompt_text() -> None:
                 f"naming a path and a sha256; the text comes back only with "
                 f"full_prompt=true, which exists for debugging. State the "
                 f"pointer, or name the flag."
+            )
+
+
+#: Ways a file can promise the seal the cycle-27 ruling REPLACED -- a merge
+#: that put the lead's prose back below the section it was typed under. Swept
+#: over the whole corpus rather than pinned as a retired start.md spelling,
+#: because this claim was in THREE files at once (start.md's F6 step and the
+#: `Foundry-Report` row of BOTH READMEs, which are byte-identical to each
+#: other) and a per-file absence pin is what lets the third copy survive.
+#: Matched case-insensitively: start.md shouted its copy and the READMEs did
+#: not, so a case-sensitive sweep would have caught one spelling of one claim.
+_RETIRED_SEAL_PROMISES = (
+    "append prose below any section",
+    "append prose below a section",
+    "append prose below them",
+)
+
+
+def test_no_owned_prose_promises_the_pre_ruling_seal() -> None:
+    """D-228 / D-230 / GI-006: the seal carries, it does not merge.
+
+    The replaced seal told lead prose from generated prose with a line-granular
+    ``difflib`` comparison and kept the ``replace`` opcodes as the lead's, so a
+    generated row whose value moved between two generations came back as "prose
+    you appended". Driven with ZERO prose appended: the HALTED transition
+    reported ``lead_prose_lines: 11`` and the sealed document carried a stale
+    ``| GRIND cycles | 22 |  | 12 | 2 |`` directly below the fresh row saying
+    ``1``. The ruling made the seal coarser instead of better-tuned -- it
+    carries what lies OUTSIDE the generated skeleton, verbatim, into one
+    trailing ``## Lead notes (carried by the seal)`` section.
+
+    The cost is that prose typed INSIDE a generated section's body is no longer
+    carried, which turns "append below a section" from a convenience into an
+    instruction that loses the lead's work silently at the next terminal
+    transition. So the promise has to be gone from every file that makes it,
+    not merely replaced in the one a defect was filed against.
+    """
+    for path in _LEAD_PROSE_CORPUS:
+        flat = _flat(path).lower()
+        for promise in _RETIRED_SEAL_PROMISES:
+            assert promise not in flat, (
+                f"{_rel(path)} still promises {promise!r} (GI-006). The F6 "
+                f"seal carries only what lies outside the generated skeleton "
+                f"-- a heading the generator did not write, or the lines above "
+                f"the first generated section -- into one trailing `## Lead "
+                f"notes (carried by the seal)` section. Prose typed below a "
+                f"generated heading sits INSIDE that section's body and is "
+                f"regenerated away. Say where prose survives, not where it "
+                f"used to be merged back to."
             )

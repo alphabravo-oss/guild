@@ -302,7 +302,7 @@ This release is about how a run *ends*. `thunder-viper` shipped 4.9.0 in 22 GRIN
 | **Pointer dispatch** — spawn tools return a path and a sha256 instead of prompt text; the agent reads the file and states the hash, and acceptance refuses on mismatch | `Foundry-Spawn-Teammate` · `Foundry-Cast-Wave` |
 | **Liveness-aware stall detector** — a waiting-on-N-agents notice while agents are running; a stall warning only when none are | `Foundry-Next` · `Foundry-Liveness` |
 | **`Foundry-Spend`** — per-agent tokens and duration, rolled up per phase and per cycle. The lead pastes the numbers; **the server never parses a transcript**. A forgotten record is reported, never blocking | `Foundry-Spend` |
-| **`Foundry-Report`** — `REPORT.md` and `report.json` generated from the run's ledgers across eleven required sections. The lead may append prose below a section but can never omit one; `Foundry-Phase('done')` refuses a missing section | `Foundry-Report` |
+| **`Foundry-Report`** — `REPORT.md` and `report.json` generated from the run's ledgers across eleven required sections. The lead may append prose under a heading of their own, which the F6 seal carries verbatim into a trailing `Lead notes (carried by the seal)` section, but can never omit a generated section; `Foundry-Phase('done')` refuses a missing section | `Foundry-Report` |
 | **`--max-cycles N`** — caps the verify-fix cycles. Reaching the cap **succeeds** into a named `HALTED` state, generating the report; `HALTED` is not `DONE` | `setup-foundry.sh` · `Foundry-Init` · `Foundry-Phase` |
 
 ---
