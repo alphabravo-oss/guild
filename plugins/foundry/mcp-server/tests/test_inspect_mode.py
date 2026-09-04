@@ -5138,3 +5138,152 @@ def test_every_inspect_opening_door_clears_the_previous_inspects_completion_stat
         "Call _clear_stream_completion_markers after the sweep refusal and "
         "before the phase write."
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-239 — the diff every width decision reads names paths, not display strings
+# --------------------------------------------------------------------------- #
+
+
+#: The two non-ASCII paths D-239 was driven on, written as real characters so
+#: the fixtures create the filenames the defect is about. At default
+#: `core.quotepath` git prints each of these quoted and octal-escaped.
+_NON_ASCII_VERIFIER = "schemas/modèle.py"
+_NON_ASCII_KEY_FILE = "src/contrôleur.py"
+
+
+def test_a_non_ascii_verifier_path_in_the_grind_diff_still_forces_full(run_env):
+    """FR-011 verbatim: 'FULL when: ... the GRIND diff touches vocab.py,
+    SCHEMAS/, gate/orchestrator code, agent/skill prose, or the spec. Otherwise
+    DELTA.' ST-006 / AC-016 / OT-013.
+
+    D-239. `_grind_diff` ran `git diff --name-only` with neither `-z` nor
+    `core.quotepath=false`, so a non-ASCII path came back as git's DISPLAY
+    string — `"schemas/mod\\303\\250le.py"`, quotes and octal escapes included —
+    and was returned verbatim. Driven at git 2.50.1: `vocab.is_verifier_path` on
+    that string is False, because the LEADING QUOTE defeats the `(?:^|/)schemas/`
+    anchor. So the transition recorded DELTA immediately after the machinery
+    that judges the build was modified, which is the exact outcome ST-006 and
+    AC-016 exist to prevent: a narrowed INSPECT run by a verifier that just
+    changed.
+
+    Nothing about the escaping is asserted here — the assertion is the DECISION,
+    because that is what the run acts on.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, _NON_ASCII_VERIFIER)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["inspect_mode"] == "FULL", result
+    assert result["inspect_rule"] == "verifier_touched", result
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    # The recorded touched-files list is what the sweep scope and the F6 report
+    # both read, so it carries the path and not the rendering of it.
+    assert _NON_ASCII_VERIFIER in recorded["touched_files"], recorded
+    for spelling in recorded["touched_files"]:
+        assert '"' not in spelling and "\\3" not in spelling, recorded
+
+
+def test_a_touched_non_ascii_key_file_reads_as_touched(run_env):
+    """FR-042 / GI-002 verbatim: 'the set of logs swept is delta by default
+    (CASTING KEY_FILES INTERSECT THE DIFF, or command references a touched
+    file)'. AC-014 / AC-017 / FR-047 / ST-007 / OT-016.
+
+    D-239's second arm. The diff strings are compared WHOLE against the manifest
+    `key_files` and against the TEST-01 scope, so an escaped spelling makes a
+    touched declared file read as UNTOUCHED: the per-stream scope asserts a
+    false negative, and `select_sweep_scope` returns [] — so the boundary
+    re-executes none of that casting's evidence logs at the one crossing GI-002
+    says re-executes them.
+
+    A DELTA cycle is used deliberately, because that is the width at which the
+    intersection decides anything: at FULL every log is swept regardless, so the
+    bug is invisible there.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(
+        fdir, castings=[{"id": 1, "key_files": ["src/handler.py", _NON_ASCII_KEY_FILE]}]
+    )
+    _grind_touching(project_root, fdir, _NON_ASCII_KEY_FILE)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    # Not a verifier path, so the width is DELTA and the intersection matters.
+    assert result["inspect_mode"] == "DELTA", result
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["touched_files"] == [_NON_ASCII_KEY_FILE], recorded
+
+
+def test_the_diff_helper_returns_the_paths_git_names(run_env):
+    """D-239, on the helper both call sites now share.
+
+    `git_changed_paths` is asserted directly as well as through the decision,
+    because it is the name `foundry_spawn`'s cycle-context diff imports — a
+    sibling casting's call site this file cannot drive. The contract that site
+    depends on is exactly this: every path spelled as it is on disk, whatever
+    bytes it holds, and `ok` False kept distinct from an empty diff.
+    """
+    project_root, _fdir = run_env
+    root = Path(project_root)
+    base = _git(root, "rev-parse", "HEAD")
+    for rel in (_NON_ASCII_VERIFIER, _NON_ASCII_KEY_FILE, "src/plain.py"):
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x = 1\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "non-ascii work")
+
+    diff = fo.git_changed_paths(project_root, base, "HEAD")
+
+    assert diff["ok"] is True, diff
+    assert diff["files"] == sorted(
+        [_NON_ASCII_VERIFIER, _NON_ASCII_KEY_FILE, "src/plain.py"]
+    ), diff
+    assert diff["error"] == "", diff
+
+    # An UNKNOWN diff is not an empty one, and the two must stay
+    # distinguishable — a caller that confused them would run a delta roster off
+    # a diff it never obtained.
+    unknown = fo.git_changed_paths(project_root, "0" * 40, "HEAD")
+    assert unknown["ok"] is False, unknown
+    assert unknown["files"] == [], unknown
+    assert unknown["error"], unknown
+
+
+def test_the_trace_skip_reads_the_same_spelling_the_width_does(run_env):
+    """D-239's sibling call site, in this module.
+
+    `_trace_skip_check` ran its own copy of the same unguarded invocation and
+    intersects the result with the manifest `key_files` exactly as the width
+    decision does. An escaped spelling there is a SKIP of the TRACE stream on a
+    cycle that touched a declared file — the stream that would have caught the
+    change, skipped because of how git renders a filename. Both call sites go
+    through the one helper now, and this is what holds them together.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest(
+        fdir, castings=[{"id": 1, "key_files": [_NON_ASCII_KEY_FILE]}]
+    )
+    root = Path(project_root)
+    (fdir / fo.TRACE_CLEAN_AT_MARKER).write_text(
+        json.dumps({"head_sha": _git(root, "rev-parse", "HEAD")}), encoding="utf-8"
+    )
+    target = root / _NON_ASCII_KEY_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "touch the declared file")
+
+    decision = fo._trace_skip_check(fdir, project_root)
+
+    assert decision["skip"] is False, decision
+    assert _NON_ASCII_KEY_FILE in decision["details"]["changed_keyfiles"], decision

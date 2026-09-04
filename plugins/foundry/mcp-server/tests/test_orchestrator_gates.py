@@ -14899,7 +14899,17 @@ def test_a_purely_generated_report_is_left_exactly_as_generated(run_env):
     sealed = (fdir / "REPORT.md").read_text(encoding="utf-8")
     # Regenerated from the same ledgers, so the only line that may differ is the
     # banner's timestamp.
-    assert sealed.count("## ") == len(vocab.REPORT_REQUIRED_SECTIONS), sealed[:400]
+    #
+    # COUNTED AS `_md_sections` COUNTS THEM — a heading is a WHOLE TRIMMED LINE
+    # beginning `"## "` — and not as a substring. A substring count reads the
+    # generator's own banner prose, which quotes `## ` inline to tell the lead
+    # where their additions may go, and a sentence about headings is not a
+    # heading. The subject of this assertion is what the seal did to the
+    # document, so it must not move when a sibling module rewords a paragraph.
+    headings = [
+        line for line in sealed.splitlines() if line.strip().startswith("## ")
+    ]
+    assert len(headings) == len(vocab.REPORT_REQUIRED_SECTIONS), headings
 
 
 @pytest.mark.parametrize("door", _TERMINAL_DOORS)
@@ -14986,11 +14996,19 @@ def test_the_seal_carries_the_lead_block_and_nothing_generated_with_it(
     # the blank between them is one of the three lines the count names.
     assert result["lead_prose_lines"] == 3, result
     assert not result["lead_prose_error"], result
-    if door != "grind_start":
-        # `_sealed_report_sentence` is the F6 doors' spelling and names WHERE
-        # the block went. The cap has its own message and publishes the same
-        # count as a result field, which is what its own D-224 test reads.
-        assert fo._LEAD_NOTES_HEADING in result["message"], result["message"]
+    # D-233 — AND `grind_start` IS NO LONGER EXEMPT FROM THIS.
+    #
+    # This assertion used to be fenced behind `if door != "grind_start"`,
+    # excused as "the cap has its own message and publishes the same count as a
+    # result field". It publishes the field and `display.py` renders a phase
+    # result's `message` and nothing else, so the cap door SEALED the lead's
+    # prose and told the operator nothing — D-224's silence verbatim, at the
+    # third terminal door. `_lead_prose_clause` is the one spelling all three
+    # now say, so the exemption is closed by the code rather than by the test.
+    assert fo._LEAD_NOTES_HEADING in result["message"], (door, result["message"])
+    assert "3 line(s) of prose you appended" in result["message"], (
+        door, result["message"]
+    )
 
     text = _assert_lead_prose_survived(fdir)
     _assert_no_generated_row_was_duplicated(text)
@@ -15326,3 +15344,344 @@ def test_a_cap_that_is_not_a_whole_number_is_no_cap_and_says_so_at_the_door(run_
         ) is None, accepted
     assert fo._persisted_max_cycles({"max_cycles": 2.0}) == 2
     assert fo._persisted_max_cycles({}) == 0
+
+
+# --------------------------------------------------------------------------- #
+# D-233 — the cap door says what the seal did to the lead's prose
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("door", _TERMINAL_DOORS)
+def test_a_seal_that_could_not_carry_the_prose_says_so_at_every_door(
+    run_env, door, monkeypatch
+):
+    """GI-006 verbatim: 'The lead may append prose but cannot omit a section;
+    `Foundry-Phase('done')` refuses if the report is absent.' FR-045 / AC-037.
+
+    D-233. `_halt_if_capped` runs the SAME
+    `_regenerate_report_preserving_lead_prose` the two F6 doors run and puts the
+    same `lead_prose_lines` / `lead_prose_error` in its result, but it built its
+    operator-facing `message` independently of `_sealed_report_sentence` — which
+    has exactly two call sites, both F6 doors. So at the cap a FAILED write-back
+    produced no "WARNING:" anywhere the operator reads, and `display.py` renders
+    a phase result's `message` and no other field. That is the silence D-224 was
+    filed for, arriving at the third terminal door, and it is the shape D-043
+    and D-044 named: a rule enforced at one terminal transition and not the
+    other is a rule the run walks around by ending the other way.
+
+    THE FAILURE IS INDUCED AT THE WRITE-BACK, not simulated by patching the
+    message. `_regenerate_report_preserving_lead_prose` generates the document
+    first and carries the lead's block onto it second, so failing the SECOND
+    write to REPORT.md is exactly the state the requirement is about: the report
+    exists and is fresh, and the prose that was on it is gone. Anything the
+    operator is not told here, they will never learn — HALTED and F6 both
+    archive the run immediately after.
+    """
+    project_root, fdir = run_env
+    _arrange_terminal_door(fdir, door)
+    _generate_report(project_root, fdir)
+    _append_lead_prose(fdir)
+
+    real_write = Path.write_text
+    seen = {"report_writes": 0}
+
+    def _failing_write(self, data, *args, **kwargs):
+        if self.name == vocab.REPORT_MD_FILENAME:
+            seen["report_writes"] += 1
+            # The first write is the generator's. The second is the seal
+            # carrying the lead's block back on, and that is the one that fails.
+            if seen["report_writes"] >= 2:
+                raise OSError(13, "Permission denied")
+        return real_write(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _failing_write)
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete(door, project_root)
+
+    monkeypatch.undo()
+
+    # The transition still HAPPENS — a failure to preserve never costs the
+    # report and never refuses a crossing whose preconditions passed.
+    assert result["ok"] is True, result
+    assert result["report_generated"] is True, result
+    assert seen["report_writes"] >= 2, seen
+    assert result["lead_prose_error"], result
+    assert result["lead_prose_lines"] == 0, result
+    # ...and the operator is TOLD, in the one field the display renders.
+    assert "WARNING:" in result["message"], (door, result["message"])
+    assert result["lead_prose_error"] in result["message"], (door, result["message"])
+    # The warning displaces the carried-prose sentence rather than joining it:
+    # nothing was carried, so claiming it was is the D-228 defect with the sign
+    # flipped.
+    assert "prose you appended" not in result["message"], (door, result["message"])
+
+
+def test_the_three_terminal_doors_share_one_spelling_of_the_prose_clauses(run_env):
+    """D-233's design invariant, asserted on the code rather than on a message.
+
+    `_lead_prose_clause` exists so that `done`, `nyquist_done` and the cap
+    cannot come apart on what they say about the lead's own additions. A future
+    author who re-inlines either clause at one door re-creates the defect, and
+    the two-of-three coverage that hid it for a cycle is exactly why the check
+    is on the shared name.
+    """
+    import inspect
+
+    halt_src = inspect.getsource(fo._halt_if_capped)
+    sentence_src = inspect.getsource(fo._sealed_report_sentence)
+
+    for name, src in (("_halt_if_capped", halt_src),
+                      ("_sealed_report_sentence", sentence_src)):
+        assert "_lead_prose_clause(" in src, name
+        # Neither door re-spells the clauses it delegates.
+        assert "WARNING: " not in src, name
+        assert "prose you appended" not in src, name
+
+    # And the helper answers nothing at all when there is nothing to report, so
+    # a run with no prose and no failure gets no sentence about prose.
+    assert fo._lead_prose_clause(
+        {"lead_prose_lines": 0, "lead_prose_error": ""}
+    ) == ""
+    assert "WARNING: disk full" in fo._lead_prose_clause(
+        {"lead_prose_lines": 0, "lead_prose_error": "disk full"}
+    )
+    assert "4 line(s) of prose you appended" in fo._lead_prose_clause(
+        {"lead_prose_lines": 4, "lead_prose_error": ""}
+    )
+
+
+# --------------------------------------------------------------------------- #
+# D-236 — a transition is never more permissive than its own gate
+# --------------------------------------------------------------------------- #
+
+
+#: The names through which the blocking-defect read reaches a Foundry-Gate
+#: branch. `_blocking_defects` is the predicate itself; `_done_preconditions` is
+#: the shared F6 evaluation that calls it, which is how both terminal gates read
+#: defects (D-037 / D-043 / D-044). A gate branch mentioning neither reads no
+#: defects, and the invariant below therefore asks nothing of its transition.
+_DEFECT_READING_GATE_CALLS = ("_blocking_defects", "_done_preconditions")
+
+
+def _phase_literals(test: ast.AST) -> set[str]:
+    """The `phase == "x"` / `phase in ("x", "y")` literals in one branch test."""
+    found: set[str] = set()
+    for node in ast.walk(test):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not (isinstance(node.left, ast.Name) and node.left.id == "phase"):
+            continue
+        for op, comparator in zip(node.ops, node.comparators):
+            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    found.add(comparator.value)
+            elif isinstance(op, ast.In) and isinstance(
+                comparator, (ast.Tuple, ast.List, ast.Set)
+            ):
+                for element in comparator.elts:
+                    if isinstance(element, ast.Constant) and isinstance(
+                        element.value, str
+                    ):
+                        found.add(element.value)
+    return found
+
+
+def _gate_phases_reading_defects() -> set[str]:
+    """Gate phases whose OWN branch reaches the blocking-defect predicate.
+
+    Read out of `foundry_gate`'s AST, branch by branch, rather than from a list
+    maintained beside it — the same discipline `_handler_phase_tokens` applies
+    one function over, and for the same reason. A gate that GAINS the defect
+    read later joins this set the day it gains it, and the invariant below then
+    demands the matching transition on the same day.
+
+    Deliberately NOT "every gate phase": `Foundry-Gate('cast')` reads the
+    castings manifest and no defects, and the `cast` transition opens the FIRST
+    INSPECT of F2 — before any stream has filed anything. Demanding a
+    defect refusal there would deadlock a resumed run on the defects it was
+    resumed to fix.
+    """
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo.foundry_gate)))
+    reading: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        phases = _phase_literals(node.test)
+        if not phases:
+            continue
+        body = "\n".join(ast.dump(stmt) for stmt in node.body)
+        if any(name in body for name in _DEFECT_READING_GATE_CALLS):
+            reading |= phases
+    return reading
+
+
+#: The phase each gated token is called FROM, and the run flags that make that
+#: entry legal. Declared, because an arrangement cannot be derived; the SET it
+#: must cover IS derived, so a gated token added later fails the map rather than
+#: silently skipping the invariant.
+_GATED_TOKEN_ARRANGEMENT = {
+    "temper": ("F4", {"temper": True}),
+    "nyquist": ("F5", {"temper": True, "nyquist": True}),
+    # No --nyquist: with the flag set, `done` is refused from F4 and the run
+    # must leave through `nyquist_done` instead.
+    "done": ("F4", {}),
+    "nyquist_done": ("F5.5", {"temper": True, "nyquist": True}),
+}
+
+
+def _gated_tokens() -> set[str]:
+    """Tokens that are BOTH a defect-reading gate phase and a Phase branch."""
+    return _gate_phases_reading_defects() & _handler_phase_tokens()
+
+
+def test_every_defect_reading_gate_names_a_real_predicate():
+    """The derivation's own inputs exist, so the set cannot quietly go empty.
+
+    `_DEFECT_READING_GATE_CALLS` is matched against AST dumps by NAME. If one of
+    those names were renamed in the module and not here, every branch would stop
+    matching, the derived set would empty, the parametrization below would
+    vanish, and a suite full of nothing would report green — the worst failure a
+    derived pin can have.
+    """
+    for name in _DEFECT_READING_GATE_CALLS:
+        assert callable(getattr(fo, name)), name
+    assert _gate_phases_reading_defects(), "no gate branch reads defects at all"
+
+
+def test_every_gated_token_has_an_arrangement_declared():
+    """The map above covers the derived set, in both directions.
+
+    Without this, a token added to both surfaces later would not appear in the
+    parametrization and the invariant would silently stop covering it — which is
+    how a partial coverage gap becomes a defect nobody sees. The reverse
+    direction catches a stale entry for a token that stopped being gated.
+    """
+    assert _gated_tokens() == set(_GATED_TOKEN_ARRANGEMENT), {
+        "gated_but_unarranged": sorted(
+            _gated_tokens() - set(_GATED_TOKEN_ARRANGEMENT)
+        ),
+        "arranged_but_ungated": sorted(
+            set(_GATED_TOKEN_ARRANGEMENT) - _gated_tokens()
+        ),
+    }
+
+
+def _arrange_gated_token(project_root: str, fdir: Path, token: str) -> str:
+    """Put the run where `token` is legal, and return the phase it starts in."""
+    phase, flags = _GATED_TOKEN_ARRANGEMENT[token]
+    _write_spec(fdir, ["FR-1"])
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _write_manifest_with_castings(fdir, ["src/handler.py"])
+    _write_state(fdir, phase=phase, cycle=2, **flags)
+    return phase
+
+
+@pytest.mark.parametrize("tier", ["LIVE", None])
+@pytest.mark.parametrize("token", sorted(_GATED_TOKEN_ARRANGEMENT))
+def test_a_gated_transition_refuses_whatever_its_gate_refuses(run_env, token, tier):
+    """FR-006 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass
+    when the only open defects are LATENT. NYQUIST GAINS THE MISSING DEFECT READ
+    SO ONE OPEN LIVE NOW BLOCKS IT.' FR-051 / CT-008.
+
+    D-236 — THE DESIGN INVARIANT: for every phase token whose gate reads
+    defects, the TRANSITION's refusal set is a superset of the GATE's.
+    `foundry_gate` implemented FR-006 for `temper` and `nyquist`; the matching
+    `foundry_mark_phase_complete` branches read verdicts, stream markers and the
+    evidence corpus, and read NO defects at all. Driven at HEAD: a run at F5
+    with nyquist enabled, one open LIVE D-002 and the ordering token armed —
+    `Foundry-Gate('nyquist')` returned passed False naming D-002, and
+    `Foundry-Phase('nyquist')` called immediately after returned ok True and
+    moved F5 -> F5.5, generating regression tests that lock in behaviour a
+    stream had already ruled wrong. Identical on `temper` (F4 -> F5). Nothing
+    enforces gate-before-phase — `_expected_gate_for_action` is display guidance
+    — so the gate was advice and the transition was the decision.
+
+    PARAMETRIZED OVER THE DERIVED TOKEN SET, and over BOTH blocking tiers: an
+    untiered record blocks like LIVE (FR-051), and a pair that agreed on LIVE
+    and disagreed on unknown would be this defect one field over. `done` and
+    `nyquist_done` are in the set because the invariant is about every
+    defect-reading gate — they have held since D-037 bound them to
+    `_done_preconditions`, and this is what keeps them bound.
+    """
+    project_root, fdir = run_env
+    phase = _arrange_gated_token(project_root, fdir, token)
+    _defect_ledger(fdir, [_tiered("D-002", tier)])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate(token, project_root)
+    assert gate["passed"] is False, (token, tier, gate)
+    assert "D-002" in gate["reason"], (token, tier, gate)
+
+    _arm_ordering_token(fdir)
+    transition = foundry_mark_phase_complete(token, project_root)
+
+    assert transition.get("ok") is not True, (token, tier, transition)
+    assert "D-002" in (
+        str(transition.get("error", "")) + str(transition.get("hint", ""))
+    ), (token, tier, transition)
+    # A refused crossing leaves the run exactly where it was.
+    assert json.loads((fdir / "state.json").read_text())["phase"] == phase, (
+        token, tier,
+    )
+
+
+@pytest.mark.parametrize("token", sorted(_GATED_TOKEN_ARRANGEMENT))
+def test_a_latent_only_backlog_blocks_no_gated_transition(run_env, token):
+    """FR-006's OTHER half, and the one an over-broad fix would break: 'all pass
+    WHEN THE ONLY OPEN DEFECTS ARE LATENT'. AC-008 / OT-011 / CT-008.
+
+    The tier is an evidence grade, never a severity — both tiers are defects and
+    both get fixed — but a scan-derivation gap with no reachable instance must
+    not hold a run at the gate a forged evidence log holds it. A transition that
+    refused on ANY open defect would close D-236 by re-creating the cost the
+    whole tier distinction exists to remove, so the permissive direction is
+    pinned beside the refusing one.
+    """
+    project_root, fdir = run_env
+    _arrange_gated_token(project_root, fdir, token)
+    _defect_ledger(fdir, [_tiered("D-003", "LATENT")])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete(token, project_root)
+
+    assert result.get("ok") is True, (token, result)
+    assert "D-003" not in str(result.get("error", "")), (token, result)
+
+
+def test_the_temper_and_nyquist_transitions_read_the_gates_own_predicate(run_env):
+    """D-236, asserted on the code so the two cannot drift apart again.
+
+    `_blocking_defects_refusal` wraps `_blocking_defects` — the SAME function
+    `foundry_gate` calls — so the transition's answer is the gate's answer by
+    construction rather than by two authors agreeing. This is
+    `_done_preconditions`' shape one phase earlier (D-037 / D-043 / D-044), and
+    the check is on the shared name because a re-inlined copy at either branch
+    is exactly how the disagreement returned.
+    """
+    import inspect
+
+    source = inspect.getsource(fo._phase_transition)
+    assert source.count("_blocking_defects_refusal(") >= 2, source
+    for destination in ("F5 TEMPER", "F5.5 NYQUIST"):
+        assert destination in source, destination
+    # The refusal is raised BEFORE the crossing does any work: no detached
+    # worktree is created and no completion marker is cleared for a crossing
+    # that will not happen. Asserted by POSITION within each branch's source.
+    temper_at = source.index('elif phase == "temper"')
+    nyquist_at = source.index('elif phase == "nyquist"')
+    done_at = source.index('elif phase == "nyquist_done"')
+    for name, branch in (
+        ("temper", source[temper_at:nyquist_at]),
+        ("nyquist", source[nyquist_at:done_at]),
+    ):
+        refusal_at = branch.index("_blocking_defects_refusal(")
+        for later in ("_sweep_evidence_at_boundary(", "_terminal_evidence_state(",
+                      "_update_phase(", "_clear_stream_completion_markers("):
+            if later in branch:
+                assert refusal_at < branch.index(later), (name, later)

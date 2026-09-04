@@ -4145,3 +4145,190 @@ def test_rung_twos_refusal_names_the_shapes_the_rung_actually_accepts(run_env):
         assert f"{testpath}/" not in _PYTEST_DISCOVERY_PHRASE, (
             testpath, _PYTEST_DISCOVERY_PHRASE
         )
+
+
+# --------------------------------------------------------------------------- #
+# D-238 — the lane measures the path git NAMES, not the path git PRINTS
+# --------------------------------------------------------------------------- #
+
+
+#: The three non-ASCII paths D-238 was driven on. Written as real characters
+#: rather than escapes so the fixture creates the filename the defect is about;
+#: `git show --numstat` at default `core.quotepath` renders each of them as a
+#: quoted, octal-escaped display string.
+_NON_ASCII_SOURCE = "src/modèle.py"
+_NON_ASCII_TEST = "tests/test_café.py"
+
+
+def _write_non_ascii(root: Path, relative: str, lines: int) -> None:
+    """Create `relative` under `root` with `lines` lines, and stage it."""
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(f"line_{n} = {n}\n" for n in range(lines)), encoding="utf-8"
+    )
+    _git(root, "add", "--", relative)
+
+
+def test_a_non_ascii_source_path_is_measured_as_the_path_it_names(run_env):
+    """FR-016 verbatim: 'the server runs `git show --numstat` on it and refuses
+    if more than one non-test file changed or added+deleted lines exceed 20
+    (TEST FILES EXCLUDED FROM THE COUNT)'. FR-034 / CT-006 / ST-004 / AC-021.
+
+    D-238. `git show --numstat` was run with `core.quotepath` at its default
+    (true) and nothing unescaped what came back, so a non-ASCII path arrived as
+    `"tests/test_caf\\303\\251.py"` — quotes and octal escapes included — and
+    was taken verbatim. Driven in a throwaway repo at git 2.50.1: a commit
+    changing src/a.py by 20 lines plus tests/test_café.py and schemas/modèle.py
+    by one line each measured as files
+    `['"schemas/mod\\303\\250le.py"', 'src/a.py', '"tests/test_caf\\303\\251.py"']`,
+    test_files `[]`, lines 25, and the lane refused "changes 3 non-test file(s)".
+
+    BOTH HALVES OF THE DAMAGE ARE ASSERTED HERE. The test file is CLASSIFIED as
+    one — `vocab.is_test_file` cannot see a test whose derived basename ends
+    `.py"`, so FR-016's exclusion did not apply to it — and the non-test path is
+    spelled as a path a reader can resolve, because that same string becomes the
+    `file` on the GI-003 audit record.
+    """
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    _write_non_ascii(root, _NON_ASCII_SOURCE, 4)
+    _write_non_ascii(root, _NON_ASCII_TEST, 3)
+    _git(root, "commit", "-qm", "non-ascii paths")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    measured = fo._numstat_measurement(commit, project_root)
+
+    assert measured["ok"] is True, measured
+    # The path git NAMES, with no quotes and no octal escapes anywhere.
+    assert measured["files"] == [_NON_ASCII_SOURCE], measured
+    assert measured["test_files"] == [_NON_ASCII_TEST], measured
+    for spelling in measured["files"] + measured["test_files"]:
+        assert '"' not in spelling and "\\3" not in spelling, spelling
+    # FR-016's exclusion applies, so the count is the source file's alone.
+    assert measured["lines"] == 4, measured
+    assert measured["per_file"][0]["path"] == _NON_ASCII_SOURCE, measured
+
+    # ...and the lane therefore sees ONE non-test file, not three.
+    assert fo._lead_lane_problem(commit, project_root) is None
+
+
+def test_the_lead_fix_record_carries_a_non_ascii_path_a_reader_can_resolve(run_env):
+    """GI-003 verbatim: 'the server itself appends a `lead_fix` handoff record
+    carrying the defect id, tier, FILE, line count and test.' AC-022.
+
+    D-238's second consequence, which outlives the refusal: on an ACCEPTED
+    one-file fix whose source file has a non-ASCII name, the escaped display
+    bytes were what `record_lead_fix_handoff` persisted as `file`, and that
+    string flows on into handoffs.md, report.json and REPORT.md as a path
+    nothing can resolve. A measurement that is merely refused can be retried; an
+    audit trail written wrong is written wrong for the life of the run.
+    """
+    project_root, fdir = run_env
+    root = _repo(project_root)
+    _set_cycle(fdir, 3)
+    _seed_tiered(fdir, "LIVE")
+    _write_non_ascii(root, _NON_ASCII_SOURCE, 6)
+    _git(root, "commit", "-qm", "non-ascii lead fix")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    result = _mark_defect_fixed(
+        defect_id="D-001", cycle=3, authored_by="lead", fix_commit=commit,
+        adjacent_path_statement=ADJACENT_STATEMENT,
+        adjacent_path_test=ADJACENT_TEST,
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+
+    lead_fixes = [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == HANDOFF_EVENT_LEAD_FIX
+    ]
+    assert len(lead_fixes) == 1, lead_fixes
+    assert lead_fixes[0]["file"] == _NON_ASCII_SOURCE, lead_fixes[0]
+    assert lead_fixes[0]["line_count"] == 6, lead_fixes[0]
+
+
+def test_a_path_git_still_quotes_is_decoded_rather_than_taken_verbatim(run_env):
+    """FR-034 / CT-006. D-238's residual case, and the reason a FLAG alone is
+    not the whole fix.
+
+    `core.quotepath=false` stops git escaping non-ASCII BYTES. It does not stop
+    git quoting a path containing a double quote, a backslash or a control
+    character — those are quoted whatever quotepath says, because the quoting is
+    what keeps the numstat record on ONE line. Verified at git 2.50.1:
+    `git -c core.quotepath=false show --numstat` prints `"src/we\\"ird.py"` for
+    such a path. So the parse decodes what it is handed, and this is the arm
+    that proves it does.
+    """
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    weird = 'src/we"ird.py'
+    _write_non_ascii(root, weird, 3)
+    _git(root, "commit", "-qm", "quoted path")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    measured = fo._numstat_measurement(commit, project_root)
+
+    assert measured["ok"] is True, measured
+    assert measured["files"] == [weird], measured
+    assert measured["lines"] == 3, measured
+
+
+def test_a_non_ascii_rename_is_parsed_after_the_quoting_is_undone(run_env):
+    """D-075's rename parse and D-238's decode, on the same field.
+
+    The ORDER is load-bearing and this is what pins it. With
+    `core.quotepath=false` a plain non-ASCII rename arrives in the BRACED
+    display form (`tests/{a.py => b.py}`) with no quoting at all, so
+    `_numstat_rename_paths` must run first and the decode must run on each side
+    afterwards. Decoding the whole field first would consume the quotes of the
+    BARE form (`"a" => "b"`), which is what git falls back to when either side
+    needs quoting — leaving the rename parse a string it can no longer split
+    correctly. Both destinations and both sources come back as real paths.
+    """
+    project_root, _fdir = run_env
+    root = _repo(project_root)
+    _write_non_ascii(root, _NON_ASCII_SOURCE, 5)
+    _git(root, "commit", "-qm", "seed non-ascii")
+    renamed = "src/modèle_renommé.py"
+    _git(root, "mv", "--", _NON_ASCII_SOURCE, renamed)
+    _git(root, "commit", "-qm", "rename non-ascii")
+    commit = _git(root, "rev-parse", "HEAD")
+
+    measured = fo._numstat_measurement(commit, project_root)
+
+    assert measured["ok"] is True, measured
+    assert measured["files"] == [renamed], measured
+    assert measured["per_file"][0]["renamed_from"] == _NON_ASCII_SOURCE, measured
+
+
+@pytest.mark.parametrize(
+    "printed,names",
+    [
+        # Unquoted fields pass through untouched, which is the common case once
+        # `core.quotepath=false` is passed.
+        ("src/a.py", "src/a.py"),
+        ("tests/test_café.py", "tests/test_café.py"),
+        # The quoted form, byte by byte: one octal escape PER BYTE, so a
+        # multi-byte character arrives as several and only accumulates
+        # correctly if the decode collects bytes before decoding UTF-8.
+        (r'"tests/test_caf\303\251.py"', "tests/test_café.py"),
+        (r'"schemas/mod\303\250le.py"', "schemas/modèle.py"),
+        # The named escapes, and a quote and backslash inside a path.
+        (r'"src/we\"ird.py"', 'src/we"ird.py'),
+        (r'"src/back\\slash.py"', "src/back\\slash.py"),
+        (r'"src/new\nline.py"', "src/new\nline.py"),
+        (r'"src/ta\tb.py"', "src/ta\tb.py"),
+    ],
+)
+def test_the_git_path_decoder_undoes_exactly_what_git_does(printed, names):
+    """D-238. The decoder in isolation, over every form git emits.
+
+    A unit test beside the door tests, because the door can only reach the forms
+    a filesystem will hold — a path containing a newline is legal on POSIX but
+    is not something the repo fixtures above should be creating, and it is
+    precisely the form quotepath cannot switch off.
+    """
+    assert fo._decode_git_path(printed) == names

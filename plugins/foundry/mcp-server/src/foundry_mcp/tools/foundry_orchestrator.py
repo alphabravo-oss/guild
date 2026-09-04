@@ -1591,6 +1591,52 @@ def _blocking_defects(fdir: Path) -> dict:
     }
 
 
+def _blocking_defects_refusal(fdir: Path, destination: str) -> dict | None:
+    """The refusal a TRANSITION owes CT-008, or None. Same predicate as the gate.
+
+    ``destination`` names where the caller was going ("F5 TEMPER"), so the
+    refusal reads as a refusal of that crossing rather than as a gate verdict
+    the lead did not ask for.
+
+    D-236 — A TRANSITION MAY NEVER BE MORE PERMISSIVE THAN ITS OWN GATE.
+    -------------------------------------------------------------------
+    FR-006 is Locked and verbatim: "INSPECT-clean, ASSAY, TEMPER, NYQUIST and
+    DONE all pass when the only open defects are LATENT. NYQUIST gains the
+    missing defect read so one open LIVE now blocks it." `foundry_gate`
+    implements it for `temper` and `nyquist`; the matching
+    `foundry_mark_phase_complete` branches read verdicts, stream markers and the
+    evidence corpus, and read NO defects at all. Driven at HEAD: a run at F5
+    with nyquist enabled, one open LIVE D-002 and the ordering token armed —
+    `Foundry-Gate('nyquist')` returned passed False naming D-002, and
+    `Foundry-Phase('nyquist')` called immediately after returned ok True and
+    moved F5 -> F5.5. Identical on `temper` (F4 -> F5), and identical with an
+    open UNKNOWN-tier defect, which FR-051 says blocks like LIVE. Gate-before-
+    phase is enforced nowhere — `_expected_gate_for_action` is display guidance
+    — so the gate was advice and the transition was the decision.
+
+    THIS IS `_done_preconditions`' SHAPE, ONE PHASE EARLIER. D-037 / D-043 /
+    D-044 bound both F6 doors and both F6 gates to ONE evaluation so they cannot
+    disagree about what "done" means; `done` and `nyquist_done` have been safe
+    ever since for exactly that reason, while `temper` and `nyquist` — the two
+    other gated tokens — were left unbound. The predicate is `_blocking_defects`
+    itself, called here and by the gate, so the transition's refusal set is a
+    superset of the gate's by construction rather than by two authors agreeing.
+    """
+    blocking = _blocking_defects(fdir)
+    if blocking["blocking"] <= 0:
+        return None
+    return {
+        "error": (
+            f"Cannot enter {destination} — {blocking['reason']}. A LATENT-only "
+            "backlog does not block this crossing; these do (CT-008 / FR-006)."
+        ),
+        "hint": blocking["hint"],
+        "open_live_defects": blocking["live"],
+        "open_unknown_tier_defects": blocking["unknown"],
+        "open_latent_defects": blocking["latent"],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Cross-casting seam: tools/foundry_report.py (C-10) and tools/evidence.py (C-7).
 #
@@ -3514,6 +3560,145 @@ def foundry_mark_stream(
     return result
 
 
+#: D-238 — git's C-quote escapes, for the one place the quoted form survives.
+#:
+#: `core.quotepath=false` stops git escaping non-ASCII bytes, and that is the
+#: whole of the common case. It does NOT stop git quoting a path that contains a
+#: double quote, a backslash or a control character: those are quoted whatever
+#: `quotepath` says, because the quoting is what keeps such a path on ONE line.
+#: So a parse that reads git's LINE-oriented output still meets the quoted form
+#: and still has to undo it.
+_C_QUOTE_ESCAPES = {
+    "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+    "v": "\v", "\\": "\\", '"': '"',
+}
+
+
+def _decode_git_path(field: str) -> str:
+    """One path as git PRINTS it, back to the path it NAMES (D-238).
+
+    A field that is not quoted is returned unchanged, so this is safe to apply
+    to every path git hands back rather than only to the ones a caller guessed
+    might need it. A quoted field is unwrapped and its escapes are undone —
+    octal escapes accumulate as BYTES and are decoded as UTF-8 at the end,
+    because git emits one escape per byte and a multi-byte character therefore
+    arrives as several (`\\303\\251` is one `é`, not two characters).
+
+    WHY THIS EXISTS RATHER THAN A SECOND FLAG (D-238 / D-239's shared class).
+    Where git can be asked for NUL-separated output it is (`git_changed_paths`),
+    and then nothing is ever quoted and this is never reached. `git show
+    --numstat` is the one consumer that cannot take that route without changing
+    its record grammar — with `-z` a rename becomes three NUL-separated tokens
+    rather than one tab field — so it keeps the line grammar
+    `_numstat_rename_paths` parses, passes `core.quotepath=false`, and undoes
+    the residual quoting here.
+    """
+    if not isinstance(field, str):
+        return ""
+    if len(field) < 2 or not (field.startswith('"') and field.endswith('"')):
+        return field
+    body = field[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        i += 1
+        if i >= len(body):
+            # A trailing lone backslash is not an escape git would emit; keep
+            # it rather than dropping a byte the path may really carry.
+            out.extend(b"\\")
+            break
+        esc = body[i]
+        if esc in "01234567":
+            digits = ""
+            while i < len(body) and len(digits) < 3 and body[i] in "01234567":
+                digits += body[i]
+                i += 1
+            out.append(int(digits, 8) & 0xFF)
+            continue
+        out.extend(_C_QUOTE_ESCAPES.get(esc, esc).encode("utf-8"))
+        i += 1
+    return out.decode("utf-8", errors="replace")
+
+
+def git_changed_paths(
+    project_root: str, base: str, head: str = "HEAD", *, timeout: float = 30.0
+) -> dict:
+    """Repo-relative paths changed between two revisions, spelled as they ARE.
+
+    Returns ``{"ok": bool, "files": [sorted paths], "error": str}``. ``ok``
+    False means the diff is UNKNOWN, which is not the same answer as an empty
+    diff — every caller must keep the two apart.
+
+    D-239 — THE ONE INVOCATION, BECAUSE THE ESCAPED FORM WAS BEING MATCHED ON.
+    -------------------------------------------------------------------------
+    `git diff --name-only` prints a path for a HUMAN to read: with
+    `core.quotepath` at its default (true) a non-ASCII path arrives wrapped in
+    quotes with its bytes octal-escaped — `"schemas/mod\\303\\250le.py"` — and
+    every consumer of this list matches that string against something. Driven in
+    a throwaway repo at git 2.50.1: a commit touching a verifier file with a
+    non-ASCII name printed `"schemas/mod\\303\\250le.py"`, and
+    `vocab.is_verifier_path` on it is False because the leading quote defeats
+    the `(?:^|/)schemas/` anchor — so the transition recorded DELTA immediately
+    after the machinery that judges the build was modified, which is exactly
+    what ST-006 / AC-016 exist to prevent. The same strings are compared whole
+    against manifest `key_files` and `test01_scope`, so a touched declared file
+    read as untouched and `select_sweep_scope` returned [], re-executing none of
+    that casting's evidence logs at a boundary GI-002 says sweeps them.
+
+    BOTH DEFENCES, because either alone leaves a hole. `core.quotepath=false`
+    stops the octal escaping of non-ASCII bytes; `-z` stops the quoting
+    ALTOGETHER, including for a path holding a double quote or a control
+    character, which quotepath does not govern. With NUL separators there is no
+    line to keep intact, so git emits the bytes and nothing needs decoding —
+    which is why this returns paths no caller has to remember to unquote.
+
+    ONE HELPER, NOT ONE PER CALL SITE. `_grind_diff` and `_trace_skip_check`
+    both ran their own copy of this invocation and `foundry_spawn`'s
+    cycle-context diff runs a third. A rule fixed in one copy is this run's
+    repeated failure shape, so the invocation is written once here and imported
+    by the others. Public deliberately: `foundry_spawn` is a sibling casting's
+    module and it imports this name.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [
+                "git", "-C", project_root,
+                # BEFORE the subcommand: it is a git-wide config override.
+                "-c", "core.quotepath=false",
+                "diff", "--name-only", "-z",
+                # Everything after this is a revision or a path, never a flag.
+                "--end-of-options", base, head,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        return {
+            "ok": False, "files": [],
+            "error": f"git unavailable: {type(exc).__name__}",
+        }
+    if proc.returncode != 0:
+        return {
+            "ok": False, "files": [],
+            "error": f"git diff failed: {proc.stderr.strip()[:120]}",
+        }
+    return {
+        "ok": True,
+        "files": sorted({tok for tok in proc.stdout.split("\0") if tok.strip()}),
+        "error": "",
+    }
+
+
 def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     """Decide whether the current F2 INSPECT can skip the TRACE stream.
 
@@ -3550,18 +3735,17 @@ def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     if not key_files:
         return {"skip": False, "reason": "no key_files declared in manifest — cannot scope diff"}
 
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["git", "-C", project_root, "diff", "--name-only", clean_sha, "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return {"skip": False, "reason": "git unavailable"}
-    if result.returncode != 0:
-        return {"skip": False, "reason": f"git diff failed: {result.stderr.strip()[:120]}"}
+    # D-239: through the ONE invocation, so this skip decision and the width
+    # decision cannot disagree about whether a non-ASCII key_file was touched.
+    # This ran its own copy with neither `-z` nor `core.quotepath=false`, so a
+    # touched declared file whose name is not ASCII arrived escaped, missed the
+    # `key_files` set it is compared whole against, and read as untouched —
+    # which is a SKIP of the stream that would have caught the change.
+    diff = git_changed_paths(project_root, clean_sha, "HEAD", timeout=10)
+    if not diff["ok"]:
+        return {"skip": False, "reason": diff["error"]}
 
-    changed_files = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    changed_files = set(diff["files"])
     overlap = changed_files & key_files
     if overlap:
         return {
@@ -3779,25 +3963,20 @@ def _grind_diff(fdir: Path, project_root: str) -> dict:
     opposite answers and the callers must not confuse them: an unknown diff
     cannot support a delta roster, so it forces FULL and a whole-corpus sweep.
     """
-    import subprocess
-
     base, source = _boundary_base_sha(fdir)
     if not base:
         return {"files": [], "base": "", "source": "",
                 "problem": "no recorded boundary, clean TRACE or CAST baseline to diff from"}
-    try:
-        result = subprocess.run(
-            ["git", "-C", project_root, "diff", "--name-only", base, "HEAD"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+    # D-239: through the ONE invocation. This is the diff EVERY width decision
+    # reads — `is_verifier_path` for the FULL rule, the manifest `key_files` and
+    # `test01_scope` matches for the per-stream scope, and `select_sweep_scope`
+    # for which evidence logs re-execute — and it returned git's escaped display
+    # form, which none of those three comparisons can match.
+    diff = git_changed_paths(project_root, base, "HEAD", timeout=30)
+    if not diff["ok"]:
         return {"files": [], "base": base, "source": source,
-                "problem": f"git unavailable: {type(exc).__name__}"}
-    if result.returncode != 0:
-        return {"files": [], "base": base, "source": source,
-                "problem": f"git diff failed: {result.stderr.strip()[:120]}"}
-    files = sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
-    return {"files": files, "base": base, "source": source, "problem": ""}
+                "problem": diff["error"]}
+    return {"files": diff["files"], "base": base, "source": source, "problem": ""}
 
 
 def _repo_relative(project_root: str, path: Path) -> str:
@@ -5443,11 +5622,19 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         "open_live_defects": blocking["live"],
         "open_unknown_tier_defects": blocking["unknown"],
         "open_latent_defects": blocking["latent"],
+        # D-233: the prose clauses come from `_lead_prose_clause`, the ONE
+        # spelling the two F6 doors say through `_sealed_report_sentence`. This
+        # branch regenerates the report exactly as they do and said nothing
+        # about what the regeneration did to the lead's own additions — neither
+        # that they were carried, nor, when the write-back failed, that they
+        # were LOST. `display.py` renders this `message` and no other field, so
+        # a fact absent from it is a fact the operator never sees.
         "message": (
             (
                 f"Run HALTED — {reason}. The report has been generated naming "
                 f"{counts}. HALTED is not DONE: this run stopped with open "
                 "work, and the report says what."
+                + _lead_prose_clause(sealed)
             )
             if report_ok
             else (
@@ -5457,6 +5644,7 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
                 "missing. Repair what the error names, then call Foundry-Report "
                 "— it is not a phase transition, so it still runs on a halted "
                 "run. HALTED is not DONE: this run stopped with open work."
+                + _lead_prose_clause(sealed)
             )
         ),
     }
@@ -5791,26 +5979,57 @@ def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
         f"{len(latent)} open LATENT defect(s) in the F6 backlog"
         + (f": {', '.join(latent)}." if latent else ".")
     )
-    # D-224 / GI-006: a regeneration that moved the lead's own prose SAYS so.
-    # The failure this closes was silent on both halves — the prose went and
-    # the response did not mention it — so the fix reports the outcome either
-    # way rather than only when it went wrong.
-    #
-    # D-228 / D-230: and it says it ONLY when there was prose. The sentence used
-    # to fire on the difflib merge's count, which counted stale generated rows,
-    # so a run whose lead appended nothing was told it had appended eleven
-    # lines. The count now comes off `_seal_lead_prose`, which counts only what
-    # lies outside the generated skeleton, and it names the section the block
-    # was carried into so the operator can find it.
+    return sentence + _lead_prose_clause(sealed)
+
+
+def _lead_prose_clause(sealed: dict) -> str:
+    """What a sealing transition says about the lead's own prose. One spelling.
+
+    Returns "" when there was no prose and no failure — the only state in which
+    there is nothing to report — otherwise a clause beginning with a space,
+    ready to append to whatever sentence the calling door builds around it.
+
+    D-224 / GI-006: a regeneration that moved the lead's own prose SAYS so. The
+    failure this closes was silent on both halves — the prose went and the
+    response did not mention it — so the outcome is reported either way rather
+    than only when it went wrong.
+
+    D-228 / D-230: and it says it ONLY when there was prose. The sentence used
+    to fire on the difflib merge's count, which counted stale generated rows, so
+    a run whose lead appended nothing was told it had appended eleven lines. The
+    count comes off `_seal_lead_prose`, which counts only what lies outside the
+    generated skeleton, and it names the section the block was carried into so
+    the operator can find it.
+
+    D-233 — AND IT IS A FUNCTION BECAUSE THE THIRD TERMINAL DOOR SAID NEITHER.
+    -------------------------------------------------------------------------
+    These two clauses lived inside `_sealed_report_sentence`, which has exactly
+    two callers, both F6 doors. `_halt_if_capped` runs the SAME
+    `_regenerate_report_preserving_lead_prose` and publishes the same
+    `lead_prose_lines` / `lead_prose_error` as result fields, but built its
+    operator-facing `message` independently — so the cap sealed the lead's prose
+    and never said so, and a FAILED write-back got no "WARNING:" at all. That is
+    D-224's silence verbatim, at the other terminal door, and it is the shape
+    D-043 / D-044 named: a rule enforced at one terminal transition and not the
+    other is a rule the run walks around by ending the other way. HALTED is
+    reachable from `grind_start` and `assay_fail`, and `display.py` renders a
+    phase result's `message` and nothing else, so the message was the whole of
+    what an operator would ever see.
+
+    Extracted rather than sharing the whole sentence: `_sealed_report_sentence`
+    speaks of "F6" and "the F6 backlog", which a HALTED run never reaches, and
+    it names the LATENT count the cap's own message already names. Two doors
+    with two accurate framings and ONE spelling of the facts they share.
+    """
     if sealed.get("lead_prose_error"):
-        sentence += f" WARNING: {sealed['lead_prose_error']}"
-    elif sealed.get("lead_prose_lines"):
-        sentence += (
+        return f" WARNING: {sealed['lead_prose_error']}"
+    if sealed.get("lead_prose_lines"):
+        return (
             f" {sealed['lead_prose_lines']} line(s) of prose you appended were "
             f"carried onto it verbatim, under `{_LEAD_NOTES_HEADING}` "
             "(GI-006)."
         )
-    return sentence
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -8598,6 +8817,14 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # recorded on `_PHASE_ENTRY_SOURCES`.
         if (wrong := _phase_entry_source_problem(fdir, "temper")) is not None:
             return wrong
+        # D-236 / CT-008 / FR-006: the SAME defect read `foundry_gate('temper')`
+        # makes. Placed here — before the mode is decided, before the corpus is
+        # swept into a detached worktree, and before any marker is cleared — so
+        # a refused crossing costs nothing and leaves the run exactly as it
+        # found it, which is the ordering this branch already holds for its
+        # other refusal.
+        if (blocked := _blocking_defects_refusal(fdir, "F5 TEMPER")) is not None:
+            return blocked
         # GI-009 / AC-016: the F5 entry opens TEMPER's first INSPECT, so it
         # records FULL / first_of_phase on exactly the same terms as the F2
         # entry above. One rule, two doors — which is what GI-009 means by
@@ -8700,6 +8927,16 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP. GI-002 names three boundaries
         # and this is the one it names by the word NYQUIST; a --nyquist run
         # entered F5.5 through the door that did not apply the rule.
+        # D-236 / CT-008 / FR-006 — AND THE DEFECT READ FR-006 NAMES BY NAME.
+        # "NYQUIST gains the missing defect read so one open LIVE now blocks
+        # it." `foundry_gate('nyquist')` gained it; this transition, which is
+        # what actually writes F5.5 and makes the auditors reachable, did not —
+        # so a run could generate regression tests locking in behaviour a stream
+        # had already ruled wrong, by calling Phase without Gate or straight
+        # past a Gate that refused. Before the sweep, for the reason the temper
+        # branch states.
+        if (blocked := _blocking_defects_refusal(fdir, "F5.5 NYQUIST")) is not None:
+            return blocked
         nyq_state = _terminal_evidence_state(fdir, project_root)
         if (refusal := _terminal_evidence_refusal(nyq_state, "enter NYQUIST")):
             return refusal
@@ -9848,7 +10085,9 @@ def _structural_proposal(info: dict) -> str:
     )
 
 
-def _escalation_entry_defaults(entry: dict) -> dict:
+def _escalation_entry_defaults(
+    entry: dict, *, escalated_at_cycle: object = None
+) -> dict:
     """Fill an escalation.json class entry's C-3 keys, preserving what is there.
 
     A PRE-CHANGE ARCHIVE HAS NONE OF THEM, and every default here is chosen so
@@ -9857,8 +10096,57 @@ def _escalation_entry_defaults(entry: dict) -> dict:
     dispatched, zero clean cycles. Reading a missing `live_clean_cycles` as
     anything but zero would clear classes in an old archive that nothing ever
     measured.
+
+    D-237 — AND `escalated_at_cycle` IS NORMALISED HERE, WITH THE REST.
+    ------------------------------------------------------------------
+    It was the one C-3 key this function skipped, and BOTH exit arms read it.
+    `_clean_arm_step` opens `if not isinstance(escalated_at, int) ... return
+    False`, so an entry with no int stamp can never bank a clean cycle. The
+    budget arm needs `structural_packet_cycles`, written only by
+    `_spend_structural_budget`, which is fed `_escalated_classes` — and that
+    opens `if not bucket["open"]: continue`, so a class with no open instances
+    can never consume a packet either. Both arms therefore sit still forever.
+
+    Driven at HEAD: `escalation.json` seeded as
+    ``{'classes': {'K': {'status': 'ESCALATED'}}}`` and, separately, as
+    ``{'classes': {'K': null}}``, with an EMPTY defects.json, across four full
+    `inspect_start` / `grind_start` crossings — both seedings still ESCALATED,
+    `escalated_at_cycle` None, `live_clean_cycles` 0, and
+    `Foundry-Gate('done')` refusing "1 defect class(es) are still ESCALATED: K"
+    with a remedy sentence promising "The next crossing records it" that no
+    crossing ever performed. `_record_escalation_proposals` made it permanent by
+    latching `escalated_at_cycle: null` through its own `setdefault`.
+
+    THE READING CHOSEN, AND WHY THE OTHER ONE IS NOT AVAILABLE. An unstamped
+    ESCALATED entry is STAMPED with the cycle the reading crossing has just
+    closed, so ST-001's guard ("the class must have been escalated before the
+    two cycles began") is honoured conservatively: this crossing banks nothing,
+    the next banks one, the one after clears — which is exactly what the
+    refusal's remedy sentence already promises. The alternative the defect
+    offers — treating an unstamped entry as CLEARED-by-repair — would need an
+    exit reason naming the repair, and `ESCALATION_EXIT_REASONS` is a CLOSED
+    frozenset in `vocab.py` holding `clean_cycles` and `budget` alone; that file
+    belongs to casting 1 and its vocabulary is LOCKED by C-1. It would also
+    waive escalation for a class nothing ever measured, which is the opposite of
+    what ST-001 and ST-002 are for.
+
+    THE LATCH IS PRESERVED (D-001). The write fires only when the stored value
+    is not an int, so a real stamp is never moved — which is the property
+    `setdefault` was giving the two writers that already passed one in, and they
+    now pass it through here instead of re-implementing it afterwards.
     """
     entry.setdefault("status", ESCALATION_STATUS_ESCALATED)
+    stamp = entry.get("escalated_at_cycle")
+    if not isinstance(stamp, int) or isinstance(stamp, bool):
+        if isinstance(escalated_at_cycle, int) and not isinstance(
+            escalated_at_cycle, bool
+        ):
+            entry["escalated_at_cycle"] = escalated_at_cycle
+        else:
+            # The key EXISTS on every C-3 entry even when nothing can stamp it,
+            # so a reader sees "not yet known" rather than "not yet written";
+            # `None` is what every arm already treats as unstamped.
+            entry.setdefault("escalated_at_cycle", None)
     entry.setdefault("exit_reason", None)
     entry.setdefault("cleared_at_cycle", None)
     entry.setdefault("structural_packets_dispatched", 0)
@@ -9939,7 +10227,12 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
             entry = classes.setdefault(key, {})
             if not isinstance(entry, dict):
                 entry = classes[key] = {}
-            _escalation_entry_defaults(entry)
+            # D-237: the stamp goes THROUGH the normaliser now, which applies
+            # the same latch this call site used to apply after it — and, unlike
+            # the `setdefault` below, repairs a `null` an earlier call latched.
+            _escalation_entry_defaults(
+                entry, escalated_at_cycle=info["escalated_at_cycle"]
+            )
             entry["proposal"] = info["proposal"]
             # D-001 — `escalated_at_cycle` IS A LATCH, AND THIS WRITER MOVED IT.
             #
@@ -9965,7 +10258,16 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
             # does (`_spend_structural_budget`); this one was the odd writer
             # out, which is why the record disagreed with itself depending on
             # which boundary touched it last.
-            entry.setdefault("escalated_at_cycle", info["escalated_at_cycle"])
+            #
+            # D-237: and the latch now lives in `_escalation_entry_defaults`
+            # above, called with this same value, because `setdefault` HERE
+            # could not repair the state it produced. When `info` carries None —
+            # which it does for every class with no open instances, since
+            # `_class_info` derives the stamp from the ledger — this wrote
+            # `escalated_at_cycle: null`, after which the key EXISTS and every
+            # later `setdefault` at every writer is a no-op forever. The
+            # normaliser writes only over a non-int, so a real stamp is still
+            # never moved and a latched null is now repairable.
             entry["consecutive_cycles"] = info["consecutive_cycles"]
             entry["defect_ids"] = info["defect_ids"]
             # FR-001: refreshed on every recording, because the backlog the F6
@@ -10142,8 +10444,10 @@ def _spend_structural_budget(
             entry = classes.setdefault(key, {})
             if not isinstance(entry, dict):
                 entry = classes[key] = {}
-            _escalation_entry_defaults(entry)
-            entry.setdefault("escalated_at_cycle", escalated[key]["escalated_at_cycle"])
+            # D-237: through the normaliser, which is where the latch lives now.
+            _escalation_entry_defaults(
+                entry, escalated_at_cycle=escalated[key]["escalated_at_cycle"]
+            )
             if packet_cycle not in entry["structural_packet_cycles"]:
                 entry["structural_packet_cycles"].append(packet_cycle)
                 entry["structural_packets_dispatched"] = (
@@ -10411,7 +10715,18 @@ def _advance_escalation_exits(
             # non-mapping entry carries no field worth preserving.
             if not isinstance(entry, dict):
                 entry = classes[key] = {}
-            _escalation_entry_defaults(entry)
+            # D-237 — AND THIS IS THE CROSSING THAT STAMPS AN UNSTAMPED CLASS.
+            #
+            # `completed_cycle`, not `boundary_cycle`: the stamp means "the
+            # class was escalated no later than this", and `_clean_arm_step`
+            # counts only cycles STRICTLY after it. Stamping with the cycle just
+            # closed therefore banks nothing on this crossing, banks one on the
+            # next and clears on the one after — which is precisely what the
+            # DONE refusal's remedy already tells the operator ("The next
+            # crossing records it, and counting starts from the crossing after
+            # that"), and what it never did. A class the ledger CAN date keeps
+            # its own date: the write fires only over a non-int.
+            _escalation_entry_defaults(entry, escalated_at_cycle=completed_cycle)
 
             def _clear(reason: str) -> None:
                 info = _class_info(
@@ -11613,7 +11928,25 @@ def _numstat_measurement(fix_commit: str, project_root: str) -> dict:
     try:
         proc = subprocess.run(
             [
-                "git", "-C", project_root, "show", "--numstat", "--format=",
+                "git", "-C", project_root,
+                # D-238 — BEFORE the subcommand, because it is a git-wide config
+                # override, and BEFORE anything reads a path out of this output.
+                # At its default (true) `core.quotepath` escapes every non-ASCII
+                # byte and wraps the path in quotes, and nothing here unescaped
+                # it. Driven in a throwaway repo: a commit changing src/a.py (20
+                # lines) plus tests/test_café.py and schemas/modèle.py by one
+                # line each measured as files ['"schemas/mod\\303\\250le.py"',
+                # 'src/a.py', '"tests/test_caf\\303\\251.py"'], test_files [],
+                # lines 25, and the lane refused "changes 3 non-test file(s)" —
+                # `vocab.is_test_file` cannot see a test file whose derived
+                # basename ends `.py"`, so FR-016's exclusion did not apply and
+                # a one-file lead fix was refused for two files it never had.
+                # The second consequence outlives the refusal: on an ACCEPTED
+                # fix the escaped bytes are what `record_lead_fix_handoff`
+                # persists as `file`, so handoffs.md, report.json and REPORT.md
+                # carry a path no reader can resolve.
+                "-c", "core.quotepath=false",
+                "show", "--numstat", "--format=",
                 # Everything after this is a revision or a path, never a flag.
                 "--end-of-options", fix_commit,
             ],
@@ -11645,6 +11978,17 @@ def _numstat_measurement(fix_commit: str, project_root: str) -> dict:
             path, renamed_from = parts[3].strip(), parts[2].strip()
         else:
             path, renamed_from = _numstat_rename_paths(parts[2])
+        # D-238: AFTER the rename split, and that order is load-bearing.
+        # `core.quotepath=false` leaves a path holding a double quote, a
+        # backslash or a control character quoted — git quotes those whatever
+        # quotepath says, because the quoting is what keeps the record on one
+        # line — and for such a rename git falls back to the BARE `"a" => "b"`
+        # form, quoting each side SEPARATELY. Decoding the whole field first
+        # would therefore hand `_numstat_rename_paths` a string whose quotes had
+        # already been consumed; decoding each side after the split gives both
+        # real paths. Verified at git 2.50.1 on renames in both forms.
+        path = _decode_git_path(path)
+        renamed_from = _decode_git_path(renamed_from) if renamed_from else ""
         # EITHER side non-test makes the entry non-test (D-075). A rename out of
         # the tests tree changes production code; a rename into it removes some.
         is_test = is_test_file(path) and (

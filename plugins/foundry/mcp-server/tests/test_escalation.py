@@ -4592,3 +4592,206 @@ def test_every_declared_convergence_id_is_actually_cited_here() -> None:
         f"_CONVERGENCE_IDS declares {unused}, which this module does not cite. "
         "Remove the entry rather than leaving a standing waiver."
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-237 — an ESCALATED entry with no cycle stamp still reaches an exit
+# --------------------------------------------------------------------------- #
+
+
+def _seed_recorded_escalation(fdir: Path, entry: object, klass: str = "K") -> None:
+    """Write escalation.json directly, with NO stamp, and an empty ledger.
+
+    Hand-written on purpose, and it is the one fixture in this file that is: the
+    state under test is a RECORD the current writers can no longer produce but
+    that a resumed archive carries — a pre-change entry, an entry an operator
+    repaired by hand, or one this run's own `_record_escalation_proposals`
+    latched `escalated_at_cycle: null` into before D-237 was closed. The ledger
+    is EMPTY because that is the state the defect was driven in: every instance
+    of the class has been fixed, so nothing re-derives a stamp for it.
+    """
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": []}, indent=2), encoding="utf-8"
+    )
+    (fdir / fo.ESCALATION_FILENAME).write_text(
+        json.dumps({"classes": {klass: entry}}), encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"status": "ESCALATED"},
+        {"status": "ESCALATED", "escalated_at_cycle": None},
+        # D-212's shape: a non-mapping entry reads as ESCALATED rather than
+        # vanishing, so it must reach an exit on the same terms.
+        None,
+    ],
+)
+def test_an_escalated_class_with_no_stamp_is_stamped_and_then_clears(run_env, entry):
+    """ST-001 verbatim: 'the second consecutive INSPECT cycle in which the class
+    draws zero LIVE instances ... COUNTED ON THE SERVER CYCLE STAMP; LATENT
+    instances do not reset the count; THE CLASS MUST HAVE BEEN ESCALATED BEFORE
+    THE TWO CYCLES BEGAN.' ST-002 / FR-001 / AC-004.
+
+    D-237. `_escalation_entry_defaults` filled every C-3 key EXCEPT
+    `escalated_at_cycle`, and BOTH exit arms read it. `_clean_arm_step` opens
+    `if not isinstance(escalated_at, int) ... return False`, so an unstamped
+    entry can never bank a clean cycle; the budget arm needs
+    `structural_packet_cycles`, written only by `_spend_structural_budget`,
+    which is fed `_escalated_classes` — and that opens `if not bucket["open"]:
+    continue`, so a class with no open instances can never consume a packet
+    either. Both arms sat still forever.
+
+    Driven at HEAD across four full crossings, on each seeding below: still
+    ESCALATED, `escalated_at_cycle` None, `live_clean_cycles` 0, and
+    `Foundry-Gate('done')` refusing "1 defect class(es) are still ESCALATED: K"
+    with a remedy sentence — "The next crossing records it" — that no crossing
+    ever performed.
+
+    THE STAMP IS CONSERVATIVE, and this asserts the arithmetic rather than only
+    the outcome. The crossing stamps the cycle it has just CLOSED, and
+    `_clean_arm_step` counts only cycles strictly after the stamp, so that
+    crossing banks nothing: the next banks one and the one after clears. That is
+    ST-001's "escalated before the two cycles began" honoured for a class whose
+    real escalation cycle is unknowable, and it is exactly what the refusal's
+    own remedy already promised.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=4)
+    _seed_recorded_escalation(fdir, entry)
+
+    # Crossing one closes cycle 4 and STAMPS it. Nothing is banked.
+    _cross_boundary(fdir, project_root)
+    stamped = _escalation_entry(fdir, "K")
+    assert stamped["escalated_at_cycle"] == 4, stamped
+    assert stamped["status"] == "ESCALATED", stamped
+    assert stamped["live_clean_cycles"] == 0, stamped
+
+    # Crossing two closes cycle 5: the first cycle the guard admits.
+    _cross_boundary(fdir, project_root)
+    banked = _escalation_entry(fdir, "K")
+    assert banked["live_clean_cycles"] == 1, banked
+    assert banked["status"] == "ESCALATED", banked
+
+    # Crossing three closes cycle 6 and CLEARS.
+    _cross_boundary(fdir, project_root)
+    cleared = _escalation_entry(fdir, "K")
+    assert cleared["status"] == "CLEARED", cleared
+    assert cleared["exit_reason"] == "clean_cycles", cleared
+    assert isinstance(cleared["cleared_at_cycle"], int), cleared
+    # AC-004: the record says which arm fired and on which cycle.
+    assert cleared["escalated_at_cycle"] == 4, cleared
+
+
+def test_the_done_refusal_stops_naming_a_class_that_can_now_exit(run_env):
+    """AC-003 / ST-010 / FR-001. D-237's operator-facing half, and D-111's rule.
+
+    "A refusal that names no reachable call is not a remedy." The DONE gate
+    refused with "1 defect class(es) are still ESCALATED: K" and offered "The
+    next crossing records it, and counting starts from the crossing after that"
+    — a sentence describing a repair no crossing performed, so a lead following
+    it moved nothing however many times they followed it. The refusal text is
+    unchanged; what changed is that it is now TRUE.
+
+    Asserted end to end at the real doors: refused before the crossings, and
+    passing after exactly the number of crossings the sentence promises.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F5.5", cycle=4, nyquist=True)
+    _seed_recorded_escalation(fdir, {"status": "ESCALATED"})
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": []}), encoding="utf-8"
+    )
+
+    def _escalation_check(result: dict) -> dict:
+        """The gate's OWN named entry for the escalated-class guarantee.
+
+        Read rather than `passed`, because this fixture is deliberately thin —
+        no spec, no generated report — so the DONE gate has other reasons to
+        refuse and asserting on the verdict would test those instead. The
+        subject here is one check: does the escalated class still block, and
+        does the refusal still name it.
+        """
+        return next(
+            row for row in result["checklist"]
+            if row["check"].startswith("escalated_classes_cleared")
+        )
+
+    _arm(fdir)
+    before = foundry_gate("done", project_root)
+    assert before["passed"] is False, before
+    assert "K" in before["reason"], before
+    assert "ESCALATED" in before["reason"], before
+    assert _escalation_check(before)["ok"] is False, before
+    # D-111's rule, and the sentence that was false: the remedy names the
+    # crossing that records the stamp.
+    assert "The next crossing records it" in (
+        before["reason"] + before.get("hint", "")
+    ), before
+
+    for _ in range(3):
+        _write_state(fdir, phase="F5.5", cycle=_current_cycle(fdir), nyquist=True)
+        _cross_boundary(fdir, project_root)
+
+    _write_state(fdir, phase="F5.5", cycle=_current_cycle(fdir), nyquist=True)
+    _arm(fdir)
+    after = foundry_gate("done", project_root)
+
+    assert _escalation_check(after)["ok"] is True, after
+    assert _escalation_check(after)["classes"] == [], after
+    assert "still ESCALATED" not in after["reason"], after
+    assert _escalation_entry(fdir, "K")["exit_reason"] == "clean_cycles"
+
+
+def test_a_real_escalation_cycle_is_never_overwritten_by_the_repair(run_env):
+    """D-001's latch, preserved. `escalated_at_cycle` is a LATCH: once an int is
+    recorded it is never moved, because `_consecutive_run` recomputes the
+    current run end from the ledger on every call and a bare assignment would
+    re-date the escalation to the newest filing — which is what let a class
+    escalated at cycle 3 walk its marker to 4, 5, 6 while `live_clean_cycles`
+    stayed 0 and the finer-boundary loop could not converge.
+
+    D-237 moved that latch INTO `_escalation_entry_defaults`, so this is the
+    property that must survive the move: the repair writes only over a value
+    that is not an int, and a class the ledger can date keeps its own date
+    through every writer that touches the record.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    original = _escalation_entry(fdir)["escalated_at_cycle"]
+    assert isinstance(original, int), original
+
+    for _ in range(2):
+        _cross_boundary(fdir, project_root)
+        assert _escalation_entry(fdir)["escalated_at_cycle"] == original
+    # ...and through Foundry-Tasks, the other writer of the key.
+    foundry_defects_to_tasks(project_root)
+    assert _escalation_entry(fdir)["escalated_at_cycle"] == original
+
+
+@pytest.mark.parametrize("offered", [None, "7", True, 2.5])
+def test_only_a_real_integer_stamps_an_unstamped_entry(offered):
+    """The normaliser in isolation. C-3 types `escalated_at_cycle` as int|null,
+    and a bool is not an int here for the same reason it is not one anywhere
+    else in this module — `isinstance(True, int)` is True in Python, and a
+    stamp of `True` would compare as cycle 1 and silently admit history.
+
+    An entry with nothing to stamp it still comes back carrying the KEY, so a
+    reader sees "not yet known" rather than "not yet written"; every arm already
+    treats `None` as unstamped.
+    """
+    entry = fo._escalation_entry_defaults(
+        {"status": "ESCALATED"}, escalated_at_cycle=offered
+    )
+    assert "escalated_at_cycle" in entry
+    assert entry["escalated_at_cycle"] is None, entry
+
+    # A real int stamps, and then a second offer never moves it.
+    stamped = fo._escalation_entry_defaults(
+        {"status": "ESCALATED"}, escalated_at_cycle=9
+    )
+    assert stamped["escalated_at_cycle"] == 9
+    assert fo._escalation_entry_defaults(
+        stamped, escalated_at_cycle=11
+    )["escalated_at_cycle"] == 9
