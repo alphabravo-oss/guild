@@ -2,71 +2,7 @@
 # evidence-for: AC-039, NFR-001, OT-030, US-008
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-#
-# GRIND cycle 12 — one filing: a second reader of a document the spec widened
-# was never taught its new keys.
-#
-# D-182 (second-reader-of-a-widened-document-not-taught-its-new-keys).
-# `stream-rollup.json`'s `cycles[<cycle>]` bucket has TWO writers in
-# foundry_orchestrator.py: `_record_stream_rollup` accumulates one stream's
-# tranches under its wire id, and `_record_cycle_facts` writes the C-6 facts
-# that describe the CYCLE ITSELF beside them. The spec's Data Model is explicit
-# about the widening — "stream-rollup.json gains the inspect mode, the rule
-# that fired, and per-stream scope for each cycle, plus the evidence sweep
-# result". `measure-run.py` `_read_stream_rollup` walked `bucket.items()`
-# treating EVERY key as a stream id and was never taught any of it.
-#
-# Driven at 056f51a as a real process, against this run's own archive:
-#
-#   $ python3 plugins/foundry/scripts/measure-run.py foundry-archive/daring-orca
-#   EXIT=1
-#   failure_tokens: ["PHASE9_SCHEMA_INVALID" x4,
-#                    "PHASE9_UNKNOWN_STREAM:stream_scope" x2,
-#                    "PHASE9_UNKNOWN_STREAM:evidence_sweep" x2]
-#
-# Four non-stream keys x cycles 10 and 11 = the eight tokens. Both names are in
-# UNREADABLE_ARTIFACT_TOKENS, so `_exit_status` returned 1. The SAME command on
-# foundry-archive/thunder-viper — an archive that PREDATES those keys — exited 0
-# with no tokens. AC-039's acceptance instrument rejected the current run's
-# well-formed artifact and accepted the old one.
-#
-# The numbers themselves were never wrong: baseline 22/8, current 12/0, target
-# 12/3, meets_target true on both axes. NFR-001 says "Numbers are the target,
-# not a gate"; what was wrong was the VERDICT asserted about the document.
-#
-# At this commit, the same two drives (they cannot be the evidence command
-# itself — /foundry-archive/ is git-ignored, so it does not exist in the
-# detached worktree the sweep re-executes in):
-#
-#   $ python3 plugins/foundry/scripts/measure-run.py foundry-archive/daring-orca
-#   EXIT=0   failure_tokens: []   cycles: 12
-#   coverage now read for all twelve cycles 0-11 (it stopped at nine before)
-#   $ python3 plugins/foundry/scripts/measure-run.py foundry-archive/thunder-viper
-#   EXIT=0   failure_tokens: []   cycles: 22        (unchanged)
-#
-# THE FIX IS ONE DEFINITION, NOT A THIRD COPY. Three modules walk this bucket.
-# Two had grown the rule by hand (`foundry_orchestrator._stream_dispatch_cycles`,
-# `foundry_report._read_dispatch_summary`) and the third had not — which is what
-# two hand-typed copies of one rule cost. The rule is now stated once as
-# `foundry_state.is_stream_record`, in the leaf module all three already import,
-# for the same reason and at the same address as `unreported_dispatch_pairs`
-# (D-047 / D-048). The two walkers casting 5 owns READ it; casting 3's copy is
-# pinned behaviourally by a test that feeds one bucket to both readers, and the
-# recommendation to adopt it is in concerns.md.
-#
-# NOT A DENYLIST OF KEY NAMES. The filing names four keys; there are five
-# (`temper_entry`, the nested sub-bucket the F5 entry writes under), and the next
-# C-6 field would be a sixth. The test is on the VALUE: a tranche is exactly a
-# mapping carrying `records`, because `_record_stream_rollup` appends to
-# `entry["records"]` on every mark and no cycle-level fact has that key.
-#
-# AND THE ONE FAULT THAT IS STILL A FAULT. Filtering by value ALONE would have
-# traded the false alarm for a new silence: `prove` holding a string is a BROKEN
-# stream record, not a cycle-level fact. The key is resolved against the roster
-# before the value test decides, so a roster key with a non-tranche value stays
-# PHASE9_SCHEMA_INVALID — pinned by
-# test_a_roster_key_whose_value_is_not_a_tranche_is_still_a_fault.
-#
+
 
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
@@ -106,4 +42,4 @@
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
 .
-1 passed, 64 deselected in 0.14s
+1 passed, 64 deselected in 0.21s

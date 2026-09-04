@@ -2,43 +2,6 @@
 # evidence-for: FR-010, CT-015, AC-015
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-#
-# GRIND cycle 17 — one filing, D-198: the acceptance door refused genuine
-# evidence as a fabricated stub whenever the CAPTURED OUTPUT happened to be
-# comments. The discriminator was punctuation, not fabrication.
-#
-# `_strip_header_and_blank_lines` dropped every line whose lstrip started with
-# `#`, ANYWHERE in the file, and its two consumers then judged a body missing
-# the captured lines: `_check_stub_patterns` rule 3 fullmatched the remainder
-# against `_STUB_BARE_ACK_RE`, and `_is_stub_pattern_timestamp_cluster`
-# required timestamps to be >=80% of it — a ratio the strip inflated by
-# deleting the denominator. That helper's own docstring already said the
-# heuristic ran "among non-blank, NON-HEADER lines"; what it called
-# implemented non-`#`.
-#
-# The first block below is the defect's own experiment: two runs of one
-# command, identical but for three characters. Each shape is judged twice —
-# by the strip this cycle replaced, reconstructed in the test rather than
-# remembered, and by the shipped one — so the transcript shows the change and
-# not just the outcome.
-#
-# The second block is the fix-shape requirement PROVE attaches to every
-# removal of a false refusal: which TRUE POSITIVES survive the narrowing. A
-# genuine bare ack and a genuine timestamp cluster have no `#` line below the
-# separator to restore, so both still fire with their own sub-token.
-#
-# The third block is the run's own corpus, pinned at d872362 — the HEAD the
-# defect was driven against — and extracted with `git show`, so these counts
-# stay frozen while `evidence/` grows every cycle. Two metrics, because they
-# measure different things. Fifteen logs had a body that was a MINORITY of
-# their non-blank lines under the old strip, which is how close the corpus
-# already sat to a one-line denominator. Ten carry `#` lines BELOW the
-# separator, in captured output — those are the ones a capture-shape away
-# from Run A's refusal, and `casting-1-gi-007-no-throttling.log` is the
-# sharpest of them: its command greps a constant out of vocab.py, whose
-# surrounding lines are comments, and the old strip judged 4 lines where 19
-# were captured. None of the 70 trips a pattern under either strip, which is
-# why this had not fired in production and not why it could not.
 
 === D-198: two runs identical but for three characters ===
     command in both: sed -n '1,3p' src/guard.py && printf '<three ISO stamps>'
@@ -92,4 +55,4 @@
     None trips a pattern today, which is why this had not fired
     in production and not why it could not.
 .
-1 passed in 0.88s
+1 passed in 0.85s

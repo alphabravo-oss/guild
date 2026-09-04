@@ -2,45 +2,6 @@
 # evidence-for: GI-006, CT-014, US-008, AC-034, AC-036, FR-023, FR-038, FR-051, NFR-002
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-#
-# GRIND cycle 9 — four filings against the generated report, each driven
-# through foundry_report.generate_report and read back out of BOTH documents.
-#
-# D-163 (two-derivations-of-one-number-disagree). report.json published
-# spend_per_phase_and_cycle.total.unreported = 0 and by_phase {'F1':
-# {'unreported': 0}} in the same file as unreported_dispatches.count = 1 and
-# by_phase {'F1': ['casting-2']}. `_read_spend` copied the field out of
-# state.json.spend on the premise that the roll-up was "the orchestrator's
-# derivation and the only one" — but _overlay_unreported runs against a
-# throwaway deep copy inside _spend_summary, so the derived count never
-# reaches state.json and the only writer there seeds 0 and never increments.
-# The count now comes from foundry_state.unreported_dispatch_summary, read
-# ONCE by generate_report and handed to both sections, and the roll-up's claim
-# is named in `disagreements` instead of published as the answer.
-#
-# D-166 (report-section-unfiltered-by-status). The unknown-tier section built
-# its rows under `tier == TIER_UNKNOWN` with no status test while the LATENT
-# backlog beside it, on the same parse, used `and status == "open"`. On the
-# live archive that printed 156 FIXED records under a note asserting "It
-# blocks the gates exactly like LIVE" and naming a re-filing as the way out —
-# both false for every row, in the section its own docstring calls the one a
-# lead must act on, while _open_defects_by_tier put the true blocking count at
-# 0. The list is the OPEN records now; the closed ones are counted.
-#
-# D-167 and D-168 (generated-prose-states-null-as-fact), D-150's class on this
-# module's two remaining sentences. The verdict-matrix header interpolated
-# verdicts.json's `cycle` unguarded while guarding its two neighbours in the
-# same f-string, so a document without the key rendered "verdicts at cycle
-# None". The executing-versions section was five bare state.get calls under a
-# table with no prose, the one section that rendered blanks silently: markdown
-# and JSON agreed, so nothing was false, and a reader still could not tell a
-# run that recorded no version fields from a report that dropped them.
-#
-# Every archive read here is synthesized under pytest's tmp_path by the test
-# itself, because foundry-archive/ is git-ignored and this log is re-executed
-# inside a `git worktree add --detach` checkout that holds tracked files only.
-# No tmp path, timestamp or duration is printed, so the only volatile field is
-# pytest's own summary line.
 
 
 === D-163 — two dispatches, ONE spend record, one report.json ===

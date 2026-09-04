@@ -51,4 +51,4 @@
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
 .
-1 passed, 290 deselected in 0.98s
+1 passed, 298 deselected in 0.49s

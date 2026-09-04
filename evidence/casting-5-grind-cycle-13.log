@@ -2,28 +2,6 @@
 # evidence-for: US-003, GI-002, ST-005, CT-007, AC-014, FR-009, FR-042, OT-016
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-#
-# GRIND cycle 13 — D-184 and D-187, one symbol, one fix.
-#
-# `evidence.py#_sweep_requirement_to_castings` was the THIRD reader of "which
-# requirement IDs does this casting own". D-180 replaced the full-text
-# `REQUIREMENT_ID_RE.findall` over a casting's whole `<spec_requirements>`
-# block with the position-based `declared_requirement_ids` at the acceptance
-# gate and at the F0.9 validator, and pinned those two against one block. This
-# reader was never migrated with them, so one rule kept two owners and a
-# survivor: a requirement merely QUOTED inside another requirement's prose
-# still keyed a log to the quoting casting.
-#
-# FR-009, verbatim: "Per cycle: re-execute only logs whose casting's key_files
-# intersect the GRIND diff, plus any log whose command references a touched
-# file; full corpus at the INSPECT before ASSAY/NYQUIST/DONE and whenever the
-# FULL rule fires (A-014). Logs run in parallel (bounded pool)." A log keyed
-# through a quotation satisfies neither arm.
-#
-# Driven below on a miniature of the exact shape: casting 2 declares CT-014 and
-# names casting 3's AC-036 inside CT-014's own statement text. The companion
-# log `casting-5-grind-cycle-13-real-corpus.log` drives the same fix against
-# this run's real manifest and its 62-log corpus.
 
 
 === the block: one declaration whose prose names another casting's requirement ===
@@ -54,4 +32,4 @@
     the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
     FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
 .
-1 passed, 290 deselected in 0.85s
+1 passed, 298 deselected in 0.58s

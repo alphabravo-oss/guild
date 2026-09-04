@@ -2,65 +2,6 @@
 # evidence-for: GI-006, CT-014, US-008, AC-034, AC-036, FR-023, FR-038, NFR-002, NFR-001, OT-026
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
-#
-# GRIND cycle 10 — two filings, both about a number a generated document
-# published beside prose describing that number, and in both cases the prose
-# and the number could not both be true.
-#
-# D-175 (two-derivations-of-one-number-disagree). foundry_state.derive_cycle_
-# count published index + 1 over the server counter, and that counter advances
-# at inspect_start, so it counts INSPECTs and not GRINDs. On a halted run the
-# GRIND at index + 1 is precisely the one the cap refused to open. Driven end
-# to end at the real doors with --max-cycles 2: Foundry-Phase('grind_start')
-# returned ok, wrote phase HALTED and the reason "opening GRIND cycle 3 would
-# exceed it" — so two GRIND cycles ran, which is _halt_if_capped's own stated
-# arithmetic — and generated the report INSIDE that same call, whose
-# baseline_comparison.current.grind_cycles read 3 and whose REPORT.md rendered
-# "| GRIND cycles | 22 |  | 12 | 3 |" beside run.max_cycles 2 in the same
-# document. One transition wrote both numbers and they contradicted each other
-# about the one quantity the cap is defined over; foundry_report and
-# scripts/measure-run.py both reach that number through the shared derivation,
-# so both published the contradiction.
-#
-# The halt now subtracts exactly the GRIND it prevented and nothing else, keyed
-# on halted_at_cycle / halted_reason — the two DATA fields _halt_if_capped
-# writes beside the phase, because foundry_state may not import vocab and
-# re-typing RUN_PHASE_HALTED there is the hand-copied-enum drift the house rule
-# bans. Re-basing the whole derivation on phase_history's F3 entries was the
-# alternative and it is worse: thunder-viper's counter never moved and its
-# history carries no per-cycle F3 stamps, so the two archives that calibrate
-# this function would stop reproducing their own published numbers. A run at
-# the same counter with no halt record still publishes index + 1, which is what
-# the second half of the transcript below shows.
-#
-# D-172 (unreported-accounting-derives-the-cycle-axis-from-a-proxy, and the
-# report half of generated-prose-states-null-as-fact). The unreported-dispatch
-# by_cycle axis is built from cycles_of_agent, which can only come from
-# stream-rollup.json, whose buckets ARE keyed by the server counter. spawns.log
-# records a teammate dispatch as timestamp, casting_id, phase, wave and
-# prompt_hash with no cycle anywhere in the row, so a CAST or GRIND teammate
-# can never be attributed to a cycle by any reader of that ledger. Driven at
-# the door over the live archive: 19 unreported pairs, 14 of them teammates
-# such as casting-1@F1 and casting-1@F3, and the axis named ZERO teammates in
-# any of cycles 0-9 — while the generated sentence beside that column stated it
-# "names the cycles those agents were dispatched in", false for 14 of the 19.
-# Driven on the synthetic shape the filing also names, three teammates
-# dispatched at cycle 1 with one reporting spend, REPORT.md rendered the cycle
-# row as 0 unreported while the phase row correctly rendered 2.
-#
-# No stamp is invented here. Correlating a spawn timestamp against
-# phase_history's cycle windows would be a second proxy, and "the cycle axis is
-# derived from a proxy" is the filing. The axis keeps its one real source, the
-# summary returns the pairs that source cannot cover as pairs_without_cycle,
-# the section publishes their number as unreported_without_cycle, and the
-# sentence states that scope instead of a coverage it does not have. The field
-# that would widen the axis — a per-dispatch `cycle` on every spawns.log row —
-# belongs to the spawn writer and was relayed to the lead rather than faked.
-#
-# Every archive read here is synthesized under pytest's tmp_path by the test
-# itself, because foundry-archive/ is git-ignored and this log is re-executed
-# inside a `git worktree add --detach` checkout that holds tracked files only.
-# No tempdir path, clock reading or SHA reaches the output.
 
 
 === D-175 — the halt reason and the report it generated, one call, one number ===
@@ -90,4 +31,4 @@
   one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
   the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
 .
-1 passed, 104 deselected in 0.11s
+1 passed, 104 deselected in 1.74s

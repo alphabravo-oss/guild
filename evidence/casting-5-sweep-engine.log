@@ -4,9 +4,10 @@
 # evidence-timeout: 300
 
 ........................................................................ [ 24%]
-........................................................................ [ 49%]
-........................................................................ [ 74%]
-......................................................................
+........................................................................ [ 48%]
+........................................................................ [ 72%]
+........................................................................ [ 96%]
+......
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -81,8 +82,7 @@
       keyed by the scan    : ['wave-report-sections.log']
     the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
     FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
-. [ 99%]
-=== D-198: two runs identical but for three characters ===
+.=== D-198: two runs identical but for three characters ===
     command in both: sed -n '1,3p' src/guard.py && printf '<three ISO stamps>'
     run A — three captured comment lines, then three stamps
         old strip: body lines  3 -> EVIDENCE_STUB_TIMESTAMP_CLUSTER
@@ -134,49 +134,84 @@
     None trips a pattern today, which is why this had not fired
     in production and not why it could not.
 .
-=== D-200: what the byte comparator strips on EACH side ===
-    the CAPTURE is stripped of nothing — a re-execution capture
-    is all output. The COMMITTED side loses exactly the prefix
-    the capture did not emit, so no strip can erase a
-    disagreement: differing leading content is removed from
-    neither side and always reaches the diff. The old shape
-    could cancel precisely because each side chose its own
-    strip in ignorance of the other.
+=== D-205: the class root cause, stated once ===
+    D-197, D-201 and D-205 are one class. Each guard asked a
+    NARROWER question than the harm it names:
 
-    branch                                         removed from the committed side  verdict
-    capture emits no leading run                   the whole leading run            match
-    capture IS the full file (cat-replay)          nothing                          match
-    capture's run is a proper suffix               the run minus that suffix        match
-    capture's run is NOT a suffix (the forgery)    only the provable header         REFUSED
+      defect       the question it asked              the harm it names
+      D-197/D-201  is this suffix in a table          does a reader OPEN this name
+      D-200        is the strip symmetric             did the command EMIT this
+      D-205        is the capture's run a suffix      is every discarded line HEADER
 
-=== the forgery, driven ===
-    committed leading block : # FABRICATED: the guard holds
-    captured leading block  : # a completely different leading comment
-    tail, identical on both : REAL_TAIL_MATCHES
-    before the fix, both sides reduced to 'REAL_TAIL_MATCHES\n' and MATCHED
-    now, the diff names the first differing line:
-      -# FABRICATED: the guard holds
-      +# a completely different leading comment
-      +# written by the real command
+    the principle, pinned in evidence.py:
+      a guard that discards, skips or exempts input must PROVE
+      each discarded unit against the rule that names the
+      exemption; anything not proven is subject to the check.
 
-=== the true accepts kept (an honest log whose captured body starts with '#') ===
-    accepted, and the captured '#' lines are INSIDE what was
-    compared rather than agreeing because both sides emptied:
-      committed body begins : # guard: refuse on mismatch, never on shape
-      captured body begins  : # guard: refuse on mismatch, never on shape
+=== the header grammar — what may be discarded, and nothing else ===
+    known directives : cmd, for, timeout, volatile
+    header           : contiguous leading '# evidence-<known>:' lines
+                       plus ONE blank separator
+    everything else  : BODY — '#'-prefixed or not — compared
+                       byte for byte against the capture
 
-=== the real committed corpus at f5b487b: 74 logs ===
-    directives run straight into writer prose    :  8
-    directives, separator, body                  : 55
-    two blank lines after the header             :  2
-    writer prose BELOW the separator             :  9
-    new header == old strip, capture untouched   : 74 of 74
+=== the three runs that differ by one character ===
+    A  honest log                              accepted
+    B  the same log, claim prefixed with '#'   REFUSED
+    C  control: the same claim, no '#'         REFUSED
+    B and C differ by ONE character. At cb77e83, B was
+    ACCEPTED at both doors: Foundry-Accept-Casting reported an
+    accepted evidence verdict, and Foundry-Phase(inspect_start)
+    reported mismatches [] and advanced the cycle counter.
 
-=== why the two narrower candidates were rejected, measured on that corpus ===
-    strip only '# evidence-*:' directives + one blank        : breaks 19 logs
-    D-198's shape: any leading '#' run + one blank           : breaks 15 logs
-    SHIPPED: the run's prefix the capture did not emit       : breaks  0 logs
-    the two named in the defect's own fix direction are the
-    first two rows, which is why the shipped rule is neither.
-.                                                                       [100%]
-290 passed, 1 deselected in 25.05s
+=== the second accepted shape the defect named ===
+    a forged '#' line ABOVE a capture whose own output
+    legitimately begins with '#' lines, where the capture's
+    run is still a suffix of the committed one:
+      REFUSED, and the diff names the forged line:
+        -# FORGED: the guard holds on every path
+
+=== the true accepts the narrowing keeps ===
+    honest capture beginning with '#' lines (D-198's subject)  accepted
+    cat-replay: the capture IS the whole committed file        accepted
+    two blank lines written; the command emits the second      accepted
+
+=== the smuggling shape the KNOWN-directive set closes ===
+    '# evidence-summary:' is not a directive the parser reads,
+    so it is body, and a command that never printed it is
+    REFUSED. A grammar of 'any # evidence-*: shape' would have
+    discarded it unread — the same hole, one notch narrower.
+
+=== corpus census at cb77e83: 76 committed logs ===
+    logs carrying hand-typed lines in the leading run — text
+    the command never printed — which therefore no longer
+    reproduce under the corrected grammar and must be
+    RECAPTURED by their owning casting:
+
+    casting 1                     8
+        casting-1-baseline-comparison.log
+        casting-1-convergence-columns.log
+        casting-1-gi-007-no-throttling.log
+        casting-1-grind-cycle-17.log
+        casting-1-migration-round-trip.log
+        casting-1-migration-tier-unknown.log
+        casting-1-rollup-preservation.log
+        casting-1-verifier-paths.log
+    casting 4                     1
+        casting-4-grind-cycle-17.log
+    casting 5                     9
+        casting-5-grind-cycle-10.log
+        casting-5-grind-cycle-12.log
+        casting-5-grind-cycle-13-real-corpus.log
+        casting-5-grind-cycle-13.log
+        casting-5-grind-cycle-15.log
+        casting-5-grind-cycle-17.log
+        casting-5-grind-cycle-18.log
+        casting-5-grind-cycle-9.log
+        casting-5-null-prose.log
+
+    total needing recapture      18 of 76
+    the other 58 reproduce unchanged: their whole leading run
+    is directives and one separator, which is the grammar.
+.                                                               [100%]
+298 passed, 1 deselected in 24.16s
