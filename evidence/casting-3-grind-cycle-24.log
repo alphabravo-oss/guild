@@ -21,7 +21,7 @@
 -- nothing else in these eight files cites a private name with no definition --
 
   unresolved cites outside the registry: 0
-  registry entries, every one a name the tree removed: 13
+  registry entries, every one a name the tree removed: 15
   registry entries excusing a live name: 0
   registry entries no prose cites: 0
 

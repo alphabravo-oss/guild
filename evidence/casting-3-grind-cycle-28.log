@@ -1,0 +1,31 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_orchestrator_gates.py tests/test_spend.py tests/test_fix_gate.py > /dev/null && echo "pytest green: tests/test_orchestrator_gates.py tests/test_spend.py tests/test_fix_gate.py" && uv run --quiet python -c "from foundry_mcp.tools import foundry_orchestrator as fo;from foundry_mcp.schemas.vocab import is_test_file;N=chr(10);GEN=N.join(['# Foundry run report - r','','Generated 2020-01-01 by Foundry-Report. Every section below is generated from the run own ledgers (GI-006).','','## Spend per phase and cycle','','| run | total | 4934646 |','','## Baseline comparison','','| Tokens | | | | 4934646 |','']);OLD=GEN.replace('4934646','4811190').replace('2020-01-01','2019-01-01');ED=OLD.rstrip()+N+N+'## Lead notes'+N+N+'LEAD-SENTINEL-228 under the lead own heading'+N;print(N+'=== D-228/D-230 GI-006/CT-014: a ledger that moved is not prose the lead appended ===');S,K=fo._seal_lead_prose(OLD,GEN);print('carried lines with ZERO prose appended:',K);print('the sealed document IS the generated one:',S==GEN);print('the stale row is not republished as lead prose:','4811190' not in S);S2,K2=fo._seal_lead_prose(ED,GEN);print('carried lines with a lead heading appended:',K2);print('the lead block is carried verbatim:','LEAD-SENTINEL-228' in S2);print('under the one trailing section the seal names:',fo._LEAD_NOTES_HEADING in S2.splitlines());print('every generated section is present once:',[l for l in S2.splitlines() if l.startswith('## ')]);print('and the stale row is still not carried:','4811190' not in S2);print('sealing twice does not wrap the wrapper:',fo._seal_lead_prose(S2,GEN)==(S2,K2));print('the difflib merge is gone from the module:',not hasattr(fo,'_merge_lead_prose') and not hasattr(fo,'_lead_only_lines'));Z={'tokens':0,'duration_ms':0,'agents':0,'unreported':0};M={'tokens':1430191,'duration_ms':8726752,'agents':8,'unreported':0};mk=lambda: {'by_phase':{},'by_cycle':{'5':dict(Z),'23':dict(M)},'total':dict(Z)};print(N+'=== D-229 CT-013/FR-037/AC-033: a cycle the run never measured gets no row ===');print('buckets handed to the overlay:',sorted(mk()['by_cycle']));A=fo._overlay_unreported(mk(),{'by_phase':{},'by_cycle':{},'count':0});print('buckets it leaves behind when nothing is unreported:',sorted(A['by_cycle']));B=fo._overlay_unreported(mk(),{'by_phase':{'F2':['trace']},'by_cycle':{'5':['trace']},'count':1});print('a cycle with an unreported dispatch keeps its row:',sorted(B['by_cycle']));print('and that row states the gap:',B['by_cycle']['5']['unreported']);print('the phase axis is untouched by the prune:',sorted(B['by_phase']));print(N+'=== the LATENT locator rung names the shapes it accepts ===');print('rung 2 discovery phrase:',fo._PYTEST_DISCOVERY_PHRASE);print('a retired directory clause is named:','tests/' in fo._PYTEST_DISCOVERY_PHRASE);g=lambda p: print('  is_test_file(%-34s) %r' % (repr(p)+',', is_test_file(p)));g('test_root_case.py');g('verifier/deep/test_nested_case.py');g('conftest.py');g('pkg/thing_test.py')"
+# evidence-for: GI-006, ST-003, ST-008, ST-010, CT-004, CT-013, CT-014, CT-016, AC-012, AC-033, AC-034, AC-036, AC-037, FR-008, FR-021, FR-022, FR-037, FR-045, FR-052, OT-023, OT-024, OT-025, OT-026
+# evidence-timeout: 600
+pytest green: tests/test_orchestrator_gates.py tests/test_spend.py tests/test_fix_gate.py
+
+=== D-228/D-230 GI-006/CT-014: a ledger that moved is not prose the lead appended ===
+carried lines with ZERO prose appended: 0
+the sealed document IS the generated one: True
+the stale row is not republished as lead prose: True
+carried lines with a lead heading appended: 3
+the lead block is carried verbatim: True
+under the one trailing section the seal names: True
+every generated section is present once: ['## Spend per phase and cycle', '## Baseline comparison', '## Lead notes (carried by the seal)', '## Lead notes']
+and the stale row is still not carried: True
+sealing twice does not wrap the wrapper: True
+the difflib merge is gone from the module: True
+
+=== D-229 CT-013/FR-037/AC-033: a cycle the run never measured gets no row ===
+buckets handed to the overlay: ['23', '5']
+buckets it leaves behind when nothing is unreported: ['23']
+a cycle with an unreported dispatch keeps its row: ['23', '5']
+and that row states the gap: 1
+the phase axis is untouched by the prune: ['F2']
+
+=== the LATENT locator rung names the shapes it accepts ===
+rung 2 discovery phrase: test_*.py or conftest.py, in any directory
+a retired directory clause is named: False
+  is_test_file('test_root_case.py',              ) True
+  is_test_file('verifier/deep/test_nested_case.py',) True
+  is_test_file('conftest.py',                    ) True
+  is_test_file('pkg/thing_test.py',              ) False
