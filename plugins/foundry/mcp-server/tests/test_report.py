@@ -3345,9 +3345,20 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     # changes, and a second numstat parser is how the audit row comes to
     # disagree with the lane measurement it exists to make re-derivable —
     # which is the same trade D-013 already ruled on, one module along.
+    # `foundry_mcp.tools.foundry_orchestrator` is the fourth, added by
+    # D-232/D-235: `_read_spend` seeds its per-cycle buckets from
+    # `_overlay_unreported`'s pruned view instead of restating that function's
+    # "nothing was measured" test. A mirrored predicate agrees with the display
+    # until the day one side is edited, which is precisely the defect — two
+    # surfaces of one rule — so the rule is READ. Body-level for the same
+    # reason as the three above, and the same reason it is spelled with the
+    # module path rather than folded into the `foundry_mcp.tools` entry: this
+    # pin is the record of what this module imports and why, and an import
+    # hidden behind an entry already here would be one the pin stopped seeing.
     assert nested == {
         "foundry_mcp.tools",
         "foundry_mcp.tools.foundry_handoff",
+        "foundry_mcp.tools.foundry_orchestrator",
         "foundry_mcp.tools.foundry_spawn",
     }, sorted(nested)
 
@@ -4396,3 +4407,233 @@ def test_demo_grind_cycle_15_the_axis_the_decisions_are_rendered_against(
     )
     assert "cycles 0-9 carry none" in section["note"]
     assert section["note"] in _inspect_md(report_env)
+
+
+# --------------------------------------------------------------------------- #
+# D-232 / D-235 — the cycle axis publishing an unmeasured zero as a measurement
+# --------------------------------------------------------------------------- #
+
+
+def test_a_zero_cycle_bucket_the_ledger_never_named_is_not_a_report_row(
+    report_env,
+):
+    """AC-033 / AC-036 / FR-037 / CT-013 — an absent row is honest where a zero
+    row is a claim (D-229), and this reader re-created every row D-229 pruned.
+
+    D-229 closed the zero rows in `foundry_orchestrator._overlay_unreported`,
+    which the DISPLAY runs on a deep copy and `foundry_record_spend` runs on the
+    persisted document — so `state.json` is repaired by the NEXT spend call and
+    not before. A run can reach DONE without one. This reader seeded a bucket
+    for every key in the PERSISTED `state.json.spend.by_cycle` and applied no
+    prune, so the sealed terminal report shipped exactly the rows the display
+    had dropped.
+
+    Driven at HEAD over this run's own archive: `state.json.spend.by_cycle` 29
+    keys of which 23 all-zero, `_spend_summary` 6 keys, `_read_spend` 29, and
+    REPORT.md carrying `| cycle | 0 | 0 | 0.0 | 0 | 0 | 0 |` through
+    `| cycle | 22 | ... |`.
+
+    NO INTERVENING `Foundry-Spend` CALL is the whole point of the fixture: the
+    guard in `test_spend.py` passes today only because its fixture calls
+    `foundry_record_spend` first, which repairs the document before either
+    surface reads it.
+    """
+    state = _read_json(report_env, "state.json")
+    zero = {"tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 0}
+    for cycle in ("7", "8", "9"):
+        state["spend"]["by_cycle"][cycle] = dict(zero)
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+
+    section = _document(report_env)["spend_per_phase_and_cycle"]
+    for cycle in ("7", "8", "9"):
+        assert cycle not in section["by_cycle"], section["by_cycle"]
+    markdown = _markdown(report_env)
+    for cycle in ("7", "8", "9"):
+        assert f"| cycle | {cycle} |" not in markdown, markdown
+    # The rows that measured something are untouched — the prune is "nothing
+    # was measured", never "no spend row exists". Cycles 3-5 have no ledger row
+    # at all and stay, because the dispatch record puts an unreported agent in
+    # each: the forgotten-`Foundry-Spend` run is the one whose gap most needs a
+    # line (D-163).
+    assert set(section["by_cycle"]) == {"0", "1", "2", "3", "4", "5"}
+    for cycle in ("3", "4", "5"):
+        assert section["by_cycle"][cycle]["unreported"] > 0
+
+
+def test_a_rollup_cycle_that_measured_something_still_reaches_disagreements(
+    report_env,
+):
+    """The other half, and the one that stops the fix over-reaching (D-232).
+
+    Dropping the roll-up arm of the seeding outright would have taken the
+    stale-roll-up detector's cycle axis with it: a cycle `state.json.spend`
+    records with real tokens and the ledger does not name would no longer get a
+    bucket, and a bucket is what the `disagreements` loop iterates. The prune
+    keeps it, because it measured something."""
+    state = _read_json(report_env, "state.json")
+    state["spend"]["by_cycle"]["9"] = {
+        "tokens": 640_000, "duration_ms": 600_000, "agents": 2, "unreported": 0,
+    }
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+
+    section = _document(report_env)["spend_per_phase_and_cycle"]
+    assert "9" in section["by_cycle"], section["by_cycle"]
+    assert section["by_cycle"]["9"]["records"] == 0
+    fields = {
+        d["field"] for d in section["disagreements"]
+        if d["scope"] == "by_cycle" and d["key"] == "9"
+    }
+    assert {"tokens", "duration_ms", "agents"} <= fields, section["disagreements"]
+
+
+def test_the_report_and_foundry_next_publish_the_same_cycle_axis(report_env):
+    """One derivation, two readers — the property the fix is built on.
+
+    `Foundry-Next` (AC-033) and REPORT.md (AC-036) answer "tokens and minutes
+    per cycle" from the same ledgers, and they disagreed by construction while
+    each applied its own rule to the persisted document. This asserts the KEY
+    SETS are equal on a fixture carrying both kinds of bucket — one that
+    measured nothing and one that did — so a fix that repaired only one surface
+    fails here.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import _spend_summary
+
+    state = _read_json(report_env, "state.json")
+    state["spend"]["by_cycle"]["7"] = {
+        "tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 0,
+    }
+    state["spend"]["by_cycle"]["8"] = {
+        "tokens": 12_000, "duration_ms": 60_000, "agents": 1, "unreported": 0,
+    }
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+
+    report_cycles = set(_document(report_env)["spend_per_phase_and_cycle"]["by_cycle"])
+    display_cycles = set(_spend_summary(report_env)["by_cycle"])
+    assert "7" not in report_cycles and "7" not in display_cycles
+    assert "8" in report_cycles and "8" in display_cycles
+    # The report's axis is the display's axis plus whatever the LEDGER itself
+    # measured — the ledger keeps its authority over tokens and minutes, and a
+    # row it measured is never pruned away by a stale roll-up.
+    assert display_cycles <= report_cycles, (display_cycles, report_cycles)
+
+
+def test_the_prune_predicate_is_not_restated_in_this_module(report_env):
+    """D-232's class is two surfaces of one rule, so the rule is READ.
+
+    `_read_spend` calls `foundry_orchestrator._overlay_unreported` rather than
+    mirroring its "nothing was measured" test. A mirrored predicate agrees
+    until the day one side is edited, which is the defect. The import is
+    function-local because `foundry_orchestrator` imports this module at its
+    own cross-casting seam and a module-level import back would close the
+    cycle this file's header names.
+    """
+    import inspect as _inspect
+
+    source = _inspect.getsource(fr._read_spend)
+    assert "_overlay_unreported" in source, source[-2000:]
+    assert "from foundry_mcp.tools.foundry_orchestrator import" in source
+    # That it is FUNCTION-local is pinned once, by depth, in
+    # `test_foundry_report_imports_only_the_two_leaf_modules` above — which is
+    # also where the fourth body-level import is recorded and justified. Not
+    # restated here; two spellings of one rule is the class under test.
+
+
+# --------------------------------------------------------------------------- #
+# D-234 — the banner that still described the retired merge
+# --------------------------------------------------------------------------- #
+
+
+def _banner(run_dir: Path) -> str:
+    header = _markdown(run_dir).split("\n## ", 1)[0]
+    return next(ln for ln in header.splitlines() if " by Foundry-Report." in ln)
+
+
+def test_the_banner_tells_the_lead_where_prose_actually_survives(report_env):
+    """GI-006 / FR-001 — the sentence a lead reads at the moment they choose
+    where to type, and it described a merge the seal stopped doing at cycle 27.
+
+    It said "prose may be appended, no section may be removed". A lead who
+    followed it and typed a paragraph under `## Verdict matrix` lost it at the
+    next terminal transition with `lead_prose_lines: 0` and no warning, because
+    `_carried_lead_prose` tells lead prose from generated body by the HEADING
+    and cannot do otherwise (D-228). Every sibling surface — the done-gate
+    hint, the tool description, `display.py`'s footer, `commands/start.md` and
+    both READMEs — was rewritten at that ruling; this banner was the one that
+    was not.
+    """
+    import inspect as _inspect
+
+    _generate(report_env)
+    banner = _banner(report_env)
+
+    assert "under your OWN `## ` heading" in banner, banner
+    assert "above the first generated section" in banner, banner
+    # Named WITHOUT the `## ` prefix — the spelling both READMEs use. In full
+    # it would be `foundry_orchestrator._LEAD_NOTES_HEADING` verbatim, and two
+    # seal tests read "the seal appended nothing" as that constant being absent
+    # from the whole document; a banner carrying it would make a purely
+    # generated report look sealed to them.
+    assert "`Lead notes (carried by the seal)`" in banner, banner
+    assert "## Lead notes (carried by the seal)" not in banner, banner
+    assert "verbatim" in banner, banner
+    assert "regenerated away" in banner, banner
+    assert "no section may be removed" in banner, banner
+    # THE CONVERSE PIN. The retired phrase is the one that sent the lead to the
+    # place their prose does not survive, and it is gone from the whole tree of
+    # generated documents, not merely reworded around.
+    assert "prose may be appended, no section may be removed" not in _markdown(
+        report_env
+    )
+    # Not a grep over the file: the comment at the site QUOTES the retired
+    # phrase, which is the house rule for a non-obvious decision (it names what
+    # the sentence used to say and what a lead did with it). What must be gone
+    # is the phrase as something this function EMITS, so the pin is over
+    # `_render_markdown`'s string literals and nothing else.
+    import ast as _ast
+
+    literals = [
+        node.value
+        for node in _ast.walk(_ast.parse(_inspect.getsource(fr._render_markdown)))
+        if isinstance(node, _ast.Constant) and isinstance(node.value, str)
+    ]
+    assert literals, "no string literals found — the pin would pass vacuously"
+    assert not any("prose may be appended" in lit for lit in literals), literals
+
+
+def test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose(
+    report_env,
+):
+    """The adjacent path: the F6 / HALTED seal, not the lead reading the file.
+
+    `foundry_orchestrator._lead_header_lines` drops a header line carrying
+    ` by Foundry-Report.` and keeps every other non-blank one AS THE LEAD'S. So
+    the banner must be ONE rendered line containing that marker — split it and
+    the half without the marker is carried into
+    `## Lead notes (carried by the seal)` on every terminal transition, the
+    document growing a paragraph of its own banner per seal. The banner also
+    now SPELLS a `## ` heading inside itself, which must not split a block:
+    `_md_sections` matches a whole trimmed line, and this asserts it stays that
+    way.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+
+    _generate(report_env)
+    generated = _markdown(report_env)
+
+    header, blocks = fo._md_sections(generated)
+    assert len(blocks) == len(REPORT_REQUIRED_SECTIONS), [h for h, _ in blocks]
+    assert sum(1 for ln in header if " by Foundry-Report." in ln) == 1, header
+    assert fo._lead_header_lines(header) == []
+    assert fo._carried_lead_prose(generated, generated) == []
+
+    # And a lead's own line above the first section still survives beside it.
+    edited = generated.replace(
+        "\n## ", "\n\nthe lead's own line\n\n## ", 1
+    )
+    assert fo._carried_lead_prose(edited, generated) == ["the lead's own line"]

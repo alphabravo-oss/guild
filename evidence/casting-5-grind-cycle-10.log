@@ -31,4 +31,4 @@
   one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
   the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
 .
-1 passed, 104 deselected in 1.74s
+1 passed, 110 deselected in 0.19s

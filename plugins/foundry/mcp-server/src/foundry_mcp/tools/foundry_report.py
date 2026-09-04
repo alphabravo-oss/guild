@@ -1054,11 +1054,62 @@ def _read_spend(
     # for: with no ledger row there is no bucket, and with no bucket the phase
     # whose every dispatch went unreported would not appear in this table at
     # all (D-163).
+    #
+    # D-232 / D-235 — AND THE SEEDING SOURCE IS THAT FUNCTION'S VIEW, NOT THE
+    # RAW PERSISTED DOCUMENT.
+    # ----------------------------------------------------------------------
+    # This loop read `state.json.spend[section]` directly and seeded a bucket
+    # for EVERY key in it. D-229 had already established that an all-zero
+    # cycle bucket is not a measurement but a leftover — the unreported
+    # summary seeds a cycle bucket, the pair then reports spend and clears
+    # every cycle stamp it carried at once, and 0/0/0/0 is what is left — and
+    # closed it in `_overlay_unreported`, which prunes those buckets. But that
+    # prune runs on the DISPLAY's deep copy and on the persisted document only
+    # when the NEXT `Foundry-Spend` call rewrites it. A run can reach DONE with
+    # no further spend call, so the seeding here re-created every pruned bucket
+    # from the unrepaired document. Driven at HEAD over this run's own archive:
+    # `state.json.spend.by_cycle` 29 keys of which 23 all-zero,
+    # `foundry_orchestrator._spend_summary` 6, this reader 29 — and REPORT.md
+    # carried 23 rows reading `| cycle | 0 | 0 | 0.0 | 0 | 0 | 0 |` while
+    # `Foundry-Next` showed six cycles, two surfaces stating different things
+    # about one set of ledgers, and the report's version was the one sealed
+    # into the run's final artifact.
+    #
+    # SO THE PREDICATE IS NOT RESTATED HERE. A mirrored copy of "nothing was
+    # measured" is a second rule that agrees until the day one side is edited,
+    # which is the whole shape of the defect. The overlay is handed a deep copy
+    # of the roll-up — the same `json.loads(json.dumps(...))` spelling
+    # `_spend_summary` uses, and for the same reason: it MUTATES what it is
+    # given, and `state_rollup` is read again below for the disagreements
+    # check — and the key sets it hands back are what this loop seeds from. One
+    # derivation, two readers.
+    #
+    # WHAT SURVIVES IT, DELIBERATELY. A roll-up bucket that measured anything
+    # (tokens, milliseconds, agents) is not pruned, so a cycle the roll-up
+    # knows and the ledger does not still gets a bucket and still reaches the
+    # `disagreements` list below. A cycle named only by the dispatch record
+    # carries `unreported >= 1` — `unreported_dispatch_summary`'s `by_cycle`
+    # values are non-empty lists by construction — so the forgotten-Foundry-
+    # Spend run keeps its line. Seeding is `setdefault` over buckets the ledger
+    # loop already built, so a row the LEDGER measured can never be pruned away
+    # by a stale roll-up; that asymmetry is the ledger keeping its authority.
+    #
+    # The import is function-local. `foundry_orchestrator` imports THIS module
+    # (lazily, at its own cross-casting seam) and a module-level import back
+    # would close the cycle the header of this file spells out; at call time
+    # every module in the chain is already built. Unguarded, so a rename fails
+    # loudly at the one call site that needs the symbol rather than silently
+    # restoring the zero rows.
+    from foundry_mcp.tools.foundry_orchestrator import _overlay_unreported
+
+    seed_view = _overlay_unreported(
+        json.loads(json.dumps(state_rollup or {})), dispatch_summary
+    )
     for section, target, unreported_keys in (
         ("by_phase", by_phase, unreported_by_phase),
         ("by_cycle", by_cycle, unreported_by_cycle),
     ):
-        group = (state_rollup or {}).get(section)
+        group = seed_view.get(section)
         keys = list(group) if isinstance(group, dict) else []
         keys += list(unreported_keys)
         for key in keys:
@@ -1843,9 +1894,47 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
     lines: list[str] = [
         f"# Foundry run report — {run_name}",
         "",
+        # D-234 — THE ONE SURFACE THE CYCLE-27 RULING DID NOT REACH.
+        #
+        # This sentence used to end "prose may be appended, no section may be
+        # removed", which was GI-006 read as a merge: type anywhere, it
+        # survives. The seal does not work that way and has not since the
+        # cycle-27 ruling — `_carried_lead_prose` tells lead prose from
+        # generated body by the HEADING, because any rule that tells them apart
+        # by comparing VALUES re-emits a moved generated row as the lead's own
+        # words (D-228). So a paragraph typed under `## Verdict matrix` is
+        # regenerated away at the next terminal transition, silently:
+        # `lead_prose_lines: 0`, no warning. Every other surface that states
+        # the rule — the done-gate hint, the Foundry-Report tool description,
+        # `display.py`'s footer, `commands/start.md`, both READMEs — was
+        # rewritten then; this banner was not, and it is the sentence a lead
+        # reads at the moment they choose where to type.
+        #
+        # ONE LINE, AND IT MUST CONTAIN " by Foundry-Report.".
+        # `foundry_orchestrator._lead_header_lines` drops a header line that
+        # carries that marker and keeps every other non-blank one as the
+        # lead's. Split this sentence across two rendered lines and the half
+        # without the marker is carried into the seal's Lead notes section on
+        # every terminal transition — the document growing a paragraph of its
+        # own banner per seal.
+        #
+        # THE LEAD-NOTES SECTION IS NAMED WITHOUT ITS `## ` PREFIX, which is
+        # the spelling both READMEs already use for it. Spelled in full, this
+        # sentence would contain `foundry_orchestrator._LEAD_NOTES_HEADING`
+        # verbatim, and the seal's regression tests read "the seal appended
+        # nothing" as that constant being ABSENT from the whole document
+        # (`test_orchestrator_gates.py`, two sites). A banner that names the
+        # section would then make a purely generated report indistinguishable
+        # from a sealed one to those tests. The heading itself is still a whole
+        # trimmed `## ` line and nothing else, which is what `_md_sections`
+        # matches on.
         f"Generated {generated_at} by Foundry-Report. Every section below is "
-        "generated from the run's own ledgers (GI-006): prose may be appended, "
-        "no section may be removed.",
+        "generated from the run's own ledgers (GI-006) and no section may be "
+        "removed. Append your prose under your OWN `## ` heading, or above the "
+        "first generated section: the F6 seal regenerates this document from "
+        "the ledgers and carries those lines verbatim into a trailing "
+        "`Lead notes (carried by the seal)` section. Prose typed INSIDE a "
+        "generated section's body is not carried — it is regenerated away.",
         "",
     ]
     for key in REPORT_REQUIRED_SECTIONS:
