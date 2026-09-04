@@ -27,6 +27,7 @@ from foundry_mcp.schemas.vocab import (
     FIX_AUTHORS,
     FULL_ROSTER_STREAMS,
     INSPECT_DELTA_RULE,
+    INSPECT_MODES,
     LEAD_LANE_MAX_FILES,
     LEAD_LANE_MAX_LINES,
     LIVE_CLEAN_CYCLES_TO_CLEAR,
@@ -6625,12 +6626,40 @@ def _current_inspect_mode(fdir: Path) -> dict | None:
     guessing a width.
     """
     modes = _load_json(fdir / "state.json").get("inspect_modes")
-    if not isinstance(modes, list):
+    if not isinstance(modes, list) or not modes:
         return None
-    for entry in reversed(modes):
-        if isinstance(entry, dict) and entry.get("mode"):
-            return entry
-    return None
+    # D-212 (same class as the escalation-status read) — THE WIDTH IS RESOLVED
+    # AGAINST `INSPECT_MODES`, AND THE LAST ENTRY IS THE ONE THAT DECIDES.
+    #
+    # `inspect_modes` is append-only and the last entry IS the current
+    # decision — `_stamp_fix_after_decision` already reads it that way. This
+    # walked BACKWARDS past any entry with a falsy `mode`, and tested that
+    # `mode` for truthiness rather than for membership of the vocabulary that
+    # spells it, so a hand-edited or foreign-written `"delta"` (lowercase) or
+    # `"BOGUS"` was a recorded width. `_unrecorded_width_problem` then answered
+    # None, and `inspect_clean`'s refusal — `recorded_mode.get("mode") ==
+    # "DELTA"` — is false for such a value, so a narrow INSPECT closed and the
+    # run reached F4.
+    #
+    # BOTH AXES. WHAT is compared: `INSPECT_MODES`, by membership, so the
+    # vocabulary decides rather than the two literals typed beside it at five
+    # doors. WHICH entry answers: the last one, so a malformed current decision
+    # cannot be answered with an older cycle's valid one — walking back would
+    # report cycle N-1's FULL as cycle N's width and PASS the ASSAY gate that
+    # refuses today, which is a worse door than the one being closed.
+    #
+    # An unusable record reads as NO record, which is D-117's ruling ("an
+    # unrecorded width is not full width") applied to the value that is present
+    # and wrong rather than to the one that is absent: every door refuses
+    # through `_unrecorded_width_problem`, naming the transition that records a
+    # width. Every entry this module writes carries a member of the vocabulary,
+    # so a well-formed archive reads exactly as before.
+    entry = modes[-1]
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("mode") not in INSPECT_MODES:
+        return None
+    return entry
 
 
 #: The transitions GI-009 names as the ones that record a width, quoted in
@@ -8768,6 +8797,13 @@ def _escalated_classes(
     defects = _load_json(fdir / "defects.json").get("defects", [])
     overrides = _escalation_overrides(project_root) if apply_overrides else set()
     recorded = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+    # D-212: `_done_preconditions`, `_still_escalated_classes` and
+    # `_advance_escalation_exits` all guard this container; this deciding read
+    # did not, so a document whose `classes` is a list reached `recorded.get`
+    # and raised AttributeError across the MCP boundary instead of returning
+    # the house refusal shape (the D-127 failure, one artifact over).
+    if not isinstance(recorded, dict):
+        recorded = {}
 
     buckets = _class_buckets(defects)
 
@@ -8880,6 +8916,13 @@ def _class_info(key: str, bucket: dict, recorded: dict) -> dict:
     and the proposal regenerated from it cannot go on asserting they are open.
     """
     run_len, run_end = _consecutive_run(bucket["cycles"])
+    # D-212: the recorded entry may not be a mapping at all. `_escalation_status`
+    # now resolves such an entry to ESCALATED rather than dropping it, so this
+    # read is reached with one. `or {}` covered `None` and covered nothing else:
+    # a string or a list fell through it and raised AttributeError on `.get`
+    # several frames below the entry point.
+    entry = recorded.get(key) if isinstance(recorded, dict) else None
+    entry = entry if isinstance(entry, dict) else {}
     return {
         "class": key,
         "declared": bucket["declared"],
@@ -8905,7 +8948,7 @@ def _class_info(key: str, bucket: dict, recorded: dict) -> dict:
         "symbols": sorted(bucket["symbols"]),
         "spec_refs": sorted(bucket["spec_refs"]),
         "sources": sorted(bucket["sources"]),
-        "proposal": (recorded.get(key) or {}).get("proposal", ""),
+        "proposal": entry.get("proposal", ""),
     }
 
 
@@ -9327,11 +9370,41 @@ def _persisted_escalations(
     return sorted(
         key
         for key, entry in classes.items()
-        if isinstance(entry, dict)
-        and key not in overrides
+        if key not in overrides
         # D-210: through the vocabulary. This read `(entry.get("status") or
         # "ESCALATED") == "ESCALATED"`, so a status of `"BOGUS"` was not
         # ESCALATED and this door let it past.
+        #
+        # D-212 — AND NOTHING PRE-FILTERS THE SHAPE AHEAD OF THE RESOLVER.
+        #
+        # This comprehension tested `isinstance(entry, dict)` BEFORE calling
+        # `_escalation_status`, so the resolver's third rung — "present and NOT
+        # a member, OR AN ENTRY THAT IS NOT A MAPPING AT ALL -> ESCALATED" —
+        # was unreachable through this door. A non-mapping entry was DROPPED
+        # from the ESCALATED list rather than resolved into it, and this list
+        # is one half of the union `_done_preconditions` and
+        # `_still_escalated_classes` refuse on.
+        #
+        # Driven at cdb9322 through `server.call_tool` `Foundry-Gate('done')`
+        # on a run whose class K has every instance fixed and verdicts
+        # complete: entry `{"status": "BOGUS"}` blocked DONE naming K (correct,
+        # post-D-210), while entry `"just a string"`, entry `["ESCALATED"]` and
+        # entry `null` each rendered `escalated_classes_cleared` ABSENT from
+        # the failing checks and the run proceeded to DONE. ST-010 is "every
+        # escalated class CLEARED", and an entry that is not a mapping carries
+        # no CLEARED — it must block exactly as an out-of-vocabulary status
+        # now does.
+        #
+        # BOTH AXES. WHAT decides: `ESCALATION_STATUSES` by membership, as
+        # D-210 established. WHERE the shape test lives: INSIDE the resolver,
+        # where its docstring already said it lived, so no caller can reach the
+        # field ahead of it. D-210 put the vocabulary in one place and left
+        # this comprehension holding its own opinion of the shape one line
+        # above it.
+        #
+        # TRUE POSITIVES KEPT: an absent entry, `{"status": null}`,
+        # `{"status": ""}` and `{"status": "BOGUS"}` all still resolve to
+        # ESCALATED and still block; `{"status": "CLEARED"}` still clears.
         and _escalation_status(entry) == ESCALATION_STATUS_ESCALATED
     )
 
@@ -9647,6 +9720,15 @@ def _advance_escalation_exits(
             classes = data["classes"] = {}
         for key in _persisted_escalations(fdir, project_root, classes):
             entry = classes[key]
+            # D-212: the roster now carries a class whose entry is not a
+            # mapping, because such an entry reads as ESCALATED rather than
+            # vanishing. `_escalation_entry_defaults` calls `setdefault` on it.
+            # Normalised exactly as `_record_escalation_proposals` already
+            # normalises the same document, so the arms can advance it and the
+            # class reaches a bounded exit instead of blocking DONE forever. A
+            # non-mapping entry carries no field worth preserving.
+            if not isinstance(entry, dict):
+                entry = classes[key] = {}
             _escalation_entry_defaults(entry)
 
             def _clear(reason: str) -> None:

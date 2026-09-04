@@ -443,8 +443,18 @@ def _read_escalated_classes(run_dir: Path) -> tuple[dict, str | None]:
     by_status = dict.fromkeys(sorted(ESCALATION_STATUSES), 0)
     by_exit_reason = dict.fromkeys(sorted(ESCALATION_EXIT_REASONS), 0)
     for name, entry in sorted(classes.items()):
+        # D-212: this `continue` DROPPED the class from the report entirely —
+        # no row, and `count` short by one — for exactly the entry shape the
+        # orchestrator's deciding reads now resolve to ESCALATED. Driven at
+        # cdb9322: entry `"just a string"`, entry `["ESCALATED"]` and entry
+        # `null` each produced `escalated_classes` count 0 with no row for the
+        # class, so it disappeared from BOTH terminal artifacts at once while
+        # `{"status": "BOGUS"}` was reported. An entry that is not a mapping
+        # carries no status, and a class with no status is reported in the
+        # state it was written in — ESCALATED, by the default two lines below —
+        # never silently retired by omission.
         if not isinstance(entry, dict):
-            continue
+            entry = {}
         # A class with no `status` predates this release's fields and is
         # reported in the state it was written in — ESCALATED. Defaulting it
         # to CLEARED would silently retire a class nobody ever cleared.

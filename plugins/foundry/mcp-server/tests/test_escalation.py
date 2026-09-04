@@ -1417,6 +1417,323 @@ def test_the_report_and_the_gate_agree_about_an_unknown_status(run_env):
     assert row["exit_reason"] is None, row
 
 
+# --------------------------------------------------------------------------- #
+# D-212 — AND NOTHING PRE-FILTERS THE SHAPE AHEAD OF THE RESOLVER (ST-010)
+#
+# D-210 routed both deciding reads through `_escalation_status`, whose third
+# rung reads "present and NOT a member, OR AN ENTRY THAT IS NOT A MAPPING AT
+# ALL -> ESCALATED". `_persisted_escalations` never reached that rung: its
+# comprehension tested `isinstance(entry, dict)` one line ABOVE the resolver,
+# so a class whose entry is not a mapping was DROPPED from the ESCALATED list
+# rather than resolved into it — and the identical `continue` in
+# `foundry_report.py`'s reader dropped it from the report. The class
+# disappeared from BOTH terminal artifacts of the run at once.
+#
+# Two axes, and the second is the one D-210 left open. WHAT decides: the
+# vocabulary, by membership (D-210). WHERE the shape test lives: inside the
+# resolver, so no caller can reach the field ahead of it (D-212).
+# --------------------------------------------------------------------------- #
+
+
+def _fixed_class_with_entry(fdir: Path, entry: object) -> None:
+    """`_fixed_class_with_status`, one layer out: the whole ENTRY is the input.
+
+    The shape under test is the entry itself rather than the `status` field
+    inside it, so the fixture has to be able to write a value that has no
+    fields at all. Everything else is `_fixed_class_with_status`'s run — every
+    instance fixed, so `_escalated_classes` returns {} and the persisted read
+    is unambiguously what answers.
+    """
+    defects = _latent_recurring([0, 1, 2])
+    for d in defects:
+        d["status"] = "fixed"
+        d["fixed_in_cycle"] = 2
+    _ready_for_f6(fdir, defects)
+    (fdir / "escalation.json").write_text(
+        json.dumps({"classes": {"FALSE_DOCUMENTED_CONTRACT": entry}}),
+        encoding="utf-8",
+    )
+
+
+#: Entries that are not mappings at all. `_escalation_status`'s third rung has
+#: always promised to resolve every one of them to ESCALATED.
+_NON_MAPPING_ENTRIES = ["just a string", ["ESCALATED"], None, 7, True, []]
+
+
+@pytest.mark.parametrize("entry", _NON_MAPPING_ENTRIES)
+def test_an_entry_that_is_not_a_mapping_blocks_done(run_env, entry):
+    """ST-010 verbatim: 'the generated report exists with every required
+    section; no LIVE defect open; every escalated class CLEARED'.
+
+    Driven at cdb9322 through `server.call_tool`'s `Foundry-Gate('done')` on a
+    run whose class K has every instance fixed and verdicts complete: entry
+    `{"status": "BOGUS"}` blocked naming K (correct, post-D-210), while entry
+    `"just a string"`, entry `["ESCALATED"]` and entry `null` each rendered
+    `escalated_classes_cleared` ABSENT from the failing checks, so the guard
+    passed and DONE proceeded. An entry that is not a mapping carries no
+    CLEARED, and ST-010's strict reading requires every class recorded in
+    escalation.json to carry CLEARED before DONE.
+
+    Parametrised over the SHAPE rather than over the one reported spelling: the
+    property is "not a mapping", and a fix keyed on `str` would pass a test
+    that named only a string.
+    """
+    project_root, fdir = run_env
+    _fixed_class_with_entry(fdir, entry)
+
+    check = _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))
+    assert check["ok"] is False, check
+    assert check["classes"] == ["FALSE_DOCUMENTED_CONTRACT"], check
+    assert check["persisted_escalated_classes"] == [
+        "FALSE_DOCUMENTED_CONTRACT"
+    ], check
+    # The ledger-recurrence half sees nothing — every instance is fixed — so
+    # the persisted read is unambiguously what answered.
+    assert check["recurring_classes"] == [], check
+
+
+@pytest.mark.parametrize("entry", _NON_MAPPING_ENTRIES)
+def test_a_non_mapping_entry_is_treated_exactly_as_an_unknown_status(
+    run_env, entry
+):
+    """The pin the fix is measured on: the same treatment, not merely SOME
+    refusal.
+
+    `{"status": "BOGUS"}` is the shape D-210 fixed and the reference this one
+    is held to — a present value the vocabulary does not spell. An entry that
+    is not a mapping is the same fact with one more layer removed, so the
+    checklist entry the gate renders for it must be the entry it renders for
+    BOGUS, field for field. Asserting merely `ok is False` would pass on a fix
+    that blocked for some unrelated reason and named a different class.
+    """
+    project_root, fdir = run_env
+
+    _fixed_class_with_entry(fdir, {"status": "BOGUS"})
+    reference = _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))
+
+    _fixed_class_with_entry(fdir, entry)
+    observed = _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))
+
+    assert observed == reference, (entry, observed, reference)
+
+
+def test_the_shape_test_lives_inside_the_resolver_and_nowhere_above_it(run_env):
+    """THE PROPERTY, derived from the source rather than from the symptom.
+
+    D-212's cause is not that `_escalation_status` answered wrongly — it
+    answers correctly for every shape and its docstring says so. The cause is
+    that `_persisted_escalations` tested the shape BEFORE calling it, so the
+    resolver's third rung was unreachable through that door however right it
+    was. A future edit that reintroduces any shape test in the comprehension
+    re-opens exactly that, whatever the parametrised drives above cover.
+
+    Companion to `test_the_status_resolver_is_the_one_path_both_deciding_reads_
+    take`, which pins that the resolver IS called; this pins that nothing is
+    consulted ahead of it.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._persisted_escalations)))
+    pre_filters = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+    ]
+    assert pre_filters == [], (
+        "_persisted_escalations tests an entry's shape itself again; the shape "
+        "test belongs inside `_escalation_status`, whose third rung already "
+        "resolves a non-mapping entry to ESCALATED — D-212."
+    )
+
+    # And the resolver still answers in the vocabulary for every one of them.
+    for handed in _NON_MAPPING_ENTRIES:
+        assert fo._escalation_status(handed) == fo.ESCALATION_STATUS_ESCALATED
+
+
+@pytest.mark.parametrize("entry", _NON_MAPPING_ENTRIES)
+def test_the_report_names_a_non_mapping_entry_as_escalated(run_env, entry):
+    """AC-004 verbatim: 'escalation.json records for the class a status, the
+    exit reason (clean-cycles or budget), the cycle it cleared and the
+    structural packets it consumed.'
+
+    The other terminal artifact. `foundry_report.py`'s reader carried the same
+    `if not isinstance(entry, dict): continue`, so `generate_report` returned
+    `escalated_classes` count 0 with NO row for the class — it vanished from
+    the report exactly as it vanished from the gate. A class with no status is
+    reported in the state it was written in, ESCALATED, never retired by
+    omission.
+    """
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    project_root, fdir = run_env
+    _fixed_class_with_entry(fdir, entry)
+
+    assert generate_report(Path(project_root), fdir)["ok"] is True
+    section = json.loads(
+        (fdir / "report.json").read_text(encoding="utf-8")
+    )["escalated_classes"]
+    assert section["count"] == 1, section
+    assert section["by_status"]["ESCALATED"] == 1, section
+    assert section["by_status"]["CLEARED"] == 0, section
+    row = section["classes"][0]
+    assert row["class"] == "FALSE_DOCUMENTED_CONTRACT", row
+    assert row["status"] == "ESCALATED", row
+    assert row["exit_reason"] is None, row
+
+
+def test_the_genuine_cleared_entry_still_clears(run_env):
+    """The control D-212's fix must not move.
+
+    Without it the drives above would pass on a read that had simply started
+    blocking everything, which deadlocks every run that legitimately cleared a
+    class — the D-034 ruling's explicit prohibition. The one shape that retires
+    a class is a mapping whose status the vocabulary spells.
+    """
+    project_root, fdir = run_env
+    _fixed_class_with_entry(fdir, {"status": "CLEARED", "exit_reason": "clean_cycles"})
+
+    check = _escalation_check(_gate_over_the_wire(project_root, fdir, "done"))
+    assert check["ok"] is True, check
+    assert check["classes"] == [], check
+    assert check["persisted_escalated_classes"] == [], check
+
+
+# --------------------------------------------------------------------------- #
+# D-212, the adjacent paths: the OTHER callers of `_persisted_escalations`.
+#
+# The defect was driven at `Foundry-Gate('done')`. Three other paths reach the
+# same list — the `inspect_start` boundary arms (`_advance_escalation_exits`),
+# the guidance notice (`_still_escalated_classes`), and `_escalated_classes`'s
+# own `_class_info` read of the recorded entry. A class that starts appearing
+# in that list appears in all four.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("entry", _NON_MAPPING_ENTRIES)
+def test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising(
+    run_env, entry
+):
+    """ADJACENT PATH — `Foundry-Phase('inspect_start')`, not the DONE gate.
+
+    `_advance_escalation_exits` walks the roster `_persisted_escalations`
+    returns and calls `_escalation_entry_defaults` on each entry, which is
+    `setdefault` on a mapping. A class that is now IN that roster and is not a
+    mapping would raise `AttributeError` several frames below the entry point —
+    the D-127 shape the house rule exists to prevent, in the very transition
+    that owns the run's cycle counter.
+
+    Normalised exactly as `_record_escalation_proposals` and
+    `_spend_structural_budget` already normalise the same document, so the
+    crossing succeeds, the entry becomes a C-3 record, and the class keeps
+    blocking rather than either crashing the boundary or vanishing again.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    doc = json.loads((fdir / fo.ESCALATION_FILENAME).read_text(encoding="utf-8"))
+    doc["classes"]["FALSE_DOCUMENTED_CONTRACT"] = entry
+    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps(doc), encoding="utf-8")
+
+    crossing = _cross_boundary(fdir, project_root)
+
+    assert crossing.get("ok") is True, crossing
+    recorded = _escalation_entry(fdir)
+    assert isinstance(recorded, dict), recorded
+    assert recorded["status"] == fo.ESCALATION_STATUS_ESCALATED, recorded
+    assert recorded["live_clean_cycles"] == 0, recorded
+    assert recorded["structural_packets_dispatched"] == 0, recorded
+    # ADJACENT PATH 2 — the guidance notice reads the same union the gate
+    # refuses on, so the lead is told about the class the gate will stop on.
+    assert fo._still_escalated_classes(fdir, project_root) == [
+        "FALSE_DOCUMENTED_CONTRACT"
+    ]
+
+
+def test_a_normalised_entry_still_reaches_a_bounded_exit(run_env):
+    """D-034's prohibition: the block this fix creates must be BOUNDED.
+
+    A class that blocks DONE forever is not an improvement on one that vanished
+    from the artifacts. `escalated_at_cycle` is not among
+    `_escalation_entry_defaults`' keys, so a normalised entry cannot advance
+    the clean arm until `Foundry-Tasks` re-latches it from the ledger — which
+    every GRIND cycle calls, and which `foundry_gate`'s grind branch refuses
+    without. Two crossings after that, the class CLEARS on `clean_cycles` like
+    any other quiet class.
+    """
+    project_root, fdir = run_env
+    _escalate(fdir, project_root)
+    doc = json.loads((fdir / fo.ESCALATION_FILENAME).read_text(encoding="utf-8"))
+    doc["classes"]["FALSE_DOCUMENTED_CONTRACT"] = "just a string"
+    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps(doc), encoding="utf-8")
+
+    _cross_boundary(fdir, project_root)
+    _fix_every_instance(fdir, _current_cycle(fdir))
+    foundry_defects_to_tasks(project_root)
+    assert isinstance(_escalation_entry(fdir)["escalated_at_cycle"], int)
+
+    for _ in range(4):
+        _cross_boundary(fdir, project_root)
+        if _escalation_entry(fdir)["status"] == fo.ESCALATION_STATUS_CLEARED:
+            break
+
+    entry = _escalation_entry(fdir)
+    assert entry["status"] == fo.ESCALATION_STATUS_CLEARED, entry
+    assert entry["exit_reason"] == "clean_cycles", entry
+
+
+@pytest.mark.parametrize("entry", _NON_MAPPING_ENTRIES)
+def test_the_recurrence_read_survives_a_non_mapping_entry(run_env, entry):
+    """ADJACENT PATH — `_escalated_classes`, the OTHER half of the union.
+
+    That read resolves the status correctly (D-210) and then hands the whole
+    `recorded` mapping to `_class_info`, which read
+    `(recorded.get(key) or {}).get("proposal", "")`. `or {}` covers `None` and
+    covers nothing else: a string or a list falls through it and raises
+    `AttributeError` on `.get`. Unreachable while the class had no open work —
+    the D-212 drive fixed every instance — and reached the moment the same
+    class has open recurring instances, which is escalation's ordinary state.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F2", cycle=3)
+    (fdir / fo.ESCALATION_FILENAME).write_text(
+        json.dumps({"classes": {"FALSE_DOCUMENTED_CONTRACT": entry}}),
+        encoding="utf-8",
+    )
+
+    escalated = _escalated_classes(fdir, project_root)
+
+    assert list(escalated) == ["FALSE_DOCUMENTED_CONTRACT"], escalated
+    assert escalated["FALSE_DOCUMENTED_CONTRACT"]["proposal"] == ""
+
+
+@pytest.mark.parametrize("classes", ["not a mapping", ["FDC"], 7, None])
+def test_the_recurrence_read_survives_a_classes_container_that_is_not_a_mapping(
+    run_env, classes
+):
+    """The container, one level up from the entry.
+
+    `_done_preconditions`, `_still_escalated_classes` and
+    `_advance_escalation_exits` each guard `isinstance(..., dict)` on
+    `classes`; `_escalated_classes` — a deciding read — did not, so a document
+    whose `classes` is a list reached `recorded.get` and raised across the MCP
+    boundary instead of returning the house refusal shape.
+    """
+    project_root, fdir = run_env
+    _write_defects(fdir, _recurring([1, 2, 3]))
+    _write_state(fdir, phase="F2", cycle=3)
+    (fdir / fo.ESCALATION_FILENAME).write_text(
+        json.dumps({"classes": classes}), encoding="utf-8"
+    )
+
+    assert list(_escalated_classes(fdir, project_root)) == [
+        "FALSE_DOCUMENTED_CONTRACT"
+    ]
+
+
 def test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice(run_env):
     """D-057: the clean arm counted inspect_start CALLS, not server cycles.
 

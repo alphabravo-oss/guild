@@ -4271,3 +4271,158 @@ def test_the_three_gate_branches_that_scan_teams_state_one_remedy(run_env):
             r for r in gate["refusals"] if "Active team" in r["reason"]
         )
         assert teams["hint"] == fo._TEAMS_DOWN_HINT, (phase, teams)
+
+
+# --------------------------------------------------------------------------- #
+# D-212 — THE RECORDED WIDTH IS RESOLVED AGAINST `INSPECT_MODES` TOO
+#
+# Same class as the escalation-status read this cycle fixed: a deciding read
+# comparing a persisted field against a typed literal instead of against the
+# closed vocabulary that spells it. `_current_inspect_mode` accepted any
+# TRUTHY `mode`, so a hand-edited or foreign-written `"delta"` (lowercase) or
+# `"BOGUS"` was a recorded width — `_unrecorded_width_problem` answered None
+# and `inspect_clean`'s refusal (`recorded_mode.get("mode") == "DELTA"`) is
+# false for such a value, so a narrow INSPECT closed and the run reached F4.
+#
+# BOTH AXES. WHAT is compared: `INSPECT_MODES`, by membership, so the
+# vocabulary decides rather than the two literals typed beside it at five
+# doors. WHICH entry answers: the LAST one, because walking back past a
+# malformed current decision would report an older cycle's FULL as this
+# cycle's width and PASS the ASSAY gate that refuses today.
+# --------------------------------------------------------------------------- #
+
+
+#: Values a `mode` field can hold that `INSPECT_MODES` does not spell.
+_OUT_OF_VOCABULARY_MODES = ["delta", "full", "BOGUS", "", "FULL ", "Delta", None, 7]
+
+
+@pytest.mark.parametrize("mode", _OUT_OF_VOCABULARY_MODES)
+def test_a_width_outside_the_vocabulary_is_not_a_recorded_width(run_env, mode):
+    """GI-009 verbatim: 'whichever Foundry-Phase transition opens an INSPECT
+    (start_cast to F2 entry, temper entry, or inspect_start) records the mode;
+    Foundry-Next only reports.'
+
+    D-117 ruled that an unrecorded width is not full width. The value that is
+    PRESENT and outside the vocabulary is the same fact one layer in: nothing
+    this module writes produces it, so nothing has recorded a width the run can
+    act on. It now reads as no record at all, and every door refuses through
+    `_unrecorded_width_problem`, naming the transition that records one.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, mode, INSPECT_DELTA_RULE)
+
+    assert _current_inspect_mode(fdir) is None, mode
+    problem = fo._unrecorded_width_problem(fdir)
+    assert problem is not None, mode
+    assert "no recorded width" in problem["reason"], mode
+    assert "inspect_start" in problem["hint"], mode
+
+
+@pytest.mark.parametrize("mode", sorted(INSPECT_MODES))
+def test_both_vocabulary_members_still_read_as_the_recorded_width(run_env, mode):
+    """The control D-212's fix must not move.
+
+    Parametrised over `INSPECT_MODES` rather than over a typed pair, so a
+    member added to casting 1's vocabulary is covered here the day it is added
+    — and so a read that had simply started refusing everything, which would
+    deadlock every INSPECT in the run, fails here.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, mode, INSPECT_DELTA_RULE)
+
+    recorded = _current_inspect_mode(fdir)
+    assert recorded is not None, mode
+    assert recorded["mode"] == mode, recorded
+    assert fo._unrecorded_width_problem(fdir) is None, mode
+
+
+def test_an_out_of_vocabulary_width_is_refused_at_every_door(run_env, monkeypatch):
+    """D-117's five-door drive, on the value that is present and wrong.
+
+    Each door reads the width on its own terms — the streams-complete roster,
+    `inspect_clean`'s DELTA refusal, the ASSAY gate's positive FULL assertion —
+    and a fix wired into two of them leaves the third deciding on a different
+    definition of "recorded". Asserted as one test over the whole set, which is
+    the shape `test_an_unrecorded_inspect_width_is_refused_at_every_door` uses
+    for the absent value.
+
+    `"delta"` is the worst of the set: `inspect_clean` tests `== "DELTA"`, so a
+    lowercase spelling let a narrow INSPECT close and move the run to F4.
+    """
+    project_root, fdir = run_env
+    _cycle_recorded_with_mode(fdir, "delta", INSPECT_DELTA_RULE)
+
+    # 1. the streams-complete check
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert streams["unrecorded_width"] is True, streams
+    assert streams["required"] == [], streams
+
+    # 2. Foundry-Phase('inspect_clean') — the transition that would open F4
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean.get("ok") is not True, clean
+    assert clean["unrecorded_width"] is True, clean
+    assert _read_state(fdir)["phase"] == "F2", "the run must not reach F4"
+
+    # 3. Foundry-Gate('assay') — the sibling door into the same phase
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+    assert gate["passed"] is False, gate
+    width = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("inspect_ran_at_full_width")
+    )
+    assert width["ok"] is False, width
+
+
+@pytest.mark.parametrize("current", [{"mode": "BOGUS"}, {"mode": ""}, "junk", 7, None])
+def test_a_malformed_current_width_is_not_answered_with_an_older_valid_one(
+    run_env, current
+):
+    """The axis the obvious fix gets wrong.
+
+    `inspect_modes` is append-only and the LAST entry is the current decision —
+    `_stamp_fix_after_decision` already reads it that way. Adding a membership
+    test to the old backwards walk would have made this state report cycle 1's
+    FULL as cycle 2's width and PASS the ASSAY gate that refuses it today: a
+    fix that opens a door currently shut, in the name of closing another.
+
+    So an unusable current decision is answered with no decision, never with an
+    older cycle's.
+    """
+    project_root, fdir = run_env
+    _full_cycle_recorded_with(fdir, "first_of_phase", cycle=1)
+    state = _read_state(fdir)
+    state["inspect_modes"].append(current)
+    state["cycle"] = 2
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    assert _current_inspect_mode(fdir) is None, current
+
+    _arm(fdir)
+    gate = fo.foundry_gate("assay", project_root)
+    assert gate["passed"] is False, gate
+
+
+def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
+    """THE PROPERTY, derived from the source rather than from the symptom.
+
+    `_current_inspect_mode`'s docstring calls itself THE ONLY READ, and GI-008
+    and GI-009 both name a lazily-computed mode as the violation. The
+    vocabulary check therefore belongs in it and nowhere else: a door that
+    re-tested the raw field would be a sixth opinion of one string, which is
+    how D-117's five permissive fallbacks came to agree on the wrong answer.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._current_inspect_mode)))
+    names = {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    }
+    assert "INSPECT_MODES" in names, (
+        "_current_inspect_mode no longer resolves the persisted mode against "
+        "the closed vocabulary, so a value outside it reads as a recorded "
+        "width again — D-212."
+    )
