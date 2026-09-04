@@ -1,0 +1,66 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_inspect_mode.py tests/test_orchestrator_gates.py > /dev/null && echo 'pytest green: tests/test_inspect_mode.py tests/test_orchestrator_gates.py' && uv run --quiet --with pytest python -c "import ast,json,pathlib,re,subprocess,sys,tempfile;sys.path.insert(0,'.');from foundry_mcp import server as S;from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state;import tests.test_inspect_mode as TIM;import tests.test_orchestrator_gates as TOG;P=pathlib.Path;W=lambda p,s:p.write_text(s,encoding='utf-8');g=lambda r,*a:subprocess.run(['git','-C',str(r),*a],capture_output=True,text=True).stdout.strip();rel=lambda s:'foundry_mcp/'+str(s).split('/foundry_mcp/')[-1];norm=lambda s:re.sub(r'/\S*/foundry_mcp/','foundry_mcp/',s);setattr(fo,'_check_active_teams',lambda _pr:{'active':False,'teams':[],'live_panes':[]});root=P(tempfile.mkdtemp());[g(root,*a) for a in (('init','-q'),('config','user.email','f@e.invalid'),('config','user.name','f'))];W(root/'.gitignore','/foundry-archive/\n');(root/'src').mkdir();W(root/'src'/'handler.py','def handle():\n    pass\n');g(root,'add','-A');g(root,'commit','-qm','baseline');fdir=root/'foundry-archive'/'ev19';(fdir/'castings').mkdir(parents=True);W(fdir/'state.json',json.dumps({'phase':'F3','cycle':1,'spec_path':''}));W(fdir/'defects.json',json.dumps({'defects':[TIM._open_live()]}));W(fdir/'castings'/'manifest.json',json.dumps({'castings':[{'id':1,'key_files':['src/handler.py']}]}));W(fdir/'spec.md','- **FR-001**: the thing works\n- **FR-002**: the thing works\n'+TIM._CONTRACTS_TABLE);g(root,'add','-A');g(root,'commit','-q','--allow-empty','-m','pre-boundary');W(fdir/fo.INSPECT_BOUNDARY_SHA_MARKER,g(root,'rev-parse','HEAD')+'\n');W(root/'src'/'a.py','# a GRIND cycle touched this\n');g(root,'add','-A');g(root,'commit','-qm','grind');W(fdir/'.next-action-called',fo._now()+'\n');foundry_state.set_active_run('ev19');S._project_root=str(root);PRJ=str(root);cells=fo._contracts_surface_cells(PRJ);reg=fo._registry_tool_modules();hit=lambda tool,surface:re.search(r'(?<![A-Za-z0-9_-])'+re.escape(tool)+r'(?![A-Za-z0-9_-])',surface);cov=sorted({rel(m) for rid,sf in cells for tool in reg for m in reg[tool] if hit(tool,sf)});print(chr(10)+'=== D-204 / ST-007 / FR-047 / AC-017 / CT-009: what '+chr(34)+'a file TEST-01 covers'+chr(34)+' IS ===');print('  the Contracts table this pin drives, read as CELLS by its surface HEADER:');[print('    %-8s %s'%(rid,sf)) for rid,sf in cells];print(chr(10)+'  each surface mapped to its module through server.py'+chr(39)+'s OWN _DISPATCH binding:');[print('    %-24s -> %s'%(t,', '.join(rel(m) for m in reg[t]))) for t in sorted({t for rid,sf in cells for t in reg if hit(t,sf)})];print(chr(10)+'  covered set (%d modules) = %s'%(len(cov),cov));print(chr(10)+'  the D-204 evidence set — every one of these read COVERED before the fix,');print('  because its basename or stem occurs somewhere in the Contracts section:');[print('    %-28s covered=%s'%(p,fo._test01_scope_touched(PRJ,[p])['touched'])) for p in TIM._STEM_COLLIDING_PATHS];r=fo._test01_scope_touched(PRJ,['src/foundry_mcp/tools/foundry_report.py']);print(chr(10)+'  and the converse, which read NOT covered before the fix:');print('    %-28s covered=%s'%('src/.../tools/foundry_report.py',r['touched']));print('    recorded provenance: %s'%norm(r['detail']));print(chr(10)+'=== D-204 at the wire: _DISPATCH[Foundry-Phase]({phase: inspect_start}) ===');res=S._DISPATCH['Foundry-Phase']({'phase':'inspect_start'});rec=json.loads((fdir/'state.json').read_text(encoding='utf-8'))['inspect_modes'][-1];print('  transition ok            : %s'%res.get('ok'));print('  the GRIND diff           : %s'%rec['touched_files']);print('  mode / rule              : %s / %s'%(rec['mode'],rec['rule']));print('  required_streams         : %s'%rec['required_streams']);print('  test01 scope             : %s (%s)'%(rec['stream_scope']['test01']['scope'],rec['stream_scope']['test01']['detail']));print('  research_audit scope     : %s'%rec['stream_scope']['research_audit']['scope']);n=len(rec['prove_sample']);[fo.foundry_mark_stream(w,rec['cycle'],items_checked=(n if w=='prove' else 1),items_total=(n if w=='prove' else 1),project_root=PRJ) for w in ('trace','prove','test')];print('  streams-complete         : %s'%fo._check_streams_complete(PRJ)['complete']);W(fdir/'.next-action-called',fo._now()+'\n');clean=fo.foundry_mark_phase_complete('inspect_clean',PRJ);print(('  inspect_clean names test01 anywhere : %s   (it refused '+chr(34)+'streams incomplete: test01'+chr(34)+' before)')%('test01' in json.dumps(clean)));foundry_state.clear_active_run();PLUG=P(fo.__file__).resolve().parents[4];trees={p:ast.parse(p.read_text(encoding='utf-8')) for p in sorted(PLUG.rglob('*.py')) if TOG._INSTALLED_DEPENDENCY_DIRS.isdisjoint(p.parts)};al=[(n,b) for t in trees.values() for n,b,s in TOG._import_aliases(t)];print(chr(10)+'=== D-203 / NFR-001 / FR-032: a name an IMPORT binds is a binding too ===');syn=ast.parse('from x import PUBLIC, _private\n');print('  on one import statement, the two pins disagree about what a subject is:');print('    reachability pin subjects (Assign/AnnAssign/Def/Class, private only) : %s'%TOG._private_names_bound(syn.body[0]));print('    unused-import pin subjects (Import/ImportFrom aliases, public too)   : %s'%[b for n,b,s in TOG._import_aliases(syn)]);print('  that is both axes of the blind spot D-202'+chr(39)+'s own fix left PIN_SENTINEL in.');print(chr(10)+'  the pin'+chr(39)+'s derivation, per axis, over every .py the plugin ships:');print('    files scanned          >= 50  : %s'%(len(trees)>=50));print('    Import aliases         >= 200 : %s'%(sum(1 for n,b in al if isinstance(n,ast.Import))>=200));print('    ImportFrom aliases     >= 700 : %s'%(sum(1 for n,b in al if isinstance(n,ast.ImportFrom))>=700));print('    aliases inside def/class >= 200 : %s'%(len([1 for t in trees.values() for d in ast.walk(t) if isinstance(d,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)) for i in ast.walk(d) for n,b,s in ([(i,'','')] if isinstance(i,(ast.Import,ast.ImportFrom)) else []) for _ in i.names])>=200));print('    __future__ is exempt          : %s'%([b for n,b,s in TOG._import_aliases(ast.parse('from __future__ import annotations\n'))]==[]));print(chr(10)+'  allowlist, which records a MECHANISM and fails when it goes stale:');[print('    %s  ->  %s'%(k,v.split(' asserts')[0])) for k,v in sorted(TOG._ATTRIBUTE_READ_REEXPORTS.items())]"
+# evidence-for: ST-007, FR-047, FR-012, AC-017, CT-009, NFR-001, FR-032
+# evidence-timeout: 600
+pytest green: tests/test_inspect_mode.py tests/test_orchestrator_gates.py
+
+=== D-204 / ST-007 / FR-047 / AC-017 / CT-009: what "a file TEST-01 covers" IS ===
+  the Contracts table this pin drives, read as CELLS by its surface HEADER:
+    CT-004   Foundry-Fix (LATENT lane)
+    CT-007   Foundry-Phase inspect_start (evidence sweep)
+    CT-008   Foundry-Gate assay, temper, nyquist, done and Foundry-Phase inspect_clean
+    CT-012   Foundry-Next (stall detector)
+    CT-013   Foundry-Spend (new tool)
+    CT-014   Foundry-Report (new tool)
+    CT-016   Foundry-Init, Foundry-Phase and Foundry-Next (max_cycles)
+
+  each surface mapped to its module through server.py's OWN _DISPATCH binding:
+    Foundry-Fix              -> foundry_mcp/tools/foundry_orchestrator.py
+    Foundry-Gate             -> foundry_mcp/tools/foundry_orchestrator.py
+    Foundry-Init             -> foundry_mcp/tools/foundry.py
+    Foundry-Next             -> foundry_mcp/tools/foundry_orchestrator.py
+    Foundry-Phase            -> foundry_mcp/tools/foundry_orchestrator.py
+    Foundry-Report           -> foundry_mcp/tools/foundry_report.py, foundry_mcp/tools/foundry_state.py
+    Foundry-Spend            -> foundry_mcp/tools/foundry_orchestrator.py
+
+  covered set (4 modules) = ['foundry_mcp/tools/foundry.py', 'foundry_mcp/tools/foundry_orchestrator.py', 'foundry_mcp/tools/foundry_report.py', 'foundry_mcp/tools/foundry_state.py']
+
+  the D-204 evidence set — every one of these read COVERED before the fix,
+  because its basename or stem occurs somewhere in the Contracts section:
+    src/a.py                     covered=False
+    src/fix.py                   covered=False
+    src/next.py                  covered=False
+    n/gate.py                    covered=False
+    lib/init.go                  covered=False
+    x/report.rb                  covered=False
+    webapp/spend.ts              covered=False
+    tools/id.py                  covered=False
+
+  and the converse, which read NOT covered before the fix:
+    src/.../tools/foundry_report.py covered=True
+    recorded provenance: CT-014 names surface Foundry-Report, which foundry_mcp/tools/foundry_report.py implements, and the diff touched src/foundry_mcp/tools/foundry_report.py
+
+=== D-204 at the wire: _DISPATCH[Foundry-Phase]({phase: inspect_start}) ===
+  transition ok            : True
+  the GRIND diff           : ['src/a.py']
+  mode / rule              : DELTA / delta
+  required_streams         : ['trace', 'prove', 'test']
+  test01 scope             : skipped (no file test01 covers was touched)
+  research_audit scope     : skipped
+  streams-complete         : True
+  inspect_clean names test01 anywhere : False   (it refused "streams incomplete: test01" before)
+
+=== D-203 / NFR-001 / FR-032: a name an IMPORT binds is a binding too ===
+  on one import statement, the two pins disagree about what a subject is:
+    reachability pin subjects (Assign/AnnAssign/Def/Class, private only) : []
+    unused-import pin subjects (Import/ImportFrom aliases, public too)   : ['PUBLIC', '_private']
+  that is both axes of the blind spot D-202's own fix left PIN_SENTINEL in.
+
+  the pin's derivation, per axis, over every .py the plugin ships:
+    files scanned          >= 50  : True
+    Import aliases         >= 200 : True
+    ImportFrom aliases     >= 700 : True
+    aliases inside def/class >= 200 : True
+    __future__ is exempt          : True
+
+  allowlist, which records a MECHANISM and fails when it goes stale:
+    ('scripts/measure-run.py', 'THUNDER_VIPER_BASELINE')  ->  tests/test_measure_run.py::test_the_baseline_and_target_are_read_from_vocab_not_re_typed
