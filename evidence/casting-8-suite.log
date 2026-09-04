@@ -227,12 +227,12 @@
 ........................................................................ [ 27%]
 ........................................................................ [ 29%]
 ........................................................................ [ 31%]
-........................................................................ [ 33%]
-........................................................................ [ 35%]
-........................................................................ [ 37%]
-........................................................................ [ 39%]
-.......................................s................................ [ 41%]
-............s.s.....
+........................................................................ [ 32%]
+........................................................................ [ 34%]
+........................................................................ [ 36%]
+........................................................................ [ 38%]
+..............................................s......................... [ 40%]
+....................s.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -270,27 +270,27 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-.................................................... [ 43%]
-........................................................................ [ 45%]
-........................................................................ [ 47%]
-........................................................................ [ 49%]
-........................................................................ [ 51%]
-........................................................................ [ 53%]
+............................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
 ........................................................................ [ 54%]
 ........................................................................ [ 56%]
 ........................................................................ [ 58%]
 ........................................................................ [ 60%]
 ........................................................................ [ 62%]
 ........................................................................ [ 64%]
-........................................................................ [ 66%]
-........................................................................ [ 68%]
-........................................................................ [ 70%]
-........................................................................ [ 72%]
-........................................................................ [ 74%]
-..........s..s.s..s..................................................... [ 76%]
-........................................................................ [ 78%]
-........................................................................ [ 80%]
-...................
+........................................................................ [ 65%]
+........................................................................ [ 67%]
+........................................................................ [ 69%]
+........................................................................ [ 71%]
+........................................................................ [ 73%]
+..................s..s.s..s............................................. [ 75%]
+........................................................................ [ 77%]
+........................................................................ [ 79%]
+...........................
 === report.json top-level keys ===
   generated_at
   run
@@ -474,22 +474,23 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-.................................................. [ 82%]
-........................................................................ [ 84%]
-......................................................ss.ss.ssss.sssssss [ 86%]
-s.ssss.s..ss.sss........................................................ [ 88%]
-........................................................................ [ 90%]
-........................................................................ [ 92%]
-........................................................................ [ 94%]
-........................................................................ [ 96%]
+.......................................... [ 81%]
+........................................................................ [ 83%]
+..............................................................ss.ss.ssss [ 85%]
+.ssssssss.ssss.s..ss.sss................................................ [ 87%]
+........................................................................ [ 89%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
 ........................................................................ [ 98%]
-..................................................................       [100%]
+.......................................                                  [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/c3-suite-ca88438/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2126: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/c3-suite-ca88438/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2195: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/c3-suite-ca88438/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-c6-c23-suite/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2178: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-c6-c23-suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2247: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-c6-c23-suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -520,4 +521,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3630 passed, 36 skipped, 3 deselected in 157.03s
+3675 passed, 36 skipped, 3 deselected in 151.17s
