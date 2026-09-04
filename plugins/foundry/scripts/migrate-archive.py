@@ -60,6 +60,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
     )
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
+        is_stream_record,
         read_json,
         read_text_file,
     )
@@ -76,6 +77,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
     )
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
+        is_stream_record,
         read_json,
         read_text_file,
     )
@@ -479,28 +481,92 @@ def _derive_stream_rollup(run_dir: Path) -> tuple[dict[str, Any], dict[str, int]
 
 
 def _rollup_needs_rebuild(existing: Any) -> bool:
-    """True when the stored roll-up is in a shape _rollup_totals cannot read.
+    """True when the stored roll-up holds NOTHING a current reader can read.
 
     v1 of this tool wrote ``cycles[c][<CANONICAL>] = <int>``. Those documents
-    are inert and must be re-derived, or an archive "migrated" by v1 keeps a
-    roll-up its consumer silently ignores.
+    are inert — ``_rollup_totals`` requires a dict and reads an int back as "no
+    record for this cycle" — and must be re-derived, or an archive "migrated"
+    by v1 keeps a roll-up its consumer silently ignores.
 
-    A document whose entries are ALREADY dicts is either server-written — with
-    a real ``records`` audit trail and real coverage numbers — or already v2.
-    Never re-derive it: the archive's own data cannot reconstruct what the
-    server observed, so a rebuild would be data loss.
+    Anything else is left exactly as found. The archive's own data cannot
+    reconstruct what the server observed, so a rebuild over server-written data
+    is data loss, and this predicate is the only thing standing between the two.
+
+    D-188 / NFR-003 — A CYCLE BUCKET IS NOT ALL STREAMS, AND HAS NOT BEEN
+    SINCE C-6. THIS IS THE FOURTH WALKER TO LEARN THAT.
+    ---------------------------------------------------------------------
+    The old rule was ``any(not isinstance(entry, dict) for entry in
+    bucket.values())`` — every key in a cycle bucket assumed to be a stream, and
+    the VALUE SHAPE hand-tested. That was true of the document when it was
+    written and stopped being true when the spec's Data Model widened it:
+    ``_record_cycle_facts`` writes ``inspect_mode`` and ``inspect_rule`` as
+    STRINGS into the same mapping as the stream tranches, so the two NEWEST
+    fields in the document read as the OLDEST shape the tool knows.
+
+    Driven end to end on a byte copy of this run's own archive: ``migrate-
+    archive.py <copy>`` exited 0 reporting step ``stream_rollup`` outcome
+    ``upgraded`` and re-derived the roll-up from markers. 45 keys were lost,
+    including every ``inspect_mode`` / ``inspect_rule`` / ``stream_scope`` /
+    ``evidence_sweep`` entry for cycles 10-12 — the exact per-cycle record
+    GI-008 requires the transition to write and FR-023/AC-036 require the
+    report's full-vs-delta section to be derivable from — plus whole stream
+    entries in eleven of thirteen cycles. Cycle 11's PROVE went from
+    ``{items_checked 172, items_total 172, findings 2, records [one audit
+    row]}`` to ``{items_checked 0, items_total 0, findings 2, records []}``.
+    ``/foundry:resume`` runs this tool on EVERY resume, so the destruction was
+    one resume away from any run under this release.
+
+    THE VALUE TEST IS SCOPED BY THE KEY, AND PRESERVING DOMINATES
+    ------------------------------------------------------------
+    Two rules, in this order:
+
+      * A key the stream roster does not resolve is NOT a stream, so its value
+        shape says nothing about the document's generation. That is exactly
+        ``measure-run.py._read_stream_rollup``'s structure (D-182) — resolve the
+        key, then test the value with the ONE definition in
+        ``foundry_state.is_stream_record``. A denylist of the C-6 key NAMES was
+        rejected for the reason stated there: ``temper_entry`` is already a
+        fifth and the next C-6 field would be a sixth.
+      * ANY evidence the server wrote this document VETOES the rebuild, wherever
+        in the document it sits: a tranche carrying ``records``, or a key the
+        roster does not know. Scoping the value test alone (the smaller fix)
+        would still rebuild a MIXED document — a v1-migrated archive RESUMED
+        under this release, whose old cycles are inert ints while its new ones
+        carry the server's audit trail and cycle facts. That shape is reachable
+        precisely because this tool exists to make old archives resumable, and
+        rebuilding it destroys the half that cannot be re-derived to repair the
+        half that can. The docstring above has always called that data loss;
+        this is the veto that makes the claim true rather than aspirational.
+
+    So an unknown key is read as "a later writer put something here I do not
+    understand", never as "this is an old document" — which is what A-044's
+    additive-compatibility regime demands of any second reader of a widened
+    document, and what the absence of that reading cost here.
+
+    Pure and total: takes the decoded JSON and returns False rather than raising
+    on any type.
     """
     if not isinstance(existing, dict):
         return True
     cycles = existing.get("cycles")
     if not isinstance(cycles, dict):
         return True
+
+    # Order-independent by construction: a veto returns immediately and is the
+    # answer wherever it was found, so the verdict cannot depend on dict order.
+    inert = False
     for bucket in cycles.values():
         if not isinstance(bucket, dict):
-            return True
-        if any(not isinstance(entry, dict) for entry in bucket.values()):
-            return True
-    return False
+            # Not the documented shape at all, and nothing in it to preserve.
+            inert = True
+            continue
+        for key, entry in bucket.items():
+            if is_stream_record(entry):
+                return False  # server-written or already re-derived
+            if not isinstance(key, str) or canonical_stream_id(key) is None:
+                return False  # a cycle-level fact, not a stream — preserve it
+            inert = True
+    return inert
 
 
 def _rollup_detail(document: dict[str, Any], non_stream: dict[str, int]) -> dict[str, Any]:
@@ -525,7 +591,12 @@ def _rollup_detail(document: dict[str, Any], non_stream: dict[str, int]) -> dict
 def _migrate_stream_rollup(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
     path = run_dir / "stream-rollup.json"
     if path.exists() and not _rollup_needs_rebuild(_load_json(path)):
-        return "no-op", {"reason": "stream-rollup.json already readable by _rollup_totals"}
+        return "no-op", {
+            # D-188: "readable" was the old, narrower claim. A no-op here now
+            # also covers a document carrying server-written cycle facts a
+            # rebuild could not reconstruct — see _rollup_needs_rebuild.
+            "reason": "stream-rollup.json carries data no rebuild could reconstruct"
+        }
     outcome = "upgraded" if path.exists() else "created"
     document, non_stream = _derive_stream_rollup(run_dir)
     if not dry_run:

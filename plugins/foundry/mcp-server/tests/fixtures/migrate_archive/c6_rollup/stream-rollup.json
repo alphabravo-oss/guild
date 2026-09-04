@@ -1,0 +1,146 @@
+{
+  "cycles": {
+    "0": {
+      "prove": {
+        "items_checked": 140,
+        "items_total": 140,
+        "findings": 3,
+        "records": [
+          {
+            "recorded_at": "2026-09-01T09:00:00Z",
+            "items_checked": 140,
+            "items_total": 140,
+            "findings": 3
+          }
+        ]
+      },
+      "trace": {
+        "items_checked": 88,
+        "items_total": 88,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-01T09:01:00Z",
+            "items_checked": 88,
+            "items_total": 88,
+            "findings": 1
+          }
+        ]
+      }
+    },
+    "11": {
+      "inspect_mode": "DELTA",
+      "inspect_rule": "delta",
+      "stream_scope": {
+        "prove": {
+          "scope": "delta",
+          "detail": {
+            "sample": 10
+          }
+        },
+        "trace": {
+          "scope": "full",
+          "detail": null
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no research file touched"
+        }
+      },
+      "evidence_sweep": {
+        "scope": "delta",
+        "logs_reexecuted": [
+          "evidence/casting-1-migration-round-trip.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 4.5,
+        "pool_size": 4,
+        "swept_at": "2026-09-01T09:30:00+00:00"
+      },
+      "prove": {
+        "items_checked": 172,
+        "items_total": 172,
+        "findings": 2,
+        "records": [
+          {
+            "recorded_at": "2026-09-01T09:31:00Z",
+            "items_checked": 172,
+            "items_total": 172,
+            "findings": 2
+          }
+        ]
+      },
+      "trace": {
+        "items_checked": 91,
+        "items_total": 91,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-01T09:32:00Z",
+            "items_checked": 91,
+            "items_total": 91,
+            "findings": 0
+          }
+        ]
+      }
+    },
+    "12": {
+      "inspect_mode": "FULL",
+      "inspect_rule": "verifier_touched",
+      "stream_scope": {
+        "prove": {
+          "scope": "full",
+          "detail": null
+        },
+        "trace": {
+          "scope": "full",
+          "detail": null
+        }
+      },
+      "evidence_sweep": {
+        "scope": "full",
+        "logs_reexecuted": [
+          "evidence/casting-1-migration-round-trip.log",
+          "evidence/casting-1-migration-tier-unknown.log"
+        ],
+        "mismatches": [],
+        "elapsed_seconds": 11.25,
+        "pool_size": 4,
+        "swept_at": "2026-09-01T10:30:00+00:00"
+      },
+      "temper_entry": {
+        "domains": [
+          "migration"
+        ],
+        "probes": 6
+      },
+      "prove": {
+        "items_checked": 172,
+        "items_total": 172,
+        "findings": 1,
+        "records": [
+          {
+            "recorded_at": "2026-09-01T10:31:00Z",
+            "items_checked": 172,
+            "items_total": 172,
+            "findings": 1
+          }
+        ]
+      },
+      "test01": {
+        "items_checked": 14,
+        "items_total": 14,
+        "findings": 0,
+        "records": [
+          {
+            "recorded_at": "2026-09-01T10:32:00Z",
+            "items_checked": 14,
+            "items_total": 14,
+            "findings": 0
+          }
+        ]
+      }
+    }
+  },
+  "updated_at": "2026-09-01T10:32:00+00:00"
+}

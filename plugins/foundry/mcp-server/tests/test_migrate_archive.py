@@ -4,7 +4,7 @@ Subprocess-invokes ``plugins/foundry/scripts/migrate-archive.py`` the way
 test_measure_run.py invokes measure-run.py (``sys.executable`` + script path),
 so the tests exercise the real CLI contract including its exit codes.
 
-Three fixtures:
+Four fixtures:
 
   * a committed SYNTHETIC pre-change archive that exercises all seven migration
     steps. Unconditional — migration correctness and idempotency are covered
@@ -14,6 +14,11 @@ Three fixtures:
     last INSPECT cycle's clean streams file no defects. Both the synthetic
     fixture above and grand-vulture happen to have marker cycle == max defect
     cycle, and that coincidence is what hid D-060.
+  * a committed C-6 archive — one that already executed UNDER this release, so
+    its stream-rollup.json carries the cycle-level facts (``inspect_mode``,
+    ``inspect_rule``, ``stream_scope``, ``evidence_sweep``, ``temper_entry``)
+    beside the stream tranches. D-188 is what this fixture exists to hold
+    down: every step must no-op on it, and step 4 must not touch a byte.
   * the real grand-vulture archive, copied to tmp_path and migrated there.
     ``foundry-archive/`` is git-ignored, so that one test is skipif-guarded.
     The real archive is NEVER opened for writing.
@@ -40,6 +45,9 @@ MEASURE_SCRIPT = REPO_ROOT / "plugins" / "foundry" / "scripts" / "measure-run.py
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "migrate_archive"
 PRE_CHANGE = FIXTURES / "pre_change"
 CLEAN_LAST_CYCLE = FIXTURES / "clean_last_cycle"
+# D-188: an archive written by THIS release. Its roll-up is the widened
+# document the rebuild detector mistook for the inert v1 shape.
+C6_ROLLUP = FIXTURES / "c6_rollup"
 
 # The real pre-change archive named by AC-026 and OT-012. git-ignored, so it
 # is present in a working checkout and absent from a clean clone.
@@ -106,6 +114,14 @@ def clean_archive(tmp_path: Path) -> Path:
     """A writable copy of the clean-last-cycle archive (D-060's shape)."""
     dest = tmp_path / "clean-last-cycle-run"
     shutil.copytree(CLEAN_LAST_CYCLE, dest)
+    return dest
+
+
+@pytest.fixture
+def c6_archive(tmp_path: Path) -> Path:
+    """A writable copy of the C-6 archive (D-188's shape)."""
+    dest = tmp_path / "c6-rollup-run"
+    shutil.copytree(C6_ROLLUP, dest)
     return dest
 
 
@@ -444,6 +460,145 @@ def test_step_4_never_rebuilds_a_server_written_document(archive: Path) -> None:
     summary = _migrate(archive)
     assert _outcomes(summary)["stream_rollup"] == "no-op"
     assert json.loads((archive / "stream-rollup.json").read_text()) == live
+
+
+# ---------------------------------------------------------------------------
+# D-188 — THE REBUILD DETECTOR AND THE WIDENED DOCUMENT.
+#
+# ``cycles[<cycle>]`` has held two kinds of key since the spec's Data Model
+# added the C-6 cycle facts: STREAM TRANCHES under a wire id, and facts about
+# the CYCLE ITSELF beside them. ``_rollup_needs_rebuild`` tested every value's
+# shape by hand, so ``inspect_mode`` and ``inspect_rule`` -- plain strings --
+# read as the v1 int-valued shape the rebuild exists to replace. Driven on a
+# byte copy of this run's own archive, the tool reported ``upgraded`` and
+# re-derived over 45 server-written keys, PROVE's cycle-11 audit row among
+# them. ``/foundry:resume`` runs this tool on every resume.
+#
+# These four tests hold both halves of the fix down: the roster scopes the
+# value test (so a cycle-level fact is not evidence of an old document), and
+# any server-written evidence anywhere VETOES the rebuild (so a mixed document
+# is preserved rather than half-repaired and half-destroyed).
+# ---------------------------------------------------------------------------
+
+
+def test_c6_fixture_really_carries_the_cycle_level_facts(c6_archive: Path) -> None:
+    """Precondition: without the widened keys the next three prove nothing.
+
+    Asserts the two STRING-valued keys by name, because they are the ones that
+    tripped the old ``not isinstance(entry, dict)`` branch, and ``temper_entry``
+    because it is the fifth such key -- the one a denylist of the four names
+    D-188 quoted would already have missed.
+    """
+    rollup = json.loads((c6_archive / "stream-rollup.json").read_text())
+    cycle_11 = rollup["cycles"]["11"]
+    assert isinstance(cycle_11["inspect_mode"], str)
+    assert isinstance(cycle_11["inspect_rule"], str)
+    assert "records" in cycle_11["prove"], "tranches sit in the same mapping"
+    cycle_12 = rollup["cycles"]["12"]
+    assert set(cycle_12) >= {
+        "inspect_mode",
+        "inspect_rule",
+        "stream_scope",
+        "evidence_sweep",
+        "temper_entry",
+    }
+
+
+def test_step_4_never_rebuilds_over_c6_cycle_facts(c6_archive: Path) -> None:
+    """D-188: the widened document is left byte-identical, not re-derived.
+
+    Byte-identity rather than an outcome check alone: ``no-op`` is the claim,
+    and the only proof of it is that the file on disk did not move.
+    """
+    before = (c6_archive / "stream-rollup.json").read_bytes()
+    summary = _migrate(c6_archive)
+    assert _outcomes(summary)["stream_rollup"] == "no-op"
+    assert (c6_archive / "stream-rollup.json").read_bytes() == before
+
+
+def test_a_c6_archive_migrates_as_a_whole_no_op(c6_archive: Path) -> None:
+    """NFR-003 on an archive this release itself wrote: nothing to do at all.
+
+    Every step no-ops and ``migrated`` is False, so a resume that runs this
+    tool against a current run changes not one byte of it.
+    """
+    before = _tree_hash(c6_archive)
+    summary = _migrate(c6_archive)
+    assert set(_outcomes(summary).values()) == {"no-op"}, _outcomes(summary)
+    assert summary["migrated"] is False
+    assert _tree_hash(c6_archive) == before
+
+
+def test_step_4_preserves_a_mixed_document_rather_than_half_rebuilding_it(
+    archive: Path,
+) -> None:
+    """Server-written evidence anywhere vetoes the rebuild.
+
+    The reachable mixed shape is a v1-migrated archive RESUMED under this
+    release: its old cycles are inert ints, its new ones carry the server's
+    audit trail and cycle facts. Re-deriving destroys the half that cannot be
+    reconstructed in order to repair the half that can, so the whole document
+    is left as found and the operator is told which cycle is still inert by
+    reading it.
+    """
+    mixed = {
+        "cycles": {
+            "0": {"PROVE": 1, "TRACE": 1},
+            "5": {
+                "inspect_mode": "FULL",
+                "prove": {
+                    "items_checked": 172,
+                    "items_total": 172,
+                    "findings": 2,
+                    "records": [{"recorded_at": "2026-09-01T09:31:00Z"}],
+                },
+            },
+        }
+    }
+    (archive / "stream-rollup.json").write_text(json.dumps(mixed), encoding="utf-8")
+    summary = _migrate(archive)
+    assert _outcomes(summary)["stream_rollup"] == "no-op"
+    assert json.loads((archive / "stream-rollup.json").read_text()) == mixed
+
+
+def test_step_6_reads_a_c6_rollup_step_4_left_as_found(archive: Path) -> None:
+    """D-188 adjacent path: step 4's verdict propagates into step 6.
+
+    Not the transition the defect was driven on. Step 6 repairs
+    ``state.json["cycle"]`` from ``derive_cycle_count``, which reads the roll-up
+    ALREADY ON DISK -- so what step 4 decides about a widened document decides a
+    number in a different file, in the same invocation. Before the fix step 4
+    re-derived this document, and the cycle keys step 6 then read were the
+    re-derived ones rather than the server's; the post-condition held only by
+    accident of the two agreeing. Here the roll-up's highest key (11) is a cycle
+    NO defect record in the fixture carries, so the assertion can only pass if
+    step 6 read the preserved document.
+    """
+    (archive / "stream-rollup.json").write_text(
+        json.dumps(
+            {
+                "cycles": {
+                    "11": {
+                        "inspect_mode": "DELTA",
+                        "inspect_rule": "delta",
+                        "stream_scope": {"prove": {"scope": "delta", "detail": None}},
+                        "evidence_sweep": {"scope": "delta", "mismatches": []},
+                        "prove": {
+                            "items_checked": 172,
+                            "items_total": 172,
+                            "findings": 2,
+                            "records": [{"recorded_at": "2026-09-01T09:31:00Z"}],
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = _migrate(archive)
+    assert _outcomes(summary)["stream_rollup"] == "no-op", "widened doc left as found"
+    assert summary["steps"]["state_cycle"]["observed"] == 11
+    assert json.loads((archive / "state.json").read_text())["cycle"] == 11
 
 
 def test_step_4_rederivation_is_deterministic(archive: Path, tmp_path: Path) -> None:
