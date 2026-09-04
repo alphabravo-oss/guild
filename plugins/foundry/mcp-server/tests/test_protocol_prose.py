@@ -6347,6 +6347,29 @@ def _sync_one(row: dict, project_root: str) -> dict:
     return json.loads(tail if marker else text)
 
 
+def _persisted_defects(project_root: str) -> list[dict]:
+    """The records the scratch run's defect ledger actually holds.
+
+    Read off disk rather than out of the door's return value, because the
+    return counts what the door BELIEVES it wrote (`added`) and says nothing
+    about the shape of it. D-213 is about a field that survives the write
+    verbatim and is wrong -- `source` -- so the only place the claim can be
+    checked is the record the next reader of this run will read.
+    """
+    run_dir = foundry_state.get_run_dir(project_root)
+    assert run_dir is not None, (
+        "the scratch run has no run directory, so nothing below can read a "
+        "persisted record. The `sync_door` fixture initialises one; if that "
+        "stopped working every driven pin here is testing an empty ledger."
+    )
+    ledger = run_dir / "defects.json"
+    if not ledger.exists():
+        return []
+    payload = json.loads(ledger.read_text(encoding="utf-8"))
+    records = payload.get("defects") if isinstance(payload, dict) else payload
+    return [r for r in (records or ()) if isinstance(r, dict)]
+
+
 @pytest.fixture
 def sync_door(tmp_path: Path, monkeypatch):
     """A scratch run with `_project_root` pointed at it, torn down after.
@@ -6431,6 +6454,16 @@ def test_every_documented_filing_row_lands_at_the_door(path: Path, sync_door) ->
       - a row a surface teaches as LATENT whose prose asserts a security
         property, which the denylist refuses as SECURITY_PROPERTY_CLAIM;
       - any field the door starts requiring after today.
+
+    AND, since D-213, what the row PERSISTED AS. Landing is not the whole
+    claim: a `source` that is a legal member of `DEFECT_SOURCE_IDS` but the
+    wrong one for the dispatch reading the row lands cleanly and is stored
+    verbatim, because the door refuses an unattributed finding and has no way
+    to know which of eleven legal identities the caller actually is. Every
+    single-dispatch surface still drives its one row and still has it recorded
+    under the one id it names; what the read-back adds is that the id in the
+    ledger is the id the example declared, for each row separately -- which is
+    the only assertion a dual-dispatch surface's two rows can both satisfy.
     """
     rows = _documented_filing_rows(path)
     for i, row in enumerate(rows):
@@ -6451,6 +6484,33 @@ def test_every_documented_filing_row_lands_at_the_door(path: Path, sync_door) ->
             "missing_fields": result.get("missing_fields"),
             "invalid_fields": result.get("invalid_fields"),
             "refusals": result.get("refusals"),
+        }
+        persisted = _persisted_defects(sync_door)
+        assert len(persisted) == i + 1, {
+            "file": _rel(path),
+            "row_index": i,
+            "records_in_ledger": len(persisted),
+            "why": (
+                "the door reported no refusal and the ledger did not grow by "
+                "exactly one record. A row that is neither refused nor "
+                "recorded is the silent half of the same failure: the stream "
+                "reads `ok` and its finding is not in defects.json for the "
+                "lead to convert into a GRIND task."
+            ),
+            "result": result,
+        }
+        assert persisted[-1].get("source") == row.get("source"), {
+            "file": _rel(path),
+            "row_index": i,
+            "declared_source": row.get("source"),
+            "persisted_source": persisted[-1].get("source"),
+            "why": (
+                "the row landed and was recorded under a different `source` "
+                "than it declares. The door does not coerce any more, so this "
+                "is a divergence between the example and the ledger rather "
+                "than the old rewrite-to-trace bug -- fix whichever side is "
+                "wrong, never this assertion."
+            ),
         }
 
 
@@ -6480,3 +6540,139 @@ def test_the_undriven_surfaces_still_earn_their_exemption(sync_door) -> None:
                 f"that is a second defect the exemption was never written to "
                 f"cover -- file it rather than widening the entry."
             )
+
+
+# ---------------------------------------------------------------------------
+# D-213 / FR-007 -- a DUAL-DISPATCH surface documents a row for EACH identity
+# ---------------------------------------------------------------------------
+#
+# D-209 gave every documented filing row a `source`, and for four of the five
+# agent surfaces one literal was the whole answer: each is dispatched under
+# exactly one wire id, so the id its example carries is right every time the
+# example is copied. `agents/assayer.md` is not one of those four. It is
+# dispatched TWICE -- as the F2 PROVE stream (its Step 4 marks the stream
+# complete with `stream: "prove"`, its width comes from
+# `inspect_mode.prove_sample`, and its ledger is `progress/prove.jsonl`) and
+# as the F4 ASSAY agent -- and both of its documented rows read
+# `"source": "assay"`, with no sentence anywhere in the file telling a PROVE
+# dispatch to substitute its own id.
+#
+# Driven at cdb9322: the two rows parsed out of the file and passed VERBATIM to
+# `server.call_tool("Foundry-Sync", ...)` each returned `ok` with `added: 1` and
+# persisted `source: "assay"`, while `Foundry-Stream(stream="prove")` succeeded
+# in the same cycle -- one stream's work recorded under two identities, in two
+# artifacts of the same run. That is the mis-attribution `foundry_sync_defects`
+# stopped COERCING and now refuses; it arrives here through the one channel the
+# refusal cannot see, because the wrong value is a legal `DEFECT_SOURCE_IDS`
+# member. The door can refuse an unattributed finding. It cannot know which of
+# eleven legal identities the caller actually is, so the example is the last
+# place the question is answerable, and a literal that is right for one of two
+# dispatches answers it wrongly half the time.
+#
+# WHY THE IDENTITIES ARE DERIVED AND NOT LISTED
+# ---------------------------------------------
+# A `{ASSAYER: ("prove", "assay"), ...}` table beside this test would be a
+# second copy of a closed vocabulary -- the failure `_EXPECTED_TYPE_ENUM`,
+# `DEFECT_FILING_AGENTS` and `DRIVEN_FILING_SURFACES` each exist to avoid --
+# and it is worse here than usual: the table is maintained by whoever ALREADY
+# knows a surface is dual-dispatch, and the surface that forgot is the surface
+# nobody adds to it. So the identities are read out of each file's own text,
+# from the three places a surface states a wire id as ITS OWN: the progress
+# ledger it is told to write, the `stream:` argument it is told to mark itself
+# complete under, and the "wire id `x`" phrase its ledger rule uses. A surface
+# naming ANOTHER stream's id in one of those places is a defect in the other
+# direction, so every id these yield is an identity the file is dispatched as.
+# The roster swept is `DRIVEN_FILING_SURFACES`, the same one declaration the
+# driving pin above sweeps -- there is no second list of surfaces here either.
+
+#: The three places a filing surface states a wire id as ITS OWN identity.
+#: Each is a self-identifying instruction rather than a mention: a file does
+#: not tell its reader to write ANOTHER stream's ledger, mark ANOTHER stream
+#: complete, or call ANOTHER stream's id "your wire id".
+_LEDGER_ID_RE = re.compile(r"progress/([a-z0-9_]+)\.jsonl")
+_STREAM_ARG_RE = re.compile(r"stream`?\s*[:=]\s*[\"']([a-z0-9_]+)[\"']")
+_WIRE_ID_RE = re.compile(r"wire id[^`\n]{0,12}`([a-z0-9_]+)`")
+
+
+def _declared_dispatch_ids(path: Path) -> frozenset[str]:
+    """Every `DEFECT_SOURCE_IDS` member a surface claims as its own identity.
+
+    Filtered through the vocabulary READ from the module rather than a set
+    typed here, so a phrase that matches one of the regexes but names nothing
+    the ledger accepts contributes nothing, and a member the vocabulary gains
+    is covered the moment a surface starts claiming it.
+    """
+    text = _read(path)
+    found = (
+        set(_LEDGER_ID_RE.findall(text))
+        | set(_STREAM_ARG_RE.findall(text))
+        | set(_WIRE_ID_RE.findall(text))
+    )
+    return frozenset(found & vocab.DEFECT_SOURCE_IDS)
+
+
+def _documented_sources(path: Path) -> frozenset[str]:
+    """The `source` values a surface's own documented filing rows declare."""
+    return frozenset(
+        row["source"].strip()
+        for row in _documented_filing_rows(path)
+        if isinstance(row.get("source"), str) and row["source"].strip()
+    )
+
+
+def test_every_driven_surface_declares_its_own_dispatch_identity() -> None:
+    """Floor check: a surface deriving no identity asserts nothing below.
+
+    The parametrised check that follows is vacuously green on a file whose
+    three signals all stopped matching -- which is indistinguishable, from
+    inside that check, from a file that legitimately claims no identity. Every
+    member of the driven roster states its wire id somewhere in its own
+    instructions today, so "all of them yield at least one" is the floor, and
+    it is derived on both sides: no roster is typed here, and no id is either.
+    """
+    silent = sorted(
+        _rel(path) for path in DRIVEN_FILING_SURFACES if not _declared_dispatch_ids(path)
+    )
+    assert not silent, (
+        f"{silent} no longer state a wire id of their own anywhere this "
+        f"module can read one -- not as a `progress/<id>.jsonl` ledger, not as "
+        f"a `stream: \"<id>\"` argument, not as a \"wire id `<id>`\" phrase. "
+        f"Either the file stopped telling its dispatch who it is (which is "
+        f"itself the defect: `Foundry-Liveness` looks a stream up under that "
+        f"id) or the derivation drifted off the wording. Fix whichever it is; "
+        f"never shrink this roster, and never replace the derivation with a "
+        f"per-file table."
+    )
+
+
+@pytest.mark.parametrize("path", DRIVEN_FILING_SURFACES, ids=_rel)
+def test_every_dispatch_identity_has_a_documented_filing_row(path: Path) -> None:
+    """D-213: a file dispatched under N identities documents a row for each.
+
+    The driving pin above proves every documented row LANDS and is recorded
+    under the source it declares. That is the whole answer for a surface with
+    one dispatch and no answer at all for a surface with two: `assay` lands
+    perfectly well when a PROVE dispatch files it, and the ledger then carries
+    a row the PROVE stream filed under the ASSAY agent's name. This is the
+    other direction -- every identity the file claims must have a row that a
+    dispatch reading as that identity can copy without editing the field.
+
+    A single-dispatch surface passes exactly as before: its one declared id is
+    the one its rows already carry. Only a file that grew a second dispatch,
+    or lost one identity's row, fails here -- and it fails naming the id.
+    """
+    declared = _declared_dispatch_ids(path)
+    documented = _documented_sources(path)
+    unserved = sorted(declared - documented)
+    assert not unserved, (
+        f"{_rel(path)} is dispatched as {unserved} and documents no filing "
+        f"row carrying that `source` -- its rows declare {sorted(documented)}. "
+        f"A dispatch reading this file as {unserved[0]!r} copies the example "
+        f"it is given, and the row LANDS: every value here is a legal member "
+        f"of vocab.DEFECT_SOURCE_IDS, so nothing refuses it and the finding is "
+        f"persisted under an identity that did not do the work, beside a "
+        f"`Foundry-Stream` record filed under the identity that did. Add the "
+        f"missing dispatch's row to the file (the rows differ in `source` and "
+        f"nothing else); never narrow this assertion to the identity that "
+        f"already has one."
+    )

@@ -325,6 +325,26 @@ When reporting HOLLOW verdicts for stubs, include:
 
 Research deviations (`RESEARCH_IGNORED` / `RESEARCH_CONFLICT`) also get mirrored into the main `defects` array with `type: "RESEARCH_DEVIATION"` so they flow through F3 GRIND like any other defect.
 
+**`source` is the identity you were DISPATCHED as, and this file has two of them.** `agents/assayer.md` runs as the F2 PROVE stream — Step 4 marks it complete through `Foundry-Stream` with `stream: "prove"`, Step 0.5 reads its width from `inspect_mode.prove_sample`, and its progress ledger is `foundry-archive/{run}/progress/prove.jsonl` — and it runs again as the F4 ASSAY agent, which marks no stream at all. `prove` and `assay` are BOTH members of `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_SOURCE_IDS`, so the door accepts either and cannot tell that you picked the wrong one. It refuses an *unattributed* finding and persists a *mis-attributed* one verbatim, which is the worse outcome: one dispatch's findings land in `defects.json` under an identity that did not do the work, beside a `Foundry-Stream` record filed under the identity that did, and the run's evidence then reads as two streams for one stream's cycle. The report above is the ASSAY dispatch's. A PROVE dispatch files the same rows with that one field changed, and nothing else:
+
+```json
+{
+  "defects": [
+    {
+      "source": "prove",
+      "id": "US-7",
+      "verdict": "MISSING",
+      "description": "No implementation found for account deletion",
+      "class": "no-auth-guard-on-destructive-endpoints",
+      "tier": "LIVE",
+      "spec_text_cited": "Users shall be able to delete their account and all associated data"
+    }
+  ]
+}
+```
+
+Read your identity off the dispatch that spawned you — never off this file's name, and never off whichever value an example beside you happened to show. No exceptions, no deferrals, no "the example said `assay`."
+
 ## Tone: Brutally Honest (Squidward Mode)
 
 You are the last gate. Your job is NOT to be helpful, encouraging, or diplomatic.
