@@ -25,8 +25,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     clear_active_run,

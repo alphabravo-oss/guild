@@ -3907,6 +3907,256 @@ def test_every_private_function_the_plugin_ships_is_reachable():
 
 
 # --------------------------------------------------------------------------- #
+# D-203 — AND THE SUBJECT SET STILL HAD A THIRD SHAPE IT COULD NOT SEE.
+#
+# `superseded-helper-left-unreachable` escalated across cycles 15-18 —
+# `_spec_relative_path`, `_parse_iso8601`, `_DOOR_WRITTEN_DEFECT_FIELDS`, and
+# then this. D-202 deleted `_PIN_SENTINEL = PIN_SENTINEL` in
+# tests/test_observations.py, which was that alias's only reader, and left the
+# `PIN_SENTINEL` name in the `from tests.test_spec_id_convention import (...)`
+# statement above it. The reachability pin cannot reach it on EITHER of its two
+# axes: its subjects are `Assign`/`AnnAssign`/`FunctionDef`/`ClassDef`, and an
+# import alias is none of those, and `_private_names_bound` keeps only
+# underscore-prefixed names, while `PIN_SENTINEL` is public. So the fix for one
+# instance of the class created the next one, in the same statement, and
+# nothing in the suite could say so.
+#
+# THE ROOT CAUSE IS NOT THAT NAME. It is that no pin covered a BINDING MADE BY
+# AN IMPORT, which is the third way this plugin binds a module-level name and
+# the one way a name can be bound without a defining statement to hang a
+# subject off. So the pin below has its own two axes, and both are stated
+# because widening one and leaving the other is precisely how this class was
+# re-filed in four consecutive cycles:
+#
+#   NODE TYPES — every `ast.Import` and `ast.ImportFrom` alias, at EVERY scope.
+#     A function-local import is a binding with the same failure mode; the
+#     reference rule below is per-file and therefore strictly more permissive
+#     about them, never less.
+#   NAME VISIBILITY — PUBLIC NAMES INCLUDED. The reachability pin is private-only
+#     because a public module-level function is part of a module's surface and
+#     may legitimately have no in-plugin caller. An IMPORT has no such defence:
+#     it is a name this module pulled in to USE, so its visibility says nothing
+#     about who may read it. `PIN_SENTINEL` is public, and that alone is what
+#     hid it.
+#
+# WHY THE REFERENCE RULE IS PER FILE, WHERE THE REACHABILITY PIN'S IS
+# CORPUS-WIDE. An import binds a name in ONE module's namespace, and the name it
+# binds is by construction defined and used in the module it came from — so a
+# corpus-wide sweep would vouch for every unused import in the plugin,
+# `PIN_SENTINEL` first among them, and the pin would be a no-op that reads as
+# load-bearing. The AST rule itself is unchanged: `_named_in_code`, code and not
+# prose, for the reason its docstring gives.
+#
+# THE TWO VOUCHERS, both mechanical:
+#   `from __future__ import annotations` binds `annotations`, which nothing ever
+#     reads. It is a compiler directive, not a name.
+#   A RE-EXPORT is a real use: when another shipped module writes
+#     `from <this module> import <name>`, this module's binding is what that
+#     import resolves. `tests/conftest.py` reads `_PRUNE_DONE_FOR` off
+#     `tools/evidence.py` exactly that way.
+# Anything else needs an entry in `_ATTRIBUTE_READ_REEXPORTS` with its reason,
+# and a stale entry FAILS rather than being tolerated — an allowlist that
+# survives the thing it excuses is the boundary-moving shape this class
+# escalated on.
+# --------------------------------------------------------------------------- #
+
+#: Imports a shipped module holds for a reader that reaches them by ATTRIBUTE,
+#: which no `from <module> import <name>` statement records.
+#:
+#: Keyed by `(path suffix, bound name)`; the suffix matches at a `/` boundary so
+#: one entry covers a name imported in both arms of a try/except import guard.
+#: Not "unused and we are fine with it" — every entry must name the reader, and
+#: `test_no_shipped_module_holds_an_unused_import` FAILS on an entry whose
+#: import is gone, so an owner deleting theirs takes the entry with it.
+#:
+#: THE PIN SKIPS THIS STATEMENT WHEN IT SWEEPS THIS FILE FOR REFERENCES, for the
+#: reason `_MECHANISM_REACHED_HELPERS` states one pin up: `_named_in_code`
+#: counts a string constant that IS a name, so an entry naming an import of THIS
+#: module would vouch for it and the allowlist would grant itself the exception
+#: it is supposed to record.
+_ATTRIBUTE_READ_REEXPORTS: dict[tuple[str, str], str] = {
+    ("scripts/measure-run.py", "THUNDER_VIPER_BASELINE"): (
+        "tests/test_measure_run.py::"
+        "test_the_baseline_and_target_are_read_from_vocab_not_re_typed asserts "
+        "`module.THUNDER_VIPER_BASELINE is vocab.THUNDER_VIPER_BASELINE` on the "
+        "script loaded by path, so the import IS the surface that assertion "
+        "reads — the script re-exports vocab's object rather than re-typing 22 "
+        "and 8, which is the drift FR-013 built vocab.py to end."
+    ),
+}
+
+
+def _is_the_unused_import_allowlist_statement(node: ast.AST) -> bool:
+    """Is ``node`` the ``_ATTRIBUTE_READ_REEXPORTS`` assignment itself?"""
+    return "_ATTRIBUTE_READ_REEXPORTS" in _assigned_names(node)
+
+
+def _import_aliases(tree: ast.AST) -> list[tuple[ast.AST, str, str]]:
+    """Every name an `Import`/`ImportFrom` in ``tree`` BINDS, at every scope.
+
+    Returned as `(node, bound name, source spelling)`. `import a.b.c` binds `a`,
+    not `c` — the dotted form binds the top package — and `from x import *`
+    binds nothing this pin can name, so it is skipped rather than guessed at.
+    `from __future__ import ...` is a compiler directive: the name it binds is
+    never read by anything, here or in any Python program.
+    """
+    found: list[tuple[ast.AST, str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "__future__":
+                continue
+            source = node.module or "."
+        elif isinstance(node, ast.Import):
+            source = ""
+        else:
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            bound = alias.asname or alias.name.split(".")[0]
+            found.append((node, bound, source or alias.name))
+    return found
+
+
+def _module_spellings(relative: Path) -> set[str]:
+    """Every dotted name another module could import ``relative`` by.
+
+    Each `.`-joined suffix of the path, `__init__.py` collapsing to its package.
+    A segment that is not an identifier (`mcp-server`) ends the walk, because no
+    import statement can spell it. Suffixes rather than one canonical name
+    because the plugin is imported under several roots — `foundry_mcp.tools.x`
+    from `src/`, `tests.test_x` from the test root — and a single canonical
+    spelling would silently stop vouching under the other.
+    """
+    parts = list(relative.parts)
+    parts[-1] = relative.stem
+    if parts[-1] == "__init__":
+        parts.pop()
+    spellings: set[str] = set()
+    for start in range(len(parts) - 1, -1, -1):
+        if not parts[start].isidentifier():
+            break
+        spellings.add(".".join(parts[start:]))
+    return spellings
+
+
+def test_no_shipped_module_holds_an_unused_import():
+    """NFR-001; FR-032's "one constant rather than typed in several places".
+    D-196, D-199, D-202, D-203.
+
+    Every name an import binds, in every Python file the plugin ships, must be
+    NAMED IN CODE by the module that binds it — or be re-exported, meaning some
+    other shipped module imports that name FROM this one. A name nothing in its
+    own module reads was superseded and nobody deleted the import.
+
+    THE SIBLING PIN ABOVE CANNOT SEE THIS, ON BOTH OF ITS AXES. Its subjects are
+    defining statements, and an import has none; its subjects are private, and
+    an imported name is as often public. D-202's own fix left `PIN_SENTINEL`
+    behind in the statement it edited, which is how a class that had been
+    escalated for three cycles produced its fourth instance out of its own
+    remedy.
+
+    PER-FILE, NOT CORPUS-WIDE, AND THAT IS THE ONE PLACE THIS DIFFERS FROM THE
+    PIN ABOVE. An imported name is defined and used in the module it came from,
+    so a corpus-wide reference sweep vouches for every unused import there is.
+    The `_named_in_code` rule is unchanged; only the scope it is applied over
+    is, and the docstring above explains why the two pins must differ there.
+    """
+    plugin_root = Path(fo.__file__).resolve().parents[4]  # .../plugins/foundry
+    assert plugin_root.name == "foundry", plugin_root
+
+    trees: dict[Path, ast.AST] = {}
+    for path in sorted(plugin_root.rglob("*.py")):
+        if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
+            continue
+        try:
+            trees[path] = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+    assert len(trees) >= 50, len(trees)
+
+    # A name some OTHER shipped module imports from this one is in use here:
+    # that import statement resolves through this module's binding.
+    reexported: dict[str, set[str]] = {}
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                bucket = reexported.setdefault(node.module.rsplit(".", 1)[-1], set())
+                bucket.update(a.name for a in node.names)
+                whole = reexported.setdefault(node.module, set())
+                whole.update(a.name for a in node.names)
+
+    orphans: list[str] = []
+    allowed_hits: set[tuple[str, str]] = set()
+    plain_imports = from_imports = nested = 0
+    for path, tree in trees.items():
+        relative = path.relative_to(plugin_root)
+        posix = relative.as_posix()
+        referenced: set[str] = set()
+        for node in tree.body:
+            if _is_the_unused_import_allowlist_statement(node):
+                continue
+            referenced |= _named_in_code(node)
+        spellings = _module_spellings(relative)
+        vouched = set().union(*(reexported.get(s, set()) for s in spellings)) \
+            if spellings else set()
+        scoped = {
+            id(inner)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            for inner in ast.walk(node)
+            if isinstance(inner, (ast.Import, ast.ImportFrom))
+        }
+
+        for node, bound, source in _import_aliases(tree):
+            if isinstance(node, ast.Import):
+                plain_imports += 1
+            else:
+                from_imports += 1
+            if id(node) in scoped:
+                nested += 1
+            if bound in referenced or bound in vouched:
+                continue
+            allow = next(
+                (
+                    key for key in _ATTRIBUTE_READ_REEXPORTS
+                    if bound == key[1]
+                    and (posix == key[0] or posix.endswith(f"/{key[0]}"))
+                ),
+                None,
+            )
+            if allow is not None:
+                allowed_hits.add(allow)
+                continue
+            orphans.append(f"{posix}:{node.lineno} imports {bound} from {source}")
+
+    # Derivations that silently found nothing would pass forever, and after
+    # D-202's lesson that has to be asserted PER AXIS: a single total stays
+    # green while one node type or one scope collapses to zero, which is the
+    # exact failure widening both axes at once exists to make impossible.
+    assert plain_imports >= 200, plain_imports
+    assert from_imports >= 700, from_imports
+    assert nested >= 200, nested
+
+    assert sorted(orphans) == [], (
+        f"unused import(s) in shipped modules: {sorted(orphans)}. A name an "
+        f"import binds that its own module never reads was superseded and "
+        f"nobody deleted the import (D-203). Delete the name from the import "
+        f"statement -- and if another module reaches it by ATTRIBUTE rather "
+        f"than by importing it from here, record that reader in "
+        f"_ATTRIBUTE_READ_REEXPORTS."
+    )
+
+    stale = sorted(set(_ATTRIBUTE_READ_REEXPORTS) - allowed_hits)
+    assert stale == [], (
+        f"_ATTRIBUTE_READ_REEXPORTS entr(y/ies) excusing nothing: {stale}. The "
+        f"import each one names is gone or is now read normally, so the entry "
+        f"outlived the exception it records. Delete it. Tolerating a stale "
+        f"entry is how an allowlist becomes the place dead names go to live."
+    )
+
+
+# --------------------------------------------------------------------------- #
 # D-042 / CT-001 / AC-006 — a refusal over MCP names the offending property
 # --------------------------------------------------------------------------- #
 

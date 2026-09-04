@@ -79,7 +79,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 from pathlib import Path
 
 from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path, _save_json

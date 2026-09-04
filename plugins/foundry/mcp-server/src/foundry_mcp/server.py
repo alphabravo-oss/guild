@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server

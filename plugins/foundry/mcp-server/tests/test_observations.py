@@ -2183,7 +2183,6 @@ def test_ledger_refusals_converts_only_the_shape_error() -> None:
 
 from tests.test_spec_id_convention import (  # noqa: E402
     LEGACY_ID_FAMILIES,
-    PIN_SENTINEL,
     id_pattern,
     prose_blocks,
     unqualified_ids,
