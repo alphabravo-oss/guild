@@ -12372,3 +12372,430 @@ def test_the_inspect_gate_names_the_teammates_before_the_sight_url(run_env):
     sight = next(c for c in gate["checklist"] if c["check"] == "sight_url")
     assert sight["ok"] is False, gate["checklist"]
     assert any("SIGHT" in r["hint"] for r in gate["refusals"]), gate["refusals"]
+
+
+# --------------------------------------------------------------------------- #
+# D-190 / D-191 — THE SAME LADDER AT THE F6 DOORS.
+#
+# D-186 converted `foundry_gate`'s branches and deliberately left
+# `_done_preconditions` alone, on the ground that no instance of the class had
+# been driven there. PROVE drove two, both through `server.call_tool`:
+#
+#   * D-190 (AC-003). A CLEARED class with one open LIVE instance and one
+#     committed evidence log that no longer reproduces. The evidence rung
+#     claimed `reason` after the blocking-defect arm, so `Foundry-Gate('done')`
+#     answered with the log and named the defect NOWHERE — a refusal
+#     byte-identical to the one the same state produces with NO defect open,
+#     while `Foundry-Gate('nyquist')`, whose defect read already went through
+#     the ladder, named it. AC-003's two named doors disagreed.
+#   * D-191 (NFR-005 / FR-026 / CT-008). Four checks failing at once rendered
+#     the verdict-coverage remedy, which `Foundry-Gate('assay')` then refuses
+#     for the very defect this door declined to mention; and `refusals`
+#     carried ONE entry for a call that had computed four.
+#
+# Both are driven here on the states PROVE used, at the doors PROVE used.
+# --------------------------------------------------------------------------- #
+
+
+def _d190_state(project_root: str, fdir: Path) -> None:
+    """PROVE's D-190 drive: a CLEARED class with one open LIVE instance, and a
+    committed evidence log that no longer reproduces at HEAD.
+
+    Two checks fail on this state and only two, which is what makes it the
+    discriminating fixture: with either one alone the retired ladder answered
+    correctly, and a fixture without the second failing check reads as VERIFIED.
+    """
+    _evidence_repo(project_root)
+    _committed_evidence(
+        project_root, "casting-1-alpha.log", "echo REPRODUCED-NOW",
+        "REPRODUCED-BEFORE\n",
+    )
+    ids = ["FR-1", "FR-2", "FR-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F5", cycle=2, nyquist=True, temper=True)
+    _write_verdicts(
+        fdir, [{"requirement_id": r, "verdict": "VERIFIED"} for r in ids]
+    )
+    _defect_ledger(fdir, [
+        _tiered("D-900", "LIVE", **{"class": "SCAN_GAP"}),
+    ])
+    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps({"classes": {
+        "SCAN_GAP": {
+            "class": "SCAN_GAP", "status": "CLEARED", "exit_reason": "budget",
+            "escalated_at_cycle": 1, "cleared_at_cycle": 2,
+            "structural_packets_dispatched": 2, "structural_packet_cycles": [1, 2],
+            "live_clean_cycles": 0, "consecutive_cycles": 3,
+            "defect_ids": ["D-900"], "open_latent_defect_ids": [],
+            "proposal": "", "recorded_at": "2020-01-01T00:00:00+00:00",
+        }
+    }}), encoding="utf-8")
+    _generate_report(project_root, fdir)
+
+
+def test_the_done_door_names_the_open_live_defect_beside_a_stale_evidence_log(
+    run_env,
+):
+    """AC-003 verbatim: 'With one LIVE instance of a CLEARED class still open,
+    Foundry-Gate done and nyquist refuse naming that defect.'
+
+    D-190's drive. The evidence rung claimed `reason` AFTER the blocking-defect
+    arm, so on this state the done door answered '1 committed evidence log(s)
+    no longer reproduce at HEAD: evidence/casting-1-alpha.log' and D-900
+    appeared in neither `reason` nor `refusals` — only in the checklist. The
+    ranks say why that is wrong rather than merely that it is: re-capturing a
+    log is defeated by the open defect, because the corpus moves again when the
+    defect is fixed and the log has to be captured a second time.
+    """
+    project_root, fdir = run_env
+    _d190_state(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("done", project_root)
+
+    assert gate["passed"] is False, gate
+    assert "D-900" in gate["reason"], gate["reason"]
+    assert "GRIND" in gate["hint"], gate["hint"]
+    # The evidence rung really did fail too — without that this fixture proves
+    # nothing about ordering — and its sentence is PUBLISHED, not discarded.
+    published = {r["reason"] for r in gate["refusals"]}
+    assert any("casting-1-alpha.log" in r for r in published), gate["refusals"]
+    assert len(gate["refusals"]) == 2, gate["refusals"]
+    assert [r["rank"] for r in gate["refusals"]] == [
+        fo._GATE_RANK_DEFECTS, fo._GATE_RANK_EVIDENCE
+    ], gate["refusals"]
+
+
+def test_the_same_state_with_no_defect_open_answers_differently(run_env):
+    """The control D-190 names: 'The SAME call on the SAME state with NO defect
+    open returns a byte-identical reason and hint.'
+
+    That identity is the defect stated as an observation — a door whose answer
+    does not change when the thing it is refusing on changes is a door that was
+    never reading it. Driven as its own case so the fix cannot be satisfied by
+    a reason that merely MENTIONS the defect while still being produced by the
+    evidence rung.
+    """
+    project_root, fdir = run_env
+    _d190_state(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    with_defect = foundry_gate("done", project_root)
+
+    _defect_ledger(fdir, [])
+    _arm_ordering_token(fdir)
+    without_defect = foundry_gate("done", project_root)
+
+    assert with_defect["passed"] is False and without_defect["passed"] is False
+    assert with_defect["reason"] != without_defect["reason"], (
+        "the done door answers the same whether or not a LIVE defect is open"
+    )
+    assert "casting-1-alpha.log" in without_defect["reason"], without_defect
+    assert with_defect["hint"] != without_defect["hint"], with_defect
+
+
+def test_both_ac_003_doors_name_the_defect_on_the_same_state(run_env):
+    """AC-003 names TWO doors — 'Foundry-Gate done and nyquist' — and D-190 is
+    that they disagreed: nyquist answered '1 open LIVE defect(s): D-900' while
+    done answered about a log. One state, both doors, one answer about the
+    defect, driven through the MCP transport a client actually uses.
+    """
+    project_root, fdir = run_env
+    _d190_state(project_root, fdir)
+
+    # Asserted on `reason` — the ONE line a lead is answered with — and not on
+    # the rendered blob. The checklist named D-900 the whole time (`live=
+    # ['D-900']`), so a whole-output substring check passes on the very state
+    # AC-003 was failing, which is why D-190 had to say "appears in neither
+    # `reason` nor `refusals`" to describe it at all.
+    for door in ("done", "nyquist"):
+        _arm_ordering_token(fdir)
+        gate = foundry_gate(door, project_root)
+        assert gate["passed"] is False, (door, gate)
+        assert "D-900" in gate["reason"], (door, gate["reason"])
+        assert any("D-900" in r["reason"] for r in gate["refusals"]), (
+            door, gate["refusals"]
+        )
+
+    # ...and the answer survives to a terminal, through the transport a client
+    # actually uses (NFR-005).
+    import foundry_mcp.server as foundry_server
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        for door in ("done", "nyquist"):
+            _arm_ordering_token(fdir)
+            assert "D-900" in _drive_mcp("Foundry-Gate", {"phase": door}), door
+    finally:
+        foundry_server._project_root = previous_root
+
+
+def test_the_done_door_publishes_every_failing_check_and_states_a_live_remedy(
+    run_env,
+):
+    """D-191's drive: four checks fail at once and `refusals` published ONE.
+
+    NFR-005 / FR-026: the pair a terminal prints must come from a check whose
+    remedy no other failing check defeats. Here the retired ladder rendered
+    'ASSAY must write ALL verdicts to verdicts.json' — and driving it,
+    `Foundry-Gate('assay')` is refused at `_GATE_RANK_DEFECTS` by the very
+    defect this door declined to mention. CT-008's clause that the refusal
+    NAMES the open LIVE defects was satisfied only in the checklist.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "FR-3", "FR-4", "FR-5"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [
+        {"requirement_id": r, "verdict": "VERIFIED"} for r in ids[:2]
+    ])
+    _defect_ledger(fdir, [_tiered("D-9", "LIVE")])
+    _teams_active(True)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("done", project_root)
+
+    assert gate["passed"] is False, gate
+    # Four failing checks, four published sentences, in rank order.
+    ranks = [r["rank"] for r in gate["refusals"]]
+    assert len(ranks) == 4, gate["refusals"]
+    assert ranks == sorted(ranks), gate["refusals"]
+    assert all(r["hint"].strip() for r in gate["refusals"]), gate["refusals"]
+    assert gate["reason"] == gate["refusals"][0]["reason"], gate
+    assert gate["hint"] == gate["refusals"][0]["hint"], gate
+
+    # The remedy that speaks is the team shutdown: it is refused by nothing on
+    # this call, while re-running ASSAY is refused by D-9 and a generated
+    # report is invalidated by every other check still failing.
+    assert "Active teams" in gate["reason"], gate["reason"]
+    assert "ASSAY must write ALL verdicts" not in gate["hint"], gate["hint"]
+
+    # ...and nothing is discarded: each of the other three is readable.
+    published = " ".join(f"{r['reason']} {r['hint']}" for r in gate["refusals"])
+    for fragment in ("D-9", "5 requirements", "Foundry-Report"):
+        assert fragment in published, (fragment, gate["refusals"])
+
+
+def test_the_verdict_remedy_this_door_used_to_render_is_the_defeated_one(
+    run_env,
+):
+    """D-191's proof that the old rendered remedy was unusable, driven rather
+    than reasoned: on the SAME state, the call its hint sends the lead to make
+    is itself refused, and refused for the defect the done door did not name.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "FR-3", "FR-4", "FR-5"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [
+        {"requirement_id": r, "verdict": "VERIFIED"} for r in ids[:2]
+    ])
+    _defect_ledger(fdir, [_tiered("D-9", "LIVE")])
+
+    _arm_ordering_token(fdir)
+    assay = foundry_gate("assay", project_root)
+
+    assert assay["passed"] is False, assay
+    assert any(
+        r["rank"] == fo._GATE_RANK_DEFECTS and "D-9" in r["reason"]
+        for r in assay["refusals"]
+    ), assay["refusals"]
+
+
+def test_the_halt_outranks_the_evidence_rung_it_used_to_follow(run_env):
+    """ST-008 / CT-016: 'HALTED is not DONE', and it keeps the last word.
+
+    The retired ladder asserted the halt TWICE — once in its own branch and
+    again after the evidence rung — because source position was the only
+    ordering the function had, and the rung below would otherwise have taken
+    `reason`. `_GATE_RANK_HALTED` is the lowest rank there is, so one `fail`
+    says the same thing for a stated reason. Driven on the state that made the
+    second assertion necessary: halted AND carrying a log that no longer
+    reproduces.
+    """
+    project_root, fdir = run_env
+    _d190_state(project_root, fdir)
+    _halted_run(fdir)
+
+    outcome = fo._done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False
+    assert "HALTED" in outcome["reason"], outcome["reason"]
+    assert "casting-1-alpha.log" not in outcome["reason"], outcome["reason"]
+    assert outcome["refusals"][0]["rank"] == fo._GATE_RANK_HALTED, outcome
+    # The rung it outranks still ran and is still published.
+    assert any(
+        "casting-1-alpha.log" in r["reason"] for r in outcome["refusals"]
+    ), outcome["refusals"]
+    # And the halt is recorded ONCE, not twice: a second `fail` would be the
+    # positional re-assertion this rank replaced.
+    halts = [r for r in outcome["refusals"] if r["rank"] == fo._GATE_RANK_HALTED]
+    assert len(halts) == 1, outcome["refusals"]
+
+
+def test_both_f6_transitions_publish_the_ranked_refusals(run_env):
+    """`_done_preconditions` is ONE evaluation with four callers (D-037), so
+    what the two GATES publish and what the two TRANSITIONS publish is the same
+    list. A refusal a lead can read at the gate and not at the call is the
+    drift that helper exists to prevent."""
+    project_root, fdir = run_env
+    _d190_state(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("done", project_root)
+
+    # Both tokens are made from F5.5 on a --nyquist run: `done`'s accepted
+    # source is the LAST phase the run's own flags make terminal (D-164).
+    for token in ("done", "nyquist_done"):
+        _write_state(fdir, phase="F5.5", cycle=2, nyquist=True, temper=True)
+        _arm_ordering_token(fdir)
+        result = foundry_mark_phase_complete(token, project_root)
+        assert result.get("ok") is not True, (token, result)
+        assert result["refusals"] == gate["refusals"], (token, result)
+        assert "D-900" in result["error"], (token, result)
+
+
+def test_no_handler_layer_function_renders_a_refusal_down_a_ladder():
+    """The generator, closed by sweep rather than by one more converted
+    function.
+
+    D-186 fixed `foundry_gate`'s branches and D-183 fixed the rung above the
+    one it missed; D-190 and D-191 were the same shape one function along, in
+    the one place that conversion deliberately skipped. Three filings of one
+    class is what a class-level guard is for, so this is PROVE's own AST sweep
+    kept as a test: NO function in the handler layer may assign the rendered
+    strings `reason` or `hint` in two or more SIBLING `if` statements, because
+    that is exactly the shape in which the last failing check owns what a
+    terminal prints.
+
+    Siblings, specifically. An `if`/`elif`/`else` chain is ONE statement whose
+    arms are mutually exclusive, so it writes the pair once and is not a
+    ladder; two independent `if`s at the same level are, whatever order they
+    happen to be in. `passed` is deliberately NOT swept: a boolean that only
+    ever moves one way accumulates correctly from any number of arms — it is
+    the STRINGS that get displaced, which is why `_GateLadder` exists.
+    """
+    import ast
+
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.schemas import findings, vocab
+    from foundry_mcp.tools import (
+        citation,
+        evidence,
+        foundry,
+        foundry_handoff,
+        foundry_report,
+        foundry_spawn,
+        foundry_state,
+        foundry_validate,
+    )
+
+    rendered = ("reason", "hint")
+
+    def _assigned(node: ast.AST) -> set[str]:
+        """Names assigned anywhere in `node`, not descending into nested defs."""
+        names: set[str] = set()
+        stack = list(ast.iter_child_nodes(node))
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                ast.Lambda, ast.ClassDef)):
+                continue
+            if isinstance(cur, ast.Assign):
+                names |= {t.id for t in cur.targets if isinstance(t, ast.Name)}
+            elif isinstance(cur, (ast.AugAssign, ast.AnnAssign)):
+                if isinstance(cur.target, ast.Name):
+                    names.add(cur.target.id)
+            stack.extend(ast.iter_child_nodes(cur))
+        return names
+
+    def _blocks(fn: ast.AST) -> list[list[ast.stmt]]:
+        """Every statement LIST inside `fn`, not descending into nested defs."""
+        out: list[list[ast.stmt]] = []
+        stack = [fn]
+        while stack:
+            cur = stack.pop()
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(cur, field, None)
+                if not isinstance(block, list) or not block:
+                    continue
+                if not all(isinstance(s, ast.stmt) for s in block):
+                    continue
+                out.append(block)
+                stack.extend(
+                    s for s in block
+                    if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                          ast.ClassDef))
+                )
+            stack.extend(getattr(cur, "handlers", []) or [])
+        return out
+
+    modules = (
+        fo, foundry_server, citation, evidence, foundry, foundry_handoff,
+        foundry_report, foundry_spawn, foundry_state, foundry_validate,
+        findings, vocab,
+    )
+    ladders: list[str] = []
+    for module in modules:
+        path = Path(module.__file__)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for block in _blocks(fn):
+                siblings = [s for s in block if isinstance(s, ast.If)]
+                for name in rendered:
+                    writers = [s for s in siblings if name in _assigned(s)]
+                    if len(writers) >= 2:
+                        ladders.append(
+                            f"{path.name}:{fn.name} assigns `{name}` in "
+                            f"{len(writers)} sibling if-statements "
+                            f"(lines {[w.lineno for w in writers]})"
+                        )
+    assert not ladders, (
+        "a refusal ladder is back — rank the checks through `_GateLadder` "
+        "instead, so the rendered pair comes from the check whose remedy no "
+        "other failing check defeats: " + "; ".join(sorted(set(ladders)))
+    )
+
+
+def test_the_done_evaluation_ranks_every_arm_through_named_constants():
+    """The mechanism half, derived from the AST like its `foundry_gate` twin.
+
+    `test_every_gate_refusal_states_a_remedy` asserts this for `foundry_gate`;
+    `_done_preconditions` is the other half of the same evaluation and had none
+    of it. Every `fail` takes three positionals with a `_GATE_RANK_*` name, so
+    the ordering is readable in one place, and the three locals the retired
+    ladder ran on are gone so a new arm has nothing to overwrite.
+    """
+    import ast
+
+    source = Path(fo.__file__).read_text(encoding="utf-8")
+    fn = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_done_preconditions"
+    )
+
+    calls = [
+        node for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "fail"
+    ]
+    assert len(calls) >= 8, "the done evaluation records fewer checks than it has"
+    for call in calls:
+        assert len(call.args) == 3 and not call.keywords, ast.dump(call)
+        rank, reason, hint = call.args
+        assert isinstance(rank, ast.Name) and rank.id.startswith("_GATE_RANK_"), (
+            f"a rank must be one of the named constants (line {call.lineno})"
+        )
+        for arg, label in ((reason, "reason"), (hint, "hint")):
+            if isinstance(arg, ast.Constant):
+                assert str(arg.value).strip(), f"empty {label} at line {call.lineno}"
+
+    stored = {
+        node.id for node in ast.walk(fn)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    assert not (stored & {"passed", "reason", "hint"}), sorted(stored)

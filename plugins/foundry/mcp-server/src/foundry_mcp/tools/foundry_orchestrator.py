@@ -1274,7 +1274,8 @@ def _generate_report(project_root: str, fdir: Path) -> dict:
 def _done_preconditions(fdir: Path, project_root: str) -> dict:
     """Evaluate the substantive preconditions for entering F6 DONE.
 
-    Returns ``{"passed": bool, "reason": str, "hint": str, "checklist": [...]}``.
+    Returns ``{"passed": bool, "reason": str, "hint": str, "checklist": [...],
+    "refusals": [...]}``.
 
     WHY THIS IS A FUNCTION (AC-011 / D-037)
     ---------------------------------------
@@ -1304,11 +1305,58 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
 
     That exclusion is the whole discipline of this helper: it enforces exactly
     the gate's checks, no more.
+
+    D-190 / D-191 — AND THE ORDERING IS DECLARED, NOT POSITIONAL.
+    ------------------------------------------------------------
+    This function used to run on the three locals ``passed`` / ``reason`` /
+    ``hint`` down a ladder of ten independent ``if`` statements, so the LAST
+    failing check owned the pair a terminal prints. That is the generator
+    D-186 replaced inside ``foundry_gate``, in the one function that fix
+    deliberately did not convert — and both halves of the harm were then driven
+    through ``server.call_tool`` at the F6 doors:
+
+      * D-190 (AC-003). A CLEARED class with one open LIVE instance D-900, a
+        committed evidence log that no longer reproduces. The evidence rung
+        claimed ``reason`` after the blocking-defect arm, so
+        ``Foundry-Gate('done')`` answered "1 committed evidence log(s) no
+        longer reproduce at HEAD" and named D-900 nowhere — a byte-identical
+        refusal to the one the SAME state produces with no defect open at all,
+        while ``Foundry-Gate('nyquist')``, whose defect read goes through
+        ``_GateLadder``, named it. AC-003's two doors disagreed, and only this
+        one was wrong.
+      * D-191 (NFR-005 / FR-026 / CT-008). Four checks failed at once — no
+        report, one open LIVE defect, a registered team, 2 verdicts of 5 — and
+        the rendered remedy was the verdict-coverage arm's "ASSAY must write
+        ALL verdicts", which ``Foundry-Gate('assay')`` then refuses at
+        ``_GATE_RANK_DEFECTS`` for the very defect this door declined to
+        mention. ``refusals`` published exactly ONE entry, the delegated
+        verdict, so the three refusals the call had already computed were
+        discarded. On that state the ladder now renders the team check, whose
+        remedy nothing failing defeats, and publishes all four; the filing's
+        parenthetical that "Call Foundry-Report" is the undefeated remedy is
+        answered at ``_GATE_RANK_REPORT``, where the reasoning is set out.
+
+    So every check now enters ``_GateLadder`` with its own rank and its own
+    remedy, under that class's one rule: THE REFUSAL THAT SPEAKS IS THE ONE
+    WHOSE REMEDY IS NOT DEFEATED BY ANOTHER FAILING CHECK ON THE SAME CALL.
+    Nothing is discarded — every failing check is published under ``refusals``,
+    and both F6 gates and both F6 transitions pass that list through.
+
+    THE HALT STILL HAS THE LAST WORD, and no longer needs to be the last
+    writer to get it. It used to be asserted TWICE — once in its own branch and
+    again after the evidence rung — precisely because position was the only
+    ordering this function had. It is now one ``fail`` at
+    ``_GATE_RANK_HALTED``, the lowest rank there is, which says the same thing
+    for a stated reason: on a run that has already stopped every other remedy
+    is work that cannot be gated, so no other failing check can defeat it and
+    it defeats them all.
     """
-    passed = True
-    reason = ""
-    hint = ""
     checklist: list[dict] = []
+    # D-190 / D-191: the three locals this used to carry (`passed`, `reason`,
+    # `hint`) were a last-writer-wins ladder. Every failing check now enters
+    # the ladder with its own rank and its own remedy; see `_GateLadder` and
+    # the `_GATE_RANK_*` block below.
+    ladder = _GateLadder()
 
     verdicts = _load_json(fdir / "verdicts.json")
     verdict_list = verdicts.get("requirements", [])
@@ -1342,34 +1390,49 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # matches whole heading lines, so appended paragraphs add headings without
     # removing any.
     #
-    # STATED FIRST, deliberately, in the ordering discipline this function
-    # already holds: the branch that claims `reason` is the LAST one to fail, so
-    # the least specific check goes at the top. A run short a report is usually
-    # also short something more specific, and a lead should be told about the
-    # open defect or the unparsed spec rather than about the paperwork. Every
-    # later failing branch overwrites this `reason`; on an otherwise-clean run
-    # nothing does, and the refusal names the report (OT-025).
+    # RANKED LAST, AT `_GATE_RANK_REPORT`, which is what this block already
+    # argued when the ordering was positional: "STATED FIRST, deliberately ...
+    # the least specific check goes at the top", so that every later failing
+    # branch overwrote it, because "a run short a report is usually also short
+    # something more specific, and a lead should be told about the open defect
+    # or the unparsed spec rather than about the paperwork". D-191 read the
+    # defeat rule the other way — `Foundry-Report` is refused by no open
+    # defect, no registered team and no unparsed spec, so its remedy looked
+    # undefeated — and the CALL is indeed never refused. The DOCUMENT is:
+    # `generate_report` derives every section from the same ledgers the checks
+    # above read, so a report generated beside an open defect, a missing
+    # verdict or an unparsed spec is a report the next cleared check
+    # invalidates, and the lead must call it again. A remedy that has to be
+    # repeated after another failing check is fixed is defeated by that check.
+    # Three tests pinned that reading before this conversion and still do —
+    # `test_a_more_specific_done_failure_still_names_itself` says it outright,
+    # "the reason a lead reads is still the concrete one, not the report".
+    # On an otherwise-clean run nothing outranks it and the refusal names the
+    # report (OT-025); on a run failing four checks its sentence is published
+    # under `refusals` rather than discarded, which is the half of D-191 that
+    # was a defect either way.
     report = _report_status(fdir)
     report_json_path = fdir / REPORT_JSON_FILENAME
     if not report["present"]:
-        passed = False
         missing_sections = report.get("missing_sections") or []
         if not report_json_path.exists():
-            reason = (
+            report_reason = (
                 f"no generated report — {REPORT_MD_FILENAME} and "
                 f"{REPORT_JSON_FILENAME} have not been written"
             )
         elif report.get("problem"):
-            reason = f"the generated report is unusable — {report['problem']}"
+            report_reason = f"the generated report is unusable — {report['problem']}"
         else:
-            reason = (
+            report_reason = (
                 f"the generated report is missing {len(missing_sections)} "
                 f"section(s): " + ", ".join(missing_sections)
             )
-        hint = (
+        ladder.fail(
+            _GATE_RANK_REPORT,
+            report_reason,
             "Call Foundry-Report. The report is generated, not written by hand: "
             "you may append prose below its sections, you may not omit one, and "
-            "DONE is refused until every section is present."
+            "DONE is refused until every section is present.",
         )
     checklist.append({
         "check": (
@@ -1387,26 +1450,31 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # verdict_coverage check guarded itself with `spec_count > 0` and so
     # skipped. A run whose spec is unresolvable or carries no tagged
     # requirement IDs therefore sailed through DONE having proved nothing.
-    # Stated first so a more specific failure below still claims `reason`.
+    #
+    # RANKED AT `_GATE_RANK_CONFIG`, which keeps exactly the standing this arm
+    # was given when it was written FIRST in a last-writer ladder ("so a more
+    # specific failure below still claims `reason`"): how the run was
+    # configured, and the last thing a lead is told when anything more concrete
+    # is also wrong. It contests nothing it used to contest — with `spec_count`
+    # at zero `non_verified` is zero and `verdict_coverage` skips, so the two
+    # verdict arms cannot fire beside it.
     if spec_count <= 0:
-        passed = False
-        reason = (
+        ladder.fail(
+            _GATE_RANK_CONFIG,
             "The spec parses to ZERO requirement IDs — nothing has been "
-            "verified, so DONE is vacuous."
-        )
-        hint = (
+            "verified, so DONE is vacuous.",
             "Check that the run's spec resolves (foundry-archive/{run}/spec.md, "
             "else state.json's spec_path) and that it carries tagged "
-            "requirement IDs (US-N / FR-N / NFR-N / AC-N / VC-N / IR-N / TR-N)."
+            "requirement IDs (US-N / FR-N / NFR-N / AC-N / VC-N / IR-N / TR-N).",
         )
 
     if non_verified > 0:
-        passed = False
-        reason = f"{non_verified} requirement(s) not VERIFIED — THIN/PARTIAL are defects, not follow-ups"
-        hint = "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented."
+        ladder.fail(
+            _GATE_RANK_VERDICTS,
+            f"{non_verified} requirement(s) not VERIFIED — THIN/PARTIAL are defects, not follow-ups",
+            "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented.",
+        )
     if open_count > 0:
-        passed = False
-        reason = blocking["reason"]
         # FR-026 — THE STALE HINT.
         #
         # This branch set `reason` and left `hint` alone, so whatever the
@@ -1415,10 +1483,10 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
         # with reason "N open defect(s) remain" beside hint "Fix all
         # non-VERIFIED requirements. Every THIN item must be fully
         # implemented." — an instruction for a different check entirely, and
-        # the lead's only stated next move. Every branch below that claims
-        # `reason` now writes the `hint` that actually clears IT; the ones that
-        # already did are unchanged.
-        hint = blocking["hint"]
+        # the lead's only stated next move. `hint` is now a REQUIRED positional
+        # on `_GateLadder.fail`, so an arm that claims `reason` without stating
+        # what clears IT is no longer expressible here either.
+        ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
 
     # AC-011 / ST-003: escalation NEVER waives closure. Swapping N
     # per-instance packets for one structural packet changes the shape of
@@ -1509,17 +1577,26 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
         if not info.get("open_live_defect_ids")
     )
     if still_escalated:
-        passed = False
         blocking_ids = sorted(
             did
             for info in escalated_open.values()
             for did in info.get("open_live_defect_ids", [])
         )
-        reason = (
+        ladder.fail(
+            # RANKED ABOVE THE DEFECT LEDGER, and this is the one place at this
+            # door where the two contest each other. "Fix the LIVE defects in
+            # GRIND" does NOT clear a class — ST-010 needs an arm to fire — so
+            # a lead who follows the defect remedy and returns is refused again
+            # by THIS check: that remedy is defeated. The escalation remedy is
+            # defeated by nothing here, and it already names the blocking LIVE
+            # instances below, so following it does the defect work too. It is
+            # also the only remedy at this door measured in CYCLES rather than
+            # in calls, and D-129 is what learning that at F5.5 costs: every
+            # remaining boundary becomes a full post-verification loop instead
+            # of one crossing from F2.
+            _GATE_RANK_ESCALATION,
             f"{len(still_escalated)} defect class(es) are still ESCALATED: "
-            f"{', '.join(still_escalated)}"
-        )
-        hint = (
+            f"{', '.join(still_escalated)}",
             "ST-010: every escalated class must be CLEARED before DONE. A "
             "class leaves escalation mechanically — two consecutive INSPECT "
             f"cycles drawing zero LIVE instances (ST-001), or "
@@ -1537,7 +1614,7 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
             # class with no persisted record BOTH named routes were no-ops. The
             # record is now written at the boundary (see the `inspect_start`
             # branch), so the distance to each arm is a number this can state.
-            + _escalation_exit_distances(fdir, project_root, still_escalated)
+            + _escalation_exit_distances(fdir, project_root, still_escalated),
         )
     checklist.append({
         "check": (
@@ -1559,33 +1636,41 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     })
 
     if teams_result["active"]:
-        passed = False
-        reason = f"Active teams: {', '.join(teams_result['teams'])}"
-        # FR-026, same stale-hint repair as the open-defect branch above.
-        hint = teams_result.get(
-            "hint",
-            "Shut down every teammate, call TeamDelete, then Foundry-Team-Down "
-            "for each team name.",
+        # FR-026, same stale-hint repair as the open-defect branch above, and
+        # the same rank the three `foundry_gate` branches give it: a registered
+        # team holds the tree, every remedy that spawns an agent is refused
+        # until it is down, and shutting it down is refused by nothing.
+        ladder.fail(
+            _GATE_RANK_TEAMS,
+            f"Active teams: {', '.join(teams_result['teams'])}",
+            teams_result.get("hint") or _TEAMS_DOWN_HINT,
         )
 
     verdict_count = len(verdict_list)
     verdicts_complete = True
     if spec_count > 0 and verdict_count < spec_count:
-        passed = False
         skipped = spec_count - verdict_count
-        reason = f"Only {verdict_count} verdicts but spec has {spec_count} requirements. {skipped} skipped."
-        hint = "ASSAY must write ALL verdicts to verdicts.json — including THIN/PARTIAL, not just VERIFIED."
+        ladder.fail(
+            _GATE_RANK_VERDICTS,
+            f"Only {verdict_count} verdicts but spec has {spec_count} requirements. {skipped} skipped.",
+            "ASSAY must write ALL verdicts to verdicts.json — including THIN/PARTIAL, not just VERIFIED.",
+        )
         verdicts_complete = False
 
     # ST-008 / CT-016 / FR-024 / D-081 — "HALTED IS NOT DONE", AS A PRECONDITION
     # OF BEING DONE.
     #
-    # LAST of the reason-claiming branches, which in this function's ordering
-    # discipline means it WINS: the branch that claims `reason` last is the one
-    # the lead is told about, and on a halted run every other failure is a
-    # detail of a run that has already stopped. Telling a lead to fix three open
-    # LIVE defects on a run that ended two cycles ago sends them to do work that
-    # cannot be gated.
+    # `_GATE_RANK_HALTED` is the lowest rank there is, which is how this keeps
+    # the last word now that the ordering is declared rather than positional.
+    # It used to be asserted TWICE — here, and again after the evidence rung —
+    # because source position was the only ordering this function had, and the
+    # rung below it would otherwise have overwritten `reason`. One `fail` says
+    # the same thing for a stated reason: on a halted run every other failure
+    # is a detail of a run that has already stopped, so no other failing
+    # check's remedy can defeat this one and this one defeats them all.
+    # Telling a lead to fix three open LIVE defects, or to re-capture an
+    # evidence log, on a run that ended two cycles ago sends them to do work
+    # that cannot be gated.
     #
     # Its own named branch here, and not merely covered by the blanket guards at
     # the gate and the transition, because THIS is the shared evaluation of "may
@@ -1595,10 +1680,13 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # reads is produced here.
     halted = _halted_state(fdir)
     if halted is not None:
-        passed = False
         refusal = _halted_refusal(fdir, "Foundry-Phase(phase='done')") or {}
-        reason = refusal.get("error", "the run is HALTED")
-        hint = refusal.get("hint", "")
+        ladder.fail(
+            _GATE_RANK_HALTED,
+            refusal.get("error") or "the run is HALTED",
+            refusal.get("hint")
+            or "HALTED is terminal. Start a NEW run with a higher --max-cycles.",
+        )
 
     checklist.append({
         "check": (
@@ -1650,11 +1738,14 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # gate-then-transition pair pays for one re-execution rather than two, and
     # any commit between them invalidates the memo and re-runs it.
     #
-    # LAST of the reason-claiming branches EXCEPT the halt, in this function's
-    # ordering discipline: a run short a verdict or carrying an open LIVE
-    # defect should be told about that first, because the corpus is going to
-    # move again when they fix it. A halted run still wins over this — it has
-    # already stopped.
+    # RANKED AT `_GATE_RANK_EVIDENCE`, below the defect and verdict ledgers and
+    # above nothing else at this door: re-capturing a log is defeated by every
+    # open defect and every missing verdict, because the corpus moves again
+    # when those are fixed and the log has to be captured a second time. That
+    # is the same judgement the retired ladder made by putting this branch
+    # LAST — D-190 is what it cost to make it by source position, where the
+    # blocking-defect arm above simply lost its `reason` to this one and the
+    # open LIVE defect the door was refusing on went unnamed.
     # D-149 — AND A SWEEP THAT COVERED NOTHING IS NOT A SWEEP THAT PASSED.
     #
     # `commands/start.md` mandates `git rm -r evidence/` as an F6 step, so the
@@ -1684,10 +1775,12 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     stripped = evidence_state["stripped"]
     evidence_ok = evidence_state["ok"]
     if not evidence_ok:
-        passed = False
         refusal = _terminal_evidence_refusal(evidence_state, "mark the run DONE")
-        reason = (refusal or {})["error"].replace("Cannot mark the run DONE — ", "")
-        hint = (refusal or {})["hint"]
+        ladder.fail(
+            _GATE_RANK_EVIDENCE,
+            (refusal or {})["error"].replace("Cannot mark the run DONE — ", ""),
+            (refusal or {})["hint"],
+        )
     checklist.append({
         # D-149: the number of logs, beside the mismatch count. A vacuous sweep
         # is visibly logs=0; the two numbers used to be one number.
@@ -1711,16 +1804,21 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
         "pre_strip_pass": prior_pass if corpus_size == 0 else None,
     })
 
-    # The halt is re-asserted after the evidence rung so it keeps the last word
-    # on `reason` (see its own branch above): telling a lead to re-capture an
-    # evidence log on a run that ended two cycles ago sends them to do work
-    # that cannot be gated.
-    if halted is not None:
-        refusal = _halted_refusal(fdir, "Foundry-Phase(phase='done')") or {}
-        reason = refusal.get("error", "the run is HALTED")
-        hint = refusal.get("hint", "")
-
-    return {"passed": passed, "reason": reason, "hint": hint, "checklist": checklist}
+    outcome = {
+        "passed": ladder.passed,
+        "checklist": checklist,
+        # D-191: every failing check's own sentence, ranked, so the four the
+        # F6 doors used to compute and discard are PUBLISHED. Both gates and
+        # both transitions pass this through.
+        "refusals": ladder.refusals(),
+    }
+    # Written through the RESULT rather than through two locals, exactly as
+    # `foundry_gate` renders its own ladder: a function that never names
+    # `reason` or `hint` as locals has nothing a later arm could overwrite,
+    # which is the property `test_the_done_evaluation_ranks_every_arm_through_
+    # named_constants` derives from this function's own AST.
+    outcome["reason"], outcome["hint"] = ladder.outcome()
+    return outcome
 
 
 # --------------------------------------------------------------------------- #
@@ -1760,20 +1858,50 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
 # without stating what clears it; `test_every_gate_refusal_states_a_remedy`
 # derives that obligation from this module's own AST rather than from a list.
 #
-# NOT applied to `_done_preconditions`, deliberately: that function documents an
-# explicit ordering discipline of its own ("LAST of the reason-claiming branches
-# ... means it WINS", pinned by
-# `test_done_preconditions_names_the_halt_and_lets_it_claim_the_reason`), every
-# one of its arms already carries a hint, and no instance of this class was
-# driven there. Converting it is a behaviour change to both F6 doors with
-# nothing filed behind it; the case for doing it is recorded in the run's
-# concerns.md instead of taken silently here.
+# D-190 / D-191 — AND IT IS APPLIED TO `_done_preconditions` TOO.
+#
+# This block used to end "NOT applied to `_done_preconditions`, deliberately",
+# on three grounds: that function documented an explicit ordering discipline of
+# its own ("LAST of the reason-claiming branches ... means it WINS"), every one
+# of its arms already carried a hint, and no instance of this class had been
+# driven there. The third ground is what the other two rested on, and PROVE
+# removed it by driving two — at the F6 doors, through `server.call_tool`:
+#
+#   * D-190. A CLEARED class with one open LIVE instance and a committed
+#     evidence log that no longer reproduces. `Foundry-Gate('done')` answered
+#     with the evidence rung — which claims `reason` after the blocking-defect
+#     arm — and named the defect NOWHERE, returning a refusal byte-identical to
+#     the one the same state produces with no defect open at all, while
+#     `Foundry-Gate('nyquist')` named it. AC-003's two doors disagreed.
+#   * D-191. Four checks failing at once rendered the verdict-coverage remedy,
+#     which `Foundry-Gate('assay')` then refuses at `_GATE_RANK_DEFECTS` for
+#     the very defect this door declined to mention; and `refusals` carried
+#     exactly ONE entry — the single delegated verdict — so the three other
+#     computed refusals were discarded at the two doors D-186 had not reached.
+#
+# "Every arm carries a hint" was never the guarantee: the guarantee is that the
+# hint a lead READS belongs to the check that speaks, and a positional ladder
+# cannot make that true. So the discipline is the same one, in the same
+# mechanism, with the same rule.
 # --------------------------------------------------------------------------- #
 
 #: Remedy precedence at a gate. LOWER WINS. Each rank names the KIND of thing
 #: that is wrong, and the ordering is the order in which a lead can actually act:
 #: a remedy at rank N is not defeated by any failing check at a rank above it.
-_GATE_RANK_DELEGATED = 0   # a verdict another evaluation already ordered
+#:
+#: D-190/D-191 added the four `_done_preconditions` needs and retired
+#: `_GATE_RANK_DELEGATED` (0, "a verdict another evaluation already ordered"):
+#: that rank existed because the delegated evaluation had no ranks of its own to
+#: offer, and it now offers one per CHECK. `_GateLadder.absorb` re-enters those.
+_GATE_RANK_HALTED = 0      # the run has already stopped: no other remedy can be
+                           # gated at all, so this defeats every check and is
+                           # defeated by none
+_GATE_RANK_ESCALATION = 5  # a class still ESCALATED — the only remedy measured
+                           # in CYCLES rather than calls. Fixing every LIVE
+                           # defect does not clear one (ST-010 needs an arm), so
+                           # the defect remedy is defeated by it and not the
+                           # reverse; and every other remedy at the door can be
+                           # executed inside the cycles this one costs
 _GATE_RANK_WIDTH = 10      # the recorded INSPECT width — `inspect_start` clears
                            # it and no other open check can refuse that call
 _GATE_RANK_TEAMS = 20      # a registered team still holds the tree; every
@@ -1783,9 +1911,20 @@ _GATE_RANK_CONFLICT = 30   # two castings own one file — teammates about to
                            # corrupt each other's work
 _GATE_RANK_DEFECTS = 40    # the defect ledger: what GRIND is for
 _GATE_RANK_VERDICTS = 50   # the verdict ledger: what ASSAY is for
+_GATE_RANK_EVIDENCE = 55   # a committed evidence log that no longer reproduces:
+                           # re-capturing it is defeated by every open defect
+                           # and every missing verdict, because the corpus moves
+                           # again when those are fixed
 _GATE_RANK_STREAMS = 60    # a required stream has not reported
 _GATE_RANK_MARKER = 70     # a phase marker the previous transition writes
 _GATE_RANK_CONFIG = 80     # how the run was configured or sized
+_GATE_RANK_REPORT = 90     # the generated report: DERIVED from every ledger
+                           # above it, so `Foundry-Report` succeeds whatever
+                           # else is failing and produces a document the next
+                           # cleared check invalidates. A remedy that must be
+                           # repeated after another failing check is fixed is
+                           # defeated by that check, which is why the cheapest
+                           # call at this door is also the last thing to say
 
 #: The one spelling of "shut the teammates down", so the three gate arms that
 #: fall back to it cannot drift apart again (D-186: the assay copy had no
@@ -1818,6 +1957,26 @@ class _GateLadder:
         self._failures.append(
             (int(rank), len(self._failures), str(reason), str(hint))
         )
+
+    def absorb(self, refusals: list[dict]) -> None:
+        """Re-enter a DELEGATED evaluation's failures at their own ranks.
+
+        `_done_preconditions` is one evaluation with four callers, and it ranks
+        its own checks (D-190 / D-191). Before that it produced a single opaque
+        verdict, so `foundry_gate`'s "done" branch entered it at a rank invented
+        for the purpose — `_GATE_RANK_DELEGATED` — and published ONE refusals
+        entry for a call that had computed four. Absorbing the ranked list
+        instead keeps the delegated ordering intact (the ranks and the order are
+        the ones that evaluation declared) AND publishes every one of them, so
+        "nothing is discarded, one thing speaks" holds at the F6 doors on the
+        same terms as everywhere else.
+
+        A malformed entry is not silently dropped: `rank`, `reason` and `hint`
+        are read positionally through the same `fail`, so an entry missing one
+        raises here rather than losing a refusal downstream.
+        """
+        for refusal in refusals:
+            self.fail(refusal["rank"], refusal["reason"], refusal["hint"])
 
     @property
     def passed(self) -> bool:
@@ -2380,13 +2539,16 @@ def foundry_gate(
         # token other than the one it was about to call. There is one
         # definition of "the run may finish"; asking about either door asks it.
         outcome = _done_preconditions(fdir, project_root)
-        # D-186: `_done_preconditions` has already applied its OWN documented
-        # ordering discipline to its arms, so its single verdict enters the
-        # ladder pre-ranked and nothing here can displace it. That is what
-        # `_GATE_RANK_DELEGATED` means: not "most important", but "already
-        # ordered by the evaluation that owns these checks".
-        if not outcome["passed"]:
-            ladder.fail(_GATE_RANK_DELEGATED, outcome["reason"], outcome["hint"])
+        # D-186 / D-190 / D-191: `_done_preconditions` applies the SAME ladder
+        # to its own arms, so what arrives here is already ranked per check —
+        # not one opaque verdict. `absorb` re-enters every one of them at the
+        # rank that evaluation declared, so the ordering is still owned by the
+        # evaluation that owns the checks AND this door publishes all of them
+        # under `refusals`. It used to publish exactly one entry for a call that
+        # had computed four, which is how "Call Foundry-Report" — the only
+        # remedy on D-191's drive that no other failing check defeats — was
+        # stated nowhere a lead could read it.
+        ladder.absorb(outcome["refusals"])
         checklist.extend(outcome["checklist"])
 
     else:
@@ -6911,6 +7073,10 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                     or "Call Foundry-Gate(phase='nyquist_done') for the full checklist."
                 ),
                 "checklist": outcome["checklist"],
+                # D-191: every failing check, ranked, not only the one that
+                # speaks. The transition publishes exactly what the gate does,
+                # because it is exactly the same evaluation (D-037).
+                "refusals": outcome["refusals"],
             }
         _update_phase(fdir, "F6")
         clear_active_run()
@@ -6952,6 +7118,10 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                     or "Call Foundry-Gate(phase='done') for the full checklist."
                 ),
                 "checklist": outcome["checklist"],
+                # D-191: every failing check, ranked, not only the one that
+                # speaks. The transition publishes exactly what the gate does,
+                # because it is exactly the same evaluation (D-037).
+                "refusals": outcome["refusals"],
             }
         _update_phase(fdir, "F6")
         # Clear the active run — session is done with this run
