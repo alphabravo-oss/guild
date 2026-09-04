@@ -93,7 +93,7 @@
 ........................................................................ [ 22%]
 ........................................................................ [ 24%]
 ........................................................................ [ 26%]
-........................................................................ [ 29%]
+........................................................................ [ 28%]
 ........................................................................ [ 31%]
 ........................................................................ [ 33%]
 ........................................................................ [ 35%]
@@ -144,8 +144,8 @@
 ........................................................................ [ 49%]
 ........................................................................ [ 51%]
 ........................................................................ [ 53%]
-........................................................................ [ 56%]
-........................................................................ [ 58%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
 ........................................................................ [ 60%]
 ........................................................................ [ 62%]
 ........................................................................ [ 64%]
@@ -153,10 +153,10 @@
 ........................................................................ [ 68%]
 ........................................................................ [ 70%]
 ........................................................................ [ 72%]
-...............................................................s..s.s..s [ 74%]
-........................................................................ [ 76%]
+........................................................................ [ 74%]
+s..s.s..s............................................................... [ 76%]
 ........................................................................ [ 78%]
-..............................................
+.......................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -306,23 +306,23 @@
   the axis is narrowed, not emptied — a stream agent IS stamped, by the roll-up's own cycle bucket:
   one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
   the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
-........................ [ 80%]
-........................................................................ [ 83%]
-........................................................................ [ 85%]
-........ss.ss.ssss.ssssssss.ssss.s..ss.sss.............................. [ 87%]
+............... [ 80%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+.................ss.ss.ssss.ssssssss.ssss.s..ss.sss..................... [ 86%]
 ........................................................................ [ 89%]
 ........................................................................ [ 91%]
 ........................................................................ [ 93%]
 ........................................................................ [ 95%]
 ........................................................................ [ 97%]
 ........................................................................ [ 99%]
-...........                                                              [100%]
+....................                                                     [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-suite/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2127: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2196: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-suite/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:626: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-040091f/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2127: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-040091f/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2196: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-040091f/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -353,4 +353,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3431 passed, 36 skipped, 3 deselected in 143.63s
+3440 passed, 36 skipped, 3 deselected in 147.94s
