@@ -3657,6 +3657,13 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
 #: mechanism reaches it and how. "It will be used soon" is not that comment.
 _UNREFERENCED_ORCHESTRATOR_HELPERS: dict[str, str] = {}
 
+#: Path segments that mean "installed here, not written here". A worktree the
+#: sweep creates has none of them and a developer's tree has all of them, so
+#: the scanned set must not depend on which one it is running in.
+_INSTALLED_DEPENDENCY_DIRS = frozenset({
+    ".venv", "venv", "site-packages", "node_modules", "__pycache__", ".tox",
+})
+
 
 def _named_in_code(tree: ast.AST) -> set[str]:
     """Every identifier `tree` NAMES IN CODE — not in prose.
@@ -3709,6 +3716,12 @@ def test_every_private_orchestrator_function_is_reachable():
     reachable: set[str] = set()
     scanned = 0
     for path in sorted(plugin_root.rglob("*.py")):
+        # THE PLUGIN'S OWN SOURCE, not everything a virtualenv dropped under it.
+        # A third-party module that happens to define a private helper of the
+        # same name would otherwise vouch for a dead one, and the set of files
+        # present would depend on whether anyone had run `uv` in this tree.
+        if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
+            continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, SyntaxError):
