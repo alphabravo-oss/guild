@@ -229,8 +229,8 @@
 ........................................................................ [ 34%]
 ........................................................................ [ 36%]
 ........................................................................ [ 38%]
-...............................s........................................ [ 40%]
-....s.s.....
+.....................................s.................................. [ 40%]
+..........s.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -268,7 +268,7 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-............................................................ [ 42%]
+...................................................... [ 42%]
 ........................................................................ [ 44%]
 ........................................................................ [ 46%]
 ........................................................................ [ 48%]
@@ -284,10 +284,10 @@
 ........................................................................ [ 68%]
 ........................................................................ [ 70%]
 ........................................................................ [ 72%]
-......................................................................s. [ 74%]
-.s.s..s................................................................. [ 76%]
+........................................................................ [ 74%]
+........s..s.s..s....................................................... [ 76%]
 ........................................................................ [ 78%]
-.............................................................
+.......................................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -371,7 +371,8 @@
   baseline derived from the archive: None
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
-.
+. [ 80%]
+
 === D-163 — two dispatches, ONE spend record, one report.json ===
   unreported_dispatches:           count=1 by_phase={'F1': ['casting-2']}
   spend.total:                     unreported=1
@@ -471,23 +472,22 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-........ [ 80%]
-........................................................................ [ 82%]
+...................................................................... [ 82%]
 ........................................................................ [ 84%]
-........................ss.ss.ssss.ssssssss.ssss.s..ss.sss.............. [ 86%]
+..................................ss.ss.ssss.ssssssss.ssss.s..ss.sss.... [ 86%]
 ........................................................................ [ 88%]
 ........................................................................ [ 90%]
 ........................................................................ [ 92%]
 ........................................................................ [ 94%]
 ........................................................................ [ 96%]
 ........................................................................ [ 98%]
-....................................                                     [100%]
+..............................................                           [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-c3-suite19/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2126: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-c3-suite19/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2195: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/wt-c3-suite19/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/suite-wt/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2126: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/suite-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2195: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/458e9d59-8bc6-410d-9171-9bf59fd36b34/scratchpad/suite-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -518,4 +518,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3528 passed, 36 skipped, 3 deselected in 148.69s
+3538 passed, 36 skipped, 3 deselected in 148.36s
