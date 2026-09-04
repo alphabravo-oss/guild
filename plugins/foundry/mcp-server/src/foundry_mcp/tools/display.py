@@ -660,13 +660,46 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
                 f"{minutes}m  over {total.get('agents', 0)} reported agent(s)"
                 f"{tail}"
             )
+        # D-220 — THE CYCLE AXIS IS ORDERED BY THE COUNTER, THROUGH THE ONE KEY
+        # FUNCTION THAT ALREADY ORDERS IT.
+        #
+        # `sorted(buckets.items())` orders on the STRINGIFIED key, and
+        # `by_cycle`'s keys are `str(cycle)` (C-4 / FR-037), so cycle 21
+        # rendered before cycle 3 and cycle 10 before cycle 2. Observed on the
+        # live run, on the very call that opened the INSPECT which filed this:
+        # "By Cycle: 0: 0tok/0m  1: 0tok/0m  10: 0tok/0m  11: 0tok/0m ...
+        # 2: 0tok/0m  20: 0tok/0m ... 23: 1,430,191tok/145m  3: 0tok/0m ...".
+        # FR-037 requires the roll-ups to be keyed by the server cycle counter
+        # and AC-033 makes this the line the lead reads tokens and minutes per
+        # cycle on; a counter rendered out of counter order is the one thing it
+        # exists to show.
+        #
+        # THE KEY FUNCTION IS IMPORTED, NOT RE-TYPED. `foundry_report` renders
+        # the SAME mapping through `_cycle_sort_key` at both `by_cycle` and
+        # `per_cycle`, and `measure-run.py` at the same two axes, so one
+        # document had two orderings depending on which surface printed it —
+        # which is the whole class. A third copy here would make it three. The
+        # import is function-local for the reason `foundry_report` gives where
+        # it imports `_agent_id_for_casting` from `foundry_spawn`: it runs at
+        # call time, when every module is loaded, and closes no cycle in the
+        # import graph.
+        #
+        # `by_phase` is UNCHANGED by it. Its keys are phase tokens ("F1",
+        # "F5.5"), which `_cycle_sort_key` maps to `(1, raw)` — after every
+        # numeric key, and among themselves in exactly the lexicographic order
+        # `sorted()` gave them. One key function over both axes, and only the
+        # axis that was wrong moves.
+        from foundry_mcp.tools.foundry_report import _cycle_sort_key
+
         for label, section in (("by phase", "by_phase"), ("by cycle", "by_cycle")):
             buckets = spend.get(section) or {}
             if not isinstance(buckets, dict) or not buckets:
                 continue
             parts = [
                 f"{key}: {b.get('tokens', 0):,}tok/{int(b.get('duration_ms', 0) // 60000)}m"
-                for key, b in sorted(buckets.items())
+                for key, b in sorted(
+                    buckets.items(), key=lambda kv: _cycle_sort_key(kv[0])
+                )
                 if isinstance(b, dict)
             ]
             if parts:

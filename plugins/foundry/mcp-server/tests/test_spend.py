@@ -1747,3 +1747,117 @@ def test_every_counted_next_line_renders_the_integer_its_result_states():
         "count, add it to _NEXT_COUNT_LINES with the field the result states; if "
         "it renders none, add it to _NEXT_UNCOUNTED_LABELS"
     )
+
+
+def test_the_spend_cycle_axis_renders_in_counter_order_not_lexicographic():
+    """FR-037 verbatim: 'roll-ups are keyed by the server cycle counter'.
+    AC-033 verbatim: 'Foundry-Next shows tokens and minutes per phase and per
+    cycle and the run total'.
+
+    D-220. `_fmt_foundry_next_lines` walked `by_phase` and `by_cycle` through
+    ONE `sorted(buckets.items())`, which orders the STRINGIFIED key. The phase
+    keys happen to sort correctly under that rule and the cycle keys — `str(cycle)`
+    per C-4 — do not, so the live run rendered "0: ... 1: ... 10: ... 11: ...
+    2: ... 20: ... 23: 1,430,191tok/145m  3: ..." on the one line that exists to
+    show what each cycle cost.
+
+    The keys below are chosen so lexicographic and numeric order DISAGREE at
+    three places (10 before 2, 11 before 2, 20 and 21 before 3), so a renderer
+    that reverts to `sorted()` cannot pass by accident. The expected order is
+    derived from `foundry_report._cycle_sort_key` — the function this surface
+    now consults — rather than typed out, because a literal list here would be
+    a fourth derivation of the same fact.
+    """
+    import re
+
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+    from foundry_mcp.tools.foundry_report import _cycle_sort_key
+
+    cycles = ["0", "1", "2", "3", "9", "10", "11", "20", "21"]
+    payload = {
+        "spend": {
+            "total": {"tokens": 9_000, "duration_ms": 60_000, "agents": 9},
+            "by_phase": {"F1": {"tokens": 1, "duration_ms": 0},
+                         "F2": {"tokens": 2, "duration_ms": 0},
+                         "F3": {"tokens": 3, "duration_ms": 0},
+                         "F5.5": {"tokens": 4, "duration_ms": 0}},
+            "by_cycle": {c: {"tokens": int(c), "duration_ms": 0} for c in cycles},
+        },
+    }
+
+    rendered = _plain("\n".join(_fmt_foundry_next_lines(payload)))
+
+    def _axis(label: str) -> list[str]:
+        match = re.search(rf"^\s*{label}:\s+(.*)$", rendered, re.MULTILINE)
+        assert match, f"no {label} line in:\n{rendered}"
+        return re.findall(r"([^\s]+): [\d,]+tok/\d+m", match.group(1))
+
+    assert _axis("By Cycle") == sorted(cycles, key=_cycle_sort_key), rendered
+    # The defect's own signature, stated as the thing that must NOT be true:
+    # 10 and 11 no longer precede 2, and 20 and 21 no longer precede 3.
+    assert _axis("By Cycle") != sorted(cycles), rendered
+
+
+def test_the_spend_phase_axis_is_unmoved_by_the_cycle_key_function():
+    """FR-021 / AC-033 — THE ADJACENT AXIS THROUGH THE SAME LOOP.
+
+    `_fmt_foundry_next_lines` walks `("by phase", "by_phase")` and
+    `("by cycle", "by_cycle")` through ONE shared `sorted(...)`, so the key
+    function D-220 installed for the cycle keys is applied to the phase keys
+    too. This drives THAT transition rather than the one the defect was found
+    on: phase tokens are non-numeric, `_cycle_sort_key` maps every one of them
+    to `(1, raw)`, and they must therefore land in exactly the lexicographic
+    order the bare `sorted()` gave them — "F5.5" after "F5" and before "F6",
+    and no phase displaced by a numeric key that does not exist on this axis.
+
+    Written because the fix's whole risk lives here: an ordering change made
+    for one axis of a shared walk that silently reorders the other is a worse
+    defect than the one being fixed, and nothing else in this file drives the
+    phase axis with enough keys to see it.
+    """
+    import re
+
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+
+    phases = ["F0", "F1", "F2", "F3", "F4", "F5", "F5.5", "F6"]
+    payload = {
+        "spend": {
+            "total": {"tokens": 8, "duration_ms": 0, "agents": 8},
+            "by_phase": {p: {"tokens": 1, "duration_ms": 0} for p in phases},
+            "by_cycle": {"1": {"tokens": 1, "duration_ms": 0}},
+        },
+    }
+
+    rendered = _plain("\n".join(_fmt_foundry_next_lines(payload)))
+    match = re.search(r"^\s*By Phase:\s+(.*)$", rendered, re.MULTILINE)
+    assert match, f"no By Phase line in:\n{rendered}"
+    shown = re.findall(r"([^\s]+): [\d,]+tok/\d+m", match.group(1))
+
+    assert shown == sorted(phases), rendered
+    assert shown == phases, rendered
+
+
+def test_the_renderer_consults_the_cycle_key_function_rather_than_copying_it():
+    """FR-021 / AC-033 — the CLASS behind D-220, which is
+    'two-derivations-of-one-fact-disagree'.
+
+    `_cycle_sort_key` already existed twice before this fix — in
+    `foundry_report` and in `scripts/measure-run.py` — and the Foundry-Next
+    display consulted neither, which is how one document acquired two orderings
+    depending on which surface printed it. A third copy inside `display.py`
+    would fix the instance and widen the class, so this asserts the shape of
+    the fix and not only its effect: the renderer imports the spelling, and
+    defines none of its own.
+    """
+    from pathlib import Path
+
+    import foundry_mcp.tools.display as display_mod
+
+    source = Path(display_mod.__file__).read_text(encoding="utf-8")
+    assert "def _cycle_sort_key" not in source, (
+        "display.py defines its own cycle-ordering key — import the one "
+        "`foundry_report` already owns instead of adding a third copy"
+    )
+    assert "from foundry_mcp.tools.foundry_report import _cycle_sort_key" in source, (
+        "the spend renderer must consult the existing cycle key function"
+    )
