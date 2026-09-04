@@ -1974,11 +1974,6 @@ def reads_the_records(fdir):
 #: quietly widening the gap.
 _TEXT_READ_RAISES: tuple[type[BaseException], ...] = (OSError, UnicodeDecodeError)
 
-#: How bytes enter a module. `read_bytes` is not a member: bytes are never
-#: decoded, so no read of them can raise this family -- an exclusion by property
-#: rather than by name, which is why it is safe to state.
-_TEXT_READ_METHODS = frozenset({"read_text", "open"})  # 2 names
-
 @functools.lru_cache(maxsize=None)
 def _positional_index(spelling: str, parameter: str) -> int | None:
     """Where ``parameter`` sits POSITIONALLY in the call this spelling makes.
@@ -2278,19 +2273,6 @@ def _handler_covers_text_decode(
         any(issubclass(raised, caught_cls) for caught_cls in caught)
         for raised in _TEXT_READ_RAISES
     )
-
-
-def _is_text_read(node: ast.AST) -> bool:
-    """True for a call that reads or opens a file's text.
-
-    Both spellings of ``open`` -- the builtin and ``Path.open`` -- because a
-    reader must not escape the scan by choosing the other one.
-    """
-    if not isinstance(node, ast.Call):
-        return False
-    if isinstance(node.func, ast.Attribute) and node.func.attr in _TEXT_READ_METHODS:
-        return True
-    return isinstance(node.func, ast.Name) and node.func.id == "open"
 
 
 def _decode_site(

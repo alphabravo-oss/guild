@@ -1,0 +1,9 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && printf 'orphan _is_text_read, references under src/ and tests/: %s\norphan _TEXT_READ_METHODS, references under src/ and tests/: %s\nsuperseding derivation _decode_site still defined: %s\n_TEXT_READ_RAISES still consumed by _handler_covers_text_decode: %s\n' "$(grep -rn --include='*.py' _is_text_read src tests | wc -l | tr -d ' ')" "$(grep -rn --include='*.py' _TEXT_READ_METHODS src tests | wc -l | tr -d ' ')" "$(grep -c '^def _decode_site(' tests/test_spawn_progress.py)" "$(grep -c 'for raised in _TEXT_READ_RAISES' tests/test_spawn_progress.py)" && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_spawn_progress.py tests/test_liveness.py >/dev/null 2>&1 && echo 'tests/test_spawn_progress.py + tests/test_liveness.py: PASS'
+# evidence-for: D-199, FR-032, NFR-001
+# evidence-timeout: 300
+
+orphan _is_text_read, references under src/ and tests/: 0
+orphan _TEXT_READ_METHODS, references under src/ and tests/: 0
+superseding derivation _decode_site still defined: 1
+_TEXT_READ_RAISES still consumed by _handler_covers_text_decode: 1
+tests/test_spawn_progress.py + tests/test_liveness.py: PASS
