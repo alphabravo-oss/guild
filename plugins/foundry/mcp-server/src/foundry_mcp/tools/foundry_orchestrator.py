@@ -5375,6 +5375,102 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     }
 
 
+def _seal_run_report(project_root: str, fdir: Path) -> dict:
+    """Regenerate the report as PART of the F6 transition. D-218.
+
+    Returns ``{"report", "report_generated", "report_error"}`` — never a
+    refusal, and never a raise. Called by BOTH F6 doors, after the phase is
+    written and before the run is archived.
+
+    WHY THE TRANSITION WRITES IT (FR-001 / GI-006 / AC-036 / OT-025)
+    ---------------------------------------------------------------
+    `_done_preconditions` asks whether a report EXISTS carrying every section
+    — that is exactly what GI-006 makes a precondition of DONE, and it is all
+    `report_status` can answer — and nothing asked whether the document
+    described the run it was closing. Driven end to end through the real
+    handlers: at F5.5 with both requirements VERIFIED and defects.json empty,
+    `generate_report` wrote `latent_backlog {"open_count": 0, "defects": []}`;
+    one open LATENT D-001 was then filed, and `foundry_mark_phase_complete(
+    'done')` returned ok True, phase F6, with its own checklist reading
+    `zero_blocking_defects (live=0 unknown_tier=0 latent_backlog=1)` beside
+    `report_generated (missing_sections=0)`. The run reached F6 with a report
+    whose LATENT backlog was empty while a LATENT defect was open — against
+    FR-001 ("open LATENT instances go to the F6 named backlog") and against
+    `_blocking_defects`' own hint, which promises the operator those defects are
+    "named in the F6 backlog".
+
+    THE MECHANISM ALREADY EXISTED AT THE OTHER TERMINAL TRANSITION.
+    `_halt_if_capped` generates the report as part of the HALTED transition,
+    "rather than left to the lead, because a halted run whose open work was
+    never written down is the outcome the cap is supposed to prevent". DONE has
+    the same property and did not do it. This is that block, in the shape the
+    two doors can share: generated AFTER `_update_phase(fdir, "F6")` so the
+    document renders the FINISHED run (`report.json`'s `run.phase`), and a
+    generator failure recorded in a second short transaction because
+    `_document_transaction` is an fcntl-locked critical section that must not
+    be held across the generator.
+
+    WHY THE GATE IS NOT ALSO GIVEN A STALENESS CHECK. Currency is not a
+    question `report_status` can answer, and the two ways to make it one are
+    both worse than writing the document. Comparing `generated_at` against
+    ledger mtimes makes the terminal door depend on filesystem timestamps and
+    can fail to terminate — one `Foundry-Spend` between `Foundry-Report` and
+    `Foundry-Phase('done')` would refuse the run again, for a report that is
+    correct about every fact the gate reads. Re-deriving the sections inside
+    the gate is `generate_report` re-implemented inside this module, which is
+    the second copy this casting is forbidden to write. Leaving the gate as it
+    is also keeps the property `_done_preconditions` exists for: both F6 gates
+    and both F6 transitions consult ONE evaluation and cannot disagree about
+    what "done" means (D-037 / D-043 / D-044). What the transition adds is not
+    a check — it is the artifact.
+
+    A GENERATOR FAILURE DOES NOT REFUSE, for `_halt_if_capped`'s reason. The
+    preconditions have already passed, F6 is written, and DONE has no exit; a
+    refusal after the phase write would leave the run unable to be anything.
+    The failure is RECORDED in `state.json` under `done_report_error` and SAID
+    in the message, naming the one call that still writes the report. GI-006's
+    refusal condition is ABSENCE, and that stays enforced where it belongs, in
+    `_done_preconditions`, before this runs at all.
+    """
+    report = _generate_report(project_root, fdir)
+    report_ok = bool(report.get("ok"))
+    report_error = "" if report_ok else str(
+        report.get("error") or "the report generator returned no reason"
+    )
+    if not report_ok:
+        with _document_transaction(fdir / "state.json") as doc:
+            doc["done_report_error"] = report_error
+            doc["updated_at"] = _now()
+    return {
+        "report": report,
+        "report_generated": report_ok,
+        "report_error": report_error,
+    }
+
+
+def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
+    """The one spelling of what the F6 message says about the report.
+
+    Both F6 doors say it, so it is written once — the drift between the `done`
+    and `nyquist_done` branches is the shape D-043 and D-044 were filed for.
+    Names the LATENT backlog count because that is the fact FR-001 puts in the
+    report and the fact a stale report got wrong.
+    """
+    if not sealed["report_generated"]:
+        return (
+            "The report could NOT be regenerated at F6: "
+            f"{sealed['report_error']}. The document on disk therefore predates "
+            "this transition — repair what the error names and call "
+            "Foundry-Report, which is not a phase transition and still runs."
+        )
+    latent = _blocking_defects(fdir)["latent"]
+    return (
+        f"The report was regenerated as part of this transition, naming "
+        f"{len(latent)} open LATENT defect(s) in the F6 backlog"
+        + (f": {', '.join(latent)}." if latent else ".")
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Spend (CT-013 / GI-005 / FR-021 / FR-022 / FR-037)
 #
@@ -8241,9 +8337,17 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "refusals": outcome["refusals"],
             }
         _update_phase(fdir, "F6")
+        # D-218 / FR-001 / GI-006: the artifact is written by the transition
+        # that closes the run, on the same terms `_halt_if_capped` writes it at
+        # the other terminal transition. Both F6 doors, one helper.
+        sealed = _seal_run_report(project_root, fdir)
+        message = (
+            "NYQUIST complete → phase is now F6 (DONE). "
+            + _sealed_report_sentence(sealed, fdir)
+            + " Run archived."
+        )
         clear_active_run()
-        return {"ok": True, "phase": "F6",
-                "message": "NYQUIST complete → phase is now F6 (DONE). Run archived."}
+        return {"ok": True, "phase": "F6", **sealed, "message": message}
 
     elif phase == "done":
         # AC-011 / D-037 — the transition, not just the gate, enforces closure.
@@ -8286,9 +8390,16 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "refusals": outcome["refusals"],
             }
         _update_phase(fdir, "F6")
+        # D-218 / FR-001 / GI-006: same helper, same terms, the other door.
+        sealed = _seal_run_report(project_root, fdir)
+        message = (
+            "Phase is now F6 (DONE). "
+            + _sealed_report_sentence(sealed, fdir)
+            + " Run archived. Start a new run with foundry_init."
+        )
         # Clear the active run — session is done with this run
         clear_active_run()
-        return {"ok": True, "phase": "F6", "message": "Phase is now F6 (DONE). Run archived. Start a new run with foundry_init."}
+        return {"ok": True, "phase": "F6", **sealed, "message": message}
 
     else:
         return {"error": f"Invalid phase: {phase}. Valid: {', '.join(PHASE_TOKENS)}"}

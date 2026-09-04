@@ -14515,3 +14515,163 @@ def test_the_done_evaluation_ranks_every_arm_through_named_constants():
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
     assert not (stored & {"passed", "reason", "hint"}), sorted(stored)
+
+
+# --------------------------------------------------------------------------- #
+# D-218 — THE F6 TRANSITION WRITES THE ARTIFACT IT CLOSES THE RUN WITH.
+#
+# `_done_preconditions` asks whether a report EXISTS carrying every section —
+# which is exactly GI-006's precondition, and all `report_status` can answer —
+# and nothing asked whether the document described the run being closed. The
+# mechanism already existed at the other terminal transition: `_halt_if_capped`
+# generates the report as PART of the HALTED transition, "because a halted run
+# whose open work was never written down is the outcome the cap is supposed to
+# prevent". DONE has the same property.
+# --------------------------------------------------------------------------- #
+
+
+def _latent(did: str) -> dict:
+    return _tiered(
+        did, "LATENT",
+        reproduction_attempted=(
+            "drove the door from both callers; no input reaches the branch"
+        ),
+    )
+
+
+def test_the_done_transition_regenerates_the_report_it_closes_the_run_with(run_env):
+    """FR-001 verbatim: 'open LATENT instances go to the F6 named backlog.'
+    AC-036 verbatim: 'Foundry-Report writes REPORT.md and report.json with ...
+    the LATENT backlog'.
+
+    D-218, driven end to end. The report was generated while defects.json was
+    empty, so its `latent_backlog` read `{"open_count": 0, "defects": []}`; one
+    open LATENT defect was then filed, and `Foundry-Phase('done')` returned ok
+    True and phase F6 with its own checklist simultaneously reading
+    `zero_blocking_defects (live=0 unknown_tier=0 latent_backlog=1)` and
+    `report_generated (missing_sections=0)`. The run finished with the one
+    artifact FR-001 puts the backlog in saying the backlog was empty.
+
+    The assertion is on the DOCUMENT, not on the checklist: DONE's report is
+    what the next run's lead receives, and `_blocking_defects`' own hint
+    promises the operator these defects are "named in the F6 backlog".
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1", "FR-2"])
+    _write_state(fdir, phase="F4", cycle=2)
+    _write_verdicts(fdir, [
+        {"requirement_id": "FR-1", "verdict": "VERIFIED"},
+        {"requirement_id": "FR-2", "verdict": "VERIFIED"},
+    ])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    stale = json.loads((fdir / "report.json").read_text(encoding="utf-8"))
+    assert stale["latent_backlog"]["open_count"] == 0, stale["latent_backlog"]
+
+    # ...and then the LATENT defect the report was written before.
+    _defect_ledger(fdir, [_latent("D-001")])
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+    assert result["report_generated"] is True, result
+
+    sealed = json.loads((fdir / "report.json").read_text(encoding="utf-8"))
+    assert sealed["latent_backlog"]["open_count"] == 1, sealed["latent_backlog"]
+    assert [d["id"] for d in sealed["latent_backlog"]["defects"]] == ["D-001"]
+    # Generated AFTER the phase write, so the document renders the FINISHED
+    # run rather than the one that was about to finish.
+    assert sealed["run"]["phase"] == "F6", sealed["run"]
+    # NFR-005: the terminal says what it wrote, and names the backlog it named.
+    assert "D-001" in result["message"], result["message"]
+
+
+def test_the_nyquist_door_seals_the_report_on_the_same_terms(run_env):
+    """AC-011 / D-043 / D-044 — THE ADJACENT PATH: F6's other door.
+
+    `nyquist_done` is a second transition into F6, not a different kind of
+    transition, and every precondition D-037 bound to `done` had to be bound to
+    it separately because the two branches drifted the first time. The report
+    seal is one more thing both doors must do, so it is driven here through the
+    door the defect was NOT found on — a `--nyquist` run routes through this
+    token and would otherwise close on the stale document the other door now
+    refreshes.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F5.5", cycle=3, temper=True, nyquist=True)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+    assert json.loads(
+        (fdir / "report.json").read_text(encoding="utf-8")
+    )["latent_backlog"]["open_count"] == 0
+
+    _defect_ledger(fdir, [_latent("D-007"), _latent("D-008")])
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("nyquist_done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+    assert result["report_generated"] is True, result
+
+    sealed = json.loads((fdir / "report.json").read_text(encoding="utf-8"))
+    assert [d["id"] for d in sealed["latent_backlog"]["defects"]] == ["D-007", "D-008"]
+    assert sealed["run"]["phase"] == "F6", sealed["run"]
+
+
+def test_a_report_that_cannot_be_regenerated_at_f6_is_recorded_and_said(
+    run_env, monkeypatch
+):
+    """CT-014 / GI-006 / NFR-005 — the designed failure branch, not a
+    theoretical one.
+
+    `generate_report` returns a named refusal rather than raising, and CT-014
+    SPECIFIES that branch. At this point in the transition the readable-ledger
+    half of it has already been refused upstream — `_artifact_guard` rejects the
+    whole `Foundry-Phase` call on a corrupt run artifact — so what remains
+    reachable here is the write itself failing, which is why the generator is
+    driven to its documented refusal shape rather than through a corrupted
+    ledger the guard would catch first.
+
+    What is asserted is that the outcome is not DISCARDED. D-165 is the same
+    branch one door along: `_halt_if_capped` threw its `report` away and
+    announced a document that did not exist. DONE has no exit, so refusing
+    after `_update_phase(fdir, "F6")` would leave the run unable to be
+    anything; the transition still happens, the failure is RECORDED in
+    state.json and SAID in the message, and the message names the one call that
+    still writes the report. GI-006's refusal condition is ABSENCE, and that
+    stays enforced in `_done_preconditions` before this runs at all.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    monkeypatch.setattr(
+        fo, "_generate_report",
+        lambda _pr, _fd: {
+            "ok": False,
+            "error": "could not write REPORT.md: Read-only file system",
+            "hint": "Repair or delete the named file, then retry.",
+        },
+    )
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+    assert result["report_generated"] is False, result
+    assert "Read-only file system" in result["report_error"], result
+    assert "Foundry-Report" in result["message"], result["message"]
+
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F6"
+    assert "Read-only file system" in state["done_report_error"], state
