@@ -644,6 +644,50 @@ def _declared_external_inputs(fdir: Path) -> list[Path]:
     return sorted(found)
 
 
+#: The document TYPES a reader in this package opens under a run directory.
+#:
+#: D-197 — the answer to "does a reader open this path" is not
+#: ``_STRICT_ARTIFACT_DECODERS``. That table is the STRICT rung, and it holds
+#: exactly ``.json`` because JSON is the only type with a rung above the text
+#: floor. Every other run document is opened on the floor, so consulting the
+#: strict table to decide DOCUMENT-NESS answered "only .json is a document" and
+#: skipped six of the seven artifact types a run actually writes.
+#:
+#: Each member is here because a reader in this package opens that type under a
+#: run directory, and each is derived from a filename this package DECLARES:
+#:   ``.json``   state.json, defects.json, verdicts.json, escalation.json,
+#:               stream-rollup.json, report.json, castings/manifest.json
+#:   ``.jsonl``  handoffs.jsonl (HANDOFFS_FILENAME), spend.jsonl
+#:               (SPEND_LEDGER_FILENAME), progress/<agent>.jsonl
+#:               (``foundry_spawn._read_progress_ledger``)
+#:   ``.log``    spawns.log (SPAWNS_FILENAME), evidence/*.log (the sweep's
+#:               ``# evidence-cmd:`` reader)
+#:   ``.md``     directives.md, forge-log.md, spec.md, REPORT.md
+#:               (REPORT_MD_FILENAME), directives-cleared.md
+#:               (DIRECTIVES_CLEARED_FILENAME), castings/casting-N-prompt.md
+#:   ``.txt``    shared/global_invariants.txt and shared/mandatory_rules.txt,
+#:               which a casting prompt reads; both present in the live corpus
+#:
+#: THE HOLE THIS SHAPE HAS, AND WHAT WATCHES IT. Membership here means a new
+#: document TYPE is unguarded until it is enrolled — the direction
+#: ``_BINARY_ARTIFACT_SIGNATURES`` warns about. It is accepted rather than
+#: inverted because the inverse was measured and is worse: reporting every
+#: suffixed directory refuses on ``.dist-info`` (30 of them in this repo's own
+#: virtualenvs) and on ``node_modules/socket.io``, and a false refusal here
+#: locks EVERY door at once — D-195 exactly. What keeps the hole from being a
+#: silent one is
+#: ``test_the_document_suffix_table_covers_every_declared_run_artifact``, which
+#: derives the expected set from the ``*_FILENAME`` constants the package
+#: declares and fails the day a new artifact type is declared without being
+#: enrolled here.
+_RUN_DOCUMENT_SUFFIXES = frozenset(_STRICT_ARTIFACT_DECODERS) | {
+    ".jsonl",
+    ".log",
+    ".md",
+    ".txt",
+}
+
+
 def _is_document_position(candidate: Path) -> bool:
     """Is ``candidate`` a path a reader OPENS as a document?
 
@@ -696,8 +740,31 @@ def _is_document_position(candidate: Path) -> bool:
     ``state.json`` goes unnamed, ``_load_json`` returns ``{}``, and the doors
     act on a fabricated all-default state — reported as success, which is the
     harm the guard exists to prevent.
+
+    D-197 — AND THEN THE TRUE-POSITIVE HALF WAS DELETED WITH THE FALSE ONE.
+    ----------------------------------------------------------------------
+    D-195's fix asked ``_STRICT_ARTIFACT_DECODERS`` — the STRICT rung, whose
+    one member is ``.json`` — so every non-JSON document position went unnamed
+    and the doors acted on the fabricated empty document D-140 describes,
+    reported as success. Driven at the wire at d872362: a run with a readable
+    ``spawns.log`` naming two dispatched castings and no spend record returned
+    ``unreported_count 2``; with ``spawns.log`` occupying a DIRECTORY position
+    the same ``Foundry-Next`` returned ``unreported_count 0`` with no error and
+    no warning, while ``Foundry-Report`` on that same run refused naming
+    "spawns.log could not be read (IsADirectoryError)" — one artifact, two
+    doors, two stories, which is the shape D-140 was filed on. The same with
+    ``directives.md``: an injected URGENT directive rendered by Foundry-Next,
+    then silently gone the moment its name was occupied by a directory.
+
+    THE QUESTION IS THE TYPE A READER OPENS, NOT THE RUNG IT OPENS IT ON.
+    ``_RUN_DOCUMENT_SUFFIXES`` above is that set, and it is a superset of the
+    strict table rather than a second copy of it, so the two cannot disagree
+    about ``.json``. ``.0`` is still not a type any reader decodes — the D-195
+    scratch directories stay silent — and ``.md``, ``.jsonl``, ``.log`` and
+    ``.txt`` are types six of this run's seven artifact families are written
+    in, so a directory occupying one of those names is named again.
     """
-    return candidate.suffix.lower() in _STRICT_ARTIFACT_DECODERS
+    return candidate.suffix.lower() in _RUN_DOCUMENT_SUFFIXES
 
 
 def _run_artifact_problems(fdir: Path) -> list[str]:
@@ -3439,8 +3506,10 @@ def _spec_relative_paths(project_root: str) -> list[str]:
     when D-102 landed, and left in the file with a docstring presenting it as a
     live sibling — so the next reader had to derive from call-site absence that
     it was dead (D-196). It is gone;
-    `test_every_private_orchestrator_function_is_reachable` is what keeps the
-    next superseded helper from being left behind the same way.
+    `test_every_private_function_the_plugin_ships_is_reachable` is what keeps
+    the next superseded helper from being left behind the same way — over every
+    file the plugin ships, since D-199 found the class living in a script and
+    in the test corpus while the pin's subject set was this module alone.
 
     D-102 — THE SPEC HAS TWO LEGAL SPELLINGS AND THE FULL RULE SAW ONE.
     ------------------------------------------------------------------
@@ -7681,8 +7750,8 @@ def _override_value_quoting(raw: str) -> tuple[str, bool]:
     D-196's second instance: that split left ``_override_value`` behind as a
     one-line wrapper over this function with no caller anywhere, named only in
     a test docstring narrating the defect above. It is gone; the pin
-    ``test_every_private_orchestrator_function_is_reachable`` is what found it,
-    which is the whole reason the pin reads CODE rather than prose.
+    ``test_every_private_function_the_plugin_ships_is_reachable`` is what found
+    it, which is the whole reason the pin reads CODE rather than prose.
 
     Whether the key was quoted is what distinguishes "this value IS the
     wildcard spelling" from "this value is a class key that LOOKS like one",

@@ -3646,16 +3646,47 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
 # The pin is over the MODULE, not over that one name: a test naming
 # `_spec_relative_path` would pass the day it is deleted and catch nothing
 # afterwards, which is how the class comes back on the next superseded helper.
+#
+# D-199 — AND THE PIN ITSELF WAS SCOPED TO ONE MODULE WHILE THE CLASS WAS NOT.
+#
+# As shipped it read every plugin .py file for CALLERS and took its SUBJECTS
+# from `foundry_orchestrator.py` alone: wide on the reference side, one module
+# deep on the subject side. So the class had live instances the pin could not
+# see — `scripts/measure-run.py#_parse_iso8601`, whose last call site commit
+# c1727f3 deleted; `tests/test_orchestrator_gates.py#_ledger_transaction_
+# callers`, dead directly beneath a comment reading "membership below is
+# computed from the call graph, not from this"; and
+# `tests/test_spawn_progress.py#_is_text_read`. A pin whose subject set is
+# narrower than the class it names is the same shape as the helper it catches.
+#
+# The subject set is now every .py file the plugin's own source holds — src,
+# scripts and tests alike — with the reference sweep, the derivation guards and
+# the installed-dependency exclusion unchanged.
 # --------------------------------------------------------------------------- #
 
-#: Private module-level functions that are deliberately unreferenced.
+#: Private module-level functions some MECHANISM reaches without naming them.
 #:
-#: EMPTY, and it is meant to stay that way. A private helper with no caller is
-#: dead code by definition; the escape hatch exists only for a name that some
-#: mechanism reaches WITHOUT naming it in source (a getattr dispatch, a
-#: plugin-style registry), and adding one costs a comment here saying which
-#: mechanism reaches it and how. "It will be used soon" is not that comment.
-_UNREFERENCED_ORCHESTRATOR_HELPERS: dict[str, str] = {}
+#: Not "unreferenced and we are fine with it" — a private helper with no caller
+#: is dead code by definition. The escape hatch is only for a name a mechanism
+#: reaches WITHOUT naming it in source (a getattr dispatch, a plugin-style
+#: registry, a collector that finds functions by decorator), and adding one
+#: costs the comment beside it saying which mechanism and how. "It will be used
+#: soon" is not that comment.
+#:
+#: THE PIN SKIPS THIS STATEMENT WHEN IT SWEEPS FOR REFERENCES, and it has to.
+#: `_named_in_code` counts a string constant that IS a helper's name, because
+#: `monkeypatch.setattr(fo, "_helper", ...)` and getattr dispatch both spell a
+#: call that way — so an entry here would VOUCH FOR ITSELF and the allowlist
+#: would be a no-op that reads as load-bearing. Same failure as the text sweep
+#: `_named_in_code`'s docstring describes, one rung further in: the mechanism
+#: that is supposed to record an exception cannot also be the thing that grants
+#: it.
+_MECHANISM_REACHED_HELPERS: dict[str, str] = {
+    # pytest collects an autouse fixture from the decorator, never from a call
+    # site, so no module names it and every module in which it is declared
+    # depends on it running. Five test modules declare one.
+    "_isolate_active_run": "@pytest.fixture(autouse=True) — pytest collects it",
+}
 
 #: Path segments that mean "installed here, not written here". A worktree the
 #: sweep creates has none of them and a developer's tree has all of them, so
@@ -3688,33 +3719,50 @@ def _named_in_code(tree: ast.AST) -> set[str]:
     return named
 
 
-def test_every_private_orchestrator_function_is_reachable():
-    """FR-032 verbatim: the verifier-path decision is 'derived from one constant
-    rather than typed in several places'. D-196.
+def _is_the_allowlist_statement(node: ast.AST) -> bool:
+    """Is ``node`` the ``_MECHANISM_REACHED_HELPERS`` assignment itself?
 
-    Every private module-level function in `foundry_orchestrator.py` must be
-    named in code somewhere OUTSIDE its own body — in any Python file the
-    plugin ships, so a helper reached only from a test still counts. A name
-    nothing names is a helper whose caller was rewired away from it and which
-    nobody deleted.
+    Excluded from the reference sweep so the allowlist grants exceptions rather
+    than manufacturing them — see the comment above the constant.
     """
-    module_path = Path(fo.__file__).resolve()
-    plugin_root = module_path.parents[4]  # .../plugins/foundry
+    targets: list[ast.expr] = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, ast.AnnAssign):
+        targets = [node.target]
+    return any(
+        isinstance(t, ast.Name) and t.id == "_MECHANISM_REACHED_HELPERS"
+        for t in targets
+    )
+
+
+def test_every_private_function_the_plugin_ships_is_reachable():
+    """FR-032 verbatim: the verifier-path decision is 'derived from one constant
+    rather than typed in several places'. NFR-001. D-196, D-199.
+
+    Every private module-level function in every Python file the plugin ships —
+    `src/`, `scripts/` and `tests/` alike — must be named in code somewhere
+    OUTSIDE its own body, in any of those files, so a helper reached only from
+    a test still counts. A name nothing names is a helper whose caller was
+    rewired away from it and which nobody deleted.
+
+    THE SUBJECT SET IS THE WHOLE OF WHAT THE PLUGIN SHIPS (D-199). Scoped to
+    `foundry_orchestrator.py`, this pin read every plugin file for CALLERS and
+    only one for SUBJECTS, and three live instances of the class it names sat
+    outside it — one in a shipped script, two in the test corpus. Both sweeps
+    now run over the same file set, so a module added tomorrow is a subject the
+    day it is added.
+
+    NAME-KEYED, WHICH CAN ONLY MAKE IT MORE PERMISSIVE. Two modules defining a
+    private helper of the same name vouch for each other. That is the same
+    looseness the single-module pin had for its own recursion, it never reports
+    a live helper as dead, and closing it would mean resolving imports rather
+    than reading names.
+    """
+    plugin_root = Path(fo.__file__).resolve().parents[4]  # .../plugins/foundry
     assert plugin_root.name == "foundry", plugin_root
 
-    module_tree = ast.parse(module_path.read_text(encoding="utf-8"))
-    helpers = {
-        node.name: node
-        for node in module_tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name.startswith("_")
-        and not node.name.startswith("__")
-    }
-    # A derivation that silently found nothing would pass forever.
-    assert len(helpers) >= 100, len(helpers)
-
-    reachable: set[str] = set()
-    scanned = 0
+    trees: dict[Path, ast.AST] = {}
     for path in sorted(plugin_root.rglob("*.py")):
         # THE PLUGIN'S OWN SOURCE, not everything a virtualenv dropped under it.
         # A third-party module that happens to define a private helper of the
@@ -3723,17 +3771,41 @@ def test_every_private_orchestrator_function_is_reachable():
         if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            trees[path] = ast.parse(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, SyntaxError):
             continue
-        scanned += 1
-        if path != module_path:
-            reachable |= _named_in_code(tree)
-            continue
-        # In the defining module, a helper's OWN body does not vouch for it:
-        # a recursive call is not a caller. Everything else in the file does.
+    # Derivations that silently found nothing would pass forever.
+    assert len(trees) >= 50, len(trees)
+
+    helpers: dict[str, list[str]] = {}
+    for path, tree in trees.items():
         for node in tree.body:
-            if node in helpers.values():
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("_")
+                and not node.name.startswith("__")
+            ):
+                helpers.setdefault(node.name, []).append(
+                    f"{path.relative_to(plugin_root)}:{node.lineno}"
+                )
+    assert len(helpers) >= 100, len(helpers)
+
+    reachable: set[str] = set()
+    for tree in trees.values():
+        own = {
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("_")
+            and not node.name.startswith("__")
+        }
+        # A helper's OWN body does not vouch for it: a recursive call is not a
+        # caller. Everything else in the file it is defined in does — except
+        # the allowlist above, whose keys would otherwise vouch for themselves.
+        for node in tree.body:
+            if _is_the_allowlist_statement(node):
+                continue
+            if node in own:
                 reachable |= {
                     name
                     for child in ast.iter_child_nodes(node)
@@ -3741,21 +3813,19 @@ def test_every_private_orchestrator_function_is_reachable():
                 } - {node.name}
             else:
                 reachable |= _named_in_code(node)
-    assert scanned >= 50, scanned
 
     orphans = sorted(
-        name
+        f"{name} ({', '.join(helpers[name])})"
         for name in helpers
-        if name not in reachable
-        and name not in _UNREFERENCED_ORCHESTRATOR_HELPERS
+        if name not in reachable and name not in _MECHANISM_REACHED_HELPERS
     )
     assert orphans == [], (
         f"private module-level function(s) reachable by nothing: {orphans}. "
         f"A helper nothing in the plugin names outside its own body was "
-        f"superseded and left behind (D-196). Delete it, or make it the "
+        f"superseded and left behind (D-196, D-199). Delete it, or make it the "
         f"survivor's helper and call it -- and if some mechanism reaches it "
         f"without naming it, record that mechanism in "
-        f"_UNREFERENCED_ORCHESTRATOR_HELPERS."
+        f"_MECHANISM_REACHED_HELPERS."
     )
 
 
@@ -5092,23 +5162,6 @@ def _raw_ledger_iterations(path: Path) -> tuple[list[str], list[str]]:
 _LEDGER_REFUSAL_DECORATOR = "ledger_refusals"
 
 
-def _ledger_transaction_callers(path: Path) -> set[str]:
-    """Every function in ``path`` that opens a ``ledger_transaction``."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    callers: set[str] = set()
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for node in ast.walk(fn):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "ledger_transaction"
-            ):
-                callers.add(fn.name)
-    return callers
-
-
 def _package_call_graph(modules: list[Path]) -> tuple[dict, dict, dict]:
     """``(callees, decorators, defining module)`` for every function in the package.
 
@@ -6215,6 +6268,211 @@ def test_a_scratch_directory_does_not_silence_a_genuinely_corrupt_document(run_e
     problems = fo._run_artifact_problems(fdir)
 
     assert [p.split(" could")[0] for p in problems] == ["defects.json"], problems
+
+
+# --------------------------------------------------------------------------- #
+# D-197 — THE GUARD WAS NARROWED PAST THE HARM IT NAMES.
+#
+# D-195's fix removed the false positive by deleting the true-positive half:
+# `_is_document_position` asked `_STRICT_ARTIFACT_DECODERS`, whose one member
+# is ".json", so a DIRECTORY occupying spawns.log, directives.md, forge-log.md,
+# handoffs.jsonl, progress/<agent>.jsonl, spec.md or notes.txt was walked past
+# and the doors acted on the fabricated empty document — D-140's own harm
+# reopened at every suffix but .json, and reported as success.
+#
+# THIS BLOCK PINS BOTH SIDES AT ONCE, WHICH IS THE ONLY WAY EITHER STAYS FIXED.
+# A test that only pins the false positive passes at the over-narrowed commit;
+# a test that only pins the true positives passes at the pre-D-195 commit. So
+# one tree carries every document position AND the version-number directory,
+# and the assertion names what is missing from each side separately.
+# --------------------------------------------------------------------------- #
+
+#: One directory per artifact family a run really writes. Every one of these is
+#: a path some reader in this package OPENS, so a directory sitting on it is
+#: the guard's business — `forge_spec._planning_guard`'s docstring states the
+#: same rule for the planning tree: "A path OCCUPYING an artifact's name is the
+#: guard's business whatever kind of thing it is."
+_RUN_DOCUMENT_POSITIONS = (
+    "state.json",                 # _load_json / _document_transaction
+    "spawns.log",                 # _dispatched_agents, foundry_report
+    "directives.md",              # _read_directives, at every Foundry-Next
+    "forge-log.md",               # the run log every door appends to
+    "handoffs.jsonl",             # record_lead_fix_handoff and its readers
+    "progress/casting-3.jsonl",   # foundry_spawn._read_progress_ledger
+    "spec.md",                    # foundry_validate_castings
+    "notes.txt",                  # the shared prose a casting prompt reads
+)
+
+
+def test_a_directory_at_every_run_document_position_is_named(run_env):
+    """D-140 verbatim, held at every artifact type: a path OCCUPYING an
+    artifact's name is the guard's business whatever kind of thing it is.
+    D-197.
+
+    The true positives the predicate must still catch, pinned one per artifact
+    family. Measured against the pre-fix commit: `_run_artifact_problems` at
+    4d705a1 named directives.md, forge-log.md, handoffs.jsonl, notes.txt,
+    spawns.log and spec.md on this tree; at d872362 it named none of them and
+    returned only state.json.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    for position in _RUN_DOCUMENT_POSITIONS:
+        (fdir / position).parent.mkdir(parents=True, exist_ok=True)
+        target = fdir / position
+        if target.exists():
+            target.unlink()
+        target.mkdir()
+    # ...and D-195's false positive in the SAME tree, so neither side of the
+    # predicate can be satisfied by sacrificing the other.
+    (fdir / "test_observations" / "generated" / ".hypothesis"
+     / "unicode_data" / "14.0.0").mkdir(parents=True)
+
+    problems = fo._run_artifact_problems(fdir)
+    named = {p.split(" could")[0] for p in problems}
+
+    unguarded = sorted(
+        position for position in _RUN_DOCUMENT_POSITIONS
+        if Path(position).name not in named
+    )
+    assert unguarded == [], (
+        f"document position(s) a directory occupies and the guard walked past: "
+        f"{unguarded}. _load_json returns {{}} for each, and the doors then act "
+        f"on a fabricated all-default document and report success (D-140, "
+        f"D-197)."
+    )
+    assert not any("14.0.0" in p for p in problems), (
+        f"D-195's false positive is back: a version-number directory no reader "
+        f"opens was named, and _artifact_guard runs at every MCP entry point, "
+        f"so that refuses every door at once. {problems}"
+    )
+
+
+def test_the_document_suffix_table_covers_every_declared_run_artifact():
+    """FR-026 / D-197: the table is a membership list, so its hole is watched.
+
+    `_RUN_DOCUMENT_SUFFIXES` says which types a reader opens, and a type absent
+    from it is a directory position the guard walks past. That hole is accepted
+    (the inverse refuses on `.dist-info`, of which this repo's virtualenvs hold
+    thirty) — but it is not left unwatched: the expected set is DERIVED from
+    the `*_FILENAME` constants this package declares, so declaring a run
+    artifact of a new type fails here the day it is declared rather than the
+    cycle someone notices a door acting on an empty document.
+    """
+    import ast
+
+    plugin_root = Path(fo.__file__).resolve().parents[4]
+    assert plugin_root.name == "foundry", plugin_root
+
+    declared: dict[str, str] = {}
+    scanned = 0
+    for path in sorted(plugin_root.rglob("*.py")):
+        if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        scanned += 1
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if not (isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id.endswith("_FILENAME"):
+                    declared[target.id] = node.value.value
+    # A derivation that silently found nothing would pass forever.
+    assert scanned >= 50, scanned
+    assert len(declared) >= 10, declared
+
+    unenrolled = sorted(
+        f"{name} = {value!r}"
+        for name, value in declared.items()
+        if (suffix := Path(value).suffix.lower())
+        and suffix not in fo._RUN_DOCUMENT_SUFFIXES
+    )
+    assert unenrolled == [], (
+        f"run artifact filename(s) whose type _RUN_DOCUMENT_SUFFIXES does not "
+        f"know: {unenrolled}. A directory occupying one of those names is "
+        f"walked past by _is_document_position, so every door acts on a "
+        f"fabricated empty document and reports success (D-140, D-197)."
+    )
+
+
+def _seed_dispatch_ledger(fdir: Path) -> None:
+    """`spawns.log` naming two dispatched castings, and no spend record."""
+    (fdir / "spawns.log").write_text(
+        '{"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 1, '
+        '"phase": "cast"}\n'
+        '{"timestamp": "2026-09-03T00:55:15+00:00", "casting_id": 2, '
+        '"phase": "cast"}\n',
+        encoding="utf-8",
+    )
+
+
+def test_foundry_next_lists_unreported_dispatches_and_refuses_on_an_occupied_spawns_log(
+    run_env, monkeypatch
+):
+    """AC-034 verbatim: 'A dispatched agent with no spend record is shown as
+    unreported in Foundry-Next and the report, and no gate refuses on it.'
+    FR-022 / CT-013. D-197.
+
+    The harm, at the transport a client uses. With a readable `spawns.log` the
+    two dispatched castings are named; with a DIRECTORY on that name the same
+    call returned ok with `unreported_count 0`, no error and no warning — the
+    two agents AC-034 requires to be shown were invisible, while Foundry-Report
+    on the same run refused naming the file. One artifact, two doors, two
+    stories, which is D-140's shape exactly.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _seed_dispatch_ledger(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    reported = _drive_mcp("Foundry-Next", {})
+    assert "casting-1" in reported, reported[:600]
+    assert "casting-2" in reported, reported[:600]
+    assert "Run artifacts cannot be read" not in reported, reported[:600]
+
+    (fdir / "spawns.log").unlink()
+    (fdir / "spawns.log").mkdir()
+
+    occupied = _drive_mcp("Foundry-Next", {})
+    assert "Run artifacts cannot be read" in occupied, occupied[:600]
+    assert "spawns.log" in occupied, occupied[:600]
+
+
+def test_an_urgent_directive_is_not_silently_lost_to_a_directory_on_its_name(
+    run_env, monkeypatch
+):
+    """FR-019 / NFR-002 held against D-197: the operator is told WHICH file to
+    repair, never handed a run whose urgent instruction has vanished.
+
+    Driven at d872362: the directive was injected and rendered, `directives.md`
+    was then made a directory, and the SAME Foundry-Next returned error <none>,
+    urgent None, normal None and an action to carry on with — the human's
+    urgent instruction silently gone. That is the same fabrication D-129 was
+    filed on, reached by a different door.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _seed_directive(project_root, _URGENT_DIRECTIVE)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    assert _URGENT_DIRECTIVE in _drive_mcp("Foundry-Next", {})
+
+    (fdir / "directives.md").unlink()
+    (fdir / "directives.md").mkdir()
+
+    occupied = _drive_mcp("Foundry-Next", {})
+    assert "Run artifacts cannot be read" in occupied, occupied[:600]
+    assert "directives.md" in occupied, occupied[:600]
 
 
 # --------------------------------------------------------------------------- #
