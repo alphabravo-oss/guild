@@ -590,13 +590,105 @@ def _read_state(run_dir: Path) -> tuple[dict, str | None]:
     return data, None
 
 
-def _inspect_modes_section(state: dict) -> dict:
+def _cycle_ranges(cycles: list[int]) -> str:
+    """`[0, 1, 2, 4, 7, 8]` -> `"0-2, 4, 7-8"`. Empty -> `""`.
+
+    The gap this renders is ten cycles wide on the run that filed D-193, and a
+    ten-item comma list reads as a data dump rather than as the one fact it
+    carries — "the first ten cycles recorded nothing". Runs of consecutive
+    cycles are the shape the gap actually has, so they are the shape it prints.
+    """
+    out: list[str] = []
+    for cycle in sorted(cycles):
+        if out and cycle == out[-1][1] + 1:
+            out[-1][1] = cycle
+        else:
+            out.append([cycle, cycle])
+    return ", ".join(
+        str(lo) if lo == hi else f"{lo}-{hi}" for lo, hi in out
+    )
+
+
+def _inspect_axis_note(
+    *,
+    axis_top: int | None,
+    axis_length: int | None,
+    recorded_cycles: int,
+    without: list[int] | None,
+    grind_cycles: int | None,
+    halted: bool,
+    extended: bool,
+    decisions: int,
+) -> str:
+    """AC-036's disclosure sentence: which cycles carry no recorded decision.
+
+    One sentence pair, built once and published in BOTH documents, because a
+    disclosure that exists only in the markdown is a disclosure `report.json`'s
+    reader never sees — and the JSON is the surface the DONE gate and every
+    downstream tool read.
+    """
+    if axis_length is None or without is None or axis_top is None:
+        return (
+            "This run's cycle axis cannot be derived — "
+            f"{_UNDERIVABLE_REASON['grind_cycles']} — so this section cannot "
+            f"say which cycles carry no recorded decision. The {decisions} "
+            "decision(s) below are every one the ledger holds, and no cycle is "
+            "assumed either way."
+        )
+
+    # The two numbers come from ONE `derive_cycle_count` reading, so where they
+    # differ the difference has a cause worth naming rather than a discrepancy
+    # to hide. Both known causes are named; a third would print the bare
+    # difference rather than a wrong reason for it.
+    reasons: list[str] = []
+    if halted:
+        reasons.append(
+            "the halt subtracts the GRIND cycle the cap refused to open"
+        )
+    if extended:
+        reasons.append(
+            f"a recorded decision names cycle {axis_top}, above the highest "
+            "cycle this run's other ledgers reach"
+        )
+    if grind_cycles is None or axis_length == grind_cycles:
+        tail = f"publishes as {grind_cycles} GRIND cycles."
+    elif reasons:
+        tail = (
+            f"publishes as {grind_cycles} GRIND cycles — the two differ "
+            f"because {' and '.join(reasons)}."
+        )
+    else:
+        tail = (
+            f"publishes as {grind_cycles} GRIND cycles, which this axis does "
+            "not match; the two derivations part here, and that is itself "
+            "worth reading."
+        )
+    axis_sentence = (
+        f"The axis is this run's own cycle counter, 0 through {axis_top} — "
+        f"{axis_length} cycles, from the same `derive_cycle_count` reading "
+        f"`baseline_comparison` {tail}"
+    )
+
+    if not without:
+        return f"{axis_sentence} Recorded decisions cover every one of them."
+    label = "cycle" if len(without) == 1 else "cycles"
+    verb = "carries" if len(without) == 1 else "carry"
+    return (
+        f"{axis_sentence} Recorded decisions cover {recorded_cycles} of them; "
+        f"{label} {_cycle_ranges(without)} {verb} none — no INSPECT-opening "
+        "transition recorded a mode there, and none is inferred here."
+    )
+
+
+def _inspect_modes_section(state: dict, run_dir: Path) -> dict:
     """FR-023 / AC-036 — EVERY recorded FULL/DELTA decision, per cycle and phase.
 
     `inspect_modes` is append-only and one cycle carries one entry per INSPECT
     it opened, so `per_cycle` maps a cycle to the LIST of its decisions, in the
     order the server recorded them. `count` counts DECISIONS, `cycle_count`
-    counts cycles, and `by_mode` is a census of every decision.
+    counts cycles THAT CARRY ONE, `cycle_axis_length` counts the cycles the run
+    ran, `cycles_without_decision` names the difference, and `by_mode` is a
+    census of every decision.
 
     LAST-ENTRY-WINS FABRICATED A WIDTH FOR THE ORDINARY RUN (D-119)
     ---------------------------------------------------------------
@@ -621,6 +713,40 @@ def _inspect_modes_section(state: dict) -> dict:
 
     `entries` still carries the raw list, because it holds the fields this
     section does not lift (`stream_scope`, `touched_files`, `prove_sample`).
+
+    THE SECTION COUNTED ITS OWN ROWS AND CALLED THAT THE RUN'S CYCLES (D-193)
+    -------------------------------------------------------------------------
+    `cycle_count` counts the cycles this LEDGER has a decision for, and the
+    document published it as the width of the axis AC-036 names — "the FULL or
+    DELTA decision per cycle", which is an axis over the run's CYCLES, not over
+    the rows that happen to exist. Driven through `generate_report` on this
+    run's own archive: REPORT.md read "5 recorded INSPECT-opening decisions
+    over 5 cycles" and, 64 lines later, "| GRIND cycles | 22 | | 12 | 15 |",
+    with `report.json` carrying `inspect_modes_per_cycle.cycle_count` 5 beside
+    `baseline_comparison.current.grind_cycles` 15. Two numbers for one axis in
+    one document, neither reconciling with the other, and no sentence anywhere
+    saying that cycles 0-9 carry no recorded decision at all. PROVE confirmed
+    the data is genuinely absent rather than dropped by this reader — neither
+    `inspect_modes` nor the roll-up holds a mode for those cycles — so the
+    section was under-reporting the axis, not losing rows.
+
+    Four sibling sections in the same document each disclose their own gap:
+    spend says the Agents cells are blank "for want of that source, not because
+    they are zero", baseline says its null columns are "null rather than
+    fabricated", `unknown_tier_defects` explains why closed records are counted
+    but unlisted, and the LATENT backlog explains an empty location cell. This
+    was the one partial section that stayed silent.
+
+    So the axis is derived HERE, from `derive_cycle_count` — the same reading
+    `_archive_metrics` publishes as `grind_cycles`, which is what makes the two
+    numbers in the document incapable of coming from two derivations (D-036's
+    lesson, applied to the third pair). What is NOT done is fabricate a
+    decision for an unrecorded cycle, or an axis that cannot show a gap: when
+    the counter cannot be derived at all, `cycle_axis_length` and
+    `cycles_without_decision` are None and the note says so, rather than
+    falling back on the highest cycle THIS ledger names — an axis taken from
+    the ledger being rendered against it is complete by construction, which is
+    the same fabrication wearing a different hat.
     """
     entries = state.get("inspect_modes")
     if not isinstance(entries, list):
@@ -648,9 +774,47 @@ def _inspect_modes_section(state: dict) -> dict:
         decisions += 1
         if decision["mode"] in by_mode:
             by_mode[decision["mode"]] += 1
+
+    # D-193 — THE AXIS, from the one derivation `baseline_comparison` reads.
+    # `index` is the counter's own highest value, so `0..index` is exactly the
+    # set of counter values a decision could have been stamped with, and
+    # `index + 1` is the number `derive_cycle_count` publishes as `count` on
+    # every run the cap did not halt. The recorded cycles are compared against
+    # THAT, never against themselves.
+    recorded_cycles = {int(key) for key in per_cycle}
+    derived = derive_cycle_count(run_dir)
+    index = derived["index"]
+    highest_recorded = max(recorded_cycles) if recorded_cycles else None
+    axis_top: int | None = None
+    axis_length: int | None = None
+    without: list[int] | None = None
+    extended = False
+    if index is not None:
+        # A decision above the counter-derived top is direct evidence that
+        # cycle ran, so the axis widens to cover the row it is about to render
+        # rather than publishing a length shorter than its own table. That is
+        # not the self-fulfilling case the docstring rules out: it widens an
+        # axis that already exists, and the note names the widening.
+        extended = highest_recorded is not None and highest_recorded > index
+        axis_top = index if highest_recorded is None else max(index, highest_recorded)
+        axis_length = axis_top + 1
+        without = [c for c in range(axis_length) if c not in recorded_cycles]
+
     return {
         "count": decisions,
         "cycle_count": len(per_cycle),
+        "cycle_axis_length": axis_length,
+        "cycles_without_decision": without,
+        "note": _inspect_axis_note(
+            axis_top=axis_top,
+            axis_length=axis_length,
+            recorded_cycles=len(per_cycle),
+            without=without,
+            grind_cycles=derived["count"],
+            halted=bool(derived["halted"]),
+            extended=extended,
+            decisions=decisions,
+        ),
         "by_mode": by_mode,
         "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=_cycle_sort_key)},
         "entries": history,
@@ -1284,7 +1448,7 @@ def _archive_metrics(
     if state is None:
         state, _problem = read_document(run_dir / STATE_FILENAME)
     if inspect_modes is None:
-        inspect_modes = _inspect_modes_section(state)
+        inspect_modes = _inspect_modes_section(state, run_dir)
 
     cycles = derive_cycle_count(run_dir)
 
@@ -1409,7 +1573,7 @@ def _baseline_comparison_section(
     if state is None:
         state, _problem = read_document(run_dir / STATE_FILENAME)
     if inspect_modes is None:
-        inspect_modes = _inspect_modes_section(state)
+        inspect_modes = _inspect_modes_section(state, run_dir)
     current = _archive_metrics(run_dir, state=state, inspect_modes=inspect_modes)
 
     baseline_dir = run_dir.parent / str(baseline_recorded.get("run", ""))
@@ -1785,12 +1949,19 @@ def _render_section(key: str, value: dict) -> list[str]:
         # F2 one and the F5 one TEMPER opens without advancing the counter —
         # has two rows here, because collapsing them printed one of the two
         # widths as though it were the cycle's answer.
+        # D-193: the headline says "cycles that carry one", never "cycles",
+        # because the two are different numbers on any run whose ledger starts
+        # partway through — and the axis they differ against is the sentence
+        # below, built once in the section so both documents carry it.
         return (
             [f"{value.get('count', 0)} recorded INSPECT-opening decisions over "
-             f"{value.get('cycle_count', 0)} cycles; by mode: "
-             f"{value.get('by_mode')}. One row per decision: a cycle carries "
-             "two rows when an F5 INSPECT reopened it after its F2 one, and "
-             "neither is dropped.", ""]
+             f"the {value.get('cycle_count', 0)} cycles that carry one; by "
+             f"mode: {value.get('by_mode')}. One row per decision: a cycle "
+             "carries two rows when an F5 INSPECT reopened it after its F2 "
+             "one, and neither is dropped.",
+             "",
+             str(value.get("note", "")),
+             ""]
             + _md_table(
                 ["Cycle", "Phase", "Mode", "Rule", "Decided by", "Required streams"],
                 [[d.get("cycle"), d.get("phase"), d.get("mode"), d.get("rule"),
@@ -2030,7 +2201,7 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     if problem is not None:
         return _refusal(SPEND_LEDGER_FILENAME, problem)
 
-    inspect_modes = _inspect_modes_section(state)
+    inspect_modes = _inspect_modes_section(state, run_dir)
 
     sections: dict[str, Any] = {
         "verdict_matrix": verdict_matrix,

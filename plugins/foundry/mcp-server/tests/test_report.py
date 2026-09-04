@@ -1416,6 +1416,295 @@ def test_both_inspects_of_one_cycle_are_reported_not_collapsed(report_env):
     assert "FULL" in rows[1] and "F5" in rows[1]
 
 
+# --------------------------------------------------------------------------- #
+# D-193 — THE AXIS THE DECISIONS ARE RENDERED AGAINST.
+#
+# `cycle_count` counts the cycles this LEDGER has a decision for. AC-036 names
+# an axis over the run's CYCLES. The two are the same number only on a run that
+# recorded a decision in every cycle, and the run that filed this defect is not
+# one: 15 cycles, 5 recorded, and both numbers published in one document with
+# nothing reconciling them and no sentence naming the ten cycles that recorded
+# nothing.
+# --------------------------------------------------------------------------- #
+
+def _a_decision(cycle: int, **extra) -> dict:
+    """One `inspect_modes` entry in the shape `_decide_inspect_mode` writes."""
+    entry = {
+        "cycle": cycle,
+        "phase": "F2",
+        "mode": "FULL",
+        "rule": "verifier_touched",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove"],
+    }
+    entry.update(extra)
+    return entry
+
+
+def _minimal_run(tmp_path, name: str, state: dict) -> Path:
+    """A run directory carrying only the two ledgers `generate_report` needs.
+
+    An ABSENT ledger is an empty section, not a refusal (the report section
+    contract), so this is the smallest archive the generator will write a full
+    document for — and it is the only way to reach a run whose cycle counter
+    NO source can supply, which is one of the branches under test.
+    """
+    run_dir = tmp_path / "foundry-archive" / name
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir, "state.json", state)
+    _write_json(run_dir, "defects.json", {"defects": []})
+    return run_dir
+
+
+def _inspect_md(run_dir: Path) -> str:
+    body = _markdown(run_dir).split("## INSPECT mode per cycle", 1)[1]
+    return body.split("\n## ", 1)[0]
+
+
+def test_the_cycles_with_no_recorded_decision_are_named(report_env):
+    """AC-036 verbatim: '... the FULL or DELTA decision per cycle ...'.
+
+    D-193: that is an axis over the run's cycles, not over the rows that happen
+    to exist. This fixture is the filing run's own shape — a counter that
+    reached 14 and an `inspect_modes` list that starts at 10, because the
+    ledger was only written from the cycle the feature landed in. REPORT.md
+    read '5 recorded INSPECT-opening decisions over 5 cycles' and, 64 lines
+    later, '| GRIND cycles | 22 | | 12 | 15 |'; report.json carried
+    `cycle_count` 5 beside `baseline_comparison.current.grind_cycles` 15. Two
+    numbers for one axis in one document, and no sentence anywhere saying that
+    cycles 0-9 carry no recorded decision.
+
+    The four sibling partial sections each disclose their own gap. This one now
+    does too, off the SAME `derive_cycle_count` reading the baseline section
+    publishes — which is what makes the two numbers incapable of disagreeing.
+    """
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 14
+    state["inspect_modes"] = [_a_decision(c) for c in range(10, 15)]
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    doc = _document(report_env)
+    section = doc["inspect_modes_per_cycle"]
+    assert section["count"] == 5
+    assert section["cycle_count"] == 5, "cycles that CARRY a decision"
+    assert section["cycle_axis_length"] == 15, "cycles the run RAN"
+    assert section["cycles_without_decision"] == list(range(10))
+
+    # THE RECONCILIATION. One derivation, two sections, one number.
+    assert section["cycle_axis_length"] == (
+        doc["baseline_comparison"]["current"]["grind_cycles"]
+    ), "the axis and the baseline's GRIND cycles are the same reading"
+
+    note = section["note"]
+    assert "15 cycles" in note, note
+    assert "cover 5 of them" in note, note
+    assert "cycles 0-9 carry none" in note, note
+    assert "none is inferred here" in note, note
+    # BOTH documents, byte for byte. A disclosure that lives only in the
+    # markdown is one report.json's readers — the DONE gate among them — never
+    # see, and the JSON is the surface FR-038 says carries the same data.
+    assert note in _inspect_md(report_env)
+
+
+def test_the_headline_no_longer_calls_its_own_row_count_the_runs_cycles(report_env):
+    """The falsifier for the test above, on the sentence that stated the claim.
+
+    'N recorded INSPECT-opening decisions over N cycles' reads as a complete
+    census of the run, and on the filing archive both Ns were 5 while the run
+    had run 15. The headline now says what the number IS — the cycles that
+    carry a decision — and the axis is the sentence beside it."""
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 14
+    state["inspect_modes"] = [_a_decision(c) for c in range(10, 15)]
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    headline = _inspect_md(report_env).strip().splitlines()[0]
+    assert "5 cycles that carry one" in headline, headline
+    assert "over 5 cycles;" not in headline, headline
+
+
+def test_a_run_that_recorded_every_cycle_says_every_cycle_is_covered(report_env):
+    """The other arm. A section that only ever printed a gap sentence would be
+    read as an alarm; this one states coverage either way, so 'no sentence' is
+    never the answer and the absence of a gap is a MEASUREMENT rather than a
+    silence indistinguishable from the D-193 one."""
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 5
+    state["inspect_modes"] = [_a_decision(c) for c in range(0, 6)]
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    section = _document(report_env)["inspect_modes_per_cycle"]
+    assert section["cycle_axis_length"] == 6
+    assert section["cycle_count"] == 6
+    assert section["cycles_without_decision"] == []
+    assert "Recorded decisions cover every one of them." in section["note"]
+    assert "carry none" not in section["note"], section["note"]
+    assert section["note"] in _inspect_md(report_env)
+
+
+def test_an_underivable_axis_is_declined_not_taken_from_the_ledger(tmp_path):
+    """The fabrication this section refuses to commit.
+
+    An axis derived from the very ledger being rendered against it is complete
+    BY CONSTRUCTION — every recorded cycle is on it and no cycle is off it — so
+    falling back on the highest cycle `inspect_modes` names would turn 'the
+    counter cannot say' into 'nothing is missing'. That is the same fabrication
+    D-193 names, wearing a different hat, and it would have made this section
+    silent on precisely the archives least able to afford it.
+
+    `derive_cycle_count`'s own rule is the one applied: 'count is None only
+    when NO source could supply a number', and 'cannot say' and 'nothing
+    missing' are different answers."""
+    run_dir = _minimal_run(
+        tmp_path,
+        "no-counter-run",
+        {"phase": "F2", "inspect_modes": [_a_decision(3), _a_decision(4)]},
+    )
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+
+    section = _document(run_dir)["inspect_modes_per_cycle"]
+    assert section["count"] == 2
+    assert section["cycle_axis_length"] is None
+    assert section["cycles_without_decision"] is None
+
+    note = section["note"]
+    assert "cycle axis cannot be derived" in note, note
+    assert "cannot say which cycles carry no recorded decision" in note, note
+    # The ledger's own floor would have printed exactly this, and it would have
+    # been a claim no artifact in the archive supports.
+    assert "0-2" not in note, note
+    assert "None" not in note, f"no Python repr reaches operator prose: {note}"
+    assert note in _inspect_md(run_dir)
+
+
+def test_a_halted_runs_axis_names_why_it_exceeds_the_grind_cycle_count(tmp_path):
+    """D-175 met D-193 here. On a halted run `derive_cycle_count` publishes
+    `index` rather than `index + 1`, because the GRIND the cap refused to open
+    never ran — but the counter DID reach `index`, and a decision is stamped
+    there. So the axis is one longer than `grind_cycles` on exactly this run
+    shape, and the note states the cause instead of leaving a reader to
+    discover two numbers and no reason."""
+    run_dir = _minimal_run(
+        tmp_path,
+        "halt-run",
+        {
+            "phase": RUN_PHASE_HALTED,
+            "cycle": 2,
+            "halted_at_cycle": 2,
+            "halted_reason": "--max-cycles 2 reached: opening GRIND cycle 3 "
+                             "would exceed it",
+            "inspect_modes": [_a_decision(1), _a_decision(2)],
+        },
+    )
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+
+    doc = _document(run_dir)
+    section = doc["inspect_modes_per_cycle"]
+    assert section["cycle_axis_length"] == 3, "the counter ran 0, 1, 2"
+    assert doc["baseline_comparison"]["current"]["grind_cycles"] == 2
+    assert section["cycles_without_decision"] == [0]
+
+    note = section["note"]
+    assert "the two differ because" in note, note
+    assert "the halt subtracts the GRIND cycle the cap refused to open" in note
+    assert "cycle 0 carries none" in note, note
+
+
+def test_a_decision_above_the_counter_widens_the_axis_it_is_rendered_against(
+    tmp_path,
+):
+    """An axis shorter than its own table would publish a length that denies a
+    row printed underneath it. A recorded decision at cycle 5 is direct
+    evidence cycle 5 ran, so the axis widens to cover it and the note names the
+    widening — which is the opposite of the refused fallback in
+    `test_an_underivable_axis_is_declined_not_taken_from_the_ledger`: this
+    widens an axis the counter already supplied, and it can still show a gap."""
+    run_dir = _minimal_run(
+        tmp_path,
+        "counter-behind-run",
+        {"phase": "F2", "cycle": 2, "inspect_modes": [_a_decision(5)]},
+    )
+    assert generate_report(tmp_path, run_dir)["ok"] is True
+
+    doc = _document(run_dir)
+    section = doc["inspect_modes_per_cycle"]
+    assert section["cycle_axis_length"] == 6, "0 through 5, the row's own cycle"
+    assert doc["baseline_comparison"]["current"]["grind_cycles"] == 3
+    assert section["cycles_without_decision"] == [0, 1, 2, 3, 4]
+
+    note = section["note"]
+    assert "a recorded decision names cycle 5" in note, note
+    assert "above the highest cycle this run's other ledgers reach" in note
+    # Every rendered row's cycle is on the axis the section published.
+    for cycle in section["per_cycle"]:
+        assert int(cycle) < section["cycle_axis_length"]
+
+
+def test_the_baseline_archives_axis_is_derived_from_its_own_directory(report_env):
+    """THE ADJACENT PATH D-193's fix walked into.
+
+    `_inspect_modes_section` has three callers and the defect came in through
+    one of them (`generate_report`). The other two are `_archive_metrics` and
+    `_baseline_comparison_section`, and `_archive_metrics` is called a SECOND
+    time on a directory that is not this run's — thunder-viper's archive, to
+    fill NFR-001's derived column. Giving the section a `run_dir` is exactly
+    the change that can make that call read the wrong archive's counter, and
+    the symptom would be invisible: a plausible number, derived from the run
+    beside the one it names.
+
+    So the two archives are planted with counters that cannot be confused —
+    this run at 14, thunder-viper's at 30 — and each column is asserted
+    against its own directory."""
+    baseline_dir = report_env.parent / THUNDER_VIPER_BASELINE["run"]
+    baseline_dir.mkdir()
+    _write_json(
+        baseline_dir, "state.json",
+        {"phase": "F6", "cycle": 30,
+         "inspect_modes": [_a_decision(30, phase="F5", decided_by="temper")]},
+    )
+    _write_json(baseline_dir, "defects.json", {"defects": []})
+
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 14
+    state["inspect_modes"] = [_a_decision(c) for c in range(10, 15)]
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    doc = _document(report_env)
+    # This run's section, from this run's counter.
+    assert doc["inspect_modes_per_cycle"]["cycle_axis_length"] == 15
+    # The baseline's derived column, from the BASELINE's counter — 30 + 1, and
+    # its single F5 decision, neither of which is anywhere in this run.
+    derived = doc["baseline_comparison"]["baseline_derived"]
+    assert derived["grind_cycles"] == 31
+    assert derived["post_verification_cycles"] == 1
+    # The published baseline column is still the constant, untouched (D-085).
+    assert doc["baseline_comparison"]["baseline_metrics"]["grind_cycles"] == (
+        THUNDER_VIPER_BASELINE["grind_cycles"]
+    )
+
+
+def test_the_gap_prints_as_ranges_not_as_a_ten_item_list(report_env):
+    """`_cycle_ranges`. The gap on the filing run is ten cycles wide, and a
+    ten-item comma list reads as a data dump rather than as the fact it
+    carries. Runs of consecutive cycles are the shape the gap has."""
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 9
+    state["inspect_modes"] = [_a_decision(c) for c in (3, 8, 9)]
+    _write_json(report_env, "state.json", state)
+    _generate(report_env)
+
+    section = _document(report_env)["inspect_modes_per_cycle"]
+    assert section["cycles_without_decision"] == [0, 1, 2, 4, 5, 6, 7]
+    assert "cycles 0-2, 4-7 carry none" in section["note"], section["note"]
+    assert fr._cycle_ranges([]) == ""
+    assert fr._cycle_ranges([4]) == "4"
+    assert fr._cycle_ranges([9, 7, 8]) == "7-9"
+
+
 def test_the_f5_reopen_of_a_cycle_counts_one_post_verification_cycle(report_env):
     """NFR-001's post-verification column, off the same `inspect_modes` ledger
     the census reads — the ADJACENT reader (`_archive_metrics`), which walks
@@ -3586,10 +3875,18 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
                 print(f"      {entry['path']}  lines={entry['line_count']}")
 
         print("=== INSPECT mode per cycle, every decision (AC-036 / D-119) ===")
-        for cycle, group in doc["inspect_modes_per_cycle"]["per_cycle"].items():
+        modes = doc["inspect_modes_per_cycle"]
+        for cycle, group in modes["per_cycle"].items():
             for row in group:
                 print(f"  cycle {cycle}  {row['phase']:<5} {row['mode']:<5} "
                       f"{row['rule']}")
+        # D-193: the axis those rows are rendered against, and the cycles that
+        # carry no row at all. The section that lists them cannot be read
+        # without it — 5 rows over a 15-cycle run is a different document from
+        # 5 rows over a 5-cycle one.
+        print(f"  axis length {modes['cycle_axis_length']}  "
+              f"without a decision {modes['cycles_without_decision']}")
+        print(f"  {modes['note']}")
 
         print("=== spend: tokens and minutes only, no money (NFR-002) ===")
         spend = doc["spend_per_phase_and_cycle"]
@@ -4023,3 +4320,90 @@ def test_demo_grind_cycle_10_filings_at_the_real_door(tmp_path, capsys):
     assert spend3["total"]["unreported"] == 2
     assert spend3["unreported_without_cycle"] == 1
     assert [spend3["by_cycle"][k]["unreported"] for k in ("1", "2")] == [1, 1]
+
+
+def test_demo_grind_cycle_15_the_axis_the_decisions_are_rendered_against(
+    report_env, tmp_path, capsys
+):
+    """D-193, driven through `generate_report` and read back out of both
+    documents on the filing run's own shape.
+
+    AC-036 / FR-023 / CT-014 / GI-006 / US-008."""
+    def _shape(state_cycle: int, cycles: list[int]) -> dict:
+        state = _read_json(report_env, "state.json")
+        state["cycle"] = state_cycle
+        state["inspect_modes"] = [_a_decision(c) for c in cycles]
+        _write_json(report_env, "state.json", state)
+        _generate(report_env)
+        return _document(report_env)
+
+    with capsys.disabled():
+        print("\n=== D-193 — the filing run's own shape: a counter that "
+              "reached 14, an inspect_modes ledger that starts at 10 ===")
+        doc = _shape(14, list(range(10, 15)))
+        section = doc["inspect_modes_per_cycle"]
+        print(f"  report.json inspect_modes_per_cycle.count       "
+              f"{section['count']}")
+        print(f"  report.json inspect_modes_per_cycle.cycle_count "
+              f"{section['cycle_count']}   <- cycles that CARRY a decision")
+        print(f"  report.json baseline_comparison.current.grind_cycles  "
+              f"{doc['baseline_comparison']['current']['grind_cycles']}"
+              f"   <- cycles the run RAN")
+        print("  the filing read exactly those two numbers, 64 lines apart in "
+              "one REPORT.md, with nothing reconciling them and no sentence "
+              "naming the cycles that recorded nothing.")
+        print("\n  the axis is now derived, from the reading the baseline "
+              "section already used:")
+        print(f"  cycle_axis_length        {section['cycle_axis_length']}")
+        print(f"  cycles_without_decision  {section['cycles_without_decision']}")
+        print(f"  same reading as the baseline: "
+              f"{section['cycle_axis_length'] == doc['baseline_comparison']['current']['grind_cycles']}")
+        print("\n  and REPORT.md says it, in the words report.json carries:")
+        for line in _inspect_md(report_env).strip().splitlines()[:3]:
+            if line:
+                print(f"  {line}")
+        print(f"\n  the same sentence is in report.json: "
+              f"{section['note'] in _inspect_md(report_env)}")
+
+        print("\n=== the other arm: a run that recorded every cycle says so, "
+              "so 'no sentence' is never the answer ===")
+        section = _shape(5, list(range(0, 6)))["inspect_modes_per_cycle"]
+        print(f"  cycle_axis_length {section['cycle_axis_length']}  "
+              f"cycles_without_decision {section['cycles_without_decision']}")
+        print("  " + section["note"].split("cycles, from")[1].split(". ")[-1])
+
+        print("\n=== gaps print as the runs they are, never as a dump ===")
+        section = _shape(9, [3, 8, 9])["inspect_modes_per_cycle"]
+        print(f"  cycles_without_decision {section['cycles_without_decision']}")
+        print("  " + section["note"].split("; ")[1])
+
+        print("\n=== what is NOT done: an axis taken from the ledger being "
+              "rendered against it ===")
+        no_counter = _minimal_run(
+            tmp_path, "demo-no-counter",
+            {"phase": "F2", "inspect_modes": [_a_decision(3), _a_decision(4)]},
+        )
+        generate_report(tmp_path, no_counter)
+        note = _document(no_counter)["inspect_modes_per_cycle"]["note"]
+        print("  a run whose counter no source can supply, whose ledger names "
+              "cycles 3 and 4:")
+        print(f"  cycle_axis_length       "
+              f"{_document(no_counter)['inspect_modes_per_cycle']['cycle_axis_length']}")
+        print(f"  cycles_without_decision "
+              f"{_document(no_counter)['inspect_modes_per_cycle']['cycles_without_decision']}")
+        print(f"  {note}")
+        print("  an axis of 0-4 taken from those two rows would have been "
+              "complete by construction — every recorded cycle on it, no "
+              "cycle off it — which is the D-193 fabrication wearing a "
+              "different hat.")
+
+    doc = _shape(14, list(range(10, 15)))
+    section = doc["inspect_modes_per_cycle"]
+    assert section["cycle_count"] == 5
+    assert section["cycle_axis_length"] == 15
+    assert section["cycles_without_decision"] == list(range(10))
+    assert section["cycle_axis_length"] == (
+        doc["baseline_comparison"]["current"]["grind_cycles"]
+    )
+    assert "cycles 0-9 carry none" in section["note"]
+    assert section["note"] in _inspect_md(report_env)
