@@ -2980,16 +2980,19 @@ def _recorded_stream_scope(fdir: Path, cycle: int, stream: str) -> str:
     a run whose INSPECT was opened before the width existed, or a decision
     stamped with a different cycle number.
 
-    The cycle stamp is checked, not assumed. `_current_inspect_mode` returns
-    the LAST entry whatever cycle it belongs to, and a caller reading a scope
-    off a decision made for another cycle would be narrowing this one against a
-    width nothing recorded for it — GI-008's named violation, arriving through
-    a helper instead of through a recomputation.
+    The cycle stamp is checked, not assumed: a caller reading a scope off a
+    decision made for another cycle would be narrowing this one against a width
+    nothing recorded for it — GI-008's named violation, arriving through a
+    helper instead of through a recomputation.
+
+    D-216: that check now lives in the read, as its `cycle` argument, rather
+    than being re-stated here. It was one of the two places the module already
+    held the rule while `_current_inspect_mode` itself returned the newest entry
+    whatever crossing wrote it, so the narrow readers were guarded and the doors
+    that decide on the width were not. One subject, passed in; not two readers.
     """
-    recorded = _current_inspect_mode(fdir)
+    recorded = _current_inspect_mode(fdir, cycle)
     if not isinstance(recorded, dict):
-        return ""
-    if recorded.get("cycle") != cycle:
         return ""
     scope = recorded.get("stream_scope")
     if not isinstance(scope, dict):
@@ -3081,8 +3084,7 @@ def _recorded_prove_roster(fdir: Path, cycle: int) -> list[str] | None:
     decision recorded a roster and the roster is empty, which
     `_prove_delta_sample` produces only when the spec parses to zero rows.
 
-    THE CYCLE MUST MATCH, and that is not defensive padding.
-    `_current_inspect_mode` returns the NEWEST entry, and a width is a fact
+    THE CYCLE MUST MATCH, and that is not defensive padding. A width is a fact
     about one crossing: a roster decided for cycle 5 says nothing about what
     cycle 4's PROVE owed. On the live path the two are equal by construction —
     `inspect_start` stamps `entry["cycle"]` from the same counter
@@ -3090,11 +3092,15 @@ def _recorded_prove_roster(fdir: Path, cycle: int) -> list[str] | None:
     costs nothing there, and a resumed archive whose counter and ledger
     disagree falls back rather than measuring one cycle's work against another
     cycle's roster.
+
+    D-216: the match is made by the read, which takes the cycle as its subject,
+    rather than being re-stated here against an entry the read had already
+    handed back unconditionally. This helper and `_recorded_stream_scope` were
+    the two places the module held the rule while the read that every DECIDING
+    door goes through did not.
     """
-    recorded = _current_inspect_mode(fdir)
+    recorded = _current_inspect_mode(fdir, cycle)
     if not recorded or recorded.get("mode") != "DELTA":
-        return None
-    if recorded.get("cycle") != cycle:
         return None
     sample = recorded.get("prove_sample")
     if not isinstance(sample, list):
@@ -6617,7 +6623,7 @@ def _sweep_refusal(sweep: dict, cycle: int, token: str = "inspect_start") -> dic
     }
 
 
-def _current_inspect_mode(fdir: Path) -> dict | None:
+def _current_inspect_mode(fdir: Path, cycle: int | None = None) -> dict | None:
     """The decision the last INSPECT-opening transition recorded, or None.
 
     THE ONLY READ. GI-008 and GI-009 both name a lazily-computed mode as the
@@ -6626,6 +6632,17 @@ def _current_inspect_mode(fdir: Path) -> dict | None:
     anything. None means a run whose INSPECT has not been opened since this
     landed, and each caller degrades to its pre-change behaviour rather than
     guessing a width.
+
+    ``cycle`` is WHICH crossing is being asked about, and it defaults to the
+    server counter (D-216). Almost every caller is asking "what width is the
+    INSPECT this run is in", which is the counter's crossing and nobody's
+    judgement call, so it passes nothing. The two NARROW readers —
+    `_recorded_stream_scope` and `_recorded_prove_roster` — are asking about a
+    named cycle instead, because their callers measure one cycle's coverage
+    against that cycle's roster, and they pass it. Making the subject an
+    argument rather than a second reader is what keeps this THE only read: the
+    alternative was a helper that resolves the entry a different way, which is
+    the two-readers-disagree shape D-117 was filed to close.
     """
     modes = _load_json(fdir / "state.json").get("inspect_modes")
     if not isinstance(modes, list) or not modes:
@@ -6661,6 +6678,46 @@ def _current_inspect_mode(fdir: Path) -> dict | None:
         return None
     if entry.get("mode") not in INSPECT_MODES:
         return None
+    # D-216 — AND IT IS THE ENTRY STAMPED FOR **THIS** CYCLE.
+    #
+    # THE THIRD AXIS. D-212 settled WHICH entry answers (the last one) and WHAT
+    # its mode is resolved against (`INSPECT_MODES`). It left WHICH CYCLE the
+    # entry belongs to, and this returned the newest entry whatever crossing had
+    # written it — so cycle 1's decision answered "what width is cycle 2" at
+    # every door that decides on one.
+    #
+    # The module already held the rule twice, in the two helpers that read a
+    # NARROW slice of a decision: `_recorded_stream_scope` and
+    # `_recorded_prove_roster` both compare the entry's cycle against the cycle
+    # being measured, and the first names the omission as GI-008's violation in
+    # its own docstring — "a caller reading a scope off a decision made for
+    # another cycle would be narrowing this one against a width nothing recorded
+    # for it". The narrow helpers guarded it; the read they are built on did not.
+    #
+    # Driven through `server.call_tool` at F2 cycle 2 with a single
+    # `{cycle: 1, mode: FULL, rule: first_of_phase}` entry and every stream
+    # complete: `Foundry-Gate('assay')` PASSED carrying
+    # `inspect_ran_at_full_width (mode=FULL rule=first_of_phase) ok=True`, an
+    # assertion about cycle 2 answered by cycle 1's record. With a cycle-1 DELTA
+    # entry, `_check_streams_complete` reported complete True over cycle 1's
+    # roster — GI-008's named violation verbatim — and the F2->F2 widening arm
+    # accepted the re-open and advanced the counter to 3, stamping a FULL
+    # decision for a crossing whose own width nothing had recorded.
+    #
+    # EARLIER OR LATER, both. Every entry this module writes carries the counter
+    # the crossing that wrote it holds (`cast` and `temper` stamp
+    # `_current_cycle`; `inspect_start` stamps the counter it advanced inside the
+    # same transaction), so a stamp ahead of the counter cannot arise on the live
+    # path at all — which is why tolerating one is tolerating something no
+    # transition produced. A stale stamp is D-117's ruling ("an unrecorded width
+    # is not full width") applied to the value that belongs to a different
+    # crossing: it reads as NO record, and every door refuses through
+    # `_unrecorded_width_problem`.
+    stamped = entry.get("cycle")
+    if isinstance(stamped, bool) or not isinstance(stamped, int):
+        return None
+    if stamped != (_current_cycle(fdir) if cycle is None else cycle):
+        return None
     return entry
 
 
@@ -6672,6 +6729,37 @@ _WIDTH_RECORDING_TRANSITIONS = (
     "Foundry-Phase(phase='temper') for the F5 entry, or "
     "Foundry-Phase(phase='inspect_start') for a GRIND->INSPECT crossing"
 )
+
+
+def _inspect_mode_gap(fdir: Path, cycle: int) -> str:
+    """Why the newest `inspect_modes` entry is not cycle `cycle`'s width.
+
+    Diagnosis only — `_current_inspect_mode` is still the one place the question
+    is DECIDED, and this is called only after it has already answered None. It
+    exists because D-216's refusal reads very differently depending on which of
+    the three ways an archive can fail to carry this INSPECT's width it hit, and
+    "cycle 2 has no recorded width" on a run whose state.json visibly holds
+    thirteen inspect_modes entries sends the lead hunting for a file that is
+    right there. NFR-005: the one line a terminal prints has to say what was
+    found, not only what was missing.
+    """
+    modes = _load_json(fdir / "state.json").get("inspect_modes")
+    if not isinstance(modes, list) or not modes:
+        return "nothing has recorded an inspect_modes entry for it"
+    entry = modes[-1]
+    if not isinstance(entry, dict) or entry.get("mode") not in INSPECT_MODES:
+        return (
+            "the newest inspect_modes entry records no width this server "
+            f"spells — {', '.join(sorted(INSPECT_MODES))} are the only two"
+        )
+    stamped = entry.get("cycle")
+    if isinstance(stamped, bool) or not isinstance(stamped, int):
+        return "the newest inspect_modes entry carries no usable cycle stamp"
+    return (
+        f"the newest inspect_modes entry is stamped for cycle {stamped}, and a "
+        f"width is a fact about ONE crossing — cycle {stamped}'s decision says "
+        f"nothing about what cycle {cycle} was opened with"
+    )
 
 
 def _unrecorded_width_problem(fdir: Path) -> dict | None:
@@ -6713,10 +6801,11 @@ def _unrecorded_width_problem(fdir: Path) -> dict | None:
     """
     if _current_inspect_mode(fdir) is not None:
         return None
+    cycle = _current_cycle(fdir)
     return {
         "reason": (
-            "this INSPECT has no recorded width — nothing has recorded an "
-            "inspect_modes entry for it, so the roster, the rule and the "
+            f"this INSPECT (cycle {cycle}) has no recorded width — "
+            f"{_inspect_mode_gap(fdir, cycle)}, so the roster, the rule and the "
             "evidence sweep it was opened with are all unknown"
         ),
         "hint": (

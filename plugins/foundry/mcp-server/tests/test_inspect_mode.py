@@ -4426,3 +4426,267 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
         "the closed vocabulary, so a value outside it reads as a recorded "
         "width again — D-212."
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-216 — THE RECORDED WIDTH IS THE ENTRY STAMPED FOR **THIS** CYCLE
+#
+# D-212 fixed WHICH entry answers (the last one) and WHAT its mode is resolved
+# against (`INSPECT_MODES`). It left the third axis: WHICH CYCLE the entry
+# belongs to. `_current_inspect_mode` returned the newest entry whatever cycle
+# it was stamped for, so cycle 1's decision answered "what width is cycle 2" at
+# every door that decides on it — the ASSAY gate's positive FULL assertion, the
+# streams-complete roster, and `_maybe_skip_trace`'s fence — while
+# `_unrecorded_width_problem` implemented D-117 as "is there ANY entry" rather
+# than "is there an entry for THIS one".
+#
+# The module already held the correct rule twice: `_recorded_stream_scope` and
+# `_recorded_prove_roster` both compare `recorded.get("cycle")` against the
+# cycle being measured, and `_recorded_stream_scope`'s docstring names the
+# omission as GI-008's violation — "a caller reading a scope off a decision made
+# for another cycle would be narrowing this one against a width nothing recorded
+# for it". The narrow helpers had the guard; the read they are all built on did
+# not.
+#
+# Driven at 2cdce02 through `server.call_tool`: at F2 cycle 2 with a single
+# `{cycle: 1, mode: FULL, rule: first_of_phase}` entry and all five streams
+# complete, `Foundry-Gate('assay')` PASSED carrying
+# `inspect_ran_at_full_width (mode=FULL rule=first_of_phase) ok=True` — an
+# assertion about cycle 2 answered by cycle 1's record. With a cycle-1 DELTA
+# entry, `_check_streams_complete` returned complete True over cycle 1's
+# three-stream roster, which is GI-008's named violation verbatim, and
+# `inspect_clean` refused naming "cycle 1 ran at DELTA width" while the run was
+# at cycle 2.
+#
+# An entry for another cycle — EARLIER OR LATER — is not this cycle's width, and
+# reads as no record at all: every door refuses through
+# `_unrecorded_width_problem`, whose refusal now names the cycle it is refusing
+# FOR and what it found instead.
+# --------------------------------------------------------------------------- #
+
+
+def _cycles_recorded_against(
+    fdir: Path,
+    *,
+    stamped: tuple[int, ...],
+    state_cycle: int,
+    mode: str = "FULL",
+    rule: str = "final_gate",
+    required_streams: tuple[str, ...] = ("trace", "prove", "test"),
+) -> None:
+    """A clean, fully-streamed F2 at `state_cycle` whose recorded decisions are
+    stamped for `stamped` instead.
+
+    Built on `_full_cycle_recorded_with`, so the run differs from the one that
+    opens ASSAY in exactly one field — the entry's `cycle` — and in nothing
+    else. `stamped=(N,)` where N == `state_cycle` is therefore the control.
+    """
+    _full_cycle_recorded_with(fdir, rule, cycle=state_cycle)
+    state = _read_state(fdir)
+    template = state["inspect_modes"][0]
+    entries = []
+    for c in stamped:
+        entry = json.loads(json.dumps(template))
+        entry["cycle"] = c
+        entry["mode"] = mode
+        entry["rule"] = rule
+        entry["required_streams"] = list(required_streams)
+        entry["stream_scope"] = {
+            w: {"scope": "full" if mode == "FULL" else "delta", "detail": "fixture"}
+            for w in required_streams
+        }
+        entries.append(entry)
+    state["inspect_modes"] = entries
+    state["cycle"] = state_cycle
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def test_a_width_stamped_for_an_earlier_cycle_is_not_this_cycles_width(
+    run_env, monkeypatch
+):
+    """GI-008 verbatim: 'The server decides at the inspect_start transition;
+    Foundry-Next only reports it', whose named violation is 'a streams-complete
+    check that reads a roster nothing recorded'.
+
+    D-117 ruled that an unrecorded width is not full width. A width recorded for
+    a DIFFERENT crossing is the same fact: nothing recorded a width for THIS
+    INSPECT, and answering with cycle 1's is not a degraded answer, it is a
+    false one. The ASSAY gate asserted `mode == "FULL"` positively after D-117
+    and still read that FULL off another cycle's row.
+    """
+    project_root, fdir = run_env
+    _cycles_recorded_against(fdir, stamped=(1,), state_cycle=2)
+
+    assert _current_inspect_mode(fdir) is None
+    problem = fo._unrecorded_width_problem(fdir)
+    assert problem is not None
+    assert "no recorded width" in problem["reason"], problem
+    assert "cycle 2" in problem["reason"], problem
+    assert "cycle 1" in problem["reason"], problem
+    assert "inspect_start" in problem["hint"], problem
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+    assert gate["passed"] is False, gate
+    width = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("inspect_ran_at_full_width")
+    )
+    assert width["ok"] is False, width
+    assert "mode=unrecorded" in width["check"], width
+
+
+def test_a_width_stamped_for_a_later_cycle_is_not_this_cycles_width_either(
+    run_env, monkeypatch
+):
+    """The axis a one-sided fix gets wrong.
+
+    `inspect_modes` is append-only and every entry this module writes carries
+    the counter the crossing that wrote it advanced, so a LATER stamp than the
+    counter cannot arise on the live path at all — which is exactly why a read
+    that tolerates it is reading something no transition produced. Guarding only
+    against older entries would leave `[FULL@1, FULL@3]` at cycle 2 answering
+    with cycle 3's FULL.
+    """
+    project_root, fdir = run_env
+    _cycles_recorded_against(fdir, stamped=(1, 3), state_cycle=2)
+
+    assert _current_inspect_mode(fdir) is None
+    problem = fo._unrecorded_width_problem(fdir)
+    assert problem is not None
+    assert "cycle 2" in problem["reason"], problem
+    assert "cycle 3" in problem["reason"], problem
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+    assert gate["passed"] is False, gate
+
+
+def test_a_delta_roster_stamped_for_another_cycle_is_not_the_roster_read(run_env):
+    """GI-008's named violation, verbatim: 'a streams-complete check that reads
+    a roster nothing recorded because Next was skipped'.
+
+    `_check_streams_complete` READS `required_streams` off the recorded decision
+    and never recomputes it — correct, and the whole point of GI-008 — but it
+    read it off whatever entry was newest. On a cycle-1 DELTA entry at cycle 2
+    it reported complete True over a three-stream roster decided for a crossing
+    that is not this one, and `inspect_clean` then refused naming cycle 1's
+    DELTA width while the run stood at cycle 2. Both halves are asserted: the
+    roster is not read, and the refusal names the cycle it is refusing FOR.
+    """
+    project_root, fdir = run_env
+    _cycles_recorded_against(
+        fdir, stamped=(1,), state_cycle=2, mode="DELTA", rule=INSPECT_DELTA_RULE,
+    )
+
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert streams["unrecorded_width"] is True, streams
+    assert streams["required"] == [], streams
+
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert clean.get("ok") is not True, clean
+    assert clean["unrecorded_width"] is True, clean
+    assert "cycle 2" in clean["error"], clean
+    assert _read_state(fdir)["phase"] == "F2", "the run must not reach F4"
+
+
+def test_the_entry_stamped_for_this_cycle_is_still_the_recorded_width(
+    run_env, monkeypatch
+):
+    """The control this fix must not move.
+
+    A run whose newest entry IS stamped for the counter is the live path —
+    `cast` and `temper` stamp `_current_cycle(fdir)`, `inspect_start` stamps the
+    counter it advanced inside the same transaction — so the cycle stamp and the
+    counter are equal by construction on every crossing this module performs. A
+    guard that also refused THAT would deadlock every INSPECT in the run.
+    """
+    project_root, fdir = run_env
+    _cycles_recorded_against(fdir, stamped=(1, 2), state_cycle=2)
+
+    recorded = _current_inspect_mode(fdir)
+    assert recorded is not None
+    assert recorded["cycle"] == 2, recorded
+    assert recorded["mode"] == "FULL", recorded
+    assert fo._unrecorded_width_problem(fdir) is None
+
+    gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
+    assert gate["passed"] is True, gate
+
+
+def test_the_trace_skip_fence_fails_closed_on_a_width_from_another_cycle(run_env):
+    """AC-019 / FR-012 — THE ADJACENT PATH.
+
+    A DIFFERENT CALLER of the same read, reached through Foundry-Next rather
+    than through the ASSAY gate. D-071 fenced this skip behind the recorded
+    width precisely so a FULL roster's trace requirement could not be satisfied
+    without TRACE running, and D-117 closed the unrecorded hole underneath it —
+    but the fence read `mode == "FULL"` off whatever entry was newest, so cycle
+    1's FULL answered "this INSPECT is recorded FULL (rule ...)" for cycle 2.
+    Benign in its verdict and false in its provenance, one edit away from the
+    auto-stamp D-071 was filed for.
+
+    The marker is asserted absent afterwards: this fence WRITES `.trace-complete`
+    on the skip arms, so "did it fail closed" is a question about the filesystem
+    and not only about the returned dict.
+    """
+    project_root, fdir = run_env
+    _cycles_recorded_against(fdir, stamped=(1,), state_cycle=2)
+    (fdir / fo._stream_marker("trace")).unlink()
+
+    decision = fo._maybe_skip_trace(fdir, project_root)
+
+    assert decision is not None, decision
+    assert decision["skip"] is False, decision
+    assert "no recorded width" in decision["reason"], decision
+    assert "cycle 2" in decision["reason"], decision
+    assert not (fdir / fo._stream_marker("trace")).exists(), (
+        "the fence auto-stamped TRACE complete off another cycle's width"
+    )
+
+
+def test_the_widening_re_open_does_not_widen_another_cycles_delta(run_env):
+    """ST-005 / AC-016 — a second adjacent path: a different TRANSITION.
+
+    The F2->F2 widening re-open exists to take a DELTA INSPECT to FULL before
+    ASSAY, and it is refused when this cycle's recorded width is not DELTA
+    because that call is then a stray second `inspect_start` (D-057). It read
+    the same unguarded value, so cycle 1's DELTA licensed a widening of cycle 2
+    — advancing the counter and stamping a FULL decision for a crossing whose
+    own width nothing had recorded. The counter is asserted unmoved, which is
+    the property AC-013 states for every refused crossing.
+    """
+    project_root, fdir = run_env
+    _cycles_recorded_against(
+        fdir, stamped=(1,), state_cycle=2, mode="DELTA", rule=INSPECT_DELTA_RULE,
+    )
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result.get("ok") is not True, result
+    assert "unrecorded" in result["error"], result
+    assert _current_cycle(fdir) == 2, "a refused crossing advanced the counter"
+
+
+def test_the_cycle_stamp_is_checked_in_the_one_width_read(run_env):
+    """THE PROPERTY, derived from the source rather than from the symptom.
+
+    `_current_inspect_mode`'s docstring calls itself THE ONLY READ, and the
+    reason D-117's five permissive fallbacks agreed on the wrong answer is that
+    each door decided for itself what "recorded" meant. WHICH CYCLE an entry
+    belongs to is the same kind of question as WHAT its mode spells, so it is
+    answered in the same one place — through `_current_cycle`, the package's one
+    guarded reader of the counter (D-059), never off a raw `state["cycle"]`.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._current_inspect_mode)))
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert "_current_cycle" in names, (
+        "_current_inspect_mode no longer compares the entry's cycle stamp "
+        "against the server counter, so a decision recorded for another "
+        "crossing reads as this INSPECT's width again — D-216."
+    )

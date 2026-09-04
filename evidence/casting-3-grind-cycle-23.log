@@ -1,0 +1,52 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_inspect_mode.py > /dev/null && echo 'pytest green: tests/test_inspect_mode.py' && echo '' && uv run --quiet --with pytest python -c "import json,pathlib,sys,tempfile;sys.path.insert(0,'.');from foundry_mcp import server as S;from foundry_mcp.tools import foundry_orchestrator as fo, foundry_state;import tests.test_inspect_mode as TIM;setattr(fo,'_check_active_teams',lambda _pr:{'active':False,'teams':[],'live_panes':[]});P=pathlib.Path;exec('''def fresh(name):\n    r = P(tempfile.mkdtemp())\n    f = r / 'foundry-archive' / name\n    (f / 'castings').mkdir(parents=True)\n    foundry_state.set_active_run(name)\n    S._project_root = str(r)\n    return r, f\n\ndef wire(tool, args):\n    return TIM._machine_readable(TIM._drive_mcp_text(tool, args))\n\ndef drive(label, stamped, state_cycle, mode, rule):\n    r, f = fresh('ev23')\n    TIM._cycles_recorded_against(f, stamped=stamped, state_cycle=state_cycle, mode=mode, rule=rule)\n    read = fo._current_inspect_mode(f)\n    streams = fo._check_streams_complete(str(r))\n    TIM._arm(f)\n    gate = wire('Foundry-Gate', {'phase': 'assay'})\n    width = [c for c in gate['checklist'] if c['check'].startswith('inspect_ran_at_full_width')][0]\n    TIM._arm(f)\n    clean = wire('Foundry-Phase', {'phase': 'inspect_clean'})\n    phase_after = json.loads((f / 'state.json').read_text(encoding='utf-8'))['phase']\n    print('  ' + label)\n    print('    state.cycle=%s   inspect_modes stamped for %s   mode=%s' % (state_cycle, list(stamped), mode))\n    print('    _current_inspect_mode       : %s' % (None if read is None else '%s@%s' % (read['mode'], read['cycle'])))\n    print('    streams complete            : %s   required=%s   unrecorded_width=%s' % (streams['complete'], streams['required'], streams.get('unrecorded_width', False)))\n    print('    Foundry-Gate(assay) passed  : %s' % gate['passed'])\n    print('    its width checklist entry   : %s ok=%s' % (width['check'], width['ok']))\n    print('    Foundry-Phase(inspect_clean): ok=%s   phase after=%s' % (clean.get('ok', False), phase_after))\n    print('    inspect_clean says          : %s' % clean.get('error', '(nothing - it succeeded)'))\n    foundry_state.clear_active_run()\n    print('')\n\ndef fence(label, stamped, state_cycle):\n    r, f = fresh('ev23t')\n    TIM._cycles_recorded_against(f, stamped=stamped, state_cycle=state_cycle, mode='FULL', rule='final_gate')\n    (f / fo._stream_marker('trace')).unlink()\n    d = fo._maybe_skip_trace(f, str(r))\n    print('  %s -> skip=%s   auto-stamped .trace-complete=%s' % (label, d['skip'], (f / fo._stream_marker('trace')).exists()))\n    print('      %s' % d['reason'])\n    foundry_state.clear_active_run()\n''');print('== GI-008 / GI-009: the transition RECORDS the width; every door only READS it ==');print('== D-216: an inspect_modes entry stamped for ANOTHER cycle recorded nothing for THIS one ==');print('');print('-- both doors driven through the MCP CallToolRequest handler, at HEAD --');print('');drive('(a) [FULL@1] with the run at cycle 2 - the driven defect', (1,), 2, 'FULL', 'first_of_phase');drive('(b) [DELTA@1] with the run at cycle 2 - the roster half', (1,), 2, 'DELTA', 'delta');drive('(c) [FULL@1, FULL@3] with the run at cycle 2 - a LATER stamp is no better', (1, 3), 2, 'FULL', 'first_of_phase');drive('(d) [FULL@1, FULL@2] with the run at cycle 2 - the true positive, kept', (1, 2), 2, 'FULL', 'final_gate');print('== the ADJACENT PATH: the same read, a different caller - TRACE D-071 skip fence ==');fence('stale [FULL@1] at cycle 2', (1,), 2);fence('live  [FULL@2] at cycle 2', (2,), 2)"
+# evidence-for: GI-008, GI-009, AC-016, AC-017, CT-009
+# evidence-timeout: 600
+
+pytest green: tests/test_inspect_mode.py
+
+== GI-008 / GI-009: the transition RECORDS the width; every door only READS it ==
+== D-216: an inspect_modes entry stamped for ANOTHER cycle recorded nothing for THIS one ==
+
+-- both doors driven through the MCP CallToolRequest handler, at HEAD --
+
+  (a) [FULL@1] with the run at cycle 2 - the driven defect
+    state.cycle=2   inspect_modes stamped for [1]   mode=FULL
+    _current_inspect_mode       : None
+    streams complete            : False   required=[]   unrecorded_width=True
+    Foundry-Gate(assay) passed  : False
+    its width checklist entry   : inspect_ran_at_full_width (mode=unrecorded rule=unrecorded) ok=False
+    Foundry-Phase(inspect_clean): ok=False   phase after=F2
+    inspect_clean says          : Cannot mark INSPECT clean — this INSPECT (cycle 2) has no recorded width — the newest inspect_modes entry is stamped for cycle 1, and a width is a fact about ONE crossing — cycle 1's decision says nothing about what cycle 2 was opened with, so the roster, the rule and the evidence sweep it was opened with are all unknown
+
+  (b) [DELTA@1] with the run at cycle 2 - the roster half
+    state.cycle=2   inspect_modes stamped for [1]   mode=DELTA
+    _current_inspect_mode       : None
+    streams complete            : False   required=[]   unrecorded_width=True
+    Foundry-Gate(assay) passed  : False
+    its width checklist entry   : inspect_ran_at_full_width (mode=unrecorded rule=unrecorded) ok=False
+    Foundry-Phase(inspect_clean): ok=False   phase after=F2
+    inspect_clean says          : Cannot mark INSPECT clean — this INSPECT (cycle 2) has no recorded width — the newest inspect_modes entry is stamped for cycle 1, and a width is a fact about ONE crossing — cycle 1's decision says nothing about what cycle 2 was opened with, so the roster, the rule and the evidence sweep it was opened with are all unknown
+
+  (c) [FULL@1, FULL@3] with the run at cycle 2 - a LATER stamp is no better
+    state.cycle=2   inspect_modes stamped for [1, 3]   mode=FULL
+    _current_inspect_mode       : None
+    streams complete            : False   required=[]   unrecorded_width=True
+    Foundry-Gate(assay) passed  : False
+    its width checklist entry   : inspect_ran_at_full_width (mode=unrecorded rule=unrecorded) ok=False
+    Foundry-Phase(inspect_clean): ok=False   phase after=F2
+    inspect_clean says          : Cannot mark INSPECT clean — this INSPECT (cycle 2) has no recorded width — the newest inspect_modes entry is stamped for cycle 3, and a width is a fact about ONE crossing — cycle 3's decision says nothing about what cycle 2 was opened with, so the roster, the rule and the evidence sweep it was opened with are all unknown
+
+  (d) [FULL@1, FULL@2] with the run at cycle 2 - the true positive, kept
+    state.cycle=2   inspect_modes stamped for [1, 2]   mode=FULL
+    _current_inspect_mode       : FULL@2
+    streams complete            : True   required=['trace', 'prove', 'test']   unrecorded_width=False
+    Foundry-Gate(assay) passed  : True
+    its width checklist entry   : inspect_ran_at_full_width (mode=FULL rule=final_gate) ok=True
+    Foundry-Phase(inspect_clean): ok=True   phase after=F4
+    inspect_clean says          : (nothing - it succeeded)
+
+== the ADJACENT PATH: the same read, a different caller - TRACE D-071 skip fence ==
+  stale [FULL@1] at cycle 2 -> skip=False   auto-stamped .trace-complete=False
+      this INSPECT (cycle 2) has no recorded width — the newest inspect_modes entry is stamped for cycle 1, and a width is a fact about ONE crossing — cycle 1's decision says nothing about what cycle 2 was opened with, so the roster, the rule and the evidence sweep it was opened with are all unknown
+  live  [FULL@2] at cycle 2 -> skip=False   auto-stamped .trace-complete=False
+      this INSPECT is recorded FULL (rule final_gate) — the full roster runs, and TRACE is in it
