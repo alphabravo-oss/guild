@@ -4275,6 +4275,15 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "superseded binding deleted; named here only as a prior instance of "
         "that same class (D-202/D-203)."
     ),
+    "_lead_only_lines": (
+        "difflib opcode filter deleted with the merge it served; the F6 seal "
+        "carries lead prose by heading now, not by comparing values "
+        "(D-228/D-230)."
+    ),
+    "_merge_lead_prose": (
+        "positional merge superseded by `_seal_lead_prose`, which appends one "
+        "trailing section and re-emits nothing generated (D-228/D-230)."
+    ),
     "_FILENAME": (
         "a naming CONVENTION, never a symbol — the run-artifact scan tests "
         "`target.id.endswith('_FILENAME')`."
@@ -14682,37 +14691,86 @@ def test_a_report_that_cannot_be_regenerated_at_f6_is_recorded_and_said(
 # destroying the prose the lead is licensed to append to it
 # --------------------------------------------------------------------------- #
 
-#: The two shapes commands/start.md licenses with "**You MAY APPEND PROSE BELOW
-#: ANY SECTION**": a bare line under a generated section's body, and the lead's
-#: own heading below the generated ones. They fail differently — a bare line has
-#: to be told apart from the generated body it sits under, a lead heading has to
-#: be told apart from a generated one — so both are driven.
-_MID_SENTINEL = "LEAD-APPENDED-PROSE-SENTINEL-42 (below a generated section)"
-_TAIL_HEADING = "## Lead notes"
-_TAIL_SENTINEL = "LEAD-APPENDED-PROSE-SENTINEL-43 (under the lead's own heading)"
+#: The shape GI-006 licenses and the seal carries: the lead's OWN heading,
+#: below the generated sections, with a sentinel under it.
+#:
+#: D-228 / D-230 narrowed this from two shapes to one. The other shape driven
+#: here used to be a bare line typed INSIDE a generated section's body, and the
+#: only way to tell such a line from the generated body around it is to compare
+#: it against the freshly generated body — which is the defect: a generated row
+#: whose VALUE moved reads as a line the lead typed, so the seal re-emitted
+#: stale rows as "prose you appended". The cycle-27 ruling reads GI-006's first
+#: clause as "appended prose survives the seal, in one appended section", and
+#: the lead appends under their own heading.
+_LEAD_HEADING = "## Lead notes"
+_LEAD_SENTINEL = "LEAD-APPENDED-PROSE-SENTINEL-43 (under the lead's own heading)"
+
+#: The three transitions that seal the report: both F6 doors and the cap.
+#: D-230 was driven at the cap and D-228 at `done`; they are ONE mechanism, so
+#: every property below is driven at all three (D-043/D-044's argument).
+_TERMINAL_DOORS = ("done", "nyquist_done", "grind_start")
+
+
+def _arrange_terminal_door(fdir: Path, door: str) -> None:
+    """Put the run in the state each sealing transition requires."""
+    _write_spec(fdir, ["FR-1"])
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    if door == "done":
+        _write_state(fdir, phase="F4", cycle=2)
+        _defect_ledger(fdir, [])
+    elif door == "nyquist_done":
+        _write_state(fdir, phase="F5.5", cycle=2, temper=True, nyquist=True)
+        _defect_ledger(fdir, [])
+    else:
+        # ST-008: the cap halts on the transition that OPENS a GRIND.
+        _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+        _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+        (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
 
 
 def _append_lead_prose(fdir: Path) -> None:
     """Edit REPORT.md exactly as GI-006 licenses the lead to edit it."""
     path = fdir / "REPORT.md"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    headings = [i for i, line in enumerate(lines) if line.strip().startswith("## ")]
-    assert len(headings) >= 2, headings
-
-    # Below the FIRST generated section's body — i.e. immediately above the
-    # second heading, which is where "below any section" puts it.
-    second = headings[1]
-    lines[second:second] = ["", _MID_SENTINEL, ""]
-    lines.extend(["", _TAIL_HEADING, "", _TAIL_SENTINEL, ""])
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.rstrip() + f"\n\n{_LEAD_HEADING}\n\n{_LEAD_SENTINEL}\n",
+        encoding="utf-8",
+    )
 
 
 def _assert_lead_prose_survived(fdir: Path) -> str:
+    """The lead's block is on disk, whole, inside the ONE section the seal adds."""
     text = (fdir / "REPORT.md").read_text(encoding="utf-8")
-    assert _MID_SENTINEL in text, text[-2000:]
-    assert _TAIL_SENTINEL in text, text[-2000:]
-    assert _TAIL_HEADING in text.splitlines(), text[-2000:]
+    lines = text.splitlines()
+    assert fo._LEAD_NOTES_HEADING in lines, text[-2000:]
+    tail = lines[lines.index(fo._LEAD_NOTES_HEADING):]
+    assert _LEAD_HEADING in tail, text[-2000:]
+    assert _LEAD_SENTINEL in tail, text[-2000:]
+    # ONE carried section, and it is the last thing in the document.
+    assert lines.count(fo._LEAD_NOTES_HEADING) == 1, text[-2000:]
     return text
+
+
+def _assert_no_generated_row_was_duplicated(text: str) -> None:
+    """D-228 / D-230's observed shape: one question, two contradictory rows.
+
+    The sealed document carried the STALE `| run | total | ... |` row from the
+    previous generation directly beside the fresh one, and the stale
+    `| Tokens | ... |` of the baseline comparison beside its fresh one. Both are
+    rows the generator emits exactly once, so counting them is the assertion:
+    a duplicate can only have arrived by the seal re-emitting generated content
+    as lead prose.
+    """
+    assert text.count("| run | total |") == 1, text[-3000:]
+    # By WHOLE LINE, because "| Tokens |" is also the spend table's header cell
+    # and a substring count would pass on a duplicated row.
+    for row in ("| Tokens |", "| GRIND cycles |"):
+        matched = [line for line in text.splitlines() if line.startswith(row)]
+        assert len(matched) == 1, (row, matched)
+    # Every generated section appears exactly once, whatever else is below.
+    assert text.count("\n## ") == len(vocab.REPORT_REQUIRED_SECTIONS) + (
+        2 if fo._LEAD_NOTES_HEADING in text else 0
+    ), [line for line in text.splitlines() if line.startswith("## ")]
 
 
 @pytest.mark.parametrize(
@@ -14800,13 +14858,9 @@ def test_the_cap_transition_carries_the_prose_the_f6_seal_carries(run_env):
     is reached from at all.
     """
     project_root, fdir = run_env
-    _write_spec(fdir, ["FR-1"])
-    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
-    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
-    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    _arrange_terminal_door(fdir, "grind_start")
     _generate_report(project_root, fdir)
     _append_lead_prose(fdir)
-    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
 
     _arm_ordering_token(fdir)
     result = foundry_mark_phase_complete("grind_start", project_root)
@@ -14848,6 +14902,104 @@ def test_a_purely_generated_report_is_left_exactly_as_generated(run_env):
     assert sealed.count("## ") == len(vocab.REPORT_REQUIRED_SECTIONS), sealed[:400]
 
 
+@pytest.mark.parametrize("door", _TERMINAL_DOORS)
+def test_a_ledger_that_moved_under_the_report_is_not_prose_the_lead_appended(
+    run_env, door
+):
+    """D-228 / D-230 — GI-006 / AC-036 / FR-023 / CT-014, driven at every door.
+
+    THE DEFECT. `_lead_only_lines` kept the `insert` AND `replace` opcodes of a
+    line-granular `difflib` comparison between the pre-existing section body and
+    the freshly generated one. A generated row whose VALUE moved between the two
+    generations lands in a `replace` opcode, so the OLD row was kept and
+    re-emitted below the fresh section as the lead's content. Driven at the real
+    terminal door with ZERO prose appended and ONE `Foundry-Spend` recorded
+    between the two generations: the transition returned `lead_prose_lines: 11`
+    and said "11 line(s) of prose you appended were carried onto it (GI-006)",
+    and the sealed REPORT.md carried a stale `| GRIND cycles | 22 |  | 12 | 2 |`
+    directly below the fresh `| GRIND cycles | 22 |  | 12 | 1 |`. The run's
+    final artifact ended with two contradictory values for one question and the
+    operator was told they had authored the contradiction.
+
+    ARM (a) OF THE RULING'S REGRESSION TEST: zero prose plus one spend between
+    generations — carried count 0, no trailing section, no stale rows anywhere,
+    and no sentence claiming the operator appended anything.
+    """
+    project_root, fdir = run_env
+    _arrange_terminal_door(fdir, door)
+    _generate_report(project_root, fdir)
+
+    # THE LEDGER MOVES, AND NOBODY TYPES A WORD. This is the whole trigger: one
+    # more spend record between the generation and the seal changes the tokens
+    # cell, the totals row and the baseline comparison.
+    spend = fo.foundry_record_spend(
+        agent="casting-3", phase="F3", tokens=4242, duration_ms=60_000,
+        project_root=project_root,
+    )
+    assert spend["ok"] is True, spend
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete(door, project_root)
+
+    assert result["ok"] is True, result
+    assert result["report_generated"] is True, result
+    assert result["lead_prose_lines"] == 0, result
+    assert not result["lead_prose_error"], result
+    assert "prose you appended" not in result["message"], result["message"]
+
+    text = (fdir / "REPORT.md").read_text(encoding="utf-8")
+    assert fo._LEAD_NOTES_HEADING not in text, text[-3000:]
+    _assert_no_generated_row_was_duplicated(text)
+    # The FRESH number is the one on the document, and it is there once.
+    assert text.count("| run | total | 4242 |") == 1, text[-3000:]
+
+
+@pytest.mark.parametrize("door", _TERMINAL_DOORS)
+def test_the_seal_carries_the_lead_block_and_nothing_generated_with_it(
+    run_env, door
+):
+    """ARM (b) OF THE RULING'S REGRESSION TEST — D-228 / D-230 / GI-006.
+
+    A `## Lead notes` section with a sentinel, AND a ledger that moved under the
+    document: exactly the lead's content in the single trailing section, every
+    generated section present exactly once with fresh values, and nothing
+    generated re-emitted as prose. The count the message names is the lead's
+    line count, not a diff's.
+    """
+    project_root, fdir = run_env
+    _arrange_terminal_door(fdir, door)
+    _generate_report(project_root, fdir)
+    _append_lead_prose(fdir)
+
+    spend = fo.foundry_record_spend(
+        agent="casting-3", phase="F3", tokens=4242, duration_ms=60_000,
+        project_root=project_root,
+    )
+    assert spend["ok"] is True, spend
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete(door, project_root)
+
+    assert result["ok"] is True, result
+    assert result["report_generated"] is True, result
+    # The lead wrote a heading, a blank and a sentinel — carried VERBATIM, so
+    # the blank between them is one of the three lines the count names.
+    assert result["lead_prose_lines"] == 3, result
+    assert not result["lead_prose_error"], result
+    if door != "grind_start":
+        # `_sealed_report_sentence` is the F6 doors' spelling and names WHERE
+        # the block went. The cap has its own message and publishes the same
+        # count as a result field, which is what its own D-224 test reads.
+        assert fo._LEAD_NOTES_HEADING in result["message"], result["message"]
+
+    text = _assert_lead_prose_survived(fdir)
+    _assert_no_generated_row_was_duplicated(text)
+    assert text.count("| run | total | 4242 |") == 1, text[-3000:]
+    # The carried block is BELOW every generated section, not interleaved.
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    assert headings[-2:] == [fo._LEAD_NOTES_HEADING, _LEAD_HEADING], headings
+
+
 def test_a_section_the_lead_deleted_never_reaches_the_seal_at_all(run_env):
     """GI-006's other clause: 'cannot omit a section'.
 
@@ -14872,7 +15024,7 @@ def test_a_section_the_lead_deleted_never_reaches_the_seal_at_all(run_env):
     path = fdir / "REPORT.md"
     lines = path.read_text(encoding="utf-8").splitlines()
     headings = [i for i, line in enumerate(lines) if line.strip().startswith("## ")]
-    generated = [i for i in headings if lines[i].strip() != _TAIL_HEADING]
+    generated = [i for i in headings if lines[i].strip() != _LEAD_HEADING]
     del lines[generated[-1]]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     missing = report_status(fdir)["missing_sections"]
@@ -14888,19 +15040,24 @@ def test_a_section_the_lead_deleted_never_reaches_the_seal_at_all(run_env):
     # Refused BEFORE the regeneration, so the document is exactly as the lead
     # left it — prose included.
     assert path.read_text(encoding="utf-8") == before
-    _assert_lead_prose_survived(fdir)
+    assert _LEAD_SENTINEL in before
 
 
-def test_the_merge_takes_its_skeleton_from_the_document_just_generated(run_env):
+def test_the_seal_takes_its_skeleton_from_the_document_just_generated(run_env):
     """The branch the doors cannot reach, driven on the helper itself.
 
-    `_merge_lead_prose` walks the document the LEAD edited, so "what if a
+    `_carried_lead_prose` walks the document the LEAD edited, so "what if a
     generated heading is not in it" has to have an answer. The answer is that
     the skeleton comes from the FRESHLY GENERATED document — not from
     `foundry_report._SECTION_TITLES`, which is a sibling casting's private name
     this module would then have to keep in step. Asserted directly because
     `_done_preconditions` refuses that document at the door (see the test
     above), so the door can never exercise it.
+
+    D-228: and the STALE ALPHA ROW IS GONE. It used to be carried "because the
+    bias is towards preserving", which is what published a generated row as the
+    operator's own words. A row under a generated heading is generated by
+    construction; the seam is the heading and nothing crosses it.
     """
     generated = (
         "# Foundry run report — r\n"
@@ -14928,41 +15085,77 @@ def test_the_merge_takes_its_skeleton_from_the_document_just_generated(run_env):
         "\n"
         "stale alpha row\n"
         "\n"
-        "lead prose below Alpha\n"
-        "\n"
         "## Lead notes\n"
         "\n"
         "lead prose under the lead's own heading\n"
     )
 
-    merged, preserved = fo._merge_lead_prose(edited, generated)
+    sealed, carried = fo._seal_lead_prose(edited, generated)
 
-    assert preserved > 0
-    headings = [line for line in merged.splitlines() if line.startswith("## ")]
-    # Beta was absent from the edited document and comes back; Lead notes is
-    # kept; neither generated heading is emitted twice.
-    assert headings == ["## Alpha", "## Lead notes", "## Beta"], headings
+    assert carried > 0
+    headings = [line for line in sealed.splitlines() if line.startswith("## ")]
+    # Beta was absent from the edited document and comes back; the carried block
+    # is one trailing section; neither generated heading is emitted twice.
+    assert headings == [
+        "## Alpha", "## Beta", fo._LEAD_NOTES_HEADING, "## Lead notes",
+    ], headings
     for kept in (
         "lead prose above the first section",
-        "lead prose below Alpha",
         "lead prose under the lead's own heading",
     ):
-        assert kept in merged, (kept, merged)
-    assert "fresh alpha row" in merged and "fresh beta row" in merged
-    # The stale row is carried over rather than silently dropped — the bias is
-    # towards preserving, because the harm being fixed is destruction.
-    assert "stale alpha row" in merged
-    # ...and the old banner is NOT, because it is regenerated every time.
-    assert "2019-01-01" not in merged, merged
+        assert kept in sealed, (kept, sealed)
+    assert "fresh alpha row" in sealed and "fresh beta row" in sealed
+    # THE ROW UNDER A GENERATED HEADING IS GENERATED, and the stale copy of it
+    # is not republished as the lead's.
+    assert "stale alpha row" not in sealed, sealed
+    # ...and the old banner is NOT carried either, because it is regenerated.
+    assert "2019-01-01" not in sealed, sealed
 
 
-def test_the_merge_invents_nothing_when_the_lead_wrote_nothing(run_env):
-    """A document that is purely generated merges to itself, with 0 preserved.
+def test_the_seal_invents_nothing_when_a_generated_value_moved(run_env):
+    """D-228's minimal isolated reproduction, as a unit assertion.
 
-    Asserted on the helper as well as through the door because this is the
+    `_merge_lead_prose(old, new)` where old and new differed only in ONE table
+    row returned `preserved=1` and a merged document carrying BOTH rows. The
+    same inputs must now carry nothing: a document that is purely generated
+    seals to itself, whatever moved inside it.
+
+    Asserted on the helper as well as through the doors because this is the
     property that stops the seal GROWING the report: every terminal transition
-    runs the merge, so a merge that preserved even one generated line per pass
-    would accumulate a duplicate section over a long run.
+    runs it, so a seal that preserved even one generated line per pass would
+    accumulate a duplicate section over a long run.
+    """
+    banner = (
+        "# Foundry run report — r\n"
+        "\n"
+        "Generated {stamp} by Foundry-Report.\n"
+        "\n"
+        "## Alpha\n"
+        "\n"
+        "| a | {value} |\n"
+    )
+    old = banner.format(stamp="2019-01-01T00:00:00+00:00", value=1)
+    new = banner.format(stamp="2020-01-01T00:00:00+00:00", value=2)
+
+    sealed, carried = fo._seal_lead_prose(old, new)
+    assert carried == 0
+    assert sealed == new
+    assert "| a | 1 |" not in sealed
+
+    # And the identity case, which is the same property with nothing moving.
+    sealed, carried = fo._seal_lead_prose(new, new)
+    assert carried == 0
+    assert sealed == new
+
+
+def test_sealing_twice_does_not_wrap_the_wrapper(run_env):
+    """The seal is idempotent over its own output.
+
+    Two terminal transitions can both run on one run — a capped GRIND opens
+    HALTED, and a resumed run can still reach `done` — so the document the seal
+    reads may be a document the seal wrote. Its own section is UNWRAPPED and
+    re-wrapped once rather than nested, so the carried block does not gain a
+    heading per pass.
     """
     generated = (
         "# Foundry run report — r\n"
@@ -14971,11 +15164,17 @@ def test_the_merge_invents_nothing_when_the_lead_wrote_nothing(run_env):
         "\n"
         "## Alpha\n"
         "\n"
-        "row\n"
+        "fresh alpha row\n"
     )
-    merged, preserved = fo._merge_lead_prose(generated, generated)
-    assert preserved == 0
-    assert merged == generated
+    edited = generated.rstrip() + "\n\n## Lead notes\n\nsentinel\n"
+
+    once, first = fo._seal_lead_prose(edited, generated)
+    twice, second = fo._seal_lead_prose(once, generated)
+
+    assert first == second == 3, (first, second)
+    assert once == twice, (once, twice)
+    assert twice.count(fo._LEAD_NOTES_HEADING) == 1, twice
+    assert twice.count("sentinel") == 1, twice
 
 
 # --------------------------------------------------------------------------- #

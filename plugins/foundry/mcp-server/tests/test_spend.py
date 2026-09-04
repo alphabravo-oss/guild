@@ -1988,3 +1988,164 @@ def test_the_renderer_consults_the_cycle_key_function_rather_than_copying_it():
     assert "from foundry_mcp.tools.foundry_report import _cycle_sort_key" in source, (
         "the spend renderer must consult the existing cycle key function"
     )
+
+
+# --------------------------------------------------------------------------- #
+# CT-013 / FR-022 / FR-037 / AC-033 — D-229: a cycle the run never measured
+# gets no row, because an absent row is honest where a zero row is a claim
+# --------------------------------------------------------------------------- #
+
+
+def _rollup_with_stream_in_cycles(fdir: Path, stream: str, cycles: tuple[int, ...]) -> None:
+    """The only record that an F2 stream agent was dispatched at all (C-5)."""
+    (fdir / "stream-rollup.json").write_text(
+        json.dumps({"cycles": {
+            str(c): {stream: {"records": [{"cycle": c}]}} for c in cycles
+        }}),
+        encoding="utf-8",
+    )
+
+
+def test_a_cycle_the_run_never_measured_gets_no_row_at_all(run_env):
+    """FR-037 / AC-033 / CT-013 — D-229, driven at the doors that publish it.
+
+    THE DEFECT. `_overlay_unreported` did
+    `spend["by_cycle"].setdefault(str(cycle), _empty_spend_bucket())` for every
+    cycle the unreported summary named, and `foundry_record_spend` persisted the
+    result into state.json. When the pairs later cleared, the loop only reset
+    `bucket["unreported"] = 0` on the buckets already there and nothing removed
+    a bucket now holding 0/0/0/0. Compounding it, the summary's cycle axis is
+    keyed on the (agent, phase) PAIR, so the moment a stream reported spend at
+    F2 EVERY cycle stamp that stream carried cleared at once. Driven on the real
+    run: `Foundry-Next` returned 23 all-zero `by_cycle` buckets and rendered
+    "By Cycle: 0: 0tok/0m  1: 0tok/0m ... 22: 0tok/0m", and the F6 report wrote
+    23 rows reading `| cycle | 5 | 0 | 0.0 | 0 | 0 | 0 |` while
+    stream-rollup.json records the full stream roster running in cycle 5. Both
+    surfaces stated that 23 of the run's 27 cycles cost zero tokens, took zero
+    minutes, ran zero agents and had ZERO unreported dispatches — every one of
+    which is false.
+
+    THE SEQUENCE IS THE WHOLE TRIGGER and it is driven here end to end: a spend
+    recorded while a stream is still unreported SEEDS the stream's cycle
+    buckets, and the stream's own later spend record CLEARS them without
+    removing them.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=5)
+    _write_spawns(fdir, [{"casting_id": 2, "phase": "cast"}])
+    _rollup_with_stream_in_cycles(fdir, "trace", (1, 2, 3))
+
+    # 1. The seed. `trace` is dispatched in cycles 1-3 and has reported nothing,
+    #    so the overlay writes a bucket for each of those cycles — which is
+    #    right, and is the case FR-022 exists for.
+    first = foundry_record_spend(
+        agent="casting-2", phase="F1", tokens=10, duration_ms=60_000,
+        project_root=project_root,
+    )
+    assert first["ok"] is True, first
+    seeded = _read_state(fdir)["spend"]["by_cycle"]
+    assert {"1", "2", "3"} <= set(seeded), seeded
+    assert [seeded[str(c)]["unreported"] for c in (1, 2, 3)] == [1, 1, 1], seeded
+
+    # 2. The clear. One spend record for the pair, and every cycle stamp it
+    #    carried stops being unreported at once.
+    second = foundry_record_spend(
+        agent="trace", phase="F2", tokens=20, duration_ms=60_000,
+        project_root=project_root,
+    )
+    assert second["ok"] is True, second
+
+    # 3. The buckets left behind measured NOTHING, so there are no buckets.
+    persisted = _read_state(fdir)["spend"]["by_cycle"]
+    assert set(persisted) == {"5"}, persisted
+    assert persisted["5"]["tokens"] == 30, persisted
+
+    # The read path says the same, because it runs the same overlay.
+    summary = fo._spend_summary(fdir)
+    assert set(summary["by_cycle"]) == {"5"}, summary["by_cycle"]
+
+    # ...and the roll-up that survived is the one that carries a measurement.
+    for key, bucket in summary["by_cycle"].items():
+        assert any(
+            bucket.get(field) for field in
+            ("tokens", "duration_ms", "agents", "unreported")
+        ), (key, bucket)
+
+
+def test_neither_foundry_next_nor_the_report_renders_an_unmeasured_cycle(run_env):
+    """D-229 — the two surfaces the zero rows reached, driven at both.
+
+    AC-033 makes the Foundry-Next line the one a lead reads tokens and minutes
+    per cycle on, and AC-036 puts the same axis in the F6 report. Both read the
+    persisted `by_cycle`, so both published the unmeasured zeros; this asserts
+    neither does, on one fixture, so a fix that repaired only the display would
+    fail here.
+    """
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=5)
+    (fdir / "spec.md").write_text("# Spec\n- FR-1: a requirement\n", encoding="utf-8")
+    _write_spawns(fdir, [{"casting_id": 2, "phase": "cast"}])
+    _rollup_with_stream_in_cycles(fdir, "trace", (1, 2, 3))
+
+    foundry_record_spend(
+        agent="casting-2", phase="F1", tokens=10, duration_ms=60_000,
+        project_root=project_root,
+    )
+    foundry_record_spend(
+        agent="trace", phase="F2", tokens=20, duration_ms=60_000,
+        project_root=project_root,
+    )
+
+    rendered = "\n".join(_fmt_foundry_next_lines(foundry_next_action(project_root)))
+    for cycle in (1, 2, 3):
+        assert f"{cycle}: 0tok/0m" not in rendered, rendered
+    assert "5: 30tok/2m" in rendered, rendered
+
+    report = generate_report(Path(project_root), fdir)
+    assert report.get("ok") is True, report
+    markdown = (fdir / "REPORT.md").read_text(encoding="utf-8")
+    for cycle in (1, 2, 3):
+        assert f"| cycle | {cycle} |" not in markdown, markdown
+    assert "| cycle | 5 |" in markdown, markdown
+
+
+def test_the_overlay_keeps_every_bucket_that_measured_something():
+    """D-229's other half, and the one that stops the fix over-reaching.
+
+    The prune is "nothing measured", not "no spend recorded". A cycle with an
+    unreported dispatch and no spend at all is the run where the lead forgot
+    every `Foundry-Spend` call — the case FR-022 exists to show — and its row
+    must stay. Asserted on the helper because the persisted document of a real
+    run reaches this function directly (that is how the live run's 23 stale
+    buckets are repaired in place, on the next spend call, rather than by hand).
+    """
+    zero = {"tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 0}
+    measured = {"tokens": 1_430_191, "duration_ms": 8_726_752, "agents": 8,
+                "unreported": 0}
+
+    cleared = fo._overlay_unreported(
+        {"by_phase": {}, "by_cycle": {"5": dict(zero), "23": dict(measured)},
+         "total": dict(zero)},
+        {"by_phase": {}, "by_cycle": {}, "count": 0},
+    )
+    assert set(cleared["by_cycle"]) == {"23"}, cleared["by_cycle"]
+
+    still_unreported = fo._overlay_unreported(
+        {"by_phase": {}, "by_cycle": {"5": dict(zero), "23": dict(measured)},
+         "total": dict(zero)},
+        {"by_phase": {"F2": ["trace"]}, "by_cycle": {"5": ["trace"]}, "count": 1},
+    )
+    assert set(still_unreported["by_cycle"]) == {"5", "23"}, (
+        still_unreported["by_cycle"]
+    )
+    assert still_unreported["by_cycle"]["5"]["unreported"] == 1
+
+    # The PHASE axis is untouched by the prune, and cannot reach all-zero
+    # anyway: the spend call that clears a phase's unreported writes that same
+    # phase bucket an `agents` count of at least 1. A phase seeded by the
+    # overlay alone still carries its unreported and is not a candidate.
+    assert set(still_unreported["by_phase"]) == {"F2"}
+    assert still_unreported["by_phase"]["F2"]["unreported"] == 1

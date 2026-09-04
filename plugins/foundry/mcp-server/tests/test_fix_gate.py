@@ -4094,18 +4094,24 @@ def test_rung_twos_refusal_names_the_shapes_the_rung_actually_accepts(run_env):
     pytest discovery patterns'. The message beside it has to match too.
 
     Casting 1 narrowed `vocab.is_test_file` to exactly the declared
-    configuration (D-222): a `PYTEST_PYTHON_FILES` glob under a
-    `PYTEST_TESTPATHS` run, plus `conftest.py`. This rung's refusal still read
-    "(test_*.py, *_test.py, conftest.py, or under a tests/ directory)", so it
-    named two shapes it now REFUSES and a caller who followed it — renaming
-    their file to `thing_test.py`, or dropping a test into any directory
-    spelled `tests` — was refused a second time for doing what the message
-    said.
+    configuration (D-222): a `PYTEST_PYTHON_FILES` glob, plus `conftest.py`.
+    This rung's refusal still read "(test_*.py, *_test.py, conftest.py, or
+    under a tests/ directory)", so it named two shapes it now REFUSES and a
+    caller who followed it — renaming their file to `thing_test.py`, or
+    dropping a test into any directory spelled `tests` — was refused a second
+    time for doing what the message said.
+
+    D-231 / THE CYCLE-27 RULING MOVED THE OTHER BOUNDARY, AND THE MESSAGE WITH
+    IT. `testpaths` seeds argument-less collection and filters nothing, so
+    `is_test_file` classifies on the BASENAME in any directory; the phrase kept
+    a "under tests/" clause the predicate no longer enforced, which is the same
+    drift arriving from the other side — a message NARROWER than the rung,
+    sending a caller to move a file that was already collectable where it sat.
 
     The property asserted is the one that stops it drifting again: the phrase
-    is DERIVED from the three constants `is_test_file` reads, so it cannot
-    disagree with the predicate it sits under. A literal beside a predicate is
-    a copy free to drift from it.
+    is DERIVED from the constants `is_test_file` reads, so it cannot disagree
+    with the predicate it sits under. A literal beside a predicate is a copy
+    free to drift from it.
     """
     project_root, _fdir = run_env
 
@@ -4116,20 +4122,26 @@ def test_rung_twos_refusal_names_the_shapes_the_rung_actually_accepts(run_env):
     # Every shape the message names is a shape the recogniser accepts...
     for glob in PYTEST_PYTHON_FILES:
         assert glob in refused, (glob, refused)
-    for testpath in PYTEST_TESTPATHS:
-        assert f"{testpath}/" in refused, (testpath, refused)
     assert PYTEST_CONFTEST_BASENAME in refused, refused
-    # ...and the two retired shapes are named by NEITHER.
-    for retired in ("*_test.py", "or under a tests/ directory"):
+    # ...and every retired shape is named by NEITHER — including the directory
+    # clause, which `is_test_file` stopped requiring (D-231).
+    for retired in ("*_test.py", "under a tests/ directory", "tests/"):
         assert retired not in refused, (retired, refused)
     assert is_test_file("pkg/thing_test.py") is False
+    # The rung accepts what the message now promises: any directory.
+    assert is_test_file("test_root_case.py") is True
+    assert is_test_file("verifier/deep/test_nested_case.py") is True
 
-    # The derivation is not vacuous: every token in the phrase comes from a
-    # constant, so a config change moves the message with the predicate.
+    # The derivation is not vacuous: every configured token in the phrase comes
+    # from a constant, so a config change moves the message with the predicate.
     for token in _PYTEST_DISCOVERY_PHRASE.replace(",", " ").split():
         assert (
             token in PYTEST_PYTHON_FILES
-            or token.rstrip("/") in PYTEST_TESTPATHS
             or token == PYTEST_CONFTEST_BASENAME
-            or token in ("under", "or")
+            or token in ("or", "in", "any", "directory")
         ), (token, _PYTEST_DISCOVERY_PHRASE)
+    # And no configured testpath leaks back into it (D-231).
+    for testpath in PYTEST_TESTPATHS:
+        assert f"{testpath}/" not in _PYTEST_DISCOVERY_PHRASE, (
+            testpath, _PYTEST_DISCOVERY_PHRASE
+        )

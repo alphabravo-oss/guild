@@ -9,7 +9,6 @@ All operations are local file reads/writes. Zero API calls. Zero cost.
 
 from __future__ import annotations
 
-import difflib
 import fcntl
 import json
 import os
@@ -37,7 +36,6 @@ from foundry_mcp.schemas.vocab import (
     PROVE_DELTA_SAMPLE_SIZE,
     PYTEST_CONFTEST_BASENAME,
     PYTEST_PYTHON_FILES,
-    PYTEST_TESTPATHS,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REQUIREMENT_ID_RE,
@@ -1785,8 +1783,10 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
             _GATE_RANK_REPORT,
             report_reason,
             "Call Foundry-Report. The report is generated, not written by hand: "
-            "you may append prose below its sections, you may not omit one, and "
-            "DONE is refused until every section is present.",
+            "you may append prose under your own `## ` heading (the F6 seal "
+            "carries it verbatim into `## Lead notes (carried by the seal)`), "
+            "you may not omit a section, and DONE is refused until every "
+            "section is present.",
         )
     checklist.append({
         "check": (
@@ -5486,37 +5486,6 @@ def _md_sections(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
     return header, blocks
 
 
-def _lead_only_lines(generated: list[str], on_disk: list[str]) -> list[str]:
-    """The lines of ``on_disk`` the freshly ``generated`` body does not account for.
-
-    Line-granular ``difflib`` rather than a common-prefix walk, because the two
-    bodies legitimately differ in the MIDDLE: the whole reason D-218 put a
-    regeneration on the F6 transition is that a ledger moves between
-    ``Foundry-Report`` and ``Foundry-Phase('done')``. A prefix walk would call
-    everything after the first changed row "the lead's", carrying a stale table
-    tail into the sealed document; the opcodes name only what actually differs.
-
-    Leading and trailing blanks are dropped so an unchanged section contributes
-    nothing and the caller can test the result for emptiness.
-
-    WHERE IT IS IMPRECISE, IT PRESERVES. A generated row that changed lands in
-    a ``replace`` opcode and is carried over beside the lead's prose — visible
-    duplication a reader can see and delete. The opposite bias is the defect
-    this function exists to close: silent destruction of an edit the operator
-    was told they could make.
-    """
-    kept: list[str] = []
-    matcher = difflib.SequenceMatcher(None, generated, on_disk, autojunk=False)
-    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
-        if tag in ("insert", "replace"):
-            kept.extend(on_disk[j1:j2])
-    while kept and not kept[0].strip():
-        kept.pop(0)
-    while kept and not kept[-1].strip():
-        kept.pop()
-    return kept
-
-
 #: A generated REPORT.md header is a ``# `` title line and one banner sentence
 #: naming the generator. Both are re-emitted fresh on every regeneration — the
 #: banner carries the timestamp — so neither is ever carried over as prose.
@@ -5537,92 +5506,117 @@ def _lead_header_lines(header: list[str]) -> list[str]:
     ]
 
 
-def _merge_lead_prose(on_disk: str, generated: str) -> tuple[str, int]:
-    """Carry the lead's additions onto a freshly generated REPORT.md.
+#: The ONE section the seal appends, and the only place lead prose is written
+#: back. Named "carried by the seal" so a reader knows the SEAL put the block
+#: there rather than the lead putting it there themselves, and recognised again
+#: on the next seal so a second terminal transition unwraps it instead of
+#: wrapping the wrapper.
+_LEAD_NOTES_HEADING = "## Lead notes (carried by the seal)"
 
-    Returns ``(merged_text, preserved_line_count)``. ``preserved_line_count``
-    is 0 when the document on disk was purely generated, and the caller then
-    has nothing to write.
 
-    D-224 — THE TRANSITION DESTROYED THE EDIT THE OPERATOR WAS LICENSED TO MAKE
-    --------------------------------------------------------------------------
-    GI-006 is two clauses — "The lead may append prose but cannot omit a
-    section; `Foundry-Phase('done')` refuses if the report is absent" — and
-    D-218's seal enforced the second by destroying the first.
-    ``_seal_run_report`` regenerated REPORT.md unconditionally from both F6
-    doors, and ``_halt_if_capped`` did the same at the HALTED transition.
-    Driven: a report was generated, a `## Lead notes` section carrying a
-    sentinel was appended below the generated sections, `report_status` still
-    read present True, and `Foundry-Phase('done')` returned ok True, phase F6,
-    with the sentinel and its heading gone from disk. ``clear_active_run()``
-    runs immediately after, so the run was archived with the prose gone and
-    nothing in the response said it had been discarded. The same claim is
-    shipped in commands/start.md ("**You MAY APPEND PROSE BELOW ANY SECTION**"),
-    both READMEs and the generated banner itself.
+def _carried_lead_prose(on_disk: str, generated: str) -> list[str]:
+    """The on-disk lines that lie OUTSIDE the generated skeleton.
 
-    THE SEAM IS THE HEADING, and it is the one the reader already uses. The
-    generated headings are taken from the FRESHLY WRITTEN document rather than
-    from ``foundry_report._SECTION_TITLES``: that table is a sibling casting's
+    The skeleton is the set of ``## `` headings the generator JUST WROTE, taken
+    from the freshly generated document rather than from
+    ``foundry_report._SECTION_TITLES`` — that table is a sibling casting's
     private name, and the document it just wrote is a better authority for what
     it generates than a constant this module would have to keep in step.
 
-    So: a block under a heading the generator did NOT just write is the lead's,
-    carried over whole; a block under one it DID write keeps its lead-only
-    lines below the regenerated body, where the lead put them; and a heading
-    the lead deleted is restored by the regeneration, which is GI-006's other
-    clause holding. Prose ABOVE the first section is carried over too, directly
-    below the fresh banner.
+    So: the header's non-generated lines are the lead's; a block under a heading
+    the generator did not write is the lead's, carried whole; a SECOND copy of a
+    generated heading is the lead's, because the generator emits each exactly
+    once; and a block under a generated heading is GENERATED and is carried
+    NOWHERE. A previous seal's own ``_LEAD_NOTES_HEADING`` is unwrapped rather
+    than re-wrapped, so sealing twice does not nest the wrapper twice.
+
+    D-228 / D-230 — WHAT THE PREVIOUS ANSWER TO THIS QUESTION DID
+    ------------------------------------------------------------
+    This replaces ``_lead_only_lines`` + ``_merge_lead_prose``, which asked the
+    question one rung finer: a line-granular ``difflib`` comparison of the
+    on-disk section body against the freshly generated one, keeping the
+    ``insert`` AND ``replace`` opcodes as "the lead's". A generated row whose
+    VALUE moved between the two generations lands in a ``replace`` opcode, so
+    the OLD row was kept and re-emitted as lead content. Driven at the real
+    terminal doors: with ZERO prose appended and one ``Foundry-Spend`` recorded
+    between the two generations, the HALTED transition returned
+    ``lead_prose_lines: 11`` and said "11 line(s) of prose you appended were
+    carried onto it (GI-006)", and the sealed REPORT.md carried a stale
+    ``| GRIND cycles | 22 |  | 12 | 2 |`` directly below the fresh
+    ``| GRIND cycles | 22 |  | 12 | 1 |``. The run's final artifact ended with
+    two contradictory values for one question, and the operator was told they
+    had authored the contradiction.
+
+    THE FIX IS TO ASK A COARSER QUESTION, NOT A BETTER-TUNED ONE. Any rule that
+    tells lead prose from generated prose by COMPARING VALUES re-acquires this
+    defect the moment a value moves, because a moved value is indistinguishable
+    from a line the lead typed. The heading is a seam nothing generated can
+    cross: the generator writes exactly the headings in its published section
+    list, so a block under one of them is generated by construction and no
+    comparison is needed to know it.
+
+    WHAT THAT COSTS, STATED (lead ruling, GRIND cycle 27). Prose typed INSIDE a
+    generated section's body is no longer carried — it cannot be told from the
+    body it sits in without the value comparison this defect is. GI-006's first
+    clause is read as "appended prose survives the seal, in one appended
+    section", not "the seal reconstructs the lead's edit positions". The lead
+    appends under their own ``## `` heading, or above the first section, and the
+    seal carries it verbatim.
     """
     old_header, old_blocks = _md_sections(on_disk)
-    new_header, new_blocks = _md_sections(generated)
+    _new_header, new_blocks = _md_sections(generated)
+    generated_headings = {heading for heading, _body in new_blocks}
 
-    generated_bodies: dict[str, list[str]] = {}
-    for heading, body in new_blocks:
-        generated_bodies.setdefault(heading, body)
-
-    # Lead content is keyed on the generated heading it FOLLOWED in the document
-    # the lead edited, so an appended block comes back where it was appended.
-    # `None` is "before the first generated heading".
-    tails: dict[str | None, list[str]] = {}
-    anchor: str | None = None
-    matched: set[str] = set()
+    carried: list[str] = list(_lead_header_lines(old_header))
+    seen: set[str] = set()
     for heading, body in old_blocks:
-        if heading in generated_bodies and heading not in matched:
-            matched.add(heading)
-            anchor = heading
-            extra = _lead_only_lines(generated_bodies[heading], body)
-            if extra:
-                tails.setdefault(anchor, []).extend(extra)
-        else:
-            # A heading the generator does not own — or a SECOND copy of one it
-            # does, which the generator never emits and the lead therefore
-            # wrote. Either way it is the lead's, and it is carried over whole
-            # rather than used to re-emit a generated body twice.
-            tails.setdefault(anchor, []).extend([heading, *body])
+        if heading in generated_headings and heading not in seen:
+            seen.add(heading)
+            continue
+        if heading == _LEAD_NOTES_HEADING:
+            carried.extend(body)
+            continue
+        carried.extend([heading, *body])
 
-    before_first = _lead_header_lines(old_header) + tails.pop(None, [])
+    while carried and not carried[0].strip():
+        carried.pop(0)
+    while carried and not carried[-1].strip():
+        carried.pop()
+    return carried
 
-    lines = list(new_header)
 
-    def _append(extra: list[str]) -> None:
-        if not extra:
-            return
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.extend(extra)
-        lines.append("")
+def _seal_lead_prose(on_disk: str, generated: str) -> tuple[str, int]:
+    """Append the lead's prose to the freshly generated REPORT.md, verbatim.
 
-    _append(before_first)
-    emitted: set[str] = set()
-    for heading, body in new_blocks:
-        lines.append(heading)
-        lines.extend(body)
-        if heading not in emitted:
-            emitted.add(heading)
-            _append(tails.get(heading, []))
+    Returns ``(sealed_text, carried_line_count)``. The count is 0 when the
+    document on disk carried nothing outside the generated skeleton, and the
+    caller then has nothing to write — a purely generated report is left EXACTLY
+    as ``generate_report`` wrote it, which is the property that stops the seal
+    growing the document one section per terminal transition.
 
-    preserved = len(before_first) + sum(len(v) for v in tails.values())
-    return "\n".join(lines).rstrip() + "\n", preserved
+    ONE TRAILING SECTION, AFTER EVERY GENERATED ONE. The prose does not go back
+    where the lead put it: reconstructing an edit position needs a value
+    comparison, and a value comparison is D-228 (see ``_carried_lead_prose``).
+    Appended whole under ``_LEAD_NOTES_HEADING``, the carried block is
+    unambiguous — every line in it is the lead's, and nothing generated is ever
+    re-emitted as lead prose. GI-006's other clause is untouched: the generated
+    sections are all present, in order, above it.
+    """
+    carried = _carried_lead_prose(on_disk, generated)
+    if not carried:
+        return generated, 0
+    sealed = (
+        generated.rstrip("\n")
+        + "\n\n"
+        + _LEAD_NOTES_HEADING
+        + "\n\n"
+        # NOT rstripped: `carried` has already lost its leading and trailing
+        # BLANK lines, and stripping again here would eat trailing whitespace
+        # off the lead's own last line. "Verbatim" is the whole promise.
+        + "\n".join(carried)
+        + "\n"
+    )
+    return sealed, len(carried)
 
 
 def _regenerate_report_preserving_lead_prose(
@@ -5641,11 +5635,19 @@ def _regenerate_report_preserving_lead_prose(
     ending the other way.
 
     A FAILURE TO PRESERVE IS RECORDED, NOT RAISED, AND NEVER COSTS THE REPORT.
-    If the merged write fails, the freshly generated document stands and
+    If the write-back fails, the freshly generated document stands and
     ``lead_prose_error`` says the prose could not be carried over — the caller
     puts that in the operator's message. The alternative, refusing the
     transition, would leave a run that has already passed every precondition
     unable to end.
+
+    D-228 / D-230 — WHAT "PRESERVING" MEANS HERE, AFTER THE CYCLE-27 RULING.
+    The carry is a SEAL, not a merge: ``_seal_lead_prose`` appends everything
+    outside the generated skeleton into one trailing section and re-emits
+    nothing generated. The difflib merge this used to run reported stale
+    generated rows as "prose you appended" — with zero prose appended — and
+    left the run's final artifact carrying two values for one question. Nothing
+    below compares a generated line with anything.
     """
     md_path = fdir / REPORT_MD_FILENAME
     # BEFORE the generator runs, because the generator is what overwrites it.
@@ -5666,7 +5668,7 @@ def _regenerate_report_preserving_lead_prose(
                 f"{REPORT_MD_FILENAME} carries no generated text to merge onto"
             )
         else:
-            merged, preserved = _merge_lead_prose(on_disk, fresh)
+            merged, preserved = _seal_lead_prose(on_disk, fresh)
             if preserved:
                 try:
                     md_path.write_text(merged, encoding="utf-8")
@@ -5793,12 +5795,20 @@ def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
     # The failure this closes was silent on both halves — the prose went and
     # the response did not mention it — so the fix reports the outcome either
     # way rather than only when it went wrong.
+    #
+    # D-228 / D-230: and it says it ONLY when there was prose. The sentence used
+    # to fire on the difflib merge's count, which counted stale generated rows,
+    # so a run whose lead appended nothing was told it had appended eleven
+    # lines. The count now comes off `_seal_lead_prose`, which counts only what
+    # lies outside the generated skeleton, and it names the section the block
+    # was carried into so the operator can find it.
     if sealed.get("lead_prose_error"):
         sentence += f" WARNING: {sealed['lead_prose_error']}"
     elif sealed.get("lead_prose_lines"):
         sentence += (
             f" {sealed['lead_prose_lines']} line(s) of prose you appended were "
-            "carried onto it (GI-006)."
+            f"carried onto it verbatim, under `{_LEAD_NOTES_HEADING}` "
+            "(GI-006)."
         )
     return sentence
 
@@ -6141,6 +6151,47 @@ def _overlay_unreported(spend: dict, summary: dict) -> dict:
         bucket = spend["by_cycle"].setdefault(str(cycle), _empty_spend_bucket())
         bucket["unreported"] = len(agents)
     spend["total"]["unreported"] = int(summary.get("count") or 0)
+
+    # D-229 — A BUCKET WITH NOTHING IN IT IS NOT A MEASUREMENT, IT IS A CLAIM.
+    #
+    # The seeding above cannot retract what it seeds. A cycle named by the
+    # unreported summary gets a bucket; the summary's cycle axis then clears the
+    # moment the (agent, phase) PAIR reports spend, which for an F2 stream agent
+    # is EVERY cycle stamp that agent carried, at once — and the bucket left
+    # behind holds 0/0/0/0. Driven on this run: `Foundry-Next` returned 23
+    # all-zero `by_cycle` buckets and rendered "By Cycle: 0: 0tok/0m 1: 0tok/0m
+    # ... 22: 0tok/0m", and `generate_report` wrote 23 rows reading
+    # `| cycle | 5 | 0 | 0.0 | 0 | 0 | 0 |` while stream-rollup.json records the
+    # full five-stream roster running in cycle 5. AC-033 makes this the line the
+    # lead reads tokens and minutes per cycle on, and it stated that 23 of 27
+    # cycles cost nothing and ran nobody. An ABSENT row is honest where a zero
+    # row is a claim.
+    #
+    # THE CYCLE AXIS IS THE ONE THAT CAN REACH ALL-ZERO, and that asymmetry is
+    # why only it is pruned. `foundry_record_spend` buckets a spend row under
+    # its phase AND under the SERVER cycle at the time it is recorded, setting
+    # `agents` to a distinct count that is always at least 1. So a phase bucket
+    # whose unreported clears was written by the very call that cleared it and
+    # can never be all-zero; a CYCLE bucket can, because the cycle a stream was
+    # dispatched in and the cycle its spend is recorded in are different
+    # numbers. Pruning `by_phase` here would delete nothing and would suggest a
+    # symmetry the two axes do not have.
+    #
+    # RUN ON BOTH SIDES BY THE ONE CALLER SET: `_spend_summary` overlays a deep
+    # copy, so the display is honest on the next read, and `foundry_record_spend`
+    # overlays the persisted document inside its transaction, so state.json is
+    # repaired in place by the next spend call rather than by hand.
+    spend["by_cycle"] = {
+        key: bucket
+        for key, bucket in spend["by_cycle"].items()
+        if not (
+            isinstance(bucket, dict)
+            and all(
+                not bucket.get(field)
+                for field in ("tokens", "duration_ms", "agents", "unreported")
+            )
+        )
+    }
     return spend
 
 
@@ -11250,22 +11301,29 @@ def _resolve_test_path(path_part: str, project_root: str) -> Path | None:
 
 
 #: How rung 2 of `_regression_test_problem` SPELLS the discovery rule it just
-#: applied, DERIVED from the same three constants `vocab.is_test_file` reads
-#: rather than re-typed beside it (FR-034).
+#: applied, DERIVED from the same constants `vocab.is_test_file` reads rather
+#: than re-typed beside it (FR-034).
 #:
-#: D-222 is why. The recogniser once accepted `*_test.py` and any path segment
-#: spelled `tests`, no `pyproject.toml` in this repo asked for either, and
-#: casting 1 narrowed it to the configured globs. This refusal's message still
-#: read "(test_*.py, *_test.py, conftest.py, or under a tests/ directory)" —
-#: naming two shapes the rung it sits under now REFUSES, so a caller who
-#: followed the message got refused again for doing exactly what it said. A
-#: literal beside a predicate is a copy free to drift from it, which is the
-#: same shape as the enum drift `server.py`'s header block describes.
+#: D-222 is why the derivation exists. The recogniser once accepted `*_test.py`
+#: and any path segment spelled `tests`, no `pyproject.toml` in this repo asked
+#: for either, and casting 1 narrowed it to the configured globs. This refusal's
+#: message still read "(test_*.py, *_test.py, conftest.py, or under a tests/
+#: directory)" — naming two shapes the rung it sits under now REFUSES, so a
+#: caller who followed the message got refused again for doing exactly what it
+#: said. A literal beside a predicate is a copy free to drift from it, which is
+#: the same shape as the enum drift `server.py`'s header block describes.
+#:
+#: D-231 / the cycle-27 lead ruling is why `PYTEST_TESTPATHS` is not in it.
+#: `testpaths` SEEDS argument-less collection and filters nothing — `pytest
+#: --collect-only .` against this configuration collects a root-level
+#: `test_*.py` — so `is_test_file` classifies on the BASENAME alone, in any
+#: directory. The phrase kept a "under tests/" clause the predicate below it had
+#: stopped enforcing, which is this constant's own failure mode arriving from
+#: the other side: the message narrower than the rung rather than wider.
 _PYTEST_DISCOVERY_PHRASE = (
     ", ".join(PYTEST_PYTHON_FILES)
-    + " under "
-    + " or ".join(f"{path}/" for path in PYTEST_TESTPATHS)
-    + f", or {PYTEST_CONFTEST_BASENAME}"
+    + f" or {PYTEST_CONFTEST_BASENAME}"
+    + ", in any directory"
 )
 
 

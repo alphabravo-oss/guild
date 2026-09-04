@@ -833,7 +833,8 @@ def _fmt_foundry_report(r: dict) -> str:
         f"  {_BWHITE}Markdown:{_RESET} {_short_path(str(r.get('report_md', '?')))}",
         f"  {_BWHITE}JSON:{_RESET}     {_short_path(str(r.get('report_json', '?')))}",
         f"  {_BWHITE}Sections:{_RESET} {len(sections)} — {', '.join(sections)}",
-        f"  {_DIM}Append prose below any section if you like; you may not omit one."
+        f"  {_DIM}Append prose under your own `## ` heading; the F6 seal carries"
+        f" it into 'Lead notes'. You may not omit a section —"
         f" Foundry-Phase(phase='done') refuses while any is missing.{_RESET}",
     ])
 
